@@ -36,6 +36,7 @@ import {
 import { taskFile } from './files';
 import * as fixture from './fixtures';
 import { type Organization, type OrganizationAction, organization, organize } from './organization';
+import { reduceWork, type WorkAction, type WorkState } from './work-state';
 
 export type Color = 'mint' | 'violet' | 'orange' | 'blue' | 'teal' | 'pink';
 export function chatRevision(state: Pick<State, 'chatStates'>, bot: string, latest?: ChatStatus) {
@@ -106,7 +107,7 @@ export const knowledgeDirty = (draft: KnowledgeDraft) =>
   !draft.id || draft.path !== draft.basePath || draft.content !== draft.baseContent;
 export type Owner = 'agent' | 'human';
 export type Theme = 'light' | 'dark';
-export type View = 'chat' | 'inbox' | 'settings';
+export type View = 'chat' | 'inbox' | 'settings' | 'tasks';
 export interface Bot {
   archived?: boolean;
   model?: DeepSeekModel;
@@ -175,6 +176,7 @@ export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
 export interface State {
+  work?: WorkState;
   organization: Organization;
   botCopy?: BotCopyRequest;
   groupCopy?: GroupCopyRequest;
@@ -227,6 +229,7 @@ export function lifecycleRequest(
   };
 }
 export type Action =
+  | WorkAction
   | OrganizationAction
   | { type: 'bot-copy-pending' | 'bot-copy-clear'; request: BotCopyRequest }
   | { type: 'group-copy-pending' | 'group-copy-clear'; request: GroupCopyRequest }
@@ -335,6 +338,14 @@ export function reduce(state: State, action: Action): State {
   // Target the Bot explicitly: changing the selected screen must never transfer ownership or route async work elsewhere.
   if ('bot' in action && !state.bots.some((b) => b.id === action.bot)) return state;
   switch (action.type) {
+    case 'work-options':
+    case 'work-draft':
+    case 'work-change':
+    case 'work-pending':
+    case 'work-release':
+    case 'work-settle':
+    case 'work-merge':
+      return { ...state, work: reduceWork(state.work, action) };
     case 'bot-pin':
     case 'bot-section':
     case 'bot-read':

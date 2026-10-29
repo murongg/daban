@@ -1,0 +1,435 @@
+import {
+  isWorkItem,
+  isWorkList,
+  isWorkReceipt,
+  recoveryBlocked,
+  type WorkItem,
+  type WorkQuery,
+  type WorkSummary,
+  type WorkWrite,
+  workKey,
+  workQueryKey,
+} from '@daban/protocol';
+import { type Dispatch, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { runtimeError, useRuntime } from './Runtime';
+import { type Action, reduce, type State } from './state';
+import { serialize, storageKey } from './storage';
+import {
+  sameWorkDraft,
+  type WorkPending,
+  workDirty,
+  workDraft,
+  workInitial,
+  workInput,
+} from './work-state';
+
+const keyOf = (request: WorkWrite) => workKey(request, { kind: 'human' });
+const rejected = new Set([
+  'WORK_CONFLICT',
+  'WORK_TRASHED',
+  'WORK_NOT_FOUND',
+  'WORK_ID_CONFLICT',
+  'WORK_LIMIT',
+  'WORK_OPERATION_LIMIT',
+  'INVALID_WORK_WRITE',
+]);
+const notSent = new Set(['INVALID_COMMAND', 'RUNTIME_TOO_OLD', 'RUNTIME_RECOVERY_PENDING']);
+const summary = (item: WorkItem): WorkSummary => {
+  const { description: _description, progress, ...fields } = item;
+  return {
+    ...fields,
+    progress: Array.from(progress).slice(0, 200).join(''),
+    progressTruncated: Array.from(progress).length > 200,
+  };
+};
+function matches(item: WorkItem, query: WorkQuery) {
+  // SQLite LIKE folds ASCII only; local acknowledgement updates must follow the same search semantics.
+  const fold = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return (
+    item.deleted === (query.filter === 'trash') &&
+    (query.filter !== 'open' || item.status !== 'done') &&
+    (query.filter !== 'done' || item.status === 'done') &&
+    (!query.text ||
+      [item.title, item.description, item.progress].some((text) =>
+        fold(text).includes(fold(query.text!)),
+      ))
+  );
+}
+export function useWork(
+  state: State,
+  dispatch: Dispatch<Action>,
+  notify: (text: string) => unknown,
+) {
+  const runtime = useRuntime();
+  const cache = state.work ?? workInitial();
+  const current = useRef(state);
+  current.current = state;
+  const pending = useRef(cache.pending);
+  pending.current = cache.pending;
+  const mounted = useRef(true);
+  const writer = useRef<string | undefined>(undefined),
+    checker = useRef<string | undefined>(undefined);
+  const reader = useRef(0),
+    listing = useRef(0);
+  const [working, setWorking] = useState(false),
+    [checking, setChecking] = useState(false),
+    [loading, setLoading] = useState(false),
+    [reading, setReading] = useState(false);
+  const [error, setError] = useState(''),
+    [listError, setListError] = useState('');
+  const [operationError, setOperationError] = useState('');
+  const [items, setItems] = useState<WorkSummary[]>([]),
+    [next, setNext] = useState<number>();
+  const [revision, setRevision] = useState<number>(),
+    [latest, setLatest] = useState<{ key: string; item: WorkItem }>();
+  const [editorVisible, setEditorVisible] = useState(!!cache.draft);
+  const query = useMemo<WorkQuery>(
+    () => ({ filter: cache.filter, text: cache.text.trim(), limit: 50 }),
+    [cache.filter, cache.text],
+  );
+  const queryKey = workQueryKey(query),
+    queryRef = useRef(query);
+  queryRef.current = query;
+  const data = useRef<{ items: WorkSummary[]; key: string; next?: number }>({ items: [], key: '' });
+  const available =
+    runtime.enabled &&
+    runtime.snapshot.phase === 'ready' &&
+    runtime.snapshot.protocolVersion >= 36 &&
+    runtime.snapshot.work?.available === true;
+  const blocked = recoveryBlocked(runtime.snapshot);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      reader.current++;
+      listing.current++;
+    };
+  }, []);
+  useEffect(() => {
+    setLatest((previous) => (previous?.key === cache.draft?.key ? previous : undefined));
+  }, [cache.draft?.key]);
+  const load = useCallback(
+    async (append = false) => {
+      if (!available) return;
+      const selected = structuredClone(queryRef.current),
+        key = workQueryKey(selected);
+      const before = append && data.current.key === key ? data.current.next : undefined;
+      if (append && before === undefined) return;
+      const requested = { ...selected, ...(before === undefined ? {} : { before }) },
+        token = ++listing.current;
+      setLoading(true);
+      setListError('');
+      try {
+        const value = await runtime.command({ type: 'work.list', query: requested });
+        if (!mounted.current || listing.current !== token || workQueryKey(queryRef.current) !== key)
+          return;
+        if (!isWorkList(value) || workQueryKey(value.query) !== workQueryKey(requested))
+          throw Error('INVALID_WORK_PAGE');
+        const merged = new Map((append ? data.current.items : []).map((item) => [item.id, item]));
+        for (const item of value.page.items)
+          if ((merged.get(item.id)?.revision ?? 0) <= item.revision) merged.set(item.id, item);
+        const rows = [...merged.values()];
+        data.current = { items: rows, key, next: value.page.nextBefore };
+        setItems(rows);
+        setNext(value.page.nextBefore);
+        // A later page does not refresh earlier rows; only a full refresh can advance their revision baseline.
+        setRevision((previous) =>
+          append && previous !== undefined ? previous : value.page.revision,
+        );
+      } catch (error) {
+        if (mounted.current && listing.current === token) setListError(runtimeError(error));
+      } finally {
+        if (mounted.current && listing.current === token) setLoading(false);
+      }
+    },
+    [available, runtime.command],
+  );
+  useEffect(() => {
+    if (state.view !== 'tasks' || !available) return;
+    data.current = { items: [], key: queryKey };
+    setItems([]);
+    setLoading(true);
+    setNext(undefined);
+    setRevision(undefined);
+    const timer = setTimeout(() => {
+      load().catch(() => setListError('暂时无法读取任务。'));
+    }, 150);
+    return () => {
+      clearTimeout(timer);
+      listing.current++;
+      setLoading(false);
+    };
+  }, [state.view, available, queryKey, load]);
+  const owns = useCallback(
+    (input: WorkPending) =>
+      mounted.current &&
+      !!pending.current &&
+      keyOf(input.request) === keyOf(pending.current.request),
+    [],
+  );
+  const accept = useCallback(
+    (value: unknown, input: WorkPending, readingOnly: boolean) => {
+      if (!owns(input)) return;
+      if (
+        !isWorkReceipt(value) ||
+        value.actor.kind !== 'human' ||
+        keyOf(value.request) !== keyOf(input.request) ||
+        (!readingOnly && value.state !== 'complete')
+      )
+        throw Error('INVALID_WORK_ACK');
+      if (value.state === 'unknown') return;
+      const key = keyOf(input.request);
+      pending.current = undefined;
+      if (writer.current === key) {
+        writer.current = undefined;
+        setWorking(false);
+      }
+      if (checker.current === key) {
+        checker.current = undefined;
+        setChecking(false);
+      }
+      dispatch({ type: 'work-settle', receipt: value });
+      setOperationError('');
+      if (sameWorkDraft(current.current.work?.draft, input.draft)) {
+        setError('');
+        setLatest(undefined);
+      }
+      const selected = queryRef.current;
+      if (data.current.key === workQueryKey(selected)) {
+        const old = data.current.items.find((row) => row.id === value.item.id);
+        if (!old || old.revision <= value.item.revision) {
+          let rows = data.current.items.filter((row) => row.id !== value.item.id);
+          if (matches(value.item, selected)) {
+            if (old)
+              rows = data.current.items.map((row) =>
+                row.id === value.item.id ? summary(value.item) : row,
+              );
+            else if (input.request.action === 'create') rows = [summary(value.item), ...rows];
+          }
+          data.current = { ...data.current, items: rows };
+          setItems(rows);
+        }
+      }
+      notify(input.request.action === 'create' ? '任务已创建，尚未自动执行。' : '任务操作已确认。');
+    },
+    [dispatch, notify, owns],
+  );
+  const check = useCallback(async () => {
+    const input = pending.current;
+    if (!available || !input || checker.current) return;
+    const key = keyOf(input.request);
+    checker.current = key;
+    setChecking(true);
+    try {
+      accept(
+        await runtime.command({ type: 'work.receipt', request: structuredClone(input.request) }),
+        input,
+        true,
+      );
+    } catch (error) {
+      if (owns(input)) setOperationError(runtimeError(error));
+    } finally {
+      if (checker.current === key) {
+        checker.current = undefined;
+        if (mounted.current) setChecking(false);
+      }
+    }
+  }, [available, runtime.command, accept, owns]);
+  useEffect(() => {
+    if (!cache.pending || !available) return;
+    let live = true,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    async function tick() {
+      await check();
+      if (live && pending.current)
+        timer = setTimeout(() => {
+          tick().catch(() => {});
+        }, 1000);
+    }
+    tick().catch(() => {});
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [cache.pending, available, check]);
+  async function send(input: WorkPending, resuming: boolean) {
+    if (
+      !available ||
+      blocked ||
+      writer.current ||
+      (pending.current && keyOf(pending.current.request) !== keyOf(input.request))
+    )
+      return;
+    const action: Action = { type: 'work-pending', pending: input };
+    const updated = resuming ? current.current : reduce(current.current, action);
+    if (!updated.work?.pending || keyOf(updated.work.pending.request) !== keyOf(input.request))
+      return;
+    try {
+      localStorage.setItem(storageKey, serialize(updated));
+    } catch {
+      (resuming ? setOperationError : setError)(
+        '本机无法保存操作记录。请释放存储空间或导出工作区后重试；你的草稿仍保留。',
+      );
+      return;
+    }
+    if (!resuming) dispatch(action);
+    pending.current = structuredClone(input);
+    const key = keyOf(input.request);
+    writer.current = key;
+    setWorking(true);
+    setOperationError('');
+    if (sameWorkDraft(current.current.work?.draft, input.draft)) setError('');
+    try {
+      accept(
+        await runtime.command({ type: 'work.write', request: structuredClone(input.request) }),
+        input,
+        false,
+      );
+    } catch (error) {
+      if (owns(input)) {
+        setOperationError(runtimeError(error));
+        if (
+          error instanceof Error &&
+          (rejected.has(error.message) || (!resuming && notSent.has(error.message)))
+        ) {
+          pending.current = undefined;
+          dispatch({ type: 'work-release', request: input.request });
+          if (sameWorkDraft(current.current.work?.draft, input.draft))
+            setError(runtimeError(error));
+          else setListError(runtimeError(error));
+        }
+      }
+    } finally {
+      if (writer.current === key) {
+        writer.current = undefined;
+        if (mounted.current) setWorking(false);
+      }
+    }
+  }
+  async function save() {
+    const draft = current.current.work?.draft;
+    if (!draft || pending.current) return;
+    const request = workInput(draft);
+    if (!request) {
+      setError('请填写任务标题（最多 500 字符）；说明和进展各最多 4,000 字符。');
+      return;
+    }
+    await send({ request, draft: structuredClone(draft) }, false);
+  }
+  async function changeStatus(action: 'trash' | 'restore') {
+    const draft = current.current.work?.draft;
+    if (!draft?.base || pending.current || (action === 'trash' && workDirty(draft))) return;
+    await send(
+      {
+        request: {
+          id: crypto.randomUUID(),
+          item: draft.base.id,
+          revision: draft.base.revision,
+          action,
+        },
+        draft: structuredClone(draft),
+      },
+      false,
+    );
+  }
+  function fresh() {
+    const previous = current.current.work?.draft;
+    if (workDirty(previous) && pending.current?.draft.key !== previous?.key) {
+      setError('先保存或放弃当前修改，再新建任务。');
+      setEditorVisible(true);
+      return;
+    }
+    reader.current++;
+    setReading(false);
+    setLatest(undefined);
+    setError('');
+    setEditorVisible(true);
+    dispatch({ type: 'work-draft', previous, draft: workDraft() });
+  }
+  async function open(id: string, review = false) {
+    if (!available) return;
+    const previous = current.current.work?.draft;
+    setEditorVisible(true);
+    if (!review && previous?.base?.id === id && workDirty(previous)) return;
+    if (!review && workDirty(previous) && pending.current?.draft.key !== previous?.key) {
+      setError('先保存或放弃当前修改，再查看其他任务。');
+      return;
+    }
+    const token = ++reader.current;
+    setReading(true);
+    setError('');
+    try {
+      const value = await runtime.command({ type: 'work.read', id });
+      if (
+        !mounted.current ||
+        reader.current !== token ||
+        !sameWorkDraft(current.current.work?.draft, previous)
+      )
+        return;
+      if (
+        !isWorkItem(value) ||
+        value.id !== id ||
+        (previous?.base?.id === id && value.revision < previous.base.revision)
+      )
+        throw Error('INVALID_WORK_ITEM');
+      if (review && previous) setLatest({ key: previous.key, item: value });
+      else dispatch({ type: 'work-draft', previous, draft: workDraft(value) });
+    } catch (error) {
+      if (mounted.current && reader.current === token) setError(runtimeError(error));
+    } finally {
+      if (mounted.current && reader.current === token) setReading(false);
+    }
+  }
+  function discard() {
+    const previous = current.current.work?.draft;
+    if (!previous || pending.current?.draft.key === previous.key) return;
+    reader.current++;
+    setReading(false);
+    setLatest(undefined);
+    setError('');
+    dispatch({
+      type: 'work-draft',
+      previous,
+      draft: previous.base ? workDraft(previous.base, previous.key) : workDraft(),
+    });
+  }
+  function merge(keep: boolean) {
+    if (!latest) return;
+    dispatch({ type: 'work-merge', key: latest.key, latest: latest.item, keep });
+    setLatest(undefined);
+    setError('');
+  }
+  return {
+    available,
+    blocked,
+    items,
+    next,
+    revision,
+    changed:
+      revision !== undefined &&
+      runtime.snapshot.work?.available &&
+      runtime.snapshot.work.revision !== revision,
+    working,
+    checking,
+    loading,
+    reading,
+    error,
+    operationError,
+    listError,
+    latest,
+    editorVisible,
+    setEditorVisible,
+    load,
+    check,
+    save,
+    changeStatus,
+    fresh,
+    open,
+    discard,
+    merge,
+    retry: async () => {
+      if (pending.current) await send(pending.current, true);
+    },
+  };
+}
+export type WorkController = ReturnType<typeof useWork>;

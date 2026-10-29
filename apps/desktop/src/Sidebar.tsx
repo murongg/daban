@@ -8,6 +8,7 @@ import {
   FolderPlus,
   Inbox,
   Laptop,
+  ListTodo,
   Mail,
   MailOpen,
   MessageSquare,
@@ -236,6 +237,18 @@ export function Sidebar({
           <kbd>⌘ K</kbd>
         </div>
         <div className="nav-main">
+          <button
+            type="button"
+            className={`nav-row ${state.view === 'tasks' ? 'selected' : ''}`}
+            aria-label={state.work?.pending ? '任务 · 操作待确认' : '任务'}
+            onClick={() => {
+              dispatch({ type: 'view', view: 'tasks' });
+              close();
+            }}
+          >
+            <ListTodo />
+            任务{state.work?.pending && <span className="nav-count">待确认</span>}
+          </button>
           <button
             type="button"
             className={`nav-row ${state.view === 'inbox' ? 'selected' : ''}`}

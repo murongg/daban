@@ -15,6 +15,7 @@ import {
 } from '@daban/protocol';
 import { restoreOrganization } from './organization';
 import { initialState, routineDraft, type State } from './state';
+import { restoreWork } from './work-state';
 
 export const storageKey = 'daban.workspace.v1';
 export function serialize(state: State) {
@@ -22,6 +23,8 @@ export function serialize(state: State) {
     version: 1,
     state: {
       ...state,
+      // Older rollback clients reject unknown root views; keep the optional task draft without resetting chats.
+      view: state.view === 'tasks' ? 'chat' : state.view,
       files: state.files.map((file) => (file.upload ? { ...file, content: '' } : file)),
       profileRevisions: {},
       chatStates: {},
@@ -44,6 +47,7 @@ export function restore(raw: string | null): State {
     const saved: unknown = JSON.parse(raw || 'null');
     if (!record(saved) || saved.version !== 1 || !record(saved.state)) return initialState();
     const s = saved.state;
+    s.work = restoreWork(s.work);
     if (!isBotImportReference(s.botImport)) delete s.botImport;
     if (!isBotCopyRequest(s.botCopy)) delete s.botCopy;
     if (!isGroupCopyRequest(s.groupCopy)) delete s.groupCopy;
@@ -151,7 +155,7 @@ export function restore(raw: string | null): State {
     if (
       new Set(ids).size !== ids.length ||
       !ids.includes(s.selected as string) ||
-      !choice(s.view, ['chat', 'inbox', 'settings']) ||
+      !choice(s.view, ['chat', 'inbox', 'settings', 'tasks']) ||
       !choice(s.panel, [null, 'computer', 'files', 'knowledge', 'skills', 'memory', 'routines']) ||
       !choice(s.theme, ['light', 'dark'])
     )

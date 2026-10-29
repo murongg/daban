@@ -74,7 +74,9 @@ import {
   type WorkspaceFile,
 } from './state';
 import { restore, serialize, storageKey } from './storage';
+import { Tasks } from './Tasks';
 import { Workspace } from './Workspace';
+import { useWork } from './work';
 
 type Modal =
   | { type: 'chat'; bot: string }
@@ -130,6 +132,7 @@ function Workbench() {
   const storageFailed = useRef(false);
   const ingested = useRef(new Map<string, string>());
   const notify = useCallback((text: string) => setToast(text), []);
+  const work = useWork(state, dispatch, notify);
   const closeModal = useCallback(() => setModal(null), []);
   const preview = useCallback((file: WorkspaceFile) => setModal({ type: 'file', file }), []);
   useNotices((activation) => {
@@ -607,8 +610,12 @@ function Workbench() {
           ) : (
             <>
               <div>
-                <h1>{state.view === 'inbox' ? '收件箱' : '设置'}</h1>
-                <p className="chat-subtitle">你的工作区</p>
+                <h1>
+                  {state.view === 'inbox' ? '收件箱' : state.view === 'tasks' ? '任务' : '设置'}
+                </h1>
+                <p className="chat-subtitle">
+                  {state.view === 'tasks' ? '共享待办 · 所有 Bot 可见' : '你的工作区'}
+                </p>
               </div>
               <span className="spacer" />
               <IconButton label="返回对话" onClick={() => dispatch({ type: 'view', view: 'chat' })}>
@@ -661,6 +668,8 @@ function Workbench() {
               />
             )}
           </div>
+        ) : state.view === 'tasks' ? (
+          <Tasks state={state} dispatch={dispatch} work={work} />
         ) : state.view === 'inbox' ? (
           <Inbox
             state={state}

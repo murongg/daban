@@ -114,6 +114,22 @@ export function useRuntime() {
 export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
+    WORK_CONFLICT: '任务已更新，你的修改仍保留。核对最新版本后再保存。',
+    WORK_TRASHED: '任务已移入回收站，你的修改仍保留。核对最新版本后可先恢复任务。',
+    WORK_NOT_FOUND: '暂未找到这张任务，草稿仍保留。请刷新列表并检查运行环境。',
+    WORK_UNAVAILABLE: '共享任务服务暂不可用，已有草稿和操作记录仍保留。',
+    WORK_CORRUPT: '任务存储无法读取，原记录未被重置。请检查运行环境，普通对话仍可使用。',
+    WORK_CLOSED: '运行环境正在关闭，请重新连接后核对任务。',
+    WORK_LIMIT: '任务保留数量已达上限，回收站也计入；已有任务仍可查看。',
+    WORK_OPERATION_LIMIT: '任务操作记录已达保留上限，请先检查运行环境；已有记录仍保留。',
+    WORK_ID_CONFLICT: '任务标识已被占用，未覆盖已有任务。请核对列表后再新建。',
+    WORK_REQUEST_CONFLICT: '这次操作与已保存回执不一致，原请求仍保留。请检查运行环境。',
+    INVALID_WORK_WRITE: '任务内容无效，请核对标题、状态和文字长度后再保存。',
+    INVALID_WORK_QUERY: '任务筛选无效，请重新选择筛选或关键词。',
+    INVALID_WORK_METADATA: '任务状态暂不可核对，请检查运行环境；草稿仍保留。',
+    INVALID_WORK_PAGE: '任务列表返回不匹配，请刷新核对；当前编辑仍保留。',
+    INVALID_WORK_ITEM: '任务详情返回不匹配，未替换当前草稿。',
+    INVALID_WORK_ACK: '任务回执不匹配，原操作仍保留，请核对结果。',
     INVALID_BOT_COPY: '复制参数无效，请重新核对名称和来源。',
     INVALID_GROUP_COPY: '群聊复制参数无效，请重新核对名称和来源。',
     INVALID_GROUP_COPY_ACK: '群聊复制回执不匹配，原请求仍保留，请核对结果。',
