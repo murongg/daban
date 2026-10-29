@@ -1,4 +1,4 @@
-export const managedProtocol = 34;
+export const managedProtocol = 35;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1341,6 +1341,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'browser.receipt',
     'bot.receipt',
     'bot.copy.receipt',
+    'group.copy.receipt',
     'chat.receipt',
     'chat.history',
     'transcript.list',
@@ -1377,6 +1378,28 @@ export interface GroupInput {
   name: string;
   members: string[];
 }
+export interface GroupCopyRequest {
+  id: string;
+  group: string;
+  revision: number;
+  name: string;
+}
+export function groupCopyKey(request: GroupCopyRequest) {
+  // Persisted origins hash this tuple; keep its order stable across reader and writer versions.
+  return JSON.stringify([
+    'daban.group-copy.v1',
+    request.id,
+    request.group,
+    request.revision,
+    request.name,
+  ]);
+}
+export interface GroupCopyAck {
+  request: GroupCopyRequest;
+  state: 'complete';
+  group: Group;
+}
+export type GroupCopyReceipt = GroupCopyAck | { request: GroupCopyRequest; state: 'unknown' };
 export interface Group extends GroupInput {
   archived?: boolean;
   revision: number;
@@ -1622,6 +1645,33 @@ export function isGroupInput(value: unknown): value is GroupInput {
     value.members.length <= 8 &&
     value.members.every(validAgentId) &&
     new Set(value.members).size === value.members.length
+  );
+}
+export function isGroupCopyRequest(value: unknown): value is GroupCopyRequest {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) => ['id', 'group', 'revision', 'name'].includes(key)) &&
+    validAgentId(value.id) &&
+    agentId(value.id) === value.id &&
+    validAgentId(value.group) &&
+    value.id !== value.group &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) > 0 &&
+    typeof value.name === 'string' &&
+    !!value.name.trim() &&
+    value.name.length <= 30 &&
+    !value.name.includes('\0')
+  );
+}
+export function isGroupCopyReceipt(value: unknown): value is GroupCopyReceipt {
+  if (!profileObject(value) || !isGroupCopyRequest(value.request)) return false;
+  if (value.state === 'unknown')
+    return Object.keys(value).every((key) => ['request', 'state'].includes(key));
+  return (
+    value.state === 'complete' &&
+    Object.keys(value).every((key) => ['request', 'state', 'group'].includes(key)) &&
+    isGroup(value.group) &&
+    value.group.id === value.request.id
   );
 }
 export function isGroup(value: unknown): value is Group {
@@ -3314,6 +3364,7 @@ export type RuntimeCommand =
       input: DesktopInput;
     }
   | { type: 'group.register'; group: GroupInput }
+  | { type: 'group.copy' | 'group.copy.receipt'; request: GroupCopyRequest }
   | { type: 'group.update'; group: string; revision: number; input: Omit<GroupInput, 'id'> }
   | { type: 'group.read'; group: string; before?: number }
   | { type: 'group.input'; group: string; sourceId: string; name: string }

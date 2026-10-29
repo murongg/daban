@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isBotCopyReceipt } from '@daban/protocol';
+import { isBotCopyReceipt, managedProtocol } from '@daban/protocol';
 import { Fault } from './control.js';
 import { startPrototype } from './server.js';
 
@@ -78,7 +78,7 @@ test('copy HTTP endpoints authenticate, bind the source, preserve metadata and a
         headers: { 'x-prototype-token': app.token, 'x-daban-client-protocol': '34' },
       })
     ).json();
-    assert.equal(state.clientProtocol, 34);
+    assert.equal(state.clientProtocol, managedProtocol);
     assert.equal(
       state.groups.items.find((item: { id: string }) => item.id === group.id).archived,
       true,

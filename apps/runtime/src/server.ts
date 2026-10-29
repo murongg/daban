@@ -23,6 +23,7 @@ import {
   isChatRequest,
   isComputerRequest,
   isDocumentUpload,
+  isGroupCopyRequest,
   isKnowledgeWrite,
   isMcpCommand,
   isMemoryQuery,
@@ -293,7 +294,7 @@ export async function startPrototype({
       if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
         throw new Fault('FOREIGN_ORIGIN', 403);
       const url = new URL(req.url || '/', origin);
-      const modernGroups = ['28', '29', '30', '31', '32', '33', '34'].includes(
+      const modernGroups = ['28', '29', '30', '31', '32', '33', '34', '35'].includes(
         String(req.headers['x-daban-client-protocol']),
       );
       const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
@@ -378,7 +379,8 @@ export async function startPrototype({
           !recoveryReads.has(url.pathname) &&
           !/^\/api\/bots\/[a-zA-Z0-9_-]{1,80}\/(browser-receipt|lifecycle-receipt|copy-receipt)$/.test(
             url.pathname,
-          )
+          ) &&
+          !/^\/api\/groups\/[a-zA-Z0-9_-]{1,80}\/copy-receipt$/.test(url.pathname)
         ) {
           const input = url.pathname.match(/^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/input$/);
           if (!recovery.admit() && input && req.method === 'POST' && runtime instanceof Computers) {
@@ -572,6 +574,20 @@ export async function startPrototype({
             );
           }
           throw new Fault('INVALID_CHAT_REQUEST', 400);
+        }
+        const groupCopy = url.pathname.match(
+          /^\/api\/groups\/([a-zA-Z0-9_-]{1,80})\/(copy|copy-receipt)$/,
+        );
+        if (groupCopy) {
+          if (!groups) throw new Fault('GROUP_UNAVAILABLE', 503);
+          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+          const data = await body(req);
+          if (url.search || !isGroupCopyRequest(data) || data.group !== groupCopy[1])
+            throw new Fault('INVALID_GROUP_COPY', 400);
+          return json(
+            res,
+            groupCopy[2] === 'copy' ? await groups.copy(data) : await groups.copyReceipt(data),
+          );
         }
         if (url.pathname.startsWith('/api/groups/') && req.method === 'POST') {
           if (!groups) throw new Fault('GROUP_UNAVAILABLE', 503);

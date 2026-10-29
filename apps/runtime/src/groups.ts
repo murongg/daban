@@ -8,13 +8,18 @@ import {
   type Group,
   type GroupActionAck,
   type GroupActionReceipt,
+  type GroupCopyAck,
+  type GroupCopyReceipt,
+  type GroupCopyRequest,
   type GroupDelivery,
   type GroupMessage,
   type GroupPage,
   type GroupSend,
+  groupCopyKey,
   isGroup,
   isGroupActionReceipt,
   isGroupActionRequest,
+  isGroupCopyRequest,
   isGroupInput,
   isGroupSend,
   isTaskFile,
@@ -85,7 +90,7 @@ export class Groups {
     await chmod(this.file, 0o600);
     this.db = new DatabaseSync(this.file);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
-      CREATE TABLE IF NOT EXISTS group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL,copy_origin TEXT);
       CREATE TABLE IF NOT EXISTS group_actions(id TEXT PRIMARY KEY,grp TEXT NOT NULL,value TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS group_actions_owner ON group_actions(grp);
       CREATE TABLE IF NOT EXISTS group_turns(grp TEXT NOT NULL,id TEXT NOT NULL,prompt TEXT NOT NULL,recipients TEXT NOT NULL,signature TEXT NOT NULL,seq INTEGER,created TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(grp,id));
@@ -96,6 +101,13 @@ export class Groups {
       CREATE TABLE IF NOT EXISTS group_handoffs(source TEXT PRIMARY KEY,signature TEXT NOT NULL,target TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS group_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
       INSERT OR IGNORE INTO group_meta(id,revision) VALUES(1,0);`);
+    if (
+      !this.db
+        .prepare('PRAGMA table_info(group_defs)')
+        .all()
+        .some((row) => row.name === 'copy_origin')
+    )
+      this.db.exec('ALTER TABLE group_defs ADD COLUMN copy_origin TEXT');
     if (
       !this.db
         .prepare('PRAGMA table_info(group_turns)')
@@ -348,19 +360,74 @@ export class Groups {
         })),
     );
   }
+  private async creationMembers(id: string, members: string[]) {
+    if (await this.runner.member(id)) throw new Fault('GROUP_ID_CONFLICT');
+    for (const member of members)
+      if (!(await this.runner.member(member))) throw new Fault('GROUP_MEMBER_REQUIRED');
+  }
+  private admitCreation(members: string[]) {
+    // Directory awaits must finish first; commit in this same turn before lifecycle permission can change.
+    if (members.some((member) => this.runner.admit?.(member) === false))
+      throw new Fault('BOT_UNAVAILABLE');
+    if (Number(this.db.prepare('SELECT count(*) AS count FROM group_defs').get()!.count) >= 50)
+      throw new Fault('GROUP_LIMIT');
+  }
+  private copied(request: GroupCopyRequest): GroupCopyAck | undefined {
+    const row = this.db.prepare('SELECT * FROM group_defs WHERE id=?').get(request.id);
+    if (!row) return undefined;
+    const origin = createHash('sha256').update(groupCopyKey(request)).digest('hex');
+    if (row.copy_origin !== origin) throw new Fault('GROUP_COPY_CONFLICT');
+    return { request, state: 'complete', group: this.definition(row) };
+  }
+  copyReceipt(input: unknown): Promise<GroupCopyReceipt> {
+    if (!isGroupCopyRequest(input)) return Promise.reject(new Fault('INVALID_GROUP_COPY', 400));
+    const request = structuredClone(input);
+    return this.exclusive<GroupCopyReceipt>(
+      () => this.copied(request) ?? { request, state: 'unknown' },
+    );
+  }
+  copy(input: unknown): Promise<GroupCopyAck> {
+    if (!isGroupCopyRequest(input)) return Promise.reject(new Fault('INVALID_GROUP_COPY', 400));
+    const request = structuredClone(input);
+    return this.exclusive<GroupCopyAck>(async () => {
+      // An accepted copy belongs to the target: later source changes must not reapply the old intent.
+      const prior = this.copied(request);
+      if (prior) return prior;
+      const source = this.group(request.group);
+      if (source.archived) throw new Fault('GROUP_ARCHIVED');
+      if (source.revision !== request.revision) throw new Fault('GROUP_CONFLICT');
+      await this.creationMembers(request.id, source.members);
+      this.admitCreation(source.members);
+      const now = new Date().toISOString();
+      const group: Group = {
+        id: request.id,
+        name: request.name.trim(),
+        members: [...source.members],
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return this.transaction(() => {
+        this.db
+          .prepare('INSERT INTO group_defs(id,value,copy_origin) VALUES(?,?,?)')
+          .run(
+            group.id,
+            JSON.stringify(group),
+            createHash('sha256').update(groupCopyKey(request)).digest('hex'),
+          );
+        this.changed();
+        return { request, state: 'complete', group };
+      });
+    });
+  }
   register(input: unknown) {
     if (!isGroupInput(input)) return Promise.reject(new Fault('INVALID_GROUP', 400));
     const value = structuredClone(input);
     return this.exclusive(async () => {
       const prior = this.db.prepare('SELECT * FROM group_defs WHERE id=?').get(value.id);
       if (prior) return this.definition(prior);
-      if (await this.runner.member(value.id)) throw new Fault('GROUP_ID_CONFLICT');
-      for (const member of value.members)
-        if (!(await this.runner.member(member))) throw new Fault('GROUP_MEMBER_REQUIRED');
-      if (value.members.some((member) => this.runner.admit?.(member) === false))
-        throw new Fault('BOT_UNAVAILABLE');
-      if (Number(this.db.prepare('SELECT count(*) AS count FROM group_defs').get()!.count) >= 50)
-        throw new Fault('GROUP_LIMIT');
+      await this.creationMembers(value.id, value.members);
+      this.admitCreation(value.members);
       const now = new Date().toISOString();
       const group: Group = {
         ...value,

@@ -5,6 +5,7 @@ import {
   botBundleText,
   botCopyKey,
   disconnected,
+  groupCopyKey,
   imageProtocol,
   isAttachmentEntry,
   isAttachmentOriginal,
@@ -30,6 +31,7 @@ import {
   isDocumentOriginal,
   isGroup,
   isGroupActionAck,
+  isGroupCopyReceipt,
   isGroupPage,
   isInteraction,
   isKnowledgeDocument,
@@ -554,6 +556,25 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (command.type === 'group.copy' || command.type === 'group.copy.receipt') {
+      // Capture the source and intent before status can yield to another editor or connection update.
+      const request = structuredClone(command.request);
+      const copying = command.type === 'group.copy';
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 35) throw new Error('RUNTIME_TOO_OLD');
+      const value = await this.api(
+        `/api/groups/${request.group}/${copying ? 'copy' : 'copy-receipt'}`,
+        request,
+      );
+      if (
+        !isGroupCopyReceipt(value) ||
+        groupCopyKey(value.request) !== groupCopyKey(request) ||
+        (copying && value.state !== 'complete')
+      )
+        throw new Error('INVALID_GROUP_COPY_ACK');
+      return value;
+    }
     if (command.type === 'bot.copy' || command.type === 'bot.copy.receipt') {
       // Bind the result to the captured operation, even if the caller changes its form while status awaits.
       const request = structuredClone(command.request);

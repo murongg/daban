@@ -18,6 +18,7 @@ import {
   isComputerRequest,
   isDocumentUpload,
   isGroupActionRequest,
+  isGroupCopyRequest,
   isGroupInput,
   isGroupSend,
   isKnowledgeWrite,
@@ -109,6 +110,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'transcript.list': ['type', 'query'],
     'transcript.content': ['type', 'query'],
     'group.action': ['type', 'request'],
+    'group.copy': ['type', 'request'],
+    'group.copy.receipt': ['type', 'request'],
     'group.receipt': ['type', 'group', 'id'],
     'model.configure': ['type', 'input'],
     'model.check': ['type', 'revision'],
@@ -229,6 +232,11 @@ export function parseCommand(value: unknown): RuntimeCommand {
   )
     return fail();
   if (v.type === 'group.action' && !isGroupActionRequest(v.request)) return fail();
+  if (
+    ['group.copy', 'group.copy.receipt'].includes(String(v.type)) &&
+    !isGroupCopyRequest(v.request)
+  )
+    return fail();
   if (v.type === 'group.receipt' && (!validAgentId(v.group) || !validAgentId(v.id))) return fail();
   if (v.type === 'group.send' && !isGroupSend(v.input)) return fail();
   if (
