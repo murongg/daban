@@ -171,7 +171,9 @@ export function noticeKey(target: NoticeTarget) {
         : [target.kind, target.bot, target.group ?? null, target.runId, target.id],
   );
 }
-export function noticeCandidates(snapshot: RuntimeSnapshot): NoticeTarget[] {
+export function noticeCandidates(
+  snapshot: Pick<RuntimeSnapshot, 'notices' | 'interactions'>,
+): NoticeTarget[] {
   const items: NoticeTarget[] = (snapshot.notices?.items || [])
     .filter(isRuntimeNotice)
     .map((item) => ({ ...item }));

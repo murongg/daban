@@ -171,6 +171,27 @@ it('defers notification navigation while an editor dialog owns unsaved input', a
   await userEvent.click(within(dialog).getByRole('button', { name: '关闭对话框' }));
   expect(await screen.findByRole('heading', { name: '设置', level: 1 })).toBeVisible();
 });
+it('defers notification navigation and acknowledgement while a section editor owns its draft', async () => {
+  const backend = connect();
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: '新建分组' }));
+  const dialog = screen.getByRole('dialog', { name: '新建分组' });
+  const name = within(dialog).getByRole('textbox', { name: '分组名称' });
+  await userEvent.type(name, 'MOCK-UNSAVED-SECTION');
+  await act(() =>
+    backend.emit({
+      id: 'mock-section-notice',
+      scope: 'a'.repeat(64),
+      target: { kind: 'settings' },
+    }),
+  );
+  expect(name).toHaveValue('MOCK-UNSAVED-SECTION');
+  expect(screen.queryByRole('heading', { name: '设置', level: 1 })).not.toBeInTheDocument();
+  expect(backend.native).not.toHaveBeenCalledWith({ type: 'ack', id: 'mock-section-notice' });
+  await userEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+  expect(await screen.findByRole('heading', { name: '设置', level: 1 })).toBeVisible();
+  expect(backend.native).toHaveBeenCalledWith({ type: 'ack', id: 'mock-section-notice' });
+});
 it('opens exactly the requested attention card without approving anything', async () => {
   const base = {
     bot: 'b',

@@ -29,6 +29,7 @@ import {
 } from '@daban/protocol';
 import { taskFile } from './files';
 import * as fixture from './fixtures';
+import { type Organization, type OrganizationAction, organization, organize } from './organization';
 
 export type Color = 'mint' | 'violet' | 'orange' | 'blue' | 'teal' | 'pink';
 export function chatRevision(state: Pick<State, 'chatStates'>, bot: string, latest?: ChatStatus) {
@@ -168,6 +169,7 @@ export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
 export interface State {
+  organization: Organization;
   botImport?: BotImportReference;
   lifecycleRequests: Record<string, BotLifecycleRequest | undefined>;
   skillDrafts: Record<string, SkillDraft | undefined>;
@@ -217,6 +219,7 @@ export function lifecycleRequest(
   };
 }
 export type Action =
+  | OrganizationAction
   | { type: 'bot-import-pending'; reference: BotImportReference }
   | { type: 'bot-import-cancel' | 'bot-import-clear'; id: string; sha256: string }
   | { type: 'lifecycle-pending'; bot: string; request: BotLifecycleRequest }
@@ -285,6 +288,7 @@ export function initialState(): State {
     ]),
   );
   return {
+    organization: organization(),
     lifecycleRequests: {},
     skillDrafts: {},
     groupRequests: {},
@@ -321,6 +325,22 @@ export function reduce(state: State, action: Action): State {
   // Target the Bot explicitly: changing the selected screen must never transfer ownership or route async work elsewhere.
   if ('bot' in action && !state.bots.some((b) => b.id === action.bot)) return state;
   switch (action.type) {
+    case 'bot-pin':
+    case 'bot-section':
+    case 'bot-read':
+    case 'section-create':
+    case 'section-rename':
+    case 'section-remove':
+    case 'section-collapse':
+    case 'section-move':
+    case 'attention': {
+      const organization = organize(
+        state.organization,
+        action,
+        state.bots.map((bot) => bot.id),
+      );
+      return organization === state.organization ? state : { ...state, organization };
+    }
     case 'chats': {
       const chatStates = { ...state.chatStates };
       let changed = false;
@@ -764,9 +784,29 @@ export function reduce(state: State, action: Action): State {
       };
     }
     case 'select':
-      return { ...state, selected: action.bot, view: 'chat' };
+      return {
+        ...state,
+        selected: action.bot,
+        view: 'chat',
+        organization: organize(
+          state.organization,
+          { type: 'bot-read', bot: action.bot, unread: false },
+          state.bots.map((bot) => bot.id),
+        ),
+      };
     case 'view':
-      return { ...state, view: action.view };
+      return {
+        ...state,
+        view: action.view,
+        organization:
+          action.view === 'chat'
+            ? organize(
+                state.organization,
+                { type: 'bot-read', bot: state.selected, unread: false },
+                state.bots.map((bot) => bot.id),
+              )
+            : state.organization,
+      };
     case 'panel':
       return { ...state, panel: action.panel };
     case 'theme':

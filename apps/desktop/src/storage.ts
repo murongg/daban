@@ -11,6 +11,7 @@ import {
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
+import { restoreOrganization } from './organization';
 import { initialState, routineDraft, type State } from './state';
 
 export const storageKey = 'daban.workspace.v1';
@@ -73,6 +74,8 @@ export function restore(raw: string | null): State {
       if (record(bot) && bot.model !== undefined && !isDeepSeekModel(bot.model)) delete bot.model;
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
+    // Organization is optional local metadata; its damage must not discard messages or pending work.
+    s.organization = restoreOrganization(s.organization, ids);
     s.chatStates = {};
     s.chatRequests = Object.fromEntries(
       Object.entries(record(s.chatRequests) ? s.chatRequests : {}).filter(

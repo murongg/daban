@@ -37,6 +37,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { isTaskReceipt } from '../receipt';
 import { Archive } from './Archive';
 import { Avatar } from './Avatar';
+import { useAttention } from './attention';
 import { IconButton } from './Button';
 import { ChatHistory } from './ChatHistory';
 import { Computer, type ComputerSurface } from './Computer';
@@ -118,6 +119,7 @@ function Workbench() {
   const [query, setQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
+  useAttention(state, dispatch, !!modal);
   const [toast, setToast] = useState('');
   const [inboxFocus, setInboxFocus] = useState<string>();
   const search = useRef<HTMLInputElement>(null);
@@ -432,6 +434,8 @@ function Workbench() {
   }, [toast]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
+      // Local editors share Dialog without owning the main modal state.
+      if (document.querySelector('[role="dialog"]')) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (modal) return;
