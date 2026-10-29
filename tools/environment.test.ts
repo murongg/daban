@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
+import { managedProtocol } from '@daban/protocol';
 import { admitBuild, assertCleanImage, hashAsset, verifyAsset } from './environment.ts';
 
 test('a runtime-image build exclusively owns a new root and cannot adopt an existing data directory', async () => {
@@ -11,7 +14,7 @@ test('a runtime-image build exclusively owns a new root and cannot adopt an exis
   try {
     const fresh = join(root, 'new-image');
     const build = await admitBuild(fresh);
-    assert.equal(build.versions.protocol, 33);
+    assert.equal(build.versions.protocol, managedProtocol);
     assert.equal(build.output, fresh);
     assert.equal((await stat(fresh)).mode & 0o777, 0o700);
     assert.ok(build.limaHome.startsWith('/tmp/daban-image-'));
@@ -21,6 +24,22 @@ test('a runtime-image build exclusively owns a new root and cannot adopt an exis
     await writeFile(join(old, 'runtime.json'), 'SYNTHETIC EXISTING DATA');
     await assert.rejects(admitBuild(old), { code: 'EEXIST' });
     assert.equal(await readFile(join(old, 'runtime.json'), 'utf8'), 'SYNTHETIC EXISTING DATA');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the guest build helper loads outside the repository without workspace packages or VM effects', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mock-standalone-image-helper-'));
+  try {
+    const file = join(root, 'environment.ts');
+    await copyFile(new URL('./environment.ts', import.meta.url), file);
+    const code = `const {assertCleanImage}=await import(${JSON.stringify(pathToFileURL(file).href)});assertCleanImage({runtimeEntries:0,providerCredentials:0,authorizedKeyBytes:0,sshHostKeys:0,homePrivateKeys:0,machineIdBytes:0,cloudInitEntries:0,randomSeedBytes:0});`;
+    execFileSync(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '-e', code],
+      { cwd: root, timeout: 5000, stdio: 'pipe' },
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

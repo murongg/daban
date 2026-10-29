@@ -1,3 +1,4 @@
+export const managedProtocol = 33;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { managedProtocol } from '@daban/protocol';
 import { expect, it, vi } from 'vitest';
 import {
   type Manifest,
@@ -123,6 +124,18 @@ it('accepts current and previous verified image protocols, binding the ID to the
     expect((await manifest(root)).versions.protocol).toBe(31);
     value.versions.protocol = 32;
     value.id = `daban-32-${digest.slice(0, 16)}`;
+    await save();
+    expect((await manifest(root)).versions.protocol).toBe(32);
+    value.versions.protocol = 33;
+    value.id = `daban-33-${digest.slice(0, 16)}`;
+    await save();
+    expect((await manifest(root)).versions.protocol).toBe(33);
+    value.versions.protocol = managedProtocol;
+    value.id = `daban-${managedProtocol}-${digest.slice(0, 16)}`;
+    await save();
+    expect((await manifest(root)).versions.protocol).toBe(managedProtocol);
+    value.versions.protocol = managedProtocol + 1;
+    value.id = `daban-${managedProtocol + 1}-${digest.slice(0, 16)}`;
     await save();
     await expect(manifest(root)).rejects.toThrow('SETUP_PAYLOAD');
   } finally {

@@ -31,6 +31,7 @@ import {
   isTranscriptContentQuery,
   isTranscriptQuery,
   isUserReply,
+  managedProtocol,
   parseBotJSON,
   type RuntimeNoticeStatus,
   validAgentId,
@@ -873,7 +874,7 @@ export async function startPrototype({
                   events: [],
                   bots: {},
                 }),
-            clientProtocol: runtime instanceof Computers ? 33 : 18,
+            clientProtocol: runtime instanceof Computers ? managedProtocol : 18,
             notices: await noticeStatus(models, groups),
             chats: models
               ? await models.chats.status()

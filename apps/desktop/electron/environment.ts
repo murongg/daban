@@ -17,6 +17,7 @@ import {
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
+import { managedProtocol } from '@daban/protocol';
 
 export interface Manifest {
   version: 1;
@@ -251,7 +252,9 @@ export async function manifest(resources: string): Promise<Manifest> {
     value.versions.lima !== '2.2.1' ||
     value.versions.node !== '24.22.1' ||
     value.versions.dsh !== '0.2.1-rc.3' ||
-    ![26, 27, 28, 29, 30, 31].includes(Number(value.versions.protocol)) ||
+    // Bundling began at26; the publisher and current runtime share the same upper version.
+    Number(value.versions.protocol) < 26 ||
+    Number(value.versions.protocol) > managedProtocol ||
     !Number.isInteger(value.versions.protocol) ||
     !record(value.user) ||
     value.user.name !== 'daban' ||
