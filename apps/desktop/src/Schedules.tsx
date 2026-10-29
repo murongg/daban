@@ -49,6 +49,8 @@ const phases = {
   coalesced: '已合并到待运行触发',
 };
 const definite = [
+  // IPC validation rejects this before dispatch; editing cannot duplicate a schedule effect.
+  'INVALID_COMMAND',
   'INVALID_SCHEDULE',
   'SCHEDULE_LIMIT',
   'SCHEDULE_ID_REUSED',
@@ -56,6 +58,14 @@ const definite = [
   'RUNTIME_TOO_OLD',
   'SCHEDULE_CORRUPT',
 ];
+
+function scheduleError(error: unknown) {
+  return runtimeError(
+    error instanceof Error && error.message === 'INVALID_COMMAND'
+      ? new Error('INVALID_SCHEDULE')
+      : error,
+  );
+}
 
 function localTime(time: string, timeZone = 'Asia/Shanghai') {
   try {
@@ -105,7 +115,7 @@ export function Schedules({
         if (live) setPreview({ times, error: '' });
       })
       .catch((error) => {
-        if (live) setPreview({ times: [], error: runtimeError(error) });
+        if (live) setPreview({ times: [], error: scheduleError(error) });
       });
     return () => {
       live = false;
@@ -181,7 +191,7 @@ export function Schedules({
               : runtimeError(new Error(catalog?.error || 'SCHEDULE_UNAVAILABLE'))}
         </p>
       )}
-      {status.error && (
+      {status.error && !(form.open && status.error === preview.error) && (
         <p className="form-error" role="alert">
           {status.error}
         </p>
@@ -324,7 +334,7 @@ export function Schedules({
                   return;
                 }
               }
-              feedback(target, { error: runtimeError(error), conflict });
+              feedback(target, { error: scheduleError(error), conflict });
             }
           }}
         >

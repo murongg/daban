@@ -206,9 +206,13 @@ export function restore(raw: string | null): State {
         typeof form.open !== 'boolean'
       )
         return initialState();
+      // A broken or foreign optional request must not discard editable text or unrelated work.
       if (
-        (form.pending !== undefined &&
-          (!isScheduleInput(form.pending) || form.pending.bot !== agentId(id))) ||
+        form.pending !== undefined &&
+        (!isScheduleInput(form.pending) || form.pending.bot !== agentId(id))
+      )
+        delete form.pending;
+      if (
         ['zone', 'date', 'interval', 'cron', 'editId'].some(
           (key) => form[key] !== undefined && typeof form[key] !== 'string',
         ) ||

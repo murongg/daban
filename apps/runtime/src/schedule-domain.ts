@@ -31,7 +31,8 @@ export async function nativeSchedules(): Promise<ScheduleDomain> {
           return native.createWeeklyScheduleRecord(
             id,
             prompt,
-            { ...clock, weekdays: rule.weekdays },
+            // Public rules use JavaScript Sunday=0; DSH's calendar uses ISO Sunday=7.
+            { ...clock, weekdays: rule.weekdays.map((day) => (day === 0 ? 7 : day)) },
             now,
             title,
           );

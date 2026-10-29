@@ -1,10 +1,82 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import type { ScheduleRule } from '@daban/protocol';
+import { nativeSchedules } from './schedule-domain.js';
 import { type ScheduleDomain, Schedules } from './schedules.js';
+
+test('installed native calendar preserves public Sunday numbering, wall time and recurrence after DST', {
+  skip: !existsSync('/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-schedule/lib/index.js'),
+}, async (t) => {
+  const calendar = await nativeSchedules();
+  const now = Date.parse('2026-10-29T12:00:00Z');
+  const cases: { name: string; rule: ScheduleRule; times: string[] }[] = [
+    {
+      name: 'daily',
+      rule: { kind: 'daily', time: '23:17', timeZone: 'Asia/Shanghai' },
+      times: ['2026-10-29T15:17:00.000Z', '2026-10-30T15:17:00.000Z'],
+    },
+    {
+      name: 'Sunday across DST',
+      rule: {
+        kind: 'weekly',
+        weekdays: [0],
+        time: '23:17',
+        timeZone: 'America/New_York',
+      },
+      times: ['2026-11-02T04:17:00.000Z', '2026-11-09T04:17:00.000Z'],
+    },
+    {
+      name: 'weekdays across DST',
+      rule: {
+        kind: 'weekly',
+        weekdays: [1, 2, 3, 4, 5],
+        time: '23:17',
+        timeZone: 'America/New_York',
+      },
+      times: ['2026-10-30T03:17:00.000Z', '2026-10-31T03:17:00.000Z', '2026-11-03T04:17:00.000Z'],
+    },
+    {
+      name: 'once',
+      rule: { kind: 'once', date: '2026-11-15', time: '09:17', timeZone: 'Asia/Shanghai' },
+      times: ['2026-11-15T01:17:00.000Z'],
+    },
+    {
+      name: 'cron',
+      rule: { kind: 'cron', expression: '17 23 * * 1,3', timeZone: 'Asia/Shanghai' },
+      times: ['2026-11-02T15:17:00.000Z', '2026-11-04T15:17:00.000Z'],
+    },
+  ];
+  for (const item of cases)
+    await t.test(item.name, () => {
+      const original = structuredClone(item.rule);
+      let record = calendar.create(
+        {
+          id: 'mock-native-calendar',
+          bot: 'mock-native-bot',
+          title: '合成日程',
+          prompt: '合成说明',
+          rule: item.rule,
+        },
+        now,
+      );
+      for (let index = 0; index < item.times.length; index++) {
+        assert.equal(record.scheduledAt, item.times[index]);
+        record = calendar.decode(record);
+        const due = calendar.due(record, Date.parse(record.scheduledAt));
+        assert.equal(due.occurrenceAt, record.scheduledAt);
+        if (index + 1 < item.times.length) {
+          assert.equal(due.nextScheduledAt, item.times[index + 1]);
+          record = { ...record, scheduledAt: due.nextScheduledAt! };
+        } else if (item.rule.kind === 'once') assert.equal(due.nextScheduledAt, undefined);
+      }
+      assert.deepEqual(item.rule, original, 'native numbering must not mutate the public rule');
+    });
+});
 
 const anchor = Date.parse('2026-01-01T00:00:00Z');
 const input = {

@@ -413,7 +413,62 @@ it('persists a pending schedule request per Bot and does not clear newer draft t
     bot: 'research',
     draft: { pending: { ...pending, bot: 'b' } },
   });
-  expect(restore(serialize(invalid)).routineDrafts.research.pending).toBeUndefined();
+  const recovered = restore(serialize(invalid));
+  expect(recovered.routineDrafts.research.pending).toBeUndefined();
+  expect(recovered.routineDrafts.research.title).toBe('合成新草稿');
+  expect(recovered.messages).toEqual(state.messages);
+});
+
+it('repairs an invalid optional schedule receipt without discarding drafts or another uncertain request', () => {
+  const validPending = {
+    id: 'mock-writer-uncertain',
+    bot: 'b',
+    title: '合成未确认计划',
+    prompt: '只处理合成输入',
+    rule: { kind: 'daily' as const, time: '09:00', timeZone: 'Asia/Shanghai' },
+  };
+  let state = reduce(initialState(), {
+    type: 'draft',
+    bot: 'research',
+    text: 'MOCK-UNSENT-DRAFT-RETAIN',
+  });
+  state = reduce(state, { type: 'memory', bot: 'writer', text: 'MOCK-SAVED-PREFERENCE' });
+  state = reduce(state, {
+    type: 'routine-draft',
+    bot: 'writer',
+    draft: { open: true, title: validPending.title, pending: validPending },
+  });
+  state = reduce(state, {
+    type: 'routine-draft',
+    bot: 'research',
+    draft: {
+      open: true,
+      title: '合成校验草稿',
+      instruction: '只处理合成输入',
+      time: '23:17',
+      zone: 'Invalid/Mock',
+    },
+  });
+  const expected = restore(serialize(state));
+  state = reduce(state, {
+    type: 'routine-draft',
+    bot: 'research',
+    draft: {
+      pending: {
+        ...validPending,
+        id: 'mock-never-dispatched',
+        bot: 'a',
+        title: '合成校验草稿',
+        rule: { kind: 'daily', time: '23:17', timeZone: 'Invalid/Mock' },
+      },
+    },
+  });
+  const recovered = restore(serialize(state));
+  expect(recovered).toEqual(expected);
+  expect(recovered.routineDrafts.writer.pending).toEqual(validPending);
+  expect(recovered.routineDrafts.research.pending).toBeUndefined();
+  expect(recovered.drafts.research).toBe('MOCK-UNSENT-DRAFT-RETAIN');
+  expect(restore(serialize(recovered))).toEqual(expected);
 });
 
 it('keeps same-name input copies distinct and caps concurrent attachments per Bot', () => {

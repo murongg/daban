@@ -10,6 +10,7 @@ import {
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
+import { parseCommand } from '../electron/ipc';
 import { App } from './App';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
@@ -145,6 +146,49 @@ it('keeps the form usable while a timezone is incomplete', async () => {
   await userEvent.clear(zone);
   await userEvent.type(zone, 'Invalid/Zone');
   expect(screen.getByRole('textbox', { name: '时区' })).toHaveValue('Invalid/Zone');
+});
+
+it('lets users correct a definitely rejected schedule without losing the draft or retrying invalid input', async () => {
+  const backend = vi.fn(async (input: ScheduleInput) => record(input));
+  const invoke = connect(backend, [], async (command) => {
+    if (command.type === 'schedule.preview' || command.type === 'schedule.create') {
+      try {
+        parseCommand(command);
+      } catch {
+        return { ok: false, error: 'INVALID_COMMAND' };
+      }
+    }
+    return undefined;
+  });
+  render(<App />);
+  await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+  await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
+  await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成校验日程');
+  await userEvent.type(screen.getByRole('textbox', { name: '需要 Bot 做什么' }), '只处理合成输入');
+  await userEvent.clear(screen.getByRole('textbox', { name: '时区' }));
+  await userEvent.type(screen.getByRole('textbox', { name: '时区' }), 'Invalid/Mock');
+  await userEvent.click(screen.getByRole('button', { name: '保存定时任务' }));
+  expect(backend).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox', { name: '时区' })).toBeEnabled();
+  expect(screen.getByRole('textbox', { name: '任务名称' })).toHaveValue('合成校验日程');
+  expect(screen.getByRole('textbox', { name: '需要 Bot 做什么' })).toHaveValue('只处理合成输入');
+  expect(screen.queryByRole('button', { name: '核对并重试保存' })).not.toBeInTheDocument();
+  expect(screen.getAllByText(/名称、任务说明或时间设置无效/)).toHaveLength(1);
+  await userEvent.clear(screen.getByRole('textbox', { name: '时区' }));
+  await userEvent.type(screen.getByRole('textbox', { name: '时区' }), 'Asia/Shanghai');
+  await userEvent.click(screen.getByRole('button', { name: '保存定时任务' }));
+  expect(backend).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText('合成校验日程')).toBeVisible();
+  const attempts = invoke.mock.calls
+    .map(([command]) => command)
+    .filter((command) => command.type === 'schedule.create');
+  expect(attempts).toHaveLength(2);
+  expect(attempts[1].input.id).not.toBe(attempts[0].input.id);
+  expect(attempts[1].input.rule).toEqual({
+    kind: 'daily',
+    time: '09:00',
+    timeZone: 'Asia/Shanghai',
+  });
 });
 
 it('reads the current backend revision on edit conflict and preserves the local draft for rebase', async () => {
