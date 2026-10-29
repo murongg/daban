@@ -61,6 +61,13 @@ import {
   taskPrompt,
   validateTask,
 } from './tasks.js';
+import {
+  projectInteraction,
+  projectTranscript,
+  type TranscriptEvent,
+  type TranscriptScope,
+  Transcripts,
+} from './transcripts.js';
 import { type WorkspaceDirectory, WorkspaceFiles } from './workspace.js';
 
 const sdkFile = '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
@@ -322,6 +329,8 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  transcript?: TranscriptScope;
+  transcriptFailed?: boolean;
   chatRevision?: number;
   skills?: SkillSnapshot;
   integrations?: McpSnapshot;
@@ -393,6 +402,7 @@ export class ModelRuns {
   readonly tools: AgentTools;
   readonly jobs = new Map<string, ModelJob>();
   readonly journal: TaskJournal;
+  readonly transcripts: Transcripts;
   readonly knowledge: Knowledge;
   readonly attachments: Attachments;
   readonly profiles: BotProfiles;
@@ -430,6 +440,7 @@ export class ModelRuns {
     );
     this.tools = new AgentTools(computer, this.workspace);
     this.journal = new TaskJournal(path.join(dir, 'task-journal'));
+    this.transcripts = new Transcripts(path.join(dir, 'transcripts.sqlite'));
     this.tools.history = new HistoryTools(this.journal);
     this.knowledge = new Knowledge(path.join(dir, 'knowledge.sqlite'));
     this.attachments = new Attachments(path.join(dir, 'attachments.sqlite'));
@@ -451,9 +462,12 @@ export class ModelRuns {
       skills: this.skills,
     });
     this.tools.memory = new MemoryTools(this.profiles);
-    this.interactions = new Interactions(path.join(dir, 'interactions'), (item) =>
-      this.jobs.get(item.bot)?.onInteraction?.(),
-    );
+    this.interactions = new Interactions(path.join(dir, 'interactions'), (item) => {
+      const job = this.jobs.get(item.bot);
+      job?.onInteraction?.();
+      if (job?.transcript && job.id === item.runId && job.conversationId === item.conversationId)
+        this.recordTranscript(job, () => projectInteraction(item, job.redact!));
+    });
     this.integrations = new Integrations(path.join(dir, 'integrations.sqlite'));
     this.tools.integrations = new IntegrationTools(this.integrations, this.interactions, {
       networkFile: path.join(dir, 'network.json'),
@@ -482,6 +496,7 @@ export class ModelRuns {
   }
   private async restore() {
     await this.chats.ready;
+    await this.transcripts.ready;
     await this.journal.load();
     await this.profiles.ready;
     await this.bundles.ready;
@@ -583,6 +598,44 @@ export class ModelRuns {
         ? { response: t.response }
         : {}),
     }));
+  }
+  private async transcriptOwner(scope: TranscriptScope) {
+    await this.ready;
+    const record = await this.journal.read(scope.bot, scope.runId);
+    if (
+      !record ||
+      record.kind === 'acceptance' ||
+      record.conversationId !== scope.conversationId ||
+      (!scope.conversationId && (record.chatRevision ?? 0) !== scope.chatRevision)
+    )
+      throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
+  }
+  async transcript(scope: TranscriptScope, after = 0) {
+    await this.transcriptOwner(scope);
+    return this.transcripts.page(scope, after);
+  }
+  async transcriptContent(scope: TranscriptScope, seq: number, offset = 0) {
+    await this.transcriptOwner(scope);
+    return this.transcripts.content(scope, seq, offset);
+  }
+  private interruptTranscript(job: ModelJob) {
+    job.transcriptFailed = true;
+    if (!job.transcript) return;
+    try {
+      this.transcripts.interrupt(job.transcript);
+    } catch {
+      /* An unclosed recording becomes interrupted on restart. */
+    }
+  }
+  private recordTranscript(job: ModelJob, project: () => TranscriptEvent | undefined) {
+    if (!job.transcript || job.transcriptFailed) return;
+    try {
+      const entry = project();
+      if (entry) this.transcripts.append(job.transcript, entry);
+    } catch {
+      // History failure must not revoke a committed human decision or change an already executed tool's outcome.
+      this.interruptTranscript(job);
+    }
   }
   async chatHistory(
     bot: string,
@@ -1042,6 +1095,12 @@ export class ModelRuns {
       };
       await this.persist(job);
       job.abort.signal.throwIfAborted();
+      if (job.task) {
+        job.transcript = job.conversationId
+          ? { bot: job.bot, runId: job.id, conversationId: job.conversationId }
+          : { bot: job.bot, runId: job.id, chatRevision: job.chatRevision ?? 0 };
+        this.transcripts.begin(job.transcript);
+      }
       job.done = this.execute(job, config, patch);
       return this.publicJob(job);
     } catch (error) {
@@ -1193,15 +1252,19 @@ export class ModelRuns {
       }
       job.sessionId = session.id;
       await this.persist(job);
-      const observe: HarnessObserver = {
-        onNotification: observeTools(job, session.id, (plan) => {
-          job.plan = plan.map((item) => ({ ...item, content: clean(item.content).slice(0, 500) }));
-          this.persist(job).catch(() => {
-            this.stop(job.bot, 'progress-save-failed').catch(() => {
-              job.error = 'MODEL_PROGRESS_SAVE_FAILED';
-            });
+      const observeProgress = observeTools(job, session.id, (plan) => {
+        job.plan = plan.map((item) => ({ ...item, content: clean(item.content).slice(0, 500) }));
+        this.persist(job).catch(() => {
+          this.stop(job.bot, 'progress-save-failed').catch(() => {
+            job.error = 'MODEL_PROGRESS_SAVE_FAILED';
           });
-        }),
+        });
+      });
+      const observe: HarnessObserver = {
+        onNotification: (note) => {
+          this.recordTranscript(job, () => projectTranscript(note, session.id, job.redact!));
+          observeProgress(note);
+        },
       };
       if (job.task) {
         const context = previous
@@ -1339,6 +1402,14 @@ export class ModelRuns {
         job.error = `DSH shutdown failed: ${clean(errorMessage(error))}`;
       }
       await this.tools.drain(job);
+      // Native shutdown and endRun can still settle tools or cancel human cards; close their transcript afterwards.
+      if (job.transcript && !job.transcriptFailed) {
+        try {
+          this.transcripts.finish(job.transcript);
+        } catch {
+          this.interruptTranscript(job);
+        }
+      }
       // Retire failed conversation state before exposing an idle Bot to a new accepted task.
       if (job.task && job.phase !== 'completed')
         this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
@@ -1513,7 +1584,11 @@ export class ModelRuns {
               try {
                 await this.integrations.close();
               } finally {
-                await this.chats.close();
+                try {
+                  await this.transcripts.close();
+                } finally {
+                  await this.chats.close();
+                }
               }
             }
           }
