@@ -1,12 +1,53 @@
 import { disconnected } from '@daban/protocol';
 import { expect, it } from 'vitest';
 import {
+  isNoticeStatus,
   isNoticeTarget,
   noticeCandidates,
   noticeCopy,
   noticeKey,
   parseNoticeCommand,
 } from '../notifications';
+
+it('validates scoped per-Bot choices without weakening legacy status or command boundaries', () => {
+  const command = {
+    type: 'bot.configure',
+    revision: 2,
+    scope: 'a'.repeat(64),
+    bot: 'mock-alpha',
+    enabled: false,
+  };
+  expect(parseNoticeCommand(command)).toEqual(command);
+  for (const invalid of [
+    { ...command, scope: 'mock-invalid' },
+    { ...command, bot: '../mock' },
+    { ...command, enabled: 'false' },
+    { ...command, revision: -1 },
+    { ...command, script: 'SYNTHETIC INJECTION' },
+  ])
+    expect(() => parseNoticeCommand(invalid)).toThrow('INVALID_NOTIFICATION_COMMAND');
+  const legacy = {
+    available: true,
+    supported: true,
+    enabled: false,
+    revision: 0,
+    delivery: 'untried',
+    runtime: 'ready',
+  };
+  const bot = { id: 'mock-alpha', name: '合成甲', enabled: false };
+  const status = { ...legacy, scope: command.scope, bots: [bot] };
+  expect(isNoticeStatus(legacy)).toBe(true);
+  expect(isNoticeStatus(status)).toBe(true);
+  for (const invalid of [
+    { ...status, scope: 'bad' },
+    { ...status, bots: [bot, bot] },
+    { ...status, bots: [{ ...bot, name: '' }] },
+    { ...status, bots: [{ ...bot, enabled: 0 }] },
+    { ...status, bots: [{ ...bot, memory: 'SYNTHETIC PRIVATE' }] },
+    { ...status, bots: new Array(1) },
+  ])
+    expect(isNoticeStatus(invalid)).toBe(false);
+});
 
 it('collects only scoped metadata, distinguishes groups/requests and never puts task or approval data in native copy', () => {
   const snapshot = disconnected('ready');

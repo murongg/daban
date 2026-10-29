@@ -2,7 +2,11 @@
 
 daban 是 Grok Bot 风格的本机 Agent 原型，使用 Electron、React、TypeScript、Vite，以及 Linux 内的 DeepSeek Harness。
 
-最新本地客户端位于 `outputs/preferences/desktop/daban.app`，功能验证记录为 `outputs/preferences/verification.json`，构建记录为 `outputs/preferences/app.json`。它新增工作偏好历史，包含协议 32 环境包，并保留导出接口与沙箱独立预加载修复。现用实例已在保留私有客户端导出、字节备份和停机磁盘备份后升级到协议 32；原有 26 个客户端字段、8 个 Bot、59 份共享文件和 573 份既有模型文件保留，模型配置与凭据元数据一致。实际客户端已验证两个独立屏幕的分别接管与交还、示例网站的一次登录共享及注销同步，以及未连接电脑的合成 Bot 通过真实 DeepSeek 工具保存偏好并留下历史；验收 Bot 已可恢复归档。升级记录为 `outputs/activation32/verification.json`。这些证据仅覆盖所列路径；原生附件输入、系统通知等其余验收、公开发行签名、公证和回滚启动验证仍未完成。
+最新本地客户端位于 `outputs/reminders/desktop/daban.app`，验证记录为 `outputs/reminders/verification.json`。设置页现可单独选择每位 Bot 的私聊桌面提醒；选择在本机立即保存、按工作区隔离，不会自动打开总开关，不影响群聊提醒、收件箱或任务。关闭后会撤回已登记的私聊提醒，重新开启不会补弹旧事件。旧通知配置只读加载，明确修改后才写入新版格式。
+
+本轮 447 项客户端测试、7 项工具检查及源码、lint、类型和构建检查通过；合成原生客户端已验证保存、正常退出重开和原资料保留。现用客户端也已在私有导出、59 份关闭状态缓存字节备份后切换到新版，29 个客户端字段逐项一致，资料、任务记录、配置、凭据元数据和原有两张屏幕实例保留。Linux 服务与协议 32 环境包未改动、未重启。实际 OS 提醒投递、点击、冷启动激活，以及公开发行签名、公证和回滚启动验证仍未完成。
+
+此前的偏好历史和原环境升级记录分别为 `outputs/preferences/verification.json` 与 `outputs/activation32/verification.json`，保留其各自的验证范围；本轮没有重复模型推理或环境镜像构建。
 
 仓库只保存源码、测试和项目文档。`outputs/`、本地计划、环境包、虚拟机磁盘、API Key 和用户工作区不随 Git 提交；克隆仓库不会自动获得本机已生成的环境镜像。下文的阶段记录保留其当时验证范围，以本段说明当前部署状态。
 

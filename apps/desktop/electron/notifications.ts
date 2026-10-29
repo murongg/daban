@@ -2,46 +2,72 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { type FileHandle, mkdir, open, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { type RuntimeSnapshot, recoveryBlocked } from '@daban/protocol';
+import { type RuntimeSnapshot, recoveryBlocked, validAgentId } from '@daban/protocol';
 import { Notification } from 'electron';
 import {
   isNoticeActivation,
+  isNoticeScope,
   type NoticeActivation,
+  type NoticeBot,
   type NoticeCommand,
   type NoticeMessage,
   type NoticeStatus,
   type NoticeTarget,
+  noticeBot,
   noticeCandidates,
   noticeCopy,
   noticeKey,
 } from '../notifications';
 
 interface Store {
-  version: 1;
+  version: 2;
   enabled: boolean;
   revision: number;
   records: NoticeActivation[];
   pending?: NoticeActivation;
+  muted: { scope: string; bot: string }[];
 }
+type LegacyStore = Omit<Store, 'version' | 'muted'> & { version: 1 };
 const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
-const empty = (): Store => ({ version: 1, enabled: false, revision: 0, records: [] });
-function store(value: unknown): value is Store {
+const empty = (): Store => ({ version: 2, enabled: false, revision: 0, records: [], muted: [] });
+function store(value: unknown): value is Store | LegacyStore {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
   return (
     Object.keys(v).every((key) =>
-      ['version', 'enabled', 'revision', 'records', 'pending'].includes(key),
+      [
+        'version',
+        'enabled',
+        'revision',
+        'records',
+        'pending',
+        ...(v.version === 2 ? ['muted'] : []),
+      ].includes(key),
     ) &&
-    v.version === 1 &&
+    (v.version === 1 || v.version === 2) &&
     typeof v.enabled === 'boolean' &&
     Number.isSafeInteger(v.revision) &&
     Number(v.revision) >= 0 &&
     Number(v.revision) < Number.MAX_SAFE_INTEGER &&
     Array.isArray(v.records) &&
     v.records.length <= 64 &&
-    v.records.every(isNoticeActivation) &&
+    Array.from(v.records).every(isNoticeActivation) &&
     new Set(v.records.map((row) => row.id)).size === v.records.length &&
-    (v.pending === undefined || isNoticeActivation(v.pending))
+    (v.pending === undefined || isNoticeActivation(v.pending)) &&
+    (v.version === 1 ||
+      (Array.isArray(v.muted) &&
+        v.muted.length <= 1024 &&
+        Array.from(v.muted).every(
+          (row) =>
+            row &&
+            typeof row === 'object' &&
+            !Array.isArray(row) &&
+            Object.keys(row).every((key) => ['scope', 'bot'].includes(key)) &&
+            isNoticeScope(row.scope) &&
+            validAgentId(row.bot),
+        ) &&
+        new Set(v.muted.map((row) => JSON.stringify([row.scope, row.bot]))).size ===
+          v.muted.length))
   );
 }
 export class Notifications {
@@ -55,6 +81,8 @@ export class Notifications {
   private processing?: Promise<unknown>;
   private latest?: { snapshot: RuntimeSnapshot; scope: string };
   private scope?: string;
+  private connection?: string;
+  private bots: Omit<NoticeBot, 'enabled'>[] = [];
   private runtime: NoticeStatus['runtime'] = 'offline';
   private delivery: NoticeStatus['delivery'] = 'untried';
   private seen = new Set<string>();
@@ -89,9 +117,19 @@ export class Notifications {
       enabled: this.data.enabled,
       revision: this.data.revision,
       delivery: this.delivery,
-      runtime: this.runtime,
+      runtime: this.currentScope() ? this.runtime : 'offline',
+      ...(this.currentScope() ? { scope: this.currentScope() } : {}),
+      bots: this.bots.map((bot) => ({ ...bot, enabled: !this.muted(bot.id, this.scope) })),
       ...(this.fault || this.error ? { error: this.fault || this.error } : {}),
     };
+  }
+  private currentScope() {
+    return this.runtime !== 'offline' && this.connection === this.scope ? this.scope : undefined;
+  }
+  private muted(bot: string | undefined, scope: string | undefined) {
+    return (
+      !!bot && !!scope && this.data.muted.some((row) => row.bot === bot && row.scope === scope)
+    );
   }
   private publish() {
     if (this.closed) return;
@@ -123,7 +161,7 @@ export class Notifications {
     if (text !== undefined) {
       const value: unknown = JSON.parse(text);
       if (!store(value)) throw new Error('NOTIFICATION_STORE_UNAVAILABLE');
-      this.data = value;
+      this.data = value.version === 1 ? { ...value, version: 2, muted: [] } : value;
       this.fingerprint = digest(text);
     }
     if (this.data.enabled && process.platform === 'darwin' && this.supported()) {
@@ -204,6 +242,34 @@ export class Notifications {
       return this.current();
     });
   }
+  configureBot(revision: number, scope: string, bot: string, enabled: boolean) {
+    return this.serial(async () => {
+      if (scope !== this.currentScope()) throw new Error('NOTIFICATION_SCOPE_CHANGED');
+      if (!this.bots.some((row) => row.id === bot)) throw new Error('NOTIFICATION_BOT_UNAVAILABLE');
+      if (revision !== this.data.revision) throw new Error('NOTIFICATION_CONFLICT');
+      if (this.muted(bot, scope) === !enabled) return this.current();
+      if (revision >= Number.MAX_SAFE_INTEGER - 1 || (!enabled && this.data.muted.length >= 1024))
+        throw new Error('NOTIFICATION_LIMIT');
+      const matches = (row: NoticeActivation) =>
+        row.scope === scope && noticeBot(row.target) === bot;
+      const removed = enabled ? [] : this.data.records.filter(matches);
+      const muted = this.data.muted.filter((row) => row.bot !== bot || row.scope !== scope);
+      if (!enabled) muted.push({ scope, bot });
+      await this.persist({
+        ...this.data,
+        muted,
+        revision: revision + 1,
+        records: this.data.records.filter((row) => !removed.includes(row)),
+        pending:
+          !enabled && this.data.pending && matches(this.data.pending)
+            ? undefined
+            : this.data.pending,
+      });
+      for (const row of removed) this.withdraw(row.id);
+      this.publish();
+      return this.current();
+    });
+  }
   private withdraw(id: string) {
     try {
       this.shown.get(id)?.close();
@@ -254,6 +320,11 @@ export class Notifications {
   }
   private async post(target: NoticeTarget, manual = false) {
     if (!this.data.enabled || !this.supported() || (!manual && this.options.foreground())) return;
+    if (
+      target.kind !== 'settings' &&
+      (!this.currentScope() || this.muted(noticeBot(target), this.scope))
+    )
+      return;
     const row: NoticeActivation = { id: randomUUID(), scope: this.scope || '0'.repeat(64), target };
     const records = [...this.data.records, row],
       removed = records.length > 64 ? records.splice(0, records.length - 64) : [];
@@ -271,7 +342,10 @@ export class Notifications {
   }
   observe(snapshot: RuntimeSnapshot, scope?: string): Promise<unknown> {
     if (this.closed) return Promise.resolve();
+    // A queued ready snapshot must not revive controls after a newer disconnect or VM switch.
+    this.connection = snapshot.phase === 'ready' ? scope : undefined;
     if (!scope || snapshot.phase !== 'ready') {
+      this.latest = undefined;
       this.runtime = 'offline';
       this.publish();
       return Promise.resolve();
@@ -314,6 +388,9 @@ export class Notifications {
         });
       for (const row of removed) this.withdraw(row.id);
     }
+    this.bots = snapshot.profiles
+      .filter((bot) => !bot.archived)
+      .map(({ id, name }) => ({ id, name }));
     this.runtime = snapshot.notices?.available ? 'ready' : 'partial';
     this.publish();
     const targets = noticeCandidates(snapshot),
@@ -361,6 +438,7 @@ export class Notifications {
       if (
         !row ||
         !this.data.enabled ||
+        this.muted(noticeBot(row.target), row.scope) ||
         (this.scope && row.target.kind !== 'settings' && row.scope !== this.scope)
       )
         return;
@@ -379,7 +457,7 @@ export class Notifications {
     const value = this.data.pending;
     return value &&
       (value.target.kind === 'settings' ||
-        (this.runtime !== 'offline' && value.scope === this.scope))
+        (value.scope === this.currentScope() && !this.muted(noticeBot(value.target), value.scope)))
       ? value
       : undefined;
   }
@@ -396,6 +474,8 @@ export class Notifications {
     if (command.type === 'status') return this.status();
     if (command.type === 'pending') return this.pending();
     if (command.type === 'configure') return this.configure(command.revision, command.enabled);
+    if (command.type === 'bot.configure')
+      return this.configureBot(command.revision, command.scope, command.bot, command.enabled);
     if (command.type === 'test') return this.test();
     if (command.type !== 'ack') throw new Error('INVALID_NOTIFICATION_COMMAND');
     await this.ack(command.id);

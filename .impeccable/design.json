@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-29T01:44:43.964576Z",
+  "generatedAt": "2026-10-29T05:21:13Z",
   "title": "Design System: daban",
   "extensions": {
     "colorMeta": {
@@ -839,7 +839,7 @@
       "name": "Secondary action",
       "kind": "button",
       "refersTo": "button-secondary",
-      "description": "Soft neutral companion action. Notifications.tsx reuses the house secondary action with skill-toggle for its off-by-default reminder checkbox label and the secondary test action; the reviewed whole-label target is 87 × 36px. Test submission copy does not claim native delivery. The existing static button specimen adds no notification behavior or CSS.",
+      "description": "Soft neutral companion action. Notifications.tsx reuses the house secondary action with skill-toggle for its off-by-default reminder checkbox label and the secondary test action; the reviewed whole-label target is 87 × 36px. Test submission copy does not claim native delivery. Private Bot choices reuse this label treatment in flat Settings rows under a native fieldset/legend, with local/private scope guidance and an independent global opt-in; the earlier target measurement is not a per-Bot measurement. Offline choices remain visible and disabled, with inline conflict and empty-list feedback. The fieldset reset reuses existing spacing and adds no durable token or component styling. The existing static button specimen adds no notification behavior or CSS.",
       "html": "<button class=\"ds-secondary\">展开</button>",
       "css": ".ds-secondary{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:8px 13px;border:0;border-radius:9px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);background:var(--soft,#f3f3f1);color:var(--ink,#252523)}.ds-secondary:hover{background:var(--hover,#ededeb)}.ds-secondary:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-secondary:disabled{opacity:.4;cursor:not-allowed}"
     },

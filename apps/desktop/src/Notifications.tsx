@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { isNoticeStatus, type NoticeCommand, type NoticeStatus } from '../notifications';
+import {
+  isNoticeStatus,
+  type NoticeBot,
+  type NoticeCommand,
+  type NoticeStatus,
+} from '../notifications';
 
 export function noticeError(cause: unknown) {
   const code = cause instanceof Error ? cause.message : '';
@@ -13,6 +18,8 @@ export function noticeError(cause: unknown) {
     NOTIFICATION_HISTORY_UNAVAILABLE: '系统提醒历史暂不可读取，新任务和收件箱仍可使用。',
     NOTIFICATION_LIMIT: '提醒记录已达到上限，请重新打开客户端后检查。',
     NOTIFICATION_OPEN_FAILED: '暂未打开对应提醒，请在收件箱或历史对话中查看。',
+    NOTIFICATION_SCOPE_CHANGED: '工作区已切换，未改动其他 Bot。请重新选择。',
+    NOTIFICATION_BOT_UNAVAILABLE: '这位 Bot 已归档或暂不可用，请重新打开设置查看。',
   };
   return messages[code] || '桌面提醒暂不可用，请稍后重试。';
 }
@@ -24,8 +31,11 @@ export function Notifications() {
     [tested, setTested] = useState(false);
   const mounted = useRef(true),
     working = useRef(false);
-  function accept(value: unknown) {
+  const updates = useRef(0);
+  function accept(value: unknown, expectedUpdate?: number) {
     if (!isNoticeStatus(value)) throw new Error('INVALID_NOTIFICATION_STATUS');
+    // Main-process updates are ordered; an older invoke reply must not restore another VM's rows.
+    if (expectedUpdate !== undefined && expectedUpdate !== updates.current) return;
     if (mounted.current)
       setStatus((current) => (!current || value.revision >= current.revision ? value : current));
   }
@@ -45,36 +55,34 @@ export function Notifications() {
     const unsubscribe = bridge.subscribe((message) => {
       if (message.type === 'status') {
         try {
+          updates.current++;
           accept(message.status);
         } catch (cause) {
           if (mounted.current) setError(noticeError(cause));
         }
       }
     });
+    const update = updates.current;
     call({ type: 'status' })
-      .then(accept)
+      .then((value) => accept(value, update))
       .catch((cause) => {
         if (mounted.current) setError(noticeError(cause));
       });
     return () => {
       mounted.current = false;
+      updates.current++;
       unsubscribe();
     };
   }, [bridge]);
-  async function perform(test = false) {
+  async function perform(command: NoticeCommand) {
     if (working.current || !status || !bridge) return;
     working.current = true;
     setBusy(true);
     setError('');
     try {
-      accept(
-        await call(
-          test
-            ? { type: 'test' }
-            : { type: 'configure', revision: status.revision, enabled: !status.enabled },
-        ),
-      );
-      if (mounted.current && test) setTested(true);
+      const update = updates.current;
+      accept(await call(command), update);
+      if (mounted.current && command.type === 'test') setTested(true);
     } catch (cause) {
       if (mounted.current) setError(noticeError(cause));
     } finally {
@@ -82,7 +90,23 @@ export function Notifications() {
       if (mounted.current) setBusy(false);
     }
   }
+  async function configureBot(bot: NoticeBot) {
+    if (!status?.scope) return;
+    await perform({
+      type: 'bot.configure',
+      revision: status.revision,
+      scope: status.scope,
+      bot: bot.id,
+      enabled: !bot.enabled,
+    });
+  }
   const failure = error || (status?.error ? noticeError(new Error(status.error)) : '');
+  const botsDisabled =
+    busy ||
+    !status?.available ||
+    !status.supported ||
+    !status.scope ||
+    status.runtime === 'offline';
   return (
     <section className="settings-section" aria-label="桌面提醒">
       <h2>桌面提醒</h2>
@@ -102,7 +126,10 @@ export function Notifications() {
             aria-label="接收桌面提醒"
             checked={!!status?.enabled}
             disabled={busy || !status?.available || !status.supported}
-            onChange={() => perform()}
+            onChange={() =>
+              status &&
+              perform({ type: 'configure', revision: status.revision, enabled: !status.enabled })
+            }
           />
           {busy ? '正在保存…' : status?.enabled ? '已开启' : '未开启'}
         </label>
@@ -137,7 +164,7 @@ export function Notifications() {
           type="button"
           className="secondary"
           disabled={busy || !status?.available || !status.supported || !status.enabled}
-          onClick={() => perform(true)}
+          onClick={() => perform({ type: 'test' })}
         >
           发送测试提醒
         </button>
@@ -156,6 +183,37 @@ export function Notifications() {
         完整退出客户端后不会发现新的桌面提醒，Linux
         中的任务仍会继续。打开客户端可在收件箱和对话中查看结果。
       </p>
+      {status?.bots && (
+        <fieldset className="notice-bots" aria-describedby="notice-bots-description">
+          <legend className="setting-label">各 Bot 的私聊提醒</legend>
+          <p className="setting-description" id="notice-bots-description">
+            仅在这台电脑上立即生效。关闭后不再弹出这位 Bot
+            的私聊结果和待处理请求；群聊提醒与收件箱不受影响。
+          </p>
+          {!status.enabled && (
+            <p className="inline-note">总开关关闭时不会弹出提醒，以下选择仍会保留。</p>
+          )}
+          {!status.scope && <p className="inline-note">连接工作区后可修改，已有选择仍保留。</p>}
+          {status.scope && !status.bots.length && (
+            <p className="inline-note">创建 Bot 后，可在这里选择它的私聊提醒。</p>
+          )}
+          {status.bots.map((bot) => (
+            <div className="setting-row" key={bot.id}>
+              <div className="setting-label">{bot.name}</div>
+              <label className="secondary skill-toggle" aria-disabled={botsDisabled}>
+                <input
+                  type="checkbox"
+                  aria-label={`${bot.name}的私聊桌面提醒`}
+                  checked={bot.enabled}
+                  disabled={botsDisabled}
+                  onChange={() => configureBot(bot)}
+                />
+                {bot.enabled ? '接收' : '不接收'}
+              </label>
+            </div>
+          ))}
+        </fieldset>
+      )}
     </section>
   );
 }

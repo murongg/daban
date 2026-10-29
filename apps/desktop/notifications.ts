@@ -16,6 +16,11 @@ export interface NoticeActivation {
   scope: string;
   target: NoticeTarget;
 }
+export interface NoticeBot {
+  id: string;
+  name: string;
+  enabled: boolean;
+}
 export interface NoticeStatus {
   available: boolean;
   supported: boolean;
@@ -23,11 +28,14 @@ export interface NoticeStatus {
   revision: number;
   delivery: 'untried' | 'submitted' | 'failed';
   runtime: 'offline' | 'partial' | 'ready';
+  scope?: string;
+  bots?: NoticeBot[];
   error?: string;
 }
 export type NoticeCommand =
   | { type: 'status' | 'test' | 'pending' }
   | { type: 'configure'; revision: number; enabled: boolean }
+  | { type: 'bot.configure'; revision: number; scope: string; bot: string; enabled: boolean }
   | { type: 'ack'; id: string };
 export type NoticeMessage =
   | { type: 'status'; status: NoticeStatus }
@@ -42,6 +50,26 @@ const keys = (value: Record<string, unknown>, names: string[]) =>
   Object.keys(value).every((key) => names.includes(key));
 const revision = (value: unknown) =>
   Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) < Number.MAX_SAFE_INTEGER;
+export const isNoticeScope = (value: unknown): value is string =>
+  typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+function isNoticeBot(value: unknown): value is NoticeBot {
+  return (
+    object(value) &&
+    keys(value, ['id', 'name', 'enabled']) &&
+    validAgentId(value.id) &&
+    typeof value.name === 'string' &&
+    !!value.name.trim() &&
+    value.name.length <= 30 &&
+    !value.name.includes('\0') &&
+    typeof value.enabled === 'boolean'
+  );
+}
+export function noticeBot(target: NoticeTarget) {
+  return target.kind === 'task' ||
+    ((target.kind === 'question' || target.kind === 'approval') && !target.group)
+    ? target.bot
+    : undefined;
+}
 export function isNoticeTarget(value: unknown): value is NoticeTarget {
   if (object(value) && value.kind === 'settings' && keys(value, ['kind'])) return true;
   if (isRuntimeNotice(value)) return true;
@@ -60,8 +88,7 @@ export function isNoticeActivation(value: unknown): value is NoticeActivation {
     object(value) &&
     keys(value, ['id', 'scope', 'target']) &&
     validAgentId(value.id) &&
-    typeof value.scope === 'string' &&
-    /^[a-f0-9]{64}$/.test(value.scope) &&
+    isNoticeScope(value.scope) &&
     isNoticeTarget(value.target)
   );
 }
@@ -75,6 +102,8 @@ export function isNoticeStatus(value: unknown): value is NoticeStatus {
       'revision',
       'delivery',
       'runtime',
+      'scope',
+      'bots',
       'error',
     ]) &&
     typeof value.available === 'boolean' &&
@@ -85,6 +114,12 @@ export function isNoticeStatus(value: unknown): value is NoticeStatus {
       value.delivery === 'submitted' ||
       value.delivery === 'failed') &&
     (value.runtime === 'offline' || value.runtime === 'partial' || value.runtime === 'ready') &&
+    (value.scope === undefined || isNoticeScope(value.scope)) &&
+    (value.bots === undefined ||
+      (Array.isArray(value.bots) &&
+        value.bots.length <= 1024 &&
+        Array.from(value.bots).every(isNoticeBot) &&
+        new Set(value.bots.map((bot) => bot.id)).size === value.bots.length)) &&
     (value.error === undefined ||
       (typeof value.error === 'string' && /^[A-Z_]{1,100}$/.test(value.error)))
   );
@@ -114,6 +149,15 @@ export function parseNoticeCommand(value: unknown): NoticeCommand {
   )
     return value as NoticeCommand;
   if (value.type === 'ack' && keys(value, ['type', 'id']) && validAgentId(value.id))
+    return value as NoticeCommand;
+  if (
+    value.type === 'bot.configure' &&
+    keys(value, ['type', 'revision', 'scope', 'bot', 'enabled']) &&
+    revision(value.revision) &&
+    isNoticeScope(value.scope) &&
+    validAgentId(value.bot) &&
+    typeof value.enabled === 'boolean'
+  )
     return value as NoticeCommand;
   throw new Error('INVALID_NOTIFICATION_COMMAND');
 }

@@ -38,6 +38,27 @@ it('exposes only strict desktop notice commands to the owned top-level renderer'
       ),
     ).toEqual({ ok: false, error: 'INVALID_NOTIFICATION_COMMAND' });
     expect(invoke).toHaveBeenCalledTimes(1);
+    const command = {
+      type: 'bot.configure',
+      scope: 'a'.repeat(64),
+      bot: 'mock-alpha',
+      revision: 0,
+      enabled: false,
+    };
+    expect(await handler({ sender, senderFrame: frame }, command)).toEqual({
+      ok: true,
+      value: { available: true },
+    });
+    expect(invoke).toHaveBeenLastCalledWith(command);
+    expect(await handler({ sender, senderFrame: { url: frame.url } }, command)).toEqual({
+      ok: false,
+      error: 'UNTRUSTED_SENDER',
+    });
+    expect(await handler({ sender, senderFrame: frame }, { ...command, approved: true })).toEqual({
+      ok: false,
+      error: 'INVALID_NOTIFICATION_COMMAND',
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
   } finally {
     close();
     mock.windows = [];

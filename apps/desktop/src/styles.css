@@ -1986,6 +1986,15 @@ textarea.skill-source {
   padding: 19px 0;
   border-bottom: 1px solid var(--line);
 }
+.notice-bots {
+  border: 0;
+  padding: 0;
+  margin: 20px 0 0;
+  min-width: 0;
+}
+.notice-bots legend {
+  padding: 0;
+}
 .setting-label {
   font-size: 13px;
   font-weight: 500;

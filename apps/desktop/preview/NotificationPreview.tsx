@@ -7,6 +7,7 @@ import type {
   NoticeMessage,
   NoticeStatus,
 } from '../notifications';
+import { isNoticeStatus } from '../notifications';
 import { App } from '../src/App';
 import { initialState } from '../src/state';
 import { serialize, storageKey } from '../src/storage';
@@ -41,13 +42,26 @@ snapshot.profiles = seed.bots
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
   }));
+if (mode === 'offline') snapshot.phase = 'offline';
 let status: NoticeStatus = {
   available: mode !== 'corrupt',
   supported: mode !== 'unsupported',
-  enabled: ['on', 'failed', 'task', 'defer'].includes(mode),
+  enabled: ['on', 'failed', 'task', 'defer', 'conflict', 'long', 'offline'].includes(mode),
   revision: 0,
   delivery: 'untried',
-  runtime: mode === 'partial' ? 'partial' : 'ready',
+  runtime: mode === 'partial' ? 'partial' : mode === 'offline' ? 'offline' : 'ready',
+  scope: mode === 'offline' ? undefined : 'a'.repeat(64),
+  bots:
+    mode === 'empty'
+      ? []
+      : snapshot.profiles.slice(0, 3).map((bot, index) => ({
+          id: bot.id,
+          name:
+            mode === 'long' && index === 0
+              ? '合成：需要完整显示的研究与资料整理工作伙伴'
+              : `合成${bot.name}`,
+          enabled: index !== 1,
+        })),
   ...(mode === 'corrupt' ? { error: 'NOTIFICATION_STORE_UNAVAILABLE' } : {}),
 };
 const listeners = new Set<(message: NoticeMessage) => unknown>();
@@ -99,12 +113,26 @@ const notifications: NoticeBridge = {
         revision: status.revision + 1,
         error: undefined,
       };
+    if (command.type === 'bot.configure') {
+      if (mode === 'conflict') return { ok: false, error: 'NOTIFICATION_CONFLICT' };
+      if (command.scope !== status.scope) return { ok: false, error: 'NOTIFICATION_SCOPE_CHANGED' };
+      if (command.revision !== status.revision)
+        return { ok: false, error: 'NOTIFICATION_CONFLICT' };
+      status = {
+        ...status,
+        revision: status.revision + 1,
+        bots: status.bots?.map((bot) =>
+          bot.id === command.bot ? { ...bot, enabled: command.enabled } : bot,
+        ),
+      };
+    }
     if (command.type === 'test')
       status = {
         ...status,
         delivery: mode === 'failed' ? 'failed' : 'submitted',
         ...(mode === 'failed' ? { error: 'NOTIFICATION_DELIVERY_FAILED' } : {}),
       };
+    if (!isNoticeStatus(status)) throw new Error('SYNTHETIC_NOTICE_STATUS_INVALID');
     for (const listener of listeners) listener({ type: 'status', status });
     return { ok: true, value: status as T };
   },
