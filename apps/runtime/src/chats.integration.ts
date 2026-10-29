@@ -40,7 +40,7 @@ test('personal conversation boundaries and receipt/history reads require authent
     const first = await response.json();
     assert.equal(first.chat.revision, 1);
     const state = await (await call('/api/state')).json();
-    assert.equal(state.clientProtocol, 32);
+    assert.equal(state.clientProtocol, 33);
     assert.equal(state.chats.items.find((item: { bot: string }) => item.bot === bot).revision, 1);
     assert.equal(state.model.configured, false);
     assert.deepEqual(

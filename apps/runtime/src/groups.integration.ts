@@ -57,7 +57,7 @@ test('authenticated group archive/restore retains definitions, fences sends, and
     assert.equal(archived.group.archived, true);
     const current = await (await call('/api/state')).json(),
       legacy = await (await call('/api/state', undefined, false)).json();
-    assert.equal(current.clientProtocol, 32);
+    assert.equal(current.clientProtocol, 33);
     assert.equal(
       current.groups.items.find((item: { id: string }) => item.id === group.id).archived,
       true,

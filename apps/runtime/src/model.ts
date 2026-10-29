@@ -12,6 +12,7 @@ import type {
   RuntimeTaskSummary,
   TaskPlan,
   TaskRequest,
+  TranscriptScope,
 } from '@daban/protocol';
 import {
   type ChatPage,
@@ -65,7 +66,6 @@ import {
   projectInteraction,
   projectTranscript,
   type TranscriptEvent,
-  type TranscriptScope,
   Transcripts,
 } from './transcripts.js';
 import { type WorkspaceDirectory, WorkspaceFiles } from './workspace.js';

@@ -1043,6 +1043,143 @@ export interface TaskTrace {
   at: string;
   code?: string;
 }
+export const transcriptPageLimit = 20;
+export const transcriptChunkLimit = 32000;
+export const transcriptEventLimit = 8 * 1024 * 1024;
+export type TranscriptScope = { bot: string; runId: string } & (
+  | { chatRevision: number; conversationId?: never }
+  | { conversationId: string; chatRevision?: never }
+);
+export type TranscriptState = 'recording' | 'complete' | 'interrupted' | 'unavailable';
+export interface TranscriptItem {
+  seq: number;
+  kind: 'call' | 'result' | 'assistant' | 'plan' | 'interaction';
+  at: string;
+  name?: string;
+  callId?: string;
+  isError?: boolean;
+  code?: string;
+  characters: number;
+}
+export interface TranscriptQuery {
+  scope: TranscriptScope;
+  after?: number;
+}
+export interface TranscriptContentQuery {
+  scope: TranscriptScope;
+  seq: number;
+  offset?: number;
+}
+export type TranscriptPage = TranscriptScope & {
+  state: TranscriptState;
+  items: TranscriptItem[];
+  nextAfter?: number;
+};
+export type TranscriptContent = TranscriptScope & {
+  seq: number;
+  offset: number;
+  total: number;
+  text: string;
+  nextOffset?: number;
+};
+function transcriptScope(
+  value: unknown,
+  fields: string[] = [],
+): value is TranscriptScope & Record<string, unknown> {
+  return (
+    profileObject(value) &&
+    exactKeys(value, ['bot', 'runId', 'chatRevision', 'conversationId', ...fields]) &&
+    validAgentId(value.bot) &&
+    validAgentId(value.runId) &&
+    (value.conversationId === undefined
+      ? browserNumber(value.chatRevision)
+      : validAgentId(value.conversationId) && value.chatRevision === undefined)
+  );
+}
+export function isTranscriptScope(value: unknown): value is TranscriptScope {
+  return transcriptScope(value);
+}
+export function sameTranscriptScope(left: TranscriptScope, right: TranscriptScope) {
+  return (
+    left.bot === right.bot &&
+    left.runId === right.runId &&
+    left.chatRevision === right.chatRevision &&
+    left.conversationId === right.conversationId
+  );
+}
+export function isTranscriptQuery(value: unknown): value is TranscriptQuery {
+  return (
+    profileObject(value) &&
+    exactKeys(value, ['scope', 'after']) &&
+    isTranscriptScope(value.scope) &&
+    (value.after === undefined || browserNumber(value.after))
+  );
+}
+export function isTranscriptContentQuery(value: unknown): value is TranscriptContentQuery {
+  return (
+    profileObject(value) &&
+    exactKeys(value, ['scope', 'seq', 'offset']) &&
+    isTranscriptScope(value.scope) &&
+    browserNumber(value.seq) &&
+    value.seq > 0 &&
+    (value.offset === undefined || browserNumber(value.offset))
+  );
+}
+export function isTranscriptItem(value: unknown): value is TranscriptItem {
+  return (
+    profileObject(value) &&
+    exactKeys(value, ['seq', 'kind', 'at', 'name', 'callId', 'isError', 'code', 'characters']) &&
+    browserNumber(value.seq) &&
+    value.seq > 0 &&
+    typeof value.kind === 'string' &&
+    ['call', 'result', 'assistant', 'plan', 'interaction'].includes(value.kind) &&
+    mcpDate(value.at) &&
+    browserNumber(value.characters) &&
+    value.characters <= transcriptEventLimit &&
+    (value.name === undefined || boundedText(value.name, 300)) &&
+    (value.callId === undefined || boundedText(value.callId, 300)) &&
+    (value.isError === undefined || typeof value.isError === 'boolean') &&
+    (value.code === undefined ||
+      (value.isError === true &&
+        typeof value.code === 'string' &&
+        /^[A-Z][A-Z0-9_]{0,80}$/.test(value.code)))
+  );
+}
+export function isTranscriptPage(value: unknown): value is TranscriptPage {
+  if (
+    !transcriptScope(value, ['state', 'items', 'nextAfter']) ||
+    typeof value.state !== 'string' ||
+    !['recording', 'complete', 'interrupted', 'unavailable'].includes(value.state) ||
+    !Array.isArray(value.items) ||
+    value.items.length > transcriptPageLimit ||
+    !value.items.every(isTranscriptItem)
+  )
+    return false;
+  const items = value.items;
+  return (
+    items.every((item, index) => index === 0 || item.seq > items[index - 1].seq) &&
+    (value.state !== 'unavailable' || (!items.length && value.nextAfter === undefined)) &&
+    (value.nextAfter === undefined || (!!items.length && value.nextAfter === items.at(-1)!.seq))
+  );
+}
+export function isTranscriptContent(value: unknown): value is TranscriptContent {
+  if (
+    !transcriptScope(value, ['seq', 'offset', 'total', 'text', 'nextOffset']) ||
+    !browserNumber(value.seq) ||
+    value.seq <= 0 ||
+    !browserNumber(value.offset) ||
+    !browserNumber(value.total) ||
+    value.total > transcriptEventLimit ||
+    typeof value.text !== 'string' ||
+    value.text.length > transcriptChunkLimit ||
+    value.offset + value.text.length > value.total
+  )
+    return false;
+  const end = value.offset + value.text.length;
+  return end === value.total
+    ? value.nextOffset === undefined
+    : value.text.length > 0 && value.nextOffset === end;
+}
 export interface RuntimeTask {
   chatRevision?: number;
   conversationId?: string;
@@ -1204,6 +1341,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'bot.receipt',
     'chat.receipt',
     'chat.history',
+    'transcript.list',
+    'transcript.content',
     'memory.history',
     'bot.export',
     'bot.import.status',
@@ -2920,7 +3059,8 @@ export function isBrowserAnswerRequest(value: unknown): value is BrowserAnswerRe
   }
   return bytes <= documentLimit;
 }
-const browserNumber = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0;
+const browserNumber = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && Number(value) >= 0;
 const browserCode = (value: unknown) =>
   value === undefined || (typeof value === 'string' && /^[A-Z_]{1,100}$/.test(value));
 export function isBrowserBinding(value: unknown): value is BrowserBinding {
@@ -3085,6 +3225,8 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | { type: 'transcript.list'; query: TranscriptQuery }
+  | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }
   | { type: 'chat.receipt'; bot: string; id: string }
   | { type: 'chat.history'; bot: string; revision: number; before?: string; runId?: string }

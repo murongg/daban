@@ -31,6 +31,8 @@ import {
   isSkillContent,
   isTaskFile,
   isTaskFileName,
+  isTranscriptContentQuery,
+  isTranscriptQuery,
   isUserReply,
   publicUrl,
   type RuntimeCommand,
@@ -103,6 +105,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'chat.new': ['type', 'request'],
     'chat.receipt': ['type', 'bot', 'id'],
     'chat.history': ['type', 'bot', 'revision', 'before', 'runId'],
+    'transcript.list': ['type', 'query'],
+    'transcript.content': ['type', 'query'],
     'group.action': ['type', 'request'],
     'group.receipt': ['type', 'group', 'id'],
     'model.configure': ['type', 'input'],
@@ -209,6 +213,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
   }
   if (v.type === 'group.register' && !isGroupInput(v.group)) return fail();
   if (v.type === 'chat.new' && !isChatRequest(v.request)) return fail();
+  if (v.type === 'transcript.list' && !isTranscriptQuery(v.query)) return fail();
+  if (v.type === 'transcript.content' && !isTranscriptContentQuery(v.query)) return fail();
   if (v.type === 'chat.receipt' && (!validAgentId(v.bot) || !validAgentId(v.id))) return fail();
   if (
     v.type === 'chat.history' &&

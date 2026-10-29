@@ -21,7 +21,7 @@ export const environmentVersions = {
   lima: '2.2.1',
   node: '24.22.1',
   dsh: '0.2.1-rc.3',
-  protocol: 32,
+  protocol: 33,
 };
 export const environmentAssets = {
   lima: {

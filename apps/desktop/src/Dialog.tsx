@@ -4,8 +4,9 @@ import { type ReactNode, useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { IconButton } from './Button';
 
+// A closed native disclosure is still keyboard-focusable; result readers must not trap Tab before it.
 const focusable =
-  'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]';
+  'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], details > summary, [tabindex="0"]';
 export function Dialog({
   title,
   onClose,

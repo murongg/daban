@@ -50,6 +50,7 @@ export function runtimeService(
   let connecting: Promise<RuntimeSnapshot> | undefined;
   let polling = false;
   let closed = false;
+  let connection = 0;
   let requested = 0,
     published = 0,
     lastPoll = 0;
@@ -116,6 +117,7 @@ export function runtimeService(
   async function connect(): Promise<RuntimeSnapshot> {
     if (connecting) return connecting;
     connecting = (async () => {
+      connection++;
       published = ++requested;
       publish(disconnected('connecting'));
       try {
@@ -224,8 +226,13 @@ export function runtimeService(
       await refreshReboot();
       if (recoveryBlocked({ ...state, reboot })) throw new Error('RUNTIME_RECOVERY_PENDING');
     }
+    const epoch = connection;
+    const transcript = command.type === 'transcript.list' || command.type === 'transcript.content';
     const result = await client.invoke(command);
-    if (!['frame', 'files.list', 'files.read'].includes(command.type)) await refresh();
+    // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.
+    if (transcript && (closed || epoch !== connection)) throw new Error('RUNTIME_OFFLINE');
+    if (!transcript && !['frame', 'files.list', 'files.read'].includes(command.type))
+      await refresh();
     return result;
   }
   ipcMain.handle('daban:runtime', async (event, value): Promise<RuntimeReply> => {

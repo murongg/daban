@@ -32,7 +32,7 @@ test('authenticated status exposes private completion metadata without full prom
     const state = await (
       await fetch(app.url + '/api/state', { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(state.clientProtocol, 32);
+    assert.equal(state.clientProtocol, 33);
     const notices: unknown = state.notices;
     assert.ok(isRuntimeNoticeStatus(notices));
     assert.ok(

@@ -14,6 +14,7 @@ import { ArrowUp, FileText, Paperclip, Plus, X } from 'lucide-react';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { IconButton } from './Button';
+import { Execution } from './Execution';
 import { attachment, stagedAttachment, taskFile } from './files';
 import { useInputs } from './inputs';
 import { Markdown } from './Markdown';
@@ -296,6 +297,12 @@ export function GroupChat({
         {value.phase && value.phase !== 'completed' && (
           <p className="inline-note">{`任务状态：${value.phase}`}</p>
         )}
+        {value.role === 'bot' && value.runId && value.author && (
+          <Execution
+            scope={{ bot: value.author, runId: value.runId, conversationId: bot.id }}
+            phase={value.phase}
+          />
+        )}
         {files.map((file) => (
           <button
             type="button"
@@ -417,6 +424,12 @@ export function GroupChat({
                           />
                         </div>
                       </article>
+                    )}
+                    {task.runId && (
+                      <Execution
+                        scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}
+                        phase={task.phase}
+                      />
                     )}
                   </div>
                 ))}

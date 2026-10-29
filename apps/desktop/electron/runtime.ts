@@ -60,6 +60,8 @@ import {
   isSkillStatus,
   isTaskFile,
   isTaskPlan,
+  isTranscriptContent,
+  isTranscriptPage,
   parseBotJSON,
   type RecoveryReceipt,
   type RecoveryRequest,
@@ -67,6 +69,7 @@ import {
   type RuntimeFile,
   type RuntimeSnapshot,
   type RuntimeTask,
+  sameTranscriptScope,
   validAgentId,
 } from '@daban/protocol';
 import { isTaskReceipt } from '../receipt';
@@ -549,6 +552,31 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (command.type === 'transcript.list' || command.type === 'transcript.content') {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 33) throw new Error('RUNTIME_TOO_OLD');
+      const scope = command.query.scope;
+      const value: unknown = await this.api(
+        `/api/transcripts/${command.type === 'transcript.list' ? 'list' : 'content'}`,
+        command.query,
+      );
+      if (command.type === 'transcript.list') {
+        if (
+          !isTranscriptPage(value) ||
+          !sameTranscriptScope(value, scope) ||
+          value.items.some((item) => item.seq <= (command.query.after ?? 0))
+        )
+          throw new Error('INVALID_TRANSCRIPT_PAGE');
+      } else if (
+        !isTranscriptContent(value) ||
+        !sameTranscriptScope(value, scope) ||
+        value.seq !== command.query.seq ||
+        value.offset !== (command.query.offset ?? 0)
+      )
+        throw new Error('INVALID_TRANSCRIPT_CONTENT');
+      return value;
+    }
     if (
       command.type === 'chat.new' ||
       command.type === 'chat.receipt' ||

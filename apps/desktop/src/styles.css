@@ -607,6 +607,56 @@ textarea.field {
   gap: 8px;
   margin: 12px 0 2px 22px;
 }
+.execution {
+  max-width: 100%;
+  font-size: 12px;
+}
+.execution > summary {
+  min-height: 36px;
+}
+.execution-phase,
+.execution-sequence {
+  color: var(--muted);
+  margin-left: auto;
+  font-size: 11px;
+}
+.execution-chevron {
+  flex-shrink: 0;
+}
+.execution[open] > summary > .execution-chevron,
+.execution-entry[open] > summary > .execution-chevron {
+  transform: rotate(180deg);
+}
+.execution-reader {
+  margin-top: 12px;
+  color: var(--ink);
+}
+.execution-list {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+.execution-list > li {
+  border-bottom: 1px solid var(--line);
+}
+.execution-entry > summary {
+  min-height: 44px;
+  flex-wrap: wrap;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.execution-body {
+  padding: 0 0 12px 21px;
+}
+.execution-content {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.7;
+}
 .activity-file {
   display: flex;
   gap: 7px;

@@ -71,6 +71,60 @@ const task = {
   trace: [],
   history: [],
 };
+it('keeps transcript reads local to their initiating connection and does not poll task state for each text chunk', async () => {
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const snapshot = disconnected('ready');
+  snapshot.protocolVersion = 33;
+  let release: (value: unknown) => unknown = () => undefined;
+  const pending = new Promise<unknown>((resolve) => {
+    release = resolve;
+  });
+  const client = {
+    status: vi.fn(async () => snapshot),
+    invoke: vi.fn(async () => pending),
+    releaseInputs: vi.fn(),
+  };
+  mocks.load.mockResolvedValue({
+    connect: vi.fn(async () => client),
+    close: vi.fn(),
+    recoveryStatus: vi.fn(async () => ({
+      available: true,
+      revision: 0,
+      busy: false,
+      vm: 'unknown',
+    })),
+  });
+  const service = runtimeService('/mock/transcript-owner', frame.url);
+  const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+  try {
+    await service.connect();
+    const handler = mocks.handlers.get('daban:runtime')!;
+    const reading = handler(
+      { sender, senderFrame: frame },
+      { type: 'transcript.list', query: { scope } },
+    );
+    await Promise.resolve();
+    expect(client.invoke).toHaveBeenCalledTimes(1);
+    await service.connect();
+    release({ ...scope, state: 'complete', items: [] });
+    expect(await reading).toEqual({ ok: false, error: 'RUNTIME_OFFLINE' });
+    const polls = client.status.mock.calls.length;
+    const content = { ...scope, seq: 1, offset: 0, total: 0, text: '' };
+    client.invoke.mockResolvedValue(content);
+    expect(
+      await handler(
+        { sender, senderFrame: frame },
+        { type: 'transcript.content', query: { scope, seq: 1 } },
+      ),
+    ).toEqual({ ok: true, value: content });
+    expect(client.status).toHaveBeenCalledTimes(polls);
+  } finally {
+    release(undefined);
+    await service.close();
+  }
+});
 it('publishes a stable VM-scoped observation to desktop-local services without exposing config paths', async () => {
   const observations: { phase: string; scope?: string }[] = [];
   const client = {

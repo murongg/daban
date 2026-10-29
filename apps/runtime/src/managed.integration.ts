@@ -45,7 +45,7 @@ test('managed19 API starts the ordinary Agent without graphics and connects only
   try {
     assert.ok(app.models);
     const initial = await call('/api/state');
-    assert.equal(initial.value.clientProtocol, 32);
+    assert.equal(initial.value.clientProtocol, 33);
     assert.equal(initial.value.mode, 'agent');
     assert.deepEqual(initial.value.bots, {});
     assert.equal(initial.value.computers.available, true);

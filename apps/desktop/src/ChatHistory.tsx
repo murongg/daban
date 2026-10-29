@@ -2,6 +2,7 @@ import { agentId, type ChatPage, isChatPage } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
+import { Execution } from './Execution';
 import { demoIds } from './fixtures';
 import { Markdown } from './Markdown';
 import { runtimeError, useRuntime } from './Runtime';
@@ -36,7 +37,8 @@ export function ChatHistory({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const mounted = useRef(true),
-    working = useRef(false);
+    working = useRef(false),
+    epoch = useRef(0);
   const selected = Number(number) - 1;
   const local =
     page && !runId
@@ -57,6 +59,7 @@ export function ChatHistory({
   );
   async function read(before?: string) {
     if (working.current || !available || !valid) return;
+    const ticket = epoch.current;
     working.current = true;
     setBusy(true);
     setError('');
@@ -70,24 +73,29 @@ export function ChatHistory({
       });
       if (!isChatPage(result) || result.bot !== agentId(bot.id) || result.revision !== selected)
         throw new Error('INVALID_CHAT_HISTORY');
-      if (mounted.current) setPage(result);
+      if (mounted.current && ticket === epoch.current) setPage(result);
     } catch (error) {
-      if (mounted.current) setError(runtimeError(error));
+      if (mounted.current && ticket === epoch.current) setError(runtimeError(error));
     } finally {
-      working.current = false;
-      if (mounted.current) setBusy(false);
+      if (ticket === epoch.current) {
+        working.current = false;
+        if (mounted.current) setBusy(false);
+      }
     }
   }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: The keyed dialog captures its initial selection; polling never reloads or changes the reader's page.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A cold-opened dialog waits for connection readiness; ordinary polls and number edits must not reset the reader's page.
   useEffect(() => {
     mounted.current = true;
+    const ticket = ++epoch.current;
     read().catch((error) => {
-      if (mounted.current) setError(runtimeError(error));
+      if (mounted.current && ticket === epoch.current) setError(runtimeError(error));
     });
     return () => {
       mounted.current = false;
+      epoch.current++;
+      working.current = false;
     };
-  }, []);
+  }, [available]);
   return (
     <Dialog title={runId ? '任务结果' : '历史对话'} onClose={close} wide>
       <div className="archive-identity">
@@ -219,6 +227,10 @@ export function ChatHistory({
                     ))}
                   </div>
                 )}
+                <Execution
+                  scope={{ bot: agentId(bot.id), runId: item.runId, chatRevision: page.revision }}
+                  phase={item.phase}
+                />
               </div>
             );
           })}

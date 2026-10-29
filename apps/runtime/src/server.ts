@@ -28,6 +28,8 @@ import {
   isSkillBinding,
   isSkillContent,
   isTaskFileName,
+  isTranscriptContentQuery,
+  isTranscriptQuery,
   isUserReply,
   parseBotJSON,
   type RuntimeNoticeStatus,
@@ -91,6 +93,8 @@ const recoveryReads = new Set([
   '/api/groups/action-receipt',
   '/api/chats/receipt',
   '/api/chats/history',
+  '/api/transcripts/list',
+  '/api/transcripts/content',
   '/api/memory/history',
   '/api/attachments/list',
   '/api/attachments/read',
@@ -287,7 +291,7 @@ export async function startPrototype({
       if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
         throw new Fault('FOREIGN_ORIGIN', 403);
       const url = new URL(req.url || '/', origin);
-      const modernGroups = ['28', '29', '30', '31', '32'].includes(
+      const modernGroups = ['28', '29', '30', '31', '32', '33'].includes(
         String(req.headers['x-daban-client-protocol']),
       );
       const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
@@ -524,6 +528,15 @@ export async function startPrototype({
           )
             throw new Fault('INVALID_MEMORY_QUERY', 400);
           return json(res, await models.profiles.history(data.bot, data.query));
+        }
+        if (url.pathname.startsWith('/api/transcripts/') && req.method === 'POST') {
+          if (!models) throw new Fault('TRANSCRIPT_UNAVAILABLE', 503);
+          const data = await body(req);
+          if (url.pathname === '/api/transcripts/list' && isTranscriptQuery(data))
+            return json(res, await models.transcript(data.scope, data.after));
+          if (url.pathname === '/api/transcripts/content' && isTranscriptContentQuery(data))
+            return json(res, await models.transcriptContent(data.scope, data.seq, data.offset));
+          throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
         }
         if (url.pathname.startsWith('/api/chats/') && req.method === 'POST') {
           if (!models) throw new Fault('CHAT_UNAVAILABLE', 503);
@@ -860,7 +873,7 @@ export async function startPrototype({
                   events: [],
                   bots: {},
                 }),
-            clientProtocol: runtime instanceof Computers ? 32 : 18,
+            clientProtocol: runtime instanceof Computers ? 33 : 18,
             notices: await noticeStatus(models, groups),
             chats: models
               ? await models.chats.status()

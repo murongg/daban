@@ -2,28 +2,25 @@ import { constants } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { type Interaction, isTaskPlan, validAgentId } from '@daban/protocol';
+import {
+  type Interaction,
+  isTaskPlan,
+  isTranscriptItem,
+  isTranscriptScope,
+  type TranscriptContent,
+  type TranscriptItem,
+  type TranscriptPage,
+  type TranscriptScope,
+  transcriptChunkLimit,
+  transcriptEventLimit,
+  transcriptPageLimit,
+} from '@daban/protocol';
 import { Fault } from './control.js';
 
-export type TranscriptScope = { bot: string; runId: string } & (
-  | { chatRevision: number; conversationId?: never }
-  | { conversationId: string; chatRevision?: never }
-);
-export interface TranscriptEvent {
+export interface TranscriptEvent extends Omit<TranscriptItem, 'seq' | 'characters'> {
   source: string;
-  kind: 'call' | 'result' | 'assistant' | 'plan' | 'interaction';
-  at: string;
-  name?: string;
-  callId?: string;
-  isError?: boolean;
-  code?: string;
   text: string;
 }
-export type TranscriptState = 'recording' | 'complete' | 'interrupted' | 'unavailable';
-export type TranscriptItem = Omit<TranscriptEvent, 'source' | 'text'> & {
-  seq: number;
-  characters: number;
-};
 
 function transcriptText(text: string, redact: (value: string) => string) {
   try {
@@ -50,18 +47,7 @@ const publicCode = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,80}$/.test(value);
 
 function identity(scope: TranscriptScope) {
-  if (
-    !record(scope) ||
-    Object.keys(scope).some(
-      (key) => !['bot', 'runId', 'chatRevision', 'conversationId'].includes(key),
-    ) ||
-    !validAgentId(scope.bot) ||
-    !validAgentId(scope.runId) ||
-    (scope.conversationId === undefined
-      ? !integer(scope.chatRevision)
-      : !validAgentId(scope.conversationId) || scope.chatRevision !== undefined)
-  )
-    throw new Fault('INVALID_TRANSCRIPT_SCOPE', 400);
+  if (!isTranscriptScope(scope)) throw new Fault('INVALID_TRANSCRIPT_SCOPE', 400);
   return JSON.stringify([
     scope.bot,
     scope.runId,
@@ -72,25 +58,10 @@ function identity(scope: TranscriptScope) {
 
 function metadata(seq: number, encoded: string): TranscriptItem {
   const value: unknown = JSON.parse(encoded);
-  if (
-    !record(value) ||
-    Object.keys(value).some(
-      (key) => !['kind', 'at', 'name', 'callId', 'isError', 'code', 'characters'].includes(key),
-    ) ||
-    !integer(seq) ||
-    !seq ||
-    !['call', 'result', 'assistant', 'plan', 'interaction'].includes(String(value.kind)) ||
-    typeof value.at !== 'string' ||
-    !Number.isFinite(Date.parse(value.at)) ||
-    !integer(value.characters) ||
-    value.characters > 8 * 1024 * 1024 ||
-    (value.name !== undefined && !short(value.name)) ||
-    (value.callId !== undefined && !short(value.callId)) ||
-    (value.isError !== undefined && typeof value.isError !== 'boolean') ||
-    (value.code !== undefined && (!value.isError || !publicCode(value.code)))
-  )
-    throw new Fault('TRANSCRIPT_CORRUPT');
-  return { seq, ...value } as TranscriptItem;
+  if (!record(value) || 'seq' in value) throw new Fault('TRANSCRIPT_CORRUPT');
+  const item = { ...value, seq };
+  if (!isTranscriptItem(item)) throw new Fault('TRANSCRIPT_CORRUPT');
+  return item;
 }
 
 export function projectInteraction(
@@ -262,19 +233,14 @@ export class Transcripts {
   }
   append(scope: TranscriptScope, event: TranscriptEvent) {
     if (this.find(scope)?.state !== 'recording') throw new Fault('TRANSCRIPT_CLOSED');
+    const { source, text, ...meta } = event;
     if (
-      !short(event.source) ||
-      !['call', 'result', 'assistant', 'plan', 'interaction'].includes(event.kind) ||
-      typeof event.text !== 'string' ||
-      event.text.length > 8 * 1024 * 1024 ||
-      !Number.isFinite(Date.parse(event.at)) ||
-      (event.name !== undefined && !short(event.name)) ||
-      (event.callId !== undefined && !short(event.callId)) ||
-      (event.isError !== undefined && typeof event.isError !== 'boolean') ||
-      (event.code !== undefined && (!event.isError || !publicCode(event.code)))
+      !short(source) ||
+      typeof text !== 'string' ||
+      text.length > transcriptEventLimit ||
+      !isTranscriptItem({ ...meta, seq: 1, characters: text.length })
     )
       throw new Fault('INVALID_TRANSCRIPT_EVENT');
-    const { source, text, ...meta } = event;
     // Content offsets are JavaScript UTF-16 offsets, not SQLite's Unicode code-point length().
     const encoded = JSON.stringify({ ...meta, characters: text.length });
     const old = this.db
@@ -299,25 +265,34 @@ export class Transcripts {
         .prepare("UPDATE transcript_runs SET state='interrupted' WHERE run=?")
         .run(scope.runId);
   }
-  page(scope: TranscriptScope, after = 0) {
+  page(scope: TranscriptScope, after = 0): TranscriptPage {
     const row = this.find(scope);
     if (!integer(after)) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
     const records = row
       ? this.db
           .prepare(
-            'SELECT seq,meta FROM transcript_events WHERE run=? AND seq>? ORDER BY seq LIMIT 21',
+            'SELECT seq,meta FROM transcript_events WHERE run=? AND seq>? ORDER BY seq LIMIT ?',
           )
-          .all(scope.runId, after)
+          .all(scope.runId, after, transcriptPageLimit + 1)
       : [];
-    const items = records.slice(0, 20).map((item) => metadata(Number(item.seq), String(item.meta)));
+    const items = records
+      .slice(0, transcriptPageLimit)
+      .map((item) => metadata(Number(item.seq), String(item.meta)));
     return {
       ...scope,
-      state: String(row?.state ?? 'unavailable') as TranscriptState,
+      state:
+        row?.state === 'recording'
+          ? 'recording'
+          : row?.state === 'complete'
+            ? 'complete'
+            : row
+              ? 'interrupted'
+              : 'unavailable',
       items,
-      ...(records.length > 20 ? { nextAfter: items.at(-1)!.seq as number } : {}),
+      ...(records.length > transcriptPageLimit ? { nextAfter: items.at(-1)!.seq } : {}),
     };
   }
-  content(scope: TranscriptScope, seq: number, offset = 0) {
+  content(scope: TranscriptScope, seq: number, offset = 0): TranscriptContent {
     this.find(scope);
     if (!integer(seq) || !seq || !integer(offset)) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
     const row = this.db
@@ -326,7 +301,7 @@ export class Transcripts {
     if (!row) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
     const body = String(row.body);
     if (offset > body.length) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
-    const text = body.slice(offset, offset + 32000);
+    const text = body.slice(offset, offset + transcriptChunkLimit);
     return {
       ...scope,
       seq,

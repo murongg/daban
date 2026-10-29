@@ -43,7 +43,7 @@ test('authenticated lifecycle API preserves owned data, checks task/resource/que
     const state = await (
       await fetch(`${app.url}/api/state`, { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(state.clientProtocol, 32);
+    assert.equal(state.clientProtocol, 33);
     assert.equal(
       (await request(profile.id, 'lifecycle', archive, 'synthetic-wrong-token')).status,
       403,

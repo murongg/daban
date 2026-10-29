@@ -22,6 +22,7 @@ import {
 import { type Dispatch, useCallback, useEffect, useRef } from 'react';
 import { Avatar } from './Avatar';
 import { IconButton } from './Button';
+import { Execution } from './Execution';
 import { demoIds } from './fixtures';
 import { useInputs } from './inputs';
 import { Markdown } from './Markdown';
@@ -266,6 +267,16 @@ export function Conversation({
         </div>
       );
     const author = state.bots.find((b) => b.id === message.author) || bot;
+    const recorded =
+      message.role === 'bot'
+        ? currentTask?.history.find(
+            (item) =>
+              !item.conversationId &&
+              (item.chatRevision ?? 0) === revision &&
+              message.id === `runtime-result:${item.runId}` &&
+              item.runId !== task?.runId,
+          )
+        : undefined;
     return (
       <article
         className={`message ${message.role}`}
@@ -323,6 +334,12 @@ export function Conversation({
             查看电脑
           </button>
         )}
+        {recorded && (
+          <Execution
+            scope={{ bot: target, runId: recorded.runId, chatRevision: revision }}
+            phase={recorded.phase}
+          />
+        )}
       </article>
     );
   }
@@ -372,6 +389,12 @@ export function Conversation({
           </div>
         )}
         {!pendingIds && current.map(renderMessage)}
+        {task?.runId && (
+          <Execution
+            scope={{ bot: target, runId: task.runId, chatRevision: revision }}
+            phase={task.phase}
+          />
+        )}
         <div ref={end} />
       </div>
       <div className="composer-wrap">

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-29T05:21:13Z",
+  "generatedAt": "2026-10-29T08:39:26Z",
   "title": "Design System: daban",
   "extensions": {
     "colorMeta": {
@@ -847,7 +847,7 @@
       "name": "Text action",
       "kind": "button",
       "refersTo": "button-text",
-      "description": "Quiet cancellation or supporting action. Workspace memory reuses this quiet action for the protocol32 history entry; older environments keep it disabled with update guidance. MemoryHistory.tsx keeps refresh/older navigation and human-only inspection separate from loading into a draft and the existing explicit CAS Save. Older-page navigation cannot advance the reader’s reviewed current revision; a concurrent change keeps loading disabled until explicit successful latest refresh.",
+      "description": "Quiet cancellation or supporting action. Workspace memory reuses this quiet action for the protocol32 history entry; older environments keep it disabled with update guidance. MemoryHistory.tsx keeps refresh/older navigation and human-only inspection separate from loading into a draft and the existing explicit CAS Save. Older-page navigation cannot advance the reader’s reviewed current revision; a concurrent change keeps loading disabled until explicit successful latest refresh. Execution.tsx reuses the same quiet actions for explicit record refresh/retry, later record pages and continued content. These read only; they never execute tools, reuse approval or resume a task. Partial content stays labelled until the remaining text is read.",
       "html": "<button class=\"ds-text\">取消</button>",
       "css": ".ds-text{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:8px 13px;border:0;border-radius:9px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);background:transparent;color:var(--muted,#66665f)}.ds-text:hover{background:var(--soft,#f3f3f1);color:var(--ink,#252523)}.ds-text:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
     },
@@ -895,7 +895,7 @@
       "name": "Conversation bubbles",
       "kind": "custom",
       "refersTo": "message-bot",
-      "description": "Asymmetric neutral assistant and ink user bubbles.",
+      "description": "Asymmetric neutral assistant and ink user bubbles. Private, group and history execution details remain quieter activity below the task rather than new bubbles: nested native disclosures lazily read scoped metadata and text, with fine neutral dividers and wrapping 44px minimum entry rows. Task phase and record completeness remain independent; retained drafts and the exact Bot/run plus revision or group identity stay authoritative. The existing bubble specimen and CSS are unchanged.",
       "html": "<div class=\"ds-messages\"><div class=\"ds-user\">先给我预览，不要发送。</div><div class=\"ds-assistant\">草稿整理好了，等待你查看。</div></div>",
       "css": ".ds-messages{display:flex;flex-direction:column;gap:22px;font-size:14px;line-height:1.9;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-user,.ds-assistant{padding:12px 16px;white-space:pre-wrap;overflow-wrap:anywhere}.ds-user{align-self:flex-end;max-width:90%;color:var(--on-bubble,#ffffff);background:var(--bubble,#252523);border-radius:17px 17px 5px 17px}.ds-assistant{align-self:flex-start;max-width:94%;color:var(--ink,#252523);background:var(--soft,#f3f3f1);border-radius:17px 17px 17px 5px}"
     },
@@ -951,7 +951,7 @@
       "name": "Bounded external-tool text",
       "kind": "custom",
       "refersTo": "field",
-      "description": "Repeated schema, argument and receipt regions are labelled, keyboard-focusable and bounded; read-only inspection conveys no execution authority. Synthetic static specimen.",
+      "description": "Repeated schema, argument and receipt regions are labelled, keyboard-focusable and bounded; read-only inspection conveys no execution authority. Synthetic static specimen. Execution.tsx applies the same bounded, labelled keyboard-reading principle to execution text using inherited Chinese system sans at 12px, line height 1.7, wrapping whitespace and a 240px maximum. Its native disclosure rows and explicit record/content pagination preserve scope and the reached tail; the existing external-tool specimen is not a transcript mockup and remains unchanged. In the house history Dialog, closed summary controls and named output regions participate in keyboard order, with Escape dismissal and focus return. Older-environment, preparing, missing, failed-read and incomplete states remain explicit; task completion does not certify record completeness.",
       "html": "<section class=\"ds-tool-text\" tabindex=\"0\" aria-label=\"合成调用参数\"><pre>{\"label\":\"SYNTHETIC\",\"count\":2}</pre></section>",
       "css": ".ds-tool-text{max-height:240px;overflow:auto;margin:10px 0;color:var(--ink,#252523)}.ds-tool-text pre{padding:14px;margin:0;background:var(--canvas,#fff);font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}.ds-tool-text:hover{color:var(--ink,#252523)}.ds-tool-text:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
     },

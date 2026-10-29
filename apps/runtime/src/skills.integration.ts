@@ -34,7 +34,7 @@ test('the authenticated skills API shares instruction documents but isolates ena
     const status = await (
       await fetch(`${app.url}/api/state`, { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(status.clientProtocol, 32);
+    assert.equal(status.clientProtocol, 33);
     assert.equal(status.skills.available, true);
     assert.deepEqual(status.bots, {});
     assert.equal(

@@ -61,7 +61,7 @@ test('human preference history stays authenticated, bounded, current-only in sna
     assert.ok(isMemoryPage(older));
     assert(older.items.every((item) => item.revision < 9));
     const state = (await call('/api/state')).value;
-    assert.equal(state.clientProtocol, 32);
+    assert.equal(state.clientProtocol, 33);
     assert(!JSON.stringify(state).includes('SYNTHETIC OLD PREFERENCE'));
     assert(!JSON.stringify(state).includes('memoryHistory'));
     assert.deepEqual(

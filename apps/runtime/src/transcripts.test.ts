@@ -3,13 +3,9 @@ import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import type { TranscriptScope } from '@daban/protocol';
 import { redact } from './redaction.js';
-import {
-  projectInteraction,
-  projectTranscript,
-  type TranscriptScope,
-  Transcripts,
-} from './transcripts.js';
+import { projectInteraction, projectTranscript, Transcripts } from './transcripts.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 const note = (seq: number, type: string, data: unknown, session = 'mock-session') => ({

@@ -11,7 +11,7 @@ test('a runtime-image build exclusively owns a new root and cannot adopt an exis
   try {
     const fresh = join(root, 'new-image');
     const build = await admitBuild(fresh);
-    assert.equal(build.versions.protocol, 32);
+    assert.equal(build.versions.protocol, 33);
     assert.equal(build.output, fresh);
     assert.equal((await stat(fresh)).mode & 0o777, 0o700);
     assert.ok(build.limaHome.startsWith('/tmp/daban-image-'));
