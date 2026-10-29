@@ -2,7 +2,7 @@
 
 daban 是 Grok Bot 风格的本机 Agent 原型，使用 Electron、React、TypeScript、Vite，以及 Linux 内的 DeepSeek Harness。
 
-最新本地客户端位于 `outputs/preferences/desktop/daban.app`，功能验证记录为 `outputs/preferences/verification.json`，构建记录为 `outputs/preferences/app.json`。它新增工作偏好历史，包含协议 32 环境包，并保留导出接口与沙箱独立预加载修复。现用实例已在保留私有客户端导出、字节备份和停机磁盘备份后升级到协议 32；原有字段、文件、模型配置及凭据保留检查通过，两个独立屏幕的分别接管与交还已验证。升级记录位于 `outputs/activation32/`；共享示例登录复验和最终验收仍待收尾。本地临时签名已核对，公开发行签名、公证和回滚启动验证仍未完成。
+最新本地客户端位于 `outputs/preferences/desktop/daban.app`，功能验证记录为 `outputs/preferences/verification.json`，构建记录为 `outputs/preferences/app.json`。它新增工作偏好历史，包含协议 32 环境包，并保留导出接口与沙箱独立预加载修复。现用实例已在保留私有客户端导出、字节备份和停机磁盘备份后升级到协议 32；原有 26 个客户端字段、8 个 Bot、59 份共享文件和 573 份既有模型文件保留，模型配置与凭据元数据一致。实际客户端已验证两个独立屏幕的分别接管与交还、示例网站的一次登录共享及注销同步，以及未连接电脑的合成 Bot 通过真实 DeepSeek 工具保存偏好并留下历史；验收 Bot 已可恢复归档。升级记录为 `outputs/activation32/verification.json`。这些证据仅覆盖所列路径；原生附件输入、系统通知等其余验收、公开发行签名、公证和回滚启动验证仍未完成。
 
 仓库只保存源码、测试和项目文档。`outputs/`、本地计划、环境包、虚拟机磁盘、API Key 和用户工作区不随 Git 提交；克隆仓库不会自动获得本机已生成的环境镜像。下文的阶段记录保留其当时验证范围，以本段说明当前部署状态。
 
