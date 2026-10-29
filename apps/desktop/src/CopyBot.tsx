@@ -1,180 +1,14 @@
-import {
-  agentId,
-  type BotCopyRequest,
-  type BotProfile,
-  botCopyKey,
-  isBotCopyReceipt,
-  modelOptions,
-  recoveryBlocked,
-} from '@daban/protocol';
-import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
+import { agentId, type BotCopyRequest, type BotProfile, modelOptions } from '@daban/protocol';
+import { useState } from 'react';
+import { type CopyProps, copyName, useCopy } from './copies';
 import { Dialog } from './Dialog';
-import { runtimeError, useRuntime } from './Runtime';
-import { type Action, reduce, type State } from './state';
-import { serialize, storageKey } from './storage';
+import { useRuntime } from './Runtime';
 
-const rejected = new Set([
-  'INVALID_COMMAND',
-  'INVALID_BOT_COPY',
-  'RUNTIME_TOO_OLD',
-  'BOT_PROFILE_CONFLICT',
-  'BOT_ARCHIVED',
-  'BOT_PROFILE_NOT_FOUND',
-]);
-
-export function CopyBot({
-  state,
-  dispatch,
-  open,
-  bot,
-  close,
-  notify,
-}: {
-  state: State;
-  dispatch: Dispatch<Action>;
-  open: boolean;
-  bot?: string;
-  close: () => unknown;
-  notify: (message: string) => unknown;
-}) {
-  const runtime = useRuntime();
-  const pending = useRef(state.botCopy),
-    opened = useRef(open),
-    mounted = useRef(true);
-  const mutation = useRef<string | undefined>(undefined),
-    reader = useRef<string | undefined>(undefined);
-  const [working, setWorking] = useState(false),
-    [reading, setReading] = useState(false);
-  const [error, setError] = useState('');
-  pending.current = state.botCopy;
-  opened.current = open;
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const owns = useCallback(
-    (request: BotCopyRequest) =>
-      mounted.current && !!pending.current && botCopyKey(pending.current) === botCopyKey(request),
-    [],
-  );
-  const handle = useCallback(
-    (value: unknown, request: BotCopyRequest) => {
-      if (!owns(request)) return;
-      if (!isBotCopyReceipt(value) || botCopyKey(value.request) !== botCopyKey(request))
-        throw new Error('INVALID_BOT_COPY_ACK');
-      if (value.state !== 'complete') return;
-      // Retire synchronously: concurrent read/mutation replies must settle this operation only once.
-      pending.current = undefined;
-      mutation.current = undefined;
-      setWorking(false);
-      dispatch({ type: 'profiles', profiles: [value.profile] });
-      dispatch({ type: 'bot-copy-clear', request });
-      setError('');
-      if (opened.current) {
-        if (!value.profile.archived) dispatch({ type: 'select', bot: value.profile.id });
-        close();
-      }
-      notify(`已复制 ${value.profile.name}。`);
-    },
-    [owns, dispatch, close, notify],
-  );
-  const available =
-    runtime.enabled && runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion >= 34;
-  const check = useCallback(async () => {
-    const request = pending.current;
-    if (!request || reader.current || !available) return;
-    const key = botCopyKey(request);
-    reader.current = key;
-    setReading(true);
-    try {
-      handle(await runtime.command({ type: 'bot.copy.receipt', request }), request);
-    } catch (error) {
-      if (owns(request)) setError(runtimeError(error));
-    } finally {
-      if (reader.current === key) {
-        reader.current = undefined;
-        if (mounted.current) setReading(false);
-      }
-    }
-  }, [available, runtime.command, handle, owns]);
-  useEffect(() => {
-    if (!state.botCopy || !available) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    async function tick() {
-      await check();
-      if (live && pending.current)
-        timer = setTimeout(() => {
-          tick().catch(() => {
-            if (live) setError('暂时无法核对复制结果。');
-          });
-        }, 1000);
-    }
-    tick().catch(() => {
-      if (live) setError('暂时无法核对复制结果。');
-    });
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [state.botCopy, available, check]);
-  async function submit(input: BotCopyRequest) {
-    if (mutation.current || !available || recoveryBlocked(runtime.snapshot)) return;
-    if (pending.current && botCopyKey(pending.current) !== botCopyKey(input)) return;
-    const request = { ...input },
-      key = botCopyKey(request);
-    try {
-      // Persist before dispatching the effect; the normal workspace effect may not run before a crash.
-      localStorage.setItem(
-        storageKey,
-        serialize(reduce(state, { type: 'bot-copy-pending', request })),
-      );
-    } catch {
-      setError('本机无法保存复制请求。请先释放存储空间或导出工作区，再重试。');
-      return;
-    }
-    pending.current = request;
-    // A placeholder profile would be registered by useProfiles and occupy the copy's target ID.
-    dispatch({ type: 'bot-copy-pending', request });
-    mutation.current = key;
-    setWorking(true);
-    setError('');
-    try {
-      const value = await runtime.command({ type: 'bot.copy', request });
-      if (!isBotCopyReceipt(value) || value.state !== 'complete')
-        throw new Error('INVALID_BOT_COPY_ACK');
-      handle(value, request);
-    } catch (error) {
-      if (owns(request)) {
-        setError(runtimeError(error));
-        if (error instanceof Error && rejected.has(error.message)) {
-          pending.current = undefined;
-          dispatch({ type: 'bot-copy-clear', request });
-        }
-      }
-    } finally {
-      if (mutation.current === key) {
-        mutation.current = undefined;
-        if (mounted.current) setWorking(false);
-      }
-    }
-  }
-  if (!open) return null;
+export function CopyBot(props: CopyProps & { bot?: string }) {
+  const controls = useCopy('bot', props);
+  if (!props.open) return null;
   return (
-    <CopyEditor
-      bot={bot}
-      pending={state.botCopy}
-      available={available}
-      blocked={recoveryBlocked(runtime.snapshot)}
-      working={working}
-      reading={reading}
-      error={error}
-      submit={submit}
-      check={check}
-      close={close}
-    />
+    <CopyEditor bot={props.bot} pending={props.state.botCopy} {...controls} close={props.close} />
   );
 }
 
@@ -208,10 +42,7 @@ function CopyEditor({
     return profile && { ...profile };
   });
   const latest = runtime.snapshot.profiles.find((profile) => profile.id === (source?.id ?? id));
-  const [name, setName] = useState(
-    () =>
-      pending?.name ?? `${(latest?.name ?? '').slice(0, 27).replace(/[\uD800-\uDBFF]$/, '')} 副本`,
-  );
+  const [name, setName] = useState(() => pending?.name ?? copyName(latest?.name ?? ''));
   const [memory, setMemory] = useState(pending?.memory ?? true);
   const inactive =
     !source ||

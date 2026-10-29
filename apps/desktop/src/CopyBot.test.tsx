@@ -306,3 +306,28 @@ it('retains the source identity when a reconstructed request is rejected and the
   );
   expect(within(dialog).getByRole('button', { name: '载入最新来源' })).toBeEnabled();
 });
+
+it('keeps a previously submitted request when retry is refused by an older runtime command reader', async () => {
+  const fake = connect(34, true);
+  fake.copy.mockRejectedValueOnce(new Error('RUNTIME_TOO_OLD'));
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: 'Bot 复制 · 核对进度' }));
+  const dialog = screen.getByRole('dialog', { name: '复制 Bot' });
+  await userEvent.click(within(dialog).getByRole('button', { name: '重试同一次复制' }));
+  await waitFor(() =>
+    expect(within(dialog).getByRole('button', { name: '重试同一次复制' })).toBeEnabled(),
+  );
+  expect(restore(localStorage.getItem(storageKey)).botCopy).toEqual(request);
+});
+
+it('keeps first-attempt source rejection editable when no previous submission could have completed', async () => {
+  const fake = connect();
+  fake.copy.mockRejectedValueOnce(new Error('BOT_PROFILE_NOT_FOUND'));
+  render(<App />);
+  const dialog = await openCopy();
+  await userEvent.click(within(dialog).getByRole('button', { name: '创建副本' }));
+  await waitFor(() =>
+    expect(within(dialog).getByRole('textbox', { name: '新 Bot 名称' })).toBeVisible(),
+  );
+  expect(restore(localStorage.getItem(storageKey)).botCopy).toBeUndefined();
+});

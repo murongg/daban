@@ -43,6 +43,7 @@ import { ChatHistory } from './ChatHistory';
 import { Computer, type ComputerSurface } from './Computer';
 import { Conversation } from './Conversation';
 import { CopyBot } from './CopyBot';
+import { CopyGroup } from './CopyGroup';
 import { Create } from './Create';
 import { Desktop } from './Desktop';
 import { Dialog } from './Dialog';
@@ -87,6 +88,7 @@ type Modal =
   | { type: 'export'; bot: string }
   | { type: 'import' }
   | { type: 'copy'; bot?: string }
+  | { type: 'group-copy'; group?: string }
   | { type: 'create'; group: boolean }
   | { type: 'profile'; bot: string }
   | { type: 'archive'; bot: string }
@@ -471,6 +473,7 @@ function Workbench() {
         searchRef={search}
         onImport={() => setModal({ type: 'import' })}
         onCopy={(bot) => setModal({ type: 'copy', bot })}
+        onCopyGroup={(group) => setModal({ type: 'group-copy', group })}
         onCreate={(group) => {
           setSidebarOpen(false);
           setModal({ type: 'create', group: !!group });
@@ -768,6 +771,14 @@ function Workbench() {
             }}
           />
         ))}
+      <CopyGroup
+        state={state}
+        dispatch={dispatch}
+        open={modal?.type === 'group-copy'}
+        group={modal?.type === 'group-copy' ? modal.group : undefined}
+        close={closeModal}
+        notify={notify}
+      />
       <CopyBot
         state={state}
         dispatch={dispatch}

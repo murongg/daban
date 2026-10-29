@@ -115,6 +115,9 @@ export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
     INVALID_BOT_COPY: '复制参数无效，请重新核对名称和来源。',
+    INVALID_GROUP_COPY: '群聊复制参数无效，请重新核对名称和来源。',
+    INVALID_GROUP_COPY_ACK: '群聊复制回执不匹配，原请求仍保留，请核对结果。',
+    GROUP_COPY_CONFLICT: '复制目标与原请求不一致，请保留原请求并检查运行环境。',
     INVALID_BOT_COPY_ACK: '复制回执不匹配，原请求仍保留，请核对结果。',
     BOT_COPY_CONFLICT: '复制目标与原请求不一致，请保留原请求并检查运行环境。',
     INVALID_BOT_LIFECYCLE: 'Bot 操作无效，请重新核对目标与资料版本。',

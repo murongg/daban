@@ -12,7 +12,9 @@ import {
   type DeepSeekModel,
   type Group,
   type GroupActionRequest,
+  type GroupCopyRequest,
   type GroupSend,
+  groupCopyKey,
   isBotCopyRequest,
   isBotImportReference,
   isBotLifecycleRequest,
@@ -21,6 +23,7 @@ import {
   isChatState,
   isGroup,
   isGroupActionRequest,
+  isGroupCopyRequest,
   isKnowledgeDocument,
   isSkillDocument,
   type KnowledgeDocument,
@@ -174,6 +177,7 @@ export function routineDraft(): RoutineDraft {
 export interface State {
   organization: Organization;
   botCopy?: BotCopyRequest;
+  groupCopy?: GroupCopyRequest;
   botImport?: BotImportReference;
   lifecycleRequests: Record<string, BotLifecycleRequest | undefined>;
   skillDrafts: Record<string, SkillDraft | undefined>;
@@ -225,6 +229,7 @@ export function lifecycleRequest(
 export type Action =
   | OrganizationAction
   | { type: 'bot-copy-pending' | 'bot-copy-clear'; request: BotCopyRequest }
+  | { type: 'group-copy-pending' | 'group-copy-clear'; request: GroupCopyRequest }
   | { type: 'bot-import-pending'; reference: BotImportReference }
   | { type: 'bot-import-cancel' | 'bot-import-clear'; id: string; sha256: string }
   | { type: 'lifecycle-pending'; bot: string; request: BotLifecycleRequest }
@@ -367,6 +372,14 @@ export function reduce(state: State, action: Action): State {
     case 'chat-clear':
       return state.chatRequests[action.bot]?.id === action.id
         ? { ...state, chatRequests: { ...state.chatRequests, [action.bot]: undefined } }
+        : state;
+    case 'group-copy-pending':
+      return !state.groupCopy && isGroupCopyRequest(action.request)
+        ? { ...state, groupCopy: { ...action.request } }
+        : state;
+    case 'group-copy-clear':
+      return state.groupCopy && groupCopyKey(state.groupCopy) === groupCopyKey(action.request)
+        ? { ...state, groupCopy: undefined }
         : state;
     case 'bot-copy-pending':
       return !state.botCopy && isBotCopyRequest(action.request)

@@ -36,3 +36,35 @@ it('drops only damaged optional copy metadata, preserving other workspace data a
   expect(repaired.drafts.writer).toBe('MOCK-OTHER-DRAFT');
   expect(restore(serialize(repaired))).toEqual(repaired);
 });
+
+it('seals and restores a group copy independently of personal copy and preserves all drafts without a placeholder', () => {
+  const request = { id: 'mock-group-copy', group: 'crew', revision: 1, name: '合成群聊副本' };
+  let state = initialState();
+  state.drafts.crew = 'MOCK GROUP DRAFT';
+  state.botCopy = {
+    id: 'mock-personal-pending',
+    bot: 'a',
+    revision: 1,
+    name: '合成个人副本',
+    memory: true,
+  };
+  const before = structuredClone(state);
+  state = reduce(state, { type: 'group-copy-pending', request });
+  expect(state.groupCopy).toEqual(request);
+  expect(state.bots).toEqual(before.bots);
+  expect(state.drafts).toEqual(before.drafts);
+  expect(restore(serialize(state)).groupCopy).toEqual(request);
+  state = reduce(state, {
+    type: 'group-copy-clear',
+    request: { ...request, name: '合成不同请求' },
+  });
+  expect(state.groupCopy).toEqual(request);
+  state = reduce(state, { type: 'group-copy-clear', request });
+  expect(state.groupCopy).toBeUndefined();
+  expect(state.botCopy).toEqual(before.botCopy);
+  const raw = JSON.parse(serialize(before));
+  raw.state.groupCopy = { ...request, id: 'research' };
+  const repaired = restore(JSON.stringify(raw));
+  expect(repaired.groupCopy).toBeUndefined();
+  expect(repaired.drafts.crew).toBe('MOCK GROUP DRAFT');
+});

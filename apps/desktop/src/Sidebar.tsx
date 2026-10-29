@@ -40,6 +40,7 @@ export function Sidebar({
   onCreate,
   onImport,
   onCopy,
+  onCopyGroup,
   open,
   close,
 }: {
@@ -51,6 +52,7 @@ export function Sidebar({
   onCreate: (group?: boolean) => unknown;
   onImport?: () => unknown;
   onCopy?: (bot?: string) => unknown;
+  onCopyGroup?: (group?: string) => unknown;
   open: boolean;
   close: () => unknown;
 }) {
@@ -379,6 +381,11 @@ export function Sidebar({
           </nav>
         </div>
         <footer className="sidebar-footer">
+          {state.groupCopy && onCopyGroup && (
+            <button className="bundle-import-entry" type="button" onClick={() => onCopyGroup()}>
+              群聊复制 · 核对进度
+            </button>
+          )}
           {state.botCopy && onCopy && (
             <button className="bundle-import-entry" type="button" onClick={() => onCopy()}>
               Bot 复制 · 核对进度
@@ -434,6 +441,27 @@ export function Sidebar({
                   const pinned = organization.pins.includes(bot.id);
                   const unread = organization.attention.unread.includes(bot.id);
                   const items: SidebarEntry[] = [
+                    ...(bot.members && onCopyGroup
+                      ? [
+                          {
+                            id: 'copy-group',
+                            kind: 'action' as const,
+                            label: '复制群聊',
+                            icon: <Copy />,
+                            disabled:
+                              !!state.groupCopy ||
+                              !runtime.enabled ||
+                              runtime.snapshot.phase !== 'ready' ||
+                              runtime.snapshot.protocolVersion < 35 ||
+                              recoveryBlocked(runtime.snapshot) ||
+                              !!state.groupActions[bot.id] ||
+                              !runtime.snapshot.groups?.items.some(
+                                (group) => group.id === bot.id && !group.archived,
+                              ),
+                            onSelect: () => onCopyGroup(bot.id),
+                          },
+                        ]
+                      : []),
                     ...(!bot.members && onCopy
                       ? [
                           {

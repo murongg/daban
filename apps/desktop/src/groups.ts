@@ -19,7 +19,14 @@ export function useGroups(
     const known = runtime.snapshot.groups.items;
     dispatch({ type: 'groups', groups: known });
     for (const bot of state.bots) {
-      if (!bot.members || known.some((group) => group.id === bot.id)) continue;
+      // Confirmed copies may precede the next snapshot; they already own their backend identities.
+      if (
+        !bot.members ||
+        bot.archived ||
+        known.some((group) => group.id === bot.id) ||
+        state.groupRevisions[bot.id] > 0
+      )
+        continue;
       const input = { id: bot.id, name: bot.name, members: bot.members.map(agentId) };
       if (
         !input.members.every((id) =>
@@ -35,5 +42,13 @@ export function useGroups(
         .then((group) => dispatch({ type: 'groups', groups: [group] }))
         .catch((error) => notify(runtimeError(error)));
     }
-  }, [runtime.enabled, runtime.snapshot, runtime.command, state.bots, dispatch, notify]);
+  }, [
+    runtime.enabled,
+    runtime.snapshot,
+    runtime.command,
+    state.bots,
+    state.groupRevisions,
+    dispatch,
+    notify,
+  ]);
 }

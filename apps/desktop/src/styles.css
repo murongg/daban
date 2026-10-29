@@ -3530,6 +3530,11 @@ textarea.skill-source {
   padding: 10px 0;
   font-size: 13px;
 }
+.copy-members {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .bundle-progress {
   margin-bottom: 22px;
   border-bottom: 1px solid var(--line);

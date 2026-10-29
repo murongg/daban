@@ -7,6 +7,7 @@ import {
   isChatRequest,
   isDeepSeekModel,
   isGroupActionRequest,
+  isGroupCopyRequest,
   isGroupSend,
   isKnowledgeContent,
   isScheduleInput,
@@ -45,6 +46,7 @@ export function restore(raw: string | null): State {
     const s = saved.state;
     if (!isBotImportReference(s.botImport)) delete s.botImport;
     if (!isBotCopyRequest(s.botCopy)) delete s.botCopy;
+    if (!isGroupCopyRequest(s.groupCopy)) delete s.groupCopy;
     s.groupRevisions = {};
     if (!record(s.groupRequests)) s.groupRequests = {};
     s.groupRequests = Object.fromEntries(
