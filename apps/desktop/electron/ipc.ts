@@ -36,6 +36,8 @@ import {
   isTranscriptContentQuery,
   isTranscriptQuery,
   isUserReply,
+  isWorkQuery,
+  isWorkWrite,
   publicUrl,
   type RuntimeCommand,
   validAgentId,
@@ -72,6 +74,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
+    'work.list': ['type', 'query'],
+    'work.read': ['type', 'id'],
+    'work.write': ['type', 'request'],
+    'work.receipt': ['type', 'request'],
     'skill.list': ['type', 'bot', 'includeDeleted'],
     'skill.read': ['type', 'bot', 'id'],
     'skill.import': ['type', 'bot', 'content'],
@@ -218,6 +224,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
       return fail();
   }
   if (v.type === 'group.register' && !isGroupInput(v.group)) return fail();
+  if (v.type === 'work.list' && !isWorkQuery(v.query)) return fail();
+  if (v.type === 'work.read' && !validAgentId(v.id)) return fail();
+  if ((v.type === 'work.write' || v.type === 'work.receipt') && !isWorkWrite(v.request))
+    return fail();
   if (v.type === 'chat.new' && !isChatRequest(v.request)) return fail();
   if (v.type === 'transcript.list' && !isTranscriptQuery(v.query)) return fail();
   if (v.type === 'transcript.content' && !isTranscriptContentQuery(v.query)) return fail();

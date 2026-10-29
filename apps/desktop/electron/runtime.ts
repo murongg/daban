@@ -66,6 +66,10 @@ import {
   isTaskPlan,
   isTranscriptContent,
   isTranscriptPage,
+  isWorkItem,
+  isWorkList,
+  isWorkReceipt,
+  isWorkStatus,
   parseBotJSON,
   type RecoveryReceipt,
   type RecoveryRequest,
@@ -75,6 +79,8 @@ import {
   type RuntimeTask,
   sameTranscriptScope,
   validAgentId,
+  workKey,
+  workQueryKey,
 } from '@daban/protocol';
 import { isTaskReceipt } from '../receipt';
 
@@ -309,6 +315,7 @@ export class RuntimeClient {
         interactions?: unknown[];
         schedules?: { available?: unknown; items?: unknown[]; error?: unknown };
         knowledge?: { available?: unknown; revision?: unknown; error?: unknown };
+        work?: unknown;
         mode?: string;
         computerError?: unknown;
         sharedLogin?: boolean;
@@ -374,6 +381,11 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      // A broken optional work store must not turn an otherwise usable Agent into an offline client.
+      if (snapshot.protocolVersion >= 36)
+        snapshot.work = isWorkStatus(raw.work)
+          ? raw.work
+          : { available: false, error: 'INVALID_WORK_METADATA' };
       if (snapshot.protocolVersion >= 30)
         snapshot.notices = isRuntimeNoticeStatus(raw.notices)
           ? raw.notices
@@ -556,6 +568,41 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (
+      command.type === 'work.list' ||
+      command.type === 'work.read' ||
+      command.type === 'work.write' ||
+      command.type === 'work.receipt'
+    ) {
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 36) throw new Error('RUNTIME_TOO_OLD');
+      if (!state.work?.available) throw new Error(state.work?.error ?? 'WORK_UNAVAILABLE');
+      if (captured.type === 'work.list') {
+        const value = await this.api('/api/work/list', captured.query);
+        if (!isWorkList(value) || workQueryKey(value.query) !== workQueryKey(captured.query))
+          throw new Error('INVALID_WORK_PAGE');
+        return value;
+      }
+      if (captured.type === 'work.read') {
+        const value = await this.api('/api/work/read', { id: captured.id });
+        if (!isWorkItem(value) || value.id !== captured.id) throw new Error('INVALID_WORK_ITEM');
+        return value;
+      }
+      const value = await this.api(
+        captured.type === 'work.write' ? '/api/work/write' : '/api/work/receipt',
+        captured.request,
+      );
+      if (
+        !isWorkReceipt(value) ||
+        value.actor.kind !== 'human' ||
+        workKey(value.request, value.actor) !== workKey(captured.request, { kind: 'human' }) ||
+        (captured.type === 'work.write' && value.state !== 'complete')
+      )
+        throw new Error('INVALID_WORK_ACK');
+      return value;
+    }
     if (command.type === 'group.copy' || command.type === 'group.copy.receipt') {
       // Capture the source and intent before status can yield to another editor or connection update.
       const request = structuredClone(command.request);

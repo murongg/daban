@@ -1,4 +1,4 @@
-export const managedProtocol = 35;
+export const managedProtocol = 36;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1282,6 +1282,7 @@ export interface SetupStatus {
   error?: string;
 }
 export interface RuntimeSnapshot {
+  work?: WorkStatus;
   notices?: RuntimeNoticeStatus;
   chats?: ChatStatus;
   setup?: SetupStatus;
@@ -1342,6 +1343,9 @@ export function recoveryReader(command: RuntimeCommand) {
     'bot.receipt',
     'bot.copy.receipt',
     'group.copy.receipt',
+    'work.list',
+    'work.read',
+    'work.receipt',
     'chat.receipt',
     'chat.history',
     'transcript.list',
@@ -1423,6 +1427,18 @@ export interface WorkPage {
   revision: number;
   nextBefore?: number;
 }
+export interface WorkList {
+  query: WorkQuery;
+  page: WorkPage;
+}
+export type WorkStatus =
+  | { available: true; revision: number; count: number; error?: never }
+  | {
+      available: false;
+      error: 'WORK_CLOSED' | 'WORK_CORRUPT' | 'WORK_UNAVAILABLE' | 'INVALID_WORK_METADATA';
+      revision?: never;
+      count?: never;
+    };
 export interface WorkAck {
   state: 'complete';
   request: WorkWrite;
@@ -1558,6 +1574,95 @@ export function isWorkItem(value: unknown): value is WorkItem {
     isWorkAuthor(value.createdBy) &&
     isWorkAuthor(value.updatedBy) &&
     (value.status === 'done' ? workTime(value.completedAt) : value.completedAt === undefined)
+  );
+}
+export function workQueryKey(query: WorkQuery) {
+  return JSON.stringify([
+    query.filter ?? 'all',
+    query.text ?? '',
+    query.before ?? null,
+    query.limit ?? 50,
+  ]);
+}
+export function isWorkStatus(value: unknown): value is WorkStatus {
+  if (!workObject(value)) return false;
+  if (value.available === false)
+    return (
+      Object.keys(value).every((key) => ['available', 'error'].includes(key)) &&
+      typeof value.error === 'string' &&
+      ['WORK_CLOSED', 'WORK_CORRUPT', 'WORK_UNAVAILABLE', 'INVALID_WORK_METADATA'].includes(
+        value.error,
+      )
+    );
+  return (
+    value.available === true &&
+    Object.keys(value).every((key) => ['available', 'revision', 'count'].includes(key)) &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 0 &&
+    Number(value.revision) <= 10000 &&
+    Number.isSafeInteger(value.count) &&
+    Number(value.count) >= 0 &&
+    Number(value.count) <= 1000
+  );
+}
+export function isWorkPage(value: unknown): value is WorkPage {
+  if (
+    !workObject(value) ||
+    Object.keys(value).some((key) => !['items', 'revision', 'nextBefore'].includes(key)) ||
+    !Number.isSafeInteger(value.revision) ||
+    Number(value.revision) < 0 ||
+    !Array.isArray(value.items) ||
+    value.items.length > 50
+  )
+    return false;
+  const ids = new Set<string>();
+  for (const row of value.items) {
+    if (
+      !workObject(row) ||
+      Object.hasOwn(row, 'description') ||
+      typeof row.progressTruncated !== 'boolean'
+    )
+      return false;
+    const { progressTruncated, ...item } = row;
+    if (
+      !isWorkItem({ ...item, description: '' }) ||
+      typeof item.id !== 'string' ||
+      typeof item.progress !== 'string' ||
+      ids.has(item.id) ||
+      Array.from(item.progress).length > 200 ||
+      (progressTruncated && Array.from(item.progress).length !== 200) ||
+      Number(item.revision) > Number(value.revision)
+    )
+      return false;
+    ids.add(item.id);
+  }
+  return (
+    value.nextBefore === undefined ||
+    (value.items.length > 0 &&
+      Number.isSafeInteger(value.nextBefore) &&
+      Number(value.nextBefore) > 0)
+  );
+}
+export function isWorkList(value: unknown): value is WorkList {
+  if (
+    !workObject(value) ||
+    Object.keys(value).some((key) => !['query', 'page'].includes(key)) ||
+    !isWorkQuery(value.query) ||
+    !isWorkPage(value.page)
+  )
+    return false;
+  const { query, page } = value;
+  return (
+    page.items.length <= (query.limit ?? 50) &&
+    (page.nextBefore === undefined ||
+      query.before === undefined ||
+      page.nextBefore < query.before) &&
+    page.items.every(
+      (item) =>
+        item.deleted === (query.filter === 'trash') &&
+        (query.filter !== 'open' || item.status !== 'done') &&
+        (query.filter !== 'done' || item.status === 'done'),
+    )
   );
 }
 export function isWorkReceipt(value: unknown): value is WorkReceipt {
@@ -3533,6 +3638,9 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | { type: 'work.list'; query: WorkQuery }
+  | { type: 'work.read'; id: string }
+  | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }

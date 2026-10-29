@@ -33,6 +33,8 @@ import {
   isTranscriptContentQuery,
   isTranscriptQuery,
   isUserReply,
+  isWorkQuery,
+  isWorkWrite,
   managedProtocol,
   parseBotJSON,
   type RuntimeNoticeStatus,
@@ -88,6 +90,9 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/work/list',
+  '/api/work/read',
+  '/api/work/receipt',
   '/api/computers/receipt',
   '/api/files/read',
   '/api/files/download',
@@ -294,7 +299,7 @@ export async function startPrototype({
       if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
         throw new Fault('FOREIGN_ORIGIN', 403);
       const url = new URL(req.url || '/', origin);
-      const modernGroups = ['28', '29', '30', '31', '32', '33', '34', '35'].includes(
+      const modernGroups = ['28', '29', '30', '31', '32', '33', '34', '35', '36'].includes(
         String(req.headers['x-daban-client-protocol']),
       );
       const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
@@ -401,6 +406,28 @@ export async function startPrototype({
             throw new Fault('RUNTIME_RECOVERY_PENDING');
           }
           releaseMutation = recovery.enter();
+        }
+        if (url.pathname.startsWith('/api/work/')) {
+          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+          if (url.search) throw new Fault('INVALID_WORK_REQUEST', 400);
+          if (!models) throw new Fault('WORK_UNAVAILABLE', 503);
+          const data = await body(req);
+          if (url.pathname === '/api/work/list' && isWorkQuery(data))
+            return json(res, { query: data, page: await models.work.list(data) });
+          if (
+            url.pathname === '/api/work/read' &&
+            validAgentId(data.id) &&
+            Object.keys(data).every((key) => key === 'id')
+          )
+            return json(res, await models.work.get(data.id));
+          // The authenticated human channel cannot claim a Bot's identity or supply provenance fields.
+          if (isWorkWrite(data)) {
+            if (url.pathname === '/api/work/write')
+              return json(res, await models.work.write(data, { kind: 'human' }));
+            if (url.pathname === '/api/work/receipt')
+              return json(res, await models.work.receipt(data, { kind: 'human' }));
+          }
+          throw new Fault('INVALID_WORK_REQUEST', 400);
         }
         if (url.pathname.startsWith('/api/bundles/')) {
           if (!models) throw new Fault('STARTING', 503);
@@ -905,6 +932,9 @@ export async function startPrototype({
               : { available: false, error: 'SKILLS_UNAVAILABLE' },
             ...(runtime instanceof Computers ? { computers: runtime.status() } : {}),
             groups: await groupStatus(groups, modernGroups),
+            work: models
+              ? await models.work.status()
+              : { available: false, error: 'WORK_UNAVAILABLE' },
             knowledge: models ? await models.knowledge.status() : { available: false },
             profiles: models ? await models.profiles.list() : [],
             interactions: models ? await models.interactions.list() : [],

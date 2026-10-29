@@ -69,6 +69,7 @@ import {
   type TranscriptEvent,
   Transcripts,
 } from './transcripts.js';
+import { Work } from './work.js';
 import { type WorkspaceDirectory, WorkspaceFiles } from './workspace.js';
 
 const sdkFile = '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
@@ -406,6 +407,7 @@ export class ModelRuns {
   readonly journal: TaskJournal;
   readonly transcripts: Transcripts;
   readonly knowledge: Knowledge;
+  readonly work: Work;
   readonly attachments: Attachments;
   readonly profiles: BotProfiles;
   readonly chats: Chats;
@@ -445,6 +447,7 @@ export class ModelRuns {
     this.transcripts = new Transcripts(path.join(dir, 'transcripts.sqlite'));
     this.tools.history = new HistoryTools(this.journal);
     this.knowledge = new Knowledge(path.join(dir, 'knowledge.sqlite'));
+    this.work = new Work(path.join(dir, 'work.sqlite'));
     this.attachments = new Attachments(path.join(dir, 'attachments.sqlite'));
     this.tools.knowledge = new KnowledgeTools(this.knowledge, (run, name, content) =>
       this.tools.writeText(run, name, content, true),
@@ -1566,36 +1569,31 @@ export class ModelRuns {
     return { jsonrpc: '2.0', id: rpc.id, result };
   }
   async close() {
+    let failure: unknown;
     try {
       await this.ready;
       await this.bundles.close();
       await Promise.all([...this.jobs.keys()].map((bot) => this.stop(bot, 'shutdown')));
-    } finally {
+    } catch (error) {
+      failure = error;
+    }
+    // Each store must close even when another owner fails, including unavailable optional services.
+    for (const owner of [
+      this.tools.integrations,
+      this.work,
+      this.attachments,
+      this.knowledge,
+      this.skills,
+      this.integrations,
+      this.transcripts,
+      this.chats,
+    ]) {
       try {
-        await this.tools.integrations?.close();
-      } finally {
-        try {
-          await this.attachments.close();
-        } finally {
-          try {
-            await this.knowledge.close();
-          } finally {
-            try {
-              await this.skills.close();
-            } finally {
-              try {
-                await this.integrations.close();
-              } finally {
-                try {
-                  await this.transcripts.close();
-                } finally {
-                  await this.chats.close();
-                }
-              }
-            }
-          }
-        }
+        await owner?.close();
+      } catch (error) {
+        failure ||= error;
       }
     }
+    if (failure) throw failure;
   }
 }

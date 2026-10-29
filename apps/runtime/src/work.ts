@@ -14,6 +14,7 @@ import {
   type WorkItem,
   type WorkPage,
   type WorkReceipt,
+  type WorkStatus,
   type WorkWrite,
   workKey,
 } from '@daban/protocol';
@@ -179,7 +180,7 @@ export class Work {
   get(id: string) {
     return this.exclusive(() => this.find(id));
   }
-  async status() {
+  async status(): Promise<WorkStatus> {
     try {
       await this.ready;
       if (this.closed) return { available: false, error: 'WORK_CLOSED' };
