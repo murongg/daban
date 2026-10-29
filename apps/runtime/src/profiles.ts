@@ -2,8 +2,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  type BotCopyAck,
+  type BotCopyReceipt,
+  type BotCopyRequest,
   type BotLifecycleRequest,
   type BotProfile,
+  isBotCopyRequest,
   isBotLifecycleRequest,
   isBotProfile,
   isBotProfileInput,
@@ -312,6 +316,71 @@ export class BotProfiles {
     await this.ready;
     // A readable current profile still needs repair when its history blocks future writes.
     return { available: true, corrupt: this.corrupt.size + this.damagedHistory.size };
+  }
+  private copyOrigin(request: BotCopyRequest): ImportOrigin {
+    return {
+      id: request.id,
+      sha256: createHash('sha256')
+        .update(
+          JSON.stringify([
+            'daban.profile-copy.v1',
+            request.id,
+            request.bot,
+            request.revision,
+            request.name,
+            request.memory,
+          ]),
+        )
+        .digest('hex'),
+    };
+  }
+  private copied(request: BotCopyRequest) {
+    if (this.corrupt.has(request.id)) throw new Fault('BOT_PROFILE_CORRUPT');
+    const current = this.records.get(request.id);
+    if (!current) return undefined;
+    const expected = this.copyOrigin(request),
+      actual = this.origins.get(request.id);
+    if (actual?.id !== expected.id || actual.sha256 !== expected.sha256)
+      throw new Fault('BOT_COPY_CONFLICT');
+    return structuredClone(current);
+  }
+  async copyReceipt(input: unknown): Promise<BotCopyReceipt> {
+    if (!isBotCopyRequest(input)) throw new Fault('INVALID_BOT_COPY', 400);
+    const request = structuredClone(input);
+    await this.ready;
+    await this.writing;
+    const profile = this.copied(request);
+    return profile ? { request, state: 'complete', profile } : { request, state: 'unknown' };
+  }
+  async copy(input: unknown): Promise<BotCopyAck> {
+    if (!isBotCopyRequest(input)) throw new Fault('INVALID_BOT_COPY', 400);
+    const request = structuredClone(input);
+    const profile = await this.mutate(async () => {
+      // Resolve an accepted request before source checks; later edits or archives must not replay creation.
+      const previous = this.copied(request);
+      if (previous) return previous;
+      this.assertActive(request.bot);
+      const source = this.required(request.bot);
+      if (source.revision !== request.revision) throw new Fault('BOT_PROFILE_CONFLICT');
+      if (this.records.size >= 2000) throw new Fault('BOT_LIMIT');
+      const now = new Date().toISOString();
+      return this.commit(
+        {
+          id: request.id,
+          name: request.name.trim(),
+          instructions: source.instructions,
+          memory: request.memory ? source.memory : '',
+          color: source.color,
+          ...(source.model === undefined ? {} : { model: source.model }),
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+        undefined,
+        this.copyOrigin(request),
+      );
+    });
+    return { request, state: 'complete', profile };
   }
   async imported(id: string, origin: ImportOrigin) {
     if (!validAgentId(id) || !importOrigin(origin)) throw new Fault('INVALID_BOT_IMPORT', 400);

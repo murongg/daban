@@ -1841,6 +1841,19 @@ export interface BotLifecycleAck {
 export type BotProfilePatch = Partial<Omit<BotProfileInput, 'id' | 'model'>> & {
   model?: DeepSeekModel | null;
 };
+export interface BotCopyRequest {
+  id: string;
+  bot: string;
+  revision: number;
+  name: string;
+  memory: boolean;
+}
+export interface BotCopyAck {
+  request: BotCopyRequest;
+  state: 'complete';
+  profile: BotProfile;
+}
+export type BotCopyReceipt = BotCopyAck | { request: BotCopyRequest; state: 'unknown' };
 export interface MemoryVersion {
   revision: number;
   content: string;
@@ -2044,6 +2057,32 @@ export function isBotProfile(value: unknown): value is BotProfile {
     (value.archived === undefined || typeof value.archived === 'boolean') &&
     profileLifecycle(value)
   );
+}
+export function isBotCopyRequest(value: unknown): value is BotCopyRequest {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) => ['id', 'bot', 'revision', 'name', 'memory'].includes(key)) &&
+    validAgentId(value.id) &&
+    validAgentId(value.bot) &&
+    value.id !== value.bot &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 1 &&
+    boundedText(value.name, 30) &&
+    typeof value.memory === 'boolean'
+  );
+}
+export function isBotCopyReceipt(value: unknown): value is BotCopyReceipt {
+  if (
+    !profileObject(value) ||
+    !Object.keys(value).every((key) => ['request', 'state', 'profile'].includes(key)) ||
+    !isBotCopyRequest(value.request)
+  )
+    return false;
+  return value.state === 'unknown'
+    ? !Object.hasOwn(value, 'profile')
+    : value.state === 'complete' &&
+        isBotProfile(value.profile) &&
+        value.profile.id === value.request.id;
 }
 function profileLifecycle(value: Record<string, unknown>) {
   const lifecycle = value.lifecycle;
