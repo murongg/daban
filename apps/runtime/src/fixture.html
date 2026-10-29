@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>示例工作台 · Bot __BOT__</title>
+    <link rel="stylesheet" href="/fixture/style.css">
+    <script type="module" src="/fixture/app.js"></script>
+  </head>
+  <body>
+    <header>
+      <span class="mark">示</span><strong>示例工作台</strong
+      ><span class="synthetic">本地模拟网站</span
+      ><span class="identity" id="identity">正在读取会话</span>
+    </header>
+    <main>
+      <div class="intro">
+        <h1>Bot __BOT__ 的页面</h1>
+        <p>登录会话共享，当前页面的操作与笔记独立。</p>
+      </div>
+      <section class="account">
+        <div>
+          <h2>团队账户</h2>
+          <p id="account-description">读取浏览器登录状态…</p>
+        </div>
+        <button type="button" id="login" disabled>登录示例账户</button
+        ><button type="button" id="logout" hidden>退出登录</button>
+      </section>
+      <section class="workspace">
+        <div>
+          <h2>页面计数器</h2>
+          <p>每次真实点击只增加当前页的计数。</p>
+        </div>
+        <div class="counter">
+          <output id="count">0</output
+          ><button type="button" id="increment" disabled>增加一次</button>
+        </div>
+      </section>
+      <label class="note-label" for="note">当前页笔记</label>
+      <input
+        id="note"
+        placeholder="接管后点击这里，试着输入文字"
+        autocomplete="off"
+        maxlength="2000"
+      >
+      <footer>Bot __BOT__ · 同一个浏览器会话中的独立页面</footer>
+    </main>
+  </body>
+</html>

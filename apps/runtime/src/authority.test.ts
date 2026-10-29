@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import { chmod, link, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { Authority, ViewerGrants } from './authority.js';
+
+test('control capability publication refuses public files, links and foreign ownership safeguards', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-authority-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'model/control-token');
+  const authority = new Authority(file);
+  await authority.publish();
+  assert.match(authority.token, /^[a-f0-9]{64}$/);
+  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  assert.equal((await stat(path.dirname(file))).mode & 0o777, 0o700);
+  assert.equal((await readFile(file, 'utf8')).trim(), authority.token);
+  const second = new Authority(file);
+  await second.publish();
+  assert.notEqual(second.token, authority.token);
+  await chmod(file, 0o644);
+  await assert.rejects(new Authority(file).publish(), { code: 'CONTROL_AUTH_UNSAFE' });
+  await rm(file);
+  const other = path.join(root, 'synthetic-private');
+  await writeFile(other, 'SYNTHETIC-KEEP-47', { mode: 0o600 });
+  await symlink(other, file);
+  await assert.rejects(new Authority(file).publish());
+  assert.equal(await readFile(other, 'utf8'), 'SYNTHETIC-KEEP-47');
+  await rm(file);
+  await link(other, file);
+  await assert.rejects(new Authority(file).publish(), { code: 'CONTROL_AUTH_UNSAFE' });
+  assert.equal(await readFile(other, 'utf8'), 'SYNTHETIC-KEEP-47');
+});
+test('viewer grants are scoped to one Bot and screen instance and retire before slot reuse', () => {
+  const grants = new ViewerGrants();
+  const a = grants.issue('mock-a', 'mock-screen-a');
+  const b = grants.issue('mock-b', 'mock-screen-b');
+  assert.equal(grants.instance(a, 'mock-a'), 'mock-screen-a');
+  assert.equal(grants.instance(a, 'mock-b'), undefined);
+  assert.equal(grants.instance('SYNTHETIC-UNKNOWN', 'mock-a'), undefined);
+  grants.retire('mock-a', 'mock-screen-a');
+  const replacement = grants.issue('mock-a', 'mock-screen-new');
+  assert.equal(grants.instance(a, 'mock-a'), undefined);
+  assert.notEqual(replacement, a);
+  assert.equal(grants.instance(b, 'mock-b'), 'mock-screen-b');
+});

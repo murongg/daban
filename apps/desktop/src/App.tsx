@@ -1,0 +1,933 @@
+import {
+  type AttachmentReceipt,
+  agentId,
+  agentTask,
+  type BotProfile,
+  type BotProfileInput,
+  computerTarget,
+  type DocumentOriginal,
+  type Group,
+  imageMime,
+  isDeepSeekModel,
+  modelHasVision,
+  type RuntimeDownload,
+  type RuntimeFile,
+  type RuntimeTaskSummary,
+  recoveryBlocked,
+  type TaskRequest,
+} from '@daban/protocol';
+import {
+  Archive as ArchiveIcon,
+  BookOpen,
+  Brain,
+  Check,
+  Clock3,
+  Download,
+  Folder,
+  History,
+  Info,
+  Menu,
+  MessageSquarePlus,
+  Monitor,
+  Moon,
+  Pencil,
+  Sun,
+} from 'lucide-react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { isTaskReceipt } from '../receipt';
+import { Archive } from './Archive';
+import { Avatar } from './Avatar';
+import { IconButton } from './Button';
+import { ChatHistory } from './ChatHistory';
+import { Computer, type ComputerSurface } from './Computer';
+import { Conversation } from './Conversation';
+import { Create } from './Create';
+import { Desktop } from './Desktop';
+import { Dialog } from './Dialog';
+import { ExportBot } from './ExportBot';
+import { download, downloadBlob, taskFile } from './files';
+import { GroupArchive } from './GroupArchive';
+import { GroupChat } from './GroupChat';
+import { GroupEditor } from './GroupEditor';
+import { useGroups } from './groups';
+import { ImagePreview } from './ImagePreview';
+import { ImportBot } from './ImportBot';
+import { Inbox } from './Inbox';
+import { NewChat } from './NewChat';
+import { useNotices } from './notices';
+import { Profile } from './Profile';
+import { profileInput, useProfiles } from './profiles';
+import { Recovery, RecoveryNotice } from './Recovery';
+import { RuntimeProvider, runtimeError, useRuntime } from './Runtime';
+import { Settings } from './Settings';
+import { Setup } from './Setup';
+import { Sidebar } from './Sidebar';
+import {
+  chatRevision,
+  initialState,
+  lifecycleRequest,
+  type Panel,
+  reduce,
+  type WorkspaceFile,
+} from './state';
+import { restore, serialize, storageKey } from './storage';
+import { Workspace } from './Workspace';
+
+type Modal =
+  | { type: 'chat'; bot: string }
+  | {
+      type: 'chat-history';
+      bot: string;
+      initialRevision?: number;
+      runId?: string;
+      includeCurrent?: boolean;
+    }
+  | { type: 'export'; bot: string }
+  | { type: 'import' }
+  | { type: 'create'; group: boolean }
+  | { type: 'profile'; bot: string }
+  | { type: 'archive'; bot: string }
+  | { type: 'recovery' }
+  | { type: 'group'; bot: string }
+  | { type: 'file'; file: WorkspaceFile }
+  | { type: 'computer'; bot: string; surface?: ComputerSurface }
+  | null;
+function load() {
+  try {
+    const state = restore(localStorage.getItem(storageKey));
+    return window.innerWidth < 1080 ? { ...state, panel: null } : state;
+  } catch {
+    return initialState();
+  }
+}
+export function App() {
+  return (
+    <RuntimeProvider>
+      <Entry />
+    </RuntimeProvider>
+  );
+}
+function Entry() {
+  const runtime = useRuntime();
+  return runtime.enabled && runtime.snapshot.setup?.required ? <Setup /> : <Workbench />;
+}
+function Workbench() {
+  const runtime = useRuntime();
+  const submitting = useRef(new Set<string>());
+  const [state, dispatch] = useReducer(reduce, undefined, load);
+  const [query, setQuery] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [modal, setModal] = useState<Modal>(null);
+  const [toast, setToast] = useState('');
+  const [inboxFocus, setInboxFocus] = useState<string>();
+  const search = useRef<HTMLInputElement>(null);
+  const storageFailed = useRef(false);
+  const ingested = useRef(new Map<string, string>());
+  const notify = useCallback((text: string) => setToast(text), []);
+  const closeModal = useCallback(() => setModal(null), []);
+  const preview = useCallback((file: WorkspaceFile) => setModal({ type: 'file', file }), []);
+  useNotices((activation) => {
+    if (modal) return false;
+    const target = activation.target;
+    if (target.kind === 'settings') {
+      dispatch({ type: 'view', view: 'settings' });
+      return true;
+    }
+    if (runtime.snapshot.phase !== 'ready') return false;
+    if (target.kind === 'question' || target.kind === 'approval') {
+      setInboxFocus(target.id);
+      dispatch({ type: 'view', view: 'inbox' });
+      return true;
+    }
+    if (target.kind === 'group') {
+      if (!runtime.snapshot.groups?.items.some((group) => group.id === target.group)) {
+        notify('提醒对应的群聊暂不可读取，未切换到其他对话。');
+        return true;
+      }
+      const group = state.bots.find((bot) => bot.id === target.group && !!bot.members);
+      if (!group) return false;
+      setQuery('');
+      dispatch({ type: 'select', bot: group.id });
+      return true;
+    }
+    if (!runtime.snapshot.profiles.some((profile) => profile.id === target.bot)) {
+      notify('提醒对应的 Bot 不在当前环境，未切换到其他对话。');
+      return true;
+    }
+    const targetBot = state.bots.find((bot) => !bot.members && agentId(bot.id) === target.bot);
+    if (!targetBot) return false;
+    if (target.chatRevision > chatRevision(state, targetBot.id, runtime.snapshot.chats)) {
+      notify('提醒对应的对话状态已变化，请在历史记录中核对。');
+      return true;
+    }
+    setQuery('');
+    dispatch({ type: 'select', bot: targetBot.id });
+    setModal({
+      type: 'chat-history',
+      bot: targetBot.id,
+      initialRevision: target.chatRevision,
+      runId: target.id,
+      includeCurrent: true,
+    });
+    return true;
+  }, notify);
+  useProfiles(state, dispatch, notify);
+  useGroups(state, dispatch, notify);
+  const bot = state.bots.find((b) => b.id === state.selected)!;
+  const target = computerTarget(runtime.snapshot, bot.id);
+  const computer = target ? runtime.snapshot.bots[target] : undefined;
+  const task = agentTask(runtime.snapshot, bot.id);
+  const pendingLifecycle = lifecycleRequest(
+    state,
+    bot.id,
+    runtime.snapshot.profiles.find((profile) => profile.id === agentId(bot.id)),
+  );
+  const pendingGroup = state.groupActions[bot.id];
+  const historyOnly = !!bot.archived || !!pendingLifecycle || !!pendingGroup;
+  const chatVersion = chatRevision(state, bot.id, runtime.snapshot.chats);
+  useEffect(() => {
+    if (runtime.snapshot.chats?.available)
+      dispatch({ type: 'chats', items: runtime.snapshot.chats.items });
+  }, [runtime.snapshot.chats]);
+  let subtitle = bot.role || '你的 AI 工作伙伴';
+  if (runtime.enabled && !bot.members) {
+    subtitle =
+      computer?.owner === 'human'
+        ? '你正在接管 · 等待交还'
+        : task?.running
+          ? task.conversationId
+            ? '正在群聊中处理任务'
+            : '正在处理你的消息'
+          : computer
+            ? '通用 Agent · 电脑已连接'
+            : '通用 Agent';
+  } else if (!runtime.enabled && state.controls[bot.id] === 'human')
+    subtitle = '你正在接管 · 等待交还';
+  if (pendingGroup) subtitle = '群聊操作待核对';
+  else if (state.chatRequests[bot.id]) subtitle = '对话操作待核对';
+  else if (pendingLifecycle) subtitle = 'Bot 操作待核对';
+  else if (bot.archived) subtitle = '已归档 · 历史只读';
+  useEffect(() => {
+    if (!runtime.enabled || runtime.snapshot.phase !== 'ready') {
+      ingested.current.clear();
+      return;
+    }
+    for (const entry of state.bots) {
+      if (entry.members) continue;
+      const botId = entry.id;
+      const task = agentTask(runtime.snapshot, botId);
+      if (!task) continue;
+      const records: RuntimeTaskSummary[] = task.history.filter((record) => !record.conversationId);
+      if (!task.conversationId && task.runId && task.requestId)
+        records.push({
+          chatRevision: task.chatRevision,
+          runId: task.runId,
+          requestId: task.requestId,
+          prompt: task.prompt,
+          phase: task.phase,
+          result: task.result,
+          error: task.error,
+          files: task.files,
+          response: ['failed', 'stopped', 'interrupted'].includes(task.phase)
+            ? task.response
+            : undefined,
+        });
+      for (const record of records) {
+        const key = `${botId}/${record.runId}`;
+        const response = ['failed', 'stopped', 'interrupted'].includes(record.phase)
+          ? record.response
+          : undefined;
+        const signature = JSON.stringify([
+          record.chatRevision,
+          record.requestId,
+          record.prompt,
+          record.phase,
+          record.result,
+          record.error,
+          (record.files || []).map((file) => [file.path, file.name, file.size, file.modified]),
+          response && [response.revision, response.state, response.text],
+        ]);
+        // Streaming changes are rendered directly; unchanged history must not replay through the reducer on every frame.
+        if (
+          ingested.current.get(key) === signature &&
+          state.runtimeRequests[botId]?.requestId !== record.requestId
+        )
+          continue;
+        ingested.current.set(key, signature);
+        dispatch({ type: 'runtime-task', bot: botId, task: record });
+      }
+    }
+  }, [runtime.enabled, runtime.snapshot, state.bots, state.runtimeRequests]);
+  async function runTask(botId: string, continued?: TaskRequest) {
+    if (recoveryBlocked(runtime.snapshot)) {
+      notify('运行环境恢复待核对，新任务暂缓，草稿会保留。');
+      return;
+    }
+    if (
+      state.bots.find((entry) => entry.id === botId)?.archived ||
+      state.chatRequests[botId] ||
+      lifecycleRequest(state, botId)
+    ) {
+      notify('先恢复 Bot 或核对操作结果，再发送新任务。');
+      return;
+    }
+    if (state.attachmentUploads[botId]) {
+      notify('请等待附件准备完成后发送。');
+      return;
+    }
+    const target = agentId(botId);
+    if (state.bots.find((entry) => entry.id === botId)?.members) {
+      notify('请在群聊窗口选择接收成员后发送。');
+      return;
+    }
+    if (submitting.current.has(botId)) return;
+    const text = state.drafts[botId].trim();
+    const attached = state.attachments[botId]
+      .map((id) => state.files.find((f) => f.id === id))
+      .filter((f): f is WorkspaceFile => !!f);
+    const task: TaskRequest = state.runtimeRequests[botId] ||
+      continued || {
+        ...(runtime.snapshot.protocolVersion >= 29
+          ? { chatRevision: chatRevision(state, botId, runtime.snapshot.chats) }
+          : {}),
+        requestId: crypto.randomUUID(),
+        prompt: text || '请查看这些文件，并完成我交代的任务。',
+        ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
+        files: attached.map(taskFile),
+      };
+    if (!task.prompt.trim()) return;
+    // An uncertain send keeps its captured request; next-task model edits cannot change receipt reconciliation.
+    if (
+      !continued &&
+      !state.runtimeRequests[botId] &&
+      attached.some((file) => imageMime(file.upload?.name || file.name))
+    ) {
+      const model =
+        state.bots.find((entry) => entry.id === botId)?.model || runtime.snapshot.model.model;
+      if (!isDeepSeekModel(model) || !modelHasVision(model)) {
+        notify('当前模型不支持图片，请切换为 Flash 后发送；文字和附件已保留。');
+        return;
+      }
+    }
+    submitting.current.add(botId);
+    dispatch({ type: 'runtime-pending', bot: botId, task });
+    try {
+      if (runtime.snapshot.protocolVersion >= 3) {
+        const entry = state.bots.find((bot) => bot.id === botId);
+        if (entry)
+          await runtime.command({
+            type: 'bot.register',
+            profile: profileInput(entry, state.memories[botId]),
+          });
+      }
+      const receipt = await runtime.command({ type: 'task.start', bot: target, task });
+      if (runtime.snapshot.protocolVersion >= 29) {
+        if (
+          !isTaskReceipt(receipt) ||
+          receipt.requestId !== task.requestId ||
+          receipt.prompt !== task.prompt ||
+          (receipt.chatRevision ?? 0) !== (task.chatRevision ?? 0)
+        )
+          throw new Error('INVALID_TASK_ACK');
+        dispatch({ type: 'runtime-task', bot: botId, task: receipt });
+      }
+    } catch (error) {
+      // Only a definite rejection is editable; an ambiguous network result retains the ID to prevent replay.
+      if (
+        error instanceof Error &&
+        [
+          'INVALID_TASK',
+          'CHAT_CONFLICT',
+          'CHAT_REVISION_REQUIRED',
+          'INVALID_COMMAND',
+          'INVALID_RETRY',
+          'RETRY_NOT_FOUND',
+          'MODEL_NOT_CONFIGURED',
+          'MODEL_ALREADY_RUNNING',
+          'DSH_NOT_INSTALLED',
+          'INVALID_BOT_PROFILE',
+          'BOT_PROFILE_CONFLICT',
+          'BOT_PROFILE_CORRUPT',
+          'ATTACHMENT_NOT_FOUND',
+          'ATTACHMENT_TRASHED',
+          'ATTACHMENT_CORRUPT',
+          'INVALID_ATTACHMENT',
+          'MODEL_IMAGE_UNSUPPORTED',
+          'RUNTIME_TOO_OLD',
+        ].includes(error.message)
+      )
+        dispatch({ type: 'runtime-clear', bot: botId });
+      notify(runtimeError(error));
+    } finally {
+      submitting.current.delete(botId);
+    }
+  }
+  async function continueTask(botId: string) {
+    const task = agentTask(runtime.snapshot, botId);
+    if (!task?.runId || task.conversationId || !task.prompt || task.running) return;
+    await runTask(botId, {
+      requestId: crypto.randomUUID(),
+      prompt: task.prompt,
+      retryOf: task.runId,
+      ...(runtime.snapshot.protocolVersion >= 29
+        ? { chatRevision: task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats) }
+        : {}),
+      ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
+    });
+  }
+  const previewFile = useCallback(
+    async (file: WorkspaceFile) => {
+      if (imageMime(file.upload?.name || file.name)) {
+        preview(file);
+        return;
+      }
+      if (file.upload) {
+        try {
+          const receipt = await runtime.command<AttachmentReceipt>({
+            type: 'attachment.read',
+            bot: file.upload.bot,
+            id: file.upload.id,
+          });
+          preview({ ...file, content: receipt.content });
+        } catch (error) {
+          notify(runtimeError(error));
+        }
+        return;
+      }
+      if (!file.runtimePath) {
+        preview(file);
+        return;
+      }
+      try {
+        const actual = await runtime.command<RuntimeFile>({
+          type: 'files.read',
+          path: file.runtimePath,
+        });
+        preview({ ...file, content: actual.content || '' });
+      } catch (error) {
+        notify(runtimeError(error));
+      }
+    },
+    [runtime.command, preview, notify],
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = state.theme;
+  }, [state.theme]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, serialize(state));
+      storageFailed.current = false;
+    } catch {
+      if (!storageFailed.current) {
+        storageFailed.current = true;
+        notify('本机存储不可用或已满。请先导出工作区，避免刷新后丢失修改。');
+      }
+    }
+  }, [state, notify]);
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = setTimeout(() => setToast(''), 4500);
+    return () => clearTimeout(timeout);
+  }, [toast]);
+  useEffect(() => {
+    function key(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (modal) return;
+        setSidebarOpen(true);
+        requestAnimationFrame(() => search.current?.focus());
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+        e.preventDefault();
+        if (!modal) dispatch({ type: 'view', view: 'settings' });
+      }
+      if (e.key === 'Escape' && !modal) {
+        setSidebarOpen(false);
+        dispatch({ type: 'panel', panel: null });
+      }
+    }
+    document.addEventListener('keydown', key);
+    return () => document.removeEventListener('keydown', key);
+  }, [modal]);
+  function panel(next: Panel) {
+    dispatch({ type: 'panel', panel: state.panel === next ? null : next });
+  }
+  const computerBot =
+    modal?.type === 'computer' ? state.bots.find((b) => b.id === modal.bot) : undefined;
+  return (
+    <div className="app" data-desktop={window.daban?.platform}>
+      <Sidebar
+        state={state}
+        dispatch={dispatch}
+        query={query}
+        setQuery={setQuery}
+        searchRef={search}
+        onImport={() => setModal({ type: 'import' })}
+        onCreate={(group) => {
+          setSidebarOpen(false);
+          setModal({ type: 'create', group: !!group });
+        }}
+        open={sidebarOpen}
+        close={() => setSidebarOpen(false)}
+      />
+      <main className="main">
+        <header className="chat-header">
+          <IconButton className="mobile-menu" label="打开侧栏" onClick={() => setSidebarOpen(true)}>
+            <Menu />
+          </IconButton>
+          {state.view === 'chat' ? (
+            <>
+              <Avatar bot={bot} />
+              <div>
+                <h1>{bot.name}</h1>
+                <p className="chat-subtitle">{subtitle}</p>
+              </div>
+              <span className="spacer" />
+              <div className="header-actions">
+                {!bot.members && (
+                  <>
+                    <IconButton
+                      label={state.chatRequests[bot.id] ? '核对对话操作' : '开启新对话'}
+                      disabled={
+                        !runtime.enabled ||
+                        runtime.snapshot.protocolVersion < 29 ||
+                        (historyOnly && !state.chatRequests[bot.id])
+                      }
+                      onClick={() => setModal({ type: 'chat', bot: bot.id })}
+                    >
+                      <MessageSquarePlus />
+                    </IconButton>
+                    <IconButton
+                      label="历史对话"
+                      disabled={
+                        !runtime.enabled || runtime.snapshot.protocolVersion < 29 || !chatVersion
+                      }
+                      onClick={() => setModal({ type: 'chat-history', bot: bot.id })}
+                    >
+                      <History />
+                    </IconButton>
+                  </>
+                )}
+                {bot.members && (
+                  <>
+                    <IconButton
+                      label="编辑群聊"
+                      disabled={historyOnly}
+                      onClick={() => setModal({ type: 'group', bot: bot.id })}
+                    >
+                      <Pencil />
+                    </IconButton>
+                    <IconButton
+                      label={pendingGroup ? '核对群聊操作' : bot.archived ? '恢复群聊' : '归档群聊'}
+                      disabled={!runtime.enabled || runtime.snapshot.protocolVersion < 28}
+                      onClick={() => setModal({ type: 'archive', bot: bot.id })}
+                    >
+                      <ArchiveIcon />
+                    </IconButton>
+                  </>
+                )}
+                {!bot.members && (
+                  <IconButton
+                    label="编辑 Bot 资料"
+                    disabled={historyOnly}
+                    onClick={() => setModal({ type: 'profile', bot: bot.id })}
+                  >
+                    <Pencil />
+                  </IconButton>
+                )}
+                <IconButton
+                  label="电脑面板"
+                  className={state.panel === 'computer' ? 'active' : ''}
+                  aria-pressed={state.panel === 'computer'}
+                  onClick={() => panel('computer')}
+                >
+                  <Monitor />
+                </IconButton>
+                <IconButton
+                  label="文件面板"
+                  className={state.panel === 'files' ? 'active' : ''}
+                  aria-pressed={state.panel === 'files'}
+                  onClick={() => panel('files')}
+                >
+                  <Folder />
+                </IconButton>
+                {!bot.members && (
+                  <>
+                    <IconButton
+                      label="资料面板"
+                      disabled={historyOnly}
+                      className={state.panel === 'knowledge' ? 'active' : ''}
+                      aria-pressed={state.panel === 'knowledge'}
+                      onClick={() => panel('knowledge')}
+                    >
+                      <BookOpen />
+                    </IconButton>
+                    <IconButton
+                      label="记忆面板"
+                      disabled={historyOnly}
+                      className={`header-optional ${state.panel === 'memory' ? 'active' : ''}`}
+                      aria-pressed={state.panel === 'memory'}
+                      onClick={() => panel('memory')}
+                    >
+                      <Brain />
+                    </IconButton>
+                    <IconButton
+                      label="定时任务面板"
+                      disabled={historyOnly}
+                      className={`header-optional ${state.panel === 'routines' ? 'active' : ''}`}
+                      aria-pressed={state.panel === 'routines'}
+                      onClick={() => panel('routines')}
+                    >
+                      <Clock3 />
+                    </IconButton>
+                  </>
+                )}
+                <span className="header-divider" />
+                <IconButton
+                  label={state.theme === 'light' ? '切换深色主题' : '切换浅色主题'}
+                  onClick={() =>
+                    dispatch({ type: 'theme', theme: state.theme === 'light' ? 'dark' : 'light' })
+                  }
+                >
+                  {state.theme === 'light' ? <Moon /> : <Sun />}
+                </IconButton>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <h1>{state.view === 'inbox' ? '收件箱' : '设置'}</h1>
+                <p className="chat-subtitle">你的工作区</p>
+              </div>
+              <span className="spacer" />
+              <IconButton label="返回对话" onClick={() => dispatch({ type: 'view', view: 'chat' })}>
+                <Monitor />
+              </IconButton>
+            </>
+          )}
+        </header>
+        <RecoveryNotice open={() => setModal({ type: 'recovery' })} />
+        {state.view === 'chat' ? (
+          <div className="conversation-layout">
+            {bot.members ? (
+              <GroupChat
+                key={bot.id}
+                state={state}
+                bot={bot}
+                dispatch={dispatch}
+                notify={notify}
+                preview={previewFile}
+              />
+            ) : (
+              <Conversation
+                state={state}
+                bot={bot}
+                dispatch={dispatch}
+                notify={notify}
+                preview={previewFile}
+                onSend={runtime.enabled ? () => runTask(bot.id) : undefined}
+                onContinue={() => continueTask(bot.id)}
+                onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
+                onNewChat={() => setModal({ type: 'chat', bot: bot.id })}
+                pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
+                onModel={() => {
+                  if (!bot.members && runtime.snapshot.protocolVersion >= 14)
+                    setModal({ type: 'profile', bot: bot.id });
+                  else dispatch({ type: 'view', view: 'settings' });
+                }}
+              />
+            )}
+            {state.panel && (!historyOnly || ['computer', 'files'].includes(state.panel)) && (
+              <Workspace
+                state={state}
+                bot={bot}
+                dispatch={dispatch}
+                notify={notify}
+                preview={previewFile}
+                expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
+                openMember={(id) => setModal({ type: 'computer', bot: id })}
+                onRecovery={() => setModal({ type: 'recovery' })}
+              />
+            )}
+          </div>
+        ) : state.view === 'inbox' ? (
+          <Inbox
+            state={state}
+            dispatch={dispatch}
+            preview={preview}
+            notify={notify}
+            focus={inboxFocus}
+            clearFocus={() => setInboxFocus(undefined)}
+          />
+        ) : (
+          <Settings
+            state={state}
+            dispatch={dispatch}
+            onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
+            onRecovery={() => setModal({ type: 'recovery' })}
+          />
+        )}
+      </main>
+      {modal?.type === 'recovery' && (
+        <Recovery
+          bots={state.bots}
+          close={closeModal}
+          onTask={(id) => {
+            const task = runtime.snapshot.agents[id];
+            const selected =
+              task?.conversationId ?? state.bots.find((entry) => agentId(entry.id) === id)?.id;
+            if (selected) dispatch({ type: 'select', bot: selected });
+            closeModal();
+          }}
+        />
+      )}
+      {modal?.type === 'chat' && (
+        <NewChat
+          key={modal.bot}
+          state={state}
+          bot={state.bots.find((bot) => bot.id === modal.bot)!}
+          dispatch={dispatch}
+          close={closeModal}
+          notify={notify}
+        />
+      )}
+      {modal?.type === 'chat-history' && (
+        <ChatHistory
+          key={modal.bot}
+          bot={state.bots.find((bot) => bot.id === modal.bot)!}
+          revision={
+            chatRevision(state, modal.bot, runtime.snapshot.chats) + (modal.includeCurrent ? 1 : 0)
+          }
+          initialRevision={modal.initialRevision}
+          runId={modal.runId}
+          close={closeModal}
+          notify={notify}
+          preview={previewFile}
+          cached={state.messages[modal.bot]}
+          cachedFiles={state.files}
+        />
+      )}
+      {modal?.type === 'group' && (
+        <Dialog title="编辑群聊" onClose={closeModal}>
+          <GroupEditor
+            state={state}
+            bot={state.bots.find((bot) => bot.id === modal.bot)!}
+            dispatch={dispatch}
+            close={closeModal}
+          />
+        </Dialog>
+      )}
+      {modal?.type === 'profile' && (
+        <Dialog title="编辑 Bot 资料" onClose={closeModal}>
+          <Profile
+            bot={state.bots.find((bot) => bot.id === modal.bot)!}
+            memory={state.memories[modal.bot]}
+            version={state.profileRevisions[agentId(modal.bot)]}
+            dispatch={dispatch}
+            close={closeModal}
+            notify={notify}
+            onArchive={() => setModal({ type: 'archive', bot: modal.bot })}
+            onExport={() => setModal({ type: 'export', bot: modal.bot })}
+          />
+        </Dialog>
+      )}
+      {modal?.type === 'archive' &&
+        (state.bots.find((entry) => entry.id === modal.bot)?.members ? (
+          <GroupArchive
+            key={modal.bot}
+            state={state}
+            bot={state.bots.find((entry) => entry.id === modal.bot)!}
+            dispatch={dispatch}
+            close={closeModal}
+            notify={notify}
+            navigate={() => {
+              dispatch({ type: 'select', bot: modal.bot });
+              closeModal();
+            }}
+          />
+        ) : (
+          <Archive
+            key={modal.bot}
+            state={state}
+            bot={state.bots.find((entry) => entry.id === modal.bot)!}
+            dispatch={dispatch}
+            close={closeModal}
+            notify={notify}
+            navigate={(id, next) => {
+              dispatch({ type: 'select', bot: id });
+              if (next) dispatch({ type: 'panel', panel: next });
+              closeModal();
+            }}
+          />
+        ))}
+      <ImportBot
+        state={state}
+        dispatch={dispatch}
+        open={modal?.type === 'import'}
+        close={closeModal}
+        notify={notify}
+      />
+      {modal?.type === 'export' && (
+        <Dialog title="导出 Bot" onClose={closeModal}>
+          <ExportBot bot={modal.bot} close={closeModal} notify={notify} />
+        </Dialog>
+      )}
+      {modal?.type === 'create' && (
+        <Dialog title={modal.group ? '创建群聊' : '认识你的新搭档'} onClose={closeModal}>
+          <Create
+            state={state}
+            dispatch={dispatch}
+            group={modal.group}
+            close={closeModal}
+            onImport={() => setModal({ type: 'import' })}
+            persist={
+              runtime.enabled
+                ? async (profile: BotProfileInput) => {
+                    await runtime.command<BotProfile>({ type: 'bot.register', profile });
+                  }
+                : undefined
+            }
+            persistGroup={
+              runtime.enabled
+                ? async (input) => {
+                    const group = await runtime.command<Group>({
+                      type: 'group.register',
+                      group: input,
+                    });
+                    dispatch({ type: 'groups', groups: [group] });
+                  }
+                : undefined
+            }
+            notify={notify}
+          />
+        </Dialog>
+      )}
+      {modal?.type === 'file' && (
+        <Dialog title={modal.file.name} onClose={closeModal} wide>
+          <p className="file-preview-meta">
+            {modal.file.kind} · {modal.file.size}
+          </p>
+          {modal.file.upload && !imageMime(modal.file.upload.name) && (
+            <p className="inline-note">
+              当前显示提取文本；图片、版式和公式不作完整还原。原件保存在运行环境中，可单独下载。
+            </p>
+          )}
+          {imageMime(modal.file.upload?.name || modal.file.name) ? (
+            <ImagePreview
+              key={`${modal.file.upload?.bot || ''}:${modal.file.id}`}
+              file={modal.file}
+            />
+          ) : (
+            <pre className="file-content">{modal.file.content}</pre>
+          )}
+          <div className="dialog-actions">
+            <button type="button" className="secondary" onClick={closeModal}>
+              关闭预览
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={!!modal.file.upload && runtime.snapshot.phase !== 'ready'}
+              onClick={async () => {
+                const file = modal.file;
+                if (file.runtimePath && imageMime(file.name)) {
+                  try {
+                    const original = await runtime.command<RuntimeDownload>({
+                      type: 'files.download',
+                      path: file.runtimePath,
+                    });
+                    const bytes = Uint8Array.from(atob(original.data), (character) =>
+                      character.charCodeAt(0),
+                    );
+                    downloadBlob(
+                      original.name,
+                      new Blob([bytes], { type: 'application/octet-stream' }),
+                    );
+                  } catch (error) {
+                    notify(runtimeError(error));
+                  }
+                  return;
+                }
+                if (!file.upload) {
+                  download(file);
+                  return;
+                }
+                try {
+                  const original = await runtime.command<DocumentOriginal>({
+                    type: 'attachment.source',
+                    bot: file.upload.bot,
+                    id: file.upload.id,
+                  });
+                  const bytes = Uint8Array.from(atob(original.file.data), (character) =>
+                    character.charCodeAt(0),
+                  );
+                  downloadBlob(
+                    original.file.name,
+                    new Blob([bytes], { type: 'application/octet-stream' }),
+                  );
+                } catch (error) {
+                  notify(runtimeError(error));
+                }
+              }}
+            >
+              <Download />
+              {modal.file.upload ? '下载原件' : '下载文件'}
+            </button>
+            {modal.file.upload && !imageMime(modal.file.upload.name) && (
+              <button type="button" className="secondary" onClick={() => download(modal.file)}>
+                下载提取文本
+              </button>
+            )}
+          </div>
+        </Dialog>
+      )}
+      {computerBot && runtime.enabled && (
+        <Dialog title={`${computerBot.name}的电脑`} onClose={closeModal} wide>
+          <Computer
+            bot={computerBot}
+            notify={notify}
+            expanded
+            onRecovery={() => setModal({ type: 'recovery' })}
+            initialView={modal?.type === 'computer' ? modal.surface : undefined}
+          />
+        </Dialog>
+      )}
+      {computerBot && !runtime.enabled && (
+        <Dialog title={`${computerBot.name}的电脑`} onClose={closeModal} wide>
+          <p className="dialog-description">Linux 桌面界面预览，尚未连接真实系统。</p>
+          <Desktop
+            name={computerBot.name}
+            human={state.controls[computerBot.id] === 'human'}
+            expanded
+          />
+          <div className="dialog-actions">
+            <button type="button" className="secondary" onClick={closeModal}>
+              收起
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() =>
+                dispatch({
+                  type: 'control',
+                  bot: computerBot.id,
+                  owner: state.controls[computerBot.id] === 'human' ? 'agent' : 'human',
+                })
+              }
+            >
+              {state.controls[computerBot.id] === 'human' ? <Check /> : <Monitor />}
+              {state.controls[computerBot.id] === 'human' ? '交还给 Bot' : '接管电脑'}
+            </button>
+          </div>
+        </Dialog>
+      )}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          <Info />
+          <span>{toast}</span>
+        </div>
+      )}
+    </div>
+  );
+}

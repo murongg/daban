@@ -1,0 +1,1038 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-29T01:44:43.964576Z",
+  "title": "Design System: daban",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(26% 0.0000 0.00)",
+          "oklch(38% 0.0000 0.00)",
+          "oklch(49% 0.0000 0.00)",
+          "oklch(61% 0.0000 0.00)",
+          "oklch(72% 0.0000 0.00)",
+          "oklch(84% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "Pale Rail",
+        "tonalRamp": [
+          "oklch(15% 0.0013 106.42)",
+          "oklch(26% 0.0013 106.42)",
+          "oklch(38% 0.0013 106.42)",
+          "oklch(49% 0.0013 106.42)",
+          "oklch(61% 0.0013 106.42)",
+          "oklch(72% 0.0013 106.42)",
+          "oklch(84% 0.0013 106.42)",
+          "oklch(95% 0.0013 106.42)"
+        ]
+      },
+      "soft": {
+        "role": "neutral",
+        "displayName": "Soft Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0027 106.45)",
+          "oklch(26% 0.0027 106.45)",
+          "oklch(38% 0.0027 106.45)",
+          "oklch(49% 0.0027 106.45)",
+          "oklch(61% 0.0027 106.45)",
+          "oklch(72% 0.0027 106.45)",
+          "oklch(84% 0.0027 106.45)",
+          "oklch(95% 0.0027 106.45)"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0027 106.45)",
+          "oklch(26% 0.0027 106.45)",
+          "oklch(38% 0.0027 106.45)",
+          "oklch(49% 0.0027 106.45)",
+          "oklch(61% 0.0027 106.45)",
+          "oklch(72% 0.0027 106.45)",
+          "oklch(84% 0.0027 106.45)",
+          "oklch(95% 0.0027 106.45)"
+        ]
+      },
+      "selected": {
+        "role": "neutral",
+        "displayName": "Selected Row",
+        "tonalRamp": [
+          "oklch(15% 0.0040 106.48)",
+          "oklch(26% 0.0040 106.48)",
+          "oklch(38% 0.0040 106.48)",
+          "oklch(49% 0.0040 106.48)",
+          "oklch(61% 0.0040 106.48)",
+          "oklch(72% 0.0040 106.48)",
+          "oklch(84% 0.0040 106.48)",
+          "oklch(95% 0.0040 106.48)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0037 106.65)",
+          "oklch(26% 0.0037 106.65)",
+          "oklch(38% 0.0037 106.65)",
+          "oklch(49% 0.0037 106.65)",
+          "oklch(61% 0.0037 106.65)",
+          "oklch(72% 0.0037 106.65)",
+          "oklch(84% 0.0037 106.65)",
+          "oklch(95% 0.0037 106.65)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0108 106.78)",
+          "oklch(26% 0.0108 106.78)",
+          "oklch(38% 0.0108 106.78)",
+          "oklch(49% 0.0108 106.78)",
+          "oklch(61% 0.0108 106.78)",
+          "oklch(72% 0.0108 106.78)",
+          "oklch(84% 0.0108 106.78)",
+          "oklch(95% 0.0108 106.78)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Fine Divider",
+        "tonalRamp": [
+          "oklch(15% 0.0053 106.50)",
+          "oklch(26% 0.0053 106.50)",
+          "oklch(38% 0.0053 106.50)",
+          "oklch(49% 0.0053 106.50)",
+          "oklch(61% 0.0053 106.50)",
+          "oklch(72% 0.0053 106.50)",
+          "oklch(84% 0.0053 106.50)",
+          "oklch(95% 0.0053 106.50)"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Strong Divider",
+        "tonalRamp": [
+          "oklch(15% 0.0081 106.56)",
+          "oklch(26% 0.0081 106.56)",
+          "oklch(38% 0.0081 106.56)",
+          "oklch(49% 0.0081 106.56)",
+          "oklch(61% 0.0081 106.56)",
+          "oklch(72% 0.0081 106.56)",
+          "oklch(84% 0.0081 106.56)",
+          "oklch(95% 0.0081 106.56)"
+        ]
+      },
+      "strong": {
+        "role": "primary",
+        "displayName": "Quiet Ink Action",
+        "tonalRamp": [
+          "oklch(15% 0.0037 106.65)",
+          "oklch(26% 0.0037 106.65)",
+          "oklch(38% 0.0037 106.65)",
+          "oklch(49% 0.0037 106.65)",
+          "oklch(61% 0.0037 106.65)",
+          "oklch(72% 0.0037 106.65)",
+          "oklch(84% 0.0037 106.65)",
+          "oklch(95% 0.0037 106.65)"
+        ]
+      },
+      "strong-hover": {
+        "role": "primary",
+        "displayName": "Action Hover",
+        "tonalRamp": [
+          "oklch(15% 0.0083 106.79)",
+          "oklch(26% 0.0083 106.79)",
+          "oklch(38% 0.0083 106.79)",
+          "oklch(49% 0.0083 106.79)",
+          "oklch(61% 0.0083 106.79)",
+          "oklch(72% 0.0083 106.79)",
+          "oklch(84% 0.0083 106.79)",
+          "oklch(95% 0.0083 106.79)"
+        ]
+      },
+      "on-strong": {
+        "role": "primary",
+        "displayName": "Action Foreground",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(26% 0.0000 0.00)",
+          "oklch(38% 0.0000 0.00)",
+          "oklch(49% 0.0000 0.00)",
+          "oklch(61% 0.0000 0.00)",
+          "oklch(72% 0.0000 0.00)",
+          "oklch(84% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "bubble": {
+        "role": "primary",
+        "displayName": "User Bubble",
+        "tonalRamp": [
+          "oklch(15% 0.0037 106.65)",
+          "oklch(26% 0.0037 106.65)",
+          "oklch(38% 0.0037 106.65)",
+          "oklch(49% 0.0037 106.65)",
+          "oklch(61% 0.0037 106.65)",
+          "oklch(72% 0.0037 106.65)",
+          "oklch(84% 0.0037 106.65)",
+          "oklch(95% 0.0037 106.65)"
+        ]
+      },
+      "on-bubble": {
+        "role": "primary",
+        "displayName": "User Bubble Foreground",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(26% 0.0000 0.00)",
+          "oklch(38% 0.0000 0.00)",
+          "oklch(49% 0.0000 0.00)",
+          "oklch(61% 0.0000 0.00)",
+          "oklch(72% 0.0000 0.00)",
+          "oklch(84% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "success": {
+        "role": "neutral",
+        "displayName": "Connected Green",
+        "tonalRamp": [
+          "oklch(15% 0.0639 165.56)",
+          "oklch(26% 0.0639 165.56)",
+          "oklch(38% 0.0639 165.56)",
+          "oklch(49% 0.0639 165.56)",
+          "oklch(61% 0.0639 165.56)",
+          "oklch(72% 0.0639 165.56)",
+          "oklch(84% 0.0639 165.56)",
+          "oklch(95% 0.0639 165.56)"
+        ]
+      },
+      "warning": {
+        "role": "neutral",
+        "displayName": "Takeover Amber",
+        "tonalRamp": [
+          "oklch(15% 0.1054 78.67)",
+          "oklch(26% 0.1054 78.67)",
+          "oklch(38% 0.1054 78.67)",
+          "oklch(49% 0.1054 78.67)",
+          "oklch(61% 0.1054 78.67)",
+          "oklch(72% 0.1054 78.67)",
+          "oklch(84% 0.1054 78.67)",
+          "oklch(95% 0.1054 78.67)"
+        ]
+      },
+      "danger": {
+        "role": "neutral",
+        "displayName": "Error Red",
+        "tonalRamp": [
+          "oklch(15% 0.1513 23.87)",
+          "oklch(26% 0.1513 23.87)",
+          "oklch(38% 0.1513 23.87)",
+          "oklch(49% 0.1513 23.87)",
+          "oklch(61% 0.1513 23.87)",
+          "oklch(72% 0.1513 23.87)",
+          "oklch(84% 0.1513 23.87)",
+          "oklch(95% 0.1513 23.87)"
+        ]
+      },
+      "selection": {
+        "role": "neutral",
+        "displayName": "Text Selection",
+        "tonalRamp": [
+          "oklch(15% 0.0188 145.42)",
+          "oklch(26% 0.0188 145.42)",
+          "oklch(38% 0.0188 145.42)",
+          "oklch(49% 0.0188 145.42)",
+          "oklch(61% 0.0188 145.42)",
+          "oklch(72% 0.0188 145.42)",
+          "oklch(84% 0.0188 145.42)",
+          "oklch(95% 0.0188 145.42)"
+        ]
+      },
+      "focus": {
+        "role": "neutral",
+        "displayName": "Keyboard Focus",
+        "tonalRamp": [
+          "oklch(15% 0.0487 155.80)",
+          "oklch(26% 0.0487 155.80)",
+          "oklch(38% 0.0487 155.80)",
+          "oklch(49% 0.0487 155.80)",
+          "oklch(61% 0.0487 155.80)",
+          "oklch(72% 0.0487 155.80)",
+          "oklch(84% 0.0487 155.80)",
+          "oklch(95% 0.0487 155.80)"
+        ]
+      },
+      "scroll": {
+        "role": "neutral",
+        "displayName": "Scroll Thumb",
+        "tonalRamp": [
+          "oklch(15% 0.0095 106.60)",
+          "oklch(26% 0.0095 106.60)",
+          "oklch(38% 0.0095 106.60)",
+          "oklch(49% 0.0095 106.60)",
+          "oklch(61% 0.0095 106.60)",
+          "oklch(72% 0.0095 106.60)",
+          "oklch(84% 0.0095 106.60)",
+          "oklch(95% 0.0095 106.60)"
+        ]
+      },
+      "dark-canvas": {
+        "role": "neutral",
+        "displayName": "Dark · Canvas",
+        "tonalRamp": [
+          "oklch(15% 0.0038 106.70)",
+          "oklch(26% 0.0038 106.70)",
+          "oklch(38% 0.0038 106.70)",
+          "oklch(49% 0.0038 106.70)",
+          "oklch(61% 0.0038 106.70)",
+          "oklch(72% 0.0038 106.70)",
+          "oklch(84% 0.0038 106.70)",
+          "oklch(95% 0.0038 106.70)"
+        ]
+      },
+      "dark-sidebar": {
+        "role": "neutral",
+        "displayName": "Dark · Pale Rail",
+        "tonalRamp": [
+          "oklch(15% 0.0019 106.57)",
+          "oklch(26% 0.0019 106.57)",
+          "oklch(38% 0.0019 106.57)",
+          "oklch(49% 0.0019 106.57)",
+          "oklch(61% 0.0019 106.57)",
+          "oklch(72% 0.0019 106.57)",
+          "oklch(84% 0.0019 106.57)",
+          "oklch(95% 0.0019 106.57)"
+        ]
+      },
+      "dark-soft": {
+        "role": "neutral",
+        "displayName": "Dark · Soft Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0036 106.64)",
+          "oklch(26% 0.0036 106.64)",
+          "oklch(38% 0.0036 106.64)",
+          "oklch(49% 0.0036 106.64)",
+          "oklch(61% 0.0036 106.64)",
+          "oklch(72% 0.0036 106.64)",
+          "oklch(84% 0.0036 106.64)",
+          "oklch(95% 0.0036 106.64)"
+        ]
+      },
+      "dark-hover": {
+        "role": "neutral",
+        "displayName": "Dark · Hover Surface",
+        "tonalRamp": [
+          "oklch(15% 0.0053 106.70)",
+          "oklch(26% 0.0053 106.70)",
+          "oklch(38% 0.0053 106.70)",
+          "oklch(49% 0.0053 106.70)",
+          "oklch(61% 0.0053 106.70)",
+          "oklch(72% 0.0053 106.70)",
+          "oklch(84% 0.0053 106.70)",
+          "oklch(95% 0.0053 106.70)"
+        ]
+      },
+      "dark-selected": {
+        "role": "neutral",
+        "displayName": "Dark · Selected Row",
+        "tonalRamp": [
+          "oklch(15% 0.0069 106.79)",
+          "oklch(26% 0.0069 106.79)",
+          "oklch(38% 0.0069 106.79)",
+          "oklch(49% 0.0069 106.79)",
+          "oklch(61% 0.0069 106.79)",
+          "oklch(72% 0.0069 106.79)",
+          "oklch(84% 0.0069 106.79)",
+          "oklch(95% 0.0069 106.79)"
+        ]
+      },
+      "dark-ink": {
+        "role": "neutral",
+        "displayName": "Dark · Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0067 106.53)",
+          "oklch(26% 0.0067 106.53)",
+          "oklch(38% 0.0067 106.53)",
+          "oklch(49% 0.0067 106.53)",
+          "oklch(61% 0.0067 106.53)",
+          "oklch(72% 0.0067 106.53)",
+          "oklch(84% 0.0067 106.53)",
+          "oklch(95% 0.0067 106.53)"
+        ]
+      },
+      "dark-muted": {
+        "role": "neutral",
+        "displayName": "Dark · Muted Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0114 106.69)",
+          "oklch(26% 0.0114 106.69)",
+          "oklch(38% 0.0114 106.69)",
+          "oklch(49% 0.0114 106.69)",
+          "oklch(61% 0.0114 106.69)",
+          "oklch(72% 0.0114 106.69)",
+          "oklch(84% 0.0114 106.69)",
+          "oklch(95% 0.0114 106.69)"
+        ]
+      },
+      "dark-line": {
+        "role": "neutral",
+        "displayName": "Dark · Fine Divider",
+        "tonalRamp": [
+          "oklch(15% 0.0070 106.80)",
+          "oklch(26% 0.0070 106.80)",
+          "oklch(38% 0.0070 106.80)",
+          "oklch(49% 0.0070 106.80)",
+          "oklch(61% 0.0070 106.80)",
+          "oklch(72% 0.0070 106.80)",
+          "oklch(84% 0.0070 106.80)",
+          "oklch(95% 0.0070 106.80)"
+        ]
+      },
+      "dark-line-strong": {
+        "role": "neutral",
+        "displayName": "Dark · Strong Divider",
+        "tonalRamp": [
+          "oklch(15% 0.0099 106.85)",
+          "oklch(26% 0.0099 106.85)",
+          "oklch(38% 0.0099 106.85)",
+          "oklch(49% 0.0099 106.85)",
+          "oklch(61% 0.0099 106.85)",
+          "oklch(72% 0.0099 106.85)",
+          "oklch(84% 0.0099 106.85)",
+          "oklch(95% 0.0099 106.85)"
+        ]
+      },
+      "dark-strong": {
+        "role": "primary",
+        "displayName": "Dark · Quiet Ink Action",
+        "tonalRamp": [
+          "oklch(15% 0.0107 106.61)",
+          "oklch(26% 0.0107 106.61)",
+          "oklch(38% 0.0107 106.61)",
+          "oklch(49% 0.0107 106.61)",
+          "oklch(61% 0.0107 106.61)",
+          "oklch(72% 0.0107 106.61)",
+          "oklch(84% 0.0107 106.61)",
+          "oklch(95% 0.0107 106.61)"
+        ]
+      },
+      "dark-strong-hover": {
+        "role": "primary",
+        "displayName": "Dark · Action Hover",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(26% 0.0000 0.00)",
+          "oklch(38% 0.0000 0.00)",
+          "oklch(49% 0.0000 0.00)",
+          "oklch(61% 0.0000 0.00)",
+          "oklch(72% 0.0000 0.00)",
+          "oklch(84% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "dark-on-strong": {
+        "role": "primary",
+        "displayName": "Dark · Action Foreground",
+        "tonalRamp": [
+          "oklch(15% 0.0037 106.65)",
+          "oklch(26% 0.0037 106.65)",
+          "oklch(38% 0.0037 106.65)",
+          "oklch(49% 0.0037 106.65)",
+          "oklch(61% 0.0037 106.65)",
+          "oklch(72% 0.0037 106.65)",
+          "oklch(84% 0.0037 106.65)",
+          "oklch(95% 0.0037 106.65)"
+        ]
+      },
+      "dark-bubble": {
+        "role": "primary",
+        "displayName": "Dark · User Bubble",
+        "tonalRamp": [
+          "oklch(15% 0.0069 106.77)",
+          "oklch(26% 0.0069 106.77)",
+          "oklch(38% 0.0069 106.77)",
+          "oklch(49% 0.0069 106.77)",
+          "oklch(61% 0.0069 106.77)",
+          "oklch(72% 0.0069 106.77)",
+          "oklch(84% 0.0069 106.77)",
+          "oklch(95% 0.0069 106.77)"
+        ]
+      },
+      "dark-on-bubble": {
+        "role": "primary",
+        "displayName": "Dark · User Bubble Foreground",
+        "tonalRamp": [
+          "oklch(15% 0.0053 106.50)",
+          "oklch(26% 0.0053 106.50)",
+          "oklch(38% 0.0053 106.50)",
+          "oklch(49% 0.0053 106.50)",
+          "oklch(61% 0.0053 106.50)",
+          "oklch(72% 0.0053 106.50)",
+          "oklch(84% 0.0053 106.50)",
+          "oklch(95% 0.0053 106.50)"
+        ]
+      },
+      "dark-success": {
+        "role": "neutral",
+        "displayName": "Dark · Connected Green",
+        "tonalRamp": [
+          "oklch(15% 0.0569 159.56)",
+          "oklch(26% 0.0569 159.56)",
+          "oklch(38% 0.0569 159.56)",
+          "oklch(49% 0.0569 159.56)",
+          "oklch(61% 0.0569 159.56)",
+          "oklch(72% 0.0569 159.56)",
+          "oklch(84% 0.0569 159.56)",
+          "oklch(95% 0.0569 159.56)"
+        ]
+      },
+      "dark-warning": {
+        "role": "neutral",
+        "displayName": "Dark · Takeover Amber",
+        "tonalRamp": [
+          "oklch(15% 0.0967 83.34)",
+          "oklch(26% 0.0967 83.34)",
+          "oklch(38% 0.0967 83.34)",
+          "oklch(49% 0.0967 83.34)",
+          "oklch(61% 0.0967 83.34)",
+          "oklch(72% 0.0967 83.34)",
+          "oklch(84% 0.0967 83.34)",
+          "oklch(95% 0.0967 83.34)"
+        ]
+      },
+      "dark-danger": {
+        "role": "neutral",
+        "displayName": "Dark · Error Red",
+        "tonalRamp": [
+          "oklch(15% 0.1000 19.61)",
+          "oklch(26% 0.1000 19.61)",
+          "oklch(38% 0.1000 19.61)",
+          "oklch(49% 0.1000 19.61)",
+          "oklch(61% 0.1000 19.61)",
+          "oklch(72% 0.1000 19.61)",
+          "oklch(84% 0.1000 19.61)",
+          "oklch(95% 0.1000 19.61)"
+        ]
+      },
+      "dark-selection": {
+        "role": "neutral",
+        "displayName": "Dark · Text Selection",
+        "tonalRamp": [
+          "oklch(15% 0.0340 154.19)",
+          "oklch(26% 0.0340 154.19)",
+          "oklch(38% 0.0340 154.19)",
+          "oklch(49% 0.0340 154.19)",
+          "oklch(61% 0.0340 154.19)",
+          "oklch(72% 0.0340 154.19)",
+          "oklch(84% 0.0340 154.19)",
+          "oklch(95% 0.0340 154.19)"
+        ]
+      },
+      "dark-focus": {
+        "role": "neutral",
+        "displayName": "Dark · Keyboard Focus",
+        "tonalRamp": [
+          "oklch(15% 0.0569 159.56)",
+          "oklch(26% 0.0569 159.56)",
+          "oklch(38% 0.0569 159.56)",
+          "oklch(49% 0.0569 159.56)",
+          "oklch(61% 0.0569 159.56)",
+          "oklch(72% 0.0569 159.56)",
+          "oklch(84% 0.0569 159.56)",
+          "oklch(95% 0.0569 159.56)"
+        ]
+      },
+      "dark-scroll": {
+        "role": "neutral",
+        "displayName": "Dark · Scroll Thumb",
+        "tonalRamp": [
+          "oklch(15% 0.0115 106.91)",
+          "oklch(26% 0.0115 106.91)",
+          "oklch(38% 0.0115 106.91)",
+          "oklch(49% 0.0115 106.91)",
+          "oklch(61% 0.0115 106.91)",
+          "oklch(72% 0.0115 106.91)",
+          "oklch(84% 0.0115 106.91)",
+          "oklch(95% 0.0115 106.91)"
+        ]
+      },
+      "bot-mint": {
+        "role": "secondary",
+        "displayName": "Bot Mint",
+        "tonalRamp": [
+          "oklch(15% 0.0627 163.93)",
+          "oklch(26% 0.0627 163.93)",
+          "oklch(38% 0.0627 163.93)",
+          "oklch(49% 0.0627 163.93)",
+          "oklch(61% 0.0627 163.93)",
+          "oklch(72% 0.0627 163.93)",
+          "oklch(84% 0.0627 163.93)",
+          "oklch(95% 0.0627 163.93)"
+        ]
+      },
+      "bot-violet": {
+        "role": "secondary",
+        "displayName": "Bot Violet",
+        "tonalRamp": [
+          "oklch(15% 0.1582 297.66)",
+          "oklch(26% 0.1582 297.66)",
+          "oklch(38% 0.1582 297.66)",
+          "oklch(49% 0.1582 297.66)",
+          "oklch(61% 0.1582 297.66)",
+          "oklch(72% 0.1582 297.66)",
+          "oklch(84% 0.1582 297.66)",
+          "oklch(95% 0.1582 297.66)"
+        ]
+      },
+      "bot-orange": {
+        "role": "secondary",
+        "displayName": "Bot Orange",
+        "tonalRamp": [
+          "oklch(15% 0.1190 77.29)",
+          "oklch(26% 0.1190 77.29)",
+          "oklch(38% 0.1190 77.29)",
+          "oklch(49% 0.1190 77.29)",
+          "oklch(61% 0.1190 77.29)",
+          "oklch(72% 0.1190 77.29)",
+          "oklch(84% 0.1190 77.29)",
+          "oklch(95% 0.1190 77.29)"
+        ]
+      },
+      "bot-blue": {
+        "role": "secondary",
+        "displayName": "Bot Blue",
+        "tonalRamp": [
+          "oklch(15% 0.1161 265.29)",
+          "oklch(26% 0.1161 265.29)",
+          "oklch(38% 0.1161 265.29)",
+          "oklch(49% 0.1161 265.29)",
+          "oklch(61% 0.1161 265.29)",
+          "oklch(72% 0.1161 265.29)",
+          "oklch(84% 0.1161 265.29)",
+          "oklch(95% 0.1161 265.29)"
+        ]
+      },
+      "bot-teal": {
+        "role": "secondary",
+        "displayName": "Bot Teal",
+        "tonalRamp": [
+          "oklch(15% 0.0597 210.21)",
+          "oklch(26% 0.0597 210.21)",
+          "oklch(38% 0.0597 210.21)",
+          "oklch(49% 0.0597 210.21)",
+          "oklch(61% 0.0597 210.21)",
+          "oklch(72% 0.0597 210.21)",
+          "oklch(84% 0.0597 210.21)",
+          "oklch(95% 0.0597 210.21)"
+        ]
+      },
+      "bot-pink": {
+        "role": "secondary",
+        "displayName": "Bot Pink",
+        "tonalRamp": [
+          "oklch(15% 0.0846 345.00)",
+          "oklch(26% 0.0846 345.00)",
+          "oklch(38% 0.0846 345.00)",
+          "oklch(49% 0.0846 345.00)",
+          "oklch(61% 0.0846 345.00)",
+          "oklch(72% 0.0846 345.00)",
+          "oklch(84% 0.0846 345.00)",
+          "oklch(95% 0.0846 345.00)"
+        ]
+      },
+      "code-keyword": {
+        "role": "secondary",
+        "displayName": "Code Keyword Violet",
+        "tonalRamp": [
+          "oklch(15% 0.1315 301.82)",
+          "oklch(26% 0.1315 301.82)",
+          "oklch(38% 0.1315 301.82)",
+          "oklch(49% 0.1315 301.82)",
+          "oklch(61% 0.1315 301.82)",
+          "oklch(72% 0.1315 301.82)",
+          "oklch(84% 0.1315 301.82)",
+          "oklch(95% 0.1315 301.82)"
+        ]
+      },
+      "code-string": {
+        "role": "secondary",
+        "displayName": "Code String Green",
+        "tonalRamp": [
+          "oklch(15% 0.0683 160.54)",
+          "oklch(26% 0.0683 160.54)",
+          "oklch(38% 0.0683 160.54)",
+          "oklch(49% 0.0683 160.54)",
+          "oklch(61% 0.0683 160.54)",
+          "oklch(72% 0.0683 160.54)",
+          "oklch(84% 0.0683 160.54)",
+          "oklch(95% 0.0683 160.54)"
+        ]
+      },
+      "code-number": {
+        "role": "secondary",
+        "displayName": "Code Number Amber",
+        "tonalRamp": [
+          "oklch(15% 0.0942 65.19)",
+          "oklch(26% 0.0942 65.19)",
+          "oklch(38% 0.0942 65.19)",
+          "oklch(49% 0.0942 65.19)",
+          "oklch(61% 0.0942 65.19)",
+          "oklch(72% 0.0942 65.19)",
+          "oklch(84% 0.0942 65.19)",
+          "oklch(95% 0.0942 65.19)"
+        ]
+      },
+      "dark-code-keyword": {
+        "role": "secondary",
+        "displayName": "Dark · Code Keyword Violet",
+        "tonalRamp": [
+          "oklch(15% 0.1056 306.61)",
+          "oklch(26% 0.1056 306.61)",
+          "oklch(38% 0.1056 306.61)",
+          "oklch(49% 0.1056 306.61)",
+          "oklch(61% 0.1056 306.61)",
+          "oklch(72% 0.1056 306.61)",
+          "oklch(84% 0.1056 306.61)",
+          "oklch(95% 0.1056 306.61)"
+        ]
+      },
+      "dark-code-string": {
+        "role": "secondary",
+        "displayName": "Dark · Code String Green",
+        "tonalRamp": [
+          "oklch(15% 0.0503 157.03)",
+          "oklch(26% 0.0503 157.03)",
+          "oklch(38% 0.0503 157.03)",
+          "oklch(49% 0.0503 157.03)",
+          "oklch(61% 0.0503 157.03)",
+          "oklch(72% 0.0503 157.03)",
+          "oklch(84% 0.0503 157.03)",
+          "oklch(95% 0.0503 157.03)"
+        ]
+      },
+      "dark-code-number": {
+        "role": "secondary",
+        "displayName": "Dark · Code Number Amber",
+        "tonalRamp": [
+          "oklch(15% 0.0892 76.07)",
+          "oklch(26% 0.0892 76.07)",
+          "oklch(38% 0.0892 76.07)",
+          "oklch(49% 0.0892 76.07)",
+          "oklch(61% 0.0892 76.07)",
+          "oklch(72% 0.0892 76.07)",
+          "oklch(84% 0.0892 76.07)",
+          "oklch(95% 0.0892 76.07)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Inbox and settings page headings."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Conversation header title."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default interface text."
+      },
+      "message": {
+        "displayName": "Message",
+        "purpose": "Conversation reading with extra line height."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Compact action labels."
+      },
+      "meta": {
+        "displayName": "Meta",
+        "purpose": "Supporting descriptions and activity."
+      },
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "Lowercase daban identity."
+      }
+    },
+    "shadows": [
+      {
+        "name": "dialog",
+        "value": "0 20px 70px #00000024",
+        "purpose": "Floating dialog."
+      },
+      {
+        "name": "toast",
+        "value": "0 7px 25px #00000016",
+        "purpose": "Bottom-centered status feedback."
+      },
+      {
+        "name": "workspace-overlay",
+        "value": "-15px 6px 35px #0000000a",
+        "purpose": "Right workspace overlay at compact widths."
+      },
+      {
+        "name": "sidebar-drawer",
+        "value": "10px 0 35px #00000012",
+        "purpose": "Narrow web navigation drawer."
+      },
+      {
+        "name": "preview-window",
+        "value": "0 10px 25px #25302a12",
+        "purpose": "The miniature synthetic desktop window in the browser-only preview."
+      }
+    ],
+    "motion": [
+      {
+        "name": "button-response",
+        "value": "background-color .15s, color .15s",
+        "purpose": "Button state feedback."
+      },
+      {
+        "name": "toggle-response",
+        "value": "transform .17s",
+        "purpose": "Switch thumb position."
+      },
+      {
+        "name": "toast-entry",
+        "value": ".18s ease-out",
+        "purpose": "Seven-pixel upward fade on status entry; disabled with reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "wide",
+        "value": "1600px"
+      },
+      {
+        "name": "compact",
+        "value": "1280px"
+      },
+      {
+        "name": "workspace-overlay",
+        "value": "1080px"
+      },
+      {
+        "name": "narrow-web",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Strong monochrome action with a quiet hover and visible keyboard focus.",
+      "html": "<button class=\"ds-primary\">接管电脑</button>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:8px 13px;border:0;border-radius:9px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);background:var(--strong,#252523);color:var(--on-strong,#ffffff)}.ds-primary:hover{background:var(--strong-hover,#42423d)}.ds-primary:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-primary:disabled{opacity:.4;cursor:not-allowed}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Soft neutral companion action. Notifications.tsx reuses the house secondary action with skill-toggle for its off-by-default reminder checkbox label and the secondary test action; the reviewed whole-label target is 87 × 36px. Test submission copy does not claim native delivery. The existing static button specimen adds no notification behavior or CSS.",
+      "html": "<button class=\"ds-secondary\">展开</button>",
+      "css": ".ds-secondary{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:8px 13px;border:0;border-radius:9px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);background:var(--soft,#f3f3f1);color:var(--ink,#252523)}.ds-secondary:hover{background:var(--hover,#ededeb)}.ds-secondary:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-secondary:disabled{opacity:.4;cursor:not-allowed}"
+    },
+    {
+      "name": "Text action",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "Quiet cancellation or supporting action. Workspace memory reuses this quiet action for the protocol32 history entry; older environments keep it disabled with update guidance. MemoryHistory.tsx keeps refresh/older navigation and human-only inspection separate from loading into a draft and the existing explicit CAS Save. Older-page navigation cannot advance the reader’s reviewed current revision; a concurrent change keeps loading disabled until explicit successful latest refresh.",
+      "html": "<button class=\"ds-text\">取消</button>",
+      "css": ".ds-text{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:8px 13px;border:0;border-radius:9px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);background:transparent;color:var(--muted,#66665f)}.ds-text:hover{background:var(--soft,#f3f3f1);color:var(--ink,#252523)}.ds-text:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
+    },
+    {
+      "name": "Text field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A labelled canvas-colored field with an explicit focus border. ChatHistory.tsx reuses this house treatment for its numeric conversation selector; no separate field style is introduced. MemoryHistory.tsx reuses the field as a complete read-only plain-text preference reader beside flat neutral version rows in the house wide Dialog. Loading only stages the named Bot’s memory draft; unsaved drafts, conflict/lifecycle/revision fences and the separate explicit CAS Save remain authoritative. This description adds no specimen, CSS or global type/spacing token. The reviewedRevision baseline is set only by validated initial/latest reads; older-page responses cannot silently adopt intervening edits. Both live and fetched profile revisions must match that baseline before staging, with the separate Save retaining CAS.",
+      "html": "<label class=\"ds-label\">任务名称<input class=\"ds-field\" placeholder=\"例如：每周工作摘要\" /></label>",
+      "css": ".ds-label{display:grid;gap:8px;font-size:12px;font-weight:500;color:var(--ink,#252523);line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-field{width:100%;border:1px solid var(--line-strong,#dcdcd6);border-radius:9px;background:var(--canvas,#ffffff);color:var(--ink,#252523);padding:10px 12px;font-size:13px;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-field::placeholder{color:var(--muted,#66665f)}.ds-field:focus{border-color:var(--muted,#66665f)}.ds-field:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
+    },
+    {
+      "name": "Selected Bot navigation",
+      "kind": "nav",
+      "refersTo": "bot-row-selected",
+      "description": "The neutral selected row preserves Bot identity and reports task, takeover, connecting/stopping or chat-capable disconnected state; physical screen allocation does not replace the Bot.",
+      "html": "<button class=\"ds-bot\" aria-current=\"page\"><svg viewBox=\"0 0 40 43\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 7C10 2 19 1 27 4c8 3 12 12 11 21-1 9-10 16-20 16C8 41 1 35 2 26 3 20 2 12 6 7Z\" fill=\"#9671dc\"/><path d=\"m15 13 1.5 7M23 12l1.5 7\" stroke=\"white\" stroke-width=\"3.3\" stroke-linecap=\"round\"/></svg><span class=\"ds-bot-copy\"><span class=\"ds-bot-top\"><strong>研究员</strong></span><span class=\"ds-bot-preview\">本机 Linux · 独立桌面</span></span></button>",
+      "css": ".ds-bot{display:flex;align-items:center;gap:12px;padding:12px 11px;min-height:76px;width:250px;border:0;border-radius:12px;text-align:left;background:var(--selected,#eaeae7);color:var(--ink,#252523);cursor:pointer;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-bot>svg{width:37px;height:39px;flex-shrink:0}.ds-bot-copy{flex:1;min-width:0}.ds-bot-top{display:flex;align-items:baseline;gap:8px}.ds-bot-top strong{font-size:13px;font-weight:550}.ds-bot-top time{margin-left:auto;font-size:10px;color:var(--muted,#66665f);font-variant-numeric:tabular-nums}.ds-bot-preview{display:block;margin-top:4px;color:var(--muted,#66665f);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-bot:hover{background:var(--selected,#eaeae7)}.ds-bot:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
+    },
+    {
+      "name": "Neutral badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Small quiet metadata; this is not an action.",
+      "html": "<span class=\"ds-badge\">界面演示</span>",
+      "css": ".ds-badge{display:inline-block;font-size:10px;color:var(--muted,#66665f);background:var(--soft,#f3f3f1);padding:3px 8px;border-radius:5px;white-space:nowrap;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}"
+    },
+    {
+      "name": "File artifact",
+      "kind": "card",
+      "refersTo": "file-artifact",
+      "description": "A flat preview action for an actual runtime output file; model prose alone does not create an artifact. Raster files reuse the wide read-only preview and original-download actions. GIF/WebP preview is a locally decoded, bounded static first frame with transparency; the nearby Chinese disclosure names first-frame model-service processing and animation retained by the original. Decode failure retains download recovery without autoplay.",
+      "html": "<button class=\"ds-artifact\"><span class=\"ds-file-symbol\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z\"/><path d=\"M14 2v6h6M8 13h8M8 17h6\"/></svg></span><span><span class=\"ds-file-name\">本周工作摘要.md</span><span class=\"ds-file-meta\">Markdown · 2.4 KB</span></span><svg class=\"ds-open\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" aria-hidden=\"true\"><path d=\"M15 3h6v6M10 14 21 3M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5\"/></svg></button>",
+      "css": ".ds-artifact{display:flex;align-items:center;gap:12px;border:1px solid var(--line,#eaeae6);border-radius:12px;padding:13px;width:335px;max-width:100%;text-align:left;background:var(--canvas,#ffffff);color:var(--ink,#252523);cursor:pointer;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-artifact:hover{background:var(--soft,#f3f3f1)}.ds-artifact:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-file-symbol{width:36px;height:40px;border-radius:7px;background:var(--soft,#f3f3f1);color:var(--muted,#66665f);display:grid;place-items:center;flex-shrink:0}.ds-file-symbol svg{width:19px;height:19px}.ds-file-name{display:block;font-size:12px;font-weight:500}.ds-file-meta{display:block;margin-top:3px;font-size:10px;color:var(--muted,#66665f)}.ds-open{width:15px;height:15px;color:var(--muted,#66665f);margin-left:auto}"
+    },
+    {
+      "name": "Conversation composer",
+      "kind": "custom",
+      "refersTo": "composer",
+      "description": "A quiet multiline input and circular send action; the hint reflects the actual execution connection. Candidate19 preserves the draft and temporarily disables this Bot’s send during computer connecting/stopping. Private/group file paste and drop reuse the attachment path without sending; pure text stays native, mixed text preserves the selected draft, and preparation remains bounded to four files and its initiating owner. Read-only/uncertain targets cannot add files. File hover reuses the focus border with transient status; the helper row wraps. GIF/WebP join PNG/JPEG on the same picker/paste/drop routes; protocol31 is checked before GIF/WebP bytes are read, while PNG/JPEG retain protocol26 compatibility. Format support does not change drafts, group recipients, explicit send or model-capability refusal.",
+      "html": "<div class=\"ds-composer-wrap\"><div class=\"ds-composer\"><textarea aria-label=\"发送消息\" placeholder=\"发消息给研究员…\"></textarea><div class=\"ds-composer-tools\"><button class=\"ds-add\" aria-label=\"添加附件\">+</button><span>DeepSeek⌄</span><button class=\"ds-send\" aria-label=\"发送消息\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><path d=\"m5 12 7-7 7 7M12 5v14\"/></svg></button></div></div><div class=\"ds-composer-hint\"><span>Enter 发送 · Shift + Enter 换行 · 可粘贴图片或拖入附件</span><span>DeepSeek · 本机 Linux 执行</span></div></div>",
+      "css": ".ds-composer-wrap{color:var(--ink,#252523);line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-composer{border:1px solid var(--line-strong,#dcdcd6);border-radius:19px;padding:13px 13px 10px;background:var(--canvas,#ffffff)}.ds-composer:focus-within,.ds-composer[data-dragging=\"files\"]{border-color:var(--muted,#66665f)}.ds-composer textarea{width:100%;min-height:49px;resize:none;border:0;padding:0 4px;background:transparent;color:var(--ink,#252523);font-size:13px;line-height:1.8;outline:none;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-composer textarea::placeholder{color:var(--muted,#66665f)}.ds-composer-tools{display:flex;align-items:center;gap:4px;color:var(--muted,#66665f);font-size:10px}.ds-add{width:29px;height:29px;border:0;border-radius:9px;background:transparent;color:var(--muted,#66665f);font-size:20px;cursor:pointer}.ds-add:hover{background:var(--hover,#ededeb);color:var(--ink,#252523)}.ds-add:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-send{margin-left:auto;width:31px;height:31px;display:grid;place-items:center;border:0;border-radius:50%;background:var(--strong,#252523);color:var(--on-strong,#ffffff);cursor:pointer}.ds-send svg{width:17px;height:17px}.ds-send:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-composer-hint{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;padding:8px 4px 0;font-size:9px;color:var(--muted,#66665f)}"
+    },
+    {
+      "name": "Conversation bubbles",
+      "kind": "custom",
+      "refersTo": "message-bot",
+      "description": "Asymmetric neutral assistant and ink user bubbles.",
+      "html": "<div class=\"ds-messages\"><div class=\"ds-user\">先给我预览，不要发送。</div><div class=\"ds-assistant\">草稿整理好了，等待你查看。</div></div>",
+      "css": ".ds-messages{display:flex;flex-direction:column;gap:22px;font-size:14px;line-height:1.9;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-user,.ds-assistant{padding:12px 16px;white-space:pre-wrap;overflow-wrap:anywhere}.ds-user{align-self:flex-end;max-width:90%;color:var(--on-bubble,#ffffff);background:var(--bubble,#252523);border-radius:17px 17px 5px 17px}.ds-assistant{align-self:flex-start;max-width:94%;color:var(--ink,#252523);background:var(--soft,#f3f3f1);border-radius:17px 17px 17px 5px}"
+    },
+    {
+      "name": "Workspace tabs",
+      "kind": "nav",
+      "refersTo": "workspace-tab",
+      "description": "Six compact personal-Bot tabs use a thin ink underline. Their internal strip scrolls for keyboard focus while the close control remains outside and reachable.",
+      "html": "<div class=\"ds-workspace-header\"><div class=\"ds-tabs\" role=\"tablist\" aria-label=\"工作区面板\"><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect width=\"20\" height=\"14\" x=\"2\" y=\"3\" rx=\"2\"></rect><line x1=\"8\" x2=\"16\" y1=\"21\" y2=\"21\"></line><line x1=\"12\" x2=\"12\" y1=\"17\" y2=\"21\"></line></svg>电脑</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"></path></svg>文件</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"></path><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"></path><path d=\"M10 9H8\"></path><path d=\"M16 13H8\"></path><path d=\"M16 17H8\"></path></svg>资料</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"true\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 5v16\"></path><path d=\"M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z\"></path></svg>技能</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 18V5\"></path><path d=\"M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4\"></path><path d=\"M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294\"></path><path d=\"M17.996 5.125a4 4 0 012.526 5.77\"></path><path d=\"M18 18a4 4 0 002-7.465\"></path><path d=\"M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517\"></path><path d=\"M6 18a4 4 0 01-2-7.465\"></path><path d=\"M6.004 5.125a4 4 0 00-2.526 5.77\"></path></svg>记忆</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"10\"></circle><path d=\"M12 6v6h4\"></path></svg>定时</button></div><button class=\"ds-close\" aria-label=\"关闭工作区面板\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" aria-hidden=\"true\"><path d=\"m18 6-12 12M6 6l12 12\"/></svg></button></div>",
+      "css": ".ds-workspace-header{display:flex;align-items:center;height:48px;padding:0 12px;border-bottom:1px solid var(--line,#eaeae6);background:var(--canvas,#fff);font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif)}.ds-tabs{display:flex;flex:1;min-width:0;height:48px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}.ds-tab{flex-shrink:0;height:48px;position:relative;display:flex;align-items:center;gap:6px;padding:0 10px;border:0;background:transparent;font-size:11px;color:var(--muted,#66665f);cursor:pointer;line-height:1.6;font-family:inherit}.ds-tab:hover,.ds-tab[aria-selected=true]{color:var(--ink,#252523)}.ds-tab[aria-selected=true]::after{content:\"\";position:absolute;bottom:0;left:10px;right:10px;height:2px;background:var(--ink,#252523)}.ds-close{display:grid;place-items:center;flex-shrink:0;width:28px;height:28px;border:0;border-radius:9px;color:var(--muted,#66665f);background:transparent;cursor:pointer}.ds-close svg{width:15px;height:15px}.ds-close:hover{background:var(--hover,#ededeb);color:var(--ink,#252523)}.ds-tab:focus-visible,.ds-close:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-tab svg{width:14px;height:14px;stroke-width:1.6}"
+    },
+    {
+      "name": "Live desktop takeover",
+      "kind": "custom",
+      "refersTo": "live-desktop",
+      "description": "src/Computer.tsx, src/Connection.tsx, src/LiveDesktop.tsx and src/Dialog.tsx: connected regular and expanded screens retain sticky ownership/handback and separate stop. Pending/error/running reasons remain textual beside controls; stop requires current revision/instance and fresh saved-content confirmation. Disconnected and transition states reuse the incumbent panel heading and muted copy, preserve drafts, and truthfully label capacity/manual restart. The schematic screen represents real Linux frames, not live control. Plain Esc exits screen capture; Alt+Esc reaches the remote application. Candidate19 is unactivated in the original protocol-15 service.",
+      "html": "<section class=\"ds-live\"><div class=\"ds-live-state\"><span class=\"ds-live-dot\"></span>你正在接管<span class=\"ds-live-name\">研究员的屏幕</span><button class=\"ds-live-handback\">交还给 Bot</button></div><div class=\"ds-live-screen\" tabindex=\"0\" aria-label=\"Linux 桌面组件示意\" aria-describedby=\"ds-live-help\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M8 21h8M12 16v5\"/></svg><span>Linux 桌面画面</span><span class=\"ds-live-label\">你正在接管</span></div><p id=\"ds-live-help\" class=\"ds-live-hint\">Esc 退出画面 · Alt+Esc 发送 Escape · Tab 在 Linux 内切换</p><div class=\"ds-live-text\"><input aria-label=\"发送文字到 Linux 桌面\" placeholder=\"输入或粘贴文字，发送到当前应用…\"/><button aria-label=\"粘贴到 Linux\" disabled><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" aria-hidden=\"true\"><path d=\"m22 2-7 20-4-9-9-4Z\"/><path d=\"M22 2 11 13\"/></svg></button></div><p class=\"ds-live-copy\">接管期间，这位 Bot 会等待你交还；另一位 Bot 可以继续工作。关闭面板不会交还控制权。</p></section>",
+      "css": ".ds-live{color:var(--ink,#252523);background:var(--sidebar,#f8f8f7);padding:18px 19px;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-live-state{position:sticky;top:0;z-index:4;background:var(--sidebar,#f8f8f7);display:flex;align-items:center;gap:7px;font-size:10px;margin-bottom:14px}.ds-live-dot{width:5px;height:5px;border-radius:50%;background:var(--warning,#9d7326)}.ds-live-name{margin-left:auto;color:var(--muted,#66665f)}.ds-live-screen{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;width:100%;aspect-ratio:1.6;border-radius:10px;background:var(--soft,#f3f3f1);color:var(--muted,#66665f);font-size:12px;outline:2px solid var(--warning,#9d7326);outline-offset:2px}.ds-live-screen>svg{width:25px;height:25px}.ds-live-screen:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-live-label{position:absolute;top:9px;right:10px;font-size:10px;background:#1c211cce;color:#fff;border-radius:5px;padding:3px 7px}.ds-live-hint{margin:8px 0;color:var(--muted,#66665f);font-size:11px;line-height:1.6}.ds-live-text{display:flex;gap:8px;margin-top:13px;border:1px solid var(--line-strong,#dcdcd6);border-radius:8px;padding:6px 8px;background:var(--canvas,#fff)}.ds-live-text input{width:100%;min-width:0;border:0;color:var(--ink,#252523);background:transparent;font-size:11px;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-live-text input::placeholder{color:var(--muted,#66665f)}.ds-live-text input:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-live-text button{display:grid;place-items:center;width:25px;height:25px;border:0;border-radius:5px;color:var(--muted,#66665f);background:transparent}.ds-live-text button svg{width:15px;height:15px}.ds-live-text button:disabled{opacity:.4;cursor:not-allowed}.ds-live-text button:hover{background:var(--soft,#f3f3f1)}.ds-live-text button:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-live-copy{font-size:11px;color:var(--muted,#66665f);margin:18px 0 14px}.ds-live-handback{flex-shrink:0;border:0;border-radius:9px;background:var(--strong,#252523);color:var(--on-strong,#fff);padding:8px 13px;min-height:36px;font-size:12px;cursor:pointer;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-live-handback:hover{background:var(--strong-hover,#42423d)}.ds-live-handback:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
+    },
+    {
+      "name": "Interrupted task recovery",
+      "kind": "custom",
+      "refersTo": "task-recovery",
+      "description": "src/Conversation.tsx, src/App.tsx and src/state.ts: quiet interrupted-task status and an explicit action that reruns the original request with saved inputs in a new directory.",
+      "html": "<div class=\"ds-recovery\" role=\"status\"><span>任务已中断，已保存文件仍保留</span><button type=\"button\">继续处理</button></div>",
+      "css": ".ds-recovery{display:flex;align-items:center;gap:10px;font-size:10px;color:var(--muted,#66665f);margin:0 3px 9px;flex-wrap:wrap;line-height:1.6;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-recovery>span:first-child{color:var(--ink,#252523)}.ds-recovery button{padding:3px 7px;background:var(--soft,#f3f3f1);border:0;border-radius:5px;margin-left:auto;color:var(--ink,#252523);font-size:10px;line-height:1.6;cursor:pointer;font-family:var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-recovery button:hover{background:var(--hover,#ededeb)}.ds-recovery button:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-recovery button:disabled{opacity:.4;cursor:not-allowed}"
+    },
+    {
+      "name": "Highlighted assistant code",
+      "kind": "custom",
+      "refersTo": "markdown-code",
+      "description": "Explicit fenced-code syntax within the existing conversation frame; this static specimen illustrates the live token roles and does not execute or copy code.",
+      "html": "<section class=\"ds-code\" aria-label=\"代码块\"><div class=\"ds-code-heading\"><span>ts</span><button type=\"button\" aria-label=\"复制代码\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\"/><path d=\"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\"/></svg>复制</button></div><pre tabindex=\"0\"><code><span class=\"ds-code-comment\">// 合成示例</span>\n<span class=\"ds-code-keyword\">const</span> label = <span class=\"ds-code-string\">\"SYNTHETIC\"</span>;\n<span class=\"ds-code-keyword\">const</span> total = <span class=\"ds-code-number\">47</span>;</code></pre></section>",
+      "css": ".ds-code{max-width:100%;overflow:hidden;border:1px solid var(--line,#eaeae6);border-radius:8px;background:var(--canvas,#fff);color:var(--ink,#252523);font:14px/1.9 var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif)}.ds-code-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid var(--line,#eaeae6);color:var(--muted,#66665f);font-size:11px}.ds-code-heading button{display:inline-flex;align-items:center;gap:5px;padding:3px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}.ds-code-heading button:hover{color:var(--ink,#252523)}.ds-code-heading button:focus-visible,.ds-code pre:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-code-heading svg{width:13px;height:13px}.ds-code pre{margin:0;overflow:auto;padding:12px;line-height:1.7;white-space:pre}.ds-code code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;white-space:pre}.ds-code-keyword{color:var(--code-keyword,#704c9f);font-weight:600}.ds-code-string{color:var(--code-string,#386a51)}.ds-code-number{color:var(--code-number,#8b5a24)}.ds-code-comment{color:var(--muted,#66665f);font-style:italic}"
+    },
+    {
+      "name": "Assistant diagram source fallback",
+      "kind": "custom",
+      "refersTo": "markdown-code",
+      "description": "Shared assistant frame while Mermaid is streaming, pending or rejected; static synthetic source specimen, without rendering or clipboard execution.",
+      "html": "<section class=\"ds-diagram-code\" aria-label=\"代码块\"><div class=\"ds-diagram-heading\"><span>图表</span><button type=\"button\" aria-label=\"复制源码\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" aria-hidden=\"true\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\"/><path d=\"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\"/></svg>复制源码</button></div><pre tabindex=\"0\"><code>flowchart LR\n  A[合成输入] --&gt; B[合成输出]</code></pre><p class=\"ds-diagram-status\" role=\"status\">正在绘制图表…</p></section>",
+      "css": ".ds-diagram-code{max-width:100%;overflow:hidden;border:1px solid var(--line,#eaeae6);border-radius:8px;background:var(--canvas,#fff);color:var(--ink,#252523);font:14px/1.9 var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif)}.ds-diagram-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid var(--line,#eaeae6);color:var(--muted,#66665f);font-size:11px}.ds-diagram-heading button{display:inline-flex;align-items:center;gap:5px;padding:3px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;transition:background-color .15s,color .15s}.ds-diagram-heading button:hover{background-color:transparent;color:inherit}.ds-diagram-heading button:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}.ds-diagram-heading svg{display:block;width:13px;height:13px}.ds-diagram-code pre{margin:0;overflow:auto;padding:12px;line-height:1.7;white-space:pre}.ds-diagram-code pre:focus-visible{outline:2px solid var(--focus,#61816c)}.ds-diagram-code code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;white-space:pre}.ds-diagram-status{margin:0;padding:0 14px 12px;color:var(--muted,#66665f);font-size:12px}@media(prefers-reduced-motion:reduce){.ds-diagram-heading button{transition:none}}"
+    },
+    {
+      "name": "Skill source editor",
+      "kind": "custom",
+      "refersTo": "field",
+      "description": "Shared single-file Markdown instructions use the existing field and flat rows. Source has a 240px minimum; drafts and explicit conflict review remain separate from model execution.",
+      "html": "<section class=\"ds-skill\"><div class=\"ds-skill-title\"><strong>mock-summary</strong><label class=\"ds-skill-toggle\"><input type=\"checkbox\" aria-label=\"为合成 Bot 启用 mock-summary\"/>未启用</label></div><p class=\"ds-skill-description\">所有 Bot 共用技能库，启用设置分别保存。</p><div class=\"ds-skill-editor\"><h3>编辑技能说明</h3><label class=\"ds-skill-label\">SKILL.md<textarea aria-label=\"技能说明\" spellcheck=\"false\">---\nname: mock-summary\ndescription: 整理合成记录\n---\n先阅读输入，再列出要点。</textarea></label><p class=\"ds-skill-help\">有未保存的修改。修改从下次任务生效。</p><button class=\"ds-skill-save\" type=\"button\">保存技能</button></div></section>",
+      "css": ".ds-skill{color:var(--ink,#252523);font:14px/1.6 var(--font,-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif)}.ds-skill-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:13px}.ds-skill-title strong{font-weight:550;overflow-wrap:anywhere}.ds-skill-toggle{margin-left:auto;display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:11px;color:var(--muted,#66665f)}.ds-skill-description{margin-top:7px;font-size:12px;line-height:1.8;color:var(--muted,#66665f);overflow-wrap:anywhere}.ds-skill-editor{margin:20px 0;padding:18px 0;border-block:1px solid var(--line,#eaeae6)}.ds-skill-editor h3{margin:0;font-size:14px;font-weight:550}.ds-skill-label{display:grid;gap:8px;font-size:12px;font-weight:500}.ds-skill-label textarea{display:block;width:100%;max-width:100%;min-height:240px;border:1px solid var(--line-strong,#dcdcd6);border-radius:9px;padding:10px 12px;background:var(--canvas,#fff);color:var(--ink,#252523);font-family:inherit;font-size:13px;line-height:1.7;resize:vertical}.ds-skill-label textarea:focus{border-color:var(--muted,#66665f)}.ds-skill-help{color:var(--muted,#66665f);font-size:11px;line-height:1.7}.ds-skill-save{min-height:36px;padding:8px 13px;border:0;border-radius:9px;background:var(--strong,#252523);color:var(--on-strong,#fff);font-family:inherit;font-size:12px;font-weight:500;line-height:1.6;cursor:pointer}.ds-skill-save:hover{background:var(--strong-hover,#42423d)}.ds-skill-save:disabled{opacity:.4;cursor:not-allowed}.ds-skill-toggle input:focus-visible,.ds-skill-label textarea:focus-visible,.ds-skill-save:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
+    },
+    {
+      "name": "Bounded external-tool text",
+      "kind": "custom",
+      "refersTo": "field",
+      "description": "Repeated schema, argument and receipt regions are labelled, keyboard-focusable and bounded; read-only inspection conveys no execution authority. Synthetic static specimen.",
+      "html": "<section class=\"ds-tool-text\" tabindex=\"0\" aria-label=\"合成调用参数\"><pre>{\"label\":\"SYNTHETIC\",\"count\":2}</pre></section>",
+      "css": ".ds-tool-text{max-height:240px;overflow:auto;margin:10px 0;color:var(--ink,#252523)}.ds-tool-text pre{padding:14px;margin:0;background:var(--canvas,#fff);font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}.ds-tool-text:hover{color:var(--ink,#252523)}.ds-tool-text:focus-visible{outline:2px solid var(--focus,#61816c);outline-offset:4px}"
+    },
+    {
+      "name": "Archived conversation notice",
+      "kind": "custom",
+      "description": "Read-only history notice with an explicit restore action; pending states instead name receipt inspection.",
+      "html": "<div class=\"ds-archive-banner\"><p>此 Bot 已归档，历史和未发送草稿保留。</p><button type=\"button\">恢复 Bot</button></div>",
+      "css": ".ds-archive-banner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-family: var(--font); font-size: 12px; line-height: 1.7; } .ds-archive-banner p { margin: 0; } .ds-archive-banner button { background: var(--soft); color: var(--ink); border: none; border-radius: 9px; min-height: 36px; padding: 8px 13px; font-family: var(--font); font-size: 12px; font-weight: 500; cursor: pointer; transition: background 150ms; } .ds-archive-banner button:hover { background: var(--hover); } .ds-archive-banner button:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; } .ds-archive-banner button:disabled { opacity: 0.4; cursor: not-allowed; } @media (prefers-reduced-motion: reduce) { .ds-archive-banner button { transition: none; } }"
+    },
+    {
+      "name": "Read-only environment check rows",
+      "kind": "custom",
+      "description": "Issue-first Settings observation with optional bounded keyboard detail; connection repair remains separate.",
+      "html": "<section class=\"ds-diagnostics\" aria-label=\"运行环境检查结果\"><p class=\"ds-diagnostic-summary\">有项目需要处理<span>上次检查 14:20:00</span></p><section class=\"ds-diagnostic-checks\" aria-label=\"检查条目\" tabindex=\"0\"><div class=\"ds-diagnostic-row\"><div><div class=\"ds-diagnostic-label\">Linux 服务</div><p>本地服务暂未就绪，可先重试连接；检查不会强制重启电脑。</p></div><span class=\"ds-diagnostic-badge\">未就绪</span></div></section><button class=\"ds-diagnostic-toggle\" type=\"button\" aria-expanded=\"true\">收起检查项</button></section>",
+      "css": ".ds-diagnostics{font-family:var(--font);color:var(--ink);min-width:0;padding-bottom:12px}.ds-diagnostic-summary,.ds-diagnostic-row p{font-size:12px;line-height:1.7;color:var(--muted)}.ds-diagnostic-summary>span{display:block;margin-top:4px}.ds-diagnostic-checks{max-height:320px;overflow:auto;padding-right:12px;margin-top:12px}.ds-diagnostic-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:12px 0;border-bottom:1px solid var(--line)}.ds-diagnostic-row>div{min-width:0}.ds-diagnostic-label{font-size:14px;font-weight:500}.ds-diagnostic-badge{flex-shrink:0;background:var(--soft);color:var(--danger);border-radius:5px;padding:3px 8px;font-size:12px}.ds-diagnostic-toggle{font-family:var(--font);font-size:12px;color:var(--muted);background:transparent;border:0;border-radius:9px;min-height:44px;margin-top:4px;padding:8px 13px;cursor:pointer;transition:background 150ms,color 150ms}.ds-diagnostic-toggle:hover{background:var(--hover);color:var(--ink)}.ds-diagnostic-toggle:focus-visible,.ds-diagnostic-checks:focus-visible{outline:2px solid var(--focus);outline-offset:4px}@media(prefers-reduced-motion:reduce){.ds-diagnostic-toggle{transition:none}}"
+    },
+    {
+      "name": "Group archive receipt recovery",
+      "kind": "custom",
+      "description": "GroupArchive.tsx pending-archive fragment with grouped identity, retained-material copy and separate receipt inspection/same-operation retry. Static synthetic specimen; personal Bot computer and schedule lifecycle stays separate.",
+      "html": "<section class=\"ds-group-archive\"><div class=\"ds-group-identity\"><span class=\"ds-group-avatars\" aria-hidden=\"true\"><span class=\"ds-group-avatar\"><svg aria-hidden=\"true\" viewBox=\"0 0 40 43\" fill=\"none\"><path d=\"M6 7C10 2 19 1 27 4c8 3 12 12 11 21-1 9-10 16-20 16C8 41 1 35 2 26 3 20 2 12 6 7Z\" fill=\"#73a48d\"/><path d=\"m15 13 1.5 7M23 12l1.5 7\" stroke=\"white\" stroke-width=\"3.3\" stroke-linecap=\"round\"/></svg></span><span class=\"ds-group-avatar\"><svg aria-hidden=\"true\" viewBox=\"0 0 40 43\" fill=\"none\"><path d=\"M6 7C10 2 19 1 27 4c8 3 12 12 11 21-1 9-10 16-20 16C8 41 1 35 2 26 3 20 2 12 6 7Z\" fill=\"#6989d2\"/><path d=\"m15 13 1.5 7M23 12l1.5 7\" stroke=\"white\" stroke-width=\"3.3\" stroke-linecap=\"round\"/></svg></span><span class=\"ds-group-avatar\"><svg aria-hidden=\"true\" viewBox=\"0 0 40 43\" fill=\"none\"><path d=\"M6 7C10 2 19 1 27 4c8 3 12 12 11 21-1 9-10 16-20 16C8 41 1 35 2 26 3 20 2 12 6 7Z\" fill=\"#9671dc\"/><path d=\"m15 13 1.5 7M23 12l1.5 7\" stroke=\"white\" stroke-width=\"3.3\" stroke-linecap=\"round\"/></svg></span></span><strong>合成协作组</strong></div><p class=\"ds-group-description\">归档后不再接受新协作。成员、历史、附件、文件和未发送草稿都会保留，成员的私聊与电脑不受影响。</p><p class=\"ds-group-note\">上一次归档尚待核对。关闭弹窗不会撤回已提交的操作，请核对结果或重试同一次操作。</p><div class=\"ds-group-actions\"><button class=\"ds-group-close\" type=\"button\">关闭</button><button class=\"ds-group-inspect\" type=\"button\">核对操作结果</button><button class=\"ds-group-retry\" type=\"button\">重试同一次操作</button></div></section>",
+      "css": ".ds-group-archive{color:var(--ink);font:14px/1.6 var(--font)}.ds-group-identity{display:flex;align-items:center;gap:12px}.ds-group-identity strong{font-size:14px;font-weight:500}.ds-group-avatars{width:37px;height:39px;position:relative;flex-shrink:0}.ds-group-avatar{position:absolute;width:25px;height:27px}.ds-group-avatar svg{display:block;width:100%;height:100%}.ds-group-avatar:nth-child(1){left:7px;top:-2px}.ds-group-avatar:nth-child(2){left:-3px;top:16px}.ds-group-avatar:nth-child(3){left:17px;top:16px}.ds-group-description{color:var(--muted);font-size:12px;margin:0 0 23px}.ds-group-note{margin:0;color:var(--muted);font-size:10px;line-height:1.8}.ds-group-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:26px}.ds-group-actions button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:8px 13px;border:0;border-radius:9px;font-family:var(--font);font-size:12px;font-weight:500;white-space:nowrap;cursor:pointer;transition:background-color .15s,color .15s}.ds-group-close{background:none;color:var(--muted)}.ds-group-close:hover{background:var(--soft);color:var(--ink)}.ds-group-inspect{background:var(--soft);color:var(--ink)}.ds-group-inspect:hover{background:var(--hover)}.ds-group-retry{background:var(--strong);color:var(--on-strong)}.ds-group-retry:hover{background:var(--strong-hover)}.ds-group-actions button:focus-visible{outline:2px solid var(--focus);outline-offset:4px}.ds-group-actions button:disabled{opacity:.4;cursor:not-allowed}@media(prefers-reduced-motion:reduce){.ds-group-actions button{transition:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Grok Bot conversation workspace",
+    "overview": "daban preserves the Grok Bot reference: a quiet, edge-to-edge conversation workspace with a pale sidebar, restrained monochrome controls, and compact colored Bot identities. Chinese system typography and messaging-app density keep attention on the conversation and the adjacent computer.\n\nThe light and dark themes share the same geometry. Surface tones, thin dividers, and text hierarchy organize the UI. Connected Electron Bots show their actual Linux desktops beside the conversation; the browser-only preview keeps its synthetic desktop. Simple SVG identities and the lowercase daban wordmark remain the identity anchors.",
+    "keyCharacteristics": [
+      "Conversation and computer sit beside each other on wide desktop windows.",
+      "Warm neutral surfaces with small identity and semantic color accents.",
+      "Compact system typography, flat rows, and restrained rounded controls.",
+      "Visible connection and demonstration labels distinguish live Bots from UI examples."
+    ],
+    "rules": [
+      {
+        "name": "The Small Accent Rule",
+        "body": "Color identifies a Bot, a meaningful state or fenced-code syntax; the workspace itself stays neutral.",
+        "section": "colors"
+      },
+      {
+        "name": "The Conversation Reading Rule",
+        "body": "Preserve the message reading size and generous line height when adding content; density comes from the surrounding chrome.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Workspace Rule",
+        "body": "Keep ordinary rows, messages, controls, and panels free of decorative drop shadows; use the existing overlay treatment when a surface actually floats.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the lowercase daban identity and Grok Bot reference.",
+      "Do use the existing semantic color variables in both themes.",
+      "Do keep Chinese text readable, with relaxed message line height and wrapping for long content.",
+      "Do preserve visible keyboard focus, accessible control names, and modal focus containment.",
+      "Do keep takeover ownership visible for the selected Bot and require explicit handback.",
+      "Do identify each webpage request by its source tab and full URL, and offer a way to reveal an inactive requesting tab.",
+      "Do label demonstration content and disconnected functionality where the user encounters them.",
+      "Do preserve interrupted-task files, editable drafts after definite rejection, and request identity while a send result is uncertain.",
+      "Do preserve per-Bot profile and memory drafts, show saved values for conflict review, and never let late save acknowledgements replace newer state.",
+      "Do show native task plans and human requests in the conversation and real inbox; preserve independent reply drafts and exact uncertain retries, and keep ordinary answers separate from one-shot permissions.",
+      "Do render only visible native response text, preserve stable final-bubble identity and incomplete labels, and keep reader scroll and unchanged history independent of token updates.",
+      "Do show computer lifecycle, pending-result and running-task reasons beside the controls; retain drafts during connection changes and require fresh saved-content confirmation before stop.",
+      "Do distinguish the shared skill library from per-Bot enablement, retain chat and editor drafts, and make conflict, recycle and restore consequences explicit.",
+      "Do keep private replacement fields empty on readback, retain active drafts during refresh, and distinguish connection checks, per-Bot tool choices and single-call approval.",
+      "Do retain readable archived history and drafts, name archive/restore consequences, and expose receipt inspection and the same-operation retry while results are pending.",
+      "Do keep read-only observation separate from connection repair, label prior checks as observations, and distinguish saved configuration or found dependencies from operational capability."
+    ],
+    "donts": [
+      "Don't introduce a marketing hero, decorative dashboard grid, or a new accent palette into this workspace.",
+      "Don't apply avatar colors to primary buttons, whole panels, or conversation text.",
+      "Don't squeeze a persistent three-column layout into a narrow web viewport.",
+      "Don't imply that closing the workspace or changing Bots returns control.",
+      "Don't present browser-only previews, unconnected Bots, routine configuration, approval examples or model labels as capabilities beyond their actual connection.",
+      "Don't imply that “继续处理” resumes a crashed process; it executes the original request again with the saved inputs in a new run directory.",
+      "Don't add renderer window controls over the native macOS traffic-light area.",
+      "Don't imply that importing a skill runs it, that restoring it restores consent, or that instruction text grants tools or permissions.",
+      "Don't present receipt inspection as execution, uncertain external effects as safe to repeat, or connection restoration as renewed Bot consent.",
+      "Don't treat Bot restoration as permission to restart a computer, schedule, old task or delegation, or silently cancel queued group work to archive.",
+      "Don't promise ordinary dialogue while the runtime is disconnected or present an environment check as recovery, installation or successful tool execution."
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=daban Linux desktop and DSH runtime
+After=network.target
+
+[Service]
+Type=simple
+User=bot-prototype
+Group=bot-prototype
+WorkingDirectory=/opt/bot-prototype/app/runtime
+Environment=PATH=/opt/bot-prototype/node/bin:/usr/bin:/bin
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/bot-prototype/browsers
+Environment=PLAYWRIGHT_MODULE=/opt/bot-prototype/app/runtime/node_modules/playwright/index.mjs
+Environment=PROFILE_DIR=/var/lib/bot-prototype/profile
+Environment=PORT=8766
+Environment=DESKTOP_MODE=1
+Environment=COMPUTER_SLOTS=2
+ExecStart=/opt/bot-prototype/node/bin/node /opt/bot-prototype/app/runtime/server.js
+Restart=on-failure
+RestartSec=2
+KillMode=mixed
+TimeoutStopSec=20
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

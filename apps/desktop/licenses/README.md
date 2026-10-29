@@ -1,0 +1,3 @@
+`remark-math-LICENSE` is the MIT license for the pinned remark-math 6.0.0 source. Its npm archive omitted the license file, so this copy is retained for local app assembly. The npm release metadata identifies git commit `d5d0660b150810a535bbb07eac6cc96a4510aa24`; source: https://github.com/remarkjs/remark-math/blob/d5d0660b150810a535bbb07eac6cc96a4510aa24/license . Keep this copy aligned when upgrading that dependency.
+
+Other newly bundled frontend notices are copied from their installed, pinned package roots by the desktop build. This does not replace the separate full transitive-license audit required for public distribution.

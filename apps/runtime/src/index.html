@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="prototype-token" content="__PROTOTYPE_TOKEN__">
+    <title>双 Bot 浏览器原型</title>
+    <link rel="stylesheet" href="/style.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="title">
+        <div>
+          <h1>两个 Bot，一个登录</h1>
+          <p>真实 Chromium 页面 · 本地模拟网站 · 确定性脚本驱动</p>
+        </div>
+        <div class="title-actions">
+          <button type="button" class="secondary" id="model-settings">DeepSeek 设置</button
+          ><span class="connection" id="connection" role="status">正在连接浏览器</span>
+        </div>
+      </header>
+      <section class="guide" aria-label="操作说明">
+        <p>
+          <strong>登录会话共享，操作和接管各自独立</strong
+          ><span
+            >未登录时先接管任意页面，点击画面中的「登录示例账户」。已登录时可直接运行两个
+            Bot，再分别接管。</span
+          >
+        </p>
+        <button type="button" class="primary" id="run-all" disabled>运行两个 Bot</button
+        ><button type="button" id="stop-all" class="secondary">停止全部任务</button>
+      </section>
+      <div class="toolbar">
+        <div id="shared-login" role="status">共享会话：读取中</div>
+        <nav aria-label="显示页面">
+          <button type="button" data-view="both" aria-pressed="true">双屏</button
+          ><button type="button" data-view="a" aria-pressed="false">Bot A 大屏</button
+          ><button type="button" data-view="b" aria-pressed="false">Bot B 大屏</button>
+        </nav>
+      </div>
+      <section class="screens" id="screens" aria-label="两个独立操作画面"></section>
+      <div class="notice" id="notice" role="status" aria-live="polite">准备浏览器画面…</div>
+      <section class="events">
+        <div class="events-title">
+          <h2>运行记录</h2>
+          <span>接管只暂停对应 Bot</span>
+        </div>
+        <ol id="events"></ol>
+      </section>
+      <footer class="scope">
+        验证范围：共享网页登录、独立页面操作、分别接管。执行系统见顶部状态；共享登录仅验证本地示例站点。
+      </footer>
+    </main>
+    <dialog id="model-dialog">
+      <form id="model-form">
+        <h2>连接 DeepSeek</h2>
+        <p>
+          使用支持截图识别的
+          deepseek-flash。密钥写入本机虚拟机的私有配置，不在页面回显。真实调用会使用你的 API 额度。
+        </p>
+        <div id="model-config-status" role="status">正在读取配置</div>
+        <label for="api-key">DeepSeek API Key</label>
+        <input
+          id="api-key"
+          name="apiKey"
+          type="password"
+          autocomplete="new-password"
+          placeholder="在这里填写，不用发送到聊天里"
+          required
+        >
+        <div id="model-config-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" id="model-close">关闭</button
+          ><button class="primary" type="submit">保存密钥</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
