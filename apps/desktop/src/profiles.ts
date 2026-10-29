@@ -37,7 +37,14 @@ export function useProfiles(
     const profiles = runtime.snapshot.profiles || [];
     const known = new Set(profiles.map((profile) => profile.id));
     for (const bot of state.bots) {
-      if (bot.members || bot.archived || known.has(agentId(bot.id))) continue;
+      // A confirmed copy/import can arrive before the next status snapshot; it already owns its ID.
+      if (
+        bot.members ||
+        bot.archived ||
+        known.has(agentId(bot.id)) ||
+        state.profileRevisions[agentId(bot.id)] > 0
+      )
+        continue;
       const profile = profileInput(bot, state.memories[bot.id]);
       const key = JSON.stringify(profile);
       if (attempted.current.has(key)) continue;
@@ -46,5 +53,13 @@ export function useProfiles(
         .command({ type: 'bot.register', profile })
         .catch((error) => notify(runtimeError(error)));
     }
-  }, [runtime.enabled, runtime.snapshot, runtime.command, state.bots, state.memories, notify]);
+  }, [
+    runtime.enabled,
+    runtime.snapshot,
+    runtime.command,
+    state.bots,
+    state.memories,
+    state.profileRevisions,
+    notify,
+  ]);
 }

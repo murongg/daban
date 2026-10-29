@@ -1,9 +1,11 @@
 import {
   type AttachmentRef,
   agentId,
+  type BotCopyRequest,
   type BotImportReference,
   type BotLifecycleRequest,
   type BotProfile,
+  botCopyKey,
   type ChatRequest,
   type ChatState,
   type ChatStatus,
@@ -11,6 +13,7 @@ import {
   type Group,
   type GroupActionRequest,
   type GroupSend,
+  isBotCopyRequest,
   isBotImportReference,
   isBotLifecycleRequest,
   isBotProfile,
@@ -170,6 +173,7 @@ export function routineDraft(): RoutineDraft {
 }
 export interface State {
   organization: Organization;
+  botCopy?: BotCopyRequest;
   botImport?: BotImportReference;
   lifecycleRequests: Record<string, BotLifecycleRequest | undefined>;
   skillDrafts: Record<string, SkillDraft | undefined>;
@@ -220,6 +224,7 @@ export function lifecycleRequest(
 }
 export type Action =
   | OrganizationAction
+  | { type: 'bot-copy-pending' | 'bot-copy-clear'; request: BotCopyRequest }
   | { type: 'bot-import-pending'; reference: BotImportReference }
   | { type: 'bot-import-cancel' | 'bot-import-clear'; id: string; sha256: string }
   | { type: 'lifecycle-pending'; bot: string; request: BotLifecycleRequest }
@@ -362,6 +367,14 @@ export function reduce(state: State, action: Action): State {
     case 'chat-clear':
       return state.chatRequests[action.bot]?.id === action.id
         ? { ...state, chatRequests: { ...state.chatRequests, [action.bot]: undefined } }
+        : state;
+    case 'bot-copy-pending':
+      return !state.botCopy && isBotCopyRequest(action.request)
+        ? { ...state, botCopy: { ...action.request } }
+        : state;
+    case 'bot-copy-clear':
+      return state.botCopy && botCopyKey(state.botCopy) === botCopyKey(action.request)
+        ? { ...state, botCopy: undefined }
         : state;
     case 'bot-import-pending': {
       if (!isBotImportReference(action.reference)) return state;

@@ -1,9 +1,10 @@
-import { agentTask, computerTarget } from '@daban/protocol';
+import { agentId, agentTask, computerTarget, recoveryBlocked } from '@daban/protocol';
 import {
   ArrowDown,
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  Copy,
   FolderPlus,
   Inbox,
   Laptop,
@@ -38,6 +39,7 @@ export function Sidebar({
   searchRef,
   onCreate,
   onImport,
+  onCopy,
   open,
   close,
 }: {
@@ -48,6 +50,7 @@ export function Sidebar({
   searchRef: RefObject<HTMLInputElement | null>;
   onCreate: (group?: boolean) => unknown;
   onImport?: () => unknown;
+  onCopy?: (bot?: string) => unknown;
   open: boolean;
   close: () => unknown;
 }) {
@@ -376,6 +379,11 @@ export function Sidebar({
           </nav>
         </div>
         <footer className="sidebar-footer">
+          {state.botCopy && onCopy && (
+            <button className="bundle-import-entry" type="button" onClick={() => onCopy()}>
+              Bot 复制 · 核对进度
+            </button>
+          )}
           {state.botImport && onImport && (
             <button className="bundle-import-entry" type="button" onClick={onImport}>
               Bot 导入 · 查看进度
@@ -426,6 +434,30 @@ export function Sidebar({
                   const pinned = organization.pins.includes(bot.id);
                   const unread = organization.attention.unread.includes(bot.id);
                   const items: SidebarEntry[] = [
+                    ...(!bot.members && onCopy
+                      ? [
+                          {
+                            id: 'copy',
+                            kind: 'action' as const,
+                            label: '复制 Bot',
+                            icon: <Copy />,
+                            disabled:
+                              !!state.botCopy ||
+                              !runtime.enabled ||
+                              runtime.snapshot.phase !== 'ready' ||
+                              runtime.snapshot.protocolVersion < 34 ||
+                              recoveryBlocked(runtime.snapshot) ||
+                              !!state.lifecycleRequests[bot.id] ||
+                              !runtime.snapshot.profiles.some(
+                                (profile) =>
+                                  profile.id === agentId(bot.id) &&
+                                  !profile.archived &&
+                                  profile.lifecycle?.phase !== 'pending',
+                              ),
+                            onSelect: () => onCopy(bot.id),
+                          },
+                        ]
+                      : []),
                     {
                       id: 'pin',
                       kind: 'action',

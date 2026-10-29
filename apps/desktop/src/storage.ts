@@ -1,6 +1,7 @@
 import {
   agentId,
   isAttachmentRef,
+  isBotCopyRequest,
   isBotImportReference,
   isBotLifecycleRequest,
   isChatRequest,
@@ -43,6 +44,7 @@ export function restore(raw: string | null): State {
     if (!record(saved) || saved.version !== 1 || !record(saved.state)) return initialState();
     const s = saved.state;
     if (!isBotImportReference(s.botImport)) delete s.botImport;
+    if (!isBotCopyRequest(s.botCopy)) delete s.botCopy;
     s.groupRevisions = {};
     if (!record(s.groupRequests)) s.groupRequests = {};
     s.groupRequests = Object.fromEntries(

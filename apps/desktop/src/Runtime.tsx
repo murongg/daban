@@ -114,6 +114,9 @@ export function useRuntime() {
 export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
+    INVALID_BOT_COPY: '复制参数无效，请重新核对名称和来源。',
+    INVALID_BOT_COPY_ACK: '复制回执不匹配，原请求仍保留，请核对结果。',
+    BOT_COPY_CONFLICT: '复制目标与原请求不一致，请保留原请求并检查运行环境。',
     INVALID_BOT_LIFECYCLE: 'Bot 操作无效，请重新核对目标与资料版本。',
     BOT_ARCHIVED: '这位 Bot 已归档。历史仍保留，恢复后可发送新任务。',
     BOT_CHANGING: 'Bot 状态正在变更，请核对操作结果后再继续。',

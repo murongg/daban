@@ -7,6 +7,7 @@ import {
   type BotCopyRequest,
   type BotLifecycleRequest,
   type BotProfile,
+  botCopyKey,
   isBotCopyRequest,
   isBotLifecycleRequest,
   isBotProfile,
@@ -320,18 +321,7 @@ export class BotProfiles {
   private copyOrigin(request: BotCopyRequest): ImportOrigin {
     return {
       id: request.id,
-      sha256: createHash('sha256')
-        .update(
-          JSON.stringify([
-            'daban.profile-copy.v1',
-            request.id,
-            request.bot,
-            request.revision,
-            request.name,
-            request.memory,
-          ]),
-        )
-        .digest('hex'),
+      sha256: createHash('sha256').update(botCopyKey(request)).digest('hex'),
     };
   }
   private copied(request: BotCopyRequest) {

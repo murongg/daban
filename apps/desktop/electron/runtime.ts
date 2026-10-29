@@ -3,6 +3,7 @@ import { request } from 'node:http';
 import {
   botBundleLimit,
   botBundleText,
+  botCopyKey,
   disconnected,
   imageProtocol,
   isAttachmentEntry,
@@ -566,11 +567,7 @@ export class RuntimeClient {
       );
       if (
         !isBotCopyReceipt(value) ||
-        value.request.id !== request.id ||
-        value.request.bot !== request.bot ||
-        value.request.revision !== request.revision ||
-        value.request.name !== request.name ||
-        value.request.memory !== request.memory ||
+        botCopyKey(value.request) !== botCopyKey(request) ||
         (copying && value.state !== 'complete')
       )
         throw new Error('INVALID_BOT_COPY_ACK');

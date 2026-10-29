@@ -1850,6 +1850,17 @@ export interface BotCopyRequest {
   name: string;
   memory: boolean;
 }
+export function botCopyKey(request: BotCopyRequest) {
+  // Persisted copy origins hash this tuple; changing its order would invalidate existing receipts.
+  return JSON.stringify([
+    'daban.profile-copy.v1',
+    request.id,
+    request.bot,
+    request.revision,
+    request.name,
+    request.memory,
+  ]);
+}
 export interface BotCopyAck {
   request: BotCopyRequest;
   state: 'complete';
