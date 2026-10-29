@@ -3,7 +3,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isTranscriptContent, isTranscriptPage, type TranscriptScope } from '@daban/protocol';
+import {
+  isTranscriptContent,
+  isTranscriptPage,
+  managedProtocol,
+  type TranscriptScope,
+} from '@daban/protocol';
 import { startPrototype } from './server.js';
 
 test('authenticated transcript reads bind exact run/Bot/private or group scope without granting work or revealing internal metadata', async () => {
@@ -133,7 +138,7 @@ test('authenticated transcript reads bind exact run/Bot/private or group scope w
     const state = await (
       await fetch(app.url + '/api/state', { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(state.clientProtocol, 33);
+    assert.equal(state.clientProtocol, managedProtocol);
     assert.equal(state.model.configured, false);
     assert.equal(app.models.jobs.size, 0);
     assert.deepEqual(

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { managedProtocol } from '@daban/protocol';
 import { startPrototype } from './server.js';
 
 test('the authenticated skills API shares instruction documents but isolates enablement by registered logical Bot', async () => {
@@ -34,7 +35,7 @@ test('the authenticated skills API shares instruction documents but isolates ena
     const status = await (
       await fetch(`${app.url}/api/state`, { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(status.clientProtocol, 33);
+    assert.equal(status.clientProtocol, managedProtocol);
     assert.equal(status.skills.available, true);
     assert.deepEqual(status.bots, {});
     assert.equal(

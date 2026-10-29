@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isBotLifecycleAck } from '@daban/protocol';
+import { isBotLifecycleAck, managedProtocol } from '@daban/protocol';
 import type { Screens } from './desktop.js';
 import { Native } from './native.js';
 import { startPrototype } from './server.js';
@@ -43,7 +43,7 @@ test('authenticated lifecycle API preserves owned data, checks task/resource/que
     const state = await (
       await fetch(`${app.url}/api/state`, { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(state.clientProtocol, 33);
+    assert.equal(state.clientProtocol, managedProtocol);
     assert.equal(
       (await request(profile.id, 'lifecycle', archive, 'synthetic-wrong-token')).status,
       403,

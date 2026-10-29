@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isMemoryPage } from '@daban/protocol';
+import { isMemoryPage, managedProtocol } from '@daban/protocol';
 import { startPrototype } from './server.js';
 
 test('human preference history stays authenticated, bounded, current-only in snapshots and readable during recovery', async () => {
@@ -61,7 +61,7 @@ test('human preference history stays authenticated, bounded, current-only in sna
     assert.ok(isMemoryPage(older));
     assert(older.items.every((item) => item.revision < 9));
     const state = (await call('/api/state')).value;
-    assert.equal(state.clientProtocol, 33);
+    assert.equal(state.clientProtocol, managedProtocol);
     assert(!JSON.stringify(state).includes('SYNTHETIC OLD PREFERENCE'));
     assert(!JSON.stringify(state).includes('memoryHistory'));
     assert.deepEqual(

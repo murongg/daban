@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isRuntimeNoticeStatus } from '@daban/protocol';
+import { isRuntimeNoticeStatus, managedProtocol } from '@daban/protocol';
 import { startPrototype } from './server.js';
 
 test('authenticated status exposes private completion metadata without full prompt/results and without running a model', async () => {
@@ -32,7 +32,7 @@ test('authenticated status exposes private completion metadata without full prom
     const state = await (
       await fetch(app.url + '/api/state', { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(state.clientProtocol, 33);
+    assert.equal(state.clientProtocol, managedProtocol);
     const notices: unknown = state.notices;
     assert.ok(isRuntimeNoticeStatus(notices));
     assert.ok(

@@ -402,7 +402,7 @@ it('keeps preparation while its recorded child is live, then resumes only after 
   expect(await finish(new Setup(f.options))).toMatchObject({ phase: 'complete' });
   await expect(fs.lstat(f.partial)).rejects.toMatchObject({ code: 'ENOENT' });
 });
-it.each([26, 27, 32, 33])(
+it.each([26, 27, 32, 33, 34])(
   'resumes an interrupted protocol %i install from its verified artifact without creating another VM',
   async (protocol) => {
     const f = await fixture(protocol);

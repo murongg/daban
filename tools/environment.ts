@@ -22,7 +22,7 @@ export const environmentVersions = {
   node: '24.22.1',
   dsh: '0.2.1-rc.3',
   // The host test binds this to managedProtocol; this helper must also load in the bare guest.
-  protocol: 33,
+  protocol: 34,
 };
 export const environmentAssets = {
   lima: {
@@ -85,8 +85,11 @@ export async function publishImage(directory: string, report: unknown, limaArchi
     output: string;
     limaHome: string;
     id: string;
+    versions: typeof environmentVersions;
   };
   assert.equal(build.output, output);
+  // A sanitized previous producer is still not the current release's payload.
+  assert.deepEqual(build.versions, environmentVersions, 'IMAGE_BUILD_VERSION');
   assert.match(build.limaHome, /^\/tmp\/daban-image-[a-zA-Z0-9]+$/);
   const binary = join(output, 'tools/bin/limactl');
   const state = JSON.parse(

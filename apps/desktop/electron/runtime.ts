@@ -11,6 +11,7 @@ import {
   isAttachmentPurge,
   isAttachmentReceipt,
   isBotBundle,
+  isBotCopyReceipt,
   isBotImportReceipt,
   isBotLifecycleAck,
   isBotProfile,
@@ -552,6 +553,29 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (command.type === 'bot.copy' || command.type === 'bot.copy.receipt') {
+      // Bind the result to the captured operation, even if the caller changes its form while status awaits.
+      const request = structuredClone(command.request);
+      const copying = command.type === 'bot.copy';
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 34) throw new Error('RUNTIME_TOO_OLD');
+      const value = await this.api(
+        `/api/bots/${request.bot}/${copying ? 'copy' : 'copy-receipt'}`,
+        request,
+      );
+      if (
+        !isBotCopyReceipt(value) ||
+        value.request.id !== request.id ||
+        value.request.bot !== request.bot ||
+        value.request.revision !== request.revision ||
+        value.request.name !== request.name ||
+        value.request.memory !== request.memory ||
+        (copying && value.state !== 'complete')
+      )
+        throw new Error('INVALID_BOT_COPY_ACK');
+      return value;
+    }
     if (command.type === 'transcript.list' || command.type === 'transcript.content') {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');

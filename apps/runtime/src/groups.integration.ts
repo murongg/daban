@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isGroupActionAck, isGroupPage } from '@daban/protocol';
+import { isGroupActionAck, isGroupPage, managedProtocol } from '@daban/protocol';
 import { startPrototype } from './server.js';
 
 test('authenticated group archive/restore retains definitions, fences sends, and preserves legacy group representations', async () => {
@@ -57,7 +57,7 @@ test('authenticated group archive/restore retains definitions, fences sends, and
     assert.equal(archived.group.archived, true);
     const current = await (await call('/api/state')).json(),
       legacy = await (await call('/api/state', undefined, false)).json();
-    assert.equal(current.clientProtocol, 33);
+    assert.equal(current.clientProtocol, managedProtocol);
     assert.equal(
       current.groups.items.find((item: { id: string }) => item.id === group.id).archived,
       true,

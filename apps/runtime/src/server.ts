@@ -12,6 +12,7 @@ import {
   isAttachmentQuery,
   isAttachmentUpload,
   isAttachmentVersion,
+  isBotCopyRequest,
   isBotExportRequest,
   isBotImportHeader,
   isBotLifecycleRequest,
@@ -292,7 +293,7 @@ export async function startPrototype({
       if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
         throw new Fault('FOREIGN_ORIGIN', 403);
       const url = new URL(req.url || '/', origin);
-      const modernGroups = ['28', '29', '30', '31', '32', '33'].includes(
+      const modernGroups = ['28', '29', '30', '31', '32', '33', '34'].includes(
         String(req.headers['x-daban-client-protocol']),
       );
       const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
@@ -375,7 +376,7 @@ export async function startPrototype({
           recovery &&
           req.method !== 'GET' &&
           !recoveryReads.has(url.pathname) &&
-          !/^\/api\/bots\/[a-zA-Z0-9_-]{1,80}\/(browser-receipt|lifecycle-receipt)$/.test(
+          !/^\/api\/bots\/[a-zA-Z0-9_-]{1,80}\/(browser-receipt|lifecycle-receipt|copy-receipt)$/.test(
             url.pathname,
           )
         ) {
@@ -933,13 +934,34 @@ export async function startPrototype({
           return json(res, { ok: true });
         }
         const match = url.pathname.match(
-          /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(control|worker|model|profile|reply|input|frame|app|browser-frame|browser-input|lifecycle|lifecycle-receipt)$/,
+          /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(control|worker|model|profile|reply|input|frame|app|browser-frame|browser-input|lifecycle|lifecycle-receipt|copy|copy-receipt)$/,
         );
         if (!match) throw new Fault('NOT_FOUND', 404);
         const [, id, action] = match;
-        if (['model', 'profile', 'reply', 'lifecycle', 'lifecycle-receipt'].includes(action)) {
+        if (
+          [
+            'model',
+            'profile',
+            'reply',
+            'lifecycle',
+            'lifecycle-receipt',
+            'copy',
+            'copy-receipt',
+          ].includes(action)
+        ) {
           if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
           const data = await body(req);
+          if (action === 'copy' || action === 'copy-receipt') {
+            if (!models) throw new Fault('STARTING', 503);
+            if (url.search || !isBotCopyRequest(data) || data.bot !== id)
+              throw new Fault('INVALID_BOT_COPY', 400);
+            return json(
+              res,
+              action === 'copy'
+                ? await models.profiles.copy(data)
+                : await models.profiles.copyReceipt(data),
+            );
+          }
           if (action === 'lifecycle' || action === 'lifecycle-receipt') {
             if (!lifecycle) throw new Fault('BOT_LIFECYCLE_UNAVAILABLE', 503);
             if (action === 'lifecycle') {

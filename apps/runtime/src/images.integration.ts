@@ -8,6 +8,7 @@ import {
   type DocumentUpload,
   isAttachmentOriginal,
   isAttachmentReceipt,
+  managedProtocol,
 } from '@daban/protocol';
 import {
   syntheticAlphaWebp,
@@ -82,7 +83,7 @@ test('authenticated four-format uploads retain exact scoped originals across res
     const status = await (
       await fetch(app.url + '/api/state', { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(status.clientProtocol, 33);
+    assert.equal(status.clientProtocol, managedProtocol);
     assert.equal(status.model.configured, false);
     for (const job of Object.values(status.model.bots)) {
       assert.ok(

@@ -4,6 +4,7 @@ import {
   isAttachmentUpload,
   isAttachmentVersion,
   isBotBundle,
+  isBotCopyRequest,
   isBotExportRequest,
   isBotImportHeader,
   isBotLifecycleRequest,
@@ -144,6 +145,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'bot.import.retry': ['type', 'id'],
     'bot.action': ['type', 'request'],
     'bot.receipt': ['type', 'bot', 'id'],
+    'bot.copy': ['type', 'request'],
+    'bot.copy.receipt': ['type', 'request'],
     'bot.update': ['type', 'bot', 'revision', 'patch'],
     'memory.history': ['type', 'bot', 'query'],
     status: ['type'],
@@ -332,6 +335,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
     return fail();
   if (v.type === 'bot.import.submit' && !isBotBundle(v.bundle)) return fail();
   if (v.type === 'bot.register' && !isBotProfileInput(v.profile)) return fail();
+  if (['bot.copy', 'bot.copy.receipt'].includes(String(v.type)) && !isBotCopyRequest(v.request))
+    return fail();
   if (v.type === 'bot.action' && !isBotLifecycleRequest(v.request)) return fail();
   if (v.type === 'recovery.restart' && !isRecoveryRequest(v.request)) return fail();
   if (

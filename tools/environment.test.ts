@@ -1,13 +1,30 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { managedProtocol } from '@daban/protocol';
-import { admitBuild, assertCleanImage, hashAsset, verifyAsset } from './environment.ts';
+import {
+  admitBuild,
+  assertCleanImage,
+  environmentVersions,
+  hashAsset,
+  publishImage,
+  verifyAsset,
+} from './environment.ts';
 
 test('a runtime-image build exclusively owns a new root and cannot adopt an existing data directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mock-environment-'));
@@ -40,6 +57,38 @@ test('the guest build helper loads outside the repository without workspace pack
       ['--experimental-strip-types', '--input-type=module', '-e', code],
       { cwd: root, timeout: 5000, stdio: 'pipe' },
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a previous-version builder cannot be published under the current runtime version', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mock-stale-image-builder-'));
+  try {
+    await writeFile(
+      join(root, 'build.json'),
+      JSON.stringify({
+        output: root,
+        limaHome: '/tmp/daban-image-mock',
+        id: 'mock-build',
+        versions: { ...environmentVersions, protocol: environmentVersions.protocol - 1 },
+      }),
+    );
+    const clean = {
+      runtimeEntries: 0,
+      providerCredentials: 0,
+      authorizedKeyBytes: 0,
+      sshHostKeys: 0,
+      homePrivateKeys: 0,
+      machineIdBytes: 0,
+      cloudInitEntries: 0,
+      randomSeedBytes: 0,
+    };
+    await assert.rejects(
+      publishImage(root, clean, join(root, 'mock-lima.tar.gz')),
+      /IMAGE_BUILD_VERSION/,
+    );
+    assert.deepEqual(await readdir(root), ['build.json']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

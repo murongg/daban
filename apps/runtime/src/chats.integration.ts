@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { managedProtocol } from '@daban/protocol';
 import { startPrototype } from './server.js';
 
 test('personal conversation boundaries and receipt/history reads require authenticated exact scope and preserve Bot state', async () => {
@@ -40,7 +41,7 @@ test('personal conversation boundaries and receipt/history reads require authent
     const first = await response.json();
     assert.equal(first.chat.revision, 1);
     const state = await (await call('/api/state')).json();
-    assert.equal(state.clientProtocol, 33);
+    assert.equal(state.clientProtocol, managedProtocol);
     assert.equal(state.chats.items.find((item: { bot: string }) => item.bot === bot).revision, 1);
     assert.equal(state.model.configured, false);
     assert.deepEqual(

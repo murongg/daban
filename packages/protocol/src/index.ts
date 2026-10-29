@@ -1,4 +1,4 @@
-export const managedProtocol = 33;
+export const managedProtocol = 34;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1340,6 +1340,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'browser.frame',
     'browser.receipt',
     'bot.receipt',
+    'bot.copy.receipt',
     'chat.receipt',
     'chat.history',
     'transcript.list',
@@ -2064,6 +2065,8 @@ export function isBotCopyRequest(value: unknown): value is BotCopyRequest {
     profileObject(value) &&
     Object.keys(value).every((key) => ['id', 'bot', 'revision', 'name', 'memory'].includes(key)) &&
     validAgentId(value.id) &&
+    // Legacy display aliases would collapse a new profile into an existing client identity.
+    agentId(value.id) === value.id &&
     validAgentId(value.bot) &&
     value.id !== value.bot &&
     Number.isSafeInteger(value.revision) &&
@@ -3334,6 +3337,7 @@ export type RuntimeCommand =
   | { type: 'interaction.reply'; bot: string; runId: string; id: string; reply: UserReply }
   | { type: 'status' | 'connect' }
   | { type: 'bot.register'; profile: BotProfileInput }
+  | { type: 'bot.copy' | 'bot.copy.receipt'; request: BotCopyRequest }
   | { type: 'bot.action'; request: BotLifecycleRequest }
   | { type: 'bot.receipt'; bot: string; id: string }
   | { type: 'bot.update'; bot: string; revision: number; patch: BotProfilePatch }

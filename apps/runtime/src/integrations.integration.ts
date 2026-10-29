@@ -3,7 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isMcpAssignments, isMcpCatalog, isMcpHistory, isMcpSaved } from '@daban/protocol';
+import {
+  isMcpAssignments,
+  isMcpCatalog,
+  isMcpHistory,
+  isMcpSaved,
+  managedProtocol,
+} from '@daban/protocol';
 import { IntegrationTools } from './integration-tools.js';
 import { startPrototype } from './server.js';
 
@@ -65,7 +71,7 @@ test('authenticated MCP API keeps config private, isolates Bot review, and offer
     const state = await (
       await fetch(`${app.url}/api/state`, { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(state.clientProtocol, 33);
+    assert.equal(state.clientProtocol, managedProtocol);
     assert.equal(state.mcp.available, true);
     assert.equal((await request({ type: 'mcp.list' }, 'synthetic-wrong-token')).status, 403);
     assert.equal((await request({ type: 'mcp.save', input, permissions: 'all' })).status, 400);
@@ -193,7 +199,7 @@ test('an unreadable MCP store is retained while the ordinary runtime and profile
     const state = await (
       await fetch(`${app.url}/api/state`, { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.equal(state.clientProtocol, 33);
+    assert.equal(state.clientProtocol, managedProtocol);
     assert.equal(state.mcp.available, false);
     assert.equal(state.computers.available, true);
     assert.ok(app.models);

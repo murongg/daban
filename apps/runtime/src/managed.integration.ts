@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isBrowserState } from '@daban/protocol';
+import { isBrowserState, managedProtocol } from '@daban/protocol';
 import type { Computers } from './computers.js';
 import type { ModelRuns } from './model.js';
 import { startPrototype } from './server.js';
@@ -45,7 +45,7 @@ test('managed19 API starts the ordinary Agent without graphics and connects only
   try {
     assert.ok(app.models);
     const initial = await call('/api/state');
-    assert.equal(initial.value.clientProtocol, 33);
+    assert.equal(initial.value.clientProtocol, managedProtocol);
     assert.equal(initial.value.mode, 'agent');
     assert.deepEqual(initial.value.bots, {});
     assert.equal(initial.value.computers.available, true);

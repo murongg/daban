@@ -130,6 +130,8 @@ test('rejects malformed copy requests before changing any profile', async () => 
     const original = await profiles.register(source);
     for (const value of [
       { ...request, id: '../mock-outside' },
+      { ...request, id: 'research' },
+      { ...request, id: 'writer' },
       { ...request, revision: 0 },
       { ...request, name: '   ' },
       { ...request, name: 'x'.repeat(31) },
