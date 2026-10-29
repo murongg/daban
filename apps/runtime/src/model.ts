@@ -59,6 +59,7 @@ import {
   type RunReceipt,
   TaskJournal,
   type TaskRecord,
+  taskActivity,
   taskPrompt,
   validateTask,
 } from './tasks.js';
@@ -329,6 +330,7 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  restoredActivity?: ReturnType<typeof taskActivity>;
   transcript?: TranscriptScope;
   transcriptFailed?: boolean;
   chatRevision?: number;
@@ -544,6 +546,8 @@ export class ModelRuns {
         limit: 60,
         seen: {},
         trace: [],
+        // Saved activity is display-only; old tool arguments and observation authority stay retired.
+        restoredActivity: taskActivity(latest),
         verification: { passed: false, openedInEditor: false },
         sessionId: latest.sessionId,
         result: latest.result || '',
@@ -712,6 +716,7 @@ export class ModelRuns {
         verified: false,
         history: this.history(job.bot),
       };
+    const activity = taskActivity(job.restoredActivity ?? job);
     return {
       chatRevision: job.chatRevision,
       ...(job.conversationId ? { conversationId: job.conversationId } : {}),
@@ -727,7 +732,7 @@ export class ModelRuns {
             ? 'paused'
             : job.phase,
       toolCount: job.toolCount,
-      executedCount: job.trace.filter((t) => t.phase === 'settled').length,
+      ...activity,
       runId: job.id,
       requestId: job.requestId,
       prompt: job.task?.prompt || job.prompt || '',
@@ -736,9 +741,6 @@ export class ModelRuns {
       result: job.result,
       error: job.error,
       verified: job.verification.passed,
-      trace: job.trace
-        .slice(-8)
-        .map(({ name, surface, phase, code, at }) => ({ name, surface, phase, code, at })),
       history: this.history(job.bot),
     };
   }

@@ -8,6 +8,7 @@ import type {
   RuntimeNotice,
   TaskPlan,
   TaskRequest,
+  TaskTrace,
 } from '@daban/protocol';
 import { isReplyStream, isTaskFile, validAgentId } from '@daban/protocol';
 import { Fault } from './control.js';
@@ -196,6 +197,42 @@ export interface TaskRecord {
   createdAt?: string;
   inputs?: string[];
   files?: RuntimeFile[];
+}
+export function taskActivity(record: Pick<TaskRecord, 'trace' | 'executedCount'>) {
+  const trace: TaskTrace[] = [];
+  for (const item of Array.isArray(record.trace) ? record.trace : []) {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      Array.isArray(item) ||
+      !('name' in item) ||
+      typeof item.name !== 'string' ||
+      !('surface' in item) ||
+      typeof item.surface !== 'string' ||
+      !('phase' in item) ||
+      typeof item.phase !== 'string' ||
+      !['running', 'settled', 'rejected'].includes(item.phase) ||
+      !('at' in item) ||
+      typeof item.at !== 'string'
+    )
+      continue;
+    trace.push({
+      name: item.name,
+      surface: item.surface,
+      phase: item.phase,
+      at: item.at,
+      ...('code' in item && typeof item.code === 'string' ? { code: item.code } : {}),
+    });
+  }
+  const saved = record.executedCount;
+  return {
+    // A bounded retained trace cannot reconstruct the full run's settled-tool count.
+    executedCount: Math.max(
+      typeof saved === 'number' && Number.isSafeInteger(saved) && saved >= 0 ? saved : 0,
+      trace.filter((item) => item.phase === 'settled').length,
+    ),
+    trace: trace.slice(-8),
+  };
 }
 export interface ConversationScope {
   id: string;

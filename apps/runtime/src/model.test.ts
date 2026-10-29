@@ -1,9 +1,166 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { editorShowsFile, sdkPatch, verifyOutput, verifyTask } from './model.js';
+import { editorShowsFile, ModelRuns, sdkPatch, verifyOutput, verifyTask } from './model.js';
+import { ModelSettings } from './settings.js';
+import { TaskJournal, type TaskRecord } from './tasks.js';
+
+test('restarted task summaries retain durable counts and safe short traces without replaying tools', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-restored-activity-'));
+  const settings = new ModelSettings(path.join(root, 'credentials.json'));
+  const directory = path.join(root, 'model');
+  const journal = new TaskJournal(path.join(directory, 'task-journal'));
+  let starts = 0;
+  class Harness {
+    async start() {
+      starts++;
+    }
+    async close() {}
+    session(id = 'mock-fresh-session') {
+      return { id, run: async () => ({ sessionId: id, finalResponse: 'MOCK-FRESH-REPLY' }) };
+    }
+    async resumeSession(id: string) {
+      return this.session(id);
+    }
+  }
+  const options = {
+    settings,
+    dir: directory,
+    workspace: path.join(root, 'workspace'),
+    origin: 'http://127.0.0.1:12345',
+    Harness,
+  };
+  const trace = Array.from({ length: 20 }, (_, i) => ({
+    name: `mock-tool-${i}`,
+    surface: 'workspace',
+    phase: i === 17 ? 'rejected' : 'settled',
+    at: new Date(1800000000000 + i * 1000).toISOString(),
+    ...(i === 17 ? { code: 'MOCK_REJECTED' } : {}),
+    args: { private: 'MOCK-PRIVATE-ARGUMENT' },
+    token: 'MOCK-PRIVATE-CAPABILITY',
+  }));
+  const base: TaskRecord = {
+    bot: 'mock-completed',
+    runId: 'mock-restored-run',
+    requestId: 'mock-restored-request',
+    chatRevision: 0,
+    kind: 'chat',
+    prompt: '合成任务',
+    phase: 'completed',
+    running: false,
+    result: 'MOCK-SAVED-REPLY',
+    error: '',
+    toolCount: 60,
+    executedCount: 55,
+    trace,
+  };
+  let models: ModelRuns | undefined;
+  try {
+    await journal.load();
+    await journal.put(base);
+    await journal.put({
+      ...base,
+      bot: 'mock-interrupted',
+      runId: 'mock-interrupted-run',
+      requestId: 'mock-interrupted-request',
+      phase: 'running',
+      running: true,
+      executedCount: 4,
+      trace: [...trace.slice(0, 2), { ...trace[2], phase: 'running' }],
+    });
+    await journal.put({
+      ...base,
+      bot: 'mock-legacy',
+      runId: 'mock-legacy-run',
+      executedCount: undefined,
+      trace: [trace[0], trace[17], null, { name: 7, phase: 'settled' }],
+    });
+    await journal.put({
+      ...base,
+      bot: 'mock-group-bot',
+      runId: 'mock-group-run',
+      conversationId: 'mock-group',
+      executedCount: 14,
+      trace: trace.slice(0, 2),
+    });
+    await writeFile(
+      path.join(journal.dir, 'mock-corrupt-run.json'),
+      JSON.stringify({
+        version: 1,
+        task: {
+          ...base,
+          bot: 'mock-corrupt',
+          runId: 'mock-corrupt-run',
+          executedCount: 'MOCK-NOT-A-COUNT',
+          trace: { untrusted: true },
+        },
+      }),
+    );
+    const file = path.join(journal.dir, `${base.runId}.json`);
+    const original = await readFile(file);
+    models = new ModelRuns(options);
+    await models.ready;
+    const completed = models.status().bots[base.bot];
+    assert.equal(completed.executedCount, 55, 'the bounded trace is not the total count');
+    assert.equal(completed.toolCount, 60);
+    assert.deepEqual(
+      completed.trace,
+      trace.slice(-8).map(({ name, surface, phase, at, code }) => ({
+        name,
+        surface,
+        phase,
+        at,
+        ...(code ? { code } : {}),
+      })),
+    );
+    assert.ok(!JSON.stringify(completed.trace).includes('MOCK-PRIVATE'));
+    const originalTrace = structuredClone(completed.trace);
+    models.status().bots[base.bot].trace![0].name = 'MOCK-CALLER-CHANGE';
+    assert.deepEqual(models.status().bots[base.bot].trace, originalTrace);
+    const interrupted = models.status().bots['mock-interrupted'];
+    assert.equal(interrupted.phase, 'interrupted');
+    assert.equal(interrupted.running, false);
+    assert.equal(interrupted.executedCount, 4);
+    assert.equal(interrupted.trace?.at(-1)?.phase, 'running');
+    assert.equal(models.status().bots['mock-legacy'].executedCount, 1);
+    assert.equal(models.status().bots['mock-legacy'].trace?.length, 2);
+    assert.equal(models.status().bots['mock-group-bot'].executedCount, 14);
+    assert.equal(models.status().bots['mock-group-bot'].conversationId, 'mock-group');
+    assert.equal(models.status().bots['mock-corrupt'].executedCount, 0);
+    assert.deepEqual(models.status().bots['mock-corrupt'].trace, []);
+    assert.equal(starts, 0, 'reading restored summaries must not start the harness');
+    await models.close();
+    models = new ModelRuns(options);
+    await models.ready;
+    assert.deepEqual(models.status().bots[base.bot], completed);
+    assert.deepEqual(await readFile(file), original, 'restoration must not rewrite the receipt');
+    await models.chats.renew({ bot: base.bot, id: 'mock-fresh-context', revision: 0 });
+    assert.equal(models.status().bots[base.bot].executedCount, 0);
+    assert.equal(models.status().bots[base.bot].trace, undefined);
+    await models.profiles.register({
+      id: base.bot,
+      name: '合成恢复 Bot',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+    await settings.save({ apiKey: 'mock-new-turn-key' });
+    await models.start(base.bot, {
+      requestId: 'mock-fresh-turn',
+      prompt: '合成新对话',
+      chatRevision: 1,
+    });
+    await models.jobs.get(base.bot)!.done;
+    assert.equal(models.status().bots[base.bot].executedCount, 0);
+    assert.deepEqual(models.status().bots[base.bot].trace, []);
+    assert.equal(starts, 1);
+  } finally {
+    await models?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('DSH profile disables unscoped native tools and registers a scoped tool server', () => {
   const patch = sdkPatch('http://127.0.0.1:12345', 'a', 'synthetic-capability');
