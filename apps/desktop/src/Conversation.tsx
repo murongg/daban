@@ -64,6 +64,8 @@ function progress(task: RuntimeTask) {
     schedule: '正在管理定时任务',
     memory: '正在整理工作偏好',
     history: '正在查找历史',
+    work: '正在整理待办',
+    catalog: '正在查看任务目录',
   };
   return labels[tool?.surface || ''] || '正在使用工具';
 }

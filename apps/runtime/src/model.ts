@@ -31,6 +31,7 @@ import {
 import { AgentTools } from './agent-tools.js';
 import { Attachments } from './attachments.js';
 import { BotBundles } from './bundles.js';
+import { CatalogTools } from './catalog.js';
 import { Chats } from './chats.js';
 import type { ToolRun } from './computer-tools.js';
 import { type ComputerFacade, computerToolList } from './computer-tools.js';
@@ -70,11 +71,12 @@ import {
   Transcripts,
 } from './transcripts.js';
 import { Work } from './work.js';
+import { WorkTools } from './work-tools.js';
 import { type WorkspaceDirectory, WorkspaceFiles } from './workspace.js';
 
 const sdkFile = '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
 const model = 'deepseek-flash';
-const sessionProfile = 'general-v5';
+const sessionProfile = 'general-v6';
 const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
   JSON.stringify(
     conversationId || !chatRevision ? [bot, conversationId ?? null] : [bot, null, chatRevision],
@@ -448,6 +450,12 @@ export class ModelRuns {
     this.tools.history = new HistoryTools(this.journal);
     this.knowledge = new Knowledge(path.join(dir, 'knowledge.sqlite'));
     this.work = new Work(path.join(dir, 'work.sqlite'));
+    this.tools.work = new WorkTools(this.work);
+    this.tools.catalog = new CatalogTools({
+      work: this.work,
+      schedules: () => this.tools.schedules?.store,
+      offered: (run) => this.tools.list(run.bot, run.model, run.conversationId, run),
+    });
     this.attachments = new Attachments(path.join(dir, 'attachments.sqlite'));
     this.tools.knowledge = new KnowledgeTools(this.knowledge, (run, name, content) =>
       this.tools.writeText(run, name, content, true),
@@ -1306,6 +1314,7 @@ export class ModelRuns {
             !!this.tools.knowledge,
             job.documentInputs,
             this.tools.hasBrowser(job.bot),
+            !!this.tools.work,
           ) +
           (job.skills?.available === false
             ? '\n本轮技能服务暂不可用；普通对话和现有工具仍可使用。不要声称已加载或执行技能。'

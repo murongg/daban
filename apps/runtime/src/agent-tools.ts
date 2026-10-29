@@ -11,6 +11,7 @@ import {
   type TaskRequest,
 } from '@daban/protocol';
 import { BrowserTools } from './browser-tools.js';
+import type { CatalogTools } from './catalog.js';
 import {
   type ComputerFacade,
   ComputerTools,
@@ -27,15 +28,19 @@ import type { McpSnapshot } from './integrations.js';
 import type { KnowledgeTools } from './knowledge-tools.js';
 import type { MemoryTools } from './memory.js';
 import { type ScheduleTools, scheduleToolList } from './schedule-tools.js';
+import type { SkillSnapshot } from './skills.js';
+import type { WorkTools } from './work-tools.js';
 import { WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  skills?: SkillSnapshot;
   sessionId?: string;
   integrations?: McpSnapshot;
   task?: TaskRequest;
   model?: DeepSeekModel;
   intentId?: string;
   redact?: (value: string) => string;
+  redactResponse?: (value: string) => string;
   workdir: string;
   canonicalRoot: string;
 }
@@ -106,6 +111,8 @@ export class AgentTools {
   memory?: MemoryTools;
   history?: HistoryTools;
   knowledge?: KnowledgeTools;
+  work?: WorkTools;
+  catalog?: CatalogTools;
   schedules?: ScheduleTools;
   integrations?: IntegrationTools;
   readonly computer: ComputerTools | undefined;
@@ -156,6 +163,8 @@ export class AgentTools {
       ...(this.memory?.list || []),
       ...(this.history?.list || []),
       ...(this.knowledge?.list || []),
+      ...(this.work?.list || []),
+      ...(this.catalog?.list || []),
       ...(conversationId ? this.groups?.list || [] : []),
       ...(run?.bot === bot && run.conversationId === conversationId
         ? this.integrations?.list(run) || []
@@ -481,6 +490,8 @@ export class AgentTools {
       this.memory,
       this.history,
       this.knowledge,
+      this.work,
+      this.catalog,
       this.groups,
       this.hasBrowser(run.bot) ? this.browser : undefined,
     ].find((tools) => tools && Object.hasOwn(tools.fields, name));
