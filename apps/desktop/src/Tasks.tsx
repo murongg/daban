@@ -28,7 +28,13 @@ export function Tasks({
   const cache = state.work ?? workInitial(),
     draft = cache.draft;
   const board = cache.mode === 'board' && cache.filter !== 'trash';
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState<{ key: string; id: string; revision: number }>();
+  // A saved revision change invalidates consent, including a trash/restore round trip.
+  const confirming =
+    !!draft?.base &&
+    confirm?.key === draft.key &&
+    confirm.id === draft.base.id &&
+    confirm.revision === draft.base.revision;
   const pending = cache.pending,
     sealed = !!draft && pending?.draft.key === draft.key;
   const readOnly = !work.available || sealed || work.reading;
@@ -65,7 +71,7 @@ export function Tasks({
           aria-label={`查看 ${item.title}`}
           aria-current={draft?.base?.id === item.id ? 'true' : undefined}
           onClick={() => {
-            setConfirm(false);
+            setConfirm(undefined);
             work.open(item.id).catch(() => {});
           }}
         >
@@ -97,7 +103,7 @@ export function Tasks({
             className="primary"
             disabled={!work.available}
             onClick={() => {
-              setConfirm(false);
+              setConfirm(undefined);
               work.fresh();
             }}
           >
@@ -345,7 +351,9 @@ export function Tasks({
                       ? '任务在回收站。恢复会保留当前草稿，之后再保存修改。'
                       : workDirty(draft)
                         ? '有未保存的修改，离开此页仍会保留。'
-                        : '已保存到当前运行环境。'}
+                        : draft.base
+                          ? '已保存到当前运行环境。'
+                          : '新任务草稿，填写后保存到运行环境。'}
                 </p>
                 {!work.available && (
                   <p className="field-help">当前只读显示本机草稿，连接后可继续编辑和保存。</p>
@@ -465,7 +473,7 @@ export function Tasks({
                       className="text-button"
                       disabled={sealed || !workDirty(draft)}
                       onClick={() => {
-                        setConfirm(false);
+                        setConfirm(undefined);
                         work.discard();
                       }}
                     >
@@ -492,7 +500,7 @@ export function Tasks({
                       >
                         恢复任务
                       </button>
-                    ) : confirm ? (
+                    ) : confirming ? (
                       <div className="task-confirm">
                         <p>将「{draft.base.title}」移入回收站？内容会保留，可以恢复。</p>
                         <div className="task-actions">
@@ -507,7 +515,7 @@ export function Tasks({
                           <button
                             type="button"
                             className="text-button"
-                            onClick={() => setConfirm(false)}
+                            onClick={() => setConfirm(undefined)}
                           >
                             取消
                           </button>
@@ -518,7 +526,13 @@ export function Tasks({
                         type="button"
                         className="text-button"
                         disabled={!work.available || work.blocked || !!pending || workDirty(draft)}
-                        onClick={() => setConfirm(true)}
+                        onClick={() =>
+                          setConfirm({
+                            key: draft.key,
+                            id: draft.base!.id,
+                            revision: draft.base!.revision,
+                          })
+                        }
                       >
                         <Trash2 aria-hidden="true" />
                         移入回收站

@@ -289,6 +289,7 @@ it('confirms trash and restores the same card while preserving a locally edited 
   await userEvent.type(screen.getByRole('textbox', { name: '任务说明' }), ' MOCK RESTORE DRAFT');
   await userEvent.click(screen.getByRole('button', { name: '恢复任务' }));
   await waitFor(() => expect(live.entries.get('mock-trash')?.deleted).toBe(false));
+  expect(screen.queryByRole('button', { name: '确认移入' })).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '任务说明' })).toHaveValue(
     'MOCK SHARED DETAIL MOCK RESTORE DRAFT',
   );
