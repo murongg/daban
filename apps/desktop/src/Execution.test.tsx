@@ -13,9 +13,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ChatHistory } from './ChatHistory';
 import { Conversation } from './Conversation';
 import { Execution } from './Execution';
+import { demoState as initialState } from './fixtures';
 import { GroupChat } from './GroupChat';
 import { RuntimeProvider } from './Runtime';
-import { initialState } from './state';
 
 afterEach(() => {
   Reflect.deleteProperty(window, 'daban');

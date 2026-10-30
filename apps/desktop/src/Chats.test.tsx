@@ -4,8 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { useReducer } from 'react';
 import { expect, it, vi } from 'vitest';
 import { ChatHistory } from './ChatHistory';
+import { demoState as initialState } from './fixtures';
 import { NewChat } from './NewChat';
-import { chatRevision, initialState, reduce, type State } from './state';
+import { chatRevision, reduce, type State } from './state';
 import { restore, serialize } from './storage';
 
 const mock = vi.hoisted(() => ({

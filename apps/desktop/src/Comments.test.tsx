@@ -1,3 +1,9 @@
+import { beforeEach as seedBeforeEach } from 'vitest';
+import { demoState as seedDemoState } from './fixtures';
+import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
+
+seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
+
 import {
   agentId,
   disconnected,
@@ -21,7 +27,7 @@ import { StrictMode } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { type CommentsState, commentCard } from './comments-state';
-import { initialState } from './state';
+import { demoState as initialState } from './fixtures';
 import { restore, serialize, storageKey } from './storage';
 import { type WorkState, workDraft } from './work-state';
 

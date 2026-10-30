@@ -19,6 +19,7 @@ import {
   Plus,
   Search,
   Settings,
+  Store,
   Trash2,
   Users,
   X,
@@ -239,6 +240,17 @@ export function Sidebar({
         <div className="nav-main">
           <button
             type="button"
+            className={`nav-row ${state.view === 'gallery' ? 'selected' : ''}`}
+            onClick={() => {
+              dispatch({ type: 'view', view: 'gallery' });
+              close();
+            }}
+          >
+            <Store />
+            Bot 广场
+          </button>
+          <button
+            type="button"
             className={`nav-row ${state.view === 'tasks' ? 'selected' : ''}`}
             aria-label={state.work?.pending ? '任务 · 操作待确认' : '任务'}
             onClick={() => {
@@ -385,7 +397,14 @@ export function Sidebar({
                   b.members && !organization.pins.includes(b.id) && !organization.placements[b.id],
               )
               .map(row)}
-            {!filtered.length && (
+            {!state.bots.length && !query && (
+              <div className="no-results">
+                还没有 Bot
+                <br />
+                从广场挑一个，或创建自己的搭档。
+              </div>
+            )}
+            {!filtered.length && !!query && (
               <div className="no-results">
                 没有找到「{query}」<br />
                 试试 Bot 名称或对话内容。

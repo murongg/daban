@@ -3,8 +3,9 @@ import { useEffect, useReducer, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Computer } from '../src/Computer';
 import { Conversation } from '../src/Conversation';
+import { demoState as initialState } from '../src/fixtures';
 import { RuntimeProvider } from '../src/Runtime';
-import { initialState, reduce } from '../src/state';
+import { reduce } from '../src/state';
 import '../src/tokens.css';
 import '../src/styles.css';
 

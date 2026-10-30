@@ -3,8 +3,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useReducer } from 'react';
 import { expect, it, vi } from 'vitest';
+import { demoState as initialState } from './fixtures';
 import { GroupArchive } from './GroupArchive';
-import { initialState, reduce, type State } from './state';
+import { reduce, type State } from './state';
 import { restore, serialize } from './storage';
 
 const mocks = vi.hoisted(() => ({

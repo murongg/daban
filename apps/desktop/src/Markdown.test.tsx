@@ -3,9 +3,10 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { Conversation } from './Conversation';
+import { demoState as initialState } from './fixtures';
 import { Markdown } from './Markdown';
 import { RuntimeProvider } from './Runtime';
-import { initialState, type WorkspaceFile } from './state';
+import type { WorkspaceFile } from './state';
 
 it('renders inline and display math with accessible original notation', () => {
   const { container } = render(

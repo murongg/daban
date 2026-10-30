@@ -1,3 +1,9 @@
+import { beforeEach as seedBeforeEach } from 'vitest';
+import { demoState as seedDemoState } from './fixtures';
+import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
+
+seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
+
 import {
   agentId,
   disconnected,
@@ -16,9 +22,10 @@ import userEvent from '@testing-library/user-event';
 import { StrictMode, useEffect, useReducer } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { demoState as initialState } from './fixtures';
 import { Notes } from './Notes';
 import { RuntimeProvider } from './Runtime';
-import { initialState, reduce } from './state';
+import { reduce } from './state';
 import { restore, serialize, storageKey } from './storage';
 
 afterEach(() => {

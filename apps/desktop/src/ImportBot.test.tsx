@@ -3,8 +3,9 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useReducer } from 'react';
 import { expect, it, vi } from 'vitest';
+import { demoState as initialState } from './fixtures';
 import { ImportBot } from './ImportBot';
-import { initialState, reduce, type State } from './state';
+import { reduce, type State } from './state';
 
 const mocks = vi.hoisted(() => ({ command: vi.fn(), read: vi.fn(), hash: vi.fn() }));
 vi.mock('./Runtime', () => ({

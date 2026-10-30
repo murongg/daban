@@ -1,3 +1,9 @@
+import { beforeEach as seedBeforeEach } from 'vitest';
+import { demoState as seedDemoState } from './fixtures';
+import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
+
+seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
+
 import {
   agentId,
   disconnected,
@@ -15,7 +21,7 @@ import type {
   NoticeMessage,
 } from '../notifications';
 import { App } from './App';
-import { initialState } from './state';
+import { demoState as initialState } from './fixtures';
 import { serialize, storageKey } from './storage';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));

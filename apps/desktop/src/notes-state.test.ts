@@ -1,5 +1,6 @@
 import { agentId, type NoteAck, type NoteItem } from '@daban/protocol';
 import { expect, it } from 'vitest';
+import { demoState as initialState } from './fixtures';
 import {
   mergeNote,
   type NotesState,
@@ -10,7 +11,7 @@ import {
   reduceNotes,
   restoreNotes,
 } from './notes-state';
-import { initialState, reduce } from './state';
+import { reduce } from './state';
 import { restore, serialize } from './storage';
 
 const at = '2026-01-01T00:00:00Z';

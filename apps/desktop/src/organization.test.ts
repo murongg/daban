@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { initialState, reduce } from './state';
+import { demoState as initialState } from './fixtures';
+import { reduce } from './state';
 import { restore, serialize } from './storage';
 
 it('pins once, retains membership on unpin and removes a section without changing Bot data', () => {

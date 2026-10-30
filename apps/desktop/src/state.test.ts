@@ -1,7 +1,14 @@
 import { type Group, type GroupSend, isTaskFile } from '@daban/protocol';
 import { describe, expect, it } from 'vitest';
 import { stagedAttachment, taskFile } from './files';
-import { initialState, knowledgeDraft, lifecycleRequest, reduce, skillDraft } from './state';
+import { demoState as initialState } from './fixtures';
+import {
+  initialState as emptyState,
+  knowledgeDraft,
+  lifecycleRequest,
+  reduce,
+  skillDraft,
+} from './state';
 import { restore, serialize } from './storage';
 
 it('retains Bot history and drafts through authoritative lifecycle revisions and exact pending-operation recovery', () => {
@@ -646,7 +653,7 @@ describe('local persistence', () => {
       '{"version":1,"state":{"bots":[]}}',
       '{"version":1,"state":{"bots":"invalid"}}',
     ]) {
-      expect(restore(raw)).toEqual(initialState());
+      expect(restore(raw)).toEqual(emptyState());
     }
   });
   it('restores earlier v1 snapshots without losing saved memory when draft support is added', () => {
@@ -662,7 +669,7 @@ describe('local persistence', () => {
     const state = initialState();
     const corrupt = JSON.parse(serialize(state));
     corrupt.state.messages.research = [{ id: 'bad', role: 'user', text: null }];
-    expect(restore(JSON.stringify(corrupt))).toEqual(initialState());
+    expect(restore(JSON.stringify(corrupt))).toEqual(emptyState());
   });
 });
 

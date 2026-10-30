@@ -9,7 +9,7 @@ import type {
 } from '../notifications';
 import { isNoticeStatus } from '../notifications';
 import { App } from '../src/App';
-import { initialState } from '../src/state';
+import { demoState as initialState } from '../src/fixtures';
 import { serialize, storageKey } from '../src/storage';
 import '../src/tokens.css';
 import '../src/styles.css';

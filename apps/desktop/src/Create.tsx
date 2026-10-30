@@ -7,6 +7,7 @@ import {
 } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar, colors } from './Avatar';
+import type { BotPreset } from './presets';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Action, Color, State } from './state';
 
@@ -27,6 +28,7 @@ export function Create({
   persist,
   persistGroup,
   onImport,
+  preset,
 }: {
   state: State;
   dispatch: Dispatch<Action>;
@@ -36,16 +38,18 @@ export function Create({
   persist?: (profile: BotProfileInput) => Promise<unknown>;
   persistGroup?: (group: GroupInput) => Promise<unknown>;
   onImport?: () => unknown;
+  preset?: BotPreset;
 }) {
   const runtime = useRuntime();
   const modelsAvailable = runtime.enabled && runtime.snapshot.protocolVersion >= 14;
   const [model, setModel] = useState('');
   const [isGroup, setGroup] = useState(group);
-  const [name, setName] = useState('');
-  const [role, setRole] = useState('');
-  const [color, setColor] = useState<Color>('violet');
+  const [name, setName] = useState(preset?.name ?? '');
+  const [role, setRole] = useState(preset?.instructions ?? '');
+  const [color, setColor] = useState<Color>(preset?.color ?? 'violet');
   const [members, setMembers] = useState<string[]>([]);
   const [error, setError] = useState('');
+  // Retries keep this identity; preset catalog IDs must never become shared runtime Bot IDs.
   const [id] = useState(() => crypto.randomUUID());
   const [saving, setSaving] = useState(false);
   const mounted = useRef(true);

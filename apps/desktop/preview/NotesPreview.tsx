@@ -10,8 +10,8 @@ import {
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import { App } from '../src/App';
+import { demoState as initialState } from '../src/fixtures';
 import { noteDraft, noteInitial, noteInput } from '../src/notes-state';
-import { initialState } from '../src/state';
 import { storageKey } from '../src/storage';
 import '../src/tokens.css';
 import '../src/styles.css';

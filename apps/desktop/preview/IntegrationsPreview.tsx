@@ -9,11 +9,12 @@ import {
 } from '@daban/protocol';
 import { useReducer, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { demoState as initialState } from '../src/fixtures';
 import { Integrations } from '../src/Integrations';
 import { IntegrationTools } from '../src/IntegrationTools';
 import { Requests } from '../src/Requests';
 import { RuntimeProvider } from '../src/Runtime';
-import { type Bot, initialState, reduce } from '../src/state';
+import { type Bot, reduce } from '../src/state';
 import '../src/tokens.css';
 import '../src/styles.css';
 

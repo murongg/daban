@@ -1,3 +1,9 @@
+import { beforeEach as seedBeforeEach } from 'vitest';
+import { demoState as seedDemoState } from './fixtures';
+import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
+
+seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
+
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';

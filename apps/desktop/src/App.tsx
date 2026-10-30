@@ -50,6 +50,7 @@ import { Desktop } from './Desktop';
 import { Dialog } from './Dialog';
 import { ExportBot } from './ExportBot';
 import { download, downloadBlob, taskFile } from './files';
+import { Gallery } from './Gallery';
 import { GroupArchive } from './GroupArchive';
 import { GroupChat } from './GroupChat';
 import { GroupEditor } from './GroupEditor';
@@ -60,6 +61,7 @@ import { Inbox } from './Inbox';
 import { NewChat } from './NewChat';
 import { useNotices } from './notices';
 import { Profile } from './Profile';
+import type { BotPreset } from './presets';
 import { profileInput, useProfiles } from './profiles';
 import { Recovery, RecoveryNotice } from './Recovery';
 import { RuntimeProvider, runtimeError, useRuntime } from './Runtime';
@@ -76,6 +78,7 @@ import {
 } from './state';
 import { restore, serialize, storageKey } from './storage';
 import { Tasks } from './Tasks';
+import { Welcome } from './Welcome';
 import { Workspace } from './Workspace';
 import { useWork } from './work';
 
@@ -92,7 +95,7 @@ type Modal =
   | { type: 'import' }
   | { type: 'copy'; bot?: string }
   | { type: 'group-copy'; group?: string }
-  | { type: 'create'; group: boolean }
+  | { type: 'create'; group: boolean; preset?: BotPreset }
   | { type: 'profile'; bot: string }
   | { type: 'archive'; bot: string }
   | { type: 'recovery' }
@@ -183,24 +186,26 @@ function Workbench() {
   }, notify);
   useProfiles(state, dispatch, notify);
   useGroups(state, dispatch, notify);
-  const bot = state.bots.find((b) => b.id === state.selected)!;
-  const target = computerTarget(runtime.snapshot, bot.id);
+  const bot = state.bots.find((b) => b.id === state.selected);
+  const target = bot ? computerTarget(runtime.snapshot, bot.id) : undefined;
   const computer = target ? runtime.snapshot.bots[target] : undefined;
-  const task = agentTask(runtime.snapshot, bot.id);
-  const pendingLifecycle = lifecycleRequest(
-    state,
-    bot.id,
-    runtime.snapshot.profiles.find((profile) => profile.id === agentId(bot.id)),
-  );
-  const pendingGroup = state.groupActions[bot.id];
-  const historyOnly = !!bot.archived || !!pendingLifecycle || !!pendingGroup;
-  const chatVersion = chatRevision(state, bot.id, runtime.snapshot.chats);
+  const task = bot ? agentTask(runtime.snapshot, bot.id) : undefined;
+  const pendingLifecycle = bot
+    ? lifecycleRequest(
+        state,
+        bot.id,
+        runtime.snapshot.profiles.find((profile) => profile.id === agentId(bot.id)),
+      )
+    : undefined;
+  const pendingGroup = bot ? state.groupActions[bot.id] : undefined;
+  const historyOnly = !!bot?.archived || !!pendingLifecycle || !!pendingGroup;
+  const chatVersion = bot ? chatRevision(state, bot.id, runtime.snapshot.chats) : 0;
   useEffect(() => {
     if (runtime.snapshot.chats?.available)
       dispatch({ type: 'chats', items: runtime.snapshot.chats.items });
   }, [runtime.snapshot.chats]);
-  let subtitle = bot.role || '你的 AI 工作伙伴';
-  if (runtime.enabled && !bot.members) {
+  let subtitle = bot?.role || '你的 AI 工作伙伴';
+  if (runtime.enabled && bot && !bot.members) {
     subtitle =
       computer?.owner === 'human'
         ? '你正在接管 · 等待交还'
@@ -211,12 +216,12 @@ function Workbench() {
           : computer
             ? '通用 Agent · 电脑已连接'
             : '通用 Agent';
-  } else if (!runtime.enabled && state.controls[bot.id] === 'human')
+  } else if (!runtime.enabled && bot && state.controls[bot.id] === 'human')
     subtitle = '你正在接管 · 等待交还';
   if (pendingGroup) subtitle = '群聊操作待核对';
-  else if (state.chatRequests[bot.id]) subtitle = '对话操作待核对';
+  else if (bot && state.chatRequests[bot.id]) subtitle = '对话操作待核对';
   else if (pendingLifecycle) subtitle = 'Bot 操作待核对';
-  else if (bot.archived) subtitle = '已归档 · 历史只读';
+  else if (bot?.archived) subtitle = '已归档 · 历史只读';
   useEffect(() => {
     if (!runtime.enabled || runtime.snapshot.phase !== 'ready') {
       ingested.current.clear();
@@ -490,7 +495,7 @@ function Workbench() {
           <IconButton className="mobile-menu" label="打开侧栏" onClick={() => setSidebarOpen(true)}>
             <Menu />
           </IconButton>
-          {state.view === 'chat' ? (
+          {state.view === 'chat' && bot ? (
             <>
               <Avatar bot={bot} />
               <div>
@@ -620,64 +625,86 @@ function Workbench() {
             <>
               <div>
                 <h1>
-                  {state.view === 'inbox' ? '收件箱' : state.view === 'tasks' ? '任务' : '设置'}
+                  {state.view === 'chat'
+                    ? '工作区'
+                    : state.view === 'gallery'
+                      ? 'Bot 广场'
+                      : state.view === 'inbox'
+                        ? '收件箱'
+                        : state.view === 'tasks'
+                          ? '任务'
+                          : '设置'}
                 </h1>
                 <p className="chat-subtitle">
                   {state.view === 'tasks' ? '共享待办 · 所有 Bot 可见' : '你的工作区'}
                 </p>
               </div>
               <span className="spacer" />
-              <IconButton label="返回对话" onClick={() => dispatch({ type: 'view', view: 'chat' })}>
-                <Monitor />
-              </IconButton>
+              {state.view !== 'chat' && (
+                <IconButton
+                  label="返回对话"
+                  onClick={() => dispatch({ type: 'view', view: 'chat' })}
+                >
+                  <Monitor />
+                </IconButton>
+              )}
             </>
           )}
         </header>
         <RecoveryNotice open={() => setModal({ type: 'recovery' })} />
         {state.view === 'chat' ? (
-          <div className="conversation-layout">
-            {bot.members ? (
-              <GroupChat
-                key={bot.id}
-                state={state}
-                bot={bot}
-                dispatch={dispatch}
-                notify={notify}
-                preview={previewFile}
-              />
-            ) : (
-              <Conversation
-                state={state}
-                bot={bot}
-                dispatch={dispatch}
-                notify={notify}
-                preview={previewFile}
-                onSend={runtime.enabled ? () => runTask(bot.id) : undefined}
-                onContinue={() => continueTask(bot.id)}
-                onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
-                onNewChat={() => setModal({ type: 'chat', bot: bot.id })}
-                pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
-                onModel={() => {
-                  if (!bot.members && runtime.snapshot.protocolVersion >= 14)
-                    setModal({ type: 'profile', bot: bot.id });
-                  else dispatch({ type: 'view', view: 'settings' });
-                }}
-              />
-            )}
-            {state.panel &&
-              (!historyOnly || ['computer', 'files', 'notes'].includes(state.panel)) && (
-                <Workspace
+          bot ? (
+            <div className="conversation-layout">
+              {bot.members ? (
+                <GroupChat
+                  key={bot.id}
                   state={state}
                   bot={bot}
                   dispatch={dispatch}
                   notify={notify}
                   preview={previewFile}
-                  expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
-                  openMember={(id) => setModal({ type: 'computer', bot: id })}
-                  onRecovery={() => setModal({ type: 'recovery' })}
+                />
+              ) : (
+                <Conversation
+                  state={state}
+                  bot={bot}
+                  dispatch={dispatch}
+                  notify={notify}
+                  preview={previewFile}
+                  onSend={runtime.enabled ? () => runTask(bot.id) : undefined}
+                  onContinue={() => continueTask(bot.id)}
+                  onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
+                  onNewChat={() => setModal({ type: 'chat', bot: bot.id })}
+                  pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
+                  onModel={() => {
+                    if (!bot.members && runtime.snapshot.protocolVersion >= 14)
+                      setModal({ type: 'profile', bot: bot.id });
+                    else dispatch({ type: 'view', view: 'settings' });
+                  }}
                 />
               )}
-          </div>
+              {state.panel &&
+                (!historyOnly || ['computer', 'files', 'notes'].includes(state.panel)) && (
+                  <Workspace
+                    state={state}
+                    bot={bot}
+                    dispatch={dispatch}
+                    notify={notify}
+                    preview={previewFile}
+                    expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
+                    openMember={(id) => setModal({ type: 'computer', bot: id })}
+                    onRecovery={() => setModal({ type: 'recovery' })}
+                  />
+                )}
+            </div>
+          ) : (
+            <Welcome
+              create={() => setModal({ type: 'create', group: false })}
+              explore={() => dispatch({ type: 'view', view: 'gallery' })}
+            />
+          )
+        ) : state.view === 'gallery' ? (
+          <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
         ) : state.view === 'tasks' ? (
           <Tasks state={state} dispatch={dispatch} work={work} />
         ) : state.view === 'inbox' ? (
@@ -821,6 +848,8 @@ function Workbench() {
       {modal?.type === 'create' && (
         <Dialog title={modal.group ? '创建群聊' : '认识你的新搭档'} onClose={closeModal}>
           <Create
+            key={modal.preset?.id ?? 'custom'}
+            preset={modal.preset}
             state={state}
             dispatch={dispatch}
             group={modal.group}

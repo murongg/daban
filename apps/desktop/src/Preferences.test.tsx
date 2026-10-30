@@ -10,8 +10,9 @@ import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, useReducer } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { demoState as initialState } from './fixtures';
 import { RuntimeProvider, useRuntime } from './Runtime';
-import { initialState, reduce } from './state';
+import { reduce } from './state';
 import { Workspace } from './Workspace';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));

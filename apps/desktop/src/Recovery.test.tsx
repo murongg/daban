@@ -1,3 +1,9 @@
+import { beforeEach as seedBeforeEach } from 'vitest';
+import { demoState as seedDemoState } from './fixtures';
+import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
+
+seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
+
 import {
   agentId,
   disconnected,
@@ -11,9 +17,9 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { demoState as initialState } from './fixtures';
 import { Recovery } from './Recovery';
 import { RuntimeProvider } from './Runtime';
-import { initialState } from './state';
 import { serialize, storageKey } from './storage';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));

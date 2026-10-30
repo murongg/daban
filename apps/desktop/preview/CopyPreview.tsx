@@ -12,7 +12,8 @@ import {
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import { App } from '../src/App';
-import { initialState, reduce } from '../src/state';
+import { demoState as initialState } from '../src/fixtures';
+import { reduce } from '../src/state';
 import { restore, serialize, storageKey } from '../src/storage';
 import '../src/tokens.css';
 import '../src/styles.css';

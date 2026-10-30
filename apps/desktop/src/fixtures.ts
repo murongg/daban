@@ -1,4 +1,13 @@
-import type { Approval, Bot, Message, Routine, WorkspaceFile } from './state';
+import {
+  type Approval,
+  type Bot,
+  initialState,
+  type Message,
+  type Routine,
+  routineDraft,
+  type State,
+  type WorkspaceFile,
+} from './state';
 
 // Deliberately synthetic examples; no account, customer or runtime data is bundled.
 export const bots: Bot[] = [
@@ -228,3 +237,57 @@ export const demoIds = new Set(
     .flat()
     .map((message) => message.id),
 );
+
+// Private previews and tests opt into sample data; normal startup always uses initialState().
+export function demoState(): State {
+  const memories = Object.fromEntries(
+    bots.map((bot) => [
+      bot.id,
+      bot.id === 'research'
+        ? '表达尽量简洁，先给结论，再补充依据。\n生成的文件先给我预览，确认后再发送。\n不确定的信息单独列出来，不要自行补全。'
+        : '',
+    ]),
+  );
+  return {
+    ...initialState(),
+    selected: 'research',
+    panel: 'computer',
+    bots: structuredClone(bots),
+    messages: structuredClone(messages),
+    drafts: Object.fromEntries(bots.map((bot) => [bot.id, ''])),
+    controls: Object.fromEntries(bots.map((bot) => [bot.id, 'agent' as const])),
+    memories,
+    memoryDrafts: { ...memories },
+    routineDrafts: Object.fromEntries(bots.map((bot) => [bot.id, routineDraft()])),
+    routines: structuredClone(routines),
+    approvals: structuredClone(approvals),
+    files: structuredClone(files),
+    attachments: Object.fromEntries(bots.map((bot) => [bot.id, []])),
+  };
+}
+
+export function removeSamples(state: State): State {
+  if (state.sampleRevision === 1) return state;
+  // Only shipped sample content is disposable; authored edits and actual runtime artifacts stay.
+  const examples = Object.values(messages).flat();
+  const same = (value: unknown, originals: unknown[]) =>
+    originals.some((original) => JSON.stringify(original) === JSON.stringify(value));
+  // A status click or toggle does not turn a shipped example into user-authored content.
+  const sampleApprovals = approvals.map((item) => ({ ...item, status: 'pending' }));
+  const sampleRoutines = routines.map((item) => ({ ...item, enabled: false }));
+  return {
+    ...state,
+    sampleRevision: 1,
+    messages: Object.fromEntries(
+      Object.entries(state.messages).map(([id, items]) => [
+        id,
+        items.filter((item) => !same(item, examples)),
+      ]),
+    ),
+    files: state.files.filter((item) => !same(item, files)),
+    routines: state.routines.filter((item) => !same({ ...item, enabled: false }, sampleRoutines)),
+    approvals: state.approvals.filter(
+      (item) => !same({ ...item, status: 'pending' }, sampleApprovals),
+    ),
+  };
+}

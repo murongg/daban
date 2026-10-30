@@ -14,6 +14,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { restoreComments } from './comments-state';
+import { removeSamples } from './fixtures';
 import { restoreNotes } from './notes-state';
 import { restoreOrganization } from './organization';
 import { initialState, routineDraft, type State } from './state';
@@ -25,8 +26,8 @@ export function serialize(state: State) {
     version: 1,
     state: {
       ...state,
-      // Older rollback clients reject unknown root views; keep the optional task draft without resetting chats.
-      view: state.view === 'tasks' ? 'chat' : state.view,
+      // Older rollback clients reject unknown root views; preserve the stored data behind new views.
+      view: ['tasks', 'gallery'].includes(state.view) ? 'chat' : state.view,
       panel: state.panel === 'notes' ? null : state.panel,
       files: state.files.map((file) => (file.upload ? { ...file, content: '' } : file)),
       profileRevisions: {},
@@ -71,7 +72,6 @@ export function restore(raw: string | null): State {
     );
     if (
       !Array.isArray(s.bots) ||
-      !s.bots.length ||
       !s.bots.every(
         (b) =>
           textFields(b, ['id', 'name', 'role', 'preview', 'time']) &&
@@ -172,8 +172,8 @@ export function restore(raw: string | null): State {
     );
     if (
       new Set(ids).size !== ids.length ||
-      !ids.includes(s.selected as string) ||
-      !choice(s.view, ['chat', 'inbox', 'settings', 'tasks']) ||
+      (s.selected !== '' && !ids.includes(s.selected as string)) ||
+      !choice(s.view, ['chat', 'inbox', 'settings', 'tasks', 'gallery']) ||
       !choice(s.panel, [
         null,
         'computer',
@@ -317,7 +317,7 @@ export function restore(raw: string | null): State {
     )
       return initialState();
     // Versioned browser storage is untrusted input; reject a partial snapshot instead of merging broken Bot records.
-    return s as unknown as State;
+    return removeSamples(s as unknown as State);
   } catch {
     return initialState();
   }

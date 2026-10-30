@@ -65,7 +65,7 @@ export function Computer({
       <div className="panel-section">
         <h2>此 Bot 可以对话，尚未连接电脑</h2>
         <p className="panel-description">
-          它仍可聊天、使用工作区工具。当前研究员和写作搭档另有独立 Linux 桌面，可切换查看或接管。
+          它仍可聊天、使用工作区工具。连接电脑后，就可以查看它的屏幕，或在需要时接管。
         </p>
       </div>
     );

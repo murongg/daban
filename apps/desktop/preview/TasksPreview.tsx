@@ -14,7 +14,7 @@ import {
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import { App } from '../src/App';
-import { initialState } from '../src/state';
+import { demoState as initialState } from '../src/fixtures';
 import { storageKey } from '../src/storage';
 import { workDraft, workInitial, workInput } from '../src/work-state';
 import '../src/tokens.css';

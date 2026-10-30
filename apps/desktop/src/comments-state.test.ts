@@ -6,7 +6,8 @@ import {
   reduceComments,
   restoreComments,
 } from './comments-state';
-import { initialState, reduce } from './state';
+import { demoState as initialState } from './fixtures';
+import { reduce } from './state';
 import { restore, serialize, storageKey } from './storage';
 import { workDraft } from './work-state';
 

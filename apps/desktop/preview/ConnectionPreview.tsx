@@ -11,8 +11,9 @@ import { createRoot } from 'react-dom/client';
 import { Computer } from '../src/Computer';
 import { Conversation } from '../src/Conversation';
 import { beginComputer, clearComputer, pendingComputer } from '../src/connections';
+import { demoState as initialState } from '../src/fixtures';
 import { RuntimeProvider } from '../src/Runtime';
-import { initialState, reduce } from '../src/state';
+import { reduce } from '../src/state';
 import '../src/tokens.css';
 import '../src/styles.css';
 

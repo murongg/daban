@@ -11,8 +11,9 @@ import userEvent from '@testing-library/user-event';
 import { useReducer } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Conversation } from './Conversation';
+import { demoState as initialState } from './fixtures';
 import { RuntimeProvider } from './Runtime';
-import { initialState, reduce } from './state';
+import { reduce } from './state';
 import { Workspace } from './Workspace';
 
 const content = '---\nname: mock-workflow\ndescription: 合成汇总工作流\n---\n只整理合成记录。';

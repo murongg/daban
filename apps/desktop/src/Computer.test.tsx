@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Computer } from './Computer';
 import { Conversation } from './Conversation';
+import { demoState as initialState } from './fixtures';
 import { RuntimeProvider } from './Runtime';
-import { initialState } from './state';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
 

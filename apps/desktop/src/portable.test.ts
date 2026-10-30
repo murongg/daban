@@ -1,8 +1,9 @@
 import { webcrypto } from 'node:crypto';
 import { type BotBundle, botBundleText } from '@daban/protocol';
 import { expect, it } from 'vitest';
+import { demoState as initialState } from './fixtures';
 import { bundleFile, bundleHeader } from './portable';
-import { initialState, reduce } from './state';
+import { reduce } from './state';
 import { restore, serialize } from './storage';
 
 const bundle: BotBundle = {

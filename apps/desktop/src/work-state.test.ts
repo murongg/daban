@@ -1,6 +1,7 @@
 import type { WorkAck, WorkItem } from '@daban/protocol';
 import { expect, it } from 'vitest';
-import { initialState, reduce } from './state';
+import { demoState as initialState } from './fixtures';
+import { reduce } from './state';
 import { restore, serialize, storageKey } from './storage';
 import {
   mergeWork,

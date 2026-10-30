@@ -35,7 +35,6 @@ import {
 } from '@daban/protocol';
 import { type CommentAction, type CommentsState, reduceComments } from './comments-state';
 import { taskFile } from './files';
-import * as fixture from './fixtures';
 import { type NotesAction, type NotesState, reduceNotes } from './notes-state';
 import { type Organization, type OrganizationAction, organization, organize } from './organization';
 import { reduceWork, type WorkAction, type WorkState } from './work-state';
@@ -109,7 +108,7 @@ export const knowledgeDirty = (draft: KnowledgeDraft) =>
   !draft.id || draft.path !== draft.basePath || draft.content !== draft.baseContent;
 export type Owner = 'agent' | 'human';
 export type Theme = 'light' | 'dark';
-export type View = 'chat' | 'inbox' | 'settings' | 'tasks';
+export type View = 'chat' | 'inbox' | 'settings' | 'tasks' | 'gallery';
 export interface Bot {
   archived?: boolean;
   model?: DeepSeekModel;
@@ -178,6 +177,7 @@ export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
 export interface State {
+  sampleRevision?: 1;
   comments?: CommentsState;
   notes?: Record<string, NotesState | undefined>;
   work?: WorkState;
@@ -298,15 +298,8 @@ export type Action =
   | { type: 'detach'; bot: string; file: string };
 
 export function initialState(): State {
-  const memories = Object.fromEntries(
-    fixture.bots.map((b) => [
-      b.id,
-      b.id === 'research'
-        ? '表达尽量简洁，先给结论，再补充依据。\n生成的文件先给我预览，确认后再发送。\n不确定的信息单独列出来，不要自行补全。'
-        : '',
-    ]),
-  );
   return {
+    sampleRevision: 1,
     organization: organization(),
     lifecycleRequests: {},
     skillDrafts: {},
@@ -321,21 +314,21 @@ export function initialState(): State {
     runtimeRequests: {},
     profileRevisions: {},
     memoryVersions: {},
-    selected: 'research',
+    selected: '',
     view: 'chat',
-    panel: 'computer',
+    panel: null,
     theme: 'light',
-    bots: structuredClone(fixture.bots),
-    messages: structuredClone(fixture.messages),
-    drafts: Object.fromEntries(fixture.bots.map((b) => [b.id, ''])),
-    controls: Object.fromEntries(fixture.bots.map((b) => [b.id, 'agent' as Owner])),
-    memories,
-    memoryDrafts: { ...memories },
-    routineDrafts: Object.fromEntries(fixture.bots.map((b) => [b.id, routineDraft()])),
-    routines: structuredClone(fixture.routines),
-    approvals: structuredClone(fixture.approvals),
-    files: structuredClone(fixture.files),
-    attachments: Object.fromEntries(fixture.bots.map((b) => [b.id, []])),
+    bots: [],
+    messages: {},
+    drafts: {},
+    controls: {},
+    memories: {},
+    memoryDrafts: {},
+    routineDrafts: {},
+    routines: [],
+    approvals: [],
+    files: [],
+    attachments: {},
     attachmentUploads: {},
   };
 }
@@ -701,7 +694,8 @@ export function reduce(state: State, action: Action): State {
           },
         };
       }
-      return next;
+      const first = !next.selected && next.bots.find((entry) => !entry.archived);
+      return first ? { ...next, selected: first.id } : next;
     }
     case 'profile-local':
       return {
@@ -862,6 +856,10 @@ export function reduce(state: State, action: Action): State {
       return {
         ...state,
         view: action.view,
+        selected:
+          action.view === 'chat' && state.bots.find((bot) => bot.id === state.selected)?.archived
+            ? (state.bots.find((bot) => !bot.archived)?.id ?? '')
+            : state.selected,
         organization:
           action.view === 'chat'
             ? organize(

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { initialState, reduce } from './state';
+import { demoState as initialState } from './fixtures';
+import { reduce } from './state';
 import { restore, serialize } from './storage';
 
 const request = { id: 'mock-copy-target', bot: 'a', revision: 1, name: '合成副本', memory: true };
