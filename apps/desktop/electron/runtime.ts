@@ -50,6 +50,12 @@ import {
   isMemoryPage,
   isModelCheck,
   isModelStatus,
+  isNoteAvailability,
+  isNoteCommand,
+  isNoteItem,
+  isNoteList,
+  isNoteReceipt,
+  isNoteStatusResult,
   isRecoveryReceipt,
   isRecoveryReview,
   isRecoveryStatus,
@@ -70,6 +76,8 @@ import {
   isWorkList,
   isWorkReceipt,
   isWorkStatus,
+  noteKey,
+  noteQueryKey,
   parseBotJSON,
   type RecoveryReceipt,
   type RecoveryRequest,
@@ -316,6 +324,7 @@ export class RuntimeClient {
         schedules?: { available?: unknown; items?: unknown[]; error?: unknown };
         knowledge?: { available?: unknown; revision?: unknown; error?: unknown };
         work?: unknown;
+        notes?: unknown;
         mode?: string;
         computerError?: unknown;
         sharedLogin?: boolean;
@@ -381,6 +390,10 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      if (snapshot.protocolVersion >= 37)
+        snapshot.notes = isNoteAvailability(raw.notes)
+          ? raw.notes
+          : { available: false, error: 'INVALID_NOTE_METADATA' };
       // A broken optional work store must not turn an otherwise usable Agent into an offline client.
       if (snapshot.protocolVersion >= 36)
         snapshot.work = isWorkStatus(raw.work)
@@ -568,6 +581,53 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (isNoteCommand(command)) {
+      // Keep the original Bot and intent even if navigation or authentication changes while status yields.
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 37) throw new Error('RUNTIME_TOO_OLD');
+      if (!state.notes?.available) throw new Error(state.notes?.error ?? 'NOTES_UNAVAILABLE');
+      if (captured.type === 'notes.status') {
+        const value = await this.api('/api/notes/status', { bot: captured.bot });
+        if (!isNoteStatusResult(value) || value.bot !== captured.bot)
+          throw new Error('INVALID_NOTE_METADATA');
+        return value;
+      }
+      if (captured.type === 'notes.list') {
+        const value = await this.api('/api/notes/list', {
+          bot: captured.bot,
+          query: captured.query,
+        });
+        if (
+          !isNoteList(value) ||
+          value.bot !== captured.bot ||
+          noteQueryKey(value.query) !== noteQueryKey(captured.query)
+        )
+          throw new Error('INVALID_NOTE_PAGE');
+        return value;
+      }
+      if (captured.type === 'notes.read') {
+        const value = await this.api('/api/notes/read', { bot: captured.bot, id: captured.id });
+        if (!isNoteItem(value) || value.bot !== captured.bot || value.id !== captured.id)
+          throw new Error('INVALID_NOTE_ITEM');
+        return value;
+      }
+      const value = await this.api(
+        captured.type === 'notes.write' ? '/api/notes/write' : '/api/notes/receipt',
+        { bot: captured.bot, request: captured.request },
+      );
+      if (
+        !isNoteReceipt(value) ||
+        value.bot !== captured.bot ||
+        value.actor.kind !== 'human' ||
+        noteKey(value.bot, value.request, value.actor) !==
+          noteKey(captured.bot, captured.request, { kind: 'human' }) ||
+        (captured.type === 'notes.write' && value.state !== 'complete')
+      )
+        throw new Error('INVALID_NOTE_ACK');
+      return value;
+    }
     if (
       command.type === 'work.list' ||
       command.type === 'work.read' ||

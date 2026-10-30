@@ -1,9 +1,10 @@
 import { validAgentId } from './id.js';
+import type { NoteAvailability, NoteCommand } from './notes.js';
 
 export { validAgentId } from './id.js';
 export * from './notes.js';
 
-export const managedProtocol = 36;
+export const managedProtocol = 37;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1287,6 +1288,7 @@ export interface SetupStatus {
   error?: string;
 }
 export interface RuntimeSnapshot {
+  notes?: NoteAvailability;
   work?: WorkStatus;
   notices?: RuntimeNoticeStatus;
   chats?: ChatStatus;
@@ -1351,6 +1353,10 @@ export function recoveryReader(command: RuntimeCommand) {
     'work.list',
     'work.read',
     'work.receipt',
+    'notes.status',
+    'notes.list',
+    'notes.read',
+    'notes.receipt',
     'chat.receipt',
     'chat.history',
     'transcript.list',
@@ -3643,6 +3649,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | NoteCommand
   | { type: 'work.list'; query: WorkQuery }
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }

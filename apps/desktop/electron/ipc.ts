@@ -25,6 +25,7 @@ import {
   isMcpCommand,
   isMemoryQuery,
   isModelUpdate,
+  isNoteCommand,
   isRecoveryRequest,
   isScheduleInput,
   isSchedulePatch,
@@ -71,6 +72,7 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {

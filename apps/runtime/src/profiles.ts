@@ -225,6 +225,10 @@ export class BotProfiles {
       throw new Fault('BOT_CHANGING');
     if (profile?.archived) throw new Fault('BOT_ARCHIVED');
   }
+  assertRegistered(id: string) {
+    if (!validAgentId(id)) throw new Fault('INVALID_BOT_PROFILE', 400);
+    this.required(id);
+  }
   admit(id: string) {
     try {
       // Legacy diagnostic runs may lack a profile; known unavailable identities still fail closed.

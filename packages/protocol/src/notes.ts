@@ -51,9 +51,26 @@ export interface NoteAck {
 export type NoteReceipt =
   | NoteAck
   | { state: 'unknown'; bot: string; request: NoteWrite; actor: NoteAuthor };
-export type NoteStatus =
-  | { available: true; revision: number; count: number }
-  | { available: false; error: 'NOTES_CLOSED' | 'NOTES_CORRUPT' | 'NOTES_UNAVAILABLE' };
+type NoteFailure = {
+  available: false;
+  error: 'NOTES_CLOSED' | 'NOTES_CORRUPT' | 'NOTES_UNAVAILABLE' | 'INVALID_NOTE_METADATA';
+};
+export type NoteAvailability = { available: true } | NoteFailure;
+export type NoteStatus = { available: true; revision: number; count: number } | NoteFailure;
+export interface NoteStatusResult {
+  bot: string;
+  status: NoteStatus;
+}
+export interface NoteList {
+  bot: string;
+  query: NoteQuery;
+  page: NotePage;
+}
+export type NoteCommand =
+  | { type: 'notes.status'; bot: string }
+  | { type: 'notes.list'; bot: string; query: NoteQuery }
+  | { type: 'notes.read'; bot: string; id: string }
+  | { type: 'notes.write' | 'notes.receipt'; bot: string; request: NoteWrite };
 
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value &&
@@ -254,4 +271,82 @@ export function noteKey(bot: string, request: NoteWrite, actor: NoteAuthor) {
         : {}),
     },
   });
+}
+
+function failure(value: Record<string, unknown>): value is NoteFailure {
+  return (
+    value.available === false &&
+    keys(value, ['available', 'error']) &&
+    typeof value.error === 'string' &&
+    ['NOTES_CLOSED', 'NOTES_CORRUPT', 'NOTES_UNAVAILABLE', 'INVALID_NOTE_METADATA'].includes(
+      value.error,
+    )
+  );
+}
+export function isNoteAvailability(value: unknown): value is NoteAvailability {
+  return object(value) && (value.available === true ? keys(value, ['available']) : failure(value));
+}
+export function isNoteStatus(value: unknown): value is NoteStatus {
+  return (
+    object(value) &&
+    (value.available === true
+      ? keys(value, ['available', 'revision', 'count']) &&
+        integer(value.revision) &&
+        integer(value.count) &&
+        value.count <= value.revision &&
+        (value.count > 0 || value.revision === 0)
+      : failure(value))
+  );
+}
+export function isNoteStatusResult(value: unknown): value is NoteStatusResult {
+  return (
+    object(value) &&
+    keys(value, ['bot', 'status']) &&
+    validAgentId(value.bot) &&
+    isNoteStatus(value.status)
+  );
+}
+export function noteQueryKey(query: NoteQuery) {
+  return JSON.stringify([
+    query.filter ?? 'active',
+    query.text ?? '',
+    query.before ?? null,
+    query.limit ?? 50,
+  ]);
+}
+export function isNoteList(value: unknown): value is NoteList {
+  if (
+    !object(value) ||
+    !keys(value, ['bot', 'query', 'page']) ||
+    !validAgentId(value.bot) ||
+    !isNoteQuery(value.query) ||
+    !isNotePage(value.page) ||
+    value.page.bot !== value.bot ||
+    value.page.items.length > (value.query.limit ?? 50) ||
+    (value.page.nextBefore !== undefined &&
+      value.query.before !== undefined &&
+      value.page.nextBefore >= value.query.before)
+  )
+    return false;
+  const filter = value.query.filter ?? 'active';
+  return value.page.items.every((item) =>
+    filter === 'trash'
+      ? item.deleted
+      : !item.deleted &&
+        (filter === 'all' ||
+          (filter === 'active' ? item.status !== 'done' : item.status === filter)),
+  );
+}
+export function isNoteCommand(value: unknown): value is NoteCommand {
+  if (!object(value) || !validAgentId(value.bot)) return false;
+  if (value.type === 'notes.status') return keys(value, ['type', 'bot']);
+  if (value.type === 'notes.list')
+    return keys(value, ['type', 'bot', 'query']) && isNoteQuery(value.query);
+  if (value.type === 'notes.read')
+    return keys(value, ['type', 'bot', 'id']) && validAgentId(value.id);
+  return (
+    (value.type === 'notes.write' || value.type === 'notes.receipt') &&
+    keys(value, ['type', 'bot', 'request']) &&
+    isNoteWrite(value.request)
+  );
 }

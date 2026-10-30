@@ -46,6 +46,7 @@ import { Interactions } from './interactions.js';
 import { Knowledge } from './knowledge.js';
 import { KnowledgeTools } from './knowledge-tools.js';
 import { MemoryTools } from './memory.js';
+import { Notes } from './notes.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
 import { redact, redactStream } from './redaction.js';
@@ -410,6 +411,7 @@ export class ModelRuns {
   readonly transcripts: Transcripts;
   readonly knowledge: Knowledge;
   readonly work: Work;
+  readonly notes: Notes;
   readonly attachments: Attachments;
   readonly profiles: BotProfiles;
   readonly chats: Chats;
@@ -461,6 +463,11 @@ export class ModelRuns {
       this.tools.writeText(run, name, content, true),
     );
     this.profiles = new BotProfiles(path.join(dir, 'bots'));
+    this.notes = new Notes(path.join(dir, 'notes.sqlite'), (bot) => {
+      if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
+      this.profiles.assertRegistered(bot);
+      this.profiles.assertActive(bot);
+    });
     this.chats = new Chats(path.join(dir, 'chats.sqlite'), (bot) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
       this.profiles.assertActive(bot);
@@ -1590,6 +1597,7 @@ export class ModelRuns {
     for (const owner of [
       this.tools.integrations,
       this.work,
+      this.notes,
       this.attachments,
       this.knowledge,
       this.skills,

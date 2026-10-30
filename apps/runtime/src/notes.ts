@@ -10,6 +10,7 @@ import {
   isNoteWrite,
   type NoteAck,
   type NoteAuthor,
+  type NoteAvailability,
   type NoteItem,
   type NotePage,
   type NoteReceipt,
@@ -34,7 +35,10 @@ export class Notes {
   private db?: DatabaseSync;
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
-  constructor(readonly file: string) {
+  constructor(
+    readonly file: string,
+    private readonly admit: (bot: string) => undefined = () => {},
+  ) {
     this.ready = this.load();
     this.ready.catch(() => {});
   }
@@ -201,6 +205,14 @@ export class Notes {
       return this.find(bot, id);
     });
   }
+  async availability(): Promise<NoteAvailability> {
+    try {
+      await this.ready;
+      return this.closed ? { available: false, error: 'NOTES_CLOSED' } : { available: true };
+    } catch {
+      return { available: false, error: 'NOTES_CORRUPT' };
+    }
+  }
   async status(bot: string): Promise<NoteStatus> {
     if (!validAgentId(bot)) throw new Fault('INVALID_NOTE_QUERY', 400);
     try {
@@ -336,6 +348,8 @@ export class Notes {
     const request = structuredClone(input),
       actor = structuredClone(by);
     return this.exclusive(() => {
+      // Recheck after the queue yields: lifecycle or recovery may have revoked a previously valid writer.
+      this.admit(bot);
       this.revision(bot);
       // Resolve an accepted intent before CAS or trash checks, without reapplying an older edit.
       const prior = this.accepted(bot, request, actor);

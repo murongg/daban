@@ -27,6 +27,7 @@ import {
   isKnowledgeWrite,
   isMcpCommand,
   isMemoryQuery,
+  isNoteCommand,
   isSkillBinding,
   isSkillContent,
   isTaskFileName,
@@ -90,6 +91,10 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/notes/status',
+  '/api/notes/list',
+  '/api/notes/read',
+  '/api/notes/receipt',
   '/api/work/list',
   '/api/work/read',
   '/api/work/receipt',
@@ -299,9 +304,14 @@ export async function startPrototype({
       if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
         throw new Fault('FOREIGN_ORIGIN', 403);
       const url = new URL(req.url || '/', origin);
-      const modernGroups = ['28', '29', '30', '31', '32', '33', '34', '35', '36'].includes(
-        String(req.headers['x-daban-client-protocol']),
-      );
+      const groupProtocol = req.headers['x-daban-client-protocol'];
+      const groupVersion =
+        typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
+          ? Number(groupProtocol)
+          : 0;
+      // Archive-aware group shapes start at28; current supported versions must not fall back to legacy.
+      const modernGroups =
+        Number.isSafeInteger(groupVersion) && groupVersion >= 28 && groupVersion <= managedProtocol;
       const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
       if (mcp) {
         if (recovery && !recovery.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -406,6 +416,34 @@ export async function startPrototype({
             throw new Fault('RUNTIME_RECOVERY_PENDING');
           }
           releaseMutation = recovery.enter();
+        }
+        if (url.pathname.startsWith('/api/notes/')) {
+          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+          if (url.search) throw new Fault('INVALID_NOTE_REQUEST', 400);
+          if (!models) throw new Fault('NOTES_UNAVAILABLE', 503);
+          const data = await body(req);
+          const command = { ...data, type: `notes.${url.pathname.slice('/api/notes/'.length)}` };
+          if (Object.hasOwn(data, 'type') || !isNoteCommand(command))
+            throw new Fault('INVALID_NOTE_REQUEST', 400);
+          if (!(await models.profiles.get(command.bot)))
+            throw new Fault('BOT_PROFILE_NOT_FOUND', 404);
+          if (command.type === 'notes.status')
+            return json(res, { bot: command.bot, status: await models.notes.status(command.bot) });
+          if (command.type === 'notes.list')
+            return json(res, {
+              bot: command.bot,
+              query: command.query,
+              page: await models.notes.list(command.bot, command.query),
+            });
+          if (command.type === 'notes.read')
+            return json(res, await models.notes.get(command.bot, command.id));
+          // This authenticated channel belongs to the Human; no client author or Bot impersonation is accepted.
+          return json(
+            res,
+            command.type === 'notes.write'
+              ? await models.notes.write(command.bot, command.request, { kind: 'human' })
+              : await models.notes.receipt(command.bot, command.request, { kind: 'human' }),
+          );
         }
         if (url.pathname.startsWith('/api/work/')) {
           if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -935,6 +973,9 @@ export async function startPrototype({
             work: models
               ? await models.work.status()
               : { available: false, error: 'WORK_UNAVAILABLE' },
+            notes: models
+              ? await models.notes.availability()
+              : { available: false, error: 'NOTES_UNAVAILABLE' },
             knowledge: models ? await models.knowledge.status() : { available: false },
             profiles: models ? await models.profiles.list() : [],
             interactions: models ? await models.interactions.list() : [],

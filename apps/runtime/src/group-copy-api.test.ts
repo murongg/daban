@@ -86,6 +86,24 @@ test('group copy HTTP binds the authenticated source and returns an empty indepe
       state.groups.items.find((item: { id: string }) => item.id === request.id).archived,
       true,
     );
+    for (const version of [
+      '28',
+      String(managedProtocol),
+      '27',
+      String(managedProtocol + 1),
+      '028',
+      `${managedProtocol}.0`,
+    ]) {
+      const response = await (
+        await fetch(`${app.url}/api/state`, {
+          headers: { 'x-prototype-token': app.token, 'x-daban-client-protocol': version },
+        })
+      ).json();
+      assert.equal(
+        response.groups.items.some((item: { id: string }) => item.id === request.id),
+        version === '28' || version === String(managedProtocol),
+      );
+    }
     assert.deepEqual(state.bots, {});
     assert.deepEqual(state.computers.items, []);
   } finally {
