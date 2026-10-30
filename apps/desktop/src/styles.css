@@ -227,7 +227,8 @@ textarea.field {
 .brand-mark {
   width: 28px;
   height: 28px;
-  color: var(--ink);
+  object-fit: contain;
+  flex-shrink: 0;
 }
 .wordmark {
   font-size: 23px;
@@ -507,9 +508,10 @@ textarea.field {
   width: 37px;
   height: 39px;
 }
-.bot-avatar > svg {
+.bot-avatar > img {
   width: 100%;
   height: 100%;
+  object-fit: contain;
 }
 .bot-avatar.small {
   width: 25px;
@@ -2750,8 +2752,13 @@ textarea.skill-source {
 /* Reserve macOS traffic lights in Electron without placing duplicate window controls in the renderer. */
 .app[data-desktop="darwin"] .sidebar-brand {
   padding-left: 97px;
+  padding-right: 16px;
+  gap: 6px;
 }
-.app[data-desktop="darwin"] .sidebar-brand .brand-mark,
+.app[data-desktop="darwin"] .sidebar-brand .brand-mark {
+  width: 24px;
+  height: 24px;
+}
 .app[data-desktop="darwin"] .sidebar-brand .brand-beta {
   display: none;
 }

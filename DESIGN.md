@@ -187,7 +187,7 @@ components:
 
 daban preserves the Grok Bot reference: a quiet, edge-to-edge conversation workspace with a pale sidebar, restrained monochrome controls, and compact colored Bot identities. Chinese system typography and messaging-app density keep attention on the conversation and the adjacent computer.
 
-The light and dark themes share the same geometry. Surface tones, thin dividers, and text hierarchy organize the UI. Connected Electron Bots show their actual Linux desktops beside the conversation; the browser-only preview keeps its synthetic desktop. Simple SVG identities and the lowercase daban wordmark remain the identity anchors.
+The light and dark themes share the same geometry. Surface tones, thin dividers, and text hierarchy organize the UI. Connected Electron Bots show their actual Linux desktops beside the conversation; the browser-only preview keeps its synthetic desktop. Transparent robot Bot avatars, the companion app mascot and the lowercase daban wordmark are the identity anchors.
 
 **Key Characteristics:**
 
@@ -209,7 +209,7 @@ The palette is warm monochrome. Use the existing CSS semantic roles; the frontma
 
 ### Secondary
 
-- **Bot Identities** (`bot-mint`, `bot-violet`, `bot-orange`, `bot-blue`, `bot-teal`, `bot-pink`): existing organic SVG avatars and color-choice controls. These identify Bots; they are not a general action palette.
+- **Bot Identities** (`bot-mint`, `bot-violet`, `bot-orange`, `bot-blue`, `bot-teal`, `bot-pink`): the six robot-avatar shell families and existing color-choice controls. The PNG artwork follows the saved color identities; its shaded pixels do not introduce new UI tokens. These identify Bots; they are not a general action palette.
 - **Code Syntax** (`code-keyword`, `code-string`, `code-number` and their `dark-*` values): muted violet, green and amber distinguish syntax only inside assistant fenced-code blocks. Comments reuse muted ink; ordinary code retains conversation ink. These roles do not extend to inline code, controls or panels.
 
 ### Neutral
@@ -245,7 +245,7 @@ The app fills the window with a fixed sidebar, a flexible conversation, and an o
 
 At (1280px) and below, the sidebar becomes (246px), while the workspace becomes (43%) with a minimum of (330px). At (1080px) and below, the workspace overlays the right side under the header at (430px), capped by the available width; initial loads below (1080px) start with it closed. At (700px) and below, the sidebar becomes an optional drawer, the header becomes (62px), and the workspace covers the conversation width. This narrow layout is a web preview adaptation, not a mobile application.
 
-The native Electron window starts at (1380 × 860px) with a minimum of (920 × 640px). On macOS, reserve the native traffic lights: the sidebar brand receives (97px) left padding and hides its mark/preview suffix. The native sidebar-brand and chat-header regions drag the window; buttons remain clickable. Do not duplicate native window buttons in the renderer.
+The native Electron window starts at (1380 × 860px) with a minimum of (920 × 640px). On macOS, reserve the native traffic lights: the sidebar brand receives (97px) left padding and keeps the companion mascot visible at (24px) beside the lowercase daban wordmark; only the preview suffix is hidden. The native sidebar-brand and chat-header regions drag the window; buttons remain clickable. Do not duplicate native window buttons in the renderer.
 
 Use the small recurring spacing values in the frontmatter for local groups. Larger page content uses a centered maximum of (850px), and dialogs use (430px) or (740px) width with viewport padding. Do not apply landing-page section spacing to this product.
 
@@ -259,7 +259,7 @@ The workspace is flat at rest. Thin dividers, neutral surface changes, and selec
 
 Controls and fields have gently rounded corners; selected Bot rows and file-artifact containers are slightly broader. Message bubbles have an asymmetric small corner facing their author: lower left for assistant messages and lower right for user messages. The composer is the largest rounded input surface. The send control, status dots, and toggle thumb are circular. Dividers and fields use fine (1px) borders.
 
-The Bot avatar is an irregular, rounded SVG silhouette with two white eye strokes. Retain that simple colored shape rather than introducing profile photos, emoji avatars, or a different icon style. Other UI icons are fine monochrome outlines, mostly (14–18px).
+Bot avatars are transparent PNG robot-head cutouts with rounded shell and ear modules, a small antenna, a dark screen and cream facial marks. The mint, violet, orange, blue, teal and pink shells distinguish Bots within one friendly illustrated family. Calm smiles, a wink and curved-eye smiles are decorative identity details, not operational status. Keep the transparent surround rather than adding a background tile or circle; reuse the family instead of profile photos or emoji avatars. Other UI icons remain fine monochrome outlines, mostly (14–18px).
 
 ## Components
 
@@ -280,6 +280,10 @@ File hover reuses the containing focus border and announces “松开即可添�
 Capture the initiating Bot/group for asynchronous attachment work. Reserve an upload before reading files so overlapping events cannot bypass preparation or the four-file limit. Archived, lifecycle-pending, conversation-change-pending and uncertain-send targets cannot add files; group readiness and sending guards also apply. Prevent file drops from navigating the renderer even when the target is read-only. These built rules and their bounded browser evidence are recorded in `.impeccable/surfaces/client.md`; they do not establish native screenshot clipboard or Finder drag acceptance.
 
 ### Navigation
+
+The app identity is a letter-free waving otter beside the lowercase daban wordmark. Reuse the shipped PNG artwork: its muted charcoal-brown/ivory pixels belong to the logo, without adding workspace color tokens. `Brand()` displays `favicon.png` at (28px), reduced to (24px) in the macOS header. The image is decorative beside the readable name (`alt=""`, `aria-hidden="true"`); preserve the separate create-Bot control. The native icon family derives from the same `app-icon.png` master. Asset generation and bounded verification provenance are recorded in `outputs/brand/brief.md`.
+
+Personal Bot avatars load `avatars/{color}.png` from the existing persisted color key and fit within the incumbent avatar sizes using `object-fit: contain`. Reuse the same six assets across light and dark themes. The three-head group composition and human-owner dot retain their existing geometry and meaning. The avatar artwork is decorative beside the Bot name; expressions do not replace readable connection or task labels. `outputs/brand/avatars.json` records each source image and exact embedded prompt.
 
 The sidebar combines compact inbox/conversation rows with taller Bot rows (76px minimum). A selected Bot uses `selected`, while ordinary navigation uses a quiet hover fill. Names and previews truncate; timestamps use tabular numerals. The footer reports the actual Linux connection state in Electron and local demo storage in the browser-only preview. Personal Bot rows show current task, takeover or computer-connection state; disconnected personal Bots stay labelled “可对话 · 未连接电脑”. Demonstration rows retain their explicit labels. On narrow web previews, navigation opens as a drawer with a scrim.
 

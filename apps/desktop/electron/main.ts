@@ -27,6 +27,7 @@ app.on('ready', (_event, launchInfo) => {
 function createWindow() {
   const window = new BrowserWindow({
     title: 'daban',
+    icon: join(__dirname, '..', 'dist', 'app-icon.png'),
     width: 1380,
     height: 860,
     minWidth: 920,
@@ -103,6 +104,8 @@ if (primary) {
   app
     .whenReady()
     .then(async () => {
+      if (process.platform === 'darwin')
+        app.dock?.setIcon(join(__dirname, '..', 'dist', 'app-icon.png'));
       const renderer = pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href;
       notifications = new Notifications(join(app.getPath('userData'), 'notifications.json'), {
         foreground: () => !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused(),

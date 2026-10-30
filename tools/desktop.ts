@@ -16,6 +16,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { environmentVersions, verifyAsset } from './environment.ts';
+import { writeIcon } from './icon.ts';
 
 // Build-time macOS app assembly. Never reuse a user directory or package a Lima home.
 assert.equal(process.platform, 'darwin');
@@ -112,6 +113,10 @@ for (const file of ['LICENSE', 'LICENSES.chromium.html'])
     path.join(resources, file),
     constants.COPYFILE_EXCL,
   );
+await writeIcon(
+  path.join(root, 'apps/desktop/public/app-icon.png'),
+  path.join(resources, 'daban.icns'),
+);
 const plist = path.join(target, 'Contents/Info.plist');
 const frontendNotices = path.join(resources, 'frontend-notices');
 await mkdir(frontendNotices);
@@ -139,6 +144,7 @@ for (const [key, value] of Object.entries({
   CFBundleExecutable: 'daban',
   CFBundleName: 'daban',
   CFBundleDisplayName: 'daban',
+  CFBundleIconFile: 'daban.icns',
   CFBundleShortVersionString: info.version,
   CFBundleVersion: info.version,
 }))

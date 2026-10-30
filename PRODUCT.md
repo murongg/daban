@@ -20,7 +20,7 @@ Give each persistent Bot a conversation and shared workspace context, with an op
 
 ## Brand Commitments
 
-The user named the project daban and requested UI as close to Grok Bot as possible. Inherit the quiet monochrome conversation workspace from the previous local prototype and the official demo capture. No new visual direction is needed. UI copy is Chinese; brand is lowercase daban.
+The user named the project daban and requested UI as close to Grok Bot as possible. Inherit the quiet monochrome conversation workspace from the previous local prototype and the official demo capture. No new visual direction is needed. UI copy is Chinese; brand is lowercase daban. The user also authorized replacement of the app icon and in-app logo, allowing a letter-free, cuter direction; the current waving-otter artwork interprets that direction while retaining the monochrome workspace commitment. The user subsequently approved a cute robot Bot-avatar prototype with a transparent background and requested color variants to distinguish Bots; the six robot shells reuse the existing saved Bot color identities.
 
 ## Capabilities and Constraints
 
