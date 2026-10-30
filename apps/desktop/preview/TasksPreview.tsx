@@ -5,8 +5,11 @@ import {
   type RuntimeCommand,
   type RuntimeReply,
   type RuntimeSnapshot,
+  type WorkComment,
+  type WorkCommentWrite,
   type WorkItem,
   type WorkWrite,
+  workCommentKey,
   workKey,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
@@ -20,6 +23,7 @@ import '../src/styles.css';
 // Private production-component fixture: every record is synthetic; no host, VM, model or external service is connected.
 const query = new URLSearchParams(location.search),
   mode = query.get('mode') ?? 'list';
+const discussing = mode.startsWith('discussion');
 const at = '2026-10-30T01:20:00Z';
 const titles = [
   '合成：核对活动报名表',
@@ -55,6 +59,30 @@ if (mode !== 'empty')
       ...(status === 'done' ? { completedAt: at } : {}),
     });
   }
+const discussionRows: { comment: WorkComment; seq: number }[] = [];
+if (discussing) {
+  const bodies = [
+    '合成确认：这轮只核对已提供的材料，保留需要进一步确认的问题。',
+    '合成反馈：已核对三份材料，第二份的来源仍需确认。',
+    '合成补充：先在讨论里保留边界，确认后再修改任务。',
+    '合成备注：发表评论不会启动其他任务。',
+  ];
+  for (const [index, body] of bodies.entries())
+    discussionRows.push({
+      seq: index + 1,
+      comment: {
+        id: `mock-discussion-${index + 1}`,
+        item: 'mock-task-1',
+        body:
+          mode === 'discussion-long' && index === 3
+            ? '合成长文本：保留原始段落与完整的核对说明。\n'.repeat(120)
+            : body,
+        createdAt: at,
+        createdBy: index % 2 ? { kind: 'bot', bot: index === 1 ? 'a' : 'b' } : { kind: 'human' },
+      },
+    });
+  items.get('mock-task-1')!.revision = discussionRows.length + 1;
+}
 const first = items.get('mock-task-1');
 const seed = initialState();
 seed.panel = null;
@@ -68,7 +96,7 @@ for (const bot of seed.bots) {
 }
 seed.drafts.research = '合成未发送聊天草稿：切换任务后请保留。';
 seed.work = { ...workInitial(), mode: mode === 'board' ? 'board' : 'list' };
-if (first && (mode === 'editor' || mode === 'conflict')) {
+if (first && (mode === 'editor' || mode === 'conflict' || discussing)) {
   seed.work.draft = workDraft(first);
   if (mode === 'conflict') {
     seed.work.draft.title = '合成：我保留的活动核对标题';
@@ -77,6 +105,32 @@ if (first && (mode === 'editor' || mode === 'conflict')) {
       title: '合成：Bot 更新后的活动核对标题',
       progress: '后台合成进展：已核对新增材料，保留本次更新。',
       revision: 2,
+      updatedBy: { kind: 'bot', bot: 'b' },
+    });
+  }
+}
+if (discussing && first) {
+  const draft = {
+    key: 'mock-discussion-draft',
+    body: '合成评论草稿：补充本次核对的边界，保留来源。',
+  };
+  seed.comments = { cards: { [first.id]: { draft } } };
+  if (mode === 'discussion-pending')
+    seed.comments.cards[first.id].pending = {
+      draft,
+      request: {
+        id: 'mock-discussion-op',
+        item: first.id,
+        revision: first.revision,
+        body: draft.body,
+      },
+    };
+  if (mode === 'discussion-conflict') {
+    seed.work!.draft!.title = '合成：保留本机未保存的任务标题';
+    items.set(first.id, {
+      ...first,
+      description: '合成外部更新：新增一份材料，保留本次来源和未确认的问题。',
+      revision: first.revision + 1,
       updatedBy: { kind: 'bot', bot: 'b' },
     });
   }
@@ -93,11 +147,15 @@ if (mode === 'pending') {
 if (query.get('keep') !== '1' || !localStorage.getItem(storageKey))
   localStorage.setItem(storageKey, JSON.stringify({ version: 1, state: seed }));
 const snapshot = disconnected('ready');
-snapshot.protocolVersion = mode === 'old' ? 35 : 36;
+snapshot.protocolVersion = discussing ? 38 : mode === 'old' ? 35 : 36;
 snapshot.work =
   mode === 'unavailable'
     ? { available: false, error: 'WORK_CORRUPT' }
-    : { available: true, revision: mode === 'conflict' ? 7 : items.size, count: items.size };
+    : {
+        available: true,
+        revision: [...items.values()].reduce((sum, row) => sum + row.revision, 0),
+        count: items.size,
+      };
 snapshot.profiles = seed.bots
   .filter((bot) => !bot.members)
   .map((bot) => ({
@@ -126,6 +184,24 @@ snapshot.groups = {
 };
 const listeners = new Set<(value: RuntimeSnapshot) => unknown>();
 const operations = new Map<string, { request: WorkWrite; acceptedRevision: number }>();
+const commentOperations = new Map<
+  string,
+  { request: WorkCommentWrite; comment: WorkComment; revision: number }
+>();
+const commentReceipt = (request: WorkCommentWrite) => {
+  const saved = commentOperations.get(workCommentKey(request, { kind: 'human' }));
+  return saved
+    ? {
+        state: 'complete',
+        request,
+        actor: { kind: 'human' },
+        comment: saved.comment,
+        acceptedRevision: saved.revision,
+        acceptedAt: at,
+        item: items.get(request.item),
+      }
+    : { state: 'unknown', request, actor: { kind: 'human' } };
+};
 const receipt = (saved: { request: WorkWrite; acceptedRevision: number }) => ({
   state: 'complete',
   actor: { kind: 'human' },
@@ -178,6 +254,54 @@ const bridge: RuntimeBridge = {
         value = saved
           ? receipt(saved)
           : { state: 'unknown', actor: { kind: 'human' }, request: command.request };
+      } else if (command.type === 'work.comments') {
+        if (mode === 'discussion-error') throw Error('RUNTIME_REQUEST_FAILED');
+        const rows = discussionRows
+          .filter(
+            (row) =>
+              row.comment.item === command.query.item &&
+              (command.query.before === undefined || row.seq < command.query.before),
+          )
+          .sort((left, right) => right.seq - left.seq);
+        const selected = rows.slice(0, command.query.limit ?? 50);
+        value = {
+          query: command.query,
+          page: {
+            item: command.query.item,
+            revision: items.get(command.query.item)!.revision,
+            comments: selected.map((row) => row.comment),
+            ...(selected.length < rows.length ? { nextBefore: selected.at(-1)!.seq } : {}),
+          },
+        };
+      } else if (command.type === 'work.comment-receipt') value = commentReceipt(command.request);
+      else if (command.type === 'work.comment') {
+        if (mode === 'discussion-pending') throw Error('RUNTIME_REQUEST_FAILED');
+        const request = command.request,
+          key = workCommentKey(request, { kind: 'human' });
+        if (commentOperations.has(key)) value = commentReceipt(request);
+        else {
+          const current = items.get(request.item)!;
+          if (current.deleted) throw Error('WORK_TRASHED');
+          if (current.revision !== request.revision) throw Error('WORK_CONFLICT');
+          const comment: WorkComment = {
+            id: request.id,
+            item: request.item,
+            body: request.body,
+            createdAt: at,
+            createdBy: { kind: 'human' },
+          };
+          current.revision++;
+          current.updatedBy = { kind: 'human' };
+          discussionRows.push({ comment, seq: discussionRows.length + 1 });
+          commentOperations.set(key, { request, comment, revision: current.revision });
+          value = commentReceipt(request);
+          snapshot.work = {
+            available: true,
+            revision: [...items.values()].reduce((sum, row) => sum + row.revision, 0),
+            count: items.size,
+          };
+          for (const listener of listeners) listener({ ...snapshot });
+        }
       } else if (command.type === 'work.write') {
         if (mode === 'pending') throw Error('RUNTIME_REQUEST_FAILED');
         const request = command.request,

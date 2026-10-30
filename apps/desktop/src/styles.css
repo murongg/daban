@@ -3949,12 +3949,15 @@ textarea.skill-source {
   border-left: 1px solid var(--line);
 }
 .task-editor-heading {
+  /* Cover the editor's top padding while the header sticks over scrolled content. */
   position: sticky;
-  top: 0;
+  top: -20px;
   z-index: 1;
   flex-wrap: wrap;
   justify-content: space-between;
   padding-bottom: 12px;
+  padding-top: 20px;
+  margin-top: -20px;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }
@@ -3999,6 +4002,104 @@ textarea.skill-source {
   margin-top: 24px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
+}
+.task-discussion {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 110px;
+}
+.comment-heading,
+.comment-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.comment-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-heading svg {
+  width: 14px;
+  height: 14px;
+}
+.comment-history {
+  /* Reserve room for task chrome and composition in short desktop windows. */
+  max-height: clamp(100px, calc(100dvh - 620px), 280px);
+  margin-top: 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.comment-history ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.comment-history li {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.comment-history li:first-child {
+  padding-top: 0;
+}
+.comment-meta {
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 12px;
+}
+.comment-meta strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.comment-history p {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comment-empty {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.task-editor .comment-composer {
+  gap: 12px;
+}
+.comment-composer .field {
+  font-size: 14px;
+  line-height: 1.7;
+}
+.comment-composer .task-actions {
+  justify-content: flex-start;
+}
+.comment-pending {
+  padding: 12px 0;
+  border-block: 1px solid var(--line);
+  font-size: 14px;
+}
+.comment-pending p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.comment-loading {
+  display: grid;
+  gap: 12px;
+  padding-top: 20px;
+}
+.comment-loading span {
+  height: 12px;
+  background: var(--hover);
+}
+.comment-loading span:last-child {
+  width: 70%;
 }
 .task-empty {
   max-width: 440px;

@@ -13,6 +13,7 @@ import {
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
+import { restoreComments } from './comments-state';
 import { restoreNotes } from './notes-state';
 import { restoreOrganization } from './organization';
 import { initialState, routineDraft, type State } from './state';
@@ -49,6 +50,7 @@ export function restore(raw: string | null): State {
     const saved: unknown = JSON.parse(raw || 'null');
     if (!record(saved) || saved.version !== 1 || !record(saved.state)) return initialState();
     const s = saved.state;
+    s.comments = restoreComments(s.comments);
     s.work = restoreWork(s.work);
     if (!isBotImportReference(s.botImport)) delete s.botImport;
     if (!isBotCopyRequest(s.botCopy)) delete s.botCopy;

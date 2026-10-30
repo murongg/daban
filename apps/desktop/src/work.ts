@@ -11,10 +11,12 @@ import {
   workQueryKey,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { commentCard } from './comments-state';
 import { runtimeError, useRuntime } from './Runtime';
 import { type Action, reduce, type State } from './state';
 import { serialize, storageKey } from './storage';
 import {
+  sameWorkContent,
   sameWorkDraft,
   type WorkPending,
   workDirty,
@@ -167,6 +169,48 @@ export function useWork(
       keyOf(input.request) === keyOf(pending.current.request),
     [],
   );
+  const remember = useCallback((item: WorkItem, created = false) => {
+    const selected = queryRef.current;
+    if (data.current.key !== workQueryKey(selected)) return;
+    const old = data.current.items.find((row) => row.id === item.id);
+    if (old && old.revision > item.revision) return;
+    let rows = data.current.items.filter((row) => row.id !== item.id);
+    if (matches(item, selected)) {
+      if (old) rows = data.current.items.map((row) => (row.id === item.id ? summary(item) : row));
+      else if (created) rows = [summary(item), ...rows];
+    }
+    data.current = { ...data.current, items: rows };
+    setItems(rows);
+  }, []);
+  const observe = useCallback(
+    (item: WorkItem) => {
+      if (!isWorkItem(item)) return;
+      remember(item);
+      const draft = current.current.work?.draft;
+      if (
+        !draft?.base ||
+        draft.base.id !== item.id ||
+        item.revision <= draft.base.revision ||
+        current.current.work?.pending?.request.item === item.id
+      )
+        return;
+      if (workDirty(draft) && !sameWorkContent(draft.base, item)) {
+        setLatest((previous) =>
+          previous?.key === draft.key && previous.item.revision > item.revision
+            ? previous
+            : { key: draft.key, item },
+        );
+      } else {
+        dispatch({ type: 'work-observe', key: draft.key, item });
+        setLatest((previous) =>
+          previous?.key === draft.key && previous.item.revision <= item.revision
+            ? undefined
+            : previous,
+        );
+      }
+    },
+    [dispatch, remember],
+  );
   const accept = useCallback(
     (value: unknown, input: WorkPending, readingOnly: boolean) => {
       if (!owns(input)) return;
@@ -194,25 +238,10 @@ export function useWork(
         setError('');
         setLatest(undefined);
       }
-      const selected = queryRef.current;
-      if (data.current.key === workQueryKey(selected)) {
-        const old = data.current.items.find((row) => row.id === value.item.id);
-        if (!old || old.revision <= value.item.revision) {
-          let rows = data.current.items.filter((row) => row.id !== value.item.id);
-          if (matches(value.item, selected)) {
-            if (old)
-              rows = data.current.items.map((row) =>
-                row.id === value.item.id ? summary(value.item) : row,
-              );
-            else if (input.request.action === 'create') rows = [summary(value.item), ...rows];
-          }
-          data.current = { ...data.current, items: rows };
-          setItems(rows);
-        }
-      }
+      remember(value.item, input.request.action === 'create');
       notify(input.request.action === 'create' ? '任务已创建，尚未自动执行。' : '任务操作已确认。');
     },
-    [dispatch, notify, owns],
+    [dispatch, notify, owns, remember],
   );
   const check = useCallback(async () => {
     const input = pending.current;
@@ -308,7 +337,12 @@ export function useWork(
   }
   async function save() {
     const draft = current.current.work?.draft;
-    if (!draft || pending.current) return;
+    if (
+      !draft ||
+      pending.current ||
+      (draft.base && commentCard(current.current.comments, draft.base.id).pending)
+    )
+      return;
     const request = workInput(draft);
     if (!request) {
       setError('请填写任务标题（最多 500 字符）；说明和进展各最多 4,000 字符。');
@@ -318,7 +352,13 @@ export function useWork(
   }
   async function changeStatus(action: 'trash' | 'restore') {
     const draft = current.current.work?.draft;
-    if (!draft?.base || pending.current || (action === 'trash' && workDirty(draft))) return;
+    if (
+      !draft?.base ||
+      pending.current ||
+      commentCard(current.current.comments, draft.base.id).pending ||
+      (action === 'trash' && workDirty(draft))
+    )
+      return;
     await send(
       {
         request: {
@@ -427,6 +467,7 @@ export function useWork(
     open,
     discard,
     merge,
+    observe,
     retry: async () => {
       if (pending.current) await send(pending.current, true);
     },

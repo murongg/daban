@@ -33,6 +33,7 @@ import {
   type TaskRequest,
   validAgentId,
 } from '@daban/protocol';
+import { type CommentAction, type CommentsState, reduceComments } from './comments-state';
 import { taskFile } from './files';
 import * as fixture from './fixtures';
 import { type NotesAction, type NotesState, reduceNotes } from './notes-state';
@@ -177,6 +178,7 @@ export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
 export interface State {
+  comments?: CommentsState;
   notes?: Record<string, NotesState | undefined>;
   work?: WorkState;
   organization: Organization;
@@ -231,6 +233,7 @@ export function lifecycleRequest(
   };
 }
 export type Action =
+  | CommentAction
   | NotesAction
   | WorkAction
   | OrganizationAction
@@ -341,6 +344,11 @@ export function reduce(state: State, action: Action): State {
   // Target the Bot explicitly: changing the selected screen must never transfer ownership or route async work elsewhere.
   if ('bot' in action && !state.bots.some((b) => b.id === action.bot)) return state;
   switch (action.type) {
+    case 'comment-draft':
+    case 'comment-pending':
+    case 'comment-release':
+    case 'comment-settle':
+      return { ...state, comments: reduceComments(state.comments, action) };
     case 'notes-options':
     case 'notes-draft':
     case 'notes-change':
@@ -363,6 +371,7 @@ export function reduce(state: State, action: Action): State {
     case 'work-release':
     case 'work-settle':
     case 'work-merge':
+    case 'work-observe':
       return { ...state, work: reduceWork(state.work, action) };
     case 'bot-pin':
     case 'bot-section':

@@ -1,6 +1,8 @@
 import { agentId, type WorkFields, type WorkSummary, workStates } from '@daban/protocol';
-import { Columns3, List, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { Columns3, List, MessageSquare, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { type Dispatch, useState } from 'react';
+import { Comments } from './Comments';
+import { commentCard } from './comments-state';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Action, State } from './state';
 import type { WorkController } from './work';
@@ -37,6 +39,7 @@ export function Tasks({
     confirm.revision === draft.base.revision;
   const pending = cache.pending,
     sealed = !!draft && pending?.draft.key === draft.key;
+  const commentPending = !!draft?.base && !!commentCard(state.comments, draft.base.id).pending;
   const readOnly = !work.available || sealed || work.reading;
   const hasEditor = work.editorVisible && (!!draft || work.reading);
   const latest = work.latest?.key === draft?.key ? work.latest?.item : undefined;
@@ -45,6 +48,7 @@ export function Tasks({
     readOnly ||
     work.blocked ||
     !!pending ||
+    commentPending ||
     !workDirty(draft) ||
     !!draft?.base?.deleted ||
     !!latest;
@@ -324,6 +328,22 @@ export function Tasks({
           <aside className="task-editor" aria-label="任务详情">
             <div className="task-editor-heading">
               <h2>{draft?.base ? '任务详情' : '新建任务'}</h2>
+              {draft?.base && !work.reading && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label="查看讨论"
+                  title="查看讨论"
+                  aria-controls={`task-comments-${draft.base.id}`}
+                  onClick={() => {
+                    const target = document.getElementById(`task-comments-${draft.base!.id}`);
+                    target?.scrollIntoView({ block: 'start' });
+                    target?.focus({ preventScroll: true });
+                  }}
+                >
+                  <MessageSquare aria-hidden="true" />
+                </button>
+              )}
               {draft && (
                 <button className="primary" type="submit" form={formId} disabled={saveDisabled}>
                   保存任务
@@ -355,6 +375,11 @@ export function Tasks({
                           ? '已保存到当前运行环境。'
                           : '新任务草稿，填写后保存到运行环境。'}
                 </p>
+                {commentPending && (
+                  <p role="status" className="field-help">
+                    这张任务的评论结果待确认。请先查看讨论并核对结果，再保存任务。
+                  </p>
+                )}
                 {!work.available && (
                   <p className="field-help">当前只读显示本机草稿，连接后可继续编辑和保存。</p>
                 )}
@@ -495,7 +520,7 @@ export function Tasks({
                       <button
                         type="button"
                         className="secondary"
-                        disabled={!work.available || work.blocked || !!pending}
+                        disabled={!work.available || work.blocked || !!pending || commentPending}
                         onClick={() => work.changeStatus('restore').catch(() => {})}
                       >
                         恢复任务
@@ -507,7 +532,7 @@ export function Tasks({
                           <button
                             type="button"
                             className="secondary"
-                            disabled={!!pending || work.blocked}
+                            disabled={!!pending || work.blocked || commentPending}
                             onClick={() => work.changeStatus('trash').catch(() => {})}
                           >
                             确认移入
@@ -525,7 +550,13 @@ export function Tasks({
                       <button
                         type="button"
                         className="text-button"
-                        disabled={!work.available || work.blocked || !!pending || workDirty(draft)}
+                        disabled={
+                          !work.available ||
+                          work.blocked ||
+                          !!pending ||
+                          commentPending ||
+                          workDirty(draft)
+                        }
                         onClick={() =>
                           setConfirm({
                             key: draft.key,
@@ -539,6 +570,16 @@ export function Tasks({
                       </button>
                     )}
                   </div>
+                )}
+                {draft.base && !work.reading && (
+                  <Comments
+                    key={draft.base.id}
+                    state={state}
+                    dispatch={dispatch}
+                    item={draft.base}
+                    observe={work.observe}
+                    author={author}
+                  />
                 )}
               </>
             )}

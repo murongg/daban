@@ -36,8 +36,11 @@ export type WorkAction =
   | { type: 'work-pending'; pending: WorkPending }
   | { type: 'work-release'; request: WorkWrite }
   | { type: 'work-settle'; receipt: WorkAck }
+  | { type: 'work-observe'; key: string; item: WorkItem }
   | { type: 'work-merge'; key: string; latest: WorkItem; keep: boolean };
 const fields = ['title', 'description', 'progress', 'status'] as const;
+export const sameWorkContent = (left: WorkItem, right: WorkItem) =>
+  fields.every((field) => left[field] === right[field]) && left.deleted === right.deleted;
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const humanKey = (request: WorkWrite) => workKey(request, { kind: 'human' });
@@ -218,5 +221,21 @@ export function reduceWork(value: WorkState | undefined, action: WorkAction): Wo
               : workDraft(action.latest, action.key),
           }
         : current;
+    case 'work-observe': {
+      const draft = current.draft;
+      // An uncertain write on another card must not stale this card's confirmed comment revision.
+      if (
+        !draft?.base ||
+        draft.key !== action.key ||
+        current.pending?.request.item === action.item.id ||
+        !isWorkItem(action.item) ||
+        action.item.id !== draft.base.id ||
+        action.item.revision <= draft.base.revision
+      )
+        return current;
+      // Comment-only revisions can advance the saved base without changing any editable task field.
+      if (workDirty(draft) && !sameWorkContent(draft.base, action.item)) return current;
+      return { ...current, draft: mergeWork(draft, action.item) };
+    }
   }
 }
