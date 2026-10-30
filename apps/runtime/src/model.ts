@@ -78,7 +78,7 @@ import { type WorkspaceDirectory, WorkspaceFiles } from './workspace.js';
 
 const sdkFile = '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
 const model = 'deepseek-flash';
-const sessionProfile = 'general-v7';
+const sessionProfile = 'general-v8';
 const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
   JSON.stringify(
     conversationId || !chatRevision ? [bot, conversationId ?? null] : [bot, null, chatRevision],

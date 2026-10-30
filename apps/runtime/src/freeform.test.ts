@@ -867,7 +867,7 @@ test('retiring a computer-only session preserves its conversation context and st
     assert.ok(observed.includes('Mock Alpha'));
     assert.ok(models.status().bots.a.history.some((item) => item.runId === 'old-run'));
     const record = models.journal.findRequest('a', 'new-general-request');
-    assert.equal((record as unknown as Record<string, unknown>).sessionProfile, 'general-v7');
+    assert.equal((record as unknown as Record<string, unknown>).sessionProfile, 'general-v8');
     await models.close();
   } finally {
     await rm(root, { recursive: true, force: true });

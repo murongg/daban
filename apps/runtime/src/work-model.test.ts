@@ -63,6 +63,7 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
           )!;
           observers.set(job.bot, observer.onNotification);
           assert.ok(job.prompt?.includes('work_read'));
+          assert.ok(job.prompt?.includes('work_comment'));
           const catalog = await models.rpc(job.bot, `Bearer ${job.token}`, {
             id: 'mock-list',
             method: 'tools/list',
@@ -72,6 +73,8 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
           for (const name of [
             'work_list',
             'work_read',
+            'work_comments',
+            'work_comment',
             'work_create',
             'work_update',
             'work_trash',
@@ -98,8 +101,12 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
     workspace: path.join(root, 'shared'),
     origin: 'http://127.0.0.1:12345',
   });
-  async function turn(bot: string, requestId: string) {
-    await models.start(bot, { requestId, prompt: 'MOCK CURRENT HUMAN REQUEST' });
+  async function turn(bot: string, requestId: string, retryOf?: string) {
+    await models.start(bot, {
+      requestId,
+      prompt: 'MOCK CURRENT HUMAN REQUEST',
+      ...(retryOf ? { retryOf } : {}),
+    });
     const job = models.jobs.get(bot)!;
     await job.done;
     assert.equal(job.phase, 'completed', job.error);
@@ -130,6 +137,11 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
       itemId = created.item.id;
       assert.deepEqual(created.item.createdBy, { kind: 'bot', bot });
       assert.equal(result(await call(bot, 'work_read', { id: itemId })).item.revision, 1);
+      const comment = result(
+        await call(bot, 'work_comment', { id: itemId, revision: 1, body: '合成模型讨论甲' }),
+      );
+      assert.deepEqual(comment.comment.createdBy, { kind: 'bot', bot });
+      assert.equal(comment.item.revision, 2);
     };
     const first = await turn('mock-alpha', 'mock-create');
     assert.equal(first.sessionId, greeting.sessionId);
@@ -140,11 +152,19 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
         catalog.tools.some((tool: { name: string }) => tool.name === 'screenshot'),
         false,
       );
-      assert.equal(result(await call(bot, 'work_read', { id: itemId })).item.revision, 1);
+      assert.equal(result(await call(bot, 'work_read', { id: itemId })).item.revision, 2);
+      const discussion = result(await call(bot, 'work_comments', { id: itemId }));
+      assert.equal(discussion.comments[0].body, '合成模型讨论甲');
+      assert.equal(
+        result(await call(bot, 'work_comment', { id: itemId, revision: 2, body: '合成模型讨论乙' }))
+          .item.revision,
+        3,
+      );
+      await call(bot, 'work_read', { id: itemId });
       const changed = result(
         await call(bot, 'work_update', {
           id: itemId,
-          revision: 1,
+          revision: 3,
           patch: { status: 'doing', progress: 'MOCK VERIFIED STEP' },
         }),
       );
@@ -154,14 +174,35 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
     const second = await turn('mock-beta', 'mock-update');
     assert.notEqual(second.sessionId, first.sessionId);
     assert.ok(second.trace.every((row) => ['work', 'catalog'].includes(row.surface)));
-    assert.equal(second.trace.filter((row) => row.phase === 'settled').length, 3);
+    assert.equal(second.trace.filter((row) => row.phase === 'settled').length, 6);
     const transcript = await models.transcript({
       bot: 'mock-beta',
       runId: second.id,
       chatRevision: 0,
     });
     assert.ok(transcript.items.some((row) => row.kind === 'call' && row.name === 'work_update'));
+    assert.ok(transcript.items.some((row) => row.kind === 'call' && row.name === 'work_comment'));
     assert.equal((await models.work.list()).items.length, 1);
+    await models.work.write(
+      {
+        id: 'mock-newer-human',
+        item: itemId,
+        action: 'update',
+        revision: 4,
+        value: { description: 'MOCK CURRENT HUMAN DETAIL' },
+      },
+      { kind: 'human' },
+    );
+    act = async (bot) => {
+      const replay = result(
+        await call(bot, 'work_comment', { id: itemId, revision: 1, body: '合成模型讨论甲' }),
+      );
+      assert.equal(replay.acceptedRevision, 2);
+      assert.equal(replay.item.description, 'MOCK CURRENT HUMAN DETAIL');
+      assert.equal(replay.item.revision, 5);
+    };
+    await turn('mock-alpha', 'mock-comment-retry', first.id);
+    assert.equal((await models.work.comments({ item: itemId })).comments.length, 2);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -202,7 +243,7 @@ test('new Work capabilities retire an old native tool context while preserving p
     const file = path.join(root, 'model/task-journal', `${old.id}.json`);
     const journal = JSON.parse(await readFile(file, 'utf8'));
     assert.equal(journal.version, 1);
-    journal.task.sessionProfile = 'general-v5';
+    journal.task.sessionProfile = 'general-v7';
     await writeFile(file, JSON.stringify(journal), { mode: 0o600 });
     models = new ModelRuns(options);
     await models.start('mock-alpha', { requestId: 'mock-new', prompt: 'MOCK NEW GREETING' });

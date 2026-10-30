@@ -84,6 +84,14 @@ export async function acceptWork(output = '/tmp/daban-work-model-verification.js
       origin: `http://127.0.0.1:${address.port}`,
     });
     await models.ready;
+    for (const bot of ['mock-alpha', 'mock-beta'])
+      await models.profiles.register({
+        id: bot,
+        name: bot,
+        instructions: 'MOCK ROLE',
+        memory: '',
+        color: 'mint',
+      });
     async function turn(bot: string, requestId: string, prompt: string, retryOf?: string) {
       assert.ok(models);
       await models.start(bot, { requestId, prompt, ...(retryOf ? { retryOf } : {}) });
