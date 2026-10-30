@@ -13,6 +13,7 @@ import {
   Plus,
   RotateCcw,
   ShieldCheck,
+  StickyNote,
   Trash2,
   X,
 } from 'lucide-react';
@@ -24,6 +25,7 @@ import { Desktop } from './Desktop';
 import { download } from './files';
 import { Knowledge } from './Knowledge';
 import { MemoryHistory } from './MemoryHistory';
+import { Notes } from './Notes';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
 import { RuntimeFiles } from './RuntimeFiles';
@@ -44,6 +46,7 @@ const allTabs = [
   ['knowledge', FileText, '资料'],
   ['skills', BookOpen, '技能'],
   ['memory', Brain, '记忆'],
+  ['notes', StickyNote, '便笺'],
   ['routines', Clock3, '定时'],
 ] as const;
 export function Workspace({
@@ -149,6 +152,9 @@ export function Workspace({
         role="tabpanel"
         aria-labelledby={`tab-${panel}`}
       >
+        {panel === 'notes' && !bot.members && (
+          <Notes key={bot.id} state={state} bot={bot} dispatch={dispatch} notify={notify} />
+        )}
         {panel === 'computer' && runtime.enabled && !bot.members && (
           <Computer bot={bot} notify={notify} expand={expand} onRecovery={onRecovery} />
         )}

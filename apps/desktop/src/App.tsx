@@ -31,6 +31,7 @@ import {
   Monitor,
   Moon,
   Pencil,
+  StickyNote,
   Sun,
 } from 'lucide-react';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
@@ -501,6 +502,14 @@ function Workbench() {
                 {!bot.members && (
                   <>
                     <IconButton
+                      label="便笺面板"
+                      className={`header-optional ${state.panel === 'notes' ? 'active' : ''}`}
+                      aria-pressed={state.panel === 'notes'}
+                      onClick={() => panel('notes')}
+                    >
+                      <StickyNote />
+                    </IconButton>
+                    <IconButton
                       label={state.chatRequests[bot.id] ? '核对对话操作' : '开启新对话'}
                       disabled={
                         !runtime.enabled ||
@@ -655,18 +664,19 @@ function Workbench() {
                 }}
               />
             )}
-            {state.panel && (!historyOnly || ['computer', 'files'].includes(state.panel)) && (
-              <Workspace
-                state={state}
-                bot={bot}
-                dispatch={dispatch}
-                notify={notify}
-                preview={previewFile}
-                expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
-                openMember={(id) => setModal({ type: 'computer', bot: id })}
-                onRecovery={() => setModal({ type: 'recovery' })}
-              />
-            )}
+            {state.panel &&
+              (!historyOnly || ['computer', 'files', 'notes'].includes(state.panel)) && (
+                <Workspace
+                  state={state}
+                  bot={bot}
+                  dispatch={dispatch}
+                  notify={notify}
+                  preview={previewFile}
+                  expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
+                  openMember={(id) => setModal({ type: 'computer', bot: id })}
+                  onRecovery={() => setModal({ type: 'recovery' })}
+                />
+              )}
           </div>
         ) : state.view === 'tasks' ? (
           <Tasks state={state} dispatch={dispatch} work={work} />

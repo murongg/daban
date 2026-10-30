@@ -389,6 +389,16 @@ Keep shared-card state separate from execution: saving or marking done starts no
 
 Conflicts retain the local draft beside the latest title/status and a bounded, keyboard-focusable explanation/progress disclosure. Save remains disabled until the explicit “保留我的更改” or “使用后台版本” decision; keeping changes carries only locally changed fields onto the newer base, preserving untouched newer fields, followed by a separate Save. Trash requires a named inline confirmation bound to the editor identity and saved card revision; a save or trash/restore revision change invalidates earlier consent. Restoring retains the local draft for later saving. A blank new editor says “新任务草稿，填写后保存到运行环境。” and only a saved base may say “已保存到当前运行环境。”. Loading, empty, unavailable, old-environment and damaged-cache guidance remain explicit. A failed initial list read uses “任务列表尚未读取” with refresh guidance; failure does not establish an empty collection. The nine synthetic production-React captures and scoped review records are bounded in `.impeccable/surfaces/client.md`. Subsequent actual Electron CRUD/conflict merge/trash/restore/board/search and unsaved-draft reopening are recorded in `outputs/provision/image36/native-preservation.json`; two native state defects were corrected with a failing regression and real-client rechecks. This adds functional evidence without a new visual world or whole-product review; the normal workspace is now protocol36 after preserved activation, with29old native fields exact and separate takeovers/handback verified in `outputs/activation36/`. Remaining native forms and the complete basics matrix retain their open scope.
 
+### Private Notes
+
+The source37 “便笺” surface extends the existing right workspace for a personal Bot. Its header action and workspace tab are absent for groups; an archived Bot keeps readable Notes. It uses the house Chinese system face, semantic light/dark roles, outline icons, fields and monochrome actions. The list is flat with fine dividers, wrapping titles, quieter status/body previews and metadata. Search and status/trash filters remain above the list, with explicit cursor loading. Notes introduces no palette, font, type ramp, token, specimen or wider layout rule.
+
+List and detail share the pane rather than creating another column. The inline editor labels title, body and open/parked/done status; its body is vertically resizable. Returning to the list retains the Bot’s draft, and a blank draft says “尚未填写”. The existing workspace scroller contains long editors. Conflict and pending notices reuse the soft neutral surface; complete prior/latest content sits in a named, keyboard-focusable comparison capped at (300px). Keep the local editor above the comparison and explicit “保留我的更改” / “采用最新版本” choices before a separate Save. Keeping changes carries only locally edited fields onto the newer base; Save remains disabled until that choice.
+
+Keep one durable editor and exact pending operation per Bot, independent of chat drafts and other Bots. Before a write, persist its Bot-bound request and submitted draft. An uncertain editor stays read-only, New and row replacement stay disabled, receipt inspection remains distinct from the explicit same-request retry, and an unknown receipt retains the intent. Late reads/acknowledgements cannot replace another Bot or newer editor. Trash uses an inline confirmation bound to editor identity and saved revision; restore keeps local changes for a separate Save. Recovery/archive guidance, damaged optional cache, loading, failed read and genuine empty states remain distinct. Saving or marking complete starts no task.
+
+The six synthetic production-React desktop captures, current paths/hashes and bounded `ship` review are recorded in `.impeccable/surfaces/client.md` and `outputs/notes-ui/`. They cover this Notes frontend at (1280 × 900px) and (1024 × 768px), including complementary top/bottom conflict views. They do not establish native37 delivery, original-data preservation or mobile acceptance. Normal app/service and retained candidate remain36; cloud/mobile and the complete basics matrix remain open.
+
 ### Task Progress and Recovery
 
 Public webpage retrieval shows “正在读取网页”, separate from reasoning, workspace tools and desktop actions. Keep the same compact status row and stop action; tool progress is actual DSH activity, never a simulated sequence.
@@ -553,6 +563,9 @@ Creation, file preview, and expanded computer views share the same softly rounde
 
 - **Do** keep read-only observation separate from connection repair, label prior checks as observations, and distinguish saved configuration or found dependencies from operational capability.
 
+- **Do** keep Notes private to the selected personal Bot, retain independent Notes and chat drafts, and require an explicit conflict-version choice before saving.
+- **Do** keep an uncertain Notes editor sealed, preserve its exact Bot-bound intent, and distinguish receipt inspection from the explicit same-request retry.
+
 ### Don't:
 
 - **Don't** introduce a marketing hero, decorative dashboard grid, or a new accent palette into this workspace.
@@ -566,3 +579,4 @@ Creation, file preview, and expanded computer views share the same softly rounde
 - **Don't** present receipt inspection as execution, uncertain external effects as safe to repeat, or connection restoration as renewed Bot consent.
 - **Don't** treat Bot restoration as permission to restart a computer, schedule, old task or delegation, or silently cancel queued group work to archive.
 - **Don't** promise ordinary dialogue while the runtime is disconnected or present an environment check as recovery, installation or successful tool execution.
+- **Don't** present Notes saving or completion as task execution, an unknown receipt as success, or a failed list read as an empty collection.

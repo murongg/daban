@@ -114,6 +114,22 @@ export function useRuntime() {
 export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
+    NOTE_CONFLICT: '便笺已更新，你的修改仍保留。核对最新版本后再保存。',
+    NOTE_TRASHED: '便笺已移入回收站，你的修改仍保留。核对最新版本后可先恢复。',
+    NOTE_NOT_FOUND: '暂未找到这张便笺，草稿仍保留。请刷新列表并核对运行环境。',
+    NOTES_UNAVAILABLE: '便笺服务暂不可用，已有草稿和操作记录仍保留。',
+    NOTES_CORRUPT: '便笺存储无法读取，原记录未被重置。请检查运行环境，普通对话仍可使用。',
+    NOTES_CLOSED: '运行环境正在关闭，请重新连接后核对便笺。',
+    NOTE_LIMIT: '便笺保留数量已达上限，回收站也计入；已有便笺仍可查看。',
+    NOTE_OPERATION_LIMIT: '便笺操作记录已达保留上限，请先检查运行环境。',
+    NOTE_ID_CONFLICT: '便笺标识已被占用，未覆盖已有记录。请核对列表后再新建。',
+    NOTE_REQUEST_CONFLICT: '这次操作与已保存回执不一致，原请求仍保留，请检查运行环境。',
+    INVALID_NOTE_WRITE: '便笺内容无效，请核对标题、状态和文字长度后再保存。',
+    INVALID_NOTE_QUERY: '便笺筛选无效，请重新选择筛选或关键词。',
+    INVALID_NOTE_METADATA: '便笺状态暂不可核对，请检查运行环境，草稿仍保留。',
+    INVALID_NOTE_PAGE: '便笺列表返回不匹配，请刷新核对；当前编辑仍保留。',
+    INVALID_NOTE_ITEM: '便笺详情返回不匹配，未替换当前草稿。',
+    INVALID_NOTE_ACK: '便笺回执不匹配，原操作仍保留，请核对结果。',
     WORK_CONFLICT: '任务已更新，你的修改仍保留。核对最新版本后再保存。',
     WORK_TRASHED: '任务已移入回收站，你的修改仍保留。核对最新版本后可先恢复任务。',
     WORK_NOT_FOUND: '暂未找到这张任务，草稿仍保留。请刷新列表并检查运行环境。',

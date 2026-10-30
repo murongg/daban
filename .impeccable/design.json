@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-29T23:38:09Z",
+  "generatedAt": "2026-10-30T03:58:22Z",
   "title": "Design System: daban",
   "extensions": {
     "colorMeta": {
@@ -1019,7 +1019,9 @@
       "Do distinguish the shared skill library from per-Bot enablement, retain chat and editor drafts, and make conflict, recycle and restore consequences explicit.",
       "Do keep private replacement fields empty on readback, retain active drafts during refresh, and distinguish connection checks, per-Bot tool choices and single-call approval.",
       "Do retain readable archived history and drafts, name archive/restore consequences, and expose receipt inspection and the same-operation retry while results are pending.",
-      "Do keep read-only observation separate from connection repair, label prior checks as observations, and distinguish saved configuration or found dependencies from operational capability."
+      "Do keep read-only observation separate from connection repair, label prior checks as observations, and distinguish saved configuration or found dependencies from operational capability.",
+      "Do keep Notes private to the selected personal Bot, retain independent Notes and chat drafts, and require an explicit conflict-version choice before saving.",
+      "Do keep an uncertain Notes editor sealed, preserve its exact Bot-bound intent, and distinguish receipt inspection from the explicit same-request retry."
     ],
     "donts": [
       "Don't introduce a marketing hero, decorative dashboard grid, or a new accent palette into this workspace.",
@@ -1032,7 +1034,8 @@
       "Don't imply that importing a skill runs it, that restoring it restores consent, or that instruction text grants tools or permissions.",
       "Don't present receipt inspection as execution, uncertain external effects as safe to repeat, or connection restoration as renewed Bot consent.",
       "Don't treat Bot restoration as permission to restart a computer, schedule, old task or delegation, or silently cancel queued group work to archive.",
-      "Don't promise ordinary dialogue while the runtime is disconnected or present an environment check as recovery, installation or successful tool execution."
+      "Don't promise ordinary dialogue while the runtime is disconnected or present an environment check as recovery, installation or successful tool execution.",
+      "Don't present Notes saving or completion as task execution, an unknown receipt as success, or a failed list read as an empty collection."
     ]
   }
 }

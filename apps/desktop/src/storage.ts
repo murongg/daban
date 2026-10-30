@@ -13,6 +13,7 @@ import {
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
+import { restoreNotes } from './notes-state';
 import { restoreOrganization } from './organization';
 import { initialState, routineDraft, type State } from './state';
 import { restoreWork } from './work-state';
@@ -25,6 +26,7 @@ export function serialize(state: State) {
       ...state,
       // Older rollback clients reject unknown root views; keep the optional task draft without resetting chats.
       view: state.view === 'tasks' ? 'chat' : state.view,
+      panel: state.panel === 'notes' ? null : state.panel,
       files: state.files.map((file) => (file.upload ? { ...file, content: '' } : file)),
       profileRevisions: {},
       chatStates: {},
@@ -82,6 +84,20 @@ export function restore(raw: string | null): State {
       if (record(bot) && bot.model !== undefined && !isDeepSeekModel(bot.model)) delete bot.model;
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
+    // Optional private editor damage must not reset chats or another Bot's pending operation.
+    if (s.notes !== undefined)
+      s.notes = Object.fromEntries(
+        bots
+          .filter((bot) => !bot.members)
+          .flatMap((bot) => {
+            const id = bot.id as string;
+            const value = restoreNotes(
+              record(s.notes) ? s.notes[id] : s.notes === undefined ? undefined : null,
+              agentId(id),
+            );
+            return value ? [[id, value]] : [];
+          }),
+      );
     // Organization is optional local metadata; its damage must not discard messages or pending work.
     s.organization = restoreOrganization(s.organization, ids);
     s.chatStates = {};
@@ -156,7 +172,16 @@ export function restore(raw: string | null): State {
       new Set(ids).size !== ids.length ||
       !ids.includes(s.selected as string) ||
       !choice(s.view, ['chat', 'inbox', 'settings', 'tasks']) ||
-      !choice(s.panel, [null, 'computer', 'files', 'knowledge', 'skills', 'memory', 'routines']) ||
+      !choice(s.panel, [
+        null,
+        'computer',
+        'files',
+        'knowledge',
+        'skills',
+        'memory',
+        'routines',
+        'notes',
+      ]) ||
       !choice(s.theme, ['light', 'dark'])
     )
       return initialState();

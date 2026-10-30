@@ -35,6 +35,7 @@ import {
 } from '@daban/protocol';
 import { taskFile } from './files';
 import * as fixture from './fixtures';
+import { type NotesAction, type NotesState, reduceNotes } from './notes-state';
 import { type Organization, type OrganizationAction, organization, organize } from './organization';
 import { reduceWork, type WorkAction, type WorkState } from './work-state';
 
@@ -45,7 +46,7 @@ export function chatRevision(state: Pick<State, 'chatStates'>, bot: string, late
     latest?.items.find((item) => item.bot === agentId(bot))?.revision ?? 0,
   );
 }
-export type Panel = 'computer' | 'files' | 'knowledge' | 'skills' | 'memory' | 'routines';
+export type Panel = 'computer' | 'files' | 'knowledge' | 'skills' | 'memory' | 'routines' | 'notes';
 export interface SkillDraft {
   id?: string;
   revision: number;
@@ -176,6 +177,7 @@ export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
 export interface State {
+  notes?: Record<string, NotesState | undefined>;
   work?: WorkState;
   organization: Organization;
   botCopy?: BotCopyRequest;
@@ -229,6 +231,7 @@ export function lifecycleRequest(
   };
 }
 export type Action =
+  | NotesAction
   | WorkAction
   | OrganizationAction
   | { type: 'bot-copy-pending' | 'bot-copy-clear'; request: BotCopyRequest }
@@ -338,6 +341,21 @@ export function reduce(state: State, action: Action): State {
   // Target the Bot explicitly: changing the selected screen must never transfer ownership or route async work elsewhere.
   if ('bot' in action && !state.bots.some((b) => b.id === action.bot)) return state;
   switch (action.type) {
+    case 'notes-options':
+    case 'notes-draft':
+    case 'notes-change':
+    case 'notes-pending':
+    case 'notes-release':
+    case 'notes-settle':
+    case 'notes-merge':
+      if (state.bots.find((bot) => bot.id === action.bot)?.members) return state;
+      return {
+        ...state,
+        notes: {
+          ...state.notes,
+          [action.bot]: reduceNotes(state.notes?.[action.bot], agentId(action.bot), action),
+        },
+      };
     case 'work-options':
     case 'work-draft':
     case 'work-change':
