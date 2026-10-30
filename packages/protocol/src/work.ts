@@ -8,14 +8,22 @@ function workObject(value: unknown): value is Record<string, unknown> {
     (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
   );
 }
-export const workStates = ['todo', 'doing', 'done'] as const;
+export const legacyWorkStates = ['todo', 'doing', 'done'] as const;
+export const workStates = ['todo', 'doing', 'review', 'blocked', 'done', 'closed'] as const;
+export const workPriorities = ['low', 'normal', 'high', 'urgent'] as const;
+export type WorkPriority = (typeof workPriorities)[number];
 export type WorkState = (typeof workStates)[number];
+export function isWorkCompleted(status: WorkState) {
+  return status === 'done' || status === 'closed';
+}
 export type WorkAuthor = { kind: 'human' } | { kind: 'bot'; bot: string };
 export interface WorkFields {
   title: string;
   description: string;
   progress: string;
   status: WorkState;
+  priority?: WorkPriority;
+  assignee?: string | null;
 }
 export interface WorkItem extends WorkFields {
   id: string;
@@ -34,11 +42,14 @@ export type WorkSummary = Omit<WorkItem, 'description' | 'progress'> & {
 export type WorkWrite = { id: string; item: string } & (
   | { revision: 0; action: 'create'; value: WorkFields }
   | { revision: number; action: 'update'; value: Partial<WorkFields> }
-  | { revision: number; action: 'trash' | 'restore' }
+  | { revision: number; action: 'trash' | 'restore' | 'reopen' }
 );
 export interface WorkQuery {
   filter?: 'open' | 'done' | 'trash' | 'all';
   text?: string;
+  status?: WorkState;
+  priority?: WorkPriority;
+  assignee?: string | null;
   before?: number;
   limit?: number;
 }
@@ -68,18 +79,27 @@ export interface WorkAck {
   item: WorkItem;
 }
 export type WorkReceipt = WorkAck | { state: 'unknown'; request: WorkWrite; actor: WorkAuthor };
-const workFieldNames = ['title', 'description', 'progress', 'status'] as const;
+const legacyFieldNames = ['title', 'description', 'progress', 'status'] as const;
+const workFieldNames = [...legacyFieldNames, 'priority', 'assignee'] as const;
 export function workKey(request: WorkWrite, actor: WorkAuthor) {
   const value = 'value' in request ? request.value : undefined;
+  // Existing accepted operations keep their exact v1 fingerprint after the additive workflow upgrade.
+  const extended =
+    request.action === 'reopen' ||
+    (!!value &&
+      (Object.hasOwn(value, 'priority') ||
+        Object.hasOwn(value, 'assignee') ||
+        (value.status !== undefined &&
+          !legacyWorkStates.includes(value.status as (typeof legacyWorkStates)[number]))));
   return JSON.stringify([
-    'daban.work.v1',
+    extended ? 'daban.work.v2' : 'daban.work.v1',
     request.id,
     request.item,
     request.revision,
     request.action,
     actor.kind,
     actor.kind === 'bot' ? actor.bot : null,
-    ...workFieldNames.map((key) =>
+    ...(extended ? workFieldNames : legacyFieldNames).map((key) =>
       value && Object.hasOwn(value, key) ? [key, value[key]] : [key],
     ),
   ]);
@@ -105,7 +125,9 @@ function workFields(value: unknown, partial = false) {
   )
     return false;
   if (
-    partial ? !Object.keys(value).length : workFieldNames.some((key) => !Object.hasOwn(value, key))
+    partial
+      ? !Object.keys(value).length
+      : legacyFieldNames.some((key) => !Object.hasOwn(value, key))
   )
     return false;
   return workFieldNames.every(
@@ -113,10 +135,14 @@ function workFields(value: unknown, partial = false) {
       !Object.hasOwn(value, key) ||
       (key === 'status'
         ? workStates.includes(value[key] as WorkState)
-        : typeof value[key] === 'string' &&
-          !value[key].includes('\0') &&
-          value[key].length <= (key === 'title' ? 500 : 4000) &&
-          (key !== 'title' || !!value[key].trim())),
+        : key === 'priority'
+          ? workPriorities.includes(value[key] as WorkPriority)
+          : key === 'assignee'
+            ? value[key] === null || validAgentId(value[key])
+            : typeof value[key] === 'string' &&
+              !value[key].includes('\0') &&
+              value[key].length <= (key === 'title' ? 500 : 4000) &&
+              (key !== 'title' || !!value[key].trim())),
   );
 }
 const workTime = (value: unknown) =>
@@ -143,7 +169,7 @@ export function isWorkWrite(value: unknown): value is WorkWrite {
         : Number(value.revision) > 0 && workFields(value.value, true))
     );
   return (
-    (value.action === 'trash' || value.action === 'restore') &&
+    (value.action === 'trash' || value.action === 'restore' || value.action === 'reopen') &&
     Number(value.revision) > 0 &&
     Object.keys(value).every((key) => ['id', 'item', 'revision', 'action'].includes(key))
   );
@@ -151,10 +177,18 @@ export function isWorkWrite(value: unknown): value is WorkWrite {
 export function isWorkQuery(value: unknown): value is WorkQuery {
   return (
     workObject(value) &&
-    Object.keys(value).every((key) => ['filter', 'text', 'before', 'limit'].includes(key)) &&
+    Object.keys(value).every((key) =>
+      ['filter', 'text', 'before', 'limit', 'status', 'priority', 'assignee'].includes(key),
+    ) &&
     (value.filter === undefined ||
       (typeof value.filter === 'string' &&
         ['open', 'done', 'trash', 'all'].includes(value.filter))) &&
+    (!Object.hasOwn(value, 'status') || workStates.includes(value.status as WorkState)) &&
+    (!Object.hasOwn(value, 'priority') ||
+      workPriorities.includes(value.priority as WorkPriority)) &&
+    (!Object.hasOwn(value, 'assignee') ||
+      value.assignee === null ||
+      validAgentId(value.assignee)) &&
     (value.text === undefined ||
       (typeof value.text === 'string' && value.text.length <= 200 && !value.text.includes('\0'))) &&
     (value.before === undefined ||
@@ -188,20 +222,33 @@ export function isWorkItem(value: unknown): value is WorkItem {
       description: value.description,
       progress: value.progress,
       status: value.status,
+      ...(Object.hasOwn(value, 'priority') ? { priority: value.priority } : {}),
+      ...(Object.hasOwn(value, 'assignee') ? { assignee: value.assignee } : {}),
     }) &&
     workTime(value.createdAt) &&
     workTime(value.updatedAt) &&
     isWorkAuthor(value.createdBy) &&
     isWorkAuthor(value.updatedBy) &&
-    (value.status === 'done' ? workTime(value.completedAt) : value.completedAt === undefined)
+    (isWorkCompleted(value.status as WorkState)
+      ? workTime(value.completedAt)
+      : value.completedAt === undefined)
   );
 }
 export function workQueryKey(query: WorkQuery) {
+  const extended = ['status', 'priority', 'assignee'].some((key) => Object.hasOwn(query, key));
   return JSON.stringify([
+    ...(extended ? ['daban.work.query.v2'] : []),
     query.filter ?? 'all',
     query.text ?? '',
     query.before ?? null,
     query.limit ?? 50,
+    ...(extended
+      ? [
+          query.status ?? null,
+          query.priority ?? null,
+          Object.hasOwn(query, 'assignee') ? [query.assignee] : [],
+        ]
+      : []),
   ]);
 }
 export function isWorkStatus(value: unknown): value is WorkStatus {
@@ -280,8 +327,11 @@ export function isWorkList(value: unknown): value is WorkList {
     page.items.every(
       (item) =>
         item.deleted === (query.filter === 'trash') &&
-        (query.filter !== 'open' || item.status !== 'done') &&
-        (query.filter !== 'done' || item.status === 'done'),
+        (query.filter !== 'open' || !isWorkCompleted(item.status)) &&
+        (query.filter !== 'done' || isWorkCompleted(item.status)) &&
+        (query.status === undefined || item.status === query.status) &&
+        (query.priority === undefined || (item.priority ?? 'normal') === query.priority) &&
+        (!Object.hasOwn(query, 'assignee') || (item.assignee ?? null) === query.assignee),
     )
   );
 }

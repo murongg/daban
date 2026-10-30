@@ -40,7 +40,10 @@ export type WorkAction =
   | { type: 'work-merge'; key: string; latest: WorkItem; keep: boolean };
 const fields = ['title', 'description', 'progress', 'status'] as const;
 export const sameWorkContent = (left: WorkItem, right: WorkItem) =>
-  fields.every((field) => left[field] === right[field]) && left.deleted === right.deleted;
+  fields.every((field) => left[field] === right[field]) &&
+  (left.priority ?? 'normal') === (right.priority ?? 'normal') &&
+  (left.assignee ?? null) === (right.assignee ?? null) &&
+  left.deleted === right.deleted;
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const humanKey = (request: WorkWrite) => workKey(request, { kind: 'human' });

@@ -84,8 +84,8 @@ test('Human comment HTTP closes routes and authorship without starting a model o
     const state = await fetch(`${f.app.url}/api/state`, {
       headers: { 'x-prototype-token': f.app.token },
     }).then((r) => r.json());
-    assert.equal(state.clientProtocol, 38);
-    assert.equal(managedProtocol, 38);
+    assert.equal(state.clientProtocol, managedProtocol);
+    assert.ok(managedProtocol >= 38);
     assert.equal(f.app.models?.jobs.size, 0);
     assert.equal(state.computers.items.length, 0);
   } finally {

@@ -3,6 +3,7 @@ import type { WorkQuery, WorkStatus, WorkWrite } from './work.js';
 
 export * from './comments.js';
 export * from './work.js';
+export * from './work-compat.js';
 
 import { validAgentId } from './id.js';
 import type { NoteAvailability, NoteCommand } from './notes.js';
@@ -10,7 +11,7 @@ import type { NoteAvailability, NoteCommand } from './notes.js';
 export { validAgentId } from './id.js';
 export * from './notes.js';
 
-export const managedProtocol = 38;
+export const managedProtocol = 39;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {

@@ -1,4 +1,5 @@
 import {
+  isWorkCompleted,
   isWorkItem,
   isWorkList,
   isWorkReceipt,
@@ -34,6 +35,11 @@ const rejected = new Set([
   'WORK_LIMIT',
   'WORK_OPERATION_LIMIT',
   'INVALID_WORK_WRITE',
+  'WORK_REOPEN_REQUIRED',
+  'WORK_REOPEN_FORBIDDEN',
+  'WORK_STATE_CONFLICT',
+  'UNKNOWN_BOT',
+  'BOT_ARCHIVED',
 ]);
 const notSent = new Set(['INVALID_COMMAND', 'RUNTIME_TOO_OLD', 'RUNTIME_RECOVERY_PENDING']);
 const summary = (item: WorkItem): WorkSummary => {
@@ -49,8 +55,11 @@ function matches(item: WorkItem, query: WorkQuery) {
   const fold = (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
   return (
     item.deleted === (query.filter === 'trash') &&
-    (query.filter !== 'open' || item.status !== 'done') &&
-    (query.filter !== 'done' || item.status === 'done') &&
+    (query.filter !== 'open' || !isWorkCompleted(item.status)) &&
+    (query.filter !== 'done' || isWorkCompleted(item.status)) &&
+    (query.status === undefined || query.status === item.status) &&
+    (query.priority === undefined || query.priority === (item.priority ?? 'normal')) &&
+    (!Object.hasOwn(query, 'assignee') || query.assignee === (item.assignee ?? null)) &&
     (!query.text ||
       [item.title, item.description, item.progress].some((text) =>
         fold(text).includes(fold(query.text!)),

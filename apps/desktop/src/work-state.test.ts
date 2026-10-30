@@ -152,3 +152,10 @@ it('isolates damaged optional work state and serializes Tasks navigation for leg
   expect(recovered.work?.damaged).toBe(true);
   localStorage.setItem(storageKey, raw);
 });
+
+it('treats assignee and priority changes as material while normalizing omitted defaults', async () => {
+  const { sameWorkContent } = await import('./work-state');
+  expect(sameWorkContent(item, { ...item, priority: 'normal', assignee: null })).toBe(true);
+  expect(sameWorkContent(item, { ...item, priority: 'high' })).toBe(false);
+  expect(sameWorkContent(item, { ...item, assignee: 'mock-beta' })).toBe(false);
+});

@@ -37,6 +37,8 @@ import {
   isKnowledgeDocument,
   isKnowledgeFile,
   isKnowledgeVersion,
+  isLegacyWorkQuery,
+  isLegacyWorkWrite,
   isMcpAssignments,
   isMcpBindingResult,
   isMcpCatalog,
@@ -270,7 +272,7 @@ export class RuntimeClient {
       });
     return this.authenticating;
   }
-  private async api(route: string, data?: unknown, retry = true): Promise<unknown> {
+  private async api(route: string, data?: unknown, retry = true, protocol = 28): Promise<unknown> {
     await this.authenticate();
     const token = this.token;
     const response = await this.fetcher(this.origin + route, {
@@ -278,8 +280,8 @@ export class RuntimeClient {
       headers: {
         host: this.serverHost,
         'x-prototype-token': token,
-        // The group metadata shape is still28; older runtimes strip archive state for unknown values.
-        'x-daban-client-protocol': '28',
+        // Unchanged group shapes keep28; Work passes its proven format explicitly.
+        'x-daban-client-protocol': String(protocol),
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: data === undefined ? undefined : JSON.stringify(data),
@@ -293,7 +295,7 @@ export class RuntimeClient {
       if (result.error === 'UNAUTHORIZED') {
         if (this.token === token) this.token = '';
         if (data !== undefined) throw new Error('RUNTIME_SESSION_CHANGED');
-        return this.api(route, data, false);
+        return this.api(route, data, false, protocol);
       }
       throw new Error('RUNTIME_REQUEST_DENIED');
     }
@@ -308,6 +310,9 @@ export class RuntimeClient {
     if (response.headers.get('content-type')?.startsWith('image/jpeg'))
       return `data:image/jpeg;base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`;
     return decode();
+  }
+  private workApi(route: string, data: unknown, protocolVersion: number) {
+    return this.api(route, data, true, protocolVersion >= 39 ? 39 : 28);
   }
   async status(): Promise<RuntimeSnapshot> {
     try {
@@ -597,7 +602,11 @@ export class RuntimeClient {
       if (captured.type === 'work.comment' && recoveryBlocked(state))
         throw new Error('RUNTIME_RECOVERY_PENDING');
       if (captured.type === 'work.comments') {
-        const value = await this.api('/api/work/comments', captured.query);
+        const value = await this.workApi(
+          '/api/work/comments',
+          captured.query,
+          state.protocolVersion,
+        );
         if (
           !isWorkCommentList(value) ||
           workCommentQueryKey(value.query) !== workCommentQueryKey(captured.query)
@@ -605,9 +614,10 @@ export class RuntimeClient {
           throw new Error('INVALID_WORK_COMMENT_PAGE');
         return value;
       }
-      const value = await this.api(
+      const value = await this.workApi(
         captured.type === 'work.comment' ? '/api/work/comment' : '/api/work/comment-receipt',
         captured.request,
+        state.protocolVersion,
       );
       if (
         !isWorkCommentReceipt(value) ||
@@ -677,20 +687,32 @@ export class RuntimeClient {
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 36) throw new Error('RUNTIME_TOO_OLD');
       if (!state.work?.available) throw new Error(state.work?.error ?? 'WORK_UNAVAILABLE');
+      if (
+        state.protocolVersion < 39 &&
+        (captured.type === 'work.list'
+          ? !isLegacyWorkQuery(captured.query)
+          : captured.type !== 'work.read' && !isLegacyWorkWrite(captured.request))
+      )
+        throw new Error('RUNTIME_TOO_OLD');
       if (captured.type === 'work.list') {
-        const value = await this.api('/api/work/list', captured.query);
+        const value = await this.workApi('/api/work/list', captured.query, state.protocolVersion);
         if (!isWorkList(value) || workQueryKey(value.query) !== workQueryKey(captured.query))
           throw new Error('INVALID_WORK_PAGE');
         return value;
       }
       if (captured.type === 'work.read') {
-        const value = await this.api('/api/work/read', { id: captured.id });
+        const value = await this.workApi(
+          '/api/work/read',
+          { id: captured.id },
+          state.protocolVersion,
+        );
         if (!isWorkItem(value) || value.id !== captured.id) throw new Error('INVALID_WORK_ITEM');
         return value;
       }
-      const value = await this.api(
+      const value = await this.workApi(
         captured.type === 'work.write' ? '/api/work/write' : '/api/work/receipt',
         captured.request,
+        state.protocolVersion,
       );
       if (
         !isWorkReceipt(value) ||

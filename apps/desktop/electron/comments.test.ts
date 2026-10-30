@@ -156,3 +156,20 @@ it('captures comment intent before status yields and keeps uncertain mutations s
     await recovery.runtime.invoke(parseCommand({ type: 'work.comment-receipt', request })),
   ).toEqual(complete);
 });
+
+it('uses the proven richer work format for discussion so acknowledgements keep metadata and workflow', async () => {
+  const current = client(
+    { ...complete, item: { ...item, status: 'review', priority: 'urgent', assignee: 'mock-beta' } },
+    39,
+  );
+  const value = await current.runtime.invoke(
+    parseCommand({ type: 'work.comment-receipt', request }),
+  );
+  expect(value).toEqual({
+    ...complete,
+    item: { ...item, status: 'review', priority: 'urgent', assignee: 'mock-beta' },
+  });
+  expect(
+    new Headers(current.fetcher.mock.calls[0][1]?.headers).get('x-daban-client-protocol'),
+  ).toBe('39');
+});

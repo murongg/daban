@@ -223,3 +223,39 @@ it('keeps broken shared-work metadata separate from ordinary Agent availability 
   protocol = 35;
   expect((await runtime.status()).work).toBeUndefined();
 });
+
+it('selects the richer work wire format only after proving runtime39 support', async () => {
+  const modern = client(
+    { ...item, status: 'blocked', priority: 'high', assignee: 'mock-beta' },
+    39,
+  );
+  await modern.runtime.invoke(parseCommand({ type: 'work.read', id: item.id }));
+  expect(new Headers(modern.fetcher.mock.calls[0][1]?.headers).get('x-daban-client-protocol')).toBe(
+    '39',
+  );
+  const old = client(item, 38);
+  await old.runtime.invoke(parseCommand({ type: 'work.read', id: item.id }));
+  expect(new Headers(old.fetcher.mock.calls[0][1]?.headers).get('x-daban-client-protocol')).toBe(
+    '28',
+  );
+  const unsupported = client(complete, 38);
+  for (const value of [
+    {
+      type: 'work.write',
+      request: { ...request, value: { ...request.value, priority: 'urgent' } },
+    },
+    {
+      type: 'work.receipt',
+      request: { ...request, value: { ...request.value, assignee: 'mock-beta' } },
+    },
+    { type: 'work.list', query: { status: 'review' } },
+    {
+      type: 'work.write',
+      request: { id: 'mock-reopen', item: item.id, revision: 2, action: 'reopen' },
+    },
+  ])
+    await expect(unsupported.runtime.invoke(parseCommand(value))).rejects.toThrow(
+      'RUNTIME_TOO_OLD',
+    );
+  expect(unsupported.fetcher).not.toHaveBeenCalled();
+});

@@ -1,4 +1,10 @@
-import { agentId, type WorkFields, type WorkSummary, workStates } from '@daban/protocol';
+import {
+  agentId,
+  legacyWorkStates,
+  type WorkFields,
+  type WorkSummary,
+  workStates,
+} from '@daban/protocol';
 import { Columns3, List, MessageSquare, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { type Dispatch, useState } from 'react';
 import { Comments } from './Comments';
@@ -8,7 +14,14 @@ import type { Action, State } from './state';
 import type { WorkController } from './work';
 import { workDirty, workInitial } from './work-state';
 
-const states = { todo: '待处理', doing: '进行中', done: '已完成' };
+const states = {
+  todo: '待处理',
+  doing: '进行中',
+  review: '待审核',
+  blocked: '受阻',
+  done: '已完成',
+  closed: '已关闭',
+};
 const filters = { all: '全部', open: '未完成', done: '已完成', trash: '回收站' } as const;
 const time = (value: string) =>
   new Date(value).toLocaleString('zh-CN', {
@@ -27,6 +40,7 @@ export function Tasks({
   work: WorkController;
 }) {
   const runtime = useRuntime();
+  const visibleStates = runtime.snapshot.protocolVersion >= 39 ? workStates : legacyWorkStates;
   const cache = state.work ?? workInitial(),
     draft = cache.draft;
   const board = cache.mode === 'board' && cache.filter !== 'trash';
@@ -295,7 +309,7 @@ export function Tasks({
               </p>
               {board ? (
                 <div className="task-board">
-                  {workStates.map((status) => (
+                  {visibleStates.map((status) => (
                     <section key={status} aria-label={states[status]} className="task-column">
                       <h2>
                         {states[status]}
@@ -411,7 +425,7 @@ export function Tasks({
                         mutate({ status: event.target.value as WorkFields['status'] })
                       }
                     >
-                      {workStates.map((status) => (
+                      {visibleStates.map((status) => (
                         <option key={status} value={status}>
                           {states[status]}
                         </option>

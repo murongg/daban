@@ -3,15 +3,19 @@ import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  isLegacyWorkWrite,
   isWorkAuthor,
   isWorkComment,
   isWorkCommentQuery,
   isWorkCommentReceipt,
   isWorkCommentWrite,
+  isWorkCompleted,
   isWorkItem,
   isWorkQuery,
   isWorkReceipt,
   isWorkWrite,
+  legacyWorkState,
+  legacyWorkStates,
   validAgentId,
   type WorkAck,
   type WorkAuthor,
@@ -27,6 +31,7 @@ import {
   type WorkWrite,
   workCommentKey,
   workKey,
+  workPriorities,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
 
@@ -45,6 +50,7 @@ export class Work {
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
   private loading = true;
+  private schemaVersion = 0;
   constructor(
     readonly file: string,
     private readonly admit: (actor: WorkAuthor) => undefined = () => undefined,
@@ -71,6 +77,7 @@ export class Work {
     try {
       this.db = new DatabaseSync(this.file);
       const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
+      this.schemaVersion = version;
       const names = this.db
         .prepare(
           "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -80,7 +87,7 @@ export class Work {
       if (
         version === 0
           ? names.length > 0
-          : ![1, 2].includes(version) ||
+          : ![1, 2, 3].includes(version) ||
             JSON.stringify(names) !==
               JSON.stringify(
                 version === 1
@@ -90,6 +97,7 @@ export class Work {
       )
         throw new Fault('WORK_CORRUPT');
       if (version > 0) {
+        this.validateColumns(version);
         const meta = this.db.prepare('SELECT id,revision FROM work_meta').all();
         if (
           meta.length !== 1 ||
@@ -103,26 +111,38 @@ export class Work {
       this.db.exec(
         'PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;',
       );
-      // Validate legacy records before the additive migration; corrupt data must not be adopted as schema2.
-      if (version === 1) this.validateWork();
-      if (version === 0)
+      // Validate every legacy receipt and comment before adopting a new schema.
+      if (version === 1 || version === 2) this.validateWork();
+      if (version === 2) {
+        this.commentAuthority();
+        for (const row of this.db.prepare('SELECT * FROM work_comments').all())
+          this.commentRow(row);
+      }
+      if (version < 3)
         this.transaction(() => {
-          this.db!.exec(`
-        CREATE TABLE IF NOT EXISTS work_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,description TEXT NOT NULL,progress TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL) STRICT;
-        CREATE TABLE IF NOT EXISTS work_operations(id TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES work_items(id),signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
-        CREATE TABLE IF NOT EXISTS work_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)) STRICT;
+          if (version === 0) {
+            this.db!.exec(`
+        CREATE TABLE work_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,description TEXT NOT NULL,progress TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL,priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),assignee TEXT) STRICT;
+        CREATE TABLE work_operations(id TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES work_items(id),signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
+        CREATE TABLE work_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)) STRICT;
         INSERT INTO work_meta VALUES(1,0,0);`);
-          this.db!.exec(commentSchema);
-          this.db!.exec('PRAGMA user_version=2');
+            this.db!.exec(commentSchema);
+          } else {
+            if (version === 1) {
+              this.db!.exec(
+                'ALTER TABLE work_meta ADD COLUMN comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)',
+              );
+              this.db!.exec(commentSchema);
+            }
+            this.db!.exec(
+              "ALTER TABLE work_items ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent'))",
+            );
+            this.db!.exec('ALTER TABLE work_items ADD COLUMN assignee TEXT');
+          }
+          this.db!.exec('PRAGMA user_version=3');
         });
-      else if (version === 1)
-        this.transaction(() => {
-          this.db!.exec(
-            'ALTER TABLE work_meta ADD COLUMN comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)',
-          );
-          this.db!.exec(commentSchema);
-          this.db!.exec('PRAGMA user_version=2');
-        });
+      this.schemaVersion = 3;
+      this.validateColumns(3);
       this.validateWork();
       this.commentAuthority();
       for (const row of this.db.prepare('SELECT * FROM work_comments').all()) this.commentRow(row);
@@ -150,6 +170,53 @@ export class Work {
     // close() drains ready; only the loader may finish its atomic schema work after admission closes.
     if (!this.db || (this.closed && !this.loading)) throw new Fault('WORK_CLOSED');
     return this.db;
+  }
+  private validateColumns(version: number) {
+    // Check legacy layout before DDL: a check after COMMIT would already have adopted an unsupported store.
+    const columns = this.database().prepare('PRAGMA table_info(work_items)').all();
+    const core = [
+      'seq',
+      'id',
+      'title',
+      'description',
+      'progress',
+      'status',
+      'revision',
+      'deleted',
+      'created',
+      'updated',
+      'completed',
+      'creator',
+      'editor',
+    ];
+    const names = version < 3 ? core : [...core, 'priority', 'assignee'];
+    if (JSON.stringify(columns.map((row) => row.name)) !== JSON.stringify(names))
+      throw new Fault('WORK_CORRUPT');
+    for (const row of columns) {
+      const name = String(row.name);
+      const type = ['seq', 'revision', 'deleted'].includes(name) ? 'INTEGER' : 'TEXT';
+      if (
+        row.type !== type ||
+        row.pk !== (name === 'seq' ? 1 : 0) ||
+        row.notnull !== (['seq', 'completed', 'assignee'].includes(name) ? 0 : 1)
+      )
+        throw new Fault('WORK_CORRUPT');
+    }
+    if (version < 3) return;
+    const priority = columns.find((row) => row.name === 'priority');
+    const assignee = columns.find((row) => row.name === 'assignee');
+    if (
+      columns.length !== 15 ||
+      priority?.type !== 'TEXT' ||
+      priority.notnull !== 1 ||
+      priority.dflt_value !== "'normal'" ||
+      priority.pk !== 0 ||
+      assignee?.type !== 'TEXT' ||
+      assignee.notnull !== 0 ||
+      assignee.dflt_value !== null ||
+      assignee.pk !== 0
+    )
+      throw new Fault('WORK_CORRUPT');
   }
   private validateWork() {
     const db = this.database(),
@@ -237,6 +304,14 @@ export class Work {
     }
   }
   private item(row: Row): WorkItem {
+    if (this.schemaVersion < 3) {
+      if (!legacyWorkStates.includes(row.status as (typeof legacyWorkStates)[number]))
+        throw new Fault('WORK_CORRUPT');
+    } else if (
+      !workPriorities.includes(row.priority as (typeof workPriorities)[number]) ||
+      (row.assignee !== null && !validAgentId(row.assignee))
+    )
+      throw new Fault('WORK_CORRUPT');
     let createdBy: unknown, updatedBy: unknown;
     try {
       createdBy = JSON.parse(String(row.creator));
@@ -250,6 +325,8 @@ export class Work {
       description: row.description,
       progress: row.progress,
       status: row.status,
+      ...(this.schemaVersion >= 3 && row.priority !== 'normal' ? { priority: row.priority } : {}),
+      ...(this.schemaVersion >= 3 && row.assignee !== null ? { assignee: row.assignee } : {}),
       revision: row.revision,
       deleted: row.deleted === 1,
       createdAt: row.created,
@@ -288,8 +365,8 @@ export class Work {
       const filter = query.filter ?? 'all',
         conditions = [filter === 'trash' ? 'deleted=1' : 'deleted=0'];
       const values: (string | number)[] = [];
-      if (filter === 'open') conditions.push("status!='done'");
-      if (filter === 'done') conditions.push("status='done'");
+      if (filter === 'open') conditions.push("status NOT IN ('done','closed')");
+      if (filter === 'done') conditions.push("status IN ('done','closed')");
       if (query.before !== undefined) {
         conditions.push('seq<?');
         values.push(query.before);
@@ -300,6 +377,21 @@ export class Work {
           "(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR progress LIKE ? ESCAPE '\\')",
         );
         values.push(text, text, text);
+      }
+      if (query.status !== undefined) {
+        conditions.push('status=?');
+        values.push(query.status);
+      }
+      if (query.priority !== undefined) {
+        conditions.push('priority=?');
+        values.push(query.priority);
+      }
+      if (Object.hasOwn(query, 'assignee')) {
+        if (query.assignee === null) conditions.push('assignee IS NULL');
+        else {
+          conditions.push('assignee=?');
+          values.push(query.assignee!);
+        }
       }
       const limit = query.limit ?? 50;
       const rows = this.database()
@@ -383,6 +475,18 @@ export class Work {
     );
   }
   write(input: unknown, by: unknown, signal?: AbortSignal): Promise<WorkAck> {
+    return this.writeFor(input, by, signal, false);
+  }
+  writeLegacy(input: unknown, by: unknown, signal?: AbortSignal): Promise<WorkAck> {
+    if (!isLegacyWorkWrite(input)) return Promise.reject(new Fault('INVALID_WORK_WRITE', 400));
+    return this.writeFor(input, by, signal, true);
+  }
+  private writeFor(
+    input: unknown,
+    by: unknown,
+    signal: AbortSignal | undefined,
+    legacy: boolean,
+  ): Promise<WorkAck> {
     if (!isWorkWrite(input)) return Promise.reject(new Fault('INVALID_WORK_WRITE', 400));
     if (!isWorkAuthor(by)) return Promise.reject(new Fault('INVALID_WORK_ACTOR', 400));
     const request = structuredClone(input),
@@ -412,10 +516,13 @@ export class Work {
           deleted: false,
           createdAt: now,
           updatedAt: now,
-          ...(request.value.status === 'done' ? { completedAt: now } : {}),
+          ...(isWorkCompleted(request.value.status) ? { completedAt: now } : {}),
           createdBy: actor,
           updatedBy: actor,
         };
+        if (item.priority === 'normal') delete item.priority;
+        if (item.assignee === null) delete item.assignee;
+        if (item.assignee) this.admit({ kind: 'bot', bot: item.assignee });
       } else {
         if (!row) throw new Fault('WORK_NOT_FOUND', 404);
         const current = this.item(row);
@@ -424,30 +531,68 @@ export class Work {
           Math.max(Date.parse(now), Date.parse(current.updatedAt), Date.parse(current.createdAt)),
         ).toISOString();
         if (current.revision !== request.revision) throw new Fault('WORK_CONFLICT');
-        if (request.action === 'update' && current.deleted) throw new Fault('WORK_TRASHED');
+        if ((request.action === 'update' || request.action === 'reopen') && current.deleted)
+          throw new Fault('WORK_TRASHED');
+        const patch = request.action === 'update' ? { ...request.value } : undefined;
+        // Legacy full forms echo a three-state projection; that echo must not erase hidden workflow state.
+        if (
+          legacy &&
+          patch?.status !== undefined &&
+          !legacyWorkStates.includes(current.status as (typeof legacyWorkStates)[number])
+        ) {
+          if (patch.status === legacyWorkState(current.status)) delete patch.status;
+          else if (current.status === 'closed') throw new Fault('WORK_CONFLICT');
+        }
+        if (request.action === 'reopen') {
+          if (actor.kind !== 'human') throw new Fault('WORK_REOPEN_FORBIDDEN');
+          if (current.status !== 'closed') throw new Fault('WORK_STATE_CONFLICT');
+        }
+        if (
+          request.action === 'update' &&
+          current.status === 'closed' &&
+          patch?.status !== undefined &&
+          patch.status !== 'closed'
+        )
+          throw new Fault('WORK_REOPEN_REQUIRED');
+        if (
+          request.action === 'update' &&
+          typeof request.value.assignee === 'string' &&
+          request.value.assignee !== current.assignee
+        )
+          this.admit({ kind: 'bot', bot: request.value.assignee });
         item = {
           ...current,
           ...(request.action === 'update'
-            ? request.value
-            : { deleted: request.action === 'trash' }),
+            ? patch
+            : request.action === 'reopen'
+              ? { status: 'todo' as const }
+              : { deleted: request.action === 'trash' }),
         };
         item.title = item.title.trim();
-        changed = ['title', 'description', 'progress', 'status', 'deleted'].some(
-          (key) => current[key as keyof WorkItem] !== item[key as keyof WorkItem],
-        );
+        if (item.priority === 'normal') delete item.priority;
+        if (item.assignee === null) delete item.assignee;
+        changed = [
+          'title',
+          'description',
+          'progress',
+          'status',
+          'deleted',
+          'priority',
+          'assignee',
+        ].some((key) => current[key as keyof WorkItem] !== item[key as keyof WorkItem]);
         if (changed) {
           item.revision++;
           item.updatedAt = now;
           item.updatedBy = actor;
-          if (item.status === 'done')
-            item.completedAt = current.status === 'done' ? current.completedAt : now;
+          if (isWorkCompleted(item.status))
+            item.completedAt = isWorkCompleted(current.status) ? current.completedAt : now;
           else delete item.completedAt;
         }
       }
       return this.transaction(() => {
         if (request.action === 'create')
           db.prepare(
-            'INSERT INTO work_items(id,title,description,progress,status,revision,deleted,created,updated,completed,creator,editor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO work_items(id,title,description,progress,status,revision,deleted,created,updated,completed,creator,editor,priority,assignee) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
           ).run(
             item.id,
             item.title,
@@ -461,11 +606,13 @@ export class Work {
             item.completedAt ?? null,
             JSON.stringify(item.createdBy),
             JSON.stringify(item.updatedBy),
+            item.priority ?? 'normal',
+            item.assignee ?? null,
           );
         else if (changed) {
           const result = db
             .prepare(
-              'UPDATE work_items SET title=?,description=?,progress=?,status=?,revision=?,deleted=?,updated=?,completed=?,editor=? WHERE id=? AND revision=?',
+              'UPDATE work_items SET title=?,description=?,progress=?,status=?,revision=?,deleted=?,updated=?,completed=?,editor=?,priority=?,assignee=? WHERE id=? AND revision=?',
             )
             .run(
               item.title,
@@ -477,6 +624,8 @@ export class Work {
               item.updatedAt,
               item.completedAt ?? null,
               JSON.stringify(item.updatedBy),
+              item.priority ?? 'normal',
+              item.assignee ?? null,
               item.id,
               request.revision,
             );

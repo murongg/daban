@@ -514,3 +514,24 @@ it('does not insert a saved card into a search result that SQLite would not matc
   );
   expect(screen.queryByRole('button', { name: '查看 合成É' })).not.toBeInTheDocument();
 });
+
+it('shows the six workflow columns only when the runtime supports them', async () => {
+  connect(
+    [
+      item('mock-review', '合成待审核', 'review'),
+      item('mock-blocked', '合成受阻', 'blocked'),
+      { ...item('mock-closed', '合成已关闭', 'closed'), completedAt: at },
+    ],
+    39,
+  );
+  render(<App />);
+  await tasks();
+  await userEvent.click(screen.getByRole('button', { name: '看板' }));
+  expect(
+    within(await screen.findByRole('region', { name: '待审核' })).getByText('合成待审核'),
+  ).toBeVisible();
+  expect(within(screen.getByRole('region', { name: '受阻' })).getByText('合成受阻')).toBeVisible();
+  expect(
+    within(screen.getByRole('region', { name: '已关闭' })).getByText('合成已关闭'),
+  ).toBeVisible();
+});

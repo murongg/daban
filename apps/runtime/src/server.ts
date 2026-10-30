@@ -25,6 +25,8 @@ import {
   isDocumentUpload,
   isGroupCopyRequest,
   isKnowledgeWrite,
+  isLegacyWorkQuery,
+  isLegacyWorkWrite,
   isMcpCommand,
   isMemoryQuery,
   isNoteCommand,
@@ -38,6 +40,9 @@ import {
   isWorkCommentWrite,
   isWorkQuery,
   isWorkWrite,
+  legacyWorkItem,
+  legacyWorkList,
+  legacyWorkReceipt,
   managedProtocol,
   parseBotJSON,
   type RuntimeNoticeStatus,
@@ -316,6 +321,7 @@ export async function startPrototype({
       // Archive-aware group shapes start at28; current supported versions must not fall back to legacy.
       const modernGroups =
         Number.isSafeInteger(groupVersion) && groupVersion >= 28 && groupVersion <= managedProtocol;
+      const coordinatedWork = groupVersion >= 39 && groupVersion <= managedProtocol;
       const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
       if (mcp) {
         if (recovery && !recovery.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -457,25 +463,45 @@ export async function startPrototype({
           if (url.pathname === '/api/work/comments' && isWorkCommentQuery(data))
             return json(res, { query: data, page: await models.work.comments(data) });
           if (isWorkCommentWrite(data)) {
-            if (url.pathname === '/api/work/comment')
-              return json(res, await models.work.comment(data, { kind: 'human' }));
-            if (url.pathname === '/api/work/comment-receipt')
-              return json(res, await models.work.commentReceipt(data, { kind: 'human' }));
+            if (
+              url.pathname === '/api/work/comment' ||
+              url.pathname === '/api/work/comment-receipt'
+            ) {
+              const value =
+                url.pathname === '/api/work/comment'
+                  ? await models.work.comment(data, { kind: 'human' })
+                  : await models.work.commentReceipt(data, { kind: 'human' });
+              return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
+            }
           }
-          if (url.pathname === '/api/work/list' && isWorkQuery(data))
-            return json(res, { query: data, page: await models.work.list(data) });
+          if (url.pathname === '/api/work/list' && isWorkQuery(data)) {
+            if (!coordinatedWork && !isLegacyWorkQuery(data))
+              throw new Fault('INVALID_WORK_QUERY', 400);
+            const value = { query: data, page: await models.work.list(data) };
+            return json(res, coordinatedWork ? value : legacyWorkList(value));
+          }
           if (
             url.pathname === '/api/work/read' &&
             validAgentId(data.id) &&
             Object.keys(data).every((key) => key === 'id')
-          )
-            return json(res, await models.work.get(data.id));
-          // The authenticated human channel cannot claim a Bot's identity or supply provenance fields.
+          ) {
+            const value = await models.work.get(data.id);
+            return json(res, coordinatedWork ? value : legacyWorkItem(value));
+          }
+          // Human provenance and compatibility are decided by the channel, never by payload fields.
           if (isWorkWrite(data)) {
-            if (url.pathname === '/api/work/write')
-              return json(res, await models.work.write(data, { kind: 'human' }));
-            if (url.pathname === '/api/work/receipt')
-              return json(res, await models.work.receipt(data, { kind: 'human' }));
+            if (!coordinatedWork && !isLegacyWorkWrite(data))
+              throw new Fault('INVALID_WORK_WRITE', 400);
+            if (url.pathname === '/api/work/write') {
+              const value = coordinatedWork
+                ? await models.work.write(data, { kind: 'human' })
+                : await models.work.writeLegacy(data, { kind: 'human' });
+              return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
+            }
+            if (url.pathname === '/api/work/receipt') {
+              const value = await models.work.receipt(data, { kind: 'human' });
+              return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
+            }
           }
           throw new Fault('INVALID_WORK_REQUEST', 400);
         }

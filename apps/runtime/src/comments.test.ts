@@ -97,7 +97,7 @@ test('additive migration retains legacy items, fingerprints and accepted receipt
     });
     const db = new DatabaseSync(f.file, { readOnly: true });
     try {
-      assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 2);
+      assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
       assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_items').get()!.n, 1);
       assert.equal(
         db.prepare('SELECT signature FROM work_operations').get()!.signature,
@@ -381,7 +381,7 @@ test('initialization and schema1 migration publish comments and version atomical
       await initial.close();
       const db = new DatabaseSync(file);
       db.exec(
-        'DROP TABLE work_comments;ALTER TABLE work_meta DROP COLUMN comments;PRAGMA user_version=1;',
+        'DROP TABLE work_comments;ALTER TABLE work_meta DROP COLUMN comments;ALTER TABLE work_items DROP COLUMN priority;ALTER TABLE work_items DROP COLUMN assignee;PRAGMA user_version=1;',
       );
       db.close();
     }
@@ -456,7 +456,7 @@ test('unknown schemas and malformed legacy rows are retained without migration',
       await f.store.close();
       const db = new DatabaseSync(f.file);
       db.exec(
-        'DROP TABLE work_comments;ALTER TABLE work_meta DROP COLUMN comments;PRAGMA user_version=1;',
+        'DROP TABLE work_comments;ALTER TABLE work_meta DROP COLUMN comments;ALTER TABLE work_items DROP COLUMN priority;ALTER TABLE work_items DROP COLUMN assignee;PRAGMA user_version=1;',
       );
       db.exec(mutation);
       db.close();
@@ -513,7 +513,7 @@ test('immediate close drains schema initialization without misclassifying the st
     assert.deepEqual(await store.status(), { available: false, error: 'WORK_CLOSED' });
     const db = new DatabaseSync(file, { readOnly: true });
     try {
-      assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 2);
+      assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
     } finally {
       db.close();
     }

@@ -127,3 +127,73 @@ it('validates truthful completion and accepted/current receipt revisions without
   ])
     expect(isWorkReceipt(value)).toBe(false);
 });
+
+it('validates richer work metadata and binds it without changing legacy operation fingerprints', () => {
+  const rich = {
+    ...request,
+    value: { title: '合成协调任务', status: 'review', priority: 'urgent', assignee: 'mock-beta' },
+  };
+  expect(isWorkWrite(rich)).toBe(true);
+  expect(isWorkWrite({ ...rich, value: { priority: 'high' } })).toBe(true);
+  expect(isWorkWrite({ ...rich, value: { assignee: null } })).toBe(true);
+  for (const value of [
+    { priority: 'critical' },
+    { assignee: '../mock-beta' },
+    { assignee: '' },
+    { assignee: undefined },
+    { priority: undefined },
+    { status: 'running' },
+  ])
+    expect(isWorkWrite({ ...rich, value })).toBe(false);
+  expect(workKey(request, actor)).toBe(
+    '["daban.work.v1","mock-op","mock-work",1,"update","human",null,["title","合成共享待办"],["description"],["progress"],["status","done"]]',
+  );
+  if (!isWorkWrite(rich)) throw Error('RICH_WORK_REQUEST_REQUIRED');
+  expect(workKey(rich, actor)).not.toBe(workKey(request, actor));
+  expect(workKey({ ...rich, value: { ...rich.value, priority: 'low' } }, actor)).not.toBe(
+    workKey(rich, actor),
+  );
+  expect(workKey({ ...rich, value: { ...rich.value, assignee: 'mock-alpha' } }, actor)).not.toBe(
+    workKey(rich, actor),
+  );
+  expect(
+    workKey(
+      {
+        ...rich,
+        value: {
+          assignee: 'mock-beta',
+          priority: 'urgent',
+          status: 'review',
+          title: '合成协调任务',
+        },
+      },
+      actor,
+    ),
+  ).toBe(workKey(rich, actor));
+});
+
+it('validates completed closed records and query-bound workflow filters', () => {
+  expect(isWorkItem({ ...item, status: 'closed', priority: 'high', assignee: 'mock-beta' })).toBe(
+    true,
+  );
+  expect(isWorkItem({ ...item, status: 'review', completedAt: undefined })).toBe(true);
+  expect(isWorkItem({ ...item, status: 'blocked', completedAt: item.completedAt })).toBe(false);
+  expect(isWorkItem({ ...item, priority: 'unknown' })).toBe(false);
+  expect(isWorkItem({ ...item, assignee: '../mock-beta' })).toBe(false);
+  const richQuery = {
+    filter: 'all',
+    status: 'review',
+    priority: 'urgent',
+    assignee: 'mock-beta',
+    limit: 10,
+  };
+  expect(isWorkQuery(richQuery)).toBe(true);
+  expect(isWorkQuery({ assignee: null })).toBe(true);
+  expect(workQueryKey({ filter: 'all', limit: 10 })).toBe('["all","",null,10]');
+  if (!isWorkQuery(richQuery)) throw Error('RICH_WORK_QUERY_REQUIRED');
+  expect(workQueryKey(richQuery)).not.toBe(workQueryKey({ ...richQuery, assignee: 'mock-alpha' }));
+  expect(workQueryKey(richQuery)).not.toBe(workQueryKey({ ...richQuery, priority: 'low' }));
+  expect(isWorkWrite({ id: 'mock-reopen', item: item.id, action: 'reopen', revision: 3 })).toBe(
+    true,
+  );
+});
