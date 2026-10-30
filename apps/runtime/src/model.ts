@@ -452,7 +452,14 @@ export class ModelRuns {
     this.transcripts = new Transcripts(path.join(dir, 'transcripts.sqlite'));
     this.tools.history = new HistoryTools(this.journal);
     this.knowledge = new Knowledge(path.join(dir, 'knowledge.sqlite'));
-    this.work = new Work(path.join(dir, 'work.sqlite'));
+    this.profiles = new BotProfiles(path.join(dir, 'bots'));
+    this.work = new Work(path.join(dir, 'work.sqlite'), (actor) => {
+      if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
+      if (actor.kind === 'bot') {
+        this.profiles.assertRegistered(actor.bot);
+        this.profiles.assertActive(actor.bot);
+      }
+    });
     this.tools.work = new WorkTools(this.work);
     this.tools.catalog = new CatalogTools({
       work: this.work,
@@ -464,7 +471,6 @@ export class ModelRuns {
     this.tools.knowledge = new KnowledgeTools(this.knowledge, (run, name, content) =>
       this.tools.writeText(run, name, content, true),
     );
-    this.profiles = new BotProfiles(path.join(dir, 'bots'));
     this.notes = new Notes(path.join(dir, 'notes.sqlite'), (bot) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
       this.profiles.assertRegistered(bot);

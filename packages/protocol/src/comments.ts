@@ -25,6 +25,13 @@ export interface WorkCommentPage {
   comments: WorkComment[];
   nextBefore?: number;
 }
+export interface WorkCommentList {
+  query: WorkCommentQuery;
+  page: WorkCommentPage;
+}
+export type WorkCommentCommand =
+  | { type: 'work.comments'; query: WorkCommentQuery }
+  | { type: 'work.comment' | 'work.comment-receipt'; request: WorkCommentWrite };
 export interface WorkCommentAck {
   state: 'complete';
   request: WorkCommentWrite;
@@ -128,6 +135,32 @@ export function isWorkCommentPage(value: unknown): value is WorkCommentPage {
     seen.add(row.id);
   }
   return new TextEncoder().encode(JSON.stringify(value)).length <= 128 * 1024;
+}
+export function workCommentQueryKey(query: WorkCommentQuery) {
+  return JSON.stringify([query.item, query.before ?? null, query.limit ?? 50]);
+}
+export function isWorkCommentList(value: unknown): value is WorkCommentList {
+  return (
+    object(value) &&
+    keys(value, ['query', 'page']) &&
+    isWorkCommentQuery(value.query) &&
+    isWorkCommentPage(value.page) &&
+    value.page.item === value.query.item &&
+    value.page.comments.length <= (value.query.limit ?? 50) &&
+    (value.page.nextBefore === undefined ||
+      value.query.before === undefined ||
+      value.page.nextBefore < value.query.before)
+  );
+}
+export function isWorkCommentCommand(value: unknown): value is WorkCommentCommand {
+  if (!object(value)) return false;
+  if (value.type === 'work.comments')
+    return keys(value, ['type', 'query']) && isWorkCommentQuery(value.query);
+  return (
+    (value.type === 'work.comment' || value.type === 'work.comment-receipt') &&
+    keys(value, ['type', 'request']) &&
+    isWorkCommentWrite(value.request)
+  );
 }
 export function isWorkCommentReceipt(value: unknown): value is WorkCommentReceipt {
   if (!object(value) || !isWorkCommentWrite(value.request) || !isWorkAuthor(value.actor))

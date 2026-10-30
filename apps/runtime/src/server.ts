@@ -34,6 +34,8 @@ import {
   isTranscriptContentQuery,
   isTranscriptQuery,
   isUserReply,
+  isWorkCommentQuery,
+  isWorkCommentWrite,
   isWorkQuery,
   isWorkWrite,
   managedProtocol,
@@ -98,6 +100,8 @@ const recoveryReads = new Set([
   '/api/work/list',
   '/api/work/read',
   '/api/work/receipt',
+  '/api/work/comments',
+  '/api/work/comment-receipt',
   '/api/computers/receipt',
   '/api/files/read',
   '/api/files/download',
@@ -450,6 +454,14 @@ export async function startPrototype({
           if (url.search) throw new Fault('INVALID_WORK_REQUEST', 400);
           if (!models) throw new Fault('WORK_UNAVAILABLE', 503);
           const data = await body(req);
+          if (url.pathname === '/api/work/comments' && isWorkCommentQuery(data))
+            return json(res, { query: data, page: await models.work.comments(data) });
+          if (isWorkCommentWrite(data)) {
+            if (url.pathname === '/api/work/comment')
+              return json(res, await models.work.comment(data, { kind: 'human' }));
+            if (url.pathname === '/api/work/comment-receipt')
+              return json(res, await models.work.commentReceipt(data, { kind: 'human' }));
+          }
           if (url.pathname === '/api/work/list' && isWorkQuery(data))
             return json(res, { query: data, page: await models.work.list(data) });
           if (

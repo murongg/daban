@@ -71,7 +71,7 @@ test('notes HTTP closes routes, owns human authorship and keeps Bot data and rec
     const advertised = await (
       await fetch(`${f.app.url}/api/state`, { headers: { 'x-prototype-token': f.app.token } })
     ).json();
-    assert.equal(advertised.clientProtocol, 37);
+    assert.equal(advertised.clientProtocol, managedProtocol);
     assert.deepEqual(advertised.notes, { available: true });
     assert.equal(
       (await call('write', { bot: alpha, request }, { token: 'mock-denied' })).status,

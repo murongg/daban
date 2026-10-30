@@ -1,3 +1,4 @@
+import type { WorkCommentCommand } from './comments.js';
 import type { WorkQuery, WorkStatus, WorkWrite } from './work.js';
 
 export * from './comments.js';
@@ -9,7 +10,7 @@ import type { NoteAvailability, NoteCommand } from './notes.js';
 export { validAgentId } from './id.js';
 export * from './notes.js';
 
-export const managedProtocol = 37;
+export const managedProtocol = 38;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1358,6 +1359,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'work.list',
     'work.read',
     'work.receipt',
+    'work.comments',
+    'work.comment-receipt',
     'notes.status',
     'notes.list',
     'notes.read',
@@ -3350,6 +3353,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
 }
 export type RuntimeCommand =
   | NoteCommand
+  | WorkCommentCommand
   | { type: 'work.list'; query: WorkQuery }
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }

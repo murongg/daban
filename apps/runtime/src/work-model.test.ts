@@ -109,6 +109,14 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
   try {
     await settings.save({ apiKey: 'mock-work-provider-key' });
     await models.ready;
+    for (const bot of ['mock-alpha', 'mock-beta'])
+      await models.profiles.register({
+        id: bot,
+        name: bot,
+        instructions: 'MOCK ROLE',
+        memory: '',
+        color: 'mint',
+      });
     const greeting = await turn('mock-alpha', 'mock-greeting');
     assert.equal(greeting.toolCount, 0);
     let itemId = '';

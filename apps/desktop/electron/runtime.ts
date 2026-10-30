@@ -72,6 +72,9 @@ import {
   isTaskPlan,
   isTranscriptContent,
   isTranscriptPage,
+  isWorkCommentCommand,
+  isWorkCommentList,
+  isWorkCommentReceipt,
   isWorkItem,
   isWorkList,
   isWorkReceipt,
@@ -85,8 +88,11 @@ import {
   type RuntimeFile,
   type RuntimeSnapshot,
   type RuntimeTask,
+  recoveryBlocked,
   sameTranscriptScope,
   validAgentId,
+  workCommentKey,
+  workCommentQueryKey,
   workKey,
   workQueryKey,
 } from '@daban/protocol';
@@ -581,6 +587,38 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (isWorkCommentCommand(command)) {
+      // Snapshot the intent before status yields so a caller cannot change the acknowledged request.
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 38) throw new Error('RUNTIME_TOO_OLD');
+      if (!state.work?.available) throw new Error(state.work?.error ?? 'WORK_UNAVAILABLE');
+      if (captured.type === 'work.comment' && recoveryBlocked(state))
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      if (captured.type === 'work.comments') {
+        const value = await this.api('/api/work/comments', captured.query);
+        if (
+          !isWorkCommentList(value) ||
+          workCommentQueryKey(value.query) !== workCommentQueryKey(captured.query)
+        )
+          throw new Error('INVALID_WORK_COMMENT_PAGE');
+        return value;
+      }
+      const value = await this.api(
+        captured.type === 'work.comment' ? '/api/work/comment' : '/api/work/comment-receipt',
+        captured.request,
+      );
+      if (
+        !isWorkCommentReceipt(value) ||
+        value.actor.kind !== 'human' ||
+        workCommentKey(value.request, value.actor) !==
+          workCommentKey(captured.request, { kind: 'human' }) ||
+        (captured.type === 'work.comment' && value.state !== 'complete')
+      )
+        throw new Error('INVALID_WORK_COMMENT_ACK');
+      return value;
+    }
     if (isNoteCommand(command)) {
       // Keep the original Bot and intent even if navigation or authentication changes while status yields.
       const captured = structuredClone(command);

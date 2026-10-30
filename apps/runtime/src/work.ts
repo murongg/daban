@@ -45,7 +45,10 @@ export class Work {
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
   private loading = true;
-  constructor(readonly file: string) {
+  constructor(
+    readonly file: string,
+    private readonly admit: (actor: WorkAuthor) => undefined = () => undefined,
+  ) {
     this.ready = this.load();
     this.ready.catch(() => {});
   }
@@ -388,6 +391,8 @@ export class Work {
       // Receipt lookup precedes CAS and trash checks: retry never reapplies old intent over newer work.
       const prior = this.accepted(request, actor);
       if (prior) return prior;
+      // Check admission inside the serialized effect: recovery or Bot lifecycle may change while queued.
+      this.admit(actor);
       this.revision();
       const db = this.database();
       if (this.operationCount() >= operations) throw new Fault('WORK_OPERATION_LIMIT');
@@ -589,6 +594,8 @@ export class Work {
       // The original immutable comment is a receipt; replay must never append it onto a newer item again.
       const accepted = this.acceptedComment(request, actor);
       if (accepted) return accepted;
+      // Accepted retries above are readers; only a new append needs current admission.
+      this.admit(actor);
       if (this.operationCount() >= operations) throw new Fault('WORK_OPERATION_LIMIT');
       const current = this.find(request.item);
       if (current.revision !== request.revision) throw new Fault('WORK_CONFLICT');

@@ -37,6 +37,7 @@ import {
   isTranscriptContentQuery,
   isTranscriptQuery,
   isUserReply,
+  isWorkCommentCommand,
   isWorkQuery,
   isWorkWrite,
   publicUrl,
@@ -73,6 +74,8 @@ export function safeRelative(value: unknown): value is string {
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
+  if (['work.comments', 'work.comment', 'work.comment-receipt'].includes(value.type))
+    return isWorkCommentCommand(value) ? value : fail();
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
