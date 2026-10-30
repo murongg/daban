@@ -1,3 +1,8 @@
+import { validAgentId } from './id.js';
+
+export { validAgentId } from './id.js';
+export * from './notes.js';
+
 export const managedProtocol = 36;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
@@ -3746,9 +3751,6 @@ export const runtimeTargets: Readonly<Record<string, RuntimeBot>> = Object.assig
   Object.create(null) as Record<string, RuntimeBot>,
   { research: 'a', writer: 'b' },
 );
-export function validAgentId(value: unknown): value is string {
-  return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(value);
-}
 export function agentId(bot: string) {
   return runtimeTargets[bot] || bot;
 }
