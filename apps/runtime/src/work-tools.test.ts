@@ -146,6 +146,7 @@ test('create identity survives argument order, continuation and store reconstruc
     status: 'todo',
   };
   const first = item(await tools.invoke(a, 'work_create', args));
+  assert.equal(first.id, 'work-f959efa272cada714edcdb987e7ba1ccbeb50b3f654812a71cd74187b9cbf7e5');
   const human = await store.write(
     {
       id: 'mock-human-progress',

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   isWorkQuery,
   isWorkWrite,
@@ -9,6 +8,7 @@ import {
 } from '@daban/protocol';
 import type { AgentToolRun } from './agent-tools.js';
 import { Fault } from './control.js';
+import { effectId } from './intent.js';
 import type { Work } from './work.js';
 
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({
@@ -97,19 +97,7 @@ export class WorkTools {
   private readonly observed = new WeakMap<AgentToolRun, Map<string, { revision: number }>>();
   constructor(readonly store: Work) {}
   private key(run: AgentToolRun, request: WorkWrite, kind: 'item' | 'operation') {
-    const intent = run.intentId ?? run.id;
-    if (!validAgentId(intent)) throw new Fault('INVALID_TOOL_ARGS', 400);
-    return `work-${createHash('sha256')
-      .update(
-        JSON.stringify([
-          'daban.work.model.v1',
-          kind,
-          run.bot,
-          intent,
-          workKey(request, { kind: 'bot', bot: run.bot }),
-        ]),
-      )
-      .digest('hex')}`;
+    return effectId(run, 'work', kind, workKey(request, { kind: 'bot', bot: run.bot }));
   }
   async invoke(run: AgentToolRun, name: string, args: Record<string, unknown>) {
     run.abort.signal.throwIfAborted();

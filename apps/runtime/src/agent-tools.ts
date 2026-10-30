@@ -27,6 +27,7 @@ import type { IntegrationTools } from './integration-tools.js';
 import type { McpSnapshot } from './integrations.js';
 import type { KnowledgeTools } from './knowledge-tools.js';
 import type { MemoryTools } from './memory.js';
+import type { NotesTools } from './notes-tools.js';
 import { type ScheduleTools, scheduleToolList } from './schedule-tools.js';
 import type { SkillSnapshot } from './skills.js';
 import type { WorkTools } from './work-tools.js';
@@ -112,6 +113,7 @@ export class AgentTools {
   history?: HistoryTools;
   knowledge?: KnowledgeTools;
   work?: WorkTools;
+  notes?: NotesTools;
   catalog?: CatalogTools;
   schedules?: ScheduleTools;
   integrations?: IntegrationTools;
@@ -164,6 +166,7 @@ export class AgentTools {
       ...(this.history?.list || []),
       ...(this.knowledge?.list || []),
       ...(this.work?.list || []),
+      ...(this.notes?.list || []),
       ...(this.catalog?.list || []),
       ...(conversationId ? this.groups?.list || [] : []),
       ...(run?.bot === bot && run.conversationId === conversationId
@@ -491,6 +494,7 @@ export class AgentTools {
       this.history,
       this.knowledge,
       this.work,
+      this.notes,
       this.catalog,
       this.groups,
       this.hasBrowser(run.bot) ? this.browser : undefined,

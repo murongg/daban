@@ -47,6 +47,7 @@ import { Knowledge } from './knowledge.js';
 import { KnowledgeTools } from './knowledge-tools.js';
 import { MemoryTools } from './memory.js';
 import { Notes } from './notes.js';
+import { NotesTools } from './notes-tools.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
 import { redact, redactStream } from './redaction.js';
@@ -77,7 +78,7 @@ import { type WorkspaceDirectory, WorkspaceFiles } from './workspace.js';
 
 const sdkFile = '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
 const model = 'deepseek-flash';
-const sessionProfile = 'general-v6';
+const sessionProfile = 'general-v7';
 const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
   JSON.stringify(
     conversationId || !chatRevision ? [bot, conversationId ?? null] : [bot, null, chatRevision],
@@ -455,6 +456,7 @@ export class ModelRuns {
     this.tools.work = new WorkTools(this.work);
     this.tools.catalog = new CatalogTools({
       work: this.work,
+      notes: () => this.tools.notes,
       schedules: () => this.tools.schedules?.store,
       offered: (run) => this.tools.list(run.bot, run.model, run.conversationId, run),
     });
@@ -467,6 +469,9 @@ export class ModelRuns {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
       this.profiles.assertRegistered(bot);
       this.profiles.assertActive(bot);
+    });
+    this.tools.notes = new NotesTools(this.notes, (bot) => {
+      this.profiles.assertRegistered(bot);
     });
     this.chats = new Chats(path.join(dir, 'chats.sqlite'), (bot) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -1322,6 +1327,7 @@ export class ModelRuns {
             job.documentInputs,
             this.tools.hasBrowser(job.bot),
             !!this.tools.work,
+            !!this.tools.notes,
           ) +
           (job.skills?.available === false
             ? '\n本轮技能服务暂不可用；普通对话和现有工具仍可使用。不要声称已加载或执行技能。'
