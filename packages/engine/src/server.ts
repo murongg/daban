@@ -71,6 +71,7 @@ import { Machine } from './machine.js';
 import { ModelRuns } from './model.js';
 import { Recovery } from './recovery.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
+import { Risk } from './risk.js';
 import { type Browser, createBrowser } from './runtime.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
@@ -1725,6 +1726,7 @@ export async function startPrototype({
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),
           interactions: models.interactions,
+          review: new Risk({ settings }).review,
           assertLive: (run) => {
             if (replacingRecovery || !recovery!.admit())
               throw new Fault('RUNTIME_RECOVERY_PENDING');

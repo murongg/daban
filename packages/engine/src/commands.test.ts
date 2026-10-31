@@ -9,6 +9,7 @@ import type { CommandReview } from './commands.js';
 import { Commands } from './commands.js';
 import type { ToolResult } from './computer-tools.js';
 import { Interactions } from './interactions.js';
+import { Risk } from './risk.js';
 
 const output: ToolResult = { content: [{ type: 'text', text: 'mock guest output' }] };
 
@@ -37,6 +38,60 @@ const run = () => ({
   abort: new AbortController(),
   workdir: '/mock-guest/task',
   task: { requestId: 'mock-request', prompt: 'Prepare synthetic project.' },
+});
+test('production risk policy auto-runs reads once but opens a human approval for deletion', async () => {
+  const context = await fixture();
+  const policy = new Risk({
+    settings: { file: '/mock/credentials.json', privateConfig: async () => null },
+  });
+  const commands = new Commands({ ...context, review: policy.review });
+  let dispatched = 0;
+  const current = run(),
+    dispatch = async () => {
+      dispatched++;
+      return output;
+    };
+  try {
+    assert.deepEqual(
+      await commands.invoke(
+        current,
+        'shell',
+        { command: 'ls -la /shared; cat input.csv' },
+        'mock-read',
+        dispatch,
+      ),
+      output,
+    );
+    assert.equal((await context.interactions.list()).length, 0);
+    assert.deepEqual(
+      await commands.invoke(
+        current,
+        'shell',
+        { command: 'ls -la /shared; cat input.csv' },
+        'mock-read',
+        dispatch,
+      ),
+      output,
+    );
+    assert.equal(dispatched, 1);
+    const deletion = commands.invoke(
+      current,
+      'process_start',
+      { command: 'rm /shared/mock.csv' },
+      'mock-delete',
+      dispatch,
+    );
+    const approval = await pending(context.interactions);
+    await context.interactions.reply(current.bot, current.id, approval.id, {
+      kind: 'decision',
+      allow: false,
+    });
+    assert.equal((await deletion).isError, true);
+    assert.equal(dispatched, 1);
+  } finally {
+    await commands.close();
+    await rm(context.root, { recursive: true, force: true });
+  }
 });
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-command-gate-'));

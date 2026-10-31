@@ -37,7 +37,7 @@ export function Settings({
                 <div className="setting-label">虚拟机内完整权限</div>
                 <p className="setting-description">
                   Bot 可以管理 Linux 系统、使用 sudo 和网络，并安装 npm、Codex
-                  等软件。执行命令前会显示具体内容供你确认。
+                  等软件。普通查看、查询和计算自动执行；安装软件、删除文件、修改系统等高风险操作会显示具体命令供你确认，无法判断的操作也会询问。
                 </p>
               </div>
             </div>

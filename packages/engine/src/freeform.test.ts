@@ -869,7 +869,7 @@ test('retiring a computer-only session preserves its conversation context and st
     const record = models.journal.findRequest('a', 'new-general-request');
     assert.equal(
       (record as unknown as Record<string, unknown>).sessionProfile,
-      'general-v10-host-context',
+      'general-v11-risk-context',
     );
     await models.close();
   } finally {
