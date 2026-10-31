@@ -1,0 +1,41 @@
+{
+  "name": "@daban/engine",
+  "private": true,
+  "type": "module",
+  "description": "Shared Node implementation with separate trusted agent and Linux executor entry graphs.",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "officeparser": "8.2.0",
+    "playwright": "1.62.1",
+    "yaml": "2.9.1",
+    "@daban/protocol": "0.1.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.2.0",
+    "fflate": "0.8.3"
+  },
+  "version": "0.1.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node --experimental-strip-types ../../tools/engine.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json",
+    "test": "npm run test:runtime --prefix ../.."
+  },
+  "exports": {
+    "./agent": {
+      "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.js"
+    },
+    "./executor": {
+      "types": "./dist/executor.d.ts",
+      "import": "./dist/executor.js"
+    },
+    "./host": {
+      "types": "./dist/host.d.ts",
+      "import": "./dist/host.js"
+    }
+  }
+}

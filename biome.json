@@ -13,6 +13,7 @@
       "*.json",
       "!package-lock.json",
       "!apps/runtime/standalone-lock.json",
+      "!apps/agent/standalone-lock.json",
       "!**/dist",
       "!**/node_modules"
     ]

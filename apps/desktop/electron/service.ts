@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   type DiagnosticReport,
   diagnosticIds,
   disconnected,
+  isRebootStatus,
   type RebootStatus,
   type RuntimeCommand,
   type RuntimeReply,
@@ -13,32 +15,58 @@ import {
   type SetupStatus,
 } from '@daban/protocol';
 import { BrowserWindow, clipboard, ipcMain, shell } from 'electron';
+import { AgentSetup } from './agent-setup';
+import { Daemon, daemonScope } from './daemon';
 import { loadHost, type ManagedHost } from './host';
 import { parseCommand, trustedSender } from './ipc';
-import type { RuntimeClient } from './runtime';
+import { RuntimeClient } from './runtime';
 import { Setup } from './setup';
+import { controlSocket } from './socket';
+import { readAgentToken, unixFetch } from './unix';
+
+export interface AgentConfig {
+  entry: string;
+  executable: string;
+  dataRoot?: string;
+  socketPath?: string;
+  vmConfig?: string;
+}
 
 export function runtimeService(
   userData: string,
   rendererUrl: string,
   resources = join(__dirname, '..', 'resources/environment'),
   onSnapshot?: (snapshot: RuntimeSnapshot, scope?: string) => Promise<unknown>,
+  agent?: AgentConfig,
 ) {
-  let setup: Setup | undefined;
+  const dataRoot = agent?.dataRoot ?? join(userData, 'agent');
+  const vmConfig = agent?.vmConfig ?? join(userData, 'runtime.json');
+  const agentScope = agent ? daemonScope(dataRoot, vmConfig) : undefined;
+  const agentConfig = agent
+    ? {
+        entry: agent.entry,
+        executable: agent.executable,
+        dataRoot,
+        vmConfig,
+        socketPath: agent.socketPath ?? controlSocket(join(userData, 'agent.sock'), agentScope!),
+      }
+    : undefined;
+  let daemon: Daemon | undefined;
+  const agentTransport = new AbortController();
+  let setup: Setup | AgentSetup | undefined;
   let setupState: SetupStatus | undefined;
   function installation() {
     if (closed) throw new Error('RUNTIME_CLOSED');
-    setup ??= new Setup({
-      userData,
-      resources,
-      onChange: (next) => {
-        if (closed) return;
-        setupState = next;
-        publish(state);
-        if (next.phase === 'complete')
-          connect().catch(() => console.error('Installed runtime connection failed'));
-      },
-    });
+    const onChange = (next: SetupStatus) => {
+      if (closed) return;
+      setupState = next;
+      publish(state);
+      if (next.phase === 'complete')
+        connect().catch(() => console.error('Installed runtime connection failed'));
+    };
+    setup ??= agentConfig
+      ? new AgentSetup({ config: agentConfig, onChange })
+      : new Setup({ userData, resources, onChange });
     return setup;
   }
   let host: ManagedHost | undefined;
@@ -46,6 +74,8 @@ export function runtimeService(
   let client: RuntimeClient | undefined;
   let state: RuntimeSnapshot = disconnected('connecting');
   let reboot: RebootStatus | undefined;
+  let rebootRequested = 0,
+    rebootPublished = 0;
   let recovering = false;
   let connecting: Promise<RuntimeSnapshot> | undefined;
   let polling = false;
@@ -56,6 +86,7 @@ export function runtimeService(
     lastPoll = 0;
   async function managed() {
     if (closed) throw new Error('RUNTIME_CLOSED');
+    if (agentConfig) throw new Error('AGENT_CONTROL_ONLY');
     if (host) return host;
     loadingHost ??= loadHost(join(userData, 'runtime.json'), join(userData, 'runtime-tunnel.sock'))
       .then(async (loaded) => {
@@ -72,6 +103,93 @@ export function runtimeService(
       });
     return loadingHost;
   }
+  function privateClient() {
+    if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
+    const fetcher = unixFetch(agentConfig.socketPath);
+    return new RuntimeClient({
+      origin: 'http://127.0.0.1:8766',
+      agent: true,
+      tokenProvider: () => readAgentToken(agentConfig.dataRoot),
+      fetcher: (url, init = {}) =>
+        fetcher(url, {
+          ...init,
+          signal: AbortSignal.any([agentTransport.signal, ...(init.signal ? [init.signal] : [])]),
+        }),
+    });
+  }
+  async function connectAgent() {
+    if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
+    // A partial configuration does not clear a user pause or authorize a legacy VM installation.
+    const progress = await installation().status();
+    if (progress.required) {
+      setupState = progress;
+      throw new Error('SETUP_REQUIRED');
+    }
+    await access(agentConfig.vmConfig);
+    if (closed) throw new Error('RUNTIME_CLOSED');
+    daemon ??= new Daemon(agentConfig);
+    await daemon.ensure();
+    if (closed) throw new Error('RUNTIME_CLOSED');
+    return privateClient();
+  }
+  async function inspectAgent(): Promise<DiagnosticReport> {
+    const report: DiagnosticReport = {
+      scope: 'host',
+      checkedAt: new Date().toISOString(),
+      checks: [...diagnosticIds.host, ...diagnosticIds.runtime].map((id) => ({
+        id,
+        state: 'unchecked',
+      })),
+    };
+    const configuration = report.checks.find((row) => row.id === 'configuration')!;
+    try {
+      await access(vmConfig);
+      configuration.state = 'ready';
+    } catch (error) {
+      configuration.state =
+        error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+          ? 'unconfigured'
+          : 'unavailable';
+      return report;
+    }
+    if (closed) throw new Error('RUNTIME_CLOSED');
+    try {
+      // Inspection attaches only to an existing private service; it must not start a daemon or VM.
+      if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
+      const response = await unixFetch(agentConfig.socketPath, { maxBytes: 64 * 1024 })(
+        'http://127.0.0.1:8766/agent/identity',
+        { signal: AbortSignal.any([agentTransport.signal, AbortSignal.timeout(2000)]) },
+      );
+      const identity: unknown = await response.json();
+      if (
+        !response.ok ||
+        !identity ||
+        typeof identity !== 'object' ||
+        !('role' in identity) ||
+        identity.role !== 'agent' ||
+        !('scope' in identity) ||
+        identity.scope !== agentScope ||
+        !('dataRoot' in identity) ||
+        identity.dataRoot !== agentConfig.dataRoot ||
+        !('socketPath' in identity) ||
+        identity.socketPath !== agentConfig.socketPath
+      )
+        throw new Error('AGENT_DAEMON_SCOPE_MISMATCH');
+      if (closed) throw new Error('RUNTIME_CLOSED');
+      const value = (await (client ?? privateClient()).invoke({
+        type: 'runtime.inspect',
+      })) as DiagnosticReport;
+      report.checks.splice(
+        diagnosticIds.host.length,
+        diagnosticIds.runtime.length,
+        ...value.checks,
+      );
+    } catch {
+      if (closed) throw new Error('RUNTIME_CLOSED');
+      report.checks.find((row) => row.id === 'agent')!.state = 'unavailable';
+    }
+    return report;
+  }
   function publish(next: RuntimeSnapshot) {
     if (closed) return;
     if (reboot) next = { ...next, reboot };
@@ -79,11 +197,13 @@ export function runtimeService(
     const changed = JSON.stringify(state) !== JSON.stringify(next);
     state = next;
     if (changed && onSnapshot) {
-      const scope = host?.config
-        ? createHash('sha256')
-            .update(JSON.stringify([host.config.limaHome, host.config.vm]))
-            .digest('hex')
-        : undefined;
+      const scope =
+        agentScope ??
+        (host?.config
+          ? createHash('sha256')
+              .update(JSON.stringify([host.config.limaHome, host.config.vm]))
+              .digest('hex')
+          : undefined);
       try {
         onSnapshot(state, scope).catch(() => console.error('Desktop notice observation failed'));
       } catch {
@@ -94,22 +214,45 @@ export function runtimeService(
       for (const window of BrowserWindow.getAllWindows())
         window.webContents.send('daban:runtime-state', state);
   }
+  function acceptReboot(next: RebootStatus, ticket = ++rebootRequested) {
+    // Network status replies started before a new power intent must never clear its effect fence.
+    if (ticket < rebootPublished) return false;
+    const changed = JSON.stringify(next) !== JSON.stringify(reboot);
+    rebootPublished = ticket;
+    reboot = next;
+    return changed;
+  }
   async function refreshReboot() {
-    if (!host) return;
-    const next = await host.recoveryStatus();
-    if (JSON.stringify(next) !== JSON.stringify(reboot)) {
-      reboot = next;
-      publish(state);
+    const ticket = ++rebootRequested,
+      epoch = connection,
+      current = client;
+    let next: RebootStatus;
+    if (agentConfig) {
+      if (!client) return;
+      try {
+        const value = await client.invoke({ type: 'recovery.status' });
+        if (!isRebootStatus(value)) throw new Error('INVALID_RUNTIME_STATE');
+        next = value;
+      } catch {
+        next = { available: false, error: 'RECOVERY_HOST_STORE_UNAVAILABLE' };
+      }
+    } else {
+      if (!host) return;
+      next = await host.recoveryStatus();
     }
+    if (epoch !== connection || (agentConfig && current !== client)) return;
+    if (acceptReboot(next, ticket)) publish(state);
   }
   async function refresh() {
     if (!client) return state;
     const current = client,
       ticket = ++requested;
+    const powerTicket = agentConfig ? ++rebootRequested : undefined;
     const next = await current.status();
     // A slow poll started before a mutation/reconnect cannot roll back its newer snapshot.
     if (current === client && ticket >= published) {
       published = ticket;
+      if (agentConfig && next.reboot) acceptReboot(next.reboot, powerTicket);
       publish(next);
     }
     return state;
@@ -118,15 +261,23 @@ export function runtimeService(
     if (connecting) return connecting;
     connecting = (async () => {
       connection++;
+      rebootPublished = ++rebootRequested;
       published = ++requested;
       publish(disconnected('connecting'));
       try {
-        const owner = await managed();
-        await refreshReboot();
-        client = await owner.connect();
+        if (agentConfig) client = await connectAgent();
+        else {
+          const owner = await managed();
+          await refreshReboot();
+          client = await owner.connect();
+        }
         await refresh();
       } catch (error) {
-        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+        if (agentConfig) client = undefined;
+        if (
+          (error instanceof Error && error.message === 'SETUP_REQUIRED') ||
+          (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+        )
           setupState = await installation().status();
         publish(disconnected('offline', '本地运行环境未连接，请在设置中重试。'));
       }
@@ -172,6 +323,28 @@ export function runtimeService(
       command.type === 'recovery.cancel' ||
       command.type === 'recovery.start'
     ) {
+      if (agentConfig) {
+        if (!client) throw new Error('RUNTIME_OFFLINE');
+        if (command.type === 'recovery.status') {
+          await refreshReboot();
+          return reboot;
+        }
+        if (command.type === 'recovery.review') return client.invoke(command);
+        recovering = true;
+        rebootPublished = ++rebootRequested;
+        published = ++requested;
+        try {
+          const result = await client.invoke(command);
+          if (!isRebootStatus(result)) throw new Error('INVALID_RUNTIME_STATE');
+          acceptReboot(result);
+          publish(state);
+          if (result.available && result.operation?.stage === 'complete') await refresh();
+          return result;
+        } finally {
+          recovering = false;
+          await refreshReboot();
+        }
+      }
       const owner = await managed();
       if (command.type === 'recovery.status') {
         await refreshReboot();
@@ -202,6 +375,7 @@ export function runtimeService(
       }
     }
     if (command.type === 'runtime.inspect') {
+      if (agentConfig) return inspectAgent();
       let owner: ManagedHost;
       try {
         owner = await managed();
@@ -289,12 +463,17 @@ export function runtimeService(
     connect,
     releaseInputs,
     async close() {
+      if (closed) return;
       closed = true;
       clearInterval(timer);
       ipcMain.removeHandler('daban:runtime');
       await setup?.close();
+      // This cancels only the UI's startup wait; launchd keeps accepted tasks alive.
+      await daemon?.close();
       host?.abort();
       await releaseInputs();
+      agentTransport.abort();
+      if (agentConfig) client = undefined;
       await loadingHost?.catch(() => {});
       await host?.close();
     },

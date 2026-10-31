@@ -58,6 +58,7 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
   isRecoveryStatus,
@@ -202,6 +203,7 @@ interface Options {
   serverOrigin?: string;
   tokenProvider?: () => Promise<string | undefined>;
   fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
+  agent?: boolean;
 }
 export class RuntimeClient {
   readonly origin: string;
@@ -210,8 +212,10 @@ export class RuntimeClient {
   private token = '';
   private readonly tokenProvider?: Options['tokenProvider'];
   private authenticating?: Promise<unknown>;
-  constructor({ origin, serverOrigin = origin, fetcher = localRequest, tokenProvider }: Options) {
+  private readonly agent: boolean;
+  constructor({ origin, serverOrigin = origin, fetcher, tokenProvider, agent = false }: Options) {
     const url = new URL(origin);
+    if (agent && !fetcher) throw new Error('AGENT_TRANSPORT_REQUIRED');
     if (
       url.protocol !== 'http:' ||
       url.hostname !== '127.0.0.1' ||
@@ -219,7 +223,8 @@ export class RuntimeClient {
       url.password ||
       !['', '/'].includes(url.pathname) ||
       url.search ||
-      url.hash
+      url.hash ||
+      (agent && url.origin !== 'http://127.0.0.1:8766')
     )
       throw new Error('INVALID_RUNTIME_ORIGIN');
     const server = new URL(serverOrigin);
@@ -232,8 +237,9 @@ export class RuntimeClient {
       throw new Error('INVALID_RUNTIME_ORIGIN');
     this.origin = url.origin;
     this.serverHost = server.host;
-    this.fetcher = fetcher;
+    this.fetcher = fetcher ?? localRequest;
     this.tokenProvider = tokenProvider;
+    this.agent = agent;
   }
   private async authenticate() {
     if (this.token) return;
@@ -286,7 +292,13 @@ export class RuntimeClient {
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: data === undefined ? undefined : JSON.stringify(data),
-      signal: AbortSignal.timeout(route.startsWith('/api/bundles/') ? 120000 : 20000),
+      signal: AbortSignal.timeout(
+        route === '/api/host/recovery'
+          ? 600000
+          : route.startsWith('/api/bundles/')
+            ? 120000
+            : 20000,
+      ),
     });
     const decode = async () =>
       route.startsWith('/api/bundles/') ? parseBotJSON(await response.text()) : response.json();
@@ -326,6 +338,8 @@ export class RuntimeClient {
         chats?: unknown;
         notices?: unknown;
         recovery?: unknown;
+        reboot?: unknown;
+        agent?: unknown;
         computers?: unknown;
         skills?: unknown;
         software?: unknown;
@@ -403,6 +417,33 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      if (this.agent) {
+        if (!isRebootStatus(raw.reboot)) throw new Error('INVALID_RUNTIME_STATE');
+        snapshot.reboot = raw.reboot;
+        if (raw.agent !== undefined) {
+          const role = raw.agent;
+          if (
+            !role ||
+            typeof role !== 'object' ||
+            Object.keys(role).length !== 4 ||
+            !('location' in role) ||
+            role.location !== 'host' ||
+            !('execution' in role) ||
+            role.execution !== 'linux-vm' ||
+            !('privilege' in role) ||
+            role.privilege !== 'sudo' ||
+            !('approvals' in role) ||
+            role.approvals !== 'host'
+          )
+            throw new Error('INVALID_RUNTIME_STATE');
+          snapshot.agent = {
+            location: 'host',
+            execution: 'linux-vm',
+            privilege: 'sudo',
+            approvals: 'host',
+          };
+        }
+      }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
@@ -599,6 +640,30 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (this.agent && command.type.startsWith('recovery.')) {
+      const captured = structuredClone(command);
+      const value = await this.api('/api/host/recovery', captured);
+      if (captured.type === 'recovery.review') {
+        if (!isRecoveryReview(value)) throw new Error('INVALID_RUNTIME_STATE');
+        return value;
+      }
+      if (!isRebootStatus(value)) throw new Error('INVALID_RUNTIME_STATE');
+      if (value.available && captured.type !== 'recovery.status') {
+        const operation = value.operation;
+        if (captured.type === 'recovery.restart') {
+          if (
+            !operation ||
+            operation.id !== captured.request.id ||
+            operation.review.digest !== captured.request.review ||
+            operation.review.revision !== captured.request.revision
+          )
+            throw new Error('INVALID_RUNTIME_STATE');
+        } else if ('id' in captured && (!operation || operation.id !== captured.id)) {
+          throw new Error('INVALID_RUNTIME_STATE');
+        }
+      }
+      return value;
+    }
     if (isWorkCommentCommand(command)) {
       // Snapshot the intent before status yields so a caller cannot change the acknowledged request.
       const captured = structuredClone(command);

@@ -16,3 +16,6 @@ dist-runtime/
 /outputs/
 
 /resources/environment/
+/resources/agent/
+
+dist-agent/

@@ -3,7 +3,6 @@ import { execFileSync } from 'node:child_process';
 import { access, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertCleanImage, environmentVersions, verifyAsset } from './environment.ts';
-import { installSoftware } from './software.ts';
 
 // Build-time entry only: a clean isolated image, never an existing user runtime.
 assert.equal(process.platform, 'linux');
@@ -112,28 +111,6 @@ if (action === 'install') {
     '--no-fund',
     '--registry=https://registry.npmjs.org',
   ]);
-  await mkdir(`${product}/dsh`, { recursive: true });
-  await writeFile(
-    `${product}/dsh/package.json`,
-    JSON.stringify({
-      private: true,
-      dependencies: {
-        '@deepseek-ai/dsh': environmentVersions.dsh,
-        '@deepseek-ai/dsh-sdk-client': environmentVersions.dsh,
-      },
-    }),
-  );
-  run(node, [
-    npm,
-    'install',
-    '--prefix',
-    `${product}/dsh`,
-    '--omit=dev',
-    '--ignore-scripts',
-    '--no-audit',
-    '--no-fund',
-    '--registry=https://registry.npmjs.org',
-  ]);
   process.env.PLAYWRIGHT_BROWSERS_PATH = `${product}/browsers`;
   run(
     node,
@@ -155,14 +132,42 @@ if (action === 'install') {
   }
   await mkdir(data, { recursive: true, mode: 0o700 });
   run('/usr/bin/chown', ['bot-prototype:bot-prototype', data]);
-  await installSoftware(`${product}/app/runtime`);
+  await mkdir('/var/lib/daban-executor', { recursive: true, mode: 0o700 });
+  run('/usr/bin/chown', ['bot-prototype:bot-prototype', '/var/lib/daban-executor']);
+  for (const binary of ['node', 'npm', 'npx'])
+    await symlink(`${product}/node/bin/${binary}`, `/usr/local/bin/${binary}`);
+  // Root installs need readable executables; direct service writes retain UMask=0077.
+  await writeFile(
+    '/etc/sudoers.d/daban-executor',
+    'Defaults:bot-prototype umask=0022,umask_override\nbot-prototype ALL=(ALL) NOPASSWD: ALL\n',
+    { mode: 0o440 },
+  );
+  run('/usr/sbin/visudo', ['-cf', '/etc/sudoers.d/daban-executor']);
   await writeFile(
     '/etc/systemd/resolved.conf.d/99-daban-no-multicast.conf',
     '[Resolve]\nLLMNR=no\nMulticastDNS=no\n',
   );
   await writeFile(
-    '/etc/systemd/system/bot-browser.service',
-    await readFile(`${product}/app/runtime/vm.service`, 'utf8'),
+    '/etc/systemd/system/daban-executor.service',
+    `[Unit]
+Description=daban Linux execution service
+After=network.target
+[Service]
+User=bot-prototype
+Group=bot-prototype
+WorkingDirectory=${product}/app/runtime
+Environment=PATH=${product}/node/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+Environment=PLAYWRIGHT_BROWSERS_PATH=${product}/browsers
+Environment=DABAN_EXECUTION_DIR=/var/lib/daban-executor
+Environment=DABAN_WORKSPACE_DIR=${data}/desktops/shared
+Environment=PROFILE_DIR=${data}/profile
+Environment=DABAN_DESKTOP_DIR=${data}/desktops
+ExecStart=${product}/node/bin/node ${product}/app/runtime/main.js
+Restart=on-failure
+UMask=0077
+[Install]
+WantedBy=multi-user.target
+`,
   );
   await writeFile(
     '/etc/daban-image.json',
@@ -173,7 +178,7 @@ if (action === 'install') {
     ) + '\n',
   );
   run('/usr/bin/systemctl', ['daemon-reload']);
-  run('/usr/bin/systemctl', ['enable', '--now', 'bot-browser.service']);
+  run('/usr/bin/systemctl', ['enable', '--now', 'daban-executor.service']);
   console.log('DABAN_IMAGE_INSTALLED');
 }
 
@@ -187,7 +192,8 @@ const homes = (await readFile('/etc/passwd', 'utf8'))
 if (action === 'sanitize') {
   // A configured provider is never considered a disposable build artifact.
   assert.equal(await exists(`${data}/model/credentials.json`), false);
-  run('/usr/bin/systemctl', ['stop', 'bot-browser.service']);
+  run('/usr/bin/systemctl', ['stop', 'daban-executor.service']);
+  await rm('/var/lib/daban-executor', { recursive: true, force: true });
   await rm(data, { recursive: true, force: true });
   await mkdir(data, { mode: 0o700 });
   run('/usr/bin/chown', ['bot-prototype:bot-prototype', data]);

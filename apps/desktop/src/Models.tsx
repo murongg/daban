@@ -110,7 +110,7 @@ export function Models() {
           <div className="setting-label">DeepSeek 官方 API</div>
           <p className="setting-description">
             {runtime.enabled
-              ? `${model.configured ? '密钥已保存在本地 Linux，客户端不回显。' : '先配置 API Key，再开始任务。'} 工作区默认模型：${name}`
+              ? `${model.configured ? (runtime.snapshot.agent?.location === 'host' ? '密钥保存在本机 Agent 服务中，不发送到 Linux 执行虚拟机。' : '密钥已保存在本地 Linux，客户端不回显。') : '先配置 API Key，再开始任务。'} 工作区默认模型：${name}`
               : '网页预览不保存密钥，请在桌面客户端配置。'}
           </p>
           {runtime.enabled && runtime.snapshot.protocolVersion < 13 && (

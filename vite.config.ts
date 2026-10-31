@@ -8,7 +8,7 @@ export default defineConfig({
       'apps/desktop/src/**/*.test.ts',
       'apps/desktop/src/**/*.test.tsx',
       'apps/desktop/electron/**/*.test.ts',
-      'apps/runtime/web/**/*.test.ts',
+      'packages/engine/web/**/*.test.ts',
     ],
     environment: 'jsdom',
     setupFiles: './tools/setup.ts',

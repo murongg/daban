@@ -1,3 +1,4 @@
+import type { RebootStatus, RuntimeCommand } from '@daban/protocol';
 import {
   isRecoveryReceipt,
   isRecoveryRequest,
@@ -166,4 +167,161 @@ it('retains strict24 recovery metadata and binds internal recovery transport to 
     '/api/recovery/prepare',
     '/api/recovery/prepare',
   ]);
+});
+
+it('agent recovery uses only the host command route and validates the returned operation binding', async () => {
+  const request = {
+    id: 'mock-private-power',
+    revision: 0,
+    review: review.digest,
+    confirmation: 'restart-all-apps' as const,
+  };
+  const status: RebootStatus = {
+    available: true,
+    revision: 1,
+    busy: false,
+    vm: 'unknown',
+    operation: { id: request.id, stage: 'preparing', review },
+  };
+  let returned: unknown = status;
+  const sent: RuntimeCommand[] = [];
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:8766',
+    agent: true,
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (url, init) => {
+      expect(new URL(url).pathname).toBe('/api/host/recovery');
+      expect(init?.method).toBe('POST');
+      expect(new Headers(init?.headers).get('x-prototype-token')).toBe('a'.repeat(64));
+      const command = JSON.parse(String(init?.body)) as RuntimeCommand;
+      sent.push(command);
+      return Response.json(command.type === 'recovery.review' ? review : returned);
+    },
+  });
+  const commands: RuntimeCommand[] = [
+    { type: 'recovery.status' },
+    { type: 'recovery.review' },
+    { type: 'recovery.restart', request },
+    { type: 'recovery.inspect', id: request.id },
+    { type: 'recovery.cancel', id: request.id },
+    { type: 'recovery.start', id: request.id },
+  ];
+  for (const command of commands)
+    expect(await client.invoke(command)).toEqual(
+      command.type === 'recovery.review' ? review : status,
+    );
+  expect(sent).toEqual(commands);
+  returned = { ...status, operation: { ...status.operation!, id: 'mock-foreign' } };
+  await expect(client.invoke({ type: 'recovery.restart', request })).rejects.toThrow(
+    'INVALID_RUNTIME_STATE',
+  );
+  returned = {
+    ...status,
+    operation: { ...status.operation!, review: { ...review, digest: 'b'.repeat(64) } },
+  };
+  await expect(client.invoke({ type: 'recovery.restart', request })).rejects.toThrow(
+    'INVALID_RUNTIME_STATE',
+  );
+});
+
+it('agent snapshots require valid host reboot authority and legacy snapshots never adopt guest reboot state', async () => {
+  let reboot: unknown = { available: true, revision: 0, busy: false, vm: 'running' };
+  const fetcher = async (url: string) =>
+    Response.json(
+      url.endsWith('/api/model/settings')
+        ? { provider: 'deepseek-official', model: 'deepseek-flash', configured: true, revision: 0 }
+        : {
+            clientProtocol: 24,
+            mode: 'agent',
+            sharedLogin: false,
+            bots: {},
+            computers: { available: true, revision: 0, limit: 2, items: [] },
+            skills: { available: true, revision: 0 },
+            mcp: { available: true, revision: 0 },
+            recovery: { available: true, revision: 0 },
+            model: { available: true, bots: {} },
+            reboot,
+          },
+    );
+  const agent = new RuntimeClient({
+    origin: 'http://127.0.0.1:8766',
+    agent: true,
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  expect((await agent.status()).reboot).toEqual(reboot);
+  reboot = {
+    available: true,
+    revision: 0,
+    busy: false,
+    vm: 'running',
+    token: 'mock-execution-token',
+  };
+  expect((await agent.status()).phase).toBe('offline');
+  const legacy = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  expect((await legacy.status()).phase).toBe('ready');
+  expect((await legacy.status()).reboot).toBeUndefined();
+});
+
+it('agent clients require an explicit private transport and the logical host origin', () => {
+  expect(() => new RuntimeClient({ origin: 'http://127.0.0.1:8766', agent: true })).toThrow(
+    'AGENT_TRANSPORT_REQUIRED',
+  );
+  expect(
+    () =>
+      new RuntimeClient({
+        origin: 'http://127.0.0.1:18766',
+        agent: true,
+        fetcher: async () => Response.json({}),
+      }),
+  ).toThrow('INVALID_RUNTIME_ORIGIN');
+});
+
+it('only private agent clients expose the exact host key and sudo-VM role metadata', async () => {
+  let metadata: unknown = {
+    location: 'host',
+    execution: 'linux-vm',
+    privilege: 'sudo',
+    approvals: 'host',
+  };
+  const fetcher = async (url: string) =>
+    Response.json(
+      url.endsWith('/api/model/settings')
+        ? { provider: 'deepseek-official', model: 'deepseek-flash', configured: true, revision: 0 }
+        : {
+            clientProtocol: 17,
+            mode: 'agent',
+            computerError: 'COMPUTER_START_FAILED',
+            sharedLogin: false,
+            bots: {},
+            model: { available: true, bots: {} },
+            reboot: { available: true, revision: 0, busy: false, vm: 'running' },
+            agent: metadata,
+          },
+    );
+  const host = new RuntimeClient({
+    origin: 'http://127.0.0.1:8766',
+    agent: true,
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  expect((await host.status()).agent).toEqual(metadata);
+  const guest = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  expect((await guest.status()).agent).toBeUndefined();
+  metadata = {
+    location: 'host',
+    execution: 'linux-vm',
+    privilege: 'sudo',
+    approvals: 'host',
+    token: 'mock-private-payload',
+  };
+  expect((await host.status()).phase).toBe('offline');
 });

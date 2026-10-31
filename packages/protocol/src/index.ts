@@ -1,3 +1,5 @@
+export * from './execution.js';
+
 import { isSoftwarePlan, type SoftwarePlan, type SoftwareState } from './software.js';
 
 export * from './software.js';
@@ -1299,6 +1301,7 @@ export interface SetupStatus {
   error?: string;
 }
 export interface RuntimeSnapshot {
+  agent?: { location: 'host'; execution: 'linux-vm'; privilege: 'sudo'; approvals: 'host' };
   notes?: NoteAvailability;
   work?: WorkStatus;
   notices?: RuntimeNoticeStatus;
@@ -2288,6 +2291,14 @@ export type InteractionInput = { id: string; sessionId: string } & (
   | { kind: 'approval'; tool: 'software_install'; plan: SoftwarePlan; purpose: string }
   | {
       kind: 'approval';
+      tool: 'vm_command';
+      command: string;
+      cwd: string;
+      purpose: string;
+      target: 'linux-vm';
+    }
+  | {
+      kind: 'approval';
       tool: 'mcp_call';
       connection: string;
       configRevision: number;
@@ -2376,6 +2387,26 @@ export function isInteractionInput(value: unknown): value is InteractionInput {
       exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'plan', 'purpose']) &&
       isSoftwarePlan(value.plan) &&
       boundedText(value.purpose, 500)
+    );
+  if (value.kind === 'approval' && value.tool === 'vm_command')
+    return (
+      exactKeys(value, [
+        'id',
+        'sessionId',
+        'kind',
+        'tool',
+        'command',
+        'cwd',
+        'purpose',
+        'target',
+      ]) &&
+      boundedText(value.command, 12000) &&
+      boundedText(value.cwd, 4096) &&
+      value.cwd.startsWith('/') &&
+      !value.cwd.includes('\\') &&
+      !value.cwd.split('/').includes('..') &&
+      boundedText(value.purpose, 500) &&
+      value.target === 'linux-vm'
     );
   if (value.kind === 'approval' && value.tool === 'mcp_call') {
     if (!publicUrl(value.origin)) return false;

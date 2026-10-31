@@ -17,14 +17,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { environmentVersions, verifyAsset } from './environment.ts';
 import { writeIcon } from './icon.ts';
+import { buildExecutor, packageHost, sealHostPackage } from './roles.ts';
 
 // Build-time macOS app assembly. Never reuse a user directory or package a Lima home.
 assert.equal(process.platform, 'darwin');
 assert.equal(process.arch, 'arm64');
-const [payloadArgument, outputArgument] = process.argv.slice(2);
+const [payloadArgument, outputArgument, nodeArgument, executorArgument] = process.argv.slice(2);
 assert.ok(
-  payloadArgument && outputArgument,
-  'Usage: bundle:desktop -- <environment-pack> <new-output-directory>',
+  payloadArgument && outputArgument && nodeArgument,
+  'Usage: bundle:desktop -- <clean-environment-pack> <new-output-directory> <node-24.22.1-directory>',
 );
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const payload = await realpath(payloadArgument);
@@ -38,7 +39,12 @@ const manifest = JSON.parse(await readFile(path.join(payload, 'manifest.json'), 
 };
 assert.equal(manifest.platform, 'darwin');
 assert.equal(manifest.arch, 'arm64');
-assert.deepEqual(manifest.versions, environmentVersions);
+// The sealed, credential-free base is deliberately independent of the overlaid execution protocol.
+assert.deepEqual(manifest.versions, { ...environmentVersions, protocol: 38 });
+assert.equal(
+  manifest.image.sha256,
+  '0b2c13631d75438214b32ebe5f016b625e27c993d602019b83eee47e044ebde9',
+);
 assert.equal(manifest.image.file, 'system.raw.gz');
 assert.equal(manifest.lima.file, 'lima.tar.gz');
 for (const asset of [manifest.image, manifest.lima])
@@ -107,6 +113,28 @@ for (const file of ['manifest.json', 'system.raw.gz', 'lima.tar.gz', 'COMPONENTS
     path.join(environment, file),
     constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
   );
+const agent = path.join(resources, 'agent');
+await packageHost(agent, await realpath(nodeArgument));
+if (executorArgument)
+  await copyFile(await realpath(executorArgument), path.join(agent, 'executor.tar.gz'));
+else {
+  const executor = path.join(output, 'executor');
+  await buildExecutor(executor);
+  execFileSync(
+    '/usr/bin/tar',
+    [
+      '--format=ustar',
+      '-czf',
+      path.join(agent, 'executor.tar.gz'),
+      '-C',
+      executor,
+      'main.js',
+      'package.json',
+      'node_modules',
+    ],
+    { env: { ...process.env, COPYFILE_DISABLE: '1' } },
+  );
+}
 for (const file of ['LICENSE', 'LICENSES.chromium.html'])
   await copyFile(
     path.join(path.dirname(source), file),
@@ -156,6 +184,9 @@ for (const [key, value] of Object.entries({
   execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
 // UNNotification requires a valid bundle signature; local ad-hoc signing does not confer Developer ID trust.
 execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', target]);
+// Deep signing can change native payload bytes; seal the final archive and signed files before the outer resource seal.
+await sealHostPackage(agent);
+execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', target]);
 execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', target]);
 await writeFile(
   path.join(output, 'BUILD.md'),

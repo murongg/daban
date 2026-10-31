@@ -2,6 +2,7 @@ import { agentId, type Interaction, matchesReply, type UserReply } from '@daban/
 import { Check, Inbox, X } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
+import { Command } from './Command';
 import { runtimeError, useRuntime } from './Runtime';
 import { Software } from './Software';
 import type { Action, State } from './state';
@@ -101,12 +102,17 @@ function Request({
       <h3 className="approval-title">
         {current.kind === 'question'
           ? '补充信息后继续'
-          : current.tool === 'software_install'
-            ? '允许安装这些软件吗？'
-            : current.tool === 'mcp_call'
-              ? '允许调用这个外部工具吗？'
-              : '允许读取这个链接吗？'}
+          : current.tool === 'vm_command'
+            ? '允许在 Linux 虚拟机中执行这个命令吗？'
+            : current.tool === 'software_install'
+              ? '允许安装这些软件吗？'
+              : current.tool === 'mcp_call'
+                ? '允许调用这个外部工具吗？'
+                : '允许读取这个链接吗？'}
       </h3>
+      {current.kind === 'approval' && current.tool === 'vm_command' && (
+        <Command request={current} />
+      )}
       {current.kind === 'approval' && current.tool === 'web_fetch' && (
         <>
           <p className="approval-description">
@@ -225,7 +231,11 @@ function Request({
                     disabled={saving}
                     onClick={() => submit({ kind: 'decision', allow: true })}
                   >
-                    {current.tool === 'software_install' ? '确认安装' : '仅允许这一次'}
+                    {current.tool === 'vm_command'
+                      ? '确认执行'
+                      : current.tool === 'software_install'
+                        ? '确认安装'
+                        : '仅允许这一次'}
                   </button>
                   <button
                     type="button"
@@ -253,9 +263,11 @@ function Request({
                 {current.reply?.kind === 'decision' && current.reply.allow ? (
                   <>
                     <Check />
-                    {current.kind === 'approval' && current.tool === 'software_install'
-                      ? '已确认本次安装'
-                      : '已允许这一次'}
+                    {current.kind === 'approval' && current.tool === 'vm_command'
+                      ? '已确认本次虚拟机命令'
+                      : current.kind === 'approval' && current.tool === 'software_install'
+                        ? '已确认本次安装'
+                        : '已允许这一次'}
                   </>
                 ) : (
                   <>

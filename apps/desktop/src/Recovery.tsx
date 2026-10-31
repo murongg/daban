@@ -118,7 +118,8 @@ export function Recovery({
       if (mounted.current) setBusy(false);
     }
   }
-  const scope = operation?.review ?? review;
+  // A completed operation describes the previous kernel; a new restart must use a freshly reviewed scope.
+  const scope = pending ? operation!.review : (review ?? operation?.review);
   const changed =
     !!review &&
     (runtime.snapshot.computers?.revision !== review.computersRevision ||
@@ -135,7 +136,8 @@ export function Recovery({
             (!lease || lease.epoch !== row.lease.epoch || lease.owner !== row.lease.owner))
         );
       }) ||
-      (!!operation &&
+      (pending &&
+        !!operation &&
         (review.boot !== operation.review.boot ||
           review.instance !== operation.review.instance ||
           review.computersRevision !== operation.review.computersRevision ||
@@ -234,7 +236,9 @@ export function Recovery({
           )}
         </div>
       )}
-      {changed && <p className="inline-note">运行环境或控制状态已变化，请重新核对。</p>}
+      {changed && operation?.stage !== 'complete' && (
+        <p className="inline-note">运行环境或控制状态已变化，请重新核对。</p>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}

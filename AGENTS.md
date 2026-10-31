@@ -30,10 +30,10 @@ Biome 保留现有非空断言、CSS 层叠顺序和必要的 `!important` 风�
 
 ## 工作区边界
 
-- 使用 npm workspaces：`apps/desktop`、`apps/runtime`、`packages/protocol`；仓库工具放在 `tools`。
+- 使用 npm workspaces：`apps/desktop`（客户端）、`apps/agent`（宿主机控制服务）、`apps/runtime`（Linux 执行服务）、`packages/engine`（分角色实现库）、`packages/protocol`（公开协议）；仓库工具放在 `tools`。
 - 应用的依赖由应用声明；共享协议只通过 `@daban/protocol` 的公开入口导入。禁止应用互相导入、跨工作区相对路径和访问包内部源码。
-- 根目录命令按协议包 → 应用的顺序构建；保持现有构建入口和用户数据路径的兼容。
-- `apps/runtime/standalone-lock.json` 用于独立 Linux 部署。更新运行时依赖时同步根 lockfile 与独立 lockfile，不依赖开发机 workspace 链接。
+- 根目录命令按协议包 → 实现库 → 应用的顺序构建；保持现有构建入口和用户数据路径的兼容。
+- `apps/runtime/standalone-lock.json` 用于独立 Linux 部署，`apps/agent/standalone-lock.json` 用于宿主机后台部署。更新依赖时同步根 lockfile 与对应独立 lockfile，不依赖开发机 workspace 链接。
 
 ## 验收产物与磁盘空间
 

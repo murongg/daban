@@ -34,7 +34,11 @@ export function Software({ request }: { request: InstallRequest }) {
       <p className="field-help">确认仅对本次计划有效；软件或依赖发生变化时需重新确认。</p>
       {approved && (
         <p role="status" className="inline-note">
-          {receipt ? statuses[receipt.phase] : '正在核对安装结果，请勿重复安装'}
+          {receipt
+            ? statuses[receipt.phase]
+            : snapshot.agent?.location === 'host'
+              ? '这是迁移前已确认的安装记录；可让 Bot 核对当前虚拟机中的软件。'
+              : '正在核对安装结果，请勿重复安装'}
         </p>
       )}
       {approved && receipt?.error && (

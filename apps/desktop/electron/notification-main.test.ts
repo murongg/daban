@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { NoticeActivation, NoticeMessage } from '../notifications';
 
@@ -20,6 +21,8 @@ const mock = vi.hoisted(() => ({
   close: vi.fn(async () => {}),
   focus: vi.fn(async () => {}),
   connect: vi.fn(async () => {}),
+  serviceArgs: [] as unknown[][],
+  packaged: false,
   permissions: undefined as
     | ((a: unknown, b: unknown, callback: (value: boolean) => unknown) => unknown)
     | undefined,
@@ -32,7 +35,9 @@ vi.mock('electron', () => ({
     requestSingleInstanceLock: () => true,
     quit: vi.fn(),
     isReady: () => true,
-    isPackaged: false,
+    get isPackaged() {
+      return mock.packaged;
+    },
     on: (name: string, callback: (...args: unknown[]) => unknown) =>
       mock.events.set(name, callback),
     whenReady: () =>
@@ -73,11 +78,14 @@ vi.mock('electron', () => ({
   },
 }));
 vi.mock('./service', () => ({
-  runtimeService: () => ({
-    connect: mock.connect,
-    close: vi.fn(async () => {}),
-    releaseInputs: vi.fn(async () => {}),
-  }),
+  runtimeService: (...args: unknown[]) => {
+    mock.serviceArgs.push(args);
+    return {
+      connect: mock.connect,
+      close: vi.fn(async () => {}),
+      releaseInputs: vi.fn(async () => {}),
+    };
+  },
 }));
 vi.mock('./notifications', () => ({
   Notifications: class {
@@ -99,36 +107,60 @@ vi.mock('./notifications', () => ({
 }));
 vi.mock('./notification-ipc', () => ({ noticeIpc: () => () => {} }));
 
-it('captures cold-start metadata, reuses the owned window and keeps renderer permissions denied', async () => {
-  vi.stubGlobal('__dirname', '/mock');
-  try {
-    await import('./main');
-    mock.events.get('ready')?.({}, { identifier: 'mock-cold-id' });
-    mock.ready?.();
-    await vi.waitFor(() => expect(mock.connect).toHaveBeenCalled());
-    mock.windows[0].emit('ready-to-show');
-    expect(mock.activate).toHaveBeenCalledWith('mock-cold-id');
-    const activation: NoticeActivation = {
-      id: 'mock-native-id',
-      scope: 'a'.repeat(64),
-      target: { kind: 'settings' },
-    };
-    mock.options!.open(activation);
-    expect(mock.windows).toHaveLength(1);
-    expect(mock.windows[0].focus).toHaveBeenCalled();
-    const permission = vi.fn();
-    mock.permissions?.({}, 'notifications', permission);
-    expect(permission).toHaveBeenCalledWith(false);
-    mock.options!.changed({ type: 'navigate', activation });
-    expect(mock.windows[0].webContents.send).toHaveBeenCalledWith('daban:notification-message', {
-      type: 'navigate',
-      activation,
+it.each([false, true])(
+  'captures notifications and always selects the host agent transport (packaged=%s)',
+  async (packaged) => {
+    vi.resetModules();
+    mock.packaged = packaged;
+    mock.events.clear();
+    mock.windows.length = 0;
+    mock.serviceArgs.length = 0;
+    mock.connect.mockClear();
+    const previous = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
+    Object.defineProperty(process, 'resourcesPath', {
+      configurable: true,
+      value: '/mock/Resources',
     });
-    mock.windows[0].destroyed = true;
-    mock.windows[0].emit('closed');
-    mock.options!.open(activation);
-    expect(mock.windows).toHaveLength(2);
-  } finally {
-    vi.unstubAllGlobals();
-  }
-});
+    vi.stubGlobal('__dirname', '/mock');
+    try {
+      await import('./main');
+      mock.events.get('ready')?.({}, { identifier: 'mock-cold-id' });
+      mock.ready?.();
+      await vi.waitFor(() => expect(mock.connect).toHaveBeenCalled());
+      expect(mock.serviceArgs[0][4]).toEqual({
+        entry: packaged
+          ? join('/mock/Resources/agent', 'main.js')
+          : expect.stringMatching(/\/resources\/agent\/main\.js$/),
+        executable: packaged
+          ? join('/mock/Resources/agent', 'node/bin/node')
+          : expect.stringMatching(/\/resources\/agent\/node\/bin\/node$/),
+      });
+      mock.windows[0].emit('ready-to-show');
+      expect(mock.activate).toHaveBeenCalledWith('mock-cold-id');
+      const activation: NoticeActivation = {
+        id: 'mock-native-id',
+        scope: 'a'.repeat(64),
+        target: { kind: 'settings' },
+      };
+      mock.options!.open(activation);
+      expect(mock.windows).toHaveLength(1);
+      expect(mock.windows[0].focus).toHaveBeenCalled();
+      const permission = vi.fn();
+      mock.permissions?.({}, 'notifications', permission);
+      expect(permission).toHaveBeenCalledWith(false);
+      mock.options!.changed({ type: 'navigate', activation });
+      expect(mock.windows[0].webContents.send).toHaveBeenCalledWith('daban:notification-message', {
+        type: 'navigate',
+        activation,
+      });
+      mock.windows[0].destroyed = true;
+      mock.windows[0].emit('closed');
+      mock.options!.open(activation);
+      expect(mock.windows).toHaveLength(2);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous) Object.defineProperty(process, 'resourcesPath', previous);
+      else Reflect.deleteProperty(process, 'resourcesPath');
+    }
+  },
+);

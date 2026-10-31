@@ -1,8 +1,12 @@
 # daban
 
-daban 是 Grok Bot 风格的本机 Agent 原型，使用 Electron、React、TypeScript、Vite，以及 Linux 内的 DeepSeek Harness。
+daban 是 Grok Bot 风格的本机 Agent 原型，使用 Electron、React、TypeScript、Vite。DSH、模型连接、聊天和审批由宿主机的独立后台服务管理；Linux VM 只负责桌面、浏览器、文件和命令执行。
 
-共享软件安装已作为可选能力接入当前冻结的 38 版客户端和运行环境。Bot 提出 Debian 官方软件包及依赖的确定版本和用途，用户逐次确认或拒绝；“已确认”与实际安装结果分开显示，完成后所有 Bot 都可使用。该通道不提供通用 sudo，也不支持 npm/Codex 安装、自定义脚本、第三方源、升级或卸载。任务协作的 39 版代码仍未启用。
+当前原型中，Bot 以普通 Linux 用户运行桌面，可通过免密 sudo 管理 VM 内的系统、网络和软件。Shell、持续进程及进程输入由宿主机保存一次性审批和回执；结果不明时不自动重放。DSH 使用随包独立 Node 24.22.1，客户端关闭后后台继续工作。模型文件工具仅访问 guest 工作区，禁止回退到宿主机执行或读写。
+
+真实 DeepSeek/DSH 已完成 Codex CLI 0.166.0 的官方 npm 全局安装、非 root 验证及另一只 Bot 的版本/帮助检查；Codex 自身未登录。原生 Electron 验证了实际审批、双 Bot 独立接管/交还，以及终端中的 Codex 和 sudo。Linux 冷重启后宿主机控制面继续工作。迁移前后 38 张表的 257 条原记录一致，原客户端草稿保留；旧 VM 停止保留为回退。共享登录另以独立 Linux 合成站点验证了一次登录、跨页面 HttpOnly Cookie 复用及清理，未登录或操作用户的外部账号。记录见 `outputs/host-agent/`，这些本地产物不提交。
+
+以下为旧版验收记录；38 版的软件安装通道已由本次宿主机控制服务方案接替。共享软件安装曾作为可选能力接入冻结的 38 版客户端和运行环境。Bot 提出 Debian 官方软件包及依赖的确定版本和用途，用户逐次确认或拒绝；“已确认”与实际安装结果分开显示，完成后所有 Bot 都可使用。该通道不提供通用 sudo，也不支持 npm/Codex 安装、自定义脚本、第三方源、升级或卸载。任务协作的 39 版代码仍未启用。
 
 `outputs/software/` 记录真实 DeepSeek/DSH 的拒绝后仍未安装、确认后安装 galculator 2.1.4-2 并查询结果，以及两位 Bot 在各自独立桌面启动计算器；客户端关闭前后的导出完全一致。环境准备源码已接入软件安装服务，实际首次配置该服务和安装软件均在现有 VM 完成，本轮未制作新的完整环境镜像。真实安装中途关闭客户端尚未专项演练；断线、重试、停止与持久化边界另有合成测试。
 
@@ -84,7 +88,7 @@ daban 是 Grok Bot 风格的本机 Agent 原型，使用 Electron、React、Type
 
 当前本地构建支持 Apple 芯片 Mac。打开 `daban.app`，首次选择“创建本地环境”；环境已随应用提供，不要求另装 Docker、Node 或 DSH。完成后自动进入工作区，再到“设置 → 模型与电脑”配置 DeepSeek 官方 API。密钥单独保存，不在安装包中。
 
-默认一台 Linux VM、2 核、3 GiB 内存和 16 GiB 逻辑磁盘；Bot 按需分配独立屏幕。首次安装预留至少 36 GB 可用空间，完成后移除原始安装缓存。退出客户端保留 VM 和任务；电脑休眠或关机不等于云端持续运行。
+当前原型默认一台 Linux VM、4 核、4 GiB 内存和 16 GiB 逻辑磁盘；Bot 按需分配独立屏幕。首次安装预留至少 36 GB 可用空间，完成后移除原始安装缓存。退出客户端保留 VM 和任务；电脑休眠或关机不等于云端持续运行。
 
 已有连接配置不会被首次安装覆盖，异常配置也不会被自动重置。安装可暂停和继续；创建/启动结果不明时先核对进程与 VM，不盲目重建。当前是本地测试版，未完成公开发行签名、公证和完整异常安装恢复。
 
@@ -103,7 +107,7 @@ npm ci
 npm run dev
 ```
 
-`npm run dev` 构建并打开 Electron；`npm start` 打开已构建的客户端。Electron 加载本地文件，无需网页服务器。`npm run dev:web` 仅调试渲染层（127.0.0.1:5173），网页预览不会执行模型任务。
+`npm run dev:web` 仅调试渲染层（127.0.0.1:5173），网页预览不会执行模型任务。完整客户端需要先准备 `resources/agent/` 和 `resources/environment/` 随包资源；之后 `npm run dev` 构建并打开 Electron，`npm start` 打开已构建的客户端。Electron 加载本地文件。完整 macOS ARM64 包使用 `npm run bundle:desktop -- <干净环境包目录> <新的输出目录> <官方 Node 24.22.1 目录>`；构建器会打包生产 SDK、独立 Node 和执行端，不依赖用户另装 Docker、Node 或 DSH。环境包及 Node 归档需预先按固定哈希校验；目前使用已封存的 38 版无凭据基础镜像，并叠加独立执行服务。
 
 `npm ci` 使用根目录唯一的工作区 lockfile，安装客户端和运行时依赖。独立 Linux 部署包另带由 `apps/runtime/standalone-lock.json` 锁定的依赖及协议包副本。文档提取使用锁定的 officeparser 8.2.0，只在 guest 沙箱内解析；提取时不联网下载解析器或 OCR 模型。
 
@@ -119,16 +123,18 @@ ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ ELECTRON_CUSTOM_DIR='{{ 
 
 ```text
 apps/desktop/        React 客户端、Electron 主进程/预加载、预览和实机验收
-apps/runtime/        Linux 常驻服务、DSH 接入、浏览器和电脑执行层
-packages/protocol/   @daban/protocol：两个应用共享的类型及边界校验
+apps/agent/          宿主机后台服务、DSH、密钥、审批和 VM 生命周期
+apps/runtime/        独立 Linux 执行入口（无 DSH、模型密钥或审批库）
+packages/engine/     分角色实现库；公开 agent / executor / host 入口
+packages/protocol/   @daban/protocol：公开类型及执行边界校验
 tools/              源码检查、工作区边界、Linux 运行包及干净环境镜像构建
 ```
 
-依赖方向是 desktop → protocol ← runtime。两个应用不能相互导入，协议只能通过公开包入口访问；`npm run check:source` 检查静态导入、导出和动态导入。电脑执行层目前仍归 runtime，这次目录迁移不构成操作系统权限隔离。
+应用不能相互导入；共享实现和协议均通过公开包入口访问，`npm run check:source` 检查静态导入、导出和动态导入。宿主机后台使用私有 Unix socket 与客户端、DSH 回调通信，通过独立 SSH 通道访问 VM；不向 VM 开放模型、审批 API，不挂载宿主文件或转发认证代理。每只 Bot 各有屏幕，共用 VM、软件、文件和浏览器登录；拥有 VM root 权限后，Bot 之间属于协作环境，不构成互相隔离的安全边界。
 
-根目录常用命令保持不变：`npm run dev`、`npm start`、`npm test`、`npm run test:runtime`、`npm run typecheck`、`npm run build`。应用命令也可通过 `npm run <命令> --workspace @daban/desktop` / `@daban/runtime` 执行；先运行 `npm run build:protocol`。构建仍输出 `dist/`、`dist-electron/`、`dist-runtime/runtime/`，用户数据和 VM 服务入口不变。
+根目录常用命令保持不变：`npm run dev`、`npm start`、`npm test`、`npm run test:runtime`、`npm run typecheck`、`npm run build`。应用命令也可通过 `npm run <命令> --workspace @daban/desktop` / `@daban/runtime` 执行；先运行 `npm run build:protocol`。构建输出 `dist/`、`dist-electron/`、`dist-agent/`、`dist-runtime/` 与 `packages/engine/dist/`。已有客户端数据保留；旧 VM 经冻结、校验和复制后保留为停止的回退环境，执行端使用从未配置密钥的干净磁盘。
 
-`npm run build:runtime` 生成可独立安装的 Linux 运行包，包含协议包及固定依赖清单。在部署目录执行 `npm ci --workspaces=false --ignore-scripts --no-audit --no-fund`；运行服务不需要开发仓库或 workspace 符号链接。开发安装使用根 lockfile，Linux 包使用独立 lockfile；更新运行时依赖时需要同步二者，构建会拒绝清单不匹配。协议包不单独发布。
+`npm run build:runtime` 生成可独立安装的 Linux 运行包，包含协议包及固定依赖清单。在部署目录执行 `npm ci --workspaces=false --ignore-scripts --no-audit --no-fund`；运行服务不需要开发仓库或 workspace 符号链接。开发安装使用根 lockfile，Linux 与宿主机后台分别使用 `apps/runtime/standalone-lock.json` 和 `apps/agent/standalone-lock.json`；更新依赖时同步相关 lockfile，构建会拒绝清单不匹配。协议包不单独发布。
 
 ## 工作偏好历史（协议 32 候选）
 

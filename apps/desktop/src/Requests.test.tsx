@@ -378,3 +378,35 @@ it.each([
   expect(await screen.findByText(label)).toBeVisible();
   expect(screen.queryByRole('button', { name: '确认安装' })).not.toBeInTheDocument();
 });
+
+it('shows an exact Linux-only command before permission and does not describe approval as execution success', async () => {
+  const card: Interaction = {
+    ...base,
+    id: 'mock-vm-command',
+    bot: 'a',
+    runId: 'mock-run-a',
+    kind: 'approval',
+    tool: 'vm_command',
+    command: 'sudo npm install -g mock-cli@1.0.0',
+    cwd: '/mock/vm/workspace',
+    purpose: '合成命令验收',
+    target: 'linux-vm',
+  };
+  const invoke = connect([card]);
+  render(<App />);
+  expect(
+    await screen.findByRole('heading', { name: '允许在 Linux 虚拟机中执行这个命令吗？' }),
+  ).toBeVisible();
+  expect(screen.getByText('sudo npm install -g mock-cli@1.0.0')).toBeVisible();
+  expect(screen.getByText('/mock/vm/workspace')).toBeVisible();
+  expect(screen.getByText(/不会在宿主机执行/)).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '确认执行' }));
+  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
+    type: 'interaction.reply',
+    bot: 'a',
+    runId: 'mock-run-a',
+    id: card.id,
+    reply: { kind: 'decision', allow: true },
+  });
+  expect(screen.queryByText('命令执行成功')).not.toBeInTheDocument();
+});

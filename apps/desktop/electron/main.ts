@@ -125,6 +125,9 @@ if (primary) {
               ?.activate(details.arguments)
               .catch(() => console.error('Notification activation failed'));
         });
+      const agentDirectory = app.isPackaged
+        ? join(process.resourcesPath, 'agent')
+        : join(__dirname, '..', 'resources/agent');
       service = runtimeService(
         app.getPath('userData'),
         pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href,
@@ -132,6 +135,10 @@ if (primary) {
           ? join(process.resourcesPath, 'environment')
           : join(__dirname, '..', 'resources/environment'),
         (snapshot, scope) => notifications!.observe(snapshot, scope),
+        {
+          entry: join(agentDirectory, 'main.js'),
+          executable: join(agentDirectory, 'node/bin/node'),
+        },
       );
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
         callback(false),

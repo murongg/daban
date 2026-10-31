@@ -1,4 +1,11 @@
-import { diagnosticIds, disconnected, type RuntimeSnapshot } from '@daban/protocol';
+import {
+  diagnosticIds,
+  disconnected,
+  type RebootStatus,
+  type RecoveryReview,
+  type RuntimeCommand,
+  type RuntimeSnapshot,
+} from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -6,12 +13,22 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => Promise<unknown>>(),
   load: vi.fn(),
   setupStatus: vi.fn(),
+  setupConstruct: vi.fn(),
   setupStart: vi.fn(),
   setupCancel: vi.fn(),
   setupClose: vi.fn(),
   setupNotify: (_value: unknown) => {},
   openExternal: vi.fn(async () => undefined),
   writeClipboard: vi.fn(),
+  daemonEnsure: vi.fn(),
+  daemonClose: vi.fn(),
+  daemonConfigs: [] as {
+    dataRoot: string;
+    socketPath: string;
+    vmConfig: string;
+    entry: string;
+    executable: string;
+  }[],
 }));
 vi.mock('electron', () => ({
   clipboard: { writeText: mocks.writeClipboard },
@@ -26,6 +43,7 @@ vi.mock('electron', () => ({
 vi.mock('./setup', () => ({
   Setup: class {
     constructor(options: { onChange: (value: unknown) => unknown }) {
+      mocks.setupConstruct();
       mocks.setupNotify = options.onChange;
     }
     status() {
@@ -49,13 +67,44 @@ vi.mock('./host', () => ({
     ...(await mocks.load(...args)),
   }),
 }));
+vi.mock('./daemon', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./daemon')>();
+  return {
+    ...actual,
+    Daemon: class {
+      readonly scope: string;
+      constructor(
+        readonly config: {
+          dataRoot: string;
+          socketPath: string;
+          vmConfig: string;
+          entry: string;
+          executable: string;
+        },
+      ) {
+        mocks.daemonConfigs.push(config);
+        this.scope = actual.daemonScope(config.dataRoot, config.vmConfig);
+      }
+      ensure() {
+        return mocks.daemonEnsure();
+      }
+      close() {
+        return mocks.daemonClose();
+      }
+    },
+  };
+});
 
+import { daemonScope } from './daemon';
 import { runtimeService } from './service';
 
-afterEach(() => {
+const roots = new Set<string>();
+afterEach(async () => {
   vi.useRealTimers();
   mocks.handlers.clear();
   mocks.windows.length = 0;
+  for (const root of roots) await fs.rm(root, { recursive: true, force: true });
+  roots.clear();
 });
 const task = {
   phase: 'running' as const,
@@ -476,4 +525,534 @@ it('offers first-run setup only for absent configuration, admits narrow commands
     await service.close();
   }
   expect(mocks.setupClose).toHaveBeenCalled();
+});
+
+import { once } from 'node:events';
+import fs from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+async function agentFixture() {
+  const root = await fs.mkdtemp(join(tmpdir(), 'mock-service-agent-'));
+  roots.add(root);
+  const dataRoot = join(root, 'data');
+  const socketPath = join(root, 's');
+  const vmConfig = join(root, 'runtime.json');
+  await fs.mkdir(join(dataRoot, 'model'), { recursive: true, mode: 0o700 });
+  await fs.chmod(dataRoot, 0o700);
+  await fs.writeFile(join(dataRoot, 'model/control-token'), 'a'.repeat(64), { mode: 0o600 });
+  await fs.writeFile(join(dataRoot, 'execution-token'), 'b'.repeat(64), { mode: 0o600 });
+  await fs.writeFile(vmConfig, '{}', { mode: 0o600 });
+  const entry = join(root, 'agent.js'),
+    executable = join(root, 'node');
+  await fs.writeFile(entry, 'SYNTHETIC AGENT ENTRY', { mode: 0o600 });
+  await fs.writeFile(executable, 'SYNTHETIC HOST NODE', { mode: 0o700 });
+  const requests: { route: string; auth?: string; body: string }[] = [];
+  const identity = { role: 'agent', scope: daemonScope(dataRoot, vmConfig), dataRoot, socketPath };
+  const review: RecoveryReview = {
+    boot: 'mock-power-boot',
+    instance: 'mock-power-instance',
+    revision: 0,
+    computersRevision: 0,
+    digest: 'c'.repeat(64),
+    screens: [],
+    running: [],
+    changing: false,
+  };
+  const power = {
+    status: { available: true, revision: 0, busy: false, vm: 'running' } as RebootStatus,
+    review,
+    commands: [] as RuntimeCommand[],
+    holdStatus: undefined as (() => Promise<RebootStatus>) | undefined,
+  };
+  let settings = {
+    provider: 'deepseek-official',
+    model: 'deepseek-flash',
+    configured: true,
+    revision: 0,
+  };
+  const server = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += String(chunk);
+    requests.push({
+      route: request.url || '',
+      auth: String(request.headers['x-prototype-token'] || ''),
+      body,
+    });
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/api/host/recovery') {
+      const command = JSON.parse(body) as RuntimeCommand;
+      power.commands.push(command);
+      if (command.type === 'recovery.status' && power.holdStatus) {
+        const hold = power.holdStatus;
+        power.holdStatus = undefined;
+        response.end(JSON.stringify(await hold()));
+        return;
+      }
+      if (command.type === 'recovery.review') response.end(JSON.stringify(power.review));
+      else {
+        if (command.type === 'recovery.restart')
+          power.status = {
+            available: true,
+            revision: 1,
+            busy: false,
+            vm: 'running',
+            operation: { id: command.request.id, stage: 'preparing', review },
+          };
+        response.end(JSON.stringify(power.status));
+      }
+    } else if (request.url === '/agent/identity') response.end(JSON.stringify(identity));
+    else if (request.url === '/api/model/configure') {
+      const input = JSON.parse(body);
+      settings = { ...settings, model: input.model, revision: input.revision + 1 };
+      response.end(JSON.stringify({ ...settings, requestId: input.requestId }));
+    } else if (request.url === '/api/model/settings') response.end(JSON.stringify(settings));
+    else if (request.url === '/api/state')
+      response.end(
+        JSON.stringify({
+          clientProtocol: 17,
+          mode: 'agent',
+          computerError: 'COMPUTER_START_FAILED',
+          sharedLogin: false,
+          reboot: power.status,
+          bots: {},
+          model: {
+            available: true,
+            provider: 'deepseek-official',
+            model: settings.model,
+            bots: {},
+          },
+        }),
+      );
+    else {
+      response.writeHead(404);
+      response.end('{}');
+    }
+  });
+  server.listen(socketPath);
+  await once(server, 'listening');
+  await fs.chmod(socketPath, 0o600);
+  mocks.daemonEnsure.mockReset().mockResolvedValue(undefined);
+  mocks.daemonClose.mockReset().mockResolvedValue(undefined);
+  mocks.daemonConfigs.length = 0;
+  mocks.load.mockClear();
+  mocks.setupConstruct.mockClear();
+  mocks.setupStart.mockClear();
+  return {
+    root,
+    dataRoot,
+    requests,
+    server,
+    identity,
+    power,
+    config: {
+      entry,
+      executable,
+      dataRoot,
+      socketPath,
+      vmConfig,
+    },
+    async close() {
+      server.closeAllConnections();
+      await new Promise<unknown>((done, reject) =>
+        server.close((error) => (error ? reject(error) : done(undefined))),
+      );
+    },
+  };
+}
+
+it('routes model settings through the host Unix agent and leaves the daemon running when the UI closes', async () => {
+  const fixture = await agentFixture();
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const observed: { phase: string; scope?: string }[] = [];
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    async (snapshot, scope) => {
+      observed.push({ phase: snapshot.phase, scope });
+    },
+    fixture.config,
+  );
+  try {
+    expect((await service.connect()).phase).toBe('ready');
+    const input = {
+      model: 'deepseek-flash',
+      apiKey: 'synthetic-host-settings-key',
+      requestId: 'mock-host-settings',
+      revision: 0,
+    };
+    expect(
+      await mocks.handlers.get('daban:runtime')!(
+        { sender, senderFrame: frame },
+        { type: 'model.configure', input },
+      ),
+    ).toMatchObject({ ok: true, value: { revision: 1, requestId: input.requestId } });
+    expect(
+      fixture.requests.some(
+        (request) =>
+          request.route === '/api/model/configure' &&
+          JSON.parse(request.body).apiKey === input.apiKey,
+      ),
+    ).toBe(true);
+    expect(fixture.requests.every((request) => request.auth === 'a'.repeat(64))).toBe(true);
+    expect(
+      fixture.requests.some(
+        (request) => request.route === '/' || request.route.startsWith('/exec'),
+      ),
+    ).toBe(false);
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(observed.find((value) => value.phase === 'ready')?.scope).toMatch(/^[a-f0-9]{64}$/);
+    await service.close();
+    expect(mocks.daemonClose).toHaveBeenCalledTimes(1);
+    expect(fixture.server.listening).toBe(true);
+    expect(mocks.load).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('never falls back to guest APIs when an agent is configured but unavailable or its host token is missing', async () => {
+  const fixture = await agentFixture();
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  mocks.daemonEnsure.mockRejectedValueOnce(new Error('AGENT_DAEMON_UNAVAILABLE'));
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  try {
+    expect((await service.connect()).phase).toBe('offline');
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(fixture.requests).toHaveLength(0);
+    expect(
+      await mocks.handlers.get('daban:runtime')!(
+        { sender, senderFrame: frame },
+        { type: 'recovery.review' },
+      ),
+    ).toEqual({ ok: false, error: 'RUNTIME_OFFLINE' });
+    await fs.unlink(join(fixture.dataRoot, 'model/control-token'));
+    expect((await service.connect()).phase).toBe('offline');
+    expect(fixture.requests).toHaveLength(0);
+    expect(mocks.load).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('does not attach a late agent client after closing during daemon startup', async () => {
+  const fixture = await agentFixture();
+  let release: () => unknown = () => {};
+  mocks.daemonEnsure.mockImplementationOnce(
+    () =>
+      new Promise<unknown>((done) => {
+        release = () => done(undefined);
+      }),
+  );
+  const service = runtimeService(
+    fixture.root,
+    'file:///mock/index.html',
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  try {
+    const connecting = service.connect();
+    await vi.waitFor(() => expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1));
+    await service.close();
+    release();
+    await connecting;
+    expect(fixture.requests).toHaveLength(0);
+    expect(mocks.load).not.toHaveBeenCalled();
+  } finally {
+    release();
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('creates first-run executor configuration through agent bootstrap without invoking legacy VM setup', async () => {
+  const fixture = await agentFixture();
+  await fs.unlink(fixture.config.vmConfig);
+  const available = { required: true, phase: 'available' };
+  mocks.setupStatus.mockResolvedValue(available);
+  mocks.setupStart.mockResolvedValue({ required: true, phase: 'verifying' });
+  mocks.daemonEnsure.mockImplementationOnce(async () => {
+    await fs.writeFile(
+      join(fixture.dataRoot, 'progress.json'),
+      JSON.stringify({ required: true, phase: 'creating' }),
+      { mode: 0o600 },
+    );
+    await fs.writeFile(fixture.config.vmConfig, '{}', { mode: 0o600 });
+  });
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  try {
+    expect(await service.connect()).toMatchObject({ phase: 'offline', setup: available });
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(mocks.setupConstruct).not.toHaveBeenCalled();
+    expect(
+      await mocks.handlers.get('daban:runtime')!(
+        { sender, senderFrame: frame },
+        { type: 'setup.start' },
+      ),
+    ).toMatchObject({ ok: true, value: { phase: 'verifying' } });
+    await vi.waitFor(() => expect(mocks.daemonEnsure).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(sender.send.mock.calls.at(-1)?.[1]).toMatchObject({ phase: 'ready' }),
+    );
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(mocks.setupStart).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('does not automatically restart paused agent bootstrap after a partial configuration is written', async () => {
+  const fixture = await agentFixture();
+  await fs.unlink(fixture.config.vmConfig);
+  let release: () => unknown = () => {};
+  mocks.daemonEnsure.mockImplementationOnce(async () => {
+    await fs.writeFile(fixture.config.vmConfig, '{"synthetic":"partial"}', { mode: 0o600 });
+    await new Promise<unknown>((done) => {
+      release = () => done(undefined);
+    });
+  });
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  const invoke = (type: 'setup.start' | 'setup.cancel') =>
+    mocks.handlers.get('daban:runtime')!({ sender, senderFrame: frame }, { type });
+  try {
+    await service.connect();
+    await invoke('setup.start');
+    await vi.waitFor(() =>
+      expect(fs.readFile(fixture.config.vmConfig, 'utf8')).resolves.toBe('{"synthetic":"partial"}'),
+    );
+    expect(await invoke('setup.cancel')).toMatchObject({
+      ok: true,
+      value: { required: true, phase: 'cancelled' },
+    });
+    expect(await service.connect()).toMatchObject({
+      phase: 'offline',
+      setup: { phase: 'cancelled' },
+    });
+    expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(await fs.readFile(join(fixture.dataRoot, 'cancel.json'), 'utf8'))).toEqual({
+      cancelled: true,
+    });
+    expect(mocks.setupConstruct).not.toHaveBeenCalled();
+    expect(mocks.load).not.toHaveBeenCalled();
+  } finally {
+    release();
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('inspects only an existing host agent and never starts a daemon or falls back to guest inspection', async () => {
+  const fixture = await agentFixture();
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  try {
+    const result = await mocks.handlers.get('daban:runtime')!(
+      { sender, senderFrame: frame },
+      { type: 'runtime.inspect' },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        scope: 'host',
+        checks: expect.arrayContaining([
+          { id: 'configuration', state: 'ready' },
+          { id: 'agent', state: 'unavailable' },
+        ]),
+      },
+    });
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(fixture.requests.map((request) => request.route)).toEqual([
+      '/agent/identity',
+      '/api/diagnostics',
+    ]);
+    expect(fixture.requests[0].auth).toBe('');
+    expect(fixture.requests[1].auth).toBe('a'.repeat(64));
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('withholds host authentication when read-only inspection finds another daemon scope', async () => {
+  const fixture = await agentFixture();
+  fixture.identity.scope = 'foreign-scope';
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  try {
+    await mocks.handlers.get('daban:runtime')!(
+      { sender, senderFrame: frame },
+      { type: 'runtime.inspect' },
+    );
+    expect(fixture.requests.map((request) => request.route)).toEqual(['/agent/identity']);
+    expect(fixture.requests[0].auth).toBe('');
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+    expect(mocks.load).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('forwards agent recovery to host authority and keeps pending power operations fenced across UI closure', async () => {
+  const fixture = await agentFixture();
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  const invoke = (command: RuntimeCommand) =>
+    mocks.handlers.get('daban:runtime')!({ sender, senderFrame: frame }, command);
+  try {
+    expect((await service.connect()).phase).toBe('ready');
+    expect(await invoke({ type: 'recovery.review' })).toEqual({
+      ok: true,
+      value: fixture.power.review,
+    });
+    expect(await invoke({ type: 'recovery.status' })).toEqual({
+      ok: true,
+      value: fixture.power.status,
+    });
+    const request = {
+      id: 'mock-agent-power',
+      revision: 0,
+      review: fixture.power.review.digest,
+      confirmation: 'restart-all-apps' as const,
+    };
+    expect(await invoke({ type: 'recovery.restart', request })).toMatchObject({
+      ok: true,
+      value: { operation: { id: request.id, stage: 'preparing' } },
+    });
+    expect(
+      await invoke({
+        type: 'task.start',
+        bot: 'mock-bot',
+        task: { requestId: 'mock-blocked-power', prompt: 'Synthetic blocked task' },
+      }),
+    ).toEqual({ ok: false, error: 'RUNTIME_RECOVERY_PENDING' });
+    expect(await invoke({ type: 'recovery.inspect', id: request.id })).toMatchObject({
+      ok: true,
+      value: { operation: { id: request.id } },
+    });
+    await service.close();
+    expect(fixture.server.listening).toBe(true);
+    expect(fixture.power.commands.filter((command) => command.type === 'recovery.restart')).toEqual(
+      [{ type: 'recovery.restart', request }],
+    );
+    expect(
+      fixture.power.commands.some((command) =>
+        ['recovery.cancel', 'recovery.start'].includes(command.type),
+      ),
+    ).toBe(false);
+    expect(mocks.load).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('a late host recovery poll cannot erase the newer accepted power intent', async () => {
+  const fixture = await agentFixture();
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+  );
+  const invoke = (command: RuntimeCommand) =>
+    mocks.handlers.get('daban:runtime')!({ sender, senderFrame: frame }, command);
+  let entered: () => unknown = () => {};
+  let release: () => unknown = () => {};
+  const waiting = new Promise<unknown>((done) => {
+    entered = () => done(undefined);
+  });
+  try {
+    await service.connect();
+    const old = structuredClone(fixture.power.status);
+    fixture.power.holdStatus = () => {
+      entered();
+      return new Promise((done) => {
+        release = () => done(old);
+      });
+    };
+    const polling = invoke({ type: 'recovery.status' });
+    await waiting;
+    const request = {
+      id: 'mock-new-power',
+      revision: 0,
+      review: fixture.power.review.digest,
+      confirmation: 'restart-all-apps' as const,
+    };
+    await invoke({ type: 'recovery.restart', request });
+    release();
+    await polling;
+    expect(await invoke({ type: 'status' })).toMatchObject({
+      ok: true,
+      value: { reboot: { operation: { id: request.id, stage: 'preparing' } } },
+    });
+  } finally {
+    release();
+    await service.close();
+    await fixture.close();
+  }
 });

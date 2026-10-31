@@ -1,27 +1,14 @@
 {
   "name": "@daban/runtime",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Linux service and DSH/computer adapters.",
-  "engines": {
-    "node": ">=22.15.0"
-  },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.2.0",
-    "officeparser": "8.2.0",
-    "playwright": "1.62.1",
-    "yaml": "2.9.1",
+    "@daban/engine": "0.1.0",
     "@daban/protocol": "0.1.0"
   },
-  "devDependencies": {
-    "@modelcontextprotocol/node": "2.0.0",
-    "@modelcontextprotocol/server": "2.2.0",
-    "fflate": "0.8.3"
-  },
-  "version": "0.1.0",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node --experimental-strip-types ../../tools/runtime.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json",
-    "test": "npm run test:runtime --prefix ../.."
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }

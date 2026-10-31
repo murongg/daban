@@ -29,6 +29,29 @@ export function Settings({
       <div className="page-inner">
         <h2 className="page-heading">按你的习惯工作</h2>
         <p className="page-subtitle">让工作区保持顺手，其他事情交给 Bot。</p>
+        {runtime.snapshot.agent?.location === 'host' && (
+          <div className="settings-section">
+            <h2>执行环境与权限</h2>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">虚拟机内完整权限</div>
+                <p className="setting-description">
+                  Bot 可以管理 Linux 系统、使用 sudo 和网络，并安装 npm、Codex
+                  等软件。执行命令前会显示具体内容供你确认。
+                </p>
+              </div>
+            </div>
+            <div className="setting-row">
+              <div>
+                <div className="setting-label">本机 Agent 服务</div>
+                <p className="setting-description">
+                  模型、密钥和审批保存在虚拟机外。关闭客户端后，后台任务继续运行；Bot
+                  不会因此获得宿主机的终端或文件权限。
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="settings-section">
           <h2>外观</h2>
           <div className="setting-row">

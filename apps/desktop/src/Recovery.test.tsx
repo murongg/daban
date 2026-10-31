@@ -154,6 +154,9 @@ function bridge(operation?: RebootOperation) {
       return { ok: true, value: host };
     }
     if (command.type === 'recovery.start' && host.available && host.operation) {
+      // A new kernel has closed the old screens; this is the expected successful recovery state.
+      snapshot.computers = { available: true, limit: 2, revision: 1, items: [] };
+      snapshot.bots = {};
       host = {
         ...host,
         revision: 5,
@@ -243,6 +246,53 @@ it('reopens into read-only inspection and requires a separate explicit start aft
   expect(invoke.mock.calls.filter(([command]) => command.type === 'recovery.start')).toHaveLength(
     1,
   );
+});
+it('successful reboot reports completion after the reviewed screens have closed', async () => {
+  bridge();
+  render(
+    <RuntimeProvider>
+      <Recovery bots={bots} close={() => undefined} />
+    </RuntimeProvider>,
+  );
+  const confirm = await screen.findByRole('button', { name: '确认重启整个环境' });
+  await userEvent.click(screen.getByRole('checkbox', { name: '我已保存所有电脑中的内容' }));
+  await userEvent.click(confirm);
+  await userEvent.click(await screen.findByRole('button', { name: '核对恢复结果' }));
+  await userEvent.click(await screen.findByRole('button', { name: '启动运行环境' }));
+  await screen.findByText('运行环境已恢复');
+  expect(screen.queryByText('运行环境或控制状态已变化，请重新核对。')).not.toBeInTheDocument();
+});
+it('a later reboot uses a fresh review instead of the completed operation from the previous kernel', async () => {
+  const previous = {
+    ...review,
+    boot: 'mock-previous-boot',
+    instance: 'mock-previous-runtime',
+    digest: 'b'.repeat(64),
+    screens: [],
+  };
+  const invoke = bridge({
+    id: 'mock-previous-reboot',
+    stage: 'complete',
+    review: previous,
+    backend: {
+      id: 'mock-previous-reboot',
+      phase: 'complete',
+      revision: 3,
+      review: previous,
+      boot: review.boot,
+      instance: review.instance,
+    },
+  });
+  render(
+    <RuntimeProvider>
+      <Recovery bots={bots} close={() => undefined} />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('checkbox', { name: '我已保存所有电脑中的内容' }));
+  expect(screen.getByText('研究员')).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '确认重启整个环境' }));
+  const next = invoke.mock.calls.find(([command]) => command.type === 'recovery.restart')?.[0];
+  expect(next).toMatchObject({ request: { review: review.digest, revision: review.revision } });
 });
 it('does not retain saved-content consent when the dialog is closed and reopened', async () => {
   bridge();
