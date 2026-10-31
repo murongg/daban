@@ -1,3 +1,7 @@
+import { isSoftwarePlan, type SoftwarePlan, type SoftwareState } from './software.js';
+
+export * from './software.js';
+
 import type { WorkCommentCommand } from './comments.js';
 import type { WorkQuery, WorkStatus, WorkWrite } from './work.js';
 
@@ -1311,6 +1315,7 @@ export interface RuntimeSnapshot {
   knowledge?: { available: boolean; revision?: number; error?: string };
   schedules?: { available: boolean; items: Schedule[]; error?: string };
   interactions?: Interaction[];
+  software?: SoftwareState;
   phase: 'connecting' | 'ready' | 'offline' | 'unsupported';
   error?: string;
   protocolVersion: number;
@@ -2280,6 +2285,7 @@ export type UserReply =
 export type InteractionInput = { id: string; sessionId: string } & (
   | { kind: 'question'; questions: UserQuestion[] }
   | { kind: 'approval'; tool: 'web_fetch'; url: string }
+  | { kind: 'approval'; tool: 'software_install'; plan: SoftwarePlan; purpose: string }
   | {
       kind: 'approval';
       tool: 'mcp_call';
@@ -2364,6 +2370,12 @@ export function isInteractionInput(value: unknown): value is InteractionInput {
       exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'url']) &&
       value.tool === 'web_fetch' &&
       publicUrl(value.url)
+    );
+  if (value.kind === 'approval' && value.tool === 'software_install')
+    return (
+      exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'plan', 'purpose']) &&
+      isSoftwarePlan(value.plan) &&
+      boundedText(value.purpose, 500)
     );
   if (value.kind === 'approval' && value.tool === 'mcp_call') {
     if (!publicUrl(value.origin)) return false;

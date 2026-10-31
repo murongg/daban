@@ -70,6 +70,7 @@ import {
   isSkillCatalogResult,
   isSkillDocument,
   isSkillStatus,
+  isSoftwareState,
   isTaskFile,
   isTaskPlan,
   isTranscriptContent,
@@ -327,6 +328,7 @@ export class RuntimeClient {
         recovery?: unknown;
         computers?: unknown;
         skills?: unknown;
+        software?: unknown;
         mcp?: unknown;
         browsers?: Record<string, unknown>;
         groups?: { available?: unknown; revision?: unknown; items?: unknown[]; error?: unknown };
@@ -401,6 +403,11 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
+      if (raw.software !== undefined)
+        snapshot.software = isSoftwareState(raw.software)
+          ? raw.software
+          : { available: false, items: [], error: 'SOFTWARE_INVALID_RESPONSE' };
       if (snapshot.protocolVersion >= 37)
         snapshot.notes = isNoteAvailability(raw.notes)
           ? raw.notes

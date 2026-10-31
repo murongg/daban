@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, readdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, readdir, readFile, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type Interaction,
@@ -61,11 +62,21 @@ export class Interactions {
       throw new Fault('INTERACTION_DIRECTORY_MOVED');
     const file = path.join(this.directory, `${value.id}.json`),
       temporary = `${file}.${randomBytes(8).toString('hex')}.tmp`;
-    await writeFile(temporary, JSON.stringify({ version: 1, request: value }), {
-      mode: 0o600,
-      flag: 'wx',
-    });
+    const handle = await open(temporary, 'wx', 0o600);
+    try {
+      await handle.writeFile(JSON.stringify({ version: 1, request: value }));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(temporary, file);
+    const directory = await open(this.directory, constants.O_RDONLY | constants.O_DIRECTORY);
+    try {
+      // A rename alone can disappear after power loss; persist its directory entry before granting authority.
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
     if (value.status === 'resolved' && this.closed.has(`${value.bot}/${value.runId}`)) {
       // Stop may arrive while the decision is being written. Withdraw it before any waiter can receive a grant.
       await this.commit({

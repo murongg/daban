@@ -73,13 +73,15 @@ export function projectInteraction(
       ? { questions: item.questions }
       : item.tool === 'web_fetch'
         ? { tool: item.tool, url: item.url }
-        : {
-            tool: item.tool,
-            name: item.name,
-            origin: item.origin,
-            operation: item.operation,
-            arguments: transcriptText(item.arguments, redact),
-          };
+        : item.tool === 'software_install'
+          ? { tool: item.tool, plan: item.plan, purpose: item.purpose }
+          : {
+              tool: item.tool,
+              name: item.name,
+              origin: item.origin,
+              operation: item.operation,
+              arguments: transcriptText(item.arguments, redact),
+            };
   return {
     source: `human:${item.id}:${item.status}:${item.updatedAt}`,
     kind: 'interaction',

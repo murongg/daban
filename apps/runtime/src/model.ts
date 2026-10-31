@@ -55,6 +55,7 @@ import type { ModelSettings } from './settings.js';
 import { invokedSkills } from './skill-provider.js';
 import { type SkillSnapshot, Skills } from './skills.js';
 import type { RawModelTask } from './snapshot.js';
+import { type SoftwareBackend, SoftwareTools } from './software.js';
 import {
   agentInstructions,
   type ConversationScope,
@@ -78,7 +79,8 @@ import { type WorkspaceDirectory, WorkspaceFiles } from './workspace.js';
 
 const sdkFile = '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
 const model = 'deepseek-flash';
-const sessionProfile = 'general-v8';
+// Software approval tools replace the former no-install system context; keep chat history, retire its SDK session.
+const sessionProfile = 'general-v9';
 const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
   JSON.stringify(
     conversationId || !chatRevision ? [bot, conversationId ?? null] : [bot, null, chatRevision],
@@ -391,6 +393,7 @@ interface Rpc {
   params?: Record<string, unknown>;
 }
 interface ModelOptions {
+  software?: SoftwareBackend;
   admit?: () => boolean;
   runtime?: Desktop;
   computer?: ComputerFacade;
@@ -437,6 +440,7 @@ export class ModelRuns {
     dir,
     Harness,
     admit = () => true,
+    software,
   }: ModelOptions) {
     this.runtime = runtime;
     this.settings = settings;
@@ -499,6 +503,16 @@ export class ModelRuns {
       if (job?.transcript && job.id === item.runId && job.conversationId === item.conversationId)
         this.recordTranscript(job, () => projectInteraction(item, job.redact!));
     });
+    if (software)
+      this.tools.software = new SoftwareTools(this.interactions, software, {
+        assertLive: (run) => {
+          if (!this.admission()) throw new Fault('SOFTWARE_RUNTIME_BUSY');
+          this.profiles.assertActive(run.bot);
+          const current = this.jobs.get(run.bot);
+          if (!current?.running || current.id !== run.id || current.abort !== run.abort)
+            throw new Fault('SOFTWARE_CANCELLED');
+        },
+      });
     this.integrations = new Integrations(path.join(dir, 'integrations.sqlite'));
     this.tools.integrations = new IntegrationTools(this.integrations, this.interactions, {
       networkFile: path.join(dir, 'network.json'),
@@ -510,7 +524,8 @@ export class ModelRuns {
             item.bot === run.bot &&
             item.runId === run.id &&
             item.conversationId === run.conversationId &&
-            item.kind === 'approval',
+            item.kind === 'approval' &&
+            item.tool !== 'software_install',
         );
         // A pending/refused public-read permission must not be bypassed through a more privileged browser or desktop surface.
         if (approvals.some((item) => item.status === 'pending'))
@@ -1556,7 +1571,11 @@ export class ModelRuns {
         revision: job.response?.revision || 0,
       };
     } else if (rpc.method === 'interaction.open') {
-      if (!isInteractionInput(rpc.params) || rpc.params.sessionId !== job.sessionId)
+      if (
+        !isInteractionInput(rpc.params) ||
+        rpc.params.sessionId !== job.sessionId ||
+        (rpc.params.kind === 'approval' && rpc.params.tool === 'software_install')
+      )
         throw new Fault('INVALID_INTERACTION', 400);
       result = await this.interactions.open(bot, job.id, rpc.params, job.conversationId);
     } else if (rpc.method === 'interaction.wait') {

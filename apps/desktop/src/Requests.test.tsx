@@ -81,11 +81,15 @@ const approval: Interaction = {
   tool: 'web_fetch',
   url: 'https://example.test/new?item=mock',
 };
-function connect(requests: Interaction[] = [question, approval]) {
+function connect(
+  requests: Interaction[] = [question, approval],
+  software?: RuntimeSnapshot['software'],
+) {
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 4;
   snapshot.model.configured = true;
   snapshot.interactions = requests;
+  snapshot.software = software;
   snapshot.agents.a = {
     phase: 'waiting',
     running: true,
@@ -314,4 +318,63 @@ it('keeps group questions out of private messages while retaining their group pr
   expect(
     within(screen.getByRole('region', { name: '收件箱' })).getByText('周报协作'),
   ).toBeVisible();
+});
+
+const softwarePlan = {
+  id: 'mock-install-plan',
+  requested: ['mock-calculator'],
+  targets: [{ name: 'mock-calculator', version: '1.0-1' }],
+  packages: [
+    { name: 'mock-calculator', version: '1.0-1' },
+    { name: 'mock-library', version: '2.0-1' },
+  ],
+  source: 'debian' as const,
+  createdAt: '2026-01-01T00:00:00Z',
+  expiresAt: '2026-01-01T00:10:00Z',
+  digest: 'a'.repeat(64),
+};
+const softwareCard: Interaction = {
+  ...base,
+  id: 'mock-install-approval',
+  bot: 'a',
+  runId: 'mock-run-a',
+  kind: 'approval',
+  tool: 'software_install',
+  plan: softwarePlan,
+  purpose: '合成计算任务',
+};
+it('previews exact shared software and dependencies, then confirms once without claiming installation success', async () => {
+  const invoke = connect([softwareCard], {
+    available: true,
+    items: [{ plan: softwarePlan, phase: 'planned', updatedAt: base.createdAt }],
+  });
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: '允许安装这些软件吗？' })).toBeVisible();
+  expect(screen.getByText('mock-calculator · 1.0-1')).toBeVisible();
+  expect(screen.getByText('mock-library · 2.0-1')).toBeVisible();
+  expect(screen.getByText(/所有 Bot 都能使用/)).toBeVisible();
+  expect(screen.getByText('Debian 官方软件源')).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '确认安装' }));
+  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
+    type: 'interaction.reply',
+    bot: 'a',
+    runId: 'mock-run-a',
+    id: softwareCard.id,
+    reply: { kind: 'decision', allow: true },
+  });
+  expect(screen.queryByText('已安装，所有 Bot 均可使用')).not.toBeInTheDocument();
+});
+it.each([
+  ['installing', '正在安装，关闭客户端后仍会继续'],
+  ['installed', '已安装，所有 Bot 均可使用'],
+  ['unknown', '安装结果待核对，请勿重复安装'],
+  ['failed', '安装未完成，请查看结果后再处理'],
+] as const)('shows actual %s receipt separately from approval', async (phase, label) => {
+  connect([{ ...softwareCard, status: 'resolved', reply: { kind: 'decision', allow: true } }], {
+    available: true,
+    items: [{ plan: softwarePlan, phase, updatedAt: base.createdAt }],
+  });
+  render(<App />);
+  expect(await screen.findByText(label)).toBeVisible();
+  expect(screen.queryByRole('button', { name: '确认安装' })).not.toBeInTheDocument();
 });

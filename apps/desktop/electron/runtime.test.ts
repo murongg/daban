@@ -1078,3 +1078,23 @@ it('a proven missing private file permits legacy services only, and malformed pr
   expect((await corrupt.status()).phase).toBe('offline');
   expect(reads).toEqual([]);
 });
+
+it('reads an additive shared software capability without a version gate and isolates malformed status', async () => {
+  let software: unknown = { available: true, items: [] };
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (url) =>
+      Response.json(
+        url.endsWith('/api/model/settings') ? { configured: true } : { ...raw, software },
+      ),
+  });
+  expect((await client.status()).software).toEqual(software);
+  software = {
+    available: true,
+    items: [{ phase: 'installed', plan: { command: 'mock-command' } }],
+  };
+  const state = await client.status();
+  expect(state.phase).toBe('ready');
+  expect(state.software?.available).toBe(false);
+});

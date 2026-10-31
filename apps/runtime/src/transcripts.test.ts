@@ -301,3 +301,35 @@ test('transcript storage refuses a symlink without modifying its target', async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('software confirmation transcripts retain exact packages and never imply successful installation', () => {
+  const event = projectInteraction(
+    {
+      id: 'mock-install',
+      sessionId: 'mock-session',
+      bot: 'mock-a',
+      runId: 'mock-run',
+      kind: 'approval',
+      tool: 'software_install',
+      purpose: '合成用途',
+      plan: {
+        id: 'mock-plan',
+        requested: ['mock-calculator'],
+        targets: [{ name: 'mock-calculator', version: '1.0-1' }],
+        packages: [{ name: 'mock-calculator', version: '1.0-1' }],
+        source: 'debian',
+        createdAt: '2026-01-01T00:00:00Z',
+        expiresAt: '2026-01-01T00:20:00Z',
+        digest: 'a'.repeat(64),
+      },
+      status: 'resolved',
+      reply: { kind: 'decision', allow: true },
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:01Z',
+    },
+    (x) => x,
+  );
+  assert.match(event.text || '', /mock-calculator/);
+  assert.match(event.text || '', /1.0-1/);
+  assert.doesNotMatch(event.text || '', /installed/);
+});

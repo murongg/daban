@@ -30,6 +30,7 @@ import type { MemoryTools } from './memory.js';
 import type { NotesTools } from './notes-tools.js';
 import { type ScheduleTools, scheduleToolList } from './schedule-tools.js';
 import type { SkillSnapshot } from './skills.js';
+import type { SoftwareTools } from './software.js';
 import type { WorkTools } from './work-tools.js';
 import { WorkspaceFiles } from './workspace.js';
 
@@ -117,6 +118,7 @@ export class AgentTools {
   catalog?: CatalogTools;
   schedules?: ScheduleTools;
   integrations?: IntegrationTools;
+  software?: SoftwareTools;
   readonly computer: ComputerTools | undefined;
   private readonly active = new WeakMap<AgentToolRun, Set<Promise<ToolResult>>>();
   constructor(
@@ -167,6 +169,7 @@ export class AgentTools {
       ...(this.knowledge?.list || []),
       ...(this.work?.list || []),
       ...(this.notes?.list || []),
+      ...(this.software?.list || []),
       ...(this.catalog?.list || []),
       ...(conversationId ? this.groups?.list || [] : []),
       ...(run?.bot === bot && run.conversationId === conversationId
@@ -496,6 +499,7 @@ export class AgentTools {
       this.work,
       this.notes,
       this.catalog,
+      this.software,
       this.groups,
       this.hasBrowser(run.bot) ? this.browser : undefined,
     ].find((tools) => tools && Object.hasOwn(tools.fields, name));
@@ -530,6 +534,11 @@ export class AgentTools {
         throw new Fault('INVALID_TOOL_ARGS', 400);
       trace = { name, surface, phase: 'running', at: new Date().toISOString() };
       run.trace.push(trace);
+      if (dataTool && dataTool === this.software) {
+        const response = await dataTool.invoke(run, name, args);
+        trace.phase = response.isError ? 'rejected' : 'settled';
+        return response;
+      }
       let result: unknown;
       if (dataTool) result = await dataTool.invoke(run, name, args);
       else if (name === 'shell') {

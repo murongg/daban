@@ -1,6 +1,7 @@
 [Unit]
 Description=daban Linux desktop and DSH runtime
-After=network.target
+After=network.target daban-software.service
+Wants=daban-software.service
 
 [Service]
 Type=simple

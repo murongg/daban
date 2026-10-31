@@ -65,6 +65,7 @@ import { type Browser, createBrowser } from './runtime.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
+import { type SoftwareBackend, SoftwareClient } from './software.js';
 import { WorkspaceFiles } from './workspace.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -192,6 +193,7 @@ export interface Prototype<
   close: () => Promise<unknown>;
 }
 export interface PrototypeOptions {
+  software?: SoftwareBackend;
   computers?: true | { dir?: string; displayBase?: number; limit?: number };
   profileDir?: string;
   port?: number;
@@ -214,6 +216,7 @@ export function startPrototype(
 ): Promise<Prototype<Browser>>;
 export function startPrototype(options: PrototypeOptions): Promise<Prototype>;
 export async function startPrototype({
+  software,
   profileDir,
   port = 8766,
   interval,
@@ -1003,6 +1006,7 @@ export async function startPrototype({
             mcp: models
               ? await models.integrations.status()
               : { available: false, error: 'MCP_STORE_UNAVAILABLE' },
+            ...(models?.tools.software ? { software: await models.tools.software.status() } : {}),
             skills: models
               ? await models.skills.status()
               : { available: false, error: 'SKILLS_UNAVAILABLE' },
@@ -1385,6 +1389,7 @@ export async function startPrototype({
       await mkdir(files.root, { recursive: true, mode: 0o700 });
       await files.base();
       models = new ModelRuns({
+        software,
         admit: () => recovery?.admit() ?? true,
         runtime: runtime instanceof Desktop ? runtime : undefined,
         computer: runtime instanceof Computers ? runtime.facade : undefined,
@@ -1475,6 +1480,8 @@ export async function startPrototype({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const app = await startPrototype({
+    // Availability is dynamic: the root broker may finish starting after this runtime.
+    software: platform() === 'linux' ? new SoftwareClient() : undefined,
     port: Number(process.env.PORT || 8766),
     profileDir: process.env.PROFILE_DIR,
     computers:

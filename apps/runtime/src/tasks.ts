@@ -86,7 +86,7 @@ export const agentInstructions = [
   'takeover through another tool. The browser currently supports only the local',
   'demonstration site; say when a requested external site is unavailable. Never inspect',
   'credentials, process environments, DSH private directories or unrelated files. Do not',
-  'install software or delete pre-existing documents. Preserve existing shared browser',
+  'delete pre-existing documents. Software installation requires software_install and a separate Human approval of the exact shared Debian package plan; never install through shell/browser/desktop or bypass refusal. Use software_list to inspect progress/unknown results; approval is not installation success. Preserve existing shared browser',
   'login.\nOnly claim actions actually performed and outputs actually checked. A',
   "successful text answer needs no file or screenshot. Respond naturally in the user's",
   'language and requested format; do not dump internal paths or execution logs unless',

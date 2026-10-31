@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { access, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertCleanImage, environmentVersions, verifyAsset } from './environment.ts';
+import { installSoftware } from './software.ts';
 
 // Build-time entry only: a clean isolated image, never an existing user runtime.
 assert.equal(process.platform, 'linux');
@@ -154,6 +155,7 @@ if (action === 'install') {
   }
   await mkdir(data, { recursive: true, mode: 0o700 });
   run('/usr/bin/chown', ['bot-prototype:bot-prototype', data]);
+  await installSoftware(`${product}/app/runtime`);
   await writeFile(
     '/etc/systemd/resolved.conf.d/99-daban-no-multicast.conf',
     '[Resolve]\nLLMNR=no\nMulticastDNS=no\n',

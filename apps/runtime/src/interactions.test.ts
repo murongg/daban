@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { type FileHandle, lstat, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -296,6 +296,169 @@ test('a stop during asynchronous decision persistence never publishes the permis
     await stopping;
     assert.equal((await store.list())[0].status, 'cancelled');
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('an approval syncs its temporary file and renamed parent directory before publishing or releasing a waiter', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'mock-approval-sync-order-'));
+  const events: string[] = [];
+  const store = new Interactions(directory, (item) => {
+    if (item.status === 'resolved') events.push('published');
+  });
+  const input = {
+    id: 'mock-sync-order',
+    sessionId: 'mock-session',
+    kind: 'approval',
+    tool: 'web_fetch',
+    url: 'https://example.test/synthetic',
+  };
+  let restore = () => undefined;
+  try {
+    await store.open('mock-bot', 'mock-run', input);
+    const probe = await open(path.join(directory, 'mock-probe'), 'w');
+    const prototype: FileHandle = Object.getPrototypeOf(probe);
+    const sync = prototype.sync;
+    await probe.close();
+    const mocked = t.mock.method(prototype, 'sync', async function (this: FileHandle) {
+      const kind = (await this.stat()).isDirectory() ? 'directory' : 'file';
+      const saved = JSON.parse(await readFile(path.join(directory, `${input.id}.json`), 'utf8'));
+      assert.equal(saved.request.status, kind === 'file' ? 'pending' : 'resolved');
+      assert.equal(store.pending('mock-bot', 'mock-run'), true);
+      await sync.call(this);
+      events.push(`${kind}-synced`);
+    });
+    restore = () => {
+      mocked.mock.restore();
+      return undefined;
+    };
+    const waiting = store.wait('mock-bot', 'mock-run', input.id).then((item) => {
+      events.push('waiter');
+      return item;
+    });
+    await store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true });
+    assert.equal((await waiting).status, 'resolved');
+    assert.deepEqual(events, ['file-synced', 'directory-synced', 'published', 'waiter']);
+  } finally {
+    restore();
+    await store.endRun('mock-bot', 'mock-run');
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+for (const failedKind of ['file', 'directory']) {
+  test(`a ${failedKind} sync failure cannot publish or release an approval grant`, async (t) => {
+    const directory = await mkdtemp(path.join(tmpdir(), `mock-${failedKind}-sync-failure-`));
+    const published: string[] = [];
+    const store = new Interactions(directory, (item) => {
+      published.push(item.status);
+    });
+    const input = {
+      id: 'mock-sync-failure',
+      sessionId: 'mock-session',
+      kind: 'approval',
+      tool: 'web_fetch',
+      url: 'https://example.test/synthetic',
+    };
+    const abort = new AbortController();
+    let restore = () => undefined;
+    let waiting: Promise<unknown> | undefined;
+    try {
+      await store.open('mock-bot', 'mock-run', input);
+      published.length = 0;
+      const probe = await open(path.join(directory, 'mock-probe'), 'w');
+      const prototype: FileHandle = Object.getPrototypeOf(probe);
+      const sync = prototype.sync;
+      await probe.close();
+      const mocked = t.mock.method(prototype, 'sync', async function (this: FileHandle) {
+        const kind = (await this.stat()).isDirectory() ? 'directory' : 'file';
+        if (kind === failedKind) throw new Error('MOCK_APPROVAL_SYNC_FAILED');
+        return sync.call(this);
+      });
+      restore = () => {
+        mocked.mock.restore();
+        return undefined;
+      };
+      let released = false;
+      waiting = store
+        .wait('mock-bot', 'mock-run', input.id, abort.signal)
+        .then(() => {
+          released = true;
+        })
+        .catch(() => undefined);
+      await assert.rejects(
+        store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true }),
+        /MOCK_APPROVAL_SYNC_FAILED/,
+      );
+      assert.equal(released, false);
+      assert.deepEqual(published, []);
+      assert.equal((await store.list())[0].status, 'pending');
+    } finally {
+      restore();
+      abort.abort();
+      await waiting;
+      await store.endRun('mock-bot', 'mock-run');
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test('stopping during the final directory sync withdraws the decision before a waiter can receive authority', {
+  timeout: 2000,
+}, async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'mock-stop-directory-sync-'));
+  const store = new Interactions(directory);
+  const input = {
+    id: 'mock-stop-directory-sync',
+    sessionId: 'mock-session',
+    kind: 'approval',
+    tool: 'web_fetch',
+    url: 'https://example.test/synthetic',
+  };
+  let entered: () => unknown = () => undefined;
+  let release: () => unknown = () => undefined;
+  const started = new Promise((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  const held = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  let restore = () => undefined;
+  try {
+    await store.open('mock-bot', 'mock-run', input);
+    const probe = await open(path.join(directory, 'mock-probe'), 'w');
+    const prototype: FileHandle = Object.getPrototypeOf(probe);
+    const sync = prototype.sync;
+    await probe.close();
+    let intercepted = false;
+    const mocked = t.mock.method(prototype, 'sync', async function (this: FileHandle) {
+      if ((await this.stat()).isDirectory() && !intercepted) {
+        intercepted = true;
+        entered();
+        await held;
+      }
+      return sync.call(this);
+    });
+    restore = () => {
+      mocked.mock.restore();
+      return undefined;
+    };
+    const waiting = store.wait('mock-bot', 'mock-run', input.id);
+    const responding = assert.rejects(
+      store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true }),
+      { code: 'INTERACTION_CLOSED' },
+    );
+    await started;
+    const stopped = store.endRun('mock-bot', 'mock-run');
+    release();
+    await responding;
+    await stopped;
+    assert.equal((await waiting).status, 'cancelled');
+    assert.equal((await store.list())[0].status, 'cancelled');
+  } finally {
+    release();
+    restore();
+    await store.endRun('mock-bot', 'mock-run');
     await rm(directory, { recursive: true, force: true });
   }
 });
