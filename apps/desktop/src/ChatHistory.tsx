@@ -200,6 +200,10 @@ export function ChatHistory({
                   </p>
                 )}
                 <article className="message bot">
+                  <Execution
+                    scope={{ bot: agentId(bot.id), runId: item.runId, chatRevision: page.revision }}
+                    phase={item.phase}
+                  />
                   <div className="bubble">
                     <Markdown
                       text={item.result || item.response?.text || item.error || '没有保存的回复。'}
@@ -227,10 +231,6 @@ export function ChatHistory({
                     ))}
                   </div>
                 )}
-                <Execution
-                  scope={{ bot: agentId(bot.id), runId: item.runId, chatRevision: page.revision }}
-                  phase={item.phase}
-                />
               </div>
             );
           })}

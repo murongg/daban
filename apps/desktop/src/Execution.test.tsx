@@ -4,6 +4,7 @@ import {
   type RuntimeCommand,
   type RuntimeReply,
   type RuntimeSnapshot,
+  type RuntimeTask,
   type TranscriptScope,
 } from '@daban/protocol';
 import { act, render, screen } from '@testing-library/react';
@@ -23,6 +24,26 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+function expectExecutionBefore(text: string) {
+  const process = screen.getByText('执行过程').closest('details')!;
+  const bubble = screen.getByText(text).closest('.bubble')!;
+  expect(process.contains(bubble)).toBe(false);
+  expect(process.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+}
+const orderTask: RuntimeTask = {
+  runId: 'mock-order-run',
+  requestId: 'mock-order-request',
+  running: false,
+  phase: 'completed',
+  prompt: '合成请求',
+  result: '',
+  error: '',
+  files: [],
+  toolCount: 0,
+  executedCount: 0,
+  trace: [],
+  history: [],
+};
 const item = (seq: number, characters = 4) => ({
   seq,
   kind: 'call' as const,
@@ -225,6 +246,7 @@ it('private conversation exposes the exact task transcript while retaining an un
   await user.click(await screen.findByText('执行过程'));
   expect(await screen.findByText('本次没有记录到工具或交互步骤。')).toBeInTheDocument();
   expect(screen.getByText('合成失败')).toBeInTheDocument();
+  expectExecutionBefore('合成失败');
   expect(screen.getByDisplayValue('SYNTHETIC UNSENT DRAFT')).toBeInTheDocument();
   expect(dispatch).not.toHaveBeenCalled();
   expect(
@@ -307,6 +329,8 @@ it('saved private history and group replies use their own author, run and conver
       />
     </RuntimeProvider>,
   );
+  await screen.findByText('执行过程');
+  expectExecutionBefore('合成旧回复');
   await user.click(await screen.findByText('执行过程'));
   expect(await screen.findByText('本次没有记录到工具或交互步骤。')).toBeInTheDocument();
   expect(
@@ -330,6 +354,8 @@ it('saved private history and group replies use their own author, run and conver
       />
     </RuntimeProvider>,
   );
+  await screen.findByText('执行过程');
+  expectExecutionBefore('合成群回复');
   await user.click(await screen.findByText('执行过程'));
   expect(await screen.findByText('本次没有记录到工具或交互步骤。')).toBeInTheDocument();
   expect(screen.getByDisplayValue('SYNTHETIC GROUP DRAFT')).toBeInTheDocument();
@@ -494,4 +520,164 @@ it('waits for task preparation to finish before asking for a durable transcript'
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'transcript.list'),
   ).toHaveLength(1);
+});
+
+it('keeps the live execution before its bubble without remounting when a human request arrives', async () => {
+  const state = initialState(),
+    bot = state.bots.find((bot) => bot.id === 'research')!;
+  state.messages[bot.id] = [];
+  const backend = bridge((command) => ({
+    ...(command.type === 'transcript.list' ? command.query.scope : scope),
+    state: 'recording',
+    items: [],
+  }));
+  backend.snapshot.agents.a = {
+    ...orderTask,
+    running: true,
+    phase: 'running',
+    response: { revision: 1, text: '合成流式回复', state: 'streaming' },
+  };
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={state}
+        bot={bot}
+        dispatch={vi.fn()}
+        preview={vi.fn()}
+        notify={vi.fn()}
+        onModel={vi.fn()}
+      />
+    </RuntimeProvider>,
+  );
+  await screen.findByText('合成流式回复');
+  expectExecutionBefore('合成流式回复');
+  const disclosure = screen.getByText('执行过程').closest('details')!;
+  await userEvent.click(screen.getByText('执行过程'));
+  await act(async () =>
+    backend.publish({
+      ...backend.snapshot,
+      interactions: [
+        {
+          id: 'mock-order-question',
+          bot: 'a',
+          runId: orderTask.runId!,
+          sessionId: 'mock-session',
+          kind: 'question',
+          status: 'pending',
+          questions: [{ id: 'format', question: '合成待确认格式？' }],
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    }),
+  );
+  await screen.findByText('合成待确认格式？');
+  expectExecutionBefore('合成流式回复');
+  expect(screen.getByText('执行过程').closest('details')).toBe(disclosure);
+  expect(disclosure.open).toBe(true);
+  await act(async () => backend.publish({ ...backend.snapshot, interactions: [] }));
+  expect(screen.getByText('执行过程').closest('details')).toBe(disclosure);
+  expect(disclosure.open).toBe(true);
+});
+
+it('places an earlier private run transcript before its corresponding saved bubble', async () => {
+  const state = initialState(),
+    bot = state.bots.find((bot) => bot.id === 'research')!;
+  state.messages[bot.id] = [
+    { id: 'runtime-result:mock-prior-run', role: 'bot', text: '合成较早回复' },
+  ];
+  const backend = bridge((command) => ({
+    ...(command.type === 'transcript.list' ? command.query.scope : scope),
+    state: 'complete',
+    items: [],
+  }));
+  backend.snapshot.agents.a = {
+    ...orderTask,
+    runId: undefined,
+    history: [
+      {
+        runId: 'mock-prior-run',
+        requestId: 'mock-prior-request',
+        prompt: '合成较早请求',
+        result: '合成较早回复',
+        error: '',
+        phase: 'completed',
+        chatRevision: 0,
+      },
+    ],
+  };
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={state}
+        bot={bot}
+        dispatch={vi.fn()}
+        preview={vi.fn()}
+        notify={vi.fn()}
+        onModel={vi.fn()}
+      />
+    </RuntimeProvider>,
+  );
+  await screen.findByText('执行过程');
+  expectExecutionBefore('合成较早回复');
+});
+
+it('places a running group member transcript before the streaming reply', async () => {
+  const state = initialState(),
+    bot = state.bots.find((bot) => bot.id === 'crew')!;
+  state.messages[bot.id] = [];
+  const group = {
+    id: bot.id,
+    name: '合成协作群',
+    members: ['a', 'b'],
+    revision: 1,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+  const backend = bridge((command) =>
+    command.type === 'group.read'
+      ? {
+          group,
+          revision: 1,
+          messages: [
+            {
+              id: 'mock-group-input',
+              group: bot.id,
+              sourceId: 'mock-group-input',
+              sequence: 1,
+              role: 'user',
+              text: '合成群请求',
+              createdAt: '2026-01-01T00:00:00Z',
+            },
+          ],
+          deliveries: [
+            {
+              id: 'mock-order-delivery',
+              group: bot.id,
+              sourceId: 'mock-group-input',
+              requestId: orderTask.requestId,
+              bot: 'b',
+              position: 0,
+              state: 'running',
+              runId: orderTask.runId,
+            },
+          ],
+        }
+      : { ...scope, state: 'recording', items: [] },
+  );
+  backend.snapshot.groups = { available: true, revision: 1, items: [group] };
+  backend.snapshot.agents.b = {
+    ...orderTask,
+    running: true,
+    phase: 'running',
+    conversationId: bot.id,
+    response: { revision: 1, text: '合成群流式回复', state: 'streaming' },
+  };
+  render(
+    <RuntimeProvider>
+      <GroupChat state={state} bot={bot} dispatch={vi.fn()} notify={vi.fn()} preview={vi.fn()} />
+    </RuntimeProvider>,
+  );
+  await screen.findByText('合成群流式回复');
+  expectExecutionBefore('合成群流式回复');
 });

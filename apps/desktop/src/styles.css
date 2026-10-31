@@ -735,6 +735,7 @@ textarea.field {
 .execution {
   max-width: 100%;
   font-size: 12px;
+  margin-bottom: 8px;
 }
 .execution > summary {
   min-height: 36px;

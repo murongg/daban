@@ -291,6 +291,12 @@ export function Conversation({
             {author.name}
           </div>
         )}
+        {recorded && (
+          <Execution
+            scope={{ bot: target, runId: recorded.runId, chatRevision: revision }}
+            phase={recorded.phase}
+          />
+        )}
         <div className="bubble">
           {message.role === 'bot' ? (
             <Markdown
@@ -336,12 +342,6 @@ export function Conversation({
             查看电脑
           </button>
         )}
-        {recorded && (
-          <Execution
-            scope={{ bot: target, runId: recorded.runId, chatRevision: revision }}
-            phase={recorded.phase}
-          />
-        )}
       </article>
     );
   }
@@ -361,7 +361,6 @@ export function Conversation({
           <>
             <div className="message-date">{live ? '本机任务与对话' : '今天 10:24 · 示例对话'}</div>
             {earlier.map(renderMessage)}
-            {pendingIds && current.map(renderMessage)}
           </>
         ) : (
           <div className="empty-chat">
@@ -384,6 +383,14 @@ export function Conversation({
             </div>
           </div>
         )}
+        {/* Keep one mounted disclosure while the reply moves around human requests. */}
+        {task?.runId && (
+          <Execution
+            scope={{ bot: target, runId: task.runId, chatRevision: revision }}
+            phase={task.phase}
+          />
+        )}
+        {pendingIds && current.map(renderMessage)}
         {live && task?.plan && <Plan items={task.plan} />}
         {live && (
           <div ref={requestStart}>
@@ -391,12 +398,6 @@ export function Conversation({
           </div>
         )}
         {!pendingIds && current.map(renderMessage)}
-        {task?.runId && (
-          <Execution
-            scope={{ bot: target, runId: task.runId, chatRevision: revision }}
-            phase={task.phase}
-          />
-        )}
         <div ref={end} />
       </div>
       <div className="composer-wrap">

@@ -278,6 +278,12 @@ export function GroupChat({
             {value.name || author?.name || 'Bot'}
           </div>
         )}
+        {value.role === 'bot' && value.runId && value.author && (
+          <Execution
+            scope={{ bot: value.author, runId: value.runId, conversationId: bot.id }}
+            phase={value.phase}
+          />
+        )}
         <div className="bubble">
           {value.role === 'bot' ? (
             <Markdown
@@ -296,12 +302,6 @@ export function GroupChat({
         </div>
         {value.phase && value.phase !== 'completed' && (
           <p className="inline-note">{`任务状态：${value.phase}`}</p>
-        )}
-        {value.role === 'bot' && value.runId && value.author && (
-          <Execution
-            scope={{ bot: value.author, runId: value.runId, conversationId: bot.id }}
-            phase={value.phase}
-          />
         )}
         {files.map((file) => (
           <button
@@ -412,6 +412,12 @@ export function GroupChat({
                           : '正在处理'}
                     </p>
                     {task.plan && <Plan items={task.plan} />}
+                    {task.runId && (
+                      <Execution
+                        scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}
+                        phase={task.phase}
+                      />
+                    )}
                     {task.response?.text && (
                       <article className="message bot" aria-live="off">
                         <div className="bubble">
@@ -424,12 +430,6 @@ export function GroupChat({
                           />
                         </div>
                       </article>
-                    )}
-                    {task.runId && (
-                      <Execution
-                        scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}
-                        phase={task.phase}
-                      />
                     )}
                   </div>
                 ))}
