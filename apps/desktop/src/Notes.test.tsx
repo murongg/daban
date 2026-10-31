@@ -1,5 +1,6 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { demoState as seedDemoState } from './fixtures';
+import { selectControl, selectOption } from './select.fixture';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
@@ -232,7 +233,7 @@ it('saves exact durable intent, completes, confirms trash and restores without d
   await userEvent.click(await screen.findByRole('button', { name: '新建便笺' }));
   await userEvent.type(screen.getByRole('textbox', { name: '便笺标题' }), '合成保存便笺');
   await userEvent.type(screen.getByRole('textbox', { name: '便笺正文' }), 'MOCK SAVED BODY');
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '便笺状态' }), 'done');
+  await selectOption(userEvent, selectControl('便笺状态'), 'done');
   await userEvent.click(screen.getByRole('button', { name: '保存便笺' }));
   await waitFor(() => expect(live.write).toHaveBeenCalledTimes(1));
   await waitFor(() =>
@@ -434,7 +435,7 @@ it('searches/filters without overwriting an editor and ignores a late superseded
   await act(async () => finish(response));
   expect(screen.queryByRole('button', { name: '查看便笺 合成搜索结果' })).not.toBeInTheDocument();
   expect(await screen.findByText('没有匹配的便笺')).toBeVisible();
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '便笺筛选' }), 'parked');
+  await selectOption(userEvent, selectControl('便笺筛选'), 'parked');
   expect(restore(localStorage.getItem(storageKey)).notes?.research).toMatchObject({
     filter: 'parked',
     text: 'MOCK MISSING',

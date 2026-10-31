@@ -180,7 +180,7 @@ export function Comments({
       tabIndex={-1}
     >
       <div className="comment-heading">
-        <h3 title={item.title}>讨论 · {item.title}</h3>
+        <h3>讨论 · {item.title}</h3>
         <button
           type="button"
           className="text-button"

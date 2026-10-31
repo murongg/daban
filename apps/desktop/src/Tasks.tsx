@@ -10,7 +10,9 @@ import { type Dispatch, useState } from 'react';
 import { Comments } from './Comments';
 import { commentCard } from './comments-state';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 import type { Action, State } from './state';
+import { Tooltip } from './Tooltip';
 import type { WorkController } from './work';
 import { workDirty, workInitial } from './work-state';
 
@@ -343,20 +345,21 @@ export function Tasks({
             <div className="task-editor-heading">
               <h2>{draft?.base ? '任务详情' : '新建任务'}</h2>
               {draft?.base && !work.reading && (
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label="查看讨论"
-                  title="查看讨论"
-                  aria-controls={`task-comments-${draft.base.id}`}
-                  onClick={() => {
-                    const target = document.getElementById(`task-comments-${draft.base!.id}`);
-                    target?.scrollIntoView({ block: 'start' });
-                    target?.focus({ preventScroll: true });
-                  }}
-                >
-                  <MessageSquare aria-hidden="true" />
-                </button>
+                <Tooltip label="查看讨论">
+                  <button
+                    type="button"
+                    className="icon-button"
+                    aria-label="查看讨论"
+                    aria-controls={`task-comments-${draft.base.id}`}
+                    onClick={() => {
+                      const target = document.getElementById(`task-comments-${draft.base!.id}`);
+                      target?.scrollIntoView({ block: 'start' });
+                      target?.focus({ preventScroll: true });
+                    }}
+                  >
+                    <MessageSquare aria-hidden="true" />
+                  </button>
+                </Tooltip>
               )}
               {draft && (
                 <button className="primary" type="submit" form={formId} disabled={saveDisabled}>
@@ -415,23 +418,19 @@ export function Tasks({
                       onChange={(event) => mutate({ title: event.target.value })}
                     />
                   </label>
-                  <label className="field-label">
+                  <div className="field-label">
                     任务状态
-                    <select
-                      className="field"
+                    <Select
+                      label="任务状态"
                       value={draft.status}
                       disabled={readOnly}
-                      onChange={(event) =>
-                        mutate({ status: event.target.value as WorkFields['status'] })
-                      }
-                    >
-                      {visibleStates.map((status) => (
-                        <option key={status} value={status}>
-                          {states[status]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      onValueChange={(value) => mutate({ status: value as WorkFields['status'] })}
+                      options={visibleStates.map((status) => ({
+                        value: status,
+                        label: states[status],
+                      }))}
+                    />
+                  </div>
                   <label className="field-label">
                     任务说明
                     <textarea

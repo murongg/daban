@@ -21,6 +21,7 @@ import { Markdown } from './Markdown';
 import { Plan } from './Plan';
 import { Requests } from './Requests';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 import { type Action, type Bot, lifecycleRequest, type State, type WorkspaceFile } from './state';
 
 export function GroupChat({
@@ -581,32 +582,32 @@ export function GroupChat({
                 if (!readOnly) await attach(files);
               }}
             />
-            <label className="group-recipient">
+            <div className="group-recipient">
               发送给{' '}
-              <select
-                aria-label="发送给"
+              <Select
+                label="发送给"
                 value={target}
                 disabled={readOnly || sending || !!pending}
-                onChange={(event) =>
-                  dispatch({ type: 'group-target', group: bot.id, target: event.target.value })
+                onValueChange={(value) =>
+                  dispatch({ type: 'group-target', group: bot.id, target: value })
                 }
-              >
-                {!validTarget && <option value={target}>原成员已归档或不可用，请重新选择</option>}
-                {members.map((member) => (
-                  <option
-                    value={member.id}
-                    key={member.id}
-                    disabled={!availableMembers.some((entry) => entry.id === member.id)}
-                  >
-                    {member.bot?.name || member.id}
-                    {!availableMembers.some((entry) => entry.id === member.id)
-                      ? '（暂不可用）'
-                      : ''}
-                  </option>
-                ))}
-                <option value="*">全部可用成员（依次处理）</option>
-              </select>
-            </label>
+                options={[
+                  ...(!validTarget
+                    ? [{ value: target, label: '原成员已归档或不可用，请重新选择', disabled: true }]
+                    : []),
+                  ...members
+                    .filter((member) => validTarget || member.id !== target)
+                    .map((member) => ({
+                      value: member.id,
+                      label: `${member.bot?.name || member.id}${!availableMembers.some((entry) => entry.id === member.id) ? '（暂不可用）' : ''}`,
+                      disabled: !availableMembers.some((entry) => entry.id === member.id),
+                    })),
+                  ...(!validTarget && target === '*'
+                    ? []
+                    : [{ value: '*', label: '全部可用成员（依次处理）' }]),
+                ]}
+              />
+            </div>
             <span className="spacer" />
             <button
               type="submit"

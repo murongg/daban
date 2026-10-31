@@ -7,6 +7,7 @@ import {
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
+import { FilePicker } from './FilePicker';
 import { bundleFile, bundleHeader } from './portable';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Action, State } from './state';
@@ -271,10 +272,9 @@ export function ImportBot({
         </div>
       )}
       {needsFile && (
-        <label className="field-label">
+        <div className="field-label">
           选择 Bot 导出包
-          <input
-            type="file"
+          <FilePicker
             aria-label="选择 Bot 导出包"
             accept=".json,application/json"
             disabled={!available || working || reading || !!pending?.cancelRequested}
@@ -310,7 +310,7 @@ export function ImportBot({
           <span className="field-help">
             UTF-8 JSON，最多 100 MiB。已有未确认操作时，请重新选择同一内容，或先取消该操作。
           </span>
-        </label>
+        </div>
       )}
       {reading && (
         <p className="inline-note" role="status">

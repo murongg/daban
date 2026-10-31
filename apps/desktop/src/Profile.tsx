@@ -2,6 +2,7 @@ import { type BotProfile, isDeepSeekModel, modelOptions } from '@daban/protocol'
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 import type { Action, Bot } from './state';
 
 export function Profile({
@@ -112,26 +113,21 @@ export function Profile({
             onChange={(event) => setName(event.target.value)}
           />
         </label>
-        <label className="field-label">
+        <div className="field-label">
           此 Bot 的模型
-          <select
-            aria-label="此 Bot 的模型"
-            className="field"
+          <Select
+            label="此 Bot 的模型"
             value={model}
             disabled={saving || !modelsAvailable}
-            onChange={(event) => setModel(event.target.value)}
-          >
-            <option value="">
-              跟随工作区 ·{' '}
-              {modelOptions.find((option) => option.id === runtime.snapshot.model.model)?.name ||
-                '默认模型'}
-            </option>
-            {modelOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.name}
-              </option>
-            ))}
-          </select>
+            onValueChange={setModel}
+            options={[
+              {
+                value: '',
+                label: `跟随工作区 · ${modelOptions.find((option) => option.id === runtime.snapshot.model.model)?.name || '默认模型'}`,
+              },
+              ...modelOptions.map((option) => ({ value: option.id, label: option.name })),
+            ]}
+          />
           <span className="field-help">
             {modelsAvailable
               ? runtime.snapshot.protocolVersion >= 16
@@ -139,7 +135,7 @@ export function Profile({
                 : '共用工作区 DeepSeek 连接，只影响这位 Bot 的后续任务。V4 Pro 不提供模型电脑操作。'
               : '更新本地运行环境后，可为每位 Bot 单独选择模型。'}
           </span>
-        </label>
+        </div>
         <label className="field-label">
           职责
           <textarea

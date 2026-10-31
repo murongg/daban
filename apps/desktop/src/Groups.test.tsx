@@ -1,5 +1,6 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { demoState as seedDemoState } from './fixtures';
+import { findSelectControl, selectControl, selectOption } from './select.fixture';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
@@ -308,11 +309,11 @@ it('keeps the existing group draft unsent, routes an explicit receiver and never
   seed();
   const backend = connect();
   render(<App />);
-  await screen.findByRole('combobox', { name: '发送给' });
+  await findSelectControl('发送给');
   expect(screen.getByText('群聊 · 已连接')).toBeVisible();
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('合成未发送群消息');
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '发送给' }), 'a');
+  await selectOption(userEvent, selectControl('发送给'), 'a');
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
   expect(await screen.findByText('合成群回复 GROUP-47')).toBeVisible();
   const send = backend.invoke.mock.calls
@@ -332,8 +333,8 @@ it('excludes archived members from an explicit all-available send while keeping 
   const f = connect(true);
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: group.name }));
-  await screen.findByRole('combobox', { name: '发送给' });
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '发送给' }), '*');
+  await findSelectControl('发送给');
+  await selectOption(userEvent, selectControl('发送给'), '*');
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '合成只发给可用成员');
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
   const command = f.invoke.mock.calls
@@ -352,8 +353,8 @@ it('keeps an archived explicit recipient unresolved instead of silently retarget
   state.drafts[group.id] = 'SYNTHETIC-KEEP-RECIPIENT-DRAFT';
   localStorage.setItem(storageKey, serialize(state));
   render(<App />);
-  const target = await screen.findByRole('combobox', { name: '发送给' });
-  expect(target).toHaveValue('a');
+  const target = await findSelectControl('发送给');
+  expect(target).toHaveAttribute('data-value', 'a');
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(state.drafts[group.id]);
 });
@@ -374,7 +375,7 @@ it('retains an ambiguous group send across relaunch for an exact manual retry wh
   const backend = connect();
   backend.failNext();
   let view = render(<App />);
-  await screen.findByRole('combobox', { name: '发送给' });
+  await findSelectControl('发送给');
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
   await screen.findByRole('button', { name: '重试发送' });
   await userEvent.clear(screen.getByRole('textbox', { name: '发送消息' }));
@@ -398,7 +399,7 @@ it('creates a real group before selecting it and saves member edits against the 
   seed();
   const backend = connect();
   render(<App />);
-  await screen.findByRole('combobox', { name: '发送给' });
+  await findSelectControl('发送给');
   await userEvent.click(screen.getByRole('button', { name: '编辑群聊' }));
   let dialog = screen.getByRole('dialog', { name: '编辑群聊' });
   await userEvent.clear(within(dialog).getByRole('textbox', { name: '群聊名称' }));

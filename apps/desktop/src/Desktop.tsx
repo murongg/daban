@@ -1,5 +1,6 @@
 import { Check, FileText, Folder, Globe, Monitor, ShieldCheck, Terminal, Wifi } from 'lucide-react';
 import { useState } from 'react';
+import { Tooltip } from './Tooltip';
 
 type App = 'document' | 'files' | 'terminal' | 'browser';
 export function Desktop({
@@ -107,17 +108,17 @@ export function Desktop({
       </div>
       <fieldset className="desktop-dock" aria-label="桌面应用预览">
         {apps.map(([id, Icon, label]) => (
-          <button
-            type="button"
-            key={id}
-            className={app === id ? 'active' : ''}
-            aria-label={`预览${label}`}
-            title={`预览${label}`}
-            aria-pressed={app === id}
-            onClick={() => setApp(id)}
-          >
-            <Icon />
-          </button>
+          <Tooltip label={`预览${label}`} key={id}>
+            <button
+              type="button"
+              className={app === id ? 'active' : ''}
+              aria-label={`预览${label}`}
+              aria-pressed={app === id}
+              onClick={() => setApp(id)}
+            >
+              <Icon />
+            </button>
+          </Tooltip>
         ))}
       </fieldset>
     </section>

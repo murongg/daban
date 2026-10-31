@@ -5,6 +5,7 @@ import { Dialog } from './Dialog';
 import { Execution } from './Execution';
 import { demoIds } from './fixtures';
 import { Markdown } from './Markdown';
+import { NumberField } from './NumberField';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Bot, Message, WorkspaceFile } from './state';
 
@@ -115,19 +116,17 @@ export function ChatHistory({
             read().catch((error) => setError(runtimeError(error)));
           }}
         >
-          <label className="field-label">
+          <div className="field-label">
             对话编号{' '}
-            <input
-              className="field"
-              type="number"
-              aria-label="对话编号"
+            <NumberField
+              label="对话编号"
+              value={number}
+              onValueChange={setNumber}
               min={1}
               max={Math.max(1, revision)}
-              value={number}
               disabled={busy}
-              onChange={(event) => setNumber(event.target.value)}
             />
-          </label>
+          </div>
           <button type="submit" className="secondary" disabled={busy || !available || !valid}>
             读取记录
           </button>

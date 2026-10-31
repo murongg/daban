@@ -1,5 +1,6 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { demoState as seedDemoState } from './fixtures';
+import { selectControl, selectOption } from './select.fixture';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
@@ -138,10 +139,7 @@ it('edits one Bot model from the composer without changing the workspace or anot
   await screen.findByRole('heading', { name: '合成甲' });
   await userEvent.click(screen.getByRole('button', { name: 'Bot 模型：DeepSeek V4.1 Flash' }));
   const dialog = screen.getByRole('dialog');
-  await userEvent.selectOptions(
-    within(dialog).getByRole('combobox', { name: '此 Bot 的模型' }),
-    'deepseek-v4-pro',
-  );
+  await selectOption(userEvent, selectControl('此 Bot 的模型'), 'deepseek-v4-pro');
   await userEvent.click(within(dialog).getByRole('button', { name: '保存资料' }));
   expect(await screen.findByRole('button', { name: 'Bot 模型：DeepSeek V4 Pro' })).toBeVisible();
   expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual({
@@ -163,7 +161,7 @@ it('clears an override back to the workspace model and shows the actual captured
   await screen.findByRole('heading', { name: '合成甲' });
   backend.advance('a', { model: 'deepseek-v4-pro' });
   await userEvent.click(screen.getByRole('button', { name: 'Bot 模型：DeepSeek V4 Pro' }));
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '此 Bot 的模型' }), '');
+  await selectOption(userEvent, selectControl('此 Bot 的模型'), '');
   await userEvent.click(screen.getByRole('button', { name: '保存资料' }));
   expect(
     await screen.findByRole('button', { name: 'Bot 模型：DeepSeek V4.1 Flash' }),
@@ -176,10 +174,8 @@ it('clears an override back to the workspace model and shows the actual captured
   });
   backend.advance('a', { model: 'deepseek-v4-pro' });
   backend.running();
-  expect(screen.getByRole('button', { name: 'Bot 模型：DeepSeek V4.1 Flash' })).toHaveAttribute(
-    'title',
-    expect.stringContaining('本轮'),
-  );
+  await userEvent.hover(screen.getByRole('button', { name: 'Bot 模型：DeepSeek V4.1 Flash' }));
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('本轮');
   expect(screen.getByText(/下次任务：DeepSeek V4 Pro/)).toBeVisible();
 });
 
@@ -188,14 +184,11 @@ it('retains a model draft through a profile conflict and requires review before 
   render(<App />);
   await screen.findByRole('heading', { name: '合成甲' });
   await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
-  await userEvent.selectOptions(
-    screen.getByRole('combobox', { name: '此 Bot 的模型' }),
-    'deepseek-v4-pro',
-  );
+  await selectOption(userEvent, selectControl('此 Bot 的模型'), 'deepseek-v4-pro');
   backend.advance('a', { model: 'deepseek-flash' });
   await userEvent.click(screen.getByRole('button', { name: '保存资料' }));
   expect(await screen.findByText('当前模型：DeepSeek V4.1 Flash')).toBeVisible();
-  expect(screen.getByRole('combobox', { name: '此 Bot 的模型' })).toHaveValue('deepseek-v4-pro');
+  expect(selectControl('此 Bot 的模型')).toHaveAttribute('data-value', 'deepseek-v4-pro');
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'bot.update'),
   ).toHaveLength(1);
@@ -210,10 +203,7 @@ it('creates a personal Bot with its selected model and keeps unsupported runtime
   await screen.findByRole('heading', { name: '合成甲' });
   await userEvent.click(screen.getByRole('button', { name: '新建 Bot' }));
   await userEvent.type(screen.getByRole('textbox', { name: '名称' }), '合成新搭档');
-  await userEvent.selectOptions(
-    screen.getByRole('combobox', { name: '此 Bot 的模型' }),
-    'deepseek-v4-pro',
-  );
+  await selectOption(userEvent, selectControl('此 Bot 的模型'), 'deepseek-v4-pro');
   await userEvent.click(screen.getByRole('button', { name: '创建 Bot' }));
   expect(await screen.findByRole('heading', { name: '合成新搭档' })).toBeVisible();
   expect(
@@ -230,5 +220,5 @@ it('creates a personal Bot with its selected model and keeps unsupported runtime
   render(<App />);
   await screen.findByRole('heading', { name: '合成甲' });
   await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
-  expect(screen.getByRole('combobox', { name: '此 Bot 的模型' })).toBeDisabled();
+  expect(selectControl('此 Bot 的模型')).toBeDisabled();
 });

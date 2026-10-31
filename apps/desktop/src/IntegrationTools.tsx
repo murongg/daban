@@ -10,6 +10,7 @@ import {
 } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 import type { Bot } from './state';
 
 interface Selection {
@@ -199,30 +200,27 @@ export function IntegrationTools({
           关闭工具设置
         </button>
       </div>
-      <label className="field-label">
+      <div className="field-label">
         使用工具的 Bot
-        <select
-          className="field"
+        <Select
+          label="使用工具的 Bot"
           value={bot}
           disabled={locked || !available}
-          onChange={(event) => {
-            setBot(event.target.value);
+          onValueChange={(value) => {
+            setBot(value);
             setDraft(undefined);
             setPending(undefined);
             setError('');
             setNotice('');
           }}
-        >
-          {!choices.some((entry) => agentId(entry.id) === bot) && bot && (
-            <option value={bot}>原 Bot 已归档或不可用</option>
-          )}
-          {choices.map((item) => (
-            <option key={item.id} value={agentId(item.id)}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
+          options={[
+            ...(!choices.some((entry) => agentId(entry.id) === bot) && bot
+              ? [{ value: bot, label: '原 Bot 已归档或不可用', disabled: true }]
+              : []),
+            ...choices.map((item) => ({ value: agentId(item.id), label: item.name })),
+          ]}
+        />
+      </div>
       {choices.length === 0 && <p className="inline-note">先创建并同步一位 Bot，再选择工具。</p>}
       {error && (
         <p className="form-error" role="alert">

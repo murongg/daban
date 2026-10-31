@@ -37,7 +37,9 @@ export function Formula({ source, display = false }: { source: string; display?:
     // biome-ignore lint/security/noDangerouslySetInnerHtml: Only bounded KaTeX output sanitized above crosses this HTML boundary.
     <span dangerouslySetInnerHTML={{ __html: html }} />
   ) : (
-    <code title="公式暂未解析，已保留原文">{source}</code>
+    <span role="note" aria-label="公式暂未解析，已保留原文">
+      <code>{source}</code>
+    </span>
   );
   return display ? (
     // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll wide formulas.

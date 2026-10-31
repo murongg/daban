@@ -30,6 +30,8 @@ export function Dialog({
       element?.querySelector<HTMLElement>(focusable)
     )?.focus();
     function handle(event: KeyboardEvent) {
+      // Portalled controls own their keyboard layer until their popup has closed.
+      if (document.querySelector('[data-daban-popup]')) return;
       if (event.key === 'Escape') {
         // A controlled remote screen owns Escape until it moves focus back to the surrounding dialog.
         if (
@@ -44,7 +46,12 @@ export function Dialog({
       }
       if (event.key !== 'Tab') return;
       const items = Array.from(element?.querySelectorAll<HTMLElement>(focusable) || []).filter(
-        (el) => !el.hidden && el.getAttribute('aria-hidden') !== 'true',
+        // Custom controls retain hidden native form inputs; those must never become Tab endpoints.
+        (el) =>
+          !el.hidden &&
+          !el.closest('[hidden], [aria-hidden="true"], [inert]') &&
+          !el.matches('input[type="hidden"]') &&
+          !(el.hasAttribute('tabindex') && el.tabIndex < 0),
       );
       const first = items[0],
         last = items.at(-1);

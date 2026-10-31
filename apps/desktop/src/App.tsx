@@ -448,7 +448,7 @@ function Workbench() {
   useEffect(() => {
     function key(e: KeyboardEvent) {
       // Local editors share Dialog without owning the main modal state.
-      if (document.querySelector('[role="dialog"]')) return;
+      if (document.querySelector('[role="dialog"], [data-daban-popup]')) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (modal) return;

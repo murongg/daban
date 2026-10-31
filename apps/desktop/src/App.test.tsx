@@ -126,6 +126,30 @@ describe('daban client', () => {
     );
     expect(screen.getByRole('textbox', { name: '任务名称' })).toHaveValue('合成研究任务');
   });
+  it('requires a time before saving a demo routine and accepts a complete time', async () => {
+    const state = seedDemoState();
+    state.routineDrafts.research = {
+      ...state.routineDrafts.research,
+      open: true,
+      title: '合成时间必填任务',
+      instruction: '只使用合成内容验证时间',
+      time: '',
+    };
+    localStorage.setItem(seedStorageKey, seedSerialize(state));
+    render(<App />);
+    await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+    await userEvent.click(screen.getByRole('button', { name: '保存定时任务' }));
+    expect(screen.getByText('请输入有效时间（00:00–23:59）。')).toBeVisible();
+    expect(screen.getByRole('textbox', { name: '任务名称' })).toHaveValue('合成时间必填任务');
+    await userEvent.click(screen.getByRole('spinbutton', { name: /小时, 时间/ }));
+    await userEvent.keyboard('10');
+    await userEvent.click(screen.getByRole('spinbutton', { name: /分钟, 时间/ }));
+    await userEvent.keyboard('30');
+    await userEvent.click(screen.getByRole('button', { name: '保存定时任务' }));
+    expect(screen.queryByRole('textbox', { name: '任务名称' })).not.toBeInTheDocument();
+    expect(screen.getByText('合成时间必填任务')).toBeVisible();
+    expect(screen.getByText('每天 · 10:30')).toBeVisible();
+  });
   it('records an approval locally and opens the correct Bot for handoff', async () => {
     render(<App />);
     await userEvent.click(screen.getByRole('button', { name: /收件箱/ }));

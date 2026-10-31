@@ -1,6 +1,7 @@
 import type { BrowserBinding, BrowserPrompt, BrowserState } from '@daban/protocol';
 import { useState } from 'react';
 import { type BrowserAnswer, browserFiles } from './browsing';
+import { FilePicker } from './FilePicker';
 import { runtimeError } from './Runtime';
 
 export function BrowserRequest({
@@ -90,10 +91,9 @@ export function BrowserRequest({
       ) : (
         <>
           <p>选择要交给此网页的本机文件，最多 {prompt.multiple ? '4 份' : '1 份'}，合计 5 MB。</p>
-          <label className="field-label">
+          <div className="field-label">
             选择本机文件
-            <input
-              type="file"
+            <FilePicker
               aria-label="选择发送给网页的文件"
               multiple={prompt.multiple}
               disabled={disabled || reading}
@@ -102,7 +102,7 @@ export function BrowserRequest({
                 setError('');
               }}
             />
-          </label>
+          </div>
           {files.length > 0 && <p>{files.map((file) => file.name).join('、')}</p>}
         </>
       )}

@@ -8,6 +8,7 @@ import {
 } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 
 const definite = new Set([
   'INVALID_CREDENTIAL',
@@ -161,23 +162,18 @@ export function Models() {
           }}
         >
           <fieldset className="model-fields" disabled={!available || busy || !!pending}>
-            <label className="field-label">
+            <div className="field-label">
               模型
-              <select
-                className="field"
+              <Select
+                label="模型"
                 value={draft.model}
-                onChange={(event) => {
-                  if (isDeepSeekModel(event.target.value))
-                    setDraft({ ...draft, model: event.target.value });
+                disabled={!available || busy || !!pending}
+                onValueChange={(value) => {
+                  if (isDeepSeekModel(value)) setDraft({ ...draft, model: value });
                 }}
-              >
-                {modelOptions.map((option) => (
-                  <option value={option.id} key={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={modelOptions.map((option) => ({ value: option.id, label: option.name }))}
+              />
+            </div>
             <label className="field-label">
               API Key
               <input

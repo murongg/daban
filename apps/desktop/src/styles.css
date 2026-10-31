@@ -65,8 +65,36 @@ textarea::placeholder {
   color: var(--muted);
   opacity: 1;
 }
-input[type="checkbox"] {
-  accent-color: var(--ink);
+input[type="checkbox"]:not([hidden]) {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--canvas);
+  color: var(--on-strong);
+  vertical-align: middle;
+  cursor: pointer;
+}
+input[type="checkbox"]:checked {
+  background: var(--strong);
+  border-color: var(--strong);
+}
+input[type="checkbox"]:checked::after {
+  content: "";
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-1px) rotate(-45deg);
+}
+input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 svg {
   display: block;
@@ -3208,18 +3236,18 @@ textarea.skill-source {
   color: var(--muted);
   font-size: 12px;
 }
-.group-recipient select {
+.group-recipient .select-field {
   max-width: 220px;
+}
+.group-recipient .select-trigger {
   min-height: 32px;
   padding: 4px 8px;
-  border: 1px solid var(--line);
+  border-color: var(--line);
   border-radius: 8px;
-  color: var(--ink);
-  background: var(--canvas);
   font: inherit;
 }
 @media (max-width: 600px) {
-  .group-recipient select {
+  .group-recipient .select-field {
     max-width: 150px;
   }
 }

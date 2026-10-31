@@ -38,6 +38,7 @@ import {
   type State,
   type WorkspaceFile,
 } from './state';
+import { Tooltip } from './Tooltip';
 
 function progress(task: RuntimeTask) {
   if (task.phase === 'waiting') return '等待你的回复';
@@ -563,21 +564,24 @@ export function Conversation({
               tabIndex={-1}
               aria-label="选择附件"
             />
-            <button
-              type="button"
-              className="model-label"
-              disabled={readOnly}
-              onClick={onModel}
-              aria-label={modelPicker ? `Bot 模型：${modelName}` : undefined}
-              title={
+            <Tooltip
+              label={
                 modelPicker
                   ? `${task?.running ? '本轮模型' : '下次任务模型'}：${modelName}`
                   : undefined
               }
             >
-              {modelLabel}
-              <ChevronDown />
-            </button>
+              <button
+                type="button"
+                className="model-label"
+                disabled={readOnly}
+                onClick={onModel}
+                aria-label={modelPicker ? `Bot 模型：${modelName}` : undefined}
+              >
+                {modelLabel}
+                <ChevronDown />
+              </button>
+            </Tooltip>
             <span className="spacer" />
             <IconButton
               label="语音输入（暂未接入）"

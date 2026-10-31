@@ -8,6 +8,7 @@ import { Diagram } from './Diagram';
 import { Formula } from './Formula';
 import { Highlight } from './Highlight';
 import type { WorkspaceFile } from './state';
+import { Tooltip } from './Tooltip';
 
 const plugins = [remarkGfm, remarkMath];
 const emptyFiles: readonly WorkspaceFile[] = [];
@@ -57,21 +58,22 @@ export const Markdown = memo(function Markdown({
   }, [files, fileIds]);
   const components = useMemo<Components>(() => {
     const web = (href: string, children: ReactNode) => (
-      <a
-        href={href}
-        title={href}
-        rel="noreferrer noopener"
-        onClick={async (event) => {
-          event.preventDefault();
-          try {
-            await openLink(href);
-          } catch {
-            notify('链接打开失败，请复制地址后手动打开。');
-          }
-        }}
-      >
-        {children}
-      </a>
+      <Tooltip label={href}>
+        <a
+          href={href}
+          rel="noreferrer noopener"
+          onClick={async (event) => {
+            event.preventDefault();
+            try {
+              await openLink(href);
+            } catch {
+              notify('链接打开失败，请复制地址后手动打开。');
+            }
+          }}
+        >
+          {children}
+        </a>
+      </Tooltip>
     );
     return {
       code: ({ children, className }) => {
@@ -92,20 +94,21 @@ export const Markdown = memo(function Markdown({
         const file = href ? known.get(href) : undefined;
         if (file && preview)
           return (
-            <button
-              type="button"
-              className="markdown-file"
-              title={`预览文件 ${file.name}`}
-              onClick={async () => {
-                try {
-                  await preview(file);
-                } catch {
-                  notify('文件打开失败，请使用文件面板重试。');
-                }
-              }}
-            >
-              {children}
-            </button>
+            <Tooltip label={`预览文件 ${file.name}`}>
+              <button
+                type="button"
+                className="markdown-file"
+                onClick={async () => {
+                  try {
+                    await preview(file);
+                  } catch {
+                    notify('文件打开失败，请使用文件面板重试。');
+                  }
+                }}
+              >
+                {children}
+              </button>
+            </Tooltip>
           );
         if (href?.startsWith(`#${scope}-`))
           return (

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Markdown } from '../src/Markdown';
+import { Select } from '../src/Select';
 import '../src/tokens.css';
 import '../src/styles.css';
 
@@ -58,16 +59,17 @@ function RenderPreview() {
         <button className="text-button" type="button" onClick={() => setStreaming(!streaming)}>
           {streaming ? '完成回复' : '模拟写入中'}
         </button>
-        <select
-          aria-label="合成样例"
+        <Select
+          label="合成样例"
           value={kind}
-          onChange={(event) => setKind(event.target.value)}
-        >
-          <option value="normal">正常内容</option>
-          <option value="sequence">时序图</option>
-          <option value="errors">异常与资源边界</option>
-          <option value="wide">宽内容</option>
-        </select>
+          onValueChange={setKind}
+          options={[
+            { value: 'normal', label: '正常内容' },
+            { value: 'sequence', label: '时序图' },
+            { value: 'errors', label: '异常与资源边界' },
+            { value: 'wide', label: '宽内容' },
+          ]}
+        />
       </header>
       <section
         style={{

@@ -5,6 +5,7 @@ import { IconButton } from './Button';
 import { useNotes } from './note-controller';
 import { noteDirty, noteInitial } from './notes-state';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 import type { Action, Bot, State } from './state';
 
 const states = { open: '待处理', parked: '暂存', done: '已完成' };
@@ -195,23 +196,16 @@ export function Notes({
                   onChange={(event) => mutate({ body: event.target.value })}
                 />
               </label>
-              <label className="field-label">
+              <div className="field-label">
                 便笺状态
-                <select
-                  className="field"
+                <Select
+                  label="便笺状态"
                   value={draft.status}
                   disabled={readOnly}
-                  onChange={(event) =>
-                    mutate({ status: event.target.value as NoteFields['status'] })
-                  }
-                >
-                  {noteStates.map((status) => (
-                    <option key={status} value={status}>
-                      {states[status]}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  onValueChange={(value) => mutate({ status: value as NoteFields['status'] })}
+                  options={noteStates.map((status) => ({ value: status, label: states[status] }))}
+                />
+              </div>
               {draft.base?.completedAt && (
                 <p className="inline-note">
                   完成于{' '}
@@ -392,24 +386,18 @@ export function Notes({
                 }
               />
             </label>
-            <select
-              className="field"
-              aria-label="便笺筛选"
+            <Select
+              label="便笺筛选"
               value={cache.filter}
-              onChange={(event) =>
+              onValueChange={(value) =>
                 dispatch({
                   type: 'notes-options',
                   bot: bot.id,
-                  patch: { filter: event.target.value as typeof cache.filter },
+                  patch: { filter: value as typeof cache.filter },
                 })
               }
-            >
-              {Object.entries(filters).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              options={Object.entries(filters).map(([value, label]) => ({ value, label }))}
+            />
           </div>
           {notes.listError && (
             <p className="error-text" role="alert">

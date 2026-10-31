@@ -30,6 +30,7 @@ import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
 import { RuntimeFiles } from './RuntimeFiles';
 import { Schedules } from './Schedules';
+import { Select } from './Select';
 import { Skills } from './Skills';
 import {
   type Action,
@@ -39,6 +40,7 @@ import {
   type State,
   type WorkspaceFile,
 } from './state';
+import { TimeField } from './TimeField';
 
 const allTabs = [
   ['computer', Monitor, '电脑'],
@@ -558,28 +560,24 @@ export function Workspace({
                     rows={3}
                   />
                 </label>
-                <label className="field-label">
+                <div className="field-label">
                   重复
-                  <select
-                    className="field"
+                  <Select
+                    label="重复"
                     value={frequency}
-                    onChange={(e) => setForm({ frequency: e.target.value })}
-                  >
-                    {['每天', '工作日', '每周五'].map((f) => (
-                      <option key={f}>{f}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field-label">
+                    onValueChange={(value) => setForm({ frequency: value })}
+                    options={['每天', '工作日', '每周五'].map((value) => ({ value, label: value }))}
+                  />
+                </div>
+                <div className="field-label">
                   时间
-                  <input
-                    className="field"
-                    type="time"
+                  <TimeField
+                    label="时间"
                     required
                     value={time}
-                    onChange={(e) => setForm({ time: e.target.value })}
+                    onValueChange={(value) => setForm({ time: value })}
                   />
-                </label>
+                </div>
                 <div className="inline-form-actions">
                   <button
                     type="button"

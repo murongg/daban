@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Integrations } from './Integrations';
 import { IntegrationTools } from './IntegrationTools';
 import { RuntimeProvider } from './Runtime';
+import { findSelectControl, selectControl, selectOption } from './select.fixture';
 import type { Bot } from './state';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
@@ -282,7 +283,7 @@ it('checks a connection without granting tools, then explicitly saves the review
       enabled: true,
     },
   });
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '使用工具的 Bot' }), 'mock-b');
+  await selectOption(userEvent, selectControl('使用工具的 Bot'), 'mock-b');
   expect(
     await screen.findByRole('checkbox', { name: '允许这位 Bot 使用所选工具' }),
   ).not.toBeChecked();
@@ -314,10 +315,10 @@ it('keeps checking available while a tool selection is dirty and blocks navigati
   await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   await userEvent.click(await screen.findByRole('checkbox', { name: 'synthetic_echo' }));
   expect(screen.getByRole('button', { name: '编辑 合成服务' })).toBeDisabled();
-  expect(screen.getByRole('combobox', { name: '使用工具的 Bot' })).toBeDisabled();
+  expect(selectControl('使用工具的 Bot')).toBeDisabled();
   expect(screen.getByRole('button', { name: '检查 合成服务' })).toBeEnabled();
   await userEvent.click(screen.getByRole('button', { name: '放弃选择修改' }));
-  expect(screen.getByRole('combobox', { name: '使用工具的 Bot' })).toBeEnabled();
+  expect(selectControl('使用工具的 Bot')).toBeEnabled();
 });
 
 it('revalidates a changed catalog without losing dirty tool choices and requires an explicit version decision', async () => {
@@ -352,7 +353,7 @@ it('treats stale saved authority as a review state without trapping navigation o
   await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   await screen.findByRole('checkbox', { name: 'synthetic_echo' });
   expect(screen.getByRole('button', { name: '关闭工具设置' })).toBeEnabled();
-  expect(screen.getByRole('combobox', { name: '使用工具的 Bot' })).toBeEnabled();
+  expect(selectControl('使用工具的 Bot')).toBeEnabled();
   expect(screen.getByRole('button', { name: '保存工具选择' })).toBeEnabled();
   await userEvent.click(screen.getByRole('button', { name: '关闭工具设置' }));
   expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.bind')).toBe(false);
@@ -370,7 +371,7 @@ it('does not select an archived identity when opening per-Bot external tool choi
   const invoke = connect({ archived: true });
   render(view());
   await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
-  const target = await screen.findByRole('combobox', { name: '使用工具的 Bot' });
-  expect(target).toHaveValue('mock-b');
+  const target = await findSelectControl('使用工具的 Bot');
+  expect(target).toHaveAttribute('data-value', 'mock-b');
   expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.bind')).toBe(false);
 });

@@ -1,5 +1,6 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { demoState as seedDemoState } from './fixtures';
+import { selectControl, selectOption } from './select.fixture';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
@@ -101,7 +102,7 @@ it('submits the selected model and exact revision, then clears the key after a c
   const invoke = connect();
   render(<App />);
   await open();
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: '模型' }), 'deepseek-flash');
+  await selectOption(userEvent, selectControl('模型'), 'deepseek-flash');
   await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-save-key');
   await userEvent.click(screen.getByRole('button', { name: '验证并保存' }));
   expect(await screen.findByText('模型设置已保存，下次任务生效。')).toBeVisible();

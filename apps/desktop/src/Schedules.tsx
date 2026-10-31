@@ -2,9 +2,13 @@ import { agentId, type Schedule, type ScheduleInput, type ScheduleRule } from '@
 import { Clock3, Lock, LockOpen, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import { type Dispatch, useEffect, useState } from 'react';
 import { IconButton } from './Button';
+import { DateField } from './DateField';
+import { NumberField } from './NumberField';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 import { type Action, type Bot, type RoutineDraft, routineDraft, type State } from './state';
+import { TimeField } from './TimeField';
 
 function rule(form: RoutineDraft): ScheduleRule {
   const timeZone = form.zone ?? 'Asia/Shanghai';
@@ -363,32 +367,32 @@ export function Schedules({
                 required
               />
             </label>
-            <label className="field-label">
+            <div className="field-label">
               重复
-              <select
-                className="field"
+              <Select
+                label="重复"
                 value={form.frequency}
-                onChange={(event) => change({ frequency: event.target.value })}
-              >
-                {['每天', '工作日', '每周五', '每周', '间隔', '单次', 'Cron'].map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
-            </label>
+                disabled={!!status.busy || !!form.pending || !available}
+                onValueChange={(value) => change({ frequency: value })}
+                options={['每天', '工作日', '每周五', '每周', '间隔', '单次', 'Cron'].map(
+                  (value) => ({ value, label: value }),
+                )}
+              />
+            </div>
             {form.frequency === '间隔' ? (
               <>
-                <label className="field-label">
+                <div className="field-label">
                   间隔分钟
-                  <input
-                    type="number"
-                    min="1"
-                    max="525600"
-                    required
-                    className="field"
+                  <NumberField
+                    label="间隔分钟"
                     value={form.interval ?? '60'}
-                    onChange={(event) => change({ interval: event.target.value })}
+                    onValueChange={(value) => change({ interval: value })}
+                    min={1}
+                    max={525600}
+                    required
+                    disabled={!!status.busy || !!form.pending || !available}
                   />
-                </label>
+                </div>
                 {Number(form.interval || 60) < 15 && (
                   <p className="inline-note">
                     每次触发都可能调用模型并产生费用，建议使用较长间隔。
@@ -398,16 +402,16 @@ export function Schedules({
             ) : (
               <>
                 {form.frequency === '单次' && (
-                  <label className="field-label">
+                  <div className="field-label">
                     日期
-                    <input
-                      type="date"
-                      className="field"
-                      required
+                    <DateField
+                      label="日期"
                       value={form.date || ''}
-                      onChange={(event) => change({ date: event.target.value })}
+                      onValueChange={(value) => change({ date: value })}
+                      required
+                      disabled={!!status.busy || !!form.pending || !available}
                     />
-                  </label>
+                  </div>
                 )}
                 {form.frequency === 'Cron' ? (
                   <label className="field-label">
@@ -421,16 +425,16 @@ export function Schedules({
                     />
                   </label>
                 ) : (
-                  <label className="field-label">
+                  <div className="field-label">
                     时间
-                    <input
-                      type="time"
-                      className="field"
-                      required
+                    <TimeField
+                      label="时间"
                       value={form.time}
-                      onChange={(event) => change({ time: event.target.value })}
+                      onValueChange={(value) => change({ time: value })}
+                      required
+                      disabled={!!status.busy || !!form.pending || !available}
                     />
-                  </label>
+                  </div>
                 )}
                 {form.frequency === '每周' && (
                   <fieldset className="schedule-days schedule-fields" aria-label="每周执行日期">

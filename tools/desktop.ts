@@ -139,6 +139,11 @@ await copyFile(
   path.join(frontendNotices, 'remark-math-LICENSE'),
   constants.COPYFILE_EXCL,
 );
+await cp(
+  path.join(root, 'apps/desktop/licenses/controls'),
+  path.join(frontendNotices, 'controls'),
+  { recursive: true, force: false, errorOnExist: true },
+);
 for (const [key, value] of Object.entries({
   CFBundleIdentifier: 'dev.daban.app',
   CFBundleExecutable: 'daban',

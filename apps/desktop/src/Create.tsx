@@ -9,6 +9,7 @@ import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar, colors } from './Avatar';
 import type { BotPreset } from './presets';
 import { runtimeError, useRuntime } from './Runtime';
+import { Select } from './Select';
 import type { Action, Color, State } from './state';
 
 const colorNames: Record<Color, string> = {
@@ -230,32 +231,27 @@ export function Create({
                   ))}
                 </fieldset>
               </div>
-              <label className="field-label">
+              <div className="field-label">
                 此 Bot 的模型
-                <select
-                  aria-label="此 Bot 的模型"
-                  className="field"
+                <Select
+                  label="此 Bot 的模型"
                   value={model}
                   disabled={saving || !modelsAvailable}
-                  onChange={(event) => setModel(event.target.value)}
-                >
-                  <option value="">
-                    跟随工作区 ·{' '}
-                    {modelOptions.find((option) => option.id === runtime.snapshot.model.model)
-                      ?.name || '默认模型'}
-                  </option>
-                  {modelOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.name}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={setModel}
+                  options={[
+                    {
+                      value: '',
+                      label: `跟随工作区 · ${modelOptions.find((option) => option.id === runtime.snapshot.model.model)?.name || '默认模型'}`,
+                    },
+                    ...modelOptions.map((option) => ({ value: option.id, label: option.name })),
+                  ]}
+                />
                 <span className="field-help">
                   {runtime.snapshot.protocolVersion >= 16
                     ? '共用工作区 DeepSeek 连接。Pro 可操作已连接浏览器的 DOM，整屏观察需要 Flash。'
                     : '共用工作区 DeepSeek 连接。之后可在 Bot 资料中修改；V4 Pro 不提供模型电脑操作。'}
                 </span>
-              </label>
+              </div>
             </>
           )}
           {error && (
