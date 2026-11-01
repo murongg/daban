@@ -47,7 +47,8 @@ seed.messages.research = [
   },
   { id: `runtime-result:${scope.runId}`, role: 'bot', text: reply },
 ];
-if (mode === 'approval') seed.messages.research = seed.messages.research.slice(0, 2);
+if (mode === 'approval' || mode === 'empty')
+  seed.messages.research = seed.messages.research.slice(0, 2);
 clientCache().setItem(storageKey, serialize(seed));
 const snapshot = previewSnapshot(mode === 'legacy' ? 32 : undefined);
 snapshot.model = {
@@ -93,6 +94,20 @@ const task: RuntimeTask = {
   history: [],
 };
 snapshot.agents[scope.bot] = task;
+if (mode === 'empty')
+  snapshot.agents[scope.bot] = {
+    ...task,
+    running: true,
+    phase: 'running',
+    result: '',
+    toolCount: 0,
+    executedCount: 0,
+  };
+if (mode === 'empty' && query.has('plan'))
+  snapshot.agents[scope.bot].plan = [
+    { content: '合成步骤：核对运行状态', status: 'in_progress' },
+    { content: '合成步骤：生成核对结果', status: 'pending' },
+  ];
 if (mode === 'approval') {
   snapshot.agents[scope.bot] = { ...task, running: true, phase: 'waiting', result: '' };
   snapshot.interactions = [
@@ -197,8 +212,19 @@ const items: TranscriptItem[] = bodies.map((text, index) => ({
     ? { callId: 'mock-search-call', ...(index === 0 ? { name: 'web_search' } : { isError: false }) }
     : {}),
 }));
+const listeners = new Set<Parameters<RuntimeBridge['subscribe']>[0]>();
 function fixture(command: RuntimeCommand): unknown {
   if (command.type === 'status') return snapshot;
+  if (command.type === 'task.stop' && mode === 'empty') {
+    const current = snapshot.agents[command.bot];
+    if (!current) throw new Error('SYNTHETIC_TASK_NOT_FOUND');
+    snapshot.agents = {
+      ...snapshot.agents,
+      [command.bot]: { ...current, running: false, phase: 'stopped' },
+    };
+    for (const listener of listeners) listener({ ...snapshot });
+    return {};
+  }
   if (command.type === 'interaction.reply' && mode === 'approval') {
     const request = snapshot.interactions?.find((item) => item.id === command.id);
     if (!request) throw new Error('SYNTHETIC_REQUEST_NOT_FOUND');
@@ -231,8 +257,15 @@ function fixture(command: RuntimeCommand): unknown {
     if (mode === 'error') throw new Error('TRANSCRIPT_UNAVAILABLE');
     return {
       ...command.query.scope,
-      state: mode === 'incomplete' ? 'interrupted' : 'complete',
-      items: items.filter((item) => item.seq > (command.query.after ?? 0)),
+      state:
+        mode === 'empty'
+          ? snapshot.agents[scope.bot]?.running
+            ? 'recording'
+            : 'interrupted'
+          : mode === 'incomplete'
+            ? 'interrupted'
+            : 'complete',
+      items: mode === 'empty' ? [] : items.filter((item) => item.seq > (command.query.after ?? 0)),
     };
   }
   if (command.type === 'transcript.content') {
@@ -262,7 +295,10 @@ const runtime: RuntimeBridge = {
       };
     }
   },
-  subscribe: () => () => {},
+  subscribe: (listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  },
 };
 Object.defineProperty(window, 'daban', {
   configurable: true,

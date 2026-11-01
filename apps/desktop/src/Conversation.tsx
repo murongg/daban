@@ -10,6 +10,7 @@ import {
   Monitor,
   Paperclip,
   Plus,
+  Square,
   X,
 } from 'lucide-react';
 import { type Dispatch, useCallback, useRef } from 'react';
@@ -388,7 +389,9 @@ export function Conversation({
             />
           )}
           {pendingIds && current.map(renderMessage)}
-          {live && task?.plan && <Plan items={task.plan} />}
+          {live && task?.plan && (
+            <Plan items={task.plan} active={task.running && task.phase === 'running'} />
+          )}
           {live && (
             <div ref={scroll.attention}>
               <Requests state={state} dispatch={dispatch} notify={notify} bot={bot.id} />
@@ -457,16 +460,17 @@ export function Conversation({
                 {t('chat.times')}
               </span>
             )}
-            <button
-              type="button"
+            <IconButton
+              className="task-stop"
+              label={t('chat.stopTask')}
               onClick={() =>
                 runtime
                   .command({ type: 'task.stop', bot: target! })
                   .catch((error) => notify(String(error)))
               }
             >
-              {t('chat.stopTask')}
-            </button>
+              <Square fill="currentColor" strokeWidth={0} aria-hidden="true" />
+            </IconButton>
           </div>
         )}
         {pending && (

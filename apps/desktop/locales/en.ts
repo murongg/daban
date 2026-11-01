@@ -1307,8 +1307,7 @@ export const english = {
   'execution.loadSubsequentRecords': 'Load subsequent records',
   'execution.noExecutionDetailsWereRetainedTask':
     'No execution details were retained for this task.',
-  'execution.noToolInteractionStepsWereRecordedTask':
-    'No tool or interaction steps were recorded for this task.',
+  'execution.noToolInteractionStepsWereRecordedTask': 'No execution steps recorded.',
   'execution.observeScreen': 'Observe screen',
   'execution.onlyPartLongContentShownContinueReading':
     'Only part of this long content is shown. Continue reading to see the rest.',
@@ -1320,7 +1319,7 @@ export const english = {
   'execution.readContentAgain': 'Read content again',
   'execution.readFile': 'Read file',
   'execution.readOnlyExecutionHistoryToolsNotRerun':
-    'Read-only execution history. Tools are not rerun and old approvals are not reused. Non-text outputs retain descriptions and are not saved again here.',
+    'Read-only records. Refreshing does not rerun the task.',
   'execution.readRecordsAgain': 'Read records again',
   'execution.readWebpage': 'Read webpage',
   'execution.reconnectLocalEnvironmentViewExecutionHistory':

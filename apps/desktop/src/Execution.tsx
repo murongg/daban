@@ -8,8 +8,9 @@ import {
   type TranscriptPage,
   type TranscriptScope,
 } from '@daban/protocol';
-import { ChevronDown, ListChecks } from 'lucide-react';
+import { ChevronDown, ListChecks, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { IconButton } from './Button';
 import { type MessageKey, t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
@@ -247,7 +248,19 @@ function Reader({ scope }: { scope: TranscriptScope }) {
   );
   return (
     <div className="execution-reader">
-      <p className="field-help">{t('execution.readOnlyExecutionHistoryToolsNotRerun')}</p>
+      {/* Keep this outside summary: refreshing must never toggle the execution disclosure. */}
+      <IconButton
+        className="execution-refresh"
+        label={error ? t('execution.readRecordsAgain') : t('execution.refreshRecords')}
+        title={`${error ? t('execution.readRecordsAgain') : t('execution.refreshRecords')} · ${t('execution.readOnlyExecutionHistoryToolsNotRerun')}`}
+        disabled={busy}
+        aria-busy={busy}
+        onClick={async () => {
+          await read();
+        }}
+      >
+        <RefreshCw />
+      </IconButton>
       {page?.state === 'unavailable' && (
         <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}
@@ -257,7 +270,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
       {page?.state === 'interrupted' && (
         <p className="field-help">{t('execution.onlySavedPortionShownDoesNotConfirm')}</p>
       )}
-      {page && page.state !== 'unavailable' && !page.items.length && !busy && (
+      {page && page.state !== 'unavailable' && !page.items.length && (
         <p className="inline-note">{t('execution.noToolInteractionStepsWereRecordedTask')}</p>
       )}
       {!!page?.items.length && (
@@ -272,7 +285,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
           ))}
         </ol>
       )}
-      {busy && (
+      {busy && !page && (
         <p className="inline-note" role="status">
           {t('execution.loadingRecords')}
         </p>
@@ -282,30 +295,18 @@ function Reader({ scope }: { scope: TranscriptScope }) {
           {error}
         </p>
       )}
-      <div className="model-actions">
+      {page?.nextAfter && (
         <button
           type="button"
           className="text-button"
           disabled={busy}
           onClick={async () => {
-            await read();
+            await read(page.nextAfter);
           }}
         >
-          {error ? t('execution.readRecordsAgain') : t('execution.refreshRecords')}
+          {t('execution.loadSubsequentRecords')}
         </button>
-        {page?.nextAfter && (
-          <button
-            type="button"
-            className="text-button"
-            disabled={busy}
-            onClick={async () => {
-              await read(page.nextAfter);
-            }}
-          >
-            {t('execution.loadSubsequentRecords')}
-          </button>
-        )}
-      </div>
+      )}
     </div>
   );
 }

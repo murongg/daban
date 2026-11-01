@@ -410,7 +410,9 @@ export function GroupChat({
                             ? t('common.waitingComputerHandback')
                             : t('groupchat.processing')}
                       </p>
-                      {task.plan && <Plan items={task.plan} />}
+                      {task.plan && (
+                        <Plan items={task.plan} active={task.running && task.phase === 'running'} />
+                      )}
                       {task.runId && (
                         <Execution
                           scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}

@@ -136,6 +136,59 @@ it('loads metadata only after opening and pages full tool content and later even
   ).toBe(true);
 });
 
+it('refreshes from an accessible icon without closing the history or rerunning a task', async () => {
+  let reads = 0;
+  const backend = bridge((command) => {
+    if (command.type !== 'transcript.list') throw new Error('UNEXPECTED_SYNTHETIC_ACTION');
+    reads += 1;
+    return { ...scope, state: 'complete', items: reads === 1 ? [] : [item(1)] };
+  });
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="completed" />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByText('执行过程'));
+  const refresh = await screen.findByRole('button', { name: '刷新记录' });
+  expect(refresh).toHaveAttribute('aria-label', '刷新记录');
+  expect(refresh).toHaveTextContent('');
+  expect(refresh.closest('summary')).toBeNull();
+  await user.click(refresh);
+  expect(await screen.findByText('第 1 条')).toBeVisible();
+  expect(screen.getByText('执行过程').closest('details')).toHaveAttribute('open');
+  expect(reads).toBe(2);
+  expect(
+    backend.invoke.mock.calls.every(([command]) =>
+      ['status', 'transcript.list'].includes(command.type),
+    ),
+  ).toBe(true);
+});
+
+it('keeps the header retry icon available after a failed record read', async () => {
+  let failed = true;
+  bridge((command) => {
+    if (command.type !== 'transcript.list') throw new Error('UNEXPECTED_SYNTHETIC_ACTION');
+    if (failed) throw new Error('SYNTHETIC_TRANSCRIPT_UNAVAILABLE');
+    return { ...scope, state: 'complete', items: [item(1)] };
+  });
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="completed" />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByText('执行过程'));
+  await screen.findByRole('alert');
+  const retry = screen.getByRole('button', { name: '重新读取记录' });
+  expect(retry).toHaveAttribute('aria-label', '重新读取记录');
+  failed = false;
+  await user.click(retry);
+  expect(await screen.findByText('第 1 条')).toBeVisible();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '刷新记录' })).toBeEnabled();
+});
+
 it('drops late private reads after changing to a group scope and blocks reads from an old environment', async () => {
   let release: (value: unknown) => unknown = () => undefined;
   const old = new Promise<unknown>((resolve) => {
@@ -244,7 +297,7 @@ it('private conversation exposes the exact task transcript while retaining an un
   );
   const user = userEvent.setup();
   await user.click(await screen.findByText('执行过程'));
-  expect(await screen.findByText('本次没有记录到工具或交互步骤。')).toBeInTheDocument();
+  expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
   expect(screen.getByText('合成失败')).toBeInTheDocument();
   expectExecutionBefore('合成失败');
   expect(screen.getByDisplayValue('SYNTHETIC UNSENT DRAFT')).toBeInTheDocument();
@@ -332,7 +385,7 @@ it('saved private history and group replies use their own author, run and conver
   await screen.findByText('执行过程');
   expectExecutionBefore('合成旧回复');
   await user.click(await screen.findByText('执行过程'));
-  expect(await screen.findByText('本次没有记录到工具或交互步骤。')).toBeInTheDocument();
+  expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.some(
       ([command]) =>
@@ -357,7 +410,7 @@ it('saved private history and group replies use their own author, run and conver
   await screen.findByText('执行过程');
   expectExecutionBefore('合成群回复');
   await user.click(await screen.findByText('执行过程'));
-  expect(await screen.findByText('本次没有记录到工具或交互步骤。')).toBeInTheDocument();
+  expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
   expect(screen.getByDisplayValue('SYNTHETIC GROUP DRAFT')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.some(
@@ -491,7 +544,7 @@ it('task-result dialogs include collapsed execution summaries in the keyboard fo
   expect(summary).toHaveFocus();
   // jsdom does not activate native details on Enter; real-browser acceptance covers that native toggle.
   await user.click(summary!);
-  await screen.findByText('本次没有记录到工具或交互步骤。');
+  await screen.findByText('暂无执行步骤。');
   await user.tab();
   expect(screen.getByRole('button', { name: '刷新记录' })).toHaveFocus();
   await user.tab();
@@ -516,7 +569,7 @@ it('waits for task preparation to finish before asking for a durable transcript'
       <Execution scope={scope} phase="running" />
     </RuntimeProvider>,
   );
-  expect(await screen.findByText('本次没有记录到工具或交互步骤。')).toBeInTheDocument();
+  expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'transcript.list'),
   ).toHaveLength(1);

@@ -82,6 +82,39 @@ function connect() {
   };
 }
 
+it('stops the selected Bot through an accessible icon with a tooltip', async () => {
+  const backend = connect();
+  render(<App />);
+  const stop = await screen.findByRole('button', { name: '停止任务' });
+  expect(stop).toHaveAttribute('aria-label', '停止任务');
+  expect(stop).toHaveTextContent('');
+  await userEvent.hover(stop);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('停止任务');
+  await userEvent.click(stop);
+  expect(
+    backend.invoke.mock.calls
+      .filter(([command]) => command.type === 'task.stop')
+      .map(([command]) => command),
+  ).toEqual([{ type: 'task.stop', bot: 'a' }]);
+});
+
+it('pauses plan motion while waiting, paused or stopped and resumes it with live work', async () => {
+  const runtime = connect();
+  runtime.emit('a', { plan: [{ content: 'Synthetic live step', status: 'in_progress' }] });
+  render(<App />);
+  const icon = () => screen.getByText('Synthetic live step').closest('li')?.querySelector('svg');
+  await screen.findByText('Synthetic live step');
+  expect(icon()).toHaveClass('plan-spinner');
+  runtime.emit('a', { phase: 'waiting' });
+  expect(icon()).not.toHaveClass('plan-spinner');
+  runtime.emit('a', { phase: 'paused' });
+  expect(icon()).not.toHaveClass('plan-spinner');
+  runtime.emit('a', { phase: 'running' });
+  expect(icon()).toHaveClass('plan-spinner');
+  runtime.emit('a', { phase: 'stopped', running: false });
+  expect(icon()).not.toHaveClass('plan-spinner');
+});
+
 it('labels model schedule management as a tool operation instead of computer control', async () => {
   const backend = connect();
   backend.emit('a', {

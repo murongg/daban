@@ -1178,7 +1178,7 @@ export const chinese = {
   'execution.loadSkill': '加载技能',
   'execution.loadSubsequentRecords': '加载后续记录',
   'execution.noExecutionDetailsWereRetainedTask': '这次任务没有保留执行详情。',
-  'execution.noToolInteractionStepsWereRecordedTask': '本次没有记录到工具或交互步骤。',
+  'execution.noToolInteractionStepsWereRecordedTask': '暂无执行步骤。',
   'execution.observeScreen': '查看屏幕',
   'execution.onlyPartLongContentShownContinueReading':
     '内容较长，当前显示部分。继续读取可查看余下内容。',
@@ -1188,8 +1188,7 @@ export const chinese = {
   'execution.questionsApprovals': '提问与审批',
   'execution.readContentAgain': '重新读取内容',
   'execution.readFile': '读取文件',
-  'execution.readOnlyExecutionHistoryToolsNotRerun':
-    '只读执行记录，不会重新运行工具或沿用旧审批。非文本输出保留说明，不在此重复保存。',
+  'execution.readOnlyExecutionHistoryToolsNotRerun': '只读记录，不会重新执行任务。',
   'execution.readRecordsAgain': '重新读取记录',
   'execution.readWebpage': '读取网页',
   'execution.reconnectLocalEnvironmentViewExecutionHistory': '重新连接本地环境后可查看执行过程。',

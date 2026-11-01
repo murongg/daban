@@ -766,12 +766,28 @@ textarea.field {
   margin: 12px 0 2px 22px;
 }
 .execution {
+  position: relative;
   max-width: 100%;
   font-size: 12px;
   margin-bottom: 8px;
 }
 .execution > summary {
   min-height: 36px;
+}
+.execution:has(.execution-refresh) > summary {
+  padding-right: 60px;
+}
+.execution:has(.execution-refresh) > summary > .execution-chevron {
+  position: absolute;
+  right: 0;
+  top: 11px;
+}
+.execution .execution-refresh {
+  position: absolute;
+  right: 21px;
+  top: 2px;
+  width: 32px;
+  height: 32px;
 }
 .execution-phase,
 .execution-sequence {
@@ -2220,6 +2236,17 @@ textarea.skill-source {
   flex-shrink: 0;
   color: var(--muted);
 }
+@media (prefers-reduced-motion: no-preference) {
+  .plan-spinner {
+    animation: plan-spin 1.2s linear infinite;
+  }
+}
+@keyframes plan-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .approval-author {
   display: flex;
   align-items: center;
@@ -3048,6 +3075,16 @@ textarea.skill-source {
   background: var(--soft);
   border-radius: 5px;
   margin-left: auto;
+}
+.live-task .task-stop {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+}
+.live-task .task-stop svg {
+  width: 11px;
+  height: 11px;
 }
 .runtime-file-path {
   font-size: 9px;
