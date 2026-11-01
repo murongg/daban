@@ -67,14 +67,22 @@ export async function packageNative(
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const requireDesktop = createRequire(new URL('../apps/desktop/package.json', import.meta.url));
+  const owner = new URL('../apps/desktop/package.json', import.meta.url);
+  const requireDesktop = createRequire(process.argv[3] ? path.resolve(process.argv[3]) : owner);
   const mode = process.argv[2];
-  if (mode === 'transport') {
-    const executable: unknown = requireDesktop('electron');
+  if (mode === 'transport' || (mode === 'abi' && !process.versions.electron)) {
+    const executable: unknown = createRequire(owner)('electron');
     if (typeof executable !== 'string') throw new Error('ELECTRON_EXECUTABLE_UNAVAILABLE');
     const result = spawnSync(
       executable,
-      ['--test', 'packages/engine/dist/private-channel.test.js'],
+      mode === 'transport'
+        ? ['--test', 'packages/engine/dist/private-channel.test.js']
+        : [
+            '--experimental-strip-types',
+            fileURLToPath(import.meta.url),
+            'abi',
+            ...(process.argv[3] ? [path.resolve(process.argv[3])] : []),
+          ],
       {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         stdio: 'inherit',

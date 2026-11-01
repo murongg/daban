@@ -115,6 +115,7 @@ const inside = (root: string, file: string) => file === root || file.startsWith(
 export class AgentTools {
   readonly browser?: BrowserTools;
   localComputer?: LocalComputerPort;
+  private readonly localRequests = new WeakMap<AgentToolRun, Set<string>>();
   private readonly localRuns = new WeakMap<AgentToolRun, boolean>();
   groups?: GroupTools;
   memory?: MemoryTools;
@@ -703,6 +704,30 @@ export class AgentTools {
       if (computerToolList.some((tool) => tool.name === name)) {
         await this.authorizeComputer?.(run);
         if (!this.localComputer) throw new Fault('LOCAL_CLIENT_UNAVAILABLE');
+        if (wireId) {
+          let requests = this.localRequests.get(run);
+          if (!requests) {
+            requests = new Set();
+            this.localRequests.set(run, requests);
+          }
+          const identity = createHash('sha256').update(wireId).digest('hex');
+          // Replayed MCP identities must neither repeat desktop effects nor present an old image as a fresh observation.
+          if (requests.has(identity))
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: 'LOCAL_REQUEST_REPLAYED: capture a fresh screenshot in a new tool call.',
+                },
+              ],
+            };
+          if (requests.size >= run.limit + 1) {
+            run.onLimit?.();
+            return { isError: true, content: [{ type: 'text', text: 'TOOL_LIMIT' }] };
+          }
+          requests.add(identity);
+        }
         return this.localComputer.invoke(run, name, args);
       }
     }

@@ -1,3 +1,4 @@
+import { builtinModules } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
@@ -23,7 +24,8 @@ export default defineConfig(({ mode }) => ({
     },
     // Sandboxed preloads require CommonJS; the source remains TypeScript while Electron stays external.
     rolldownOptions: {
-      external: (id) => id === 'electron' || id.startsWith('node:'),
+      // Dependencies may use bare Node names (for example crypto); browser shims break the Windows native bridge.
+      external: (id) => id === 'electron' || id.startsWith('node:') || builtinModules.includes(id),
     },
   },
 }));

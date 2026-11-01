@@ -12,6 +12,7 @@ import {
   executionCapabilities,
 } from '@daban/protocol';
 import { startAgent } from './host-server.js';
+import { LocalComputerClient } from './local-computer.js';
 
 const snapshot: ExecutionSnapshot = {
   role: 'executor',
@@ -571,6 +572,66 @@ test('offline cold start serves host recovery from a cached root without guest c
     workspaceRoot = '/mock-guest/moved-workspace';
     await assert.rejects(app.refreshExecution(), /WORKSPACE_CHANGED/);
     assert.equal(app.models.admit('mock-bot'), false);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a host with a VM also blocks archiving a Bot that still owns the native desktop', async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'mock-native-archive-')));
+  const localComputer = new LocalComputerClient(root);
+  localComputer.status = async () => ({
+    platform: 'darwin',
+    available: true,
+    shortcut: true,
+    permissions: { screen: true, accessibility: true },
+    session: {
+      id: 'mock-session',
+      bot: 'mock-bot',
+      revision: 1,
+      owner: 'human',
+      model: 'mock-model',
+      modelRevision: 1,
+    },
+  });
+  const app = await startAgent({
+    dataRoot: root,
+    socketPath: path.join(root, 'a.sock'),
+    scope: 'a'.repeat(64),
+    sdkFile: await mockSdk(root),
+    localComputer,
+    execution: {
+      ready: Promise.resolve(snapshot),
+      snapshot,
+      refresh: async () => snapshot,
+      call: async (method) => {
+        if (method === 'workspace.base') return '/mock-guest/workspace';
+        if (method === 'computer.snapshot') return snapshot;
+        throw new Error('Unexpected synthetic method');
+      },
+    },
+  });
+  try {
+    const profile = await app.models.profiles.register({
+      id: 'mock-bot',
+      name: 'Synthetic native Bot',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+    await assert.rejects(
+      app.lifecycle!.operate({
+        id: 'mock-archive',
+        bot: profile.id,
+        action: 'archive',
+        revision: profile.revision,
+      }),
+      { code: 'BOT_COMPUTER_CONNECTED' },
+    );
+    const retained = await app.models.profiles.get(profile.id);
+    assert.ok(retained);
+    assert.notEqual(retained.archived, true);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

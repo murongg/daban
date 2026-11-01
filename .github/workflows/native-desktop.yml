@@ -30,6 +30,8 @@ jobs:
       - name: Verify native DSH tool loop
         timeout-minutes: 3
         run: node --experimental-sqlite --test dist-agent/native-loop.test.js
+      - name: Verify bundled native cryptography
+        run: node --experimental-strip-types --test tools/native.test.ts tools/preload.test.ts
       - name: Verify Electron encrypted transport
         run: node --experimental-strip-types tools/native.ts transport
       - name: Verify Windows native module ABI
@@ -38,9 +40,31 @@ jobs:
         shell: pwsh
         run: |
           $env:DABAN_NODE_DIRECTORY = Split-Path (Get-Command node).Source
-          npm run bundle:windows -- outputs/Daban-win-x64 $env:DABAN_NODE_DIRECTORY
+          $bundle = Join-Path $env:RUNNER_TEMP 'Daban-win-x64'
+          npm run bundle:windows -- $bundle $env:DABAN_NODE_DIRECTORY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify packaged native module and DSH dependencies
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP 'Daban-win-x64'
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & "$bundle/Daban.exe" --experimental-strip-types tools/native.ts abi "$bundle/resources/app/package.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+          $smoke = "$bundle/resources/agent/native-loop.test.js"
+          Copy-Item dist-agent/native-loop.test.js $smoke
+          try {
+            & "$bundle/resources/agent/node/node.exe" --experimental-sqlite --test $smoke
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item $smoke
+          }
+      - name: Verify packaged client first-use startup
+        timeout-minutes: 3
+        run: node --experimental-strip-types tools/windows.acceptance.ts "${{ runner.temp }}/Daban-win-x64"
       - uses: actions/upload-artifact@v4
         with:
           name: Daban-windows-x64
-          path: outputs/Daban-win-x64
+          path: ${{ runner.temp }}/Daban-win-x64
           retention-days: 7

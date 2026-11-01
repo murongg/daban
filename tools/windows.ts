@@ -15,6 +15,7 @@ assert.ok(
 );
 const root = fileURLToPath(new URL('..', import.meta.url)),
   target = path.resolve(output);
+await mkdir(path.dirname(target), { recursive: true });
 await mkdir(target, { recursive: false });
 const requireDesktop = createRequire(path.join(root, 'apps/desktop/package.json'));
 const electron = path.join(path.dirname(requireDesktop.resolve('electron/package.json')), 'dist');

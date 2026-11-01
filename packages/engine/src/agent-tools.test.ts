@@ -634,8 +634,15 @@ test('an explicitly selected host computer is pinned to the run and never falls 
   };
   await tools.open(run);
   selected = false;
-  const result = await tools.invoke(run, 'screenshot', { surface: 'desktop' });
+  const result = await tools.invoke(run, 'screenshot', { surface: 'desktop' }, 'mock-wire-1');
   assert.deepEqual(result.content, [{ type: 'text', text: 'MOCK HOST SCREEN' }]);
+  const repeated = await tools.invoke(
+    run,
+    'act',
+    { surface: 'desktop', actions: [{ type: 'text', text: 'SYNTHETIC INPUT' }] },
+    'mock-wire-1',
+  );
+  assert.equal(repeated.isError, true);
   assert.equal(hostCalls, 1);
   assert.equal(remoteCalls.includes('tools.invoke'), false);
   tools.localComputer.invoke = async () => {

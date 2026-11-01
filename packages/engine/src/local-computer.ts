@@ -338,8 +338,9 @@ export class LocalComputerClient implements LocalComputerPort {
   async cancel(run: AgentToolRun) {
     const session = this.leases.get(run);
     this.observed.delete(run);
+    // Retain the lease until cancellation is acknowledged, so a lost bridge response can be retried safely.
+    if (run.id && session) await this.rpc('cancel', { runId: run.id, session });
     this.leases.delete(run);
-    if (run.id && session) await this.rpc('cancel', { runId: run.id, session }).catch(() => {});
   }
 }
 

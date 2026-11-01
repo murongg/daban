@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
@@ -89,10 +89,25 @@ it('keeps host RPC private, forbids RPC consent, and binds returned images to th
     expect(await client.prepare(run)).toBe(true);
     const first = await client.invoke(run, 'screenshot', { surface: 'desktop' });
     expect(first.content[1]).toEqual({ type: 'image', mimeType: 'image/jpeg', data: 'AA==' });
+    const retained = join(root, 'mock-retained-token');
+    await rename(paths.token, retained);
+    try {
+      await expect(client.cancel(run)).rejects.toThrow('LOCAL_CLIENT_UNAVAILABLE');
+    } finally {
+      await rename(retained, paths.token);
+    }
+    await client.cancel(run);
+    expect(await client.prepare(run)).toBe(true);
+    expect(
+      JSON.stringify(await client.invoke(run, 'screenshot', { surface: 'desktop' })),
+    ).toContain('LOCAL_RUN_STALE');
+    const nextRun = { ...run, id: 'mock-next-run', toolCount: 0, trace: [] };
+    await client.prepare(nextRun);
+    await client.invoke(nextRun, 'screenshot', { surface: 'desktop' });
     client.modelRevision = async () => 2;
     expect(
       (
-        await client.invoke(run, 'act', {
+        await client.invoke(nextRun, 'act', {
           surface: 'desktop',
           actions: [{ type: 'click', x: 10, y: 10 }],
         })

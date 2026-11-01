@@ -1860,9 +1860,9 @@ export async function startPrototype({
           assertIdle: async (bot) => {
             if (models!.running(bot)) throw new Fault('BOT_TASK_RUNNING');
             if (changing.has(bot)) throw new Fault('BOT_COMPUTER_CONNECTED');
+            if ((await host?.localComputer?.status())?.session?.bot === bot)
+              throw new Fault('BOT_COMPUTER_CONNECTED');
             if (host?.nativeWorkspace) {
-              if ((await host.localComputer?.status())?.session?.bot === bot)
-                throw new Fault('BOT_COMPUTER_CONNECTED');
               if (await groups!.hasPendingBot(bot)) throw new Fault('BOT_GROUP_PENDING');
               return;
             }
