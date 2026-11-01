@@ -85,6 +85,7 @@ function connect(
 }
 async function open() {
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(screen.getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(await screen.findByRole('button', { name: '修改模型设置' }));
 }
 it('keeps the write-only key outside persisted state and clears unsubmitted secrets when leaving settings', async () => {
@@ -94,7 +95,7 @@ it('keeps the write-only key outside persisted state and clears unsubmitted secr
   expect(screen.getByLabelText('API Key')).toHaveValue('');
   await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-private-draft');
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-private-draft');
-  await userEvent.click(screen.getByRole('button', { name: '返回对话' }));
+  await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
   await open();
   expect(screen.getByLabelText('API Key')).toHaveValue('');
 });
@@ -164,6 +165,7 @@ it('checks only the saved connection and gates new controls on older runtimes', 
   const invoke = connect();
   const view = render(<App />);
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(screen.getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(await screen.findByRole('button', { name: '检查连接' }));
   expect(await screen.findByText(/连接检查通过/)).toBeVisible();
   expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
@@ -174,5 +176,6 @@ it('checks only the saved connection and gates new controls on older runtimes', 
   connect(12);
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(screen.getByRole('tab', { name: '模型与供应商' }));
   expect(await screen.findByRole('button', { name: '修改模型设置' })).toBeDisabled();
 });

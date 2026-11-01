@@ -197,6 +197,31 @@ const view = () => (
   </RuntimeProvider>
 );
 
+it('reports its local archive dialog layer without repeating the signal on ordinary rerenders', async () => {
+  connect();
+  const change = vi.fn();
+  const mounted = render(
+    <RuntimeProvider>
+      <Integrations bots={bots} onDialogChange={change} />
+    </RuntimeProvider>,
+  );
+  const archive = await screen.findByRole('button', { name: '归档 合成服务' });
+  expect(change).toHaveBeenLastCalledWith(false);
+  await userEvent.click(archive);
+  expect(screen.getByRole('dialog', { name: '归档连接' })).toBeVisible();
+  expect(change).toHaveBeenLastCalledWith(true);
+  const calls = change.mock.calls.length;
+  mounted.rerender(
+    <RuntimeProvider>
+      <Integrations bots={[...bots]} onDialogChange={change} />
+    </RuntimeProvider>,
+  );
+  expect(change).toHaveBeenCalledTimes(calls);
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog', { name: '归档连接' })).not.toBeInTheDocument();
+  expect(change).toHaveBeenLastCalledWith(false);
+});
+
 it('creates a write-only connection without storing private input in the workspace, and clears it on leaving', async () => {
   const invoke = connect({ empty: true });
   const mounted = render(view());

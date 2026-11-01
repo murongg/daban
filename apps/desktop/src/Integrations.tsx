@@ -26,7 +26,13 @@ const definite = new Set([
 ]);
 const health = { unchecked: '未检查', ready: '上次检查可用', unavailable: '上次检查失败' };
 
-export function Integrations({ bots }: { bots: Bot[] }) {
+export function Integrations({
+  bots,
+  onDialogChange,
+}: {
+  bots: Bot[];
+  onDialogChange?: (open: boolean) => unknown;
+}) {
   const runtime = useRuntime();
   const [rows, setRows] = useState<McpConnection[]>([]);
   const [trash, setTrash] = useState(false);
@@ -36,6 +42,10 @@ export function Integrations({ bots }: { bots: Bot[] }) {
   const [selected, setSelected] = useState<McpConnection>();
   const [accessDirty, setAccessDirty] = useState(false);
   const [archiving, setArchiving] = useState<McpConnection>();
+  const dialogOpen = !!archiving;
+  useEffect(() => {
+    onDialogChange?.(dialogOpen);
+  }, [dialogOpen, onDialogChange]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -248,7 +258,7 @@ export function Integrations({ bots }: { bots: Bot[] }) {
             )}
             <p className="field-help">
               地址与 Token 保存后不回显；编辑时留空沿用当前版本。清除 Bearer
-              不会移除地址中的凭据，需替换服务地址。未提交输入仅留在本页内存，离开此页会清空。
+              不会移除地址中的凭据，需替换服务地址。未提交输入仅留在设置内存，关闭设置后会清空。
             </p>
           </fieldset>
           {pending && !busy && (

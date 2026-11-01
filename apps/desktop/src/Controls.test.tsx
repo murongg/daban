@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useCallback, useState } from 'react';
 import { expect, it, vi } from 'vitest';
 import { IconButton } from './Button';
 import { DateField } from './DateField';
@@ -36,6 +36,136 @@ const options = [
   { value: 'b', label: '合成乙', disabled: true },
   { value: 'c', label: '合成丙' },
 ];
+
+function SuspendedDialogFixture() {
+  const [open, setOpen] = useState(false);
+  const [child, setChild] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+  const closeChild = useCallback(() => setChild(false), []);
+  return (
+    <>
+      <div id="root">
+        <button type="button" onClick={() => setOpen(true)}>
+          打开合成设置
+        </button>
+      </div>
+      {open && (
+        <Dialog
+          title="合成设置"
+          onClose={close}
+          active={!child}
+          className="settings-dialog-fixture"
+        >
+          <input aria-label="合成私有输入" />
+          <div hidden>
+            <button type="button">隐藏分类的按钮</button>
+          </div>
+          <button type="button" onClick={() => setChild(true)}>
+            打开合成子弹窗
+          </button>
+        </Dialog>
+      )}
+      {child && (
+        <Dialog title="合成子弹窗" onClose={closeChild}>
+          <button type="button">合成子操作</button>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
+it('suspends a settings dialog without losing input, then restores its focus boundary', async () => {
+  render(<SuspendedDialogFixture />);
+  const opener = screen.getByRole('button', { name: '打开合成设置' });
+  await userEvent.click(opener);
+  const parent = screen.getByRole('dialog', { name: '合成设置' });
+  expect(parent).toHaveClass('settings-dialog-fixture');
+  const input = screen.getByRole('textbox', { name: '合成私有输入' });
+  await userEvent.type(input, 'SYNTHETIC-PRIVATE-DRAFT');
+  await userEvent.click(screen.getByRole('button', { name: '打开合成子弹窗' }));
+  expect(screen.queryByRole('dialog', { name: '合成设置' })).not.toBeInTheDocument();
+  expect(input).toBeInTheDocument();
+  expect(input).not.toBeVisible();
+  expect(document.getElementById('root')).toHaveProperty('inert', true);
+  expect(screen.getByRole('dialog', { name: '合成子弹窗' })).toContainElement(
+    document.activeElement as HTMLElement,
+  );
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog', { name: '合成子弹窗' })).not.toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: '合成设置' })).toBeVisible();
+  expect(input).toHaveValue('SYNTHETIC-PRIVATE-DRAFT');
+  expect(document.getElementById('root')).toHaveProperty('inert', true);
+  expect(parent).toContainElement(document.activeElement as HTMLElement);
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(document.getElementById('root')).toHaveProperty('inert', false);
+  expect(opener).toHaveFocus();
+});
+
+it('routes Escape only to the topmost active dialog while local layer signals settle', async () => {
+  const parent = vi.fn();
+  const child = vi.fn();
+  render(
+    <>
+      <Dialog title="合成底层" onClose={parent}>
+        <button type="button">底层操作</button>
+      </Dialog>
+      <Dialog title="合成顶层" onClose={child}>
+        <button type="button">顶层操作</button>
+      </Dialog>
+    </>,
+  );
+  await userEvent.keyboard('{Escape}');
+  expect(parent).not.toHaveBeenCalled();
+  expect(child).toHaveBeenCalledTimes(1);
+});
+
+function ReplacementFixture({ backgroundFocus }: { backgroundFocus: () => unknown }) {
+  const [first, setFirst] = useState(false);
+  const [second, setSecond] = useState(false);
+  return (
+    <>
+      <div id="root">
+        <button type="button" onFocus={backgroundFocus} onClick={() => setFirst(true)}>
+          合成入口
+        </button>
+      </div>
+      {first && (
+        <Dialog title="合成详情" onClose={() => setFirst(false)}>
+          <button
+            type="button"
+            onClick={() => {
+              setFirst(false);
+              setSecond(true);
+            }}
+          >
+            继续合成创建
+          </button>
+        </Dialog>
+      )}
+      {second && (
+        <Dialog title="合成创建" onClose={() => setSecond(false)}>
+          <input aria-label="合成创建名称" data-autofocus="true" />
+        </Dialog>
+      )}
+    </>
+  );
+}
+
+it('keeps the original opener when one dialog is replaced by another without focusing the background', async () => {
+  const backgroundFocus = vi.fn();
+  render(<ReplacementFixture backgroundFocus={backgroundFocus} />);
+  const opener = screen.getByRole('button', { name: '合成入口' });
+  await userEvent.click(opener);
+  await userEvent.click(screen.getByRole('button', { name: '继续合成创建' }));
+  expect(screen.getByRole('textbox', { name: '合成创建名称' })).toHaveFocus();
+  expect(backgroundFocus).toHaveBeenCalledTimes(1);
+  expect(document.getElementById('root')).toHaveProperty('inert', true);
+  await userEvent.keyboard('{Escape}');
+  expect(opener).toHaveFocus();
+  expect(backgroundFocus).toHaveBeenCalledTimes(2);
+  expect(document.getElementById('root')).toHaveProperty('inert', false);
+});
 it('draws a selectable list, skips disabled options and restores trigger focus on Escape', async () => {
   const change = vi.fn();
   render(<Select label="合成选择" value="a" options={options} onValueChange={change} />);

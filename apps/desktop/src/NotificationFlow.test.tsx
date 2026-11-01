@@ -175,7 +175,7 @@ it('defers notification navigation while an editor dialog owns unsaved input', a
   expect(name).toHaveValue('SYNTHETIC EDIT NOT SAVED');
   expect(dialog).toBeVisible();
   await userEvent.click(within(dialog).getByRole('button', { name: '关闭对话框' }));
-  expect(await screen.findByRole('heading', { name: '设置', level: 1 })).toBeVisible();
+  expect(await screen.findByRole('dialog', { name: '设置' })).toBeVisible();
 });
 it('defers notification navigation and acknowledgement while a section editor owns its draft', async () => {
   const backend = connect();
@@ -192,10 +192,10 @@ it('defers notification navigation and acknowledgement while a section editor ow
     }),
   );
   expect(name).toHaveValue('MOCK-UNSAVED-SECTION');
-  expect(screen.queryByRole('heading', { name: '设置', level: 1 })).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: '设置' })).not.toBeInTheDocument();
   expect(backend.native).not.toHaveBeenCalledWith({ type: 'ack', id: 'mock-section-notice' });
   await userEvent.click(within(dialog).getByRole('button', { name: '取消' }));
-  expect(await screen.findByRole('heading', { name: '设置', level: 1 })).toBeVisible();
+  expect(await screen.findByRole('dialog', { name: '设置' })).toBeVisible();
   expect(backend.native).toHaveBeenCalledWith({ type: 'ack', id: 'mock-section-notice' });
 });
 it('opens exactly the requested attention card without approving anything', async () => {

@@ -91,7 +91,7 @@ it('keeps section-editor input and its underlying conversation while global shor
   await userEvent.type(name, 'MOCK-SECTION-DRAFT');
   await userEvent.keyboard('{Control>},{/Control}');
   expect(name).toHaveValue('MOCK-SECTION-DRAFT');
-  expect(screen.queryByRole('heading', { name: '设置', level: 1 })).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: '设置' })).not.toBeInTheDocument();
   await userEvent.click(within(dialog).getByRole('button', { name: '取消' }));
   expect(screen.getByRole('heading', { name: '研究员', level: 1 })).toBeVisible();
 });
@@ -100,6 +100,6 @@ it('dismisses row actions when a global shortcut opens another view', async () =
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: '整理 写作搭档' }));
   await userEvent.keyboard('{Control>},{/Control}');
-  expect(screen.getByRole('heading', { name: '设置', level: 1 })).toBeVisible();
+  expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible();
   expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 });

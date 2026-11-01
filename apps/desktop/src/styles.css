@@ -2412,6 +2412,9 @@ textarea.skill-source {
   justify-content: center;
   padding: 24px;
 }
+.backdrop[hidden] {
+  display: none;
+}
 .dialog {
   width: 430px;
   max-width: 100%;

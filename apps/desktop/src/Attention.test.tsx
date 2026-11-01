@@ -73,6 +73,42 @@ function connect() {
   };
 }
 
+it('reads newly uncovered conversation results only after settings closes', async () => {
+  const fake = connect();
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await act(() =>
+    fake.emit({
+      ...fake.snapshot(),
+      notices: {
+        available: true,
+        items: [
+          ...fake.snapshot().notices!.items,
+          {
+            kind: 'task',
+            id: 'mock-behind-settings',
+            bot: 'a',
+            chatRevision: 0,
+            phase: 'completed',
+          },
+        ],
+      },
+    }),
+  );
+  expect(restore(localStorage.getItem(storageKey)).organization.attention.unread).toContain(
+    'research',
+  );
+  await userEvent.click(
+    within(screen.getByRole('dialog', { name: '设置' })).getByRole('button', {
+      name: '关闭对话框',
+    }),
+  );
+  expect(restore(localStorage.getItem(storageKey)).organization.attention.unread).not.toContain(
+    'research',
+  );
+});
+
 it('does not mark initial history unread, marks fresh private/group work and clears only the selected conversation', async () => {
   const fake = connect();
   render(<App />);

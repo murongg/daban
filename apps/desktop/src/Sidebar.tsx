@@ -45,6 +45,7 @@ export function Sidebar({
   onCopyGroup,
   open,
   close,
+  settingsOpen = false,
 }: {
   state: State;
   dispatch: Dispatch<Action>;
@@ -57,6 +58,7 @@ export function Sidebar({
   onCopyGroup?: (group?: string) => unknown;
   open: boolean;
   close: () => unknown;
+  settingsOpen?: boolean;
 }) {
   const runtime = useRuntime();
   const [menu, setMenu] = useState<{
@@ -70,7 +72,7 @@ export function Sidebar({
   // biome-ignore lint/correctness/useExhaustiveDependencies: View, conversation and search define the transient menu's lifetime.
   useEffect(() => {
     setMenu(undefined);
-  }, [state.view, state.selected, query]);
+  }, [state.view, state.selected, query, settingsOpen]);
   const closeMenu = useCallback(
     (restoreFocus: boolean) => {
       setMenu(undefined);
@@ -448,7 +450,9 @@ export function Sidebar({
             <span className="spacer" />
             <IconButton
               label="设置"
-              className={state.view === 'settings' ? 'active' : ''}
+              className={settingsOpen || state.view === 'settings' ? 'active' : ''}
+              aria-haspopup="dialog"
+              aria-expanded={settingsOpen}
               onClick={() => {
                 dispatch({ type: 'view', view: 'settings' });
                 close();

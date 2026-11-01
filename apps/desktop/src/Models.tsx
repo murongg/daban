@@ -183,7 +183,7 @@ function LegacyModels() {
             </label>
             <p className="field-help">
               {model.configured ? '留空保留现有密钥。' : '从 DeepSeek 开放平台获取密钥。'}
-              密钥不写入客户端存储或导出；离开此页会清空未提交输入。
+              密钥不写入客户端存储或导出；关闭设置后会清空未提交输入。
             </p>
           </fieldset>
           <p className="inline-note">

@@ -70,6 +70,7 @@ import { Settings } from './Settings';
 import { Setup } from './Setup';
 import { Sidebar } from './Sidebar';
 import {
+  type Action,
   chatRevision,
   initialState,
   lifecycleRequest,
@@ -126,11 +127,26 @@ function Entry() {
 function Workbench() {
   const runtime = useRuntime();
   const submitting = useRef(new Set<string>());
-  const [state, dispatch] = useReducer(reduce, undefined, load);
+  const legacySettings = useRef(false);
+  const [state, update] = useReducer(reduce, undefined, () => {
+    const restored = load();
+    legacySettings.current = restored.view === 'settings';
+    // Cache migration must not mark the obscured conversation read through a navigation action.
+    return legacySettings.current ? { ...restored, view: 'chat' as const } : restored;
+  });
+  const [settingsOpen, setSettingsOpen] = useState(legacySettings.current);
+  const dispatch = useCallback((action: Action) => {
+    if (action.type === 'view' && action.view === 'settings') {
+      setSettingsOpen(true);
+      return;
+    }
+    if (action.type === 'select' || action.type === 'view') setSettingsOpen(false);
+    update(action);
+  }, []);
   const [query, setQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
-  useAttention(state, dispatch, !!modal);
+  useAttention(state, dispatch, !!modal || settingsOpen);
   const [toast, setToast] = useState('');
   const [inboxFocus, setInboxFocus] = useState<string>();
   const search = useRef<HTMLInputElement>(null);
@@ -139,9 +155,15 @@ function Workbench() {
   const notify = useCallback((text: string) => setToast(text), []);
   const work = useWork(state, dispatch, notify);
   const closeModal = useCallback(() => setModal(null), []);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    if (state.view === 'chat' && !modal && !document.hidden && document.hasFocus()) {
+      update({ type: 'bot-read', bot: state.selected, unread: false });
+    }
+  }, [state.selected, state.view, modal]);
   const preview = useCallback((file: WorkspaceFile) => setModal({ type: 'file', file }), []);
   useNotices((activation) => {
-    if (modal) return false;
+    if (modal || settingsOpen) return false;
     const target = activation.target;
     if (target.kind === 'settings') {
       dispatch({ type: 'view', view: 'settings' });
@@ -204,7 +226,7 @@ function Workbench() {
   useEffect(() => {
     if (runtime.snapshot.chats?.available)
       dispatch({ type: 'chats', items: runtime.snapshot.chats.items });
-  }, [runtime.snapshot.chats]);
+  }, [runtime.snapshot.chats, dispatch]);
   let subtitle = bot?.role || '你的 AI 工作伙伴';
   if (runtime.enabled && bot && !bot.members) {
     subtitle =
@@ -273,7 +295,7 @@ function Workbench() {
         dispatch({ type: 'runtime-task', bot: botId, task: record });
       }
     }
-  }, [runtime.enabled, runtime.snapshot, state.bots, state.runtimeRequests]);
+  }, [runtime.enabled, runtime.snapshot, state.bots, state.runtimeRequests, dispatch]);
   async function runTask(botId: string, continued?: TaskRequest) {
     if (recoveryBlocked(runtime.snapshot)) {
       notify('运行环境恢复待核对，新任务暂缓，草稿会保留。');
@@ -470,7 +492,7 @@ function Workbench() {
     }
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
-  }, [modal]);
+  }, [modal, dispatch]);
   function panel(next: Panel) {
     dispatch({ type: 'panel', panel: state.panel === next ? null : next });
   }
@@ -480,6 +502,7 @@ function Workbench() {
     <div className="app" data-desktop={window.daban?.platform}>
       <Sidebar
         state={state}
+        settingsOpen={settingsOpen}
         dispatch={dispatch}
         query={query}
         setQuery={setQuery}
@@ -720,15 +743,18 @@ function Workbench() {
             focus={inboxFocus}
             clearFocus={() => setInboxFocus(undefined)}
           />
-        ) : (
-          <Settings
-            state={state}
-            dispatch={dispatch}
-            onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
-            onRecovery={() => setModal({ type: 'recovery' })}
-          />
-        )}
+        ) : null}
       </main>
+      {settingsOpen && (
+        <Settings
+          state={state}
+          dispatch={dispatch}
+          onClose={closeSettings}
+          active={!modal}
+          onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
+          onRecovery={() => setModal({ type: 'recovery' })}
+        />
+      )}
       {modal?.type === 'recovery' && (
         <Recovery
           bots={state.bots}

@@ -177,6 +177,7 @@ it('archives and restores a Bot without discarding its draft/history or silently
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
   expect(screen.getByText('SYNTHETIC-RETAINED-HISTORY')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(screen.getByRole('tab', { name: '归档管理' }));
   await userEvent.click(await screen.findByRole('button', { name: `恢复 ${name}` }));
   await userEvent.click(screen.getByRole('button', { name: '确认恢复' }));
   await waitFor(() =>
@@ -187,7 +188,7 @@ it('archives and restores a Bot without discarding its draft/history or silently
       ['task.start', 'computer.action', 'schedule.run'].includes(command.type),
     ),
   ).toHaveLength(0);
-  await userEvent.click(screen.getByRole('button', { name: '返回对话' }));
+  await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC-UNSENT-DRAFT');
   expect(screen.getByRole('textbox', { name: '发送消息' })).toBeEnabled();
 });
@@ -257,5 +258,6 @@ it('keeps all-archived and missing-backend history readable without recreating a
   expect(await screen.findByText('所有 Bot 都已归档')).toBeVisible();
   expect(screen.getByText('SYNTHETIC-RETAINED-HISTORY')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(screen.getByRole('tab', { name: '归档管理' }));
   expect(await screen.findByRole('button', { name: `查看历史 ${name}` })).toBeVisible();
 });
