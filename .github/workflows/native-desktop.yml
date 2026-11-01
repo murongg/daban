@@ -43,24 +43,7 @@ jobs:
           $bundle = Join-Path $env:RUNNER_TEMP 'Daban-win-x64'
           npm run bundle:windows -- $bundle $env:DABAN_NODE_DIRECTORY
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify packaged native module and DSH dependencies
-        shell: pwsh
-        timeout-minutes: 3
-        run: |
-          $bundle = Join-Path $env:RUNNER_TEMP 'Daban-win-x64'
-          $env:ELECTRON_RUN_AS_NODE = '1'
-          & "$bundle/Daban.exe" --experimental-strip-types tools/native.ts abi "$bundle/resources/app/package.json"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Remove-Item Env:ELECTRON_RUN_AS_NODE
-          $smoke = "$bundle/resources/agent/native-loop.test.js"
-          Copy-Item dist-agent/native-loop.test.js $smoke
-          try {
-            & "$bundle/resources/agent/node/node.exe" --experimental-sqlite --test $smoke
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } finally {
-            Remove-Item $smoke
-          }
-      - name: Verify packaged client first-use startup
+      - name: Verify packaged dependencies and first-use startup
         timeout-minutes: 3
         run: node --experimental-strip-types tools/windows.acceptance.ts "${{ runner.temp }}/Daban-win-x64"
       - uses: actions/upload-artifact@v4

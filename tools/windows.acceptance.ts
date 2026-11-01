@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, copyFile, readFile, unlink } from 'node:fs/promises';
 import { request } from 'node:https';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { privateClientOptions } from '@daban/engine/local-computer';
 import { isLocalComputerStatus } from '@daban/protocol';
@@ -23,6 +25,41 @@ const dataRoot = path.join(root, 'agent');
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const scope = digest([path.resolve(dataRoot), path.resolve(root, 'runtime.json')]);
 const socketPath = String.raw`\\.\pipe\daban-agent-${digest([path.resolve(root, 'agent.sock'), scope]).slice(0, 32)}`;
+const run = promisify(execFile);
+const executable = path.resolve(target, 'Daban.exe');
+const abi = await run(
+  executable,
+  [
+    '--experimental-strip-types',
+    fileURLToPath(new URL('./native.ts', import.meta.url)),
+    'abi',
+    path.resolve(target, 'resources/app/package.json'),
+  ],
+  {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    timeout: 45000,
+    maxBuffer: 2 * 1024 * 1024,
+  },
+);
+process.stdout.write(abi.stdout);
+const agent = path.resolve(target, 'resources/agent'),
+  smoke = path.join(agent, 'native-loop.test.js');
+await copyFile(
+  fileURLToPath(new URL('../dist-agent/native-loop.test.js', import.meta.url)),
+  smoke,
+  constants.COPYFILE_EXCL,
+);
+try {
+  const sdk = await run(
+    path.join(agent, 'node/node.exe'),
+    ['--experimental-sqlite', '--test', smoke],
+    { cwd: agent, timeout: 60000, maxBuffer: 2 * 1024 * 1024 },
+  );
+  assert.match(sdk.stdout, /real DSH dispatches/);
+  process.stdout.write(sdk.stdout);
+} finally {
+  await unlink(smoke);
+}
 const child = spawn(path.resolve(target, 'Daban.exe'), [], {
   cwd: path.resolve(target),
   stdio: 'ignore',
