@@ -7,6 +7,7 @@
 | 页面                          | 用途                     | 常用参数                                                |
 | ----------------------------- | ------------------------ | ------------------------------------------------------- |
 | `/preview/settings.html`      | 完整设置弹窗             | `theme=dark`                                            |
+| `/preview/setup.html`         | 首次安装与搭子状态       | `phase=starting`、`progress=37`、`theme=dark`           |
 | `/preview/providers.html`     | 供应商与多模型表单       | `empty=1`、`theme=dark`                                 |
 | `/preview/controls.html`      | 下拉框、日期、时间等控件 | `theme=dark`                                            |
 | `/preview/sidebar.html`       | 侧栏与整理菜单           | `controls=1`、`keep=1`                                  |
@@ -22,6 +23,8 @@
 | `/preview/render.html`        | Markdown、公式与图表     | 使用页面内工具栏                                        |
 
 多个参数用 `&` 连接；表格中 `mode` 后列出的简写也都是该参数的值。大部分页面支持 `theme=dark`；所有页面都可以通过 `lang=en` 或 `lang=zh-CN` 设置各自预览的界面语言。
+
+安装页用 `phase` 切换安装阶段或 `available`、`cancelled`、`failed`、`unavailable` 状态；`progress` 只在 `phase=extracting` 时显示。暂停和继续按钮只更新合成状态，不会操作真实环境。
 
 正常场景使用公开协议的 `managedProtocol`。涉及版本边界的场景支持 `mode=legacy`，原有 `mode=old` 参数在任务、便笺和复制场景中继续保留。
 

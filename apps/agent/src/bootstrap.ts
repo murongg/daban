@@ -54,6 +54,14 @@ const target: MigrationIdentity = {
   vm: 'exec',
   imageFingerprint: 'e74a74239cb93d057b17d9a7c72f4dfd2fcab051a1be052766ed350f6bb62df7',
 };
+export function setupPhase(stage: string): SetupStatus['phase'] {
+  // Provisioning emits intermediate receipts too; they must not reset the visible installer to verification.
+  if (stage === 'image') return 'extracting';
+  if (stage === 'creating' || stage === 'created') return 'creating';
+  if (stage === 'starting') return 'starting';
+  if (stage === 'bootstrapping' || stage === 'ready') return 'connecting';
+  return 'verifying';
+}
 async function atomic(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`,
@@ -259,24 +267,16 @@ export async function bootstrapAgent(
   await pause();
   state.phase = 'provision';
   await atomic(journal, state);
-  await progress({ required: true, phase: 'creating' });
+  await progress({ required: true, phase: 'verifying' });
   await pause();
   state.target = await (
     dependencies.provision ??
     ((opts) =>
       ensureExecutionVm(opts, {
         progress: (stage, percent) => {
-          const phase =
-            stage === 'image'
-              ? 'extracting'
-              : stage === 'creating'
-                ? 'creating'
-                : stage === 'starting'
-                  ? 'starting'
-                  : 'verifying';
           progress({
             required: true,
-            phase,
+            phase: setupPhase(stage),
             ...(percent === undefined ? {} : { progress: percent }),
           }).catch(() => {});
         },

@@ -4,7 +4,16 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { bootstrapAgent } from './bootstrap.js';
+import { bootstrapAgent, setupPhase } from './bootstrap.js';
+
+test('provisioning phases keep the visible installer moving toward connection', () => {
+  assert.deepEqual(
+    ['assets', 'image', 'creating', 'created', 'starting', 'bootstrapping', 'ready'].map((stage) =>
+      setupPhase(stage),
+    ),
+    ['verifying', 'extracting', 'creating', 'creating', 'starting', 'connecting', 'connecting'],
+  );
+});
 
 const vm = {
   limactl: '/mock/bin/limactl',
@@ -26,6 +35,10 @@ test('fresh host setup provisions once and never publishes a guest provider cred
   try {
     const dependencies = {
       provision: async () => {
+        const progress = JSON.parse(
+          await readFile(path.join(options.dataRoot, 'progress.json'), 'utf8'),
+        );
+        assert.equal(progress.phase, 'verifying');
         created++;
         return vm;
       },

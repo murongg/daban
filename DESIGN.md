@@ -291,6 +291,10 @@ The sidebar combines compact inbox/conversation rows with taller Bot rows (76px 
 
 Workspace tabs use a thin (2px) active underline, monochrome icons, and text labels. The six personal-Bot tabs scroll inside their own strip when space is limited; the close control stays outside that strip and remains reachable. Retain `aria-selected`, arrow/Home/End keyboard navigation, their tabpanel relationship, and scrolling the focused selection into view without widening the panel.
 
+### Local Environment Setup
+
+`Setup.tsx` pairs the existing otter app-icon artwork with a flat five-step installer. The companion is (120px), with a restrained rocking motion only while an installation phase is active. A (30px) heading and short explanation sit beside the steps in an (860px) maximum-width two-column layout; below (760px) the layout stacks and the companion becomes (80px). The current step uses a soft surface, a loading indicator, explicit “进行中” copy and `aria-current="step"`; completed steps have checks and future steps remain numbered. A live status announces the current phase. Only measured Linux extraction exposes a percentage and progress bar. Pause, failure and recovery states stop the companion and retain the existing actions without guessing completed steps from an unavailable history. Reduced motion disables both companion movement and spinner rotation while preserving readable status. The initial screen retains bundled-environment and disk/memory disclosures before installation.
+
 ### Empty Workspace and Local Bot Gallery
 
 New workspaces have no seeded Bots, messages or activity. `Welcome.tsx` centers the existing app mascot above a compact invitation, muted explanation and two distinct house actions: “逛逛 Bot 广场” and “自定义 Bot”. Its mascot is (64px), heading (24px, 600) and supporting copy (14px); these are local empty-state treatments. The sidebar's “Bot 广场” entry reuses the existing navigation row. Sample-filled states remain explicit private-preview/test fixtures rather than the normal first viewport.

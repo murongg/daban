@@ -1,4 +1,22 @@
 export const english: Record<string, string> = {
+  搭子正在布置工作空间: 'Your companion is getting things ready',
+  正在暂停安装: 'Pausing setup',
+  准备好了再继续: 'Continue when you’re ready',
+  工作空间准备好了: 'Your workspace is ready',
+  工作空间还没准备好: 'Your workspace needs attention',
+  '环境就绪后会自动进入工作区。请保持电脑唤醒，也可以随时暂停。':
+    'Your workspace will open automatically when ready. Keep your computer awake, or pause at any time.',
+  '正在核对安装文件，确保环境完整。': 'Checking the installation files for completeness.',
+  '正在解包系统文件，可能需要一些时间。':
+    'Unpacking the system files. This may take a little while.',
+  '正在为 Bot 准备独立的本地环境。': 'Preparing a separate local environment for your Bots.',
+  '正在启动 Linux，完成后会自动连接。': 'Starting Linux. It will connect automatically when ready.',
+  '正在连接本地服务，完成后即可进入工作区。':
+    'Connecting to local services before opening your workspace.',
+  安装进行中: 'Setup in progress',
+  安装步骤: 'Setup steps',
+  连接工作区: 'Connect workspace',
+  待执行: 'Waiting',
   设置: 'Settings',
   '关于 {0}': 'About {0}',
   '第 {0} 条': 'Record {0}',
