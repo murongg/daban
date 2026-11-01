@@ -12,7 +12,7 @@ import { resolveSdk } from './sdk.js';
 
 test('real DSH dispatches vision tools to the selected native bridge without a VM or a real provider', {
   timeout: 60000,
-}, async () => {
+}, async (t) => {
   const temporary = await mkdtemp(path.join(tmpdir(), 'mock-native-loop-'));
   const root = path.join(temporary, 'private');
   await secureDirectory(root);
@@ -20,6 +20,19 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
     key = 'a'.repeat(64);
   if (process.platform !== 'win32') await mkdir(path.dirname(locations.socket), { mode: 0o700 });
   await writeFile(locations.token, key, { mode: 0o600 });
+  let local: Awaited<ReturnType<typeof privateServer>>['server'] | undefined;
+  let model: import('node:http').Server | undefined;
+  let agent: Awaited<ReturnType<typeof startNativeAgent>> | undefined;
+  t.after(async () => {
+    await agent?.close();
+    for (const server of [local, model]) {
+      server?.closeAllConnections();
+      if (server?.listening) await new Promise((resolve) => server.close(resolve));
+    }
+    if (process.platform !== 'win32')
+      await rm(path.dirname(locations.socket), { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
+  });
   const nativeCalls: string[] = [];
   let observation = 'mock-observation-0';
   const channel = await privateServer(async (req, res) => {
@@ -60,13 +73,13 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
     }
     res.end(JSON.stringify({ ok: true, value }));
   }, locations.certificate);
-  const local = channel.server;
+  local = channel.server;
   local.listen(locations.socket);
   await once(local, 'listening');
   await channel.publish();
   if (process.platform !== 'win32') await chmod(locations.socket, 0o600);
   let modelCalls = 0;
-  const model = createServer(async (req, res) => {
+  model = createServer(async (req, res) => {
     if (req.method === 'GET') {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ data: [{ id: 'mock-vision' }] }));
@@ -118,9 +131,9 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
   const port = (model.address() as { port: number }).port;
   const socketPath =
     process.platform === 'win32'
-      ? `\\.pipedaban-agent-${createHash('sha256').update(root).digest('hex').slice(0, 24)}`
+      ? String.raw`\\.\pipe\daban-agent-${createHash('sha256').update(root).digest('hex').slice(0, 24)}`
       : path.join(root, 'a.sock');
-  const agent = await startNativeAgent({
+  agent = await startNativeAgent({
     dataRoot: root,
     socketPath,
     scope: createHash('sha256').update(root).digest('hex'),
@@ -128,56 +141,43 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
     nativeWorkspace: path.join(root, 'workspace'),
     localComputer: new LocalComputerClient(root),
   });
-  try {
-    await agent.models.settings.configure({
-      model: 'provider:mock-provider:mock-vision',
-      revision: 0,
-      requestId: 'mock-setup',
-      apiKey: 'synthetic-model-key',
-      connection: {
-        id: 'mock-provider',
-        name: 'Synthetic model',
-        baseURL: `http://127.0.0.1:${port}/v1`,
-        models: [
-          {
-            id: 'mock-vision',
-            name: 'Synthetic vision',
-            vision: true,
-            contextWindow: 64000,
-            maxTokens: 2048,
-          },
-        ],
-      },
-    });
-    await agent.models.profiles.register({
-      id: 'mock-bot',
-      name: 'Synthetic native Bot',
-      color: 'mint',
-      instructions: '',
-      memory: '',
-    });
-    await agent.models.start('mock-bot', {
-      requestId: 'mock-native-request',
-      prompt: 'Use the native screen and type SYNTHETIC NATIVE INPUT, then finish.',
-      chatRevision: 0,
-    });
-    const until = Date.now() + 45000;
-    while (agent.models.jobs.get('mock-bot')?.running && Date.now() < until)
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    const job = agent.models.jobs.get('mock-bot')!;
-    assert.equal(job.phase, 'completed', job.error);
-    assert.deepEqual(nativeCalls, ['screenshot', 'act']);
-    assert.match(job.result, /SYNTHETIC NATIVE LOOP COMPLETE/);
-  } finally {
-    await agent.close();
-    local.closeAllConnections();
-    model.closeAllConnections();
-    await Promise.all([
-      new Promise((resolve) => local.close(resolve)),
-      new Promise((resolve) => model.close(resolve)),
-    ]);
-    if (process.platform !== 'win32')
-      await rm(path.dirname(locations.socket), { recursive: true, force: true }).catch(() => {});
-    await rm(temporary, { recursive: true, force: true });
-  }
+  await agent.models.settings.configure({
+    model: 'provider:mock-provider:mock-vision',
+    revision: 0,
+    requestId: 'mock-setup',
+    apiKey: 'synthetic-model-key',
+    connection: {
+      id: 'mock-provider',
+      name: 'Synthetic model',
+      baseURL: `http://127.0.0.1:${port}/v1`,
+      models: [
+        {
+          id: 'mock-vision',
+          name: 'Synthetic vision',
+          vision: true,
+          contextWindow: 64000,
+          maxTokens: 2048,
+        },
+      ],
+    },
+  });
+  await agent.models.profiles.register({
+    id: 'mock-bot',
+    name: 'Synthetic native Bot',
+    color: 'mint',
+    instructions: '',
+    memory: '',
+  });
+  await agent.models.start('mock-bot', {
+    requestId: 'mock-native-request',
+    prompt: 'Use the native screen and type SYNTHETIC NATIVE INPUT, then finish.',
+    chatRevision: 0,
+  });
+  const until = Date.now() + 45000;
+  while (agent.models.jobs.get('mock-bot')?.running && Date.now() < until)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  const job = agent.models.jobs.get('mock-bot')!;
+  assert.equal(job.phase, 'completed', job.error);
+  assert.deepEqual(nativeCalls, ['screenshot', 'act']);
+  assert.match(job.result, /SYNTHETIC NATIVE LOOP COMPLETE/);
 });

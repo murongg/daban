@@ -26,7 +26,10 @@ jobs:
       - name: Test desktop bindings and authority
         run: npx vitest run apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/src/LocalComputer.test.tsx --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
-        run: node --experimental-sqlite --test packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/native-agent.test.js dist-agent/native-loop.test.js
+        run: node --experimental-sqlite --test packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/native-agent.test.js
+      - name: Verify native DSH tool loop
+        timeout-minutes: 3
+        run: node --experimental-sqlite --test dist-agent/native-loop.test.js
       - name: Verify Electron encrypted transport
         shell: pwsh
         run: |

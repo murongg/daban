@@ -55,6 +55,13 @@ export async function secureDirectory(directory: string) {
         'S-1-5-32-544',
         'S-1-3-0',
       ]);
+      // Conditional and unrecognized ACEs need a full ACL evaluator; never silently skip a potential allow grant.
+      if (
+        [...descriptor.matchAll(/\(([A-Z]+);/g)].some(
+          (entry) => !['A', 'OA', 'D', 'OD'].includes(entry[1]),
+        )
+      )
+        throw new Error('PRIVATE_DIRECTORY_UNSAFE');
       const entries = [...descriptor.matchAll(/\((A|OA);[^)]*;;;([^;)]+)\)/g)];
       if (!entries.length || entries.some((entry) => !allowed.has(entry[2])))
         throw new Error('PRIVATE_DIRECTORY_UNSAFE');

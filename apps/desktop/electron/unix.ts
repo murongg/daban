@@ -57,7 +57,7 @@ export async function readAgentToken(dataRoot: string) {
 
 export function unixFetch(
   socketPath: string,
-  options: { maxBytes?: number; key?: () => Promise<string>; certificateFile?: string } = {},
+  options: { maxBytes?: number; certificateFile?: string } = {},
 ) {
   const limit = options.maxBytes ?? uploadLimit;
   if (

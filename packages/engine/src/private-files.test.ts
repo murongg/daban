@@ -32,6 +32,11 @@ test('Windows private directories accept the local administrator SID alias but r
     await secureDirectory(path.join(root, 'trusted'));
     descriptor = 'D:PAI(A;OICI;FA;;;WD)';
     await assert.rejects(secureDirectory(path.join(root, 'untrusted')), /PRIVATE_DIRECTORY_UNSAFE/);
+    descriptor = 'D:PAI(A;OICI;FA;;;LA)(XA;OICI;FA;;;WD;(1==1))';
+    await assert.rejects(
+      secureDirectory(path.join(root, 'conditional')),
+      /PRIVATE_DIRECTORY_UNSAFE/,
+    );
   } finally {
     Object.defineProperty(process, 'platform', platform);
     t.mock.restoreAll();
