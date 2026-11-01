@@ -101,6 +101,7 @@ export class LocalComputerClient implements LocalComputerPort {
   modelRevision: () => Promise<number> = async () => 0;
   authorize?: (run: AgentToolRun) => Promise<unknown>;
   private cached: LocalComputerStatus = unavailableLocalComputer();
+  private selection?: string;
   private readonly leases = new WeakMap<AgentToolRun, string>();
   private readonly observed = new WeakMap<AgentToolRun, LocalComputerFrame>();
   constructor(readonly dataRoot: string) {}
@@ -196,13 +197,15 @@ export class LocalComputerClient implements LocalComputerPort {
       const value = await this.rpc('status');
       if (!isLocalComputerStatus(value)) throw new Error('LOCAL_INVALID_RESPONSE');
       this.cached = value;
+      this.selection = value.session?.bot;
     } catch {
       this.cached = unavailableLocalComputer();
     }
     return this.cached;
   }
   selected(bot: string) {
-    return this.cached.session?.bot === bot;
+    // Losing transport is not a human switch to the VM. Keep the backend choice until a trusted status releases it.
+    return (this.cached.available ? this.cached.session?.bot : this.selection) === bot;
   }
   async prepare(run: AgentToolRun) {
     const previous = this.selected(run.bot);

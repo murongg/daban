@@ -47,6 +47,8 @@ export async function secureDirectory(directory: string) {
         owner,
         'SY',
         'BA',
+        // icacls may encode the local Administrator account as its SDDL alias rather than the full SID.
+        'LA',
         'CO',
         'OW',
         'S-1-5-18',

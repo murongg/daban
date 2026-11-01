@@ -44,6 +44,7 @@ export function Settings({
 }) {
   useLocale();
   const runtime = useRuntime();
+  const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
   const [category, setCategory] = useState('general');
   const [error, setError] = useState('');
   const [connectionDialog, setConnectionDialog] = useState(false);
@@ -109,10 +110,12 @@ export function Settings({
       id: 'computer',
       label: t('settings.computerPermissions'),
       icon: Monitor,
-      description: t('settings.manageLocalLinuxConnectionStateActionPermissions'),
+      description: nativeOnly
+        ? t('localComputer.description')
+        : t('settings.manageLocalLinuxConnectionStateActionPermissions'),
       content: (
         <>
-          {runtime.snapshot.agent?.location === 'host' && (
+          {runtime.snapshot.agent?.execution === 'linux-vm' && (
             <div className="settings-section">
               <h2>{t('settings.executionEnvironmentPermissions')}</h2>
               <div className="setting-row">
@@ -134,7 +137,7 @@ export function Settings({
             </div>
           )}
           <div className="settings-section">
-            <h2>{t('settings.localLinux')}</h2>
+            <h2>{nativeOnly ? t('localComputer.computer') : t('settings.localLinux')}</h2>
             {error && (
               <p role="alert" className="form-error">
                 {error}
@@ -142,13 +145,17 @@ export function Settings({
             )}
             <div className="setting-row">
               <div>
-                <div className="setting-label">{t('settings.localLinuxRuntime')}</div>
+                <div className="setting-label">
+                  {nativeOnly ? t('localComputer.computer') : t('settings.localLinuxRuntime')}
+                </div>
                 <p className="setting-description">
                   {runtime.enabled
                     ? (isMessageKey(runtime.snapshot.error)
                         ? t(runtime.snapshot.error)
                         : runtime.snapshot.error) ||
-                      t('settings.botDesktopsTasksFilesRunLocalVirtual')
+                      (nativeOnly
+                        ? t('localComputer.settingsDescription')
+                        : t('settings.botDesktopsTasksFilesRunLocalVirtual'))
                     : t('settings.computerPanelExamplePreviewNoRealTerminal')}
                 </p>
               </div>
@@ -174,11 +181,13 @@ export function Settings({
               )}
             </div>
           </div>
-          <div className="settings-section">
-            <h2>{t('settings.runtime')}</h2>
-            <Diagnostics />
-            <RecoveryEntry open={onRecovery} />
-          </div>
+          {!nativeOnly && (
+            <div className="settings-section">
+              <h2>{t('settings.runtime')}</h2>
+              <Diagnostics />
+              <RecoveryEntry open={onRecovery} />
+            </div>
+          )}
         </>
       ),
     },
@@ -260,7 +269,9 @@ export function Settings({
           </div>
           <p className="inline-note">
             {runtime.enabled
-              ? t('settings.localLinuxDshConnectedMobileCrossDevice')
+              ? nativeOnly
+                ? t('localComputer.settingsDescription')
+                : t('settings.localLinuxDshConnectedMobileCrossDevice')
               : t('settings.previewIncludesOnlyAppInterfaceMobileCross')}
           </p>
         </div>

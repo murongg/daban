@@ -15,9 +15,10 @@ import { restore, serialize, storageKey } from './storage';
 beforeEach(() => localStorage.setItem(storageKey, serialize(demoState())));
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
 
-function connect(uncertain = false) {
+function connect(uncertain = false, agent?: RuntimeSnapshot['agent']) {
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = 39;
+  snapshot.agent = agent;
   snapshot.model = {
     configured: true,
     available: true,
@@ -217,4 +218,23 @@ it('does not clear conversation unread when settings closes in an unfocused wind
   expect(restore(localStorage.getItem(storageKey)).organization.attention.unread).not.toContain(
     'research',
   );
+});
+
+it('explains native-only setup without offering Linux installation or VM recovery', async () => {
+  connect(false, {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  });
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  const dialog = await screen.findByRole('dialog', { name: '设置' });
+  await userEvent.click(within(dialog).getByRole('tab', { name: '电脑与权限' }));
+  expect(within(dialog).getByRole('heading', { name: '本机电脑' })).toBeVisible();
+  const panel = within(dialog).getByRole('tabpanel', { name: '电脑与权限' });
+  expect(
+    within(panel).getByText('在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。'),
+  ).toBeVisible();
+  expect(within(dialog).queryByRole('button', { name: '检查并恢复' })).toBeNull();
 });

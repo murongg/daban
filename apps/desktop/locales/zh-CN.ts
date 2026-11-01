@@ -1635,6 +1635,8 @@ export const chinese = {
   'localComputer.driverUnavailable': '本机控制组件不可用，请重启或安装完整客户端。',
   'localComputer.shortcutUnavailable': '暂停快捷键被占用，请关闭冲突应用后重试。',
   'localComputer.primaryDisplay': '请把目标应用移到主显示器后重试。',
+  'localComputer.computer': '本机电脑',
+  'localComputer.settingsDescription': '在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。',
   'localComputer.workspace': '本机工作区已连接',
   'localComputer.source': '操作电脑',
   'localComputer.virtual': 'Linux 虚拟机',

@@ -137,12 +137,14 @@ export function desktopDriver(
         context = native().getActiveWindow();
       if (context) {
         const bounds = native().getWindowRect(context);
-        // A primary-screen image must never authorize keys in an unseen second-monitor window.
+        const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+        // Native Windows bounds are physical pixels; Electron display bounds are DIP. Reject unseen foreground windows.
+        const point = platform === 'win32' ? screen.screenToDipPoint(center) : center;
         if (
-          bounds.x + bounds.width < display.bounds.x ||
-          bounds.y + bounds.height < display.bounds.y ||
-          bounds.x > display.bounds.x + display.bounds.width ||
-          bounds.y > display.bounds.y + display.bounds.height
+          point.x < display.bounds.x ||
+          point.y < display.bounds.y ||
+          point.x >= display.bounds.x + display.bounds.width ||
+          point.y >= display.bounds.y + display.bounds.height
         )
           throw new Error('LOCAL_OTHER_DISPLAY');
       }

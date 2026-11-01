@@ -37,6 +37,7 @@ it('keeps host RPC private, forbids RPC consent, and binds returned images to th
     true,
   );
   const close = await localServer(root, computer);
+  let closed = false;
   try {
     const paths = localComputerPaths(root);
     if (process.platform !== 'win32') expect((await stat(paths.socket)).mode & 0o777).toBe(0o600);
@@ -98,8 +99,22 @@ it('keeps host RPC private, forbids RPC consent, and binds returned images to th
       ).isError,
     ).toBe(true);
     expect(computer.status().session).toBeUndefined();
-  } finally {
+    await computer.connect({
+      type: 'local.connect',
+      id: 'mock-next-consent',
+      bot: 'mock-bot',
+      model: 'provider:mock-provider:mock-vision',
+      modelRevision: 2,
+    });
+    await client.status();
     await close();
+    closed = true;
+    expect((await client.status()).available).toBe(false);
+    await expect(client.prepare({ ...run, id: 'mock-after-disconnect' })).rejects.toThrow(
+      'LOCAL_CLIENT_UNAVAILABLE',
+    );
+  } finally {
+    if (!closed) await close();
     await rm(temporary, { recursive: true, force: true });
   }
 });

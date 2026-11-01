@@ -5,7 +5,7 @@
 ## 环境要求
 
 - Node.js 22.15+（22.x）或 24+，以及 npm；建议使用 Node.js 24。
-- 完整客户端和当前打包流程需要 Apple 芯片 Mac。
+- Linux 虚拟机模式和 macOS 打包需要 Apple 芯片 Mac；Windows x64 可构建无需 VM 的本机模式。
 - 执行模型任务需要所选供应商的 API Key，在客户端设置中填写。
 
 仓库不包含环境镜像、随包后台资源、虚拟机磁盘或用户凭据。仅克隆源码和安装依赖，不会得到完整的 Linux 运行环境。
@@ -103,6 +103,21 @@ npm run bundle:desktop -- /absolute/path/to/environment-pack /absolute/path/to/n
 输出目录必须尚不存在。成功后在该目录生成 `Daban.app`，包含 Electron、界面、宿主机后台及独立 Linux 执行环境，无需用户另外安装 Docker、Node.js 或 DSH。
 
 当前构建器固定使用已封存的 38 版无凭据基础镜像，并叠加当前执行端；环境包须匹配构建器校验，不能任意替换。环境准备与校验代码见 [environment.ts](../tools/environment.ts)、[guest.ts](../tools/guest.ts) 和 [desktop.ts](../tools/desktop.ts)。本地打包尚不代表完成公开发行签名、公证或自动更新。
+
+## Windows 本机模式
+
+在 Windows x64 上准备官方 Node.js 24.22.1 目录（含 node.exe 与 LICENSE），然后执行：
+
+```sh
+npm ci
+npm run bundle:windows -- C:/build/Daban-win-x64 C:/tools/node-v24.22.1-win-x64
+```
+
+输出目录必须尚不存在，运行其中的 `Daban.exe`。随包提供后台、DSH 和原生输入组件，无需 Lima、WSL 或 Docker。首次使用直接配置模型；在 Bot 的电脑面板授权本机桌面操作。当前仅控制主显示器和当前用户能操作的应用，不自动通过 UAC 或管理员界面。
+
+本机权限只保存在客户端内存中，按 Bot、模型和连接修订绑定。返回 Daban、锁屏、休眠或按 Ctrl + Alt / Option + Esc 暂停；关闭客户端撤销桌面授权。Windows 命名管道使用校验服务端证书的 TLS，公开证书在成功监听后发布到受 ACL 保护的用户目录，密钥不发送给未验证的监听者。
+
+Windows 本机模式尚无 Linux 工作区的 shell、文件和进程工具，桌面 GUI 仍可操作真实应用与文件。`Native desktop` 工作流构建便携包并运行合成测试；签名和真实 Windows 桌面的手工验收仍需分别完成。
 
 ## 数据与本地产物
 

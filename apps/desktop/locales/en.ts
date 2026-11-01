@@ -1810,6 +1810,9 @@ export const english = {
   'localComputer.shortcutUnavailable':
     'The pause shortcut is in use. Close the conflicting app and try again.',
   'localComputer.primaryDisplay': 'Move the target app to the primary display and try again.',
+  'localComputer.computer': 'This computer',
+  'localComputer.settingsDescription':
+    'Authorize desktop control per Bot in its Computer panel. No Linux VM is required.',
   'localComputer.workspace': 'Local workspace connected',
   'localComputer.source': 'Computer source',
   'localComputer.virtual': 'Linux VM',

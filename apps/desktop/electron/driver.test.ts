@@ -5,8 +5,25 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('electron', () => ({
   app: { getAppPath: () => '/mock/app' },
-  screen: { dipToScreenPoint: mocks.dip },
-  desktopCapturer: {},
+  screen: {
+    dipToScreenPoint: mocks.dip,
+    screenToDipPoint: (p: { x: number; y: number }) => ({ x: p.x / 1.25, y: p.y / 1.25 }),
+    getPrimaryDisplay: () => ({ id: 1, bounds: { x: 0, y: 0, width: 1536, height: 864 } }),
+  },
+  desktopCapturer: {
+    getSources: async () => [
+      {
+        display_id: '1',
+        thumbnail: {
+          isEmpty: () => false,
+          resize: () => ({
+            getSize: () => ({ width: 1280, height: 720 }),
+            toJPEG: () => Buffer.from('SYNTHETIC JPEG'),
+          }),
+        },
+      },
+    ],
+  },
   shell: {},
   systemPreferences: {},
 }));
@@ -63,4 +80,17 @@ it('types bounded Unicode chunks without overwriting the clipboard and checks st
     true,
   );
   expect(checks.mock.calls.length).toBeGreaterThan(2);
+});
+
+it('checks the foreground window on the primary display in DIP coordinates on scaled Windows desktops', async () => {
+  const api = automation();
+  api.getWindowRect = () => ({ x: 1800, y: 100, width: 100, height: 100 });
+  const driver = desktopDriver(
+    () => undefined,
+    'win32',
+    () => api,
+  );
+  expect((await driver.capture()).context).toBe('1');
+  api.getWindowRect = () => ({ x: 1800, y: 100, width: 600, height: 100 });
+  await expect(driver.capture()).rejects.toThrow('LOCAL_OTHER_DISPLAY');
 });
