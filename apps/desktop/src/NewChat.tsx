@@ -76,8 +76,8 @@ export function NewChat({
     if (!mounted.current) return;
     notify(
       value.chat.revision === value.receipt.revision
-        ? t('已开启新对话，旧记录和未发送草稿保留。')
-        : t('此前操作已完成，当前已是更新的对话。'),
+        ? t('newchat.newConversationOpenedOldHistoryUnsentDrafts')
+        : t('newchat.earlierOperationCompletedNewerConversationNowCurrent'),
     );
     close();
   }
@@ -112,28 +112,28 @@ export function NewChat({
     }
   }
   return (
-    <Dialog title={t('开启新对话')} onClose={close}>
+    <Dialog title={t('common.newConversation')} onClose={close}>
       <div className="archive-identity">
         <Avatar bot={bot} />
         <strong>{bot.name}</strong>
       </div>
-      <p className="dialog-description">
-        {t(
-          '新对话使用全新的模型上下文。旧记录可在历史对话中阅读，工作偏好、资料、文件、电脑和浏览器登录状态保持原样。未发送的文字和附件会保留，不会自动发送。',
-        )}
-      </p>
+      <p className="dialog-description">{t('newchat.newConversationStartsFreshModelContextOld')}</p>
       {!available && (
-        <p className="inline-note">{t('连接更新后的本地环境，才能开启新对话或核对操作。')}</p>
+        <p className="inline-note">
+          {t('newchat.connectUpdatedLocalEnvironmentStartConversationsVerify')}
+        </p>
       )}
       {!!state.runtimeRequests[bot.id] && (
-        <p className="inline-note">{t('有一条消息的发送结果尚待确认，请先在对话里核对。')}</p>
+        <p className="inline-note">{t('newchat.oneMessageHasUnconfirmedSendResultVerify')}</p>
       )}
       {task?.running && !task.conversationId && (
-        <p className="inline-note">{t('先结束当前私聊任务，再开启新对话。群聊任务不受影响。')}</p>
+        <p className="inline-note">
+          {t('newchat.finishCurrentPrivateTaskStartingNewConversation')}
+        </p>
       )}
       {pending && (
         <p className="inline-note">
-          {t('上一次开启操作尚待核对。关闭弹窗不会撤回已提交的操作，请核对结果或重试同一次操作。')}
+          {t('newchat.previousRequestOpenConversationNeedsVerificationClosing')}
         </p>
       )}
       {error && (
@@ -143,7 +143,7 @@ export function NewChat({
       )}
       <div className="dialog-actions">
         <button className="text-button" type="button" onClick={close}>
-          {t('关闭')}
+          {t('common.close')}
         </button>
         {pending && (
           <button
@@ -159,7 +159,7 @@ export function NewChat({
               )
             }
           >
-            {t('核对操作结果')}
+            {t('common.verifyOperationResult')}
           </button>
         )}
         <button
@@ -168,7 +168,11 @@ export function NewChat({
           disabled={busy || !canWrite}
           onClick={() => perform(submit)}
         >
-          {busy ? t('正在处理…') : pending ? t('重试同一次操作') : t('确认开启')}
+          {busy
+            ? t('common.processing')
+            : pending
+              ? t('common.retrySameOperation')
+              : t('newchat.confirmNewConversation')}
         </button>
       </div>
     </Dialog>

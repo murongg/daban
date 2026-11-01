@@ -44,13 +44,13 @@ import {
 import { TimeField } from './TimeField';
 
 const allTabs = [
-  ['computer', Monitor, '电脑'],
-  ['files', Folder, '文件'],
-  ['knowledge', FileText, '资料'],
-  ['skills', BookOpen, '技能'],
-  ['memory', Brain, '记忆'],
-  ['notes', StickyNote, '便笺'],
-  ['routines', Clock3, '定时'],
+  ['computer', Monitor, 'workspace.computer'],
+  ['files', Folder, 'common.files'],
+  ['knowledge', FileText, 'workspace.documents'],
+  ['skills', BookOpen, 'common.skills'],
+  ['memory', Brain, 'workspace.memory'],
+  ['notes', StickyNote, 'common.notes'],
+  ['routines', Clock3, 'workspace.schedules'],
 ] as const;
 export function Workspace({
   state,
@@ -88,13 +88,13 @@ export function Workspace({
   const closeHistory = useCallback(() => setHistoryBot(undefined), []);
   const profile = runtime.snapshot.profiles.find((profile) => profile.id === agentId(bot.id));
   const memoryBlocked = memorySaving
-    ? t('偏好正在保存，请等待完成。')
+    ? t('workspace.preferencesBeingSavedWaitCompletion')
     : memoryConflict
-      ? t('请先处理编辑器中的版本冲突。')
+      ? t('workspace.resolveRevisionConflictEditorFirst')
       : bot.archived || profile?.archived || lifecycleRequest(state, bot.id, profile)
-        ? t('Bot 正在归档或恢复，当前只能查看历史。')
+        ? t('workspace.botBeingArchivedRestoredHistoryReadOnly')
         : state.memoryDrafts[bot.id] !== state.memories[bot.id]
-          ? t('请先保存或还原编辑器中的草稿，再载入历史版本。')
+          ? t('workspace.saveRevertEditorDraftLoadingHistoricalRevision')
           : undefined;
   useEffect(() => {
     if (historyBot !== bot.id || panel !== 'memory') setHistoryBot(undefined);
@@ -125,9 +125,13 @@ export function Workspace({
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [panel]);
   return (
-    <aside className="workspace" aria-label={t('Bot 工作区')}>
+    <aside className="workspace" aria-label={t('workspace.botWorkspace')}>
       <div className="workspace-tabs">
-        <div className="workspace-tablist" role="tablist" aria-label={t('工作区面板')}>
+        <div
+          className="workspace-tablist"
+          role="tablist"
+          aria-label={t('workspace.workspacePanel')}
+        >
           {tabs.map(([id, Icon, label], i) => (
             <button
               type="button"
@@ -147,7 +151,7 @@ export function Workspace({
           ))}
         </div>
         <IconButton
-          label={t('关闭工作区面板')}
+          label={t('workspace.closeWorkspacePanel')}
           onClick={() => dispatch({ type: 'panel', panel: null })}
         >
           <X />
@@ -169,8 +173,10 @@ export function Workspace({
           (!runtime.enabled || !!bot.members) &&
           (bot.members ? (
             <div className="panel-section">
-              <h2>{t('每位 Bot 都有自己的电脑')}</h2>
-              <p className="panel-description">{t('选择一位群成员，查看它的独立工作空间。')}</p>
+              <h2>{t('workspace.everyBotHasOwnComputer')}</h2>
+              <p className="panel-description">
+                {t('workspace.selectGroupMemberViewIndependentWorkspace')}
+              </p>
               <div className="file-list">
                 {bot.members.map((id) => {
                   const member = state.bots.find((b) => b.id === id);
@@ -202,20 +208,20 @@ export function Workspace({
             <div className="computer-panel">
               <div className={`computer-info ${human ? 'human' : ''}`}>
                 <span className="status-dot" />
-                <span>{human ? t('你正在接管') : t('桌面预览')}</span>
+                <span>{human ? t('common.control') : t('workspace.desktopPreview')}</span>
                 <span className="spacer" />
                 <span className="muted">
                   {bot.name}
-                  {t('的屏幕')}
+                  {t('common.sScreen')}
                 </span>
               </div>
               <Desktop key={bot.id} name={bot.name} human={human} />
               <div className="computer-copy">
-                <h2>{human ? t('电脑暂时交给你') : t('工作正在这里发生')}</h2>
+                <h2>{human ? t('common.computerYoursNow') : t('workspace.workHappensHere')}</h2>
                 <p>
                   {human
-                    ? t('接管期间，这位 Bot 会等待你交还。切换到其他 Bot，不会改变这里的接管状态。')
-                    : t('查看 Bot 的电脑、文件和应用。需要时可以接管，完成后再交还，让协作继续。')}
+                    ? t('workspace.botWaitsWhileControlComputerSwitchingBots')
+                    : t('workspace.viewBotSComputerFilesAppsTake')}
                 </p>
                 <div className="computer-actions">
                   <button
@@ -225,22 +231,24 @@ export function Workspace({
                       dispatch({ type: 'control', bot: bot.id, owner: human ? 'agent' : 'human' });
                       notify(
                         human
-                          ? t('已交还给 Bot（演示）')
-                          : t('已进入接管状态（演示），尚未连接真实电脑'),
+                          ? t('workspace.handedBackBotDemo')
+                          : t('workspace.takeoverEnabledDemoNoRealComputerConnected'),
                       );
                     }}
                   >
                     {human ? <Check /> : <Monitor />}
-                    {human ? t('交还给 Bot') : t('接管电脑')}
+                    {human ? t('common.handBackBot') : t('common.takeOverComputer')}
                   </button>
                   <button type="button" className="secondary" onClick={() => expand('desktop')}>
                     <Maximize2 />
-                    {t('展开')}
+                    {t('common.expand')}
                   </button>
                   <span className="spacer" />
                   <IconButton
-                    label={t('刷新桌面预览')}
-                    onClick={() => notify(t('这是示例桌面，实时画面将在接入运行环境后显示。'))}
+                    label={t('workspace.refreshDesktopPreview')}
+                    onClick={() =>
+                      notify(t('workspace.exampleDesktopLiveViewAppearsConnectingRuntime'))
+                    }
                   >
                     <RotateCcw />
                   </IconButton>
@@ -248,7 +256,7 @@ export function Workspace({
               </div>
               <div className="computer-footer">
                 <ShieldCheck />
-                <span>{t('示例电脑画面 · 不连接你的真实电脑')}</span>
+                <span>{t('workspace.exampleComputerScreenDoesNotConnectActual')}</span>
               </div>
             </div>
           ))}
@@ -274,9 +282,9 @@ export function Workspace({
         )}
         {panel === 'files' && !runtime.enabled && (
           <div className="panel-section">
-            <h2>{t('工作区文件')}</h2>
+            <h2>{t('common.workspaceFiles')}</h2>
             <p className="panel-description">
-              {t('Bot 共享这里的文件。点击预览，也可以下载到本机。')}
+              {t('workspace.botsShareFilesPreviewFileDownloadComputer')}
             </p>
             <div className="file-list">
               {state.files.map((file) => (
@@ -293,7 +301,7 @@ export function Workspace({
                     </div>
                   </button>
                   <IconButton
-                    label={`${file.upload ? t('下载提取文本') : t('下载')} ${file.name}`}
+                    label={`${file.upload ? t('common.downloadExtractedText') : t('workspace.download')} ${file.name}`}
                     onClick={() => download(file)}
                   >
                     <Download />
@@ -302,7 +310,7 @@ export function Workspace({
               ))}
             </div>
             <p className="inline-note" style={{ marginTop: 20 }}>
-              {t('示例文件仅用于展示。添加的文本附件保存在本机，不会上传到服务器。')}
+              {t('workspace.exampleFilesDisplayOnlyAddedTextAttachments')}
             </p>
           </div>
         )}
@@ -315,7 +323,7 @@ export function Workspace({
         {panel === 'memory' && (
           <div className="panel-section">
             <div className="panel-heading">
-              <h2>{t('让协作更默契')}</h2>
+              <h2>{t('workspace.workBetterTogether')}</h2>
               <button
                 className="text-button"
                 type="button"
@@ -327,22 +335,20 @@ export function Workspace({
                 }
                 onClick={() => setHistoryBot(bot.id)}
               >
-                {t('历史版本')}
+                {t('workspace.revisions')}
               </button>
             </div>
             <p className="panel-description">
               {runtime.enabled && runtime.snapshot.protocolVersion >= 7
-                ? t(
-                    '记下你的工作偏好，下次不用重复交代。也可以在对话里说“记住这个偏好”或“忘掉某条偏好”。',
-                  )
-                : t('记下你的工作偏好，下次不用重复交代。')}
+                ? t('workspace.saveWorkPreferencesSoDoNotNeedRepeat')
+                : t('workspace.saveWorkPreferencesSoDoNotNeed')}
             </p>
             <div className="memory-intro">
               <Avatar bot={bot} />
               <span>
-                {t('仅用于')}
+                {t('workspace.only')}
                 {bot.name}
-                {t('的工作记忆')}
+                {t('workspace.sWorkMemory')}
               </span>
             </div>
             {memoryError && (
@@ -381,7 +387,11 @@ export function Workspace({
                       submitted: value,
                     });
                   } else dispatch({ type: 'memory', bot: target, text: value, submitted: value });
-                  notify(runtime.enabled ? t('记忆已保存到本机运行环境。') : t('记忆已保存在本机'));
+                  notify(
+                    runtime.enabled
+                      ? t('workspace.memorySavedLocalRuntime')
+                      : t('workspace.memorySavedLocally'),
+                  );
                   feedback({});
                 } catch (error) {
                   const conflict =
@@ -403,12 +413,12 @@ export function Workspace({
               }}
             >
               <label className="field-label">
-                {t('工作偏好')}
+                {t('workspace.workPreferences')}
                 <textarea
                   className="field"
-                  aria-label={t('工作偏好')}
+                  aria-label={t('workspace.workPreferences')}
                   maxLength={12000}
-                  placeholder={t('例如：先给结论，再补充依据；发送文件之前先让我确认。')}
+                  placeholder={t('workspace.exampleLeadConclusionsThenEvidenceLetMe')}
                   value={memory}
                   onChange={(e) =>
                     dispatch({ type: 'memory-draft', bot: bot.id, text: e.target.value })
@@ -418,23 +428,23 @@ export function Workspace({
               <div className="memory-actions">
                 <span className="inline-note">
                   {memory === state.memories[bot.id]
-                    ? t('已保存到本机')
-                    : t('未保存修改 · 草稿已暂存')}
+                    ? t('workspace.savedLocally')
+                    : t('common.unsavedChangesDraftRetained')}
                 </span>
                 <button
                   className="primary"
                   type="submit"
                   disabled={memorySaving || !!memoryConflict}
                 >
-                  {memorySaving ? t('正在保存…') : t('保存记忆')}
+                  {memorySaving ? t('common.saving') : t('workspace.saveMemory')}
                 </button>
               </div>
             </form>
             {memoryConflict && (
               <div>
-                <p className="inline-note">{t('当前已保存的工作偏好：')}</p>
+                <p className="inline-note">{t('workspace.currentlySavedWorkPreferences')}</p>
                 <p className="panel-description">
-                  {memoryConflict.memory || t('尚未设置工作偏好')}
+                  {memoryConflict.memory || t('workspace.noWorkPreferencesSet')}
                 </p>
                 <button
                   type="button"
@@ -448,7 +458,7 @@ export function Workspace({
                     setMemoryStatus((current) => ({ ...current, [bot.id]: {} }));
                   }}
                 >
-                  {t('保留草稿，按此版本重试')}
+                  {t('common.keepDraftRetryRevision')}
                 </button>
               </div>
             )}
@@ -456,14 +466,10 @@ export function Workspace({
               {runtime.enabled
                 ? runtime.snapshot.protocolVersion >= 7
                   ? runtime.snapshot.protocolVersion >= 32
-                    ? t(
-                        '这里和对话共用同一份偏好，下次任务只读取最新保存内容。移除偏好不会删除已有聊天或保留的历史。',
-                      )
-                    : t(
-                        '这里和对话共用同一份偏好，下次任务会读取最新保存内容。移除偏好不会删除已有聊天记录。更新本地环境后可查看历史版本。',
-                      )
-                  : t('这些偏好会用于下一次真实任务；聊天记忆工具需要更新运行环境后使用。')
-                : t('当前为界面演示。接入模型后，这些偏好才能用于真实任务。')}
+                    ? t('workspace.preferencesSharedChatNextTaskUsesOnly')
+                    : t('workspace.preferencesSharedChatNextTaskUsesLatest')
+                  : t('workspace.preferencesApplyNextRealTaskUpdateRuntime')
+                : t('workspace.uiDemonstrationPreferencesApplyRealTasksModel')}
             </p>
             {historyBot === bot.id && (
               <MemoryHistory
@@ -482,7 +488,7 @@ export function Workspace({
                     return;
                   dispatch({ type: 'memory-draft', bot: bot.id, text: version.content });
                   closeHistory();
-                  notify(t('已载入编辑器，请确认后保存。'));
+                  notify(t('workspace.loadedIntoEditorReviewSaveApply'));
                 }}
               />
             )}
@@ -494,12 +500,15 @@ export function Workspace({
         {panel === 'routines' && !runtime.enabled && (
           <div className="panel-section">
             <div className="panel-heading">
-              <h2>{t('定时任务')}</h2>
-              <IconButton label={t('新建定时任务')} onClick={() => setForm({ open: true })}>
+              <h2>{t('common.scheduledTasks')}</h2>
+              <IconButton
+                label={t('common.newScheduledTask')}
+                onClick={() => setForm({ open: true })}
+              >
                 <Plus />
               </IconButton>
             </div>
-            <p className="panel-description">{t('把重复的事交代一次，在合适的时候开始。')}</p>
+            <p className="panel-description">{t('workspace.setUpRecurringWorkOnceLetStart')}</p>
             {state.routines
               .filter((r) => r.bot === bot.id)
               .map((r) => (
@@ -510,7 +519,7 @@ export function Workspace({
                       type="button"
                       className="toggle"
                       role="switch"
-                      aria-label={`${r.enabled ? t('停用') : t('启用')} ${r.title}`}
+                      aria-label={`${r.enabled ? t('common.disable') : t('common.enable')} ${r.title}`}
                       aria-checked={r.enabled}
                       onClick={() => dispatch({ type: 'routine-toggle', id: r.id })}
                     />
@@ -520,12 +529,12 @@ export function Workspace({
                     {r.schedule}
                   </div>
                   <div className="routine-bottom">
-                    <span>{r.enabled ? t('已启用 · 演示') : t('已暂停')}</span>
+                    <span>{r.enabled ? t('workspace.enabledDemo') : t('common.paused')}</span>
                     <IconButton
-                      label={t('删除定时任务 {0}', { 0: r.title })}
+                      label={t('common.deleteSchedule', { 0: r.title })}
                       onClick={() => {
                         dispatch({ type: 'routine-remove', id: r.id });
-                        notify(t('已移除这项定时任务'));
+                        notify(t('workspace.scheduledTaskRemoved'));
                       }}
                     >
                       <Trash2 />
@@ -536,11 +545,11 @@ export function Workspace({
             {!state.routines.some((r) => r.bot === bot.id) && !adding && (
               <div className="empty-panel">
                 <Clock3 />
-                <h3>{t('让 Bot 记得按时开始')}</h3>
-                <p>{t('例如每周整理进展，或每天汇总待办。')}</p>
+                <h3>{t('common.letBotStartTime')}</h3>
+                <p>{t('common.exampleSummarizeProgressWeeklyDosDaily')}</p>
                 <button type="button" className="secondary" onClick={() => setForm({ open: true })}>
                   <Plus />
-                  {t('创建定时任务')}
+                  {t('common.createSchedule')}
                 </button>
               </div>
             )}
@@ -561,22 +570,22 @@ export function Workspace({
                       enabled: true,
                     },
                   });
-                  notify(t('定时任务已保存（演示），不会自动运行'));
+                  notify(t('workspace.scheduleSavedDemonstrationWillNotRunAutomatically'));
                 }}
               >
                 <label className="field-label">
-                  {t('任务名称')}
+                  {t('common.taskName')}
                   <input
                     className="field"
                     value={routineTitle}
                     onChange={(e) => setForm({ title: e.target.value })}
                     maxLength={60}
                     required
-                    placeholder={t('例如：每周工作摘要')}
+                    placeholder={t('workspace.exampleWeeklyWorkSummary')}
                   />
                 </label>
                 <label className="field-label">
-                  {t('需要 Bot 做什么')}
+                  {t('common.whatShouldBotDo')}
                   <textarea
                     className="field"
                     value={instruction}
@@ -587,21 +596,25 @@ export function Workspace({
                   />
                 </label>
                 <div className="field-label">
-                  {t('重复')}
+                  {t('common.repeat')}
                   <Select
-                    label={t('重复')}
+                    label={t('common.repeat')}
                     value={frequency}
                     onValueChange={(value) => setForm({ frequency: value })}
-                    options={[t('每天'), t('工作日'), t('每周五')].map((value) => ({
+                    options={[
+                      t('common.daily'),
+                      t('workspace.weekdays'),
+                      t('workspace.everyFriday'),
+                    ].map((value) => ({
                       value,
                       label: value,
                     }))}
                   />
                 </div>
                 <div className="field-label">
-                  {t('时间')}
+                  {t('common.time')}
                   <TimeField
-                    label={t('时间')}
+                    label={t('common.time')}
                     required
                     value={time}
                     onValueChange={(value) => setForm({ time: value })}
@@ -613,17 +626,17 @@ export function Workspace({
                     className="text-button"
                     onClick={() => setForm({ open: false })}
                   >
-                    {t('取消')}
+                    {t('common.cancel')}
                   </button>
                   <button type="submit" className="primary">
-                    {t('保存定时任务')}
+                    {t('common.saveSchedule')}
                   </button>
                 </div>
               </form>
             )}
             <p className="inline-note" style={{ marginTop: 25, display: 'flex', gap: 6 }}>
               <Info size={13} />
-              {t('定时任务为界面演示，目前不会自动运行。')}
+              {t('workspace.schedulesUiDemonstrationDoNotRunAutomatically')}
             </p>
           </div>
         )}

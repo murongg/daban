@@ -55,7 +55,7 @@ function CopyEditor({
     latest?.archived ||
     latest?.lifecycle?.phase === 'pending';
   return (
-    <Dialog title={t('复制 Bot')} onClose={close}>
+    <Dialog title={t('common.copyBot')} onClose={close}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -69,35 +69,29 @@ function CopyEditor({
           }).catch(() => {});
         }}
       >
-        <p className="dialog-description">
-          {t(
-            '创建独立的新 Bot，复制已保存的职责、颜色和模型选择。资料与技能可通过导入导出迁移；聊天、日程和工具授权不复制。',
-          )}
-        </p>
+        <p className="dialog-description">{t('copybot.createIndependentBotSavedRoleColorModel')}</p>
         {!available && (
           <p className="form-error" role="alert">
-            {t('请先更新并连接本地运行环境，再复制 Bot。')}
+            {t('copybot.updateConnectLocalRuntimeCopyingBot')}
           </p>
         )}
         {blocked && (
-          <p className="inline-note">
-            {t('运行环境正在恢复，可以核对结果，恢复完成后可重试复制。')}
-          </p>
+          <p className="inline-note">{t('common.runtimeRecoveringCanVerifyResultsRetryCopying')}</p>
         )}
         {pending ? (
           <div className="bundle-progress" role="status">
             <strong>{pending.name}</strong>
-            <p>{t('复制结果尚未确认。关闭后仍会保留原请求；重开只核对结果。')}</p>
-            <p className="inline-note">{t('重试沿用同一次请求，不会重复创建 Bot。')}</p>
+            <p>{t('common.copyResultUnconfirmedOriginalRequestRemainsClosing')}</p>
+            <p className="inline-note">{t('copybot.retryUsesSameRequestDoesNotCreate')}</p>
           </div>
         ) : source ? (
           <div className="form-stack">
             <p className="inline-note">
-              {t('来源：')}
+              {t('common.source')}
               {source.name}
             </p>
             <label className="field-label">
-              {t('新 Bot 名称')}
+              {t('common.newBotName')}
               <input
                 className="field"
                 data-autofocus
@@ -107,14 +101,14 @@ function CopyEditor({
               />
             </label>
             <label className="field-label">
-              {t('职责')}
+              {t('common.role')}
               <textarea className="field" rows={3} value={source.instructions} readOnly />
             </label>
             <p className="inline-note">
-              {t('模型：')}
+              {t('copybot.model')}
               {source.model
                 ? modelName(source.model, runtime.snapshot.model.connections)
-                : t('跟随工作区')}
+                : t('common.followWorkspace')}
             </p>
             <label className="bundle-choice">
               <input
@@ -122,21 +116,19 @@ function CopyEditor({
                 checked={memory}
                 onChange={(event) => setMemory(event.target.checked)}
               />
-              <span>{t('包含工作偏好')}</span>
+              <span>{t('common.includeWorkPreferences')}</span>
             </label>
             {memory && (
               <textarea
                 className="field"
-                aria-label={t('已保存的工作偏好')}
+                aria-label={t('common.savedWorkPreferences')}
                 rows={3}
                 value={source.memory}
                 readOnly
               />
             )}
             {latest && latest.revision !== source.revision && (
-              <p className="inline-note">
-                {t('来源资料已有更新，请载入后核对；新名称和偏好选择会保留。')}
-              </p>
+              <p className="inline-note">{t('copybot.sourceContentChangedLoadReviewNewName')}</p>
             )}
             {latest && (
               <button
@@ -145,18 +137,18 @@ function CopyEditor({
                 disabled={!available || !!latest.archived || latest.lifecycle?.phase === 'pending'}
                 onClick={() => setSource({ ...latest })}
               >
-                {t('载入最新来源')}
+                {t('common.loadLatestSource')}
               </button>
             )}
             {inactive && (
               <p className="form-error" role="alert">
-                {t('来源 Bot 暂不可复制，请核对归档或恢复状态。')}
+                {t('copybot.sourceBotCannotCopiedRightNowCheck')}
               </p>
             )}
           </div>
         ) : (
           <p className="form-error" role="alert">
-            {t('未找到来源资料，请关闭后重新选择 Bot。')}
+            {t('copybot.sourceDocumentNotFoundCloseDialogSelect')}
           </p>
         )}
         {error && (
@@ -166,7 +158,7 @@ function CopyEditor({
         )}
         <div className="dialog-actions">
           <button type="button" className="secondary" onClick={close}>
-            {t('关闭')}
+            {t('common.close')}
           </button>
           {pending ? (
             <>
@@ -176,7 +168,7 @@ function CopyEditor({
                 disabled={!available || reading}
                 onClick={() => check().catch(() => {})}
               >
-                {reading ? t('正在核对…') : t('核对复制结果')}
+                {reading ? t('common.verifying') : t('common.verifyCopyResult')}
               </button>
               <button
                 type="button"
@@ -184,7 +176,7 @@ function CopyEditor({
                 disabled={!available || blocked || working}
                 onClick={() => submit(pending).catch(() => {})}
               >
-                {working ? t('正在复制…') : t('重试同一次复制')}
+                {working ? t('common.copying') : t('common.retrySameCopy')}
               </button>
             </>
           ) : (
@@ -195,7 +187,7 @@ function CopyEditor({
                 !available || blocked || working || inactive || !name.trim() || name.includes('\0')
               }
             >
-              {t('创建副本')}
+              {t('common.createCopy')}
             </button>
           )}
         </div>

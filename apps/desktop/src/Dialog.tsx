@@ -144,7 +144,7 @@ export function Dialog({
       >
         <header className="dialog-header">
           <h2 id={label}>{title}</h2>
-          <IconButton label={t('关闭对话框')} onClick={dismiss}>
+          <IconButton label={t('dialog.closeDialog')} onClick={dismiss}>
             <X />
           </IconButton>
         </header>

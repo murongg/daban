@@ -25,21 +25,23 @@ export function SectionDialog({
   const section = state.organization.sections.find((item) => item.id === edit.id);
   const [name, setName] = useState(section?.name || '');
   const [error, setError] = useState('');
-  const title = { create: t('新建分组'), rename: t('重命名分组'), remove: t('移除分组') }[
-    edit.kind
-  ];
+  const title = {
+    create: t('common.newSection'),
+    rename: t('common.renameSection'),
+    remove: t('common.removeSection'),
+  }[edit.kind];
   return (
     <Dialog title={title} onClose={onClose}>
       {edit.kind === 'remove' ? (
         <>
           <p>
-            {t('移除「')}
+            {t('sectiondialog.remove')}
             {section?.name}
-            {t('」分组？其中的 Bot 和群聊会回到未分组列表，置顶、聊天和草稿都会保留。')}
+            {t('sectiondialog.botsGroupsReturnUngroupedListPinsChats')}
           </p>
           <div className="dialog-actions">
             <button type="button" className="secondary" onClick={onClose}>
-              {t('取消')}
+              {t('common.cancel')}
             </button>
             <button
               type="button"
@@ -50,7 +52,7 @@ export function SectionDialog({
                 onClose();
               }}
             >
-              {t('确认移除')}
+              {t('sectiondialog.confirmRemoval')}
             </button>
           </div>
         </>
@@ -60,7 +62,7 @@ export function SectionDialog({
             event.preventDefault();
             const trimmed = name.trim();
             if (!trimmed || trimmed.length > 40) {
-              setError(t('请输入 1–40 个字符的分组名称。'));
+              setError(t('sectiondialog.enterSectionNameCharacters'));
               return;
             }
             if (
@@ -68,15 +70,15 @@ export function SectionDialog({
                 (item) => item.id !== edit.id && item.name === trimmed,
               )
             ) {
-              setError(t('已有同名分组，请换一个名称。'));
+              setError(t('sectiondialog.sectionNameAlreadyExistsChooseAnotherName'));
               return;
             }
             if (edit.kind === 'create' && state.organization.sections.length >= 32) {
-              setError(t('最多保留 32 个分组，请先整理已有分组。'));
+              setError(t('sectiondialog.upSectionsRetainedOrganizeExistingSectionsFirst'));
               return;
             }
             if (edit.kind === 'rename' && !section) {
-              setError(t('这个分组已不存在，请关闭后查看列表。'));
+              setError(t('sectiondialog.sectionNoLongerExistsCloseDialogCheck'));
               return;
             }
             const id = section?.id || crypto.randomUUID();
@@ -91,7 +93,7 @@ export function SectionDialog({
           }}
         >
           <label className="field-label">
-            {t('分组名称')}
+            {t('sectiondialog.sectionName')}
             <input
               className="field"
               required
@@ -104,7 +106,9 @@ export function SectionDialog({
               }}
             />
           </label>
-          <p className="field-help">{t('分组保存在这台电脑，聊天和文件保持原处。')}</p>
+          <p className="field-help">
+            {t('sectiondialog.sectionsStoredComputerChatsFilesStayWhere')}
+          </p>
           {error && (
             <p role="alert" className="form-error">
               {error}
@@ -112,10 +116,12 @@ export function SectionDialog({
           )}
           <div className="dialog-actions">
             <button type="button" className="secondary" onClick={onClose}>
-              {t('取消')}
+              {t('common.cancel')}
             </button>
             <button type="submit" className="primary">
-              {edit.kind === 'create' ? t('创建分组') : t('保存名称')}
+              {edit.kind === 'create'
+                ? t('sectiondialog.createSection')
+                : t('sectiondialog.saveName')}
             </button>
           </div>
         </form>

@@ -46,16 +46,18 @@ export function NumberField({
         commitBehavior="validate"
       >
         <Group className="field number-control">
-          <Button slot="decrement" aria-label={t('减少{0}', { 0: label })}>
+          <Button slot="decrement" aria-label={t('numberfield.decrease', { 0: label })}>
             <Minus aria-hidden="true" />
           </Button>
           {/* Persist raw edits before blur so closing an editor cannot discard the draft. */}
           <Input onChange={(event) => onValueChange(event.currentTarget.value)} />
-          <Button slot="increment" aria-label={t('增加{0}', { 0: label })}>
+          <Button slot="increment" aria-label={t('numberfield.increase', { 0: label })}>
             <Plus aria-hidden="true" />
           </Button>
         </Group>
-        <FieldError className="control-error">{t('请输入范围内的有效整数。')}</FieldError>
+        <FieldError className="control-error">
+          {t('numberfield.enterValidIntegerWithinAllowedRange')}
+        </FieldError>
       </AriaNumberField>
     </I18nProvider>
   );

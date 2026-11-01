@@ -50,7 +50,7 @@ export function TimeField({
           </DateInput>
           <Clock3 aria-hidden="true" />
         </div>
-        <FieldError className="control-error">{t('请输入有效时间（00:00–23:59）。')}</FieldError>
+        <FieldError className="control-error">{t('timefield.enterValidTime')}</FieldError>
       </AriaTimeField>
     </I18nProvider>
   );

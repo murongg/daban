@@ -122,7 +122,7 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
     document.title =
-      locale === 'en' ? 'Daban · Your AI work companion' : t('Daban · 你的 AI 工作伙伴');
+      locale === 'en' ? 'Daban · Your AI work companion' : t('app.dabanAiWorkCompanion');
   }, [locale]);
   return (
     <I18nProvider locale={locale}>
@@ -191,7 +191,7 @@ function Workbench() {
     }
     if (target.kind === 'group') {
       if (!runtime.snapshot.groups?.items.some((group) => group.id === target.group)) {
-        notify(t('提醒对应的群聊暂不可读取，未切换到其他对话。'));
+        notify(t('app.notificationSGroupUnreadableNoOtherConversation'));
         return true;
       }
       const group = state.bots.find((bot) => bot.id === target.group && !!bot.members);
@@ -201,13 +201,13 @@ function Workbench() {
       return true;
     }
     if (!runtime.snapshot.profiles.some((profile) => profile.id === target.bot)) {
-      notify(t('提醒对应的 Bot 不在当前环境，未切换到其他对话。'));
+      notify(t('app.notificationSBotNotEnvironmentNoOther'));
       return true;
     }
     const targetBot = state.bots.find((bot) => !bot.members && agentId(bot.id) === target.bot);
     if (!targetBot) return false;
     if (target.chatRevision > chatRevision(state, targetBot.id, runtime.snapshot.chats)) {
-      notify(t('提醒对应的对话状态已变化，请在历史记录中核对。'));
+      notify(t('app.notificationSConversationStateChangedCheckConversation'));
       return true;
     }
     setQuery('');
@@ -241,24 +241,25 @@ function Workbench() {
     if (runtime.snapshot.chats?.available)
       dispatch({ type: 'chats', items: runtime.snapshot.chats.items });
   }, [runtime.snapshot.chats, dispatch]);
-  let subtitle = bot?.role || t('你的 AI 工作伙伴');
+  let subtitle = bot?.role || t('app.aiWorkCompanion');
   if (runtime.enabled && bot && !bot.members) {
     subtitle =
       computer?.owner === 'human'
-        ? t('你正在接管 · 等待交还')
+        ? t('app.controlAwaitingHandback')
         : task?.running
           ? task.conversationId
-            ? t('正在群聊中处理任务')
-            : t('正在处理你的消息')
+            ? t('common.workingGroupTask')
+            : t('common.processingMessage')
           : computer
-            ? t('通用 Agent · 电脑已连接')
-            : t('通用 Agent');
+            ? t('app.generalAgentComputerConnected')
+            : t('common.generalAgent');
   } else if (!runtime.enabled && bot && state.controls[bot.id] === 'human')
-    subtitle = t('你正在接管 · 等待交还');
-  if (pendingGroup) subtitle = t('群聊操作待核对');
-  else if (bot && state.chatRequests[bot.id]) subtitle = t('对话操作待核对');
-  else if (pendingLifecycle) subtitle = t('Bot 操作待核对');
-  else if (bot?.archived) subtitle = t('已归档 · 历史只读');
+    subtitle = t('app.controlAwaitingHandback');
+  if (pendingGroup) subtitle = t('app.groupActionNeedsVerification');
+  else if (bot && state.chatRequests[bot.id])
+    subtitle = t('app.conversationActionNeedsVerification');
+  else if (pendingLifecycle) subtitle = t('app.botActionNeedsVerification');
+  else if (bot?.archived) subtitle = t('app.archivedReadOnlyHistory');
   useEffect(() => {
     if (!runtime.enabled || runtime.snapshot.phase !== 'ready') {
       ingested.current.clear();
@@ -312,7 +313,7 @@ function Workbench() {
   }, [runtime.enabled, runtime.snapshot, state.bots, state.runtimeRequests, dispatch]);
   async function runTask(botId: string, continued?: TaskRequest) {
     if (recoveryBlocked(runtime.snapshot)) {
-      notify(t('运行环境恢复待核对，新任务暂缓，草稿会保留。'));
+      notify(t('app.runtimeRecoveryNeedsVerificationNewTasksPaused'));
       return;
     }
     if (
@@ -320,16 +321,16 @@ function Workbench() {
       state.chatRequests[botId] ||
       lifecycleRequest(state, botId)
     ) {
-      notify(t('先恢复 Bot 或核对操作结果，再发送新任务。'));
+      notify(t('app.restoreBotVerifyOperationResultSendingNew'));
       return;
     }
     if (state.attachmentUploads[botId]) {
-      notify(t('请等待附件准备完成后发送。'));
+      notify(t('common.waitUntilAttachmentsReadySending'));
       return;
     }
     const target = agentId(botId);
     if (state.bots.find((entry) => entry.id === botId)?.members) {
-      notify(t('请在群聊窗口选择接收成员后发送。'));
+      notify(t('app.chooseRecipientsGroupWindowSending'));
       return;
     }
     if (submitting.current.has(botId)) return;
@@ -343,7 +344,7 @@ function Workbench() {
           ? { chatRevision: chatRevision(state, botId, runtime.snapshot.chats) }
           : {}),
         requestId: crypto.randomUUID(),
-        prompt: text || t('请查看这些文件，并完成我交代的任务。'),
+        prompt: text || t('common.reviewFilesCompleteTaskIDescribed'),
         ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
         files: attached.map(taskFile),
       };
@@ -360,7 +361,7 @@ function Workbench() {
         !isModelId(model) ||
         !modelHasVision(model, modelCatalog(runtime.snapshot.model.connections))
       ) {
-        notify(t('当前模型不支持图片，请切换为支持图片的模型后发送；文字和附件已保留。'));
+        notify(t('app.currentModelDoesNotSupportImagesChoose'));
         return;
       }
     }
@@ -476,7 +477,7 @@ function Workbench() {
     } catch {
       if (!storageFailed.current) {
         storageFailed.current = true;
-        notify(t('本机存储不可用或已满。请先导出工作区，避免刷新后丢失修改。'));
+        notify(t('app.localStorageUnavailableFullExportWorkspaceRefreshing'));
       }
     }
   }, [state, notify]);
@@ -535,7 +536,7 @@ function Workbench() {
         <header className="chat-header">
           <IconButton
             className="mobile-menu"
-            label={t('打开侧栏')}
+            label={t('app.openSidebar')}
             onClick={() => setSidebarOpen(true)}
           >
             <Menu />
@@ -552,7 +553,7 @@ function Workbench() {
                 {!bot.members && (
                   <>
                     <IconButton
-                      label={t('便笺面板')}
+                      label={t('app.notesPanel')}
                       className={`header-optional ${state.panel === 'notes' ? 'active' : ''}`}
                       aria-pressed={state.panel === 'notes'}
                       onClick={() => panel('notes')}
@@ -560,7 +561,11 @@ function Workbench() {
                       <StickyNote />
                     </IconButton>
                     <IconButton
-                      label={state.chatRequests[bot.id] ? t('核对对话操作') : t('开启新对话')}
+                      label={
+                        state.chatRequests[bot.id]
+                          ? t('common.verifyConversationAction')
+                          : t('common.newConversation')
+                      }
                       disabled={
                         !runtime.enabled ||
                         runtime.snapshot.protocolVersion < 29 ||
@@ -571,7 +576,7 @@ function Workbench() {
                       <MessageSquarePlus />
                     </IconButton>
                     <IconButton
-                      label={t('历史对话')}
+                      label={t('chat.conversationHistory')}
                       disabled={
                         !runtime.enabled || runtime.snapshot.protocolVersion < 29 || !chatVersion
                       }
@@ -584,7 +589,7 @@ function Workbench() {
                 {bot.members && (
                   <>
                     <IconButton
-                      label={t('编辑群聊')}
+                      label={t('app.editGroup')}
                       disabled={historyOnly}
                       onClick={() => setModal({ type: 'group', bot: bot.id })}
                     >
@@ -593,10 +598,10 @@ function Workbench() {
                     <IconButton
                       label={
                         pendingGroup
-                          ? t('核对群聊操作')
+                          ? t('app.verifyGroupAction')
                           : bot.archived
-                            ? t('恢复群聊')
-                            : t('归档群聊')
+                            ? t('common.restoreGroup')
+                            : t('common.archiveGroup')
                       }
                       disabled={!runtime.enabled || runtime.snapshot.protocolVersion < 28}
                       onClick={() => setModal({ type: 'archive', bot: bot.id })}
@@ -607,7 +612,7 @@ function Workbench() {
                 )}
                 {!bot.members && (
                   <IconButton
-                    label={t('编辑 Bot 资料')}
+                    label={t('app.editBotProfile')}
                     disabled={historyOnly}
                     onClick={() => setModal({ type: 'profile', bot: bot.id })}
                   >
@@ -615,7 +620,7 @@ function Workbench() {
                   </IconButton>
                 )}
                 <IconButton
-                  label={t('电脑面板')}
+                  label={t('app.computerPanel')}
                   className={state.panel === 'computer' ? 'active' : ''}
                   aria-pressed={state.panel === 'computer'}
                   onClick={() => panel('computer')}
@@ -623,7 +628,7 @@ function Workbench() {
                   <Monitor />
                 </IconButton>
                 <IconButton
-                  label={t('文件面板')}
+                  label={t('app.filesPanel')}
                   className={state.panel === 'files' ? 'active' : ''}
                   aria-pressed={state.panel === 'files'}
                   onClick={() => panel('files')}
@@ -633,7 +638,7 @@ function Workbench() {
                 {!bot.members && (
                   <>
                     <IconButton
-                      label={t('资料面板')}
+                      label={t('app.documentsPanel')}
                       disabled={historyOnly}
                       className={state.panel === 'knowledge' ? 'active' : ''}
                       aria-pressed={state.panel === 'knowledge'}
@@ -642,7 +647,7 @@ function Workbench() {
                       <BookOpen />
                     </IconButton>
                     <IconButton
-                      label={t('记忆面板')}
+                      label={t('app.memoryPanel')}
                       disabled={historyOnly}
                       className={`header-optional ${state.panel === 'memory' ? 'active' : ''}`}
                       aria-pressed={state.panel === 'memory'}
@@ -651,7 +656,7 @@ function Workbench() {
                       <Brain />
                     </IconButton>
                     <IconButton
-                      label={t('定时任务面板')}
+                      label={t('app.schedulesPanel')}
                       disabled={historyOnly}
                       className={`header-optional ${state.panel === 'routines' ? 'active' : ''}`}
                       aria-pressed={state.panel === 'routines'}
@@ -663,7 +668,9 @@ function Workbench() {
                 )}
                 <span className="header-divider" />
                 <IconButton
-                  label={state.theme === 'light' ? t('切换深色主题') : t('切换浅色主题')}
+                  label={
+                    state.theme === 'light' ? t('app.switchDarkTheme') : t('app.switchLightTheme')
+                  }
                   onClick={() =>
                     dispatch({ type: 'theme', theme: state.theme === 'light' ? 'dark' : 'light' })
                   }
@@ -677,23 +684,25 @@ function Workbench() {
               <div>
                 <h1>
                   {state.view === 'chat'
-                    ? t('工作区')
+                    ? t('workspace.title')
                     : state.view === 'gallery'
-                      ? t('Bot 广场')
+                      ? t('common.botGallery')
                       : state.view === 'inbox'
-                        ? t('收件箱')
+                        ? t('common.inbox')
                         : state.view === 'tasks'
-                          ? t('任务')
-                          : t('设置')}
+                          ? t('common.tasks')
+                          : t('settings.title')}
                 </h1>
                 <p className="chat-subtitle">
-                  {state.view === 'tasks' ? t('共享待办 · 所有 Bot 可见') : t('你的工作区')}
+                  {state.view === 'tasks'
+                    ? t('app.sharedDosVisibleAllBots')
+                    : t('workspace.yourWorkspace')}
                 </p>
               </div>
               <span className="spacer" />
               {state.view !== 'chat' && (
                 <IconButton
-                  label={t('返回对话')}
+                  label={t('app.backConversation')}
                   onClick={() => dispatch({ type: 'view', view: 'chat' })}
                 >
                   <Monitor />
@@ -819,7 +828,7 @@ function Workbench() {
         />
       )}
       {modal?.type === 'group' && (
-        <Dialog title={t('编辑群聊')} onClose={closeModal}>
+        <Dialog title={t('app.editGroup')} onClose={closeModal}>
           <GroupEditor
             state={state}
             bot={state.bots.find((bot) => bot.id === modal.bot)!}
@@ -829,7 +838,7 @@ function Workbench() {
         </Dialog>
       )}
       {modal?.type === 'profile' && (
-        <Dialog title={t('编辑 Bot 资料')} onClose={closeModal}>
+        <Dialog title={t('app.editBotProfile')} onClose={closeModal}>
           <Profile
             bot={state.bots.find((bot) => bot.id === modal.bot)!}
             memory={state.memories[modal.bot]}
@@ -895,12 +904,15 @@ function Workbench() {
         notify={notify}
       />
       {modal?.type === 'export' && (
-        <Dialog title={t('导出 Bot')} onClose={closeModal}>
+        <Dialog title={t('common.exportBot')} onClose={closeModal}>
           <ExportBot bot={modal.bot} close={closeModal} notify={notify} />
         </Dialog>
       )}
       {modal?.type === 'create' && (
-        <Dialog title={modal.group ? t('创建群聊') : t('认识你的新搭档')} onClose={closeModal}>
+        <Dialog
+          title={modal.group ? t('common.createGroup') : t('app.meetNewCompanion')}
+          onClose={closeModal}
+        >
           <Create
             key={modal.preset?.id ?? 'custom'}
             preset={modal.preset}
@@ -937,11 +949,7 @@ function Workbench() {
             {modal.file.kind} · {modal.file.size}
           </p>
           {modal.file.upload && !imageMime(modal.file.upload.name) && (
-            <p className="inline-note">
-              {t(
-                '当前显示提取文本；图片、版式和公式不作完整还原。原件保存在运行环境中，可单独下载。',
-              )}
-            </p>
+            <p className="inline-note">{t('app.showingExtractedTextImagesLayoutFormulasNot')}</p>
           )}
           {imageMime(modal.file.upload?.name || modal.file.name) ? (
             <ImagePreview
@@ -953,7 +961,7 @@ function Workbench() {
           )}
           <div className="dialog-actions">
             <button type="button" className="secondary" onClick={closeModal}>
-              {t('关闭预览')}
+              {t('app.closePreview')}
             </button>
             <button
               type="button"
@@ -1002,18 +1010,18 @@ function Workbench() {
               }}
             >
               <Download />
-              {modal.file.upload ? t('下载原件') : t('下载文件')}
+              {modal.file.upload ? t('app.downloadOriginal') : t('app.downloadFile')}
             </button>
             {modal.file.upload && !imageMime(modal.file.upload.name) && (
               <button type="button" className="secondary" onClick={() => download(modal.file)}>
-                {t('下载提取文本')}
+                {t('common.downloadExtractedText')}
               </button>
             )}
           </div>
         </Dialog>
       )}
       {computerBot && runtime.enabled && (
-        <Dialog title={t('{0}的电脑', { 0: computerBot.name })} onClose={closeModal} wide>
+        <Dialog title={t('app.computer', { 0: computerBot.name })} onClose={closeModal} wide>
           <Computer
             bot={computerBot}
             notify={notify}
@@ -1024,8 +1032,8 @@ function Workbench() {
         </Dialog>
       )}
       {computerBot && !runtime.enabled && (
-        <Dialog title={t('{0}的电脑', { 0: computerBot.name })} onClose={closeModal} wide>
-          <p className="dialog-description">{t('Linux 桌面界面预览，尚未连接真实系统。')}</p>
+        <Dialog title={t('app.computer', { 0: computerBot.name })} onClose={closeModal} wide>
+          <p className="dialog-description">{t('app.linuxDesktopPreviewNoRealSystemConnected')}</p>
           <Desktop
             name={computerBot.name}
             human={state.controls[computerBot.id] === 'human'}
@@ -1033,7 +1041,7 @@ function Workbench() {
           />
           <div className="dialog-actions">
             <button type="button" className="secondary" onClick={closeModal}>
-              {t('收起')}
+              {t('common.collapse')}
             </button>
             <button
               type="button"
@@ -1047,7 +1055,9 @@ function Workbench() {
               }
             >
               {state.controls[computerBot.id] === 'human' ? <Check /> : <Monitor />}
-              {state.controls[computerBot.id] === 'human' ? t('交还给 Bot') : t('接管电脑')}
+              {state.controls[computerBot.id] === 'human'
+                ? t('common.handBackBot')
+                : t('common.takeOverComputer')}
             </button>
           </div>
         </Dialog>

@@ -11,45 +11,65 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { Language } from './Language';
-import { t, useLocale } from './locale';
+import { type MessageKey, t, useLocale } from './locale';
 import { useRuntime } from './Runtime';
 
 const steps = [
-  { phase: 'verifying', label: '检查本地环境文件', detail: '正在核对安装文件，确保环境完整。' },
-  { phase: 'extracting', label: '准备 Linux 系统', detail: '正在解包系统文件，可能需要一些时间。' },
-  { phase: 'creating', label: '创建独立工作空间', detail: '正在为 Bot 准备独立的本地环境。' },
-  { phase: 'starting', label: '启动本地环境', detail: '正在启动 Linux，完成后会自动连接。' },
-  { phase: 'connecting', label: '连接工作区', detail: '正在连接本地服务，完成后即可进入工作区。' },
-];
-const labels: Partial<Record<SetupPhase, string>> = {
-  cancelling: '正在保存当前进度',
-  cancelled: '安装已暂停',
-  failed: '安装尚未完成',
-  unavailable: '暂时无法安装',
-  complete: '本地环境已就绪',
-  existing: '本地环境已就绪',
+  {
+    phase: 'verifying',
+    label: 'setup.checkLocalEnvironmentFiles',
+    detail: 'setup.checkingInstallationFilesCompleteness',
+  },
+  {
+    phase: 'extracting',
+    label: 'setup.prepareLinuxSystem',
+    detail: 'setup.unpackingSystemFilesMayTakeLittleWhile',
+  },
+  {
+    phase: 'creating',
+    label: 'setup.createIndependentWorkspace',
+    detail: 'setup.preparingSeparateLocalEnvironmentBots',
+  },
+  {
+    phase: 'starting',
+    label: 'setup.startLocalEnvironment',
+    detail: 'setup.startingLinuxWillConnectAutomaticallyWhenReady',
+  },
+  {
+    phase: 'connecting',
+    label: 'setup.connectWorkspace',
+    detail: 'setup.connectingLocalServicesOpeningWorkspace',
+  },
+] as const;
+const labels: Partial<Record<SetupPhase, MessageKey>> = {
+  cancelling: 'setup.savingCurrentProgress',
+  cancelled: 'setup.setupPaused',
+  failed: 'setup.setupIncomplete',
+  unavailable: 'setup.setupUnavailable',
+  complete: 'setup.localEnvironmentReady',
+  existing: 'setup.localEnvironmentReady',
 };
-const titles: Partial<Record<SetupPhase, string>> = {
-  available: '给 Bot 一个本地工作空间',
-  cancelling: '正在暂停安装',
-  cancelled: '准备好了再继续',
-  complete: '工作空间准备好了',
-  existing: '工作空间准备好了',
+const titles: Partial<Record<SetupPhase, MessageKey>> = {
+  available: 'setup.title',
+  cancelling: 'setup.pausingSetup',
+  cancelled: 'setup.continueWhenReReady',
+  complete: 'setup.workspaceReady',
+  existing: 'setup.workspaceReady',
 };
-const errors: Record<string, string> = {
-  SETUP_BUSY: '上一次安装操作仍在处理中。已保留进度，请稍后继续安装。',
-  SETUP_MISSING: '此开发版本尚未附带本地运行环境。请使用包含运行环境的客户端安装包。',
-  SETUP_PLATFORM: '此版本的本地环境暂仅支持 Apple 芯片 Mac。',
-  SETUP_PAYLOAD: '运行环境文件不完整或版本不匹配。请重新获取包含环境的安装包。',
-  SETUP_INTEGRITY: '运行环境文件校验未通过。请重新获取安装包后继续。',
-  SETUP_SPACE: '可用磁盘空间不足。请清理空间后继续安装，已有进度会保留。',
-  SETUP_STORE: '安装记录或目录无法安全使用。已保留原有内容，请检查本地运行环境。',
-  SETUP_CHANGED: '安装包与上次的环境版本不同。已保留已有环境，请使用原版本继续安装。',
-  SETUP_EXISTS: '检测到已有连接配置，安装没有替换它。请重新打开客户端连接原有环境。',
-  SETUP_UNCERTAIN: '上一次操作的结果尚未确认。环境已保留，请稍后继续核对。',
-  SETUP_CONNECT: 'Linux 已保留，Agent 暂未连接。请继续安装以重试连接。',
-  SETUP_PORT: '本机连接地址暂时不可用，已有 Linux 环境已保留。请继续安装以重试连接。',
-  SETUP_RECOVERY: '检测到已有环境的恢复记录，安装已暂停。请先恢复原连接配置，已有数据会保留。',
+const errors: Record<string, MessageKey> = {
+  SETUP_BUSY: 'setup.previousSetupOperationStillRunningProgressRetained',
+  SETUP_MISSING: 'setup.developmentBuildDoesNotIncludeLocalRuntime',
+  SETUP_PLATFORM: 'setup.localEnvironmentCurrentlySupportsAppleSiliconMacs',
+  SETUP_PAYLOAD: 'setup.runtimeFilesIncompleteIncompatibleGetCompleteApp',
+  SETUP_INTEGRITY: 'setup.runtimeFileIntegrityCheckFailedGetApp',
+  SETUP_SPACE: 'setup.notEnoughFreeDiskSpaceFreeSpace',
+  SETUP_STORE: 'setup.setupRecordsDirectoriesCannotUsedSafelyExisting',
+  SETUP_CHANGED: 'setup.packageDiffersPreviousEnvironmentVersionExistingEnvironment',
+  SETUP_EXISTS: 'setup.existingConnectionConfigurationWasFoundWasNot',
+  SETUP_UNCERTAIN: 'setup.previousResultUnconfirmedEnvironmentRetainedCheckAgain',
+  SETUP_CONNECT: 'setup.linuxRetainedButAgentNotConnectedContinue',
+  SETUP_PORT: 'setup.localConnectionUrlTemporarilyUnavailableExistingLinux',
+  SETUP_RECOVERY: 'setup.existingRecoveryRecordWasFoundSetupPaused',
 };
 export function Setup() {
   useLocale();
@@ -78,7 +98,7 @@ export function Setup() {
     try {
       await runtime.command({ type });
     } catch {
-      setError(t('暂时无法处理安装请求。进度已保留，请重试或重新打开客户端。'));
+      setError(t('setup.setupRequestCouldNotProcessedProgressRetained'));
     } finally {
       setPending(false);
     }
@@ -86,7 +106,7 @@ export function Setup() {
   const problem =
     error ||
     (status.error
-      ? t(errors[status.error] ?? '安装未完成，已有环境和数据会保留。请继续安装以重试。')
+      ? t(errors[status.error] ?? 'setup.setupIncompleteExistingEnvironmentDataRetainedContinue')
       : '');
   return (
     <main className="setup-page">
@@ -96,7 +116,7 @@ export function Setup() {
           <Language />
           <span className="setup-local">
             <HardDrive size={15} />
-            {t('本机运行')}
+            {t('setup.runningLocally')}
           </span>
         </div>
       </header>
@@ -106,14 +126,16 @@ export function Setup() {
             <img src={`${import.meta.env.BASE_URL}app-icon.png`} alt="" width="120" height="120" />
           </div>
           <h1 id="setup-title">
-            {t(working ? '搭子正在布置工作空间' : (titles[status.phase] ?? '工作空间还没准备好'))}
+            {t(
+              working
+                ? 'setup.companionGettingThingsReady'
+                : (titles[status.phase] ?? 'setup.workspaceNeedsAttention'),
+            )}
           </h1>
           <p className="setup-description">
             {working
-              ? t('环境就绪后会自动进入工作区。请保持电脑唤醒，也可以随时暂停。')
-              : t(
-                  '让 Bot 在独立的 Linux 环境里工作。每位 Bot 有自己的屏幕，共享文件和浏览器登录，你可以随时接管。',
-                )}
+              ? t('setup.workspaceWillOpenAutomaticallyWhenReadyKeep')
+              : t('setup.letBotsWorkSeparateLinuxEnvironmentEach')}
           </p>
         </div>
         <div className="setup-install">
@@ -122,16 +144,14 @@ export function Setup() {
               <div className="setup-details">
                 <span>
                   <CircleCheck size={17} />
-                  {t('环境随客户端提供')}
+                  {t('setup.environmentIncludedApp')}
                 </span>
                 <span>
                   <CircleCheck size={17} />
-                  {t('无需单独安装 Docker 或 DSH')}
+                  {t('setup.noSeparateDockerDshInstallationNeeded')}
                 </span>
               </div>
-              <p className="setup-budget">
-                {t('默认分配 3 GiB 内存、16 GiB 虚拟磁盘。首次安装请预留至少 36 GB 可用空间。')}
-              </p>
+              <p className="setup-budget">{t('setup.usesGibMemoryGibVirtualDiskDefault')}</p>
             </>
           )}
           {!initial && (
@@ -140,7 +160,7 @@ export function Setup() {
                 {working ? (
                   <>
                     <span>
-                      {t('安装进行中')}
+                      {t('setup.setupProgress')}
                       <span className="sr-only"> · {t(steps[current].label)}</span>
                     </span>
                     <span className="setup-count">
@@ -156,12 +176,12 @@ export function Setup() {
                     ) : (
                       <CircleAlert size={19} />
                     )}
-                    {t(labels[status.phase] ?? '准备本地环境')}
+                    {t(labels[status.phase] ?? 'setup.prepareLocalEnvironment')}
                   </span>
                 )}
               </div>
               {working && (
-                <ol className="setup-steps" aria-label={t('安装步骤')}>
+                <ol className="setup-steps" aria-label={t('setup.steps')}>
                   {steps.map((step, index) => {
                     const active = index === current;
                     const done = index < current;
@@ -185,7 +205,13 @@ export function Setup() {
                           <div className="setup-step-heading">
                             <span>{t(step.label)}</span>
                             <span className="setup-step-state">
-                              {t(active ? '进行中' : done ? '已完成' : '待执行')}
+                              {t(
+                                active
+                                  ? 'common.progress'
+                                  : done
+                                    ? 'common.completed'
+                                    : 'setup.waiting',
+                              )}
                             </span>
                           </div>
                           {active && (
@@ -196,7 +222,7 @@ export function Setup() {
                                   <div
                                     className="setup-track"
                                     role="progressbar"
-                                    aria-label={t('Linux 系统解包进度')}
+                                    aria-label={t('setup.linuxExtractionProgress')}
                                     aria-valuemin={0}
                                     aria-valuemax={100}
                                     aria-valuenow={percent}
@@ -215,10 +241,10 @@ export function Setup() {
                 </ol>
               )}
               {status.phase === 'cancelling' && (
-                <p>{t('当前创建或启动步骤结束后暂停，已创建的环境会保留。')}</p>
+                <p>{t('setup.pausesCurrentCreationStartupStepCreatedEnvironments')}</p>
               )}
               {status.phase === 'cancelled' && (
-                <p>{t('继续安装会先核对已有进度，不会删除工作空间。')}</p>
+                <p>{t('setup.continuingSetupVerifiesExistingProgressFirstDoes')}</p>
               )}
             </div>
           )}
@@ -236,7 +262,7 @@ export function Setup() {
                 onClick={() => act('setup.cancel')}
               >
                 <Pause size={15} />
-                {t('暂停安装')}
+                {t('setup.pauseSetup')}
               </button>
             ) : (
               status.phase !== 'unavailable' && (
@@ -246,15 +272,15 @@ export function Setup() {
                   disabled={pending}
                   onClick={() => act('setup.start')}
                 >
-                  {status.phase === 'available' ? t('创建本地环境') : t('继续安装')}
+                  {status.phase === 'available'
+                    ? t('setup.createLocalEnvironment')
+                    : t('setup.continueSetup')}
                   <ArrowRight size={17} />
                 </button>
               )
             )}
           </div>
-          <p className="setup-footnote">
-            {t('任务在本机运行。关闭客户端不会删除环境，模型连接在环境就绪后单独配置。')}
-          </p>
+          <p className="setup-footnote">{t('setup.tasksRunLocallyClosingAppDoesNot')}</p>
         </div>
       </section>
     </main>

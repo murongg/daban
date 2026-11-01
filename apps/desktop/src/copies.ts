@@ -26,7 +26,7 @@ export interface CopyProps {
 }
 // Reserve the suffix within the name limit without splitting an emoji's surrogate pair.
 export const copyName = (name: string) =>
-  t('{0} 副本', { 0: name.slice(0, 27).replace(/[\uD800-\uDBFF]$/, '') });
+  t('copies.copy', { 0: name.slice(0, 27).replace(/[\uD800-\uDBFF]$/, '') });
 const keyOf = (request: CopyRequest) =>
   'bot' in request ? botCopyKey(request) : groupCopyKey(request);
 const hold = (request: CopyRequest): Action =>
@@ -112,7 +112,7 @@ export function useCopy(
         if (!target.archived) dispatch({ type: 'select', bot: target.id });
         close();
       }
-      notify(t('已复制 {0}。', { 0: target.name }));
+      notify(t('copies.copied', { 0: target.name }));
     },
     [owns, dispatch, close, notify],
   );
@@ -151,12 +151,12 @@ export function useCopy(
       if (live && pending.current)
         timer = setTimeout(() => {
           tick().catch(() => {
-            if (live) setError(t('暂时无法核对复制结果。'));
+            if (live) setError(t('copies.copyResultCannotVerifiedRightNow'));
           });
         }, 1000);
     }
     tick().catch(() => {
-      if (live) setError(t('暂时无法核对复制结果。'));
+      if (live) setError(t('copies.copyResultCannotVerifiedRightNow'));
     });
     return () => {
       live = false;
@@ -178,7 +178,7 @@ export function useCopy(
       // Persist before the effect, and never create a placeholder that legacy registration could occupy.
       clientCache().setItem(storageKey, serialize(reduce(state, action)));
     } catch {
-      setError(t('本机无法保存复制请求。请先释放存储空间或导出工作区，再重试。'));
+      setError(t('copies.copyRequestCouldNotSavedLocallyFree'));
       return;
     }
     pending.current = request;
@@ -199,7 +199,7 @@ export function useCopy(
       if (owns(request)) {
         setError(
           error instanceof Error && error.message === 'GROUP_CONFLICT'
-            ? t('原群聊已更新，新名称仍保留。请核对来源后重试。')
+            ? t('copies.originalGroupChangedNewNameRetainedReview')
             : runtimeError(error),
         );
         // Rejecting this retry before dispatch cannot disprove an earlier unconfirmed submission.

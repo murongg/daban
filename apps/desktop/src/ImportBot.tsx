@@ -8,7 +8,7 @@ import {
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
 import { FilePicker } from './FilePicker';
-import { t, useLocale } from './locale';
+import { type MessageKey, t, useLocale } from './locale';
 import { bundleFile, bundleHeader } from './portable';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Action, State } from './state';
@@ -18,14 +18,14 @@ const header = (value: BotImportReference): BotImportHeader => ({
   sha256: value.sha256,
   size: value.size,
 });
-const progressNames: Record<string, string> = {
-  unknown: '尚未确认收到文件',
-  awaiting: '等待提交原文件',
-  validating: '正在校验资料',
-  applying: '正在保存 Bot 内容',
-  failed: '导入尚未完成',
-  complete: '导入已完成',
-  cancelled: '导入已取消',
+const progressNames: Record<string, MessageKey> = {
+  unknown: 'importbot.fileReceiptUnconfirmed',
+  awaiting: 'importbot.waitingOriginalFileSubmission',
+  validating: 'importbot.validatingDocuments',
+  applying: 'importbot.savingBotContent',
+  failed: 'importbot.importIncomplete',
+  complete: 'importbot.importComplete',
+  cancelled: 'importbot.importCancelled',
 };
 export function ImportBot({
   state,
@@ -102,14 +102,14 @@ export function ImportBot({
         }
         notify(
           wasCancelled
-            ? t('保存已完成，新 Bot 已保留，可在资料中归档。')
-            : t('已导入 {0}，技能说明保持关闭。', { 0: value.profile.name }),
+            ? t('importbot.savedNewBotRetainedCanArchivedProfile')
+            : t('importbot.importedSkillInstructionsRemainDisabled', { 0: value.profile.name }),
         );
       } else if (value.state === 'cancelled') {
         dispatch({ type: 'bot-import-clear', id: captured.id, sha256: captured.sha256 });
         setSelected(undefined);
         setError('');
-        notify(t('Bot 导入已取消。'));
+        notify(t('importbot.botImportCancelled'));
       }
     },
     [dispatch, close, notify],
@@ -148,7 +148,7 @@ export function ImportBot({
       } finally {
         if (live && reference.current?.id === captured!.id)
           timer = setTimeout(() => {
-            tick().catch(() => setError(t('暂时无法核对导入进度。')));
+            tick().catch(() => setError(t('importbot.importProgressCannotVerifiedRightNow')));
           }, 1000);
       }
     }
@@ -252,15 +252,13 @@ export function ImportBot({
   if (!open) return null;
   const needsFile = !pending || !receipt || ['unknown', 'awaiting'].includes(receipt.state);
   return (
-    <Dialog title={t('导入 Bot')} onClose={close}>
+    <Dialog title={t('importbot.importBot')} onClose={close}>
       <p className="dialog-description">
-        {t(
-          '从 Daban 导出包创建独立的新 Bot。连接设置、聊天和登录不迁移；所含技能说明不会自动启用。',
-        )}
+        {t('importbot.createIndependentBotDabanExportConnectionsChats')}
       </p>
       {!available && (
         <p className="form-error" role="alert">
-          {t('请先更新并连接本地运行环境，再导入 Bot。')}
+          {t('importbot.updateConnectLocalRuntimeImportingBot')}
         </p>
       )}
       {pending && (
@@ -272,14 +270,14 @@ export function ImportBot({
               {receipt.progress.done} / {receipt.progress.total}
             </p>
           )}
-          <p className="field-help">{t('关闭弹窗不取消已提交的导入。保存开始后，请等待完成。')}</p>
+          <p className="field-help">{t('importbot.closingDialogDoesNotCancelSubmittedImport')}</p>
         </div>
       )}
       {needsFile && (
         <div className="field-label">
-          {t('选择 Bot 导出包')}
+          {t('importbot.chooseBotExport')}
           <FilePicker
-            aria-label={t('选择 Bot 导出包')}
+            aria-label={t('importbot.chooseBotExport')}
             accept=".json,application/json"
             disabled={!available || working || reading || !!pending?.cancelRequested}
             onChange={async (event) => {
@@ -311,20 +309,18 @@ export function ImportBot({
               }
             }}
           />
-          <span className="field-help">
-            {t('UTF-8 JSON，最多 100 MiB。已有未确认操作时，请重新选择同一内容，或先取消该操作。')}
-          </span>
+          <span className="field-help">{t('importbot.utfJsonUpMibIfOperationUnconfirmed')}</span>
         </div>
       )}
       {reading && (
         <p className="inline-note" role="status">
-          {t('正在读取导出包…')}
+          {t('importbot.readingExport')}
         </p>
       )}
       {selected && (
         <div className="form-stack">
           <label className="field-label">
-            {t('新 Bot 名称')}
+            {t('common.newBotName')}
             <input
               className="field"
               maxLength={30}
@@ -334,7 +330,7 @@ export function ImportBot({
             />
           </label>
           <label className="field-label">
-            {t('职责')}
+            {t('common.role')}
             <textarea className="field" rows={3} value={selected.profile.instructions} readOnly />
           </label>
           <label className="bundle-choice">
@@ -344,12 +340,12 @@ export function ImportBot({
               disabled={working || !!pending}
               onChange={(event) => setMemory(event.target.checked)}
             />
-            <span>{t('包含工作偏好')}</span>
+            <span>{t('common.includeWorkPreferences')}</span>
           </label>
           {memory && (
             <textarea
               className="field"
-              aria-label={t('导入的工作偏好')}
+              aria-label={t('importbot.importedWorkPreferences')}
               rows={3}
               value={selected.preferences}
               readOnly
@@ -362,7 +358,7 @@ export function ImportBot({
               disabled={working || !!pending}
               onChange={(event) => setWithSkills(event.target.checked)}
             />
-            <span>{t('包含 {0} 份技能说明', { 0: selected.skills.length })}</span>
+            <span>{t('importbot.includeSkills', { 0: selected.skills.length })}</span>
           </label>
           {selected.skills.map((skill) => (
             <div className="bundle-row" key={skill.name}>
@@ -372,7 +368,7 @@ export function ImportBot({
                 className="text-button"
                 onClick={() => setView({ title: skill.name, content: skill.content })}
               >
-                {t('查看说明')}
+                {t('importbot.viewInstructions')}
               </button>
             </div>
           ))}
@@ -383,20 +379,20 @@ export function ImportBot({
               disabled={working || !!pending}
               onChange={(event) => setWithKnowledge(event.target.checked)}
             />
-            <span>{t('包含 {0} 份当前资料', { 0: selected.knowledge.length })}</span>
+            <span>{t('importbot.includeDocuments', { 0: selected.knowledge.length })}</span>
           </label>
           {selected.knowledge.map((document) => (
             <div className="bundle-row" key={document.path}>
               <span className="bundle-path">
                 {document.path}
-                {document.original ? t(' · 含原件') : ''}
+                {document.original ? t('importbot.includesOriginals') : ''}
               </span>
               <button
                 type="button"
                 className="text-button"
                 onClick={() => setView({ title: document.path, content: document.content })}
               >
-                {t('查看正文')}
+                {t('importbot.viewContent')}
               </button>
             </div>
           ))}
@@ -407,19 +403,15 @@ export function ImportBot({
                 className="field"
                 rows={7}
                 value={view.content}
-                aria-label={t('导入内容预览')}
+                aria-label={t('importbot.importPreview')}
                 readOnly
               />
               <button type="button" className="text-button" onClick={() => setView(undefined)}>
-                {t('收起预览')}
+                {t('importbot.collapsePreview')}
               </button>
             </div>
           )}
-          <p className="field-help">
-            {t(
-              '内容将成为新 Bot 的职责、偏好和参考资料，请确认来源与内容。不会自动运行任务或连接电脑。',
-            )}
-          </p>
+          <p className="field-help">{t('importbot.contentBecomesNewBotSRolePreferences')}</p>
         </div>
       )}
       {(error || receipt?.error) && (
@@ -435,11 +427,11 @@ export function ImportBot({
             disabled={working || !available}
             onClick={cancel}
           >
-            {t('取消导入')}
+            {t('importbot.cancelImport')}
           </button>
         )}
         <button type="button" className="text-button" onClick={close}>
-          {t('关闭')}
+          {t('common.close')}
         </button>
         {pending && receipt?.state === 'failed' && (
           <button
@@ -448,7 +440,7 @@ export function ImportBot({
             disabled={working || !available}
             onClick={retry}
           >
-            {t('继续核对并保存')}
+            {t('importbot.continueVerificationSave')}
           </button>
         )}
         {needsFile && (
@@ -465,7 +457,11 @@ export function ImportBot({
             }
             onClick={submit}
           >
-            {working ? t('正在提交…') : pending ? t('重新提交同一内容') : t('导入为新 Bot')}
+            {working
+              ? t('common.submitting')
+              : pending
+                ? t('importbot.resubmitSameContent')
+                : t('importbot.importNewBot')}
           </button>
         )}
       </div>

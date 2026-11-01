@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, Notification, session } from 'electron';
-import { type Parameters, translate } from '../locale';
+import { type MessageKey, type Parameters, translate } from '../locale';
 import { LocalePreferences } from './locale';
 import { localeIpc } from './locale-ipc';
 import { localizeMenu } from './menu';
@@ -30,7 +30,7 @@ app.on('ready', (_event, launchInfo) => {
     nativeLaunchId = value.identifier;
 });
 
-const text = (source: string, values?: Parameters) =>
+const text = (source: MessageKey, values?: Parameters) =>
   translate(preferences?.current ?? 'zh-CN', source, values);
 
 function createWindow() {
@@ -79,10 +79,10 @@ function createWindow() {
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.loadFile(join(__dirname, '..', 'dist', 'index.html')).catch((error) => {
     dialog.showErrorBox(
-      text('Daban 启动失败'),
+      text('app.dabanCouldNotStart'),
       app.isPackaged
-        ? text('客户端文件无法载入，请重新获取完整安装包。已保存的任务和文件不会被清除。')
-        : text('无法载入客户端界面。请先运行 npm run build。\n{0}', { 0: error.message }),
+        ? text('app.appFilesCouldNotLoadedGetComplete')
+        : text('app.unableLoadAppInterfaceRunNpmRun', { 0: error.message }),
     );
     app.quit();
   });
@@ -167,8 +167,8 @@ if (primary) {
     .catch(() => {
       console.error('Daban initialization failed');
       dialog.showErrorBox(
-        text('Daban 启动失败'),
-        text('请重新打开客户端；已保存的任务和文件不会被清除。'),
+        text('app.dabanCouldNotStart'),
+        text('app.reopenAppSavedTasksFilesWillNot'),
       );
     });
   app.on('window-all-closed', () => {

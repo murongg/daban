@@ -10,38 +10,43 @@ import {
 } from '@daban/protocol';
 import { ChevronDown, ListChecks } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { t, useLocale } from './locale';
+import { type MessageKey, t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
-const phases: Partial<Record<TaskPhase, string>> = {
-  starting: '准备中',
-  running: '执行中',
-  waiting: '等待回复',
-  paused: '等待交还电脑',
-  completed: '已完成',
-  failed: '未完成',
-  stopped: '已停止',
-  interrupted: '已中断',
+const phases: Partial<Record<TaskPhase, MessageKey>> = {
+  starting: 'execution.preparing',
+  running: 'common.running',
+  waiting: 'execution.waitingReply',
+  paused: 'common.waitingComputerHandback',
+  completed: 'common.completed',
+  failed: 'common.incomplete',
+  stopped: 'common.stopped',
+  interrupted: 'common.interrupted',
 };
-const tools: Record<string, string> = {
-  web_search: '搜索网页',
-  web_fetch: '读取网页',
-  read_file: '读取文件',
-  write_file: '写入文件',
-  list_files: '查看文件',
-  shell: '运行命令',
-  screenshot: '查看屏幕',
-  act: '操作电脑',
-  open_app: '打开应用',
-  todo_write: '更新计划',
-  ask_user_question: '询问你',
-  skill: '加载技能',
+const tools: Record<string, MessageKey> = {
+  web_search: 'execution.searchWeb',
+  web_fetch: 'execution.readWebpage',
+  read_file: 'execution.readFile',
+  write_file: 'execution.writeFile',
+  list_files: 'common.viewFiles',
+  shell: 'execution.runCommand',
+  screenshot: 'execution.observeScreen',
+  act: 'execution.controlComputer',
+  open_app: 'execution.openApplication',
+  todo_write: 'execution.updatePlan',
+  ask_user_question: 'execution.ask',
+  skill: 'execution.loadSkill',
 };
 function label(item: TranscriptItem, name?: string) {
-  const tool = name ? t(tools[name.split('__').at(-1)!]) || name : t('工具');
-  if (item.kind === 'call') return t('{0} · 调用', { 0: tool });
-  if (item.kind === 'result') return `${tool} · ${item.isError ? t('失败') : t('结果')}`;
-  return { assistant: t('阶段回复'), plan: t('任务计划'), interaction: t('提问与审批') }[item.kind];
+  const tool = name ? t(tools[name.split('__').at(-1)!]) || name : t('execution.tool');
+  if (item.kind === 'call') return t('execution.toolCall', { 0: tool });
+  if (item.kind === 'result')
+    return `${tool} · ${item.isError ? t('common.failed') : t('execution.result')}`;
+  return {
+    assistant: t('execution.interimResponse'),
+    plan: t('execution.taskPlan'),
+    interaction: t('execution.questionsApprovals'),
+  }[item.kind];
 }
 
 function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem }) {
@@ -102,7 +107,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
       working.current = false;
     };
   }, [read]);
-  const regionLabel = t('第 {0} 条记录内容', { 0: item.seq });
+  const regionLabel = t('execution.contentRecord', { 0: item.seq });
   return (
     <div className="execution-body">
       {content && (
@@ -113,7 +118,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
       )}
       {busy && (
         <p className="inline-note" role="status">
-          {t('正在读取内容…')}
+          {t('execution.loadingContent')}
         </p>
       )}
       {error && (
@@ -122,7 +127,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
         </p>
       )}
       {content?.nextOffset !== undefined && (
-        <p className="field-help">{t('内容较长，当前显示部分。继续读取可查看余下内容。')}</p>
+        <p className="field-help">{t('execution.onlyPartLongContentShownContinueReading')}</p>
       )}
       {(error || content?.nextOffset !== undefined) && (
         <button
@@ -133,7 +138,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
             await read(error ? (saved.current?.nextOffset ?? 0) : content?.nextOffset);
           }}
         >
-          {error ? t('重新读取内容') : t('继续读取内容')}
+          {error ? t('execution.readContentAgain') : t('execution.continueReading')}
         </button>
       )}
     </div>
@@ -157,7 +162,7 @@ function Entry({
         <summary>
           <ChevronDown className="execution-chevron" />
           <span>{label(item, name)}</span>
-          <span className="execution-sequence">{t('第 {0} 条', { 0: item.seq })}</span>
+          <span className="execution-sequence">{t('execution.record', { 0: item.seq })}</span>
           {item.code && <span className="form-error">{item.code}</span>}
         </summary>
         {open && <Content scope={scope} item={item} />}
@@ -242,18 +247,18 @@ function Reader({ scope }: { scope: TranscriptScope }) {
   );
   return (
     <div className="execution-reader">
-      <p className="field-help">
-        {t('只读执行记录，不会重新运行工具或沿用旧审批。非文本输出保留说明，不在此重复保存。')}
-      </p>
+      <p className="field-help">{t('execution.readOnlyExecutionHistoryToolsNotRerun')}</p>
       {page?.state === 'unavailable' && (
-        <p className="inline-note">{t('这次任务没有保留执行详情。')}</p>
+        <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}
-      {page?.state === 'interrupted' && <p className="form-error">{t('执行记录不完整')}</p>}
       {page?.state === 'interrupted' && (
-        <p className="field-help">{t('以下仅是已保存的部分，不能据此确认后续操作。')}</p>
+        <p className="form-error">{t('execution.incompleteExecutionHistory')}</p>
+      )}
+      {page?.state === 'interrupted' && (
+        <p className="field-help">{t('execution.onlySavedPortionShownDoesNotConfirm')}</p>
       )}
       {page && page.state !== 'unavailable' && !page.items.length && !busy && (
-        <p className="inline-note">{t('本次没有记录到工具或交互步骤。')}</p>
+        <p className="inline-note">{t('execution.noToolInteractionStepsWereRecordedTask')}</p>
       )}
       {!!page?.items.length && (
         <ol className="execution-list">
@@ -269,7 +274,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
       )}
       {busy && (
         <p className="inline-note" role="status">
-          {t('正在读取记录…')}
+          {t('execution.loadingRecords')}
         </p>
       )}
       {error && (
@@ -286,7 +291,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
             await read();
           }}
         >
-          {error ? t('重新读取记录') : t('刷新记录')}
+          {error ? t('execution.readRecordsAgain') : t('execution.refreshRecords')}
         </button>
         {page?.nextAfter && (
           <button
@@ -297,7 +302,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
               await read(page.nextAfter);
             }}
           >
-            {t('加载后续记录')}
+            {t('execution.loadSubsequentRecords')}
           </button>
         )}
       </div>
@@ -322,18 +327,22 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
     >
       <summary>
         <ListChecks />
-        <span>{t('执行过程')}</span>
+        <span>{t('execution.execution')}</span>
         {phase && <span className="execution-phase">{t(phases[phase])}</span>}
         <ChevronDown className="execution-chevron" />
       </summary>
       {open &&
         (preparing ? (
-          <p className="field-help">{t('任务正在准备，执行开始后会显示记录。')}</p>
+          <p className="field-help">
+            {t('execution.taskPreparingExecutionRecordsAppearWhenStarts')}
+          </p>
         ) : available ? (
           <Reader scope={scope} />
         ) : (
           <p className="field-help">
-            {ready ? t('更新本地环境后可查看执行过程。') : t('重新连接本地环境后可查看执行过程。')}
+            {ready
+              ? t('execution.updateLocalEnvironmentViewExecutionHistory')
+              : t('execution.reconnectLocalEnvironmentViewExecutionHistory')}
           </p>
         ))}
     </details>

@@ -8,7 +8,7 @@ export function Plan({ items }: { items: TaskPlan }) {
   return (
     <details className="task-plan" open>
       <summary>
-        {t('任务计划 ·')}
+        {t('plan.taskPlan')}
         {items.filter((item) => item.status === 'completed').length}/{items.length}
       </summary>
       <ol>
@@ -24,10 +24,10 @@ export function Plan({ items }: { items: TaskPlan }) {
             <span>{item.content}</span>
             <span className="inline-note">
               {item.status === 'completed'
-                ? t('已完成')
+                ? t('common.completed')
                 : item.status === 'in_progress'
-                  ? t('进行中')
-                  : t('待处理')}
+                  ? t('common.progress')
+                  : t('common.do')}
             </span>
           </li>
         ))}

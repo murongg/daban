@@ -70,7 +70,7 @@ function Request({
       if (mounted.current) {
         setReceipt(saved);
         setSubmitted(undefined);
-        notify(t('回复已提交。'));
+        notify(t('requests.replySubmitted'));
       }
     } catch (error) {
       if (mounted.current) {
@@ -97,31 +97,34 @@ function Request({
         <span>{bot?.name || 'Bot'}</span>
         {current.conversationId && (
           <span>
-            {state.bots.find((bot) => bot.id === current.conversationId)?.name || t('群聊')}
+            {state.bots.find((bot) => bot.id === current.conversationId)?.name ||
+              t('common.groupChat')}
           </span>
         )}
         <span className="spacer" />
-        <span>{current.kind === 'question' ? t('需要你的回答') : t('单次权限确认')}</span>
+        <span>
+          {current.kind === 'question'
+            ? t('requests.needsAnswer')
+            : t('requests.oneTimePermission')}
+        </span>
       </div>
       <h3 className="approval-title">
         {current.kind === 'question'
-          ? t('补充信息后继续')
+          ? t('requests.addDetailsContinue')
           : current.tool === 'vm_command'
-            ? t('允许在 Linux 虚拟机中执行这个命令吗？')
+            ? t('requests.allowCommandLinuxVirtualMachine')
             : current.tool === 'software_install'
-              ? t('允许安装这些软件吗？')
+              ? t('requests.allowInstallationSoftware')
               : current.tool === 'mcp_call'
-                ? t('允许调用这个外部工具吗？')
-                : t('允许读取这个链接吗？')}
+                ? t('requests.allowExternalToolCall')
+                : t('requests.allowReadingUrl')}
       </h3>
       {current.kind === 'approval' && current.tool === 'vm_command' && (
         <Command request={current} />
       )}
       {current.kind === 'approval' && current.tool === 'web_fetch' && (
         <>
-          <p className="approval-description">
-            {t('仅允许这一次公开网页读取；不会授予登录状态或其他网址的权限。')}
-          </p>
+          <p className="approval-description">{t('requests.allowOnlyPublicWebpageReadDoesNot')}</p>
           <p className="request-value">{current.url}</p>
         </>
       )}
@@ -131,16 +134,18 @@ function Request({
       {current.kind === 'approval' && current.tool === 'mcp_call' && (
         <>
           <p className="approval-description">
-            {t(
-              '将下列参数发送至这个连接，可能执行外部操作。仅允许本次调用，不会授予其他工具或后续调用的权限。',
-            )}
+            {t('requests.sendParametersConnectionWhichMayPerformExternal')}
           </p>
           <p className="request-value">
             {current.name} · {current.operation}
           </p>
           <p className="request-value">{current.origin}</p>
-          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Long tool arguments need a keyboard-focusable scrolling surface. */}
-          <section className="request-arguments" aria-label={t('本次工具调用参数')} tabIndex={0}>
+          <section
+            className="request-arguments"
+            aria-label={t('requests.toolCallParameters')}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Long tool arguments need a keyboard-focusable scrolling surface.
+            tabIndex={0}
+          >
             <pre className="request-value">{current.arguments}</pre>
           </section>
         </>
@@ -188,7 +193,9 @@ function Request({
                       </label>
                     ))}
                     <label className="field-label">
-                      {question.options?.length ? t('补充回答') : t('你的回答')}
+                      {question.options?.length
+                        ? t('requests.additionalAnswer')
+                        : t('requests.answer')}
                       <textarea
                         className="field"
                         rows={2}
@@ -213,7 +220,11 @@ function Request({
                   className="primary"
                   disabled={saving || !matchesReply(current, submitted || answer)}
                 >
-                  {saving ? t('正在提交…') : submitted ? t('重试提交') : t('提交回复')}
+                  {saving
+                    ? t('common.submitting')
+                    : submitted
+                      ? t('requests.retrySubmission')
+                      : t('requests.submitReply')}
                 </button>
               </div>
             </form>
@@ -227,7 +238,7 @@ function Request({
                   disabled={saving}
                   onClick={() => submit(submitted)}
                 >
-                  {saving ? t('正在提交…') : t('重试提交')}
+                  {saving ? t('common.submitting') : t('requests.retrySubmission')}
                 </button>
               ) : (
                 <>
@@ -238,10 +249,10 @@ function Request({
                     onClick={() => submit({ kind: 'decision', allow: true })}
                   >
                     {current.tool === 'vm_command'
-                      ? t('确认执行')
+                      ? t('requests.confirmExecution')
                       : current.tool === 'software_install'
-                        ? t('确认安装')
-                        : t('仅允许这一次')}
+                        ? t('requests.confirmInstallation')
+                        : t('requests.allowOnce')}
                   </button>
                   <button
                     type="button"
@@ -249,7 +260,7 @@ function Request({
                     disabled={saving}
                     onClick={() => submit({ kind: 'decision', allow: false })}
                   >
-                    {t('拒绝')}
+                    {t('requests.decline')}
                   </button>
                 </>
               )}
@@ -262,7 +273,7 @@ function Request({
             current.reply?.kind === 'answer' ? (
               <span className="approval-state">
                 <Check />
-                {t('已回复')}
+                {t('requests.answered')}
               </span>
             ) : (
               <span className="approval-state">
@@ -270,15 +281,15 @@ function Request({
                   <>
                     <Check />
                     {current.kind === 'approval' && current.tool === 'vm_command'
-                      ? t('已确认本次虚拟机命令')
+                      ? t('requests.vmCommandApproved')
                       : current.kind === 'approval' && current.tool === 'software_install'
-                        ? t('已确认本次安装')
-                        : t('已允许这一次')}
+                        ? t('requests.installationApproved')
+                        : t('requests.allowedOnce')}
                   </>
                 ) : (
                   <>
                     <X />
-                    {t('已拒绝')}
+                    {t('common.declined')}
                   </>
                 )}
               </span>
@@ -287,8 +298,8 @@ function Request({
             <span className="approval-state">
               <X />
               {current.status === 'interrupted'
-                ? t('任务已中断，这个请求不能再回复')
-                : t('请求已撤销')}
+                ? t('requests.taskInterruptedRequestCanNoLongerAnswered')
+                : t('requests.requestWithdrawn')}
             </span>
           )}
           {current.kind === 'question' && (
@@ -316,7 +327,7 @@ function Request({
       {error && (
         <p className="form-error" role="alert">
           {error}
-          {submitted && t(' 请核对连接后重试；会提交同一份回复。')}
+          {submitted && t('requests.checkConnectionRetrySameReplyWillSubmitted')}
         </p>
       )}
     </article>
@@ -360,14 +371,14 @@ export function Requests({
   const content = (
     <>
       {!bot && !runs && !focus && (
-        <div className="filter-tabs" role="tablist" aria-label={t('收件箱筛选')}>
+        <div className="filter-tabs" role="tablist" aria-label={t('common.inboxFilter')}>
           <button
             type="button"
             role="tab"
             aria-selected={filter === 'pending'}
             onClick={() => setFilter('pending')}
           >
-            {t('待处理')}
+            {t('common.do')}
             {pending.length ? `· ${pending.length}` : ''}
           </button>
           <button
@@ -376,7 +387,7 @@ export function Requests({
             aria-selected={filter === 'done'}
             onClick={() => setFilter('done')}
           >
-            {t('已处理')}
+            {t('common.handled')}
           </button>
         </div>
       )}
@@ -386,8 +397,12 @@ export function Requests({
       {!bot && !runs && !entries.length && (
         <div className="empty-panel">
           <Inbox />
-          <h3>{filter === 'pending' ? t('暂时没有需要确认的事') : t('还没有处理记录')}</h3>
-          <p>{t('真实任务需要你的回答或确认时，会集中显示在这里。')}</p>
+          <h3>
+            {filter === 'pending'
+              ? t('common.nothingNeedsAttentionRightNow')
+              : t('common.noHandledRequestsYet')}
+          </h3>
+          <p>{t('requests.questionsApprovalsNeededRealTasksAppearHere')}</p>
         </div>
       )}
     </>
@@ -395,10 +410,10 @@ export function Requests({
   return bot || runs ? (
     <div className="request-list">{content}</div>
   ) : (
-    <section className="full-page" aria-label={t('收件箱')}>
+    <section className="full-page" aria-label={t('common.inbox')}>
       <div className="page-inner">
-        <h2 className="page-heading">{t('需要你看一眼')}</h2>
-        <p className="page-subtitle">{t('回答问题或确认这一次操作，让 Bot 继续。')}</p>
+        <h2 className="page-heading">{t('common.needsAttention')}</h2>
+        <p className="page-subtitle">{t('requests.answerQuestionApproveOneOperationLetBot')}</p>
         {content}
       </div>
     </section>

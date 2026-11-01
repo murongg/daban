@@ -77,7 +77,7 @@ export function Profile({
             dispatch({ type: 'profiles', profiles: [updated] });
           } else dispatch({ type: 'profile-local', bot: bot.id, name: name.trim(), instructions });
           if (mounted.current) {
-            notify(t('Bot 资料已保存，下次对话生效。'));
+            notify(t('profile.botProfileSavedChangesApplyNextConversation'));
             close();
           }
         } catch (error) {
@@ -99,15 +99,13 @@ export function Profile({
         }
       }}
     >
-      <p className="dialog-description">
-        {t('名称、职责和模型会用于下一次任务；当前任务和聊天记录会保留。')}
-      </p>
+      <p className="dialog-description">{t('profile.nameRoleModelApplyNextTaskCurrent')}</p>
       <div className="form-stack">
         <label className="field-label">
-          {t('名称')}
+          {t('common.name')}
           <input
             className="field"
-            aria-label={t('名称')}
+            aria-label={t('common.name')}
             data-autofocus
             required
             maxLength={30}
@@ -117,9 +115,9 @@ export function Profile({
           />
         </label>
         <div className="field-label">
-          {t('此 Bot 的模型')}
+          {t('common.modelBot')}
           <Select
-            label={t('此 Bot 的模型')}
+            label={t('common.modelBot')}
             value={model}
             disabled={saving || !modelsAvailable}
             onValueChange={setModel}
@@ -127,7 +125,7 @@ export function Profile({
               {
                 value: '',
                 icon: modelIcon(runtime.snapshot.model.model, runtime.snapshot.model.connections),
-                label: t('跟随工作区 · {0}', {
+                label: t('common.followNamedWorkspace', {
                   0: modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections),
                 }),
               },
@@ -137,25 +135,23 @@ export function Profile({
           <span className="field-help">
             {modelsAvailable
               ? runtime.snapshot.protocolVersion >= 16
-                ? t('使用所选供应商的连接，只影响后续任务。整屏观察需要支持图片的模型。')
-                : t('使用工作区已配置的连接，只影响这位 Bot 的后续任务。')
-              : t('更新本地运行环境后，可为每位 Bot 单独选择模型。')}
+                ? t('profile.usesSelectedProviderConnectionFutureTasksOnly')
+                : t('profile.usesConfiguredWorkspaceConnectionBotSFuture')
+              : t('profile.updateLocalRuntimeSelectModelsPerBot')}
           </span>
         </div>
         <label className="field-label">
-          {t('职责')}
+          {t('common.role')}
           <textarea
             className="field"
-            aria-label={t('职责')}
+            aria-label={t('common.role')}
             rows={5}
             maxLength={4000}
             value={instructions}
             disabled={saving}
             onChange={(event) => setInstructions(event.target.value)}
           />
-          <span className="field-help">
-            {t('描述希望它如何协助你，不会因此获得额外工具权限。')}
-          </span>
+          <span className="field-help">{t('profile.describeHowBotShouldHelpDoesNot')}</span>
         </label>
         {error && (
           <p className="form-error" role="alert">
@@ -164,15 +160,15 @@ export function Profile({
         )}
         {conflict && (
           <div>
-            <p className="inline-note">{t('当前已保存的名称与职责：')}</p>
+            <p className="inline-note">{t('profile.currentlySavedNameRole')}</p>
             <p>{conflict.name}</p>
-            <p className="panel-description">{conflict.instructions || t('未设置职责')}</p>
+            <p className="panel-description">{conflict.instructions || t('profile.noRoleSet')}</p>
             {modelsAvailable && (
               <p className="panel-description">
-                {t('当前模型：')}
+                {t('profile.currentModel')}
                 {conflict.model
                   ? modelName(conflict.model, runtime.snapshot.model.connections)
-                  : t('跟随工作区')}
+                  : t('common.followWorkspace')}
               </p>
             )}
             <button
@@ -184,7 +180,7 @@ export function Profile({
                 setError('');
               }}
             >
-              {t('保留编辑，按此版本重试')}
+              {t('profile.keepEditsRetryRevision')}
             </button>
           </div>
         )}
@@ -197,7 +193,7 @@ export function Profile({
             disabled={saving || dirty || version === undefined}
             onClick={onExport}
           >
-            {t('导出 Bot')}
+            {t('common.exportBot')}
           </button>
         )}
         {onArchive && runtime.snapshot.protocolVersion >= 22 && (
@@ -207,14 +203,14 @@ export function Profile({
             disabled={saving || dirty}
             onClick={onArchive}
           >
-            {t('归档 Bot')}
+            {t('common.archiveBot')}
           </button>
         )}
         <button type="button" className="text-button" onClick={close}>
-          {t('取消')}
+          {t('common.cancel')}
         </button>
         <button type="submit" className="primary" disabled={saving || !!conflict || !name.trim()}>
-          {saving ? t('正在保存…') : t('保存资料')}
+          {saving ? t('common.saving') : t('common.saveDocument')}
         </button>
       </div>
     </form>

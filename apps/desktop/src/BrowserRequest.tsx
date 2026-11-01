@@ -28,7 +28,11 @@ export function BrowserRequest({
   return (
     <form
       className="browser-request"
-      aria-label={prompt.kind === 'dialog' ? t('网页请求') : t('网页选文件请求')}
+      aria-label={
+        prompt.kind === 'dialog'
+          ? t('browserrequest.webpageRequest')
+          : t('browserrequest.webpageFileSelectionRequest')
+      }
       onSubmit={async (event) => {
         event.preventDefault();
         if (disabled || reading) return;
@@ -57,33 +61,39 @@ export function BrowserRequest({
         }
       }}
     >
-      <h3>{prompt.kind === 'dialog' ? t('网页等待你确认') : t('网页需要选择文件')}</h3>
+      <h3>
+        {prompt.kind === 'dialog'
+          ? t('browserrequest.webpageAwaitingConfirmation')
+          : t('browserrequest.webpageNeedsFile')}
+      </h3>
       <p className="browser-request-source">
         <span>
-          {t('请求所在标签：')}
-          {tab.title || t('新标签页')}
+          {t('browserrequest.requestingTab')}
+          {tab.title || t('common.newTab')}
         </span>
         <span>{tab.url}</span>
       </p>
       {show && (
         <button type="button" className="text-button" disabled={disabled || reading} onClick={show}>
-          {t('显示请求所在标签')}
+          {t('browserrequest.showRequestingTab')}
         </button>
       )}
       {prompt.kind === 'dialog' ? (
         <>
-          <p className="browser-request-message">{prompt.message || t('网页未提供说明。')}</p>
+          <p className="browser-request-message">
+            {prompt.message || t('browserrequest.webpageProvidedNoDescription')}
+          </p>
           {prompt.truncated && (
             <p className="form-error" role="alert">
-              {t('说明过长，当前显示不完整，已禁止确认。请取消后联系网站处理。')}
+              {t('browserrequest.descriptionTooLongIncompleteSoConfirmationBlocked')}
             </p>
           )}
           {prompt.dialog === 'prompt' && (
             <label className="field-label">
-              {t('网页回复')}
+              {t('browserrequest.webpageReply')}
               <input
                 className="field"
-                aria-label={t('网页回复')}
+                aria-label={t('browserrequest.webpageReply')}
                 autoComplete="off"
                 maxLength={2000}
                 value={text}
@@ -96,14 +106,14 @@ export function BrowserRequest({
       ) : (
         <>
           <p>
-            {t('选择要交给此网页的本机文件，最多')}
-            {prompt.multiple ? t('4 份') : t('1 份')}
-            {t('，合计 5 MB。')}
+            {t('browserrequest.chooseLocalFilesWebpageUp')}
+            {prompt.multiple ? t('browserrequest.copies') : t('browserrequest.copy')}
+            {t('browserrequest.mbCombined')}
           </p>
           <div className="field-label">
-            {t('选择本机文件')}
+            {t('browserrequest.chooseLocalFile')}
             <FilePicker
-              aria-label={t('选择发送给网页的文件')}
+              aria-label={t('browserrequest.chooseFilesSendWebpage')}
               multiple={prompt.multiple}
               disabled={disabled || reading}
               onChange={(event) => {
@@ -117,8 +127,8 @@ export function BrowserRequest({
       )}
       <p className="inline-note">
         {disabled
-          ? t('接管电脑后可以处理。')
-          : t('回复和文件仅交给上方标签内的这个网页请求，不会保存到聊天草稿。')}
+          ? t('browserrequest.takeOverComputerContinue')
+          : t('browserrequest.replyFilesGoOnlyWebpageRequestShown')}
       </p>
       {error && (
         <p className="form-error" role="alert">
@@ -138,7 +148,9 @@ export function BrowserRequest({
             );
           }}
         >
-          {prompt.kind === 'dialog' ? t('取消网页请求') : t('取消选文件')}
+          {prompt.kind === 'dialog'
+            ? t('browserrequest.cancelWebpageRequest')
+            : t('browserrequest.cancelFileSelection')}
         </button>
         <button
           type="submit"
@@ -148,10 +160,10 @@ export function BrowserRequest({
           }
         >
           {reading
-            ? t('正在处理…')
+            ? t('common.processing')
             : prompt.kind === 'dialog'
-              ? t('确认网页请求')
-              : t('发送文件到网页')}
+              ? t('browserrequest.confirmWebpageRequest')
+              : t('browserrequest.sendFilesWebpage')}
         </button>
       </div>
     </form>

@@ -83,14 +83,14 @@ export function LiveDesktop({
           setError('');
         }
       } catch {
-        if (active) setError(t('画面暂时不可用，正在重试。'));
+        if (active) setError(t('common.screenTemporarilyUnavailableRetrying'));
       } finally {
         busy = false;
       }
     }
-    refresh().catch(() => setError(t('画面读取失败。')));
+    refresh().catch(() => setError(t('livedesktop.screenCouldNotRead')));
     const timer = setInterval(() => {
-      refresh().catch(() => setError(t('画面读取失败。')));
+      refresh().catch(() => setError(t('livedesktop.screenCouldNotRead')));
     }, 800);
     return () => {
       active = false;
@@ -239,7 +239,7 @@ export function LiveDesktop({
         className={`live-screen ${human ? 'controlled' : ''}`}
         role="application"
         data-remote-keyboard={human ? 'true' : undefined}
-        aria-label={t('{0}的操作画面', { 0: name })}
+        aria-label={t('livedesktop.computerScreen', { 0: name })}
         aria-describedby={human ? helpId : undefined}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The remote keyboard surface needs focus and provides an explicit Escape exit.
         tabIndex={0}
@@ -265,29 +265,31 @@ export function LiveDesktop({
           <img
             ref={picture}
             src={image}
-            alt={t('{0}的 Linux 桌面', { 0: name })}
+            alt={t('livedesktop.linuxDesktop', { 0: name })}
             draggable={false}
           />
         ) : (
           <div className="live-screen-loading">
             <Monitor />
-            <span>{ready ? t('正在读取 Linux 桌面…') : t('正在等待运行环境…')}</span>
+            <span>{ready ? t('livedesktop.readingLinuxDesktop') : t('common.waitingRuntime')}</span>
           </div>
         )}
-        <span className="live-view-label">{human ? t('你正在接管') : t('只读观看')}</span>
+        <span className="live-view-label">
+          {human ? t('common.control') : t('common.viewOnly')}
+        </span>
         {(!ready || error) && (
           <div className="live-screen-error">
             <WifiOff />
             {error ||
               (runtime.snapshot.phase === 'connecting'
-                ? t('正在连接，暂不可操作')
-                : t('连接中断，画面已暂停'))}
+                ? t('livedesktop.connectingControlsUnavailable')
+                : t('livedesktop.disconnectedScreenPaused'))}
           </div>
         )}
       </div>
       {human && (
         <p id={helpId} className="desktop-keyboard-hint">
-          {t('Esc 退出画面 · Alt+Esc 发送 Escape · Tab 在 Linux 内切换')}
+          {t('livedesktop.escLeaveScreenAltEscSendEscape')}
         </p>
       )}
       <form
@@ -302,16 +304,22 @@ export function LiveDesktop({
       >
         <input
           ref={textInput}
-          aria-label={t('发送文字到 Linux 桌面')}
+          aria-label={t('livedesktop.sendTextLinuxDesktop')}
           disabled={!human}
           placeholder={
-            human ? t('输入或粘贴文字，发送到当前应用…') : t('接管后可以点击、键入和拖动窗口')
+            human
+              ? t('livedesktop.typePasteTextSendCurrentApp')
+              : t('livedesktop.takeOverClickTypeDragWindows')
           }
           maxLength={2000}
           value={text}
           onChange={(event) => setText(event.target.value)}
         />
-        <button type="submit" aria-label={t('粘贴到 Linux')} disabled={!human || !text}>
+        <button
+          type="submit"
+          aria-label={t('livedesktop.pasteIntoLinux')}
+          disabled={!human || !text}
+        >
           <Send size={15} />
         </button>
       </form>

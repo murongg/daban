@@ -1,63 +1,63 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron';
-import { type Locale, translate } from '../locale';
+import { type Locale, type MessageKey, translate } from '../locale';
 
 export function localizeMenu(locale: Locale) {
-  const text = (copy: string) => translate(locale, copy);
+  const text = (copy: MessageKey) => translate(locale, copy);
   const template: MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
       ? [
           {
             label: 'Daban',
             submenu: [
-              { role: 'about' as const, label: text('关于 Daban') },
+              { role: 'about' as const, label: text('common.aboutDaban') },
               { type: 'separator' as const },
-              { role: 'services' as const, label: text('服务') },
+              { role: 'services' as const, label: text('menu.services') },
               { type: 'separator' as const },
-              { role: 'hide' as const, label: text('隐藏 Daban') },
-              { role: 'hideOthers' as const, label: text('隐藏其他应用') },
-              { role: 'unhide' as const, label: text('显示全部') },
+              { role: 'hide' as const, label: text('menu.hideDaban') },
+              { role: 'hideOthers' as const, label: text('menu.hideOthers') },
+              { role: 'unhide' as const, label: text('menu.showAll') },
               { type: 'separator' as const },
-              { role: 'quit' as const, label: text('退出 Daban') },
+              { role: 'quit' as const, label: text('menu.quitDaban') },
             ],
           },
         ]
       : []),
-    { label: text('文件'), submenu: [{ role: 'close', label: text('关闭窗口') }] },
+    { label: text('common.files'), submenu: [{ role: 'close', label: text('menu.closeWindow') }] },
     {
-      label: text('编辑'),
+      label: text('common.edit'),
       submenu: [
-        { role: 'undo', label: text('撤销') },
-        { role: 'redo', label: text('重做') },
+        { role: 'undo', label: text('menu.undo') },
+        { role: 'redo', label: text('menu.redo') },
         { type: 'separator' },
-        { role: 'cut', label: text('剪切') },
-        { role: 'copy', label: text('复制') },
-        { role: 'paste', label: text('粘贴') },
-        { role: 'selectAll', label: text('全选') },
+        { role: 'cut', label: text('menu.cut') },
+        { role: 'copy', label: text('common.copy') },
+        { role: 'paste', label: text('menu.paste') },
+        { role: 'selectAll', label: text('menu.selectAll') },
       ],
     },
     {
-      label: text('视图'),
+      label: text('menu.view'),
       submenu: [
-        { role: 'reload', label: text('重新载入') },
-        { role: 'forceReload', label: text('强制重新载入') },
-        { role: 'toggleDevTools', label: text('开发者工具') },
+        { role: 'reload', label: text('menu.reload') },
+        { role: 'forceReload', label: text('menu.forceReload') },
+        { role: 'toggleDevTools', label: text('menu.developerTools') },
         { type: 'separator' },
-        { role: 'resetZoom', label: text('实际大小') },
-        { role: 'zoomIn', label: text('放大') },
-        { role: 'zoomOut', label: text('缩小') },
+        { role: 'resetZoom', label: text('menu.actualSize') },
+        { role: 'zoomIn', label: text('menu.zoomIn') },
+        { role: 'zoomOut', label: text('menu.zoomOut') },
         { type: 'separator' },
-        { role: 'togglefullscreen', label: text('切换全屏') },
+        { role: 'togglefullscreen', label: text('menu.toggleFullScreen') },
       ],
     },
     {
-      label: text('窗口'),
+      label: text('menu.window'),
       submenu: [
-        { role: 'minimize', label: text('最小化') },
-        { role: 'zoom', label: text('缩放') },
+        { role: 'minimize', label: text('menu.minimize') },
+        { role: 'zoom', label: text('menu.zoomWindow') },
         ...(process.platform === 'darwin'
           ? [
               { type: 'separator' as const },
-              { role: 'front' as const, label: text('前置全部窗口') },
+              { role: 'front' as const, label: text('menu.bringAllFront') },
             ]
           : []),
       ],

@@ -164,7 +164,7 @@ export function GroupChat({
       revision: registered.revision,
       id: crypto.randomUUID(),
       group: bot.id,
-      prompt: draft.trim() || t('请查看这些文件，并完成我交代的任务。'),
+      prompt: draft.trim() || t('common.reviewFilesCompleteTaskIDescribed'),
       recipients: target === '*' ? availableMembers.map((member) => member.id) : [target],
       files: attached.map(taskFile),
     };
@@ -178,7 +178,7 @@ export function GroupChat({
         );
       });
       if (unsupported) {
-        notify(t('所选成员中有模型不支持图片，请切换为支持图片的模型后发送；草稿已保留。'));
+        notify(t('groupchat.selectedMemberSModelDoesNotSupport'));
         return;
       }
     }
@@ -271,7 +271,7 @@ export function GroupChat({
     const files: WorkspaceFile[] = (value.files || []).map((file) => ({
       id: `runtime:${file.path}`,
       name: file.name,
-      kind: file.name.split('.').at(-1)?.toUpperCase() || t('文件'),
+      kind: file.name.split('.').at(-1)?.toUpperCase() || t('common.files'),
       size: `${(file.size / 1024).toFixed(1)} KB`,
       modified: file.modified,
       runtimePath: file.path,
@@ -308,7 +308,7 @@ export function GroupChat({
           )}
         </div>
         {value.phase && value.phase !== 'completed' && (
-          <p className="inline-note">{t('任务状态：{0}', { 0: value.phase })}</p>
+          <p className="inline-note">{t('groupchat.taskStatus', { 0: value.phase })}</p>
         )}
         {files.map((file) => (
           <button
@@ -322,9 +322,7 @@ export function GroupChat({
           </button>
         ))}
         {files.length >= 20 && (
-          <p className="inline-note">
-            {t('每条消息最多展示 20 项文件，全部文件可在文件面板查看。')}
-          </p>
+          <p className="inline-note">{t('groupchat.eachMessageShowsUpFilesViewAll')}</p>
         )}
         {value.inputNames?.map((name) => (
           <button
@@ -342,11 +340,11 @@ export function GroupChat({
   }
   const sources = [...new Set((page?.messages || []).map((message) => message.sourceId))];
   return (
-    <section className="conversation" aria-label={t('{0}的对话', { 0: bot.name })}>
+    <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
       <div
         className="transcript"
         role="log"
-        aria-label={t('对话记录')}
+        aria-label={t('chat.conversationRecords')}
         aria-live="polite"
         onScroll={(event) => {
           const el = event.currentTarget;
@@ -355,7 +353,7 @@ export function GroupChat({
       >
         {!!state.messages[bot.id].length && (
           <details className="activity">
-            <summary>{t('本机旧记录（未提交到群聊服务）')}</summary>
+            <summary>{t('groupchat.legacyLocalRecordsNotSubmittedGroupService')}</summary>
             {state.messages[bot.id].map((item) => (
               <p className="inline-note" key={item.id}>
                 {item.text}
@@ -365,14 +363,14 @@ export function GroupChat({
         )}
         {page?.nextBefore && (
           <button type="button" className="text-button" disabled={loading} onClick={older}>
-            {loading ? t('正在读取…') : t('加载更早的消息')}
+            {loading ? t('common.loading') : t('groupchat.loadEarlierMessages')}
           </button>
         )}
         {!page?.messages.length && (
           <div className="empty-chat">
             <Avatar bot={bot} size="large" />
-            <h2>{t('一起开始协作')}</h2>
-            <p>{t('选择接收成员，再发出第一条消息。成员按顺序处理，也能在本群交接任务。')}</p>
+            <h2>{t('groupchat.startCollaborating')}</h2>
+            <p>{t('groupchat.chooseRecipientsSendFirstMessageMembersWork')}</p>
           </div>
         )}
         {sources.map((sourceId) => {
@@ -415,10 +413,10 @@ export function GroupChat({
                         delivery.bot}{' '}
                       ·{' '}
                       {task.phase === 'waiting'
-                        ? t('等待你的回复')
+                        ? t('common.waitingReply')
                         : task.phase === 'paused'
-                          ? t('等待交还电脑')
-                          : t('正在处理')}
+                          ? t('common.waitingComputerHandback')
+                          : t('groupchat.processing')}
                     </p>
                     {task.plan && <Plan items={task.plan} />}
                     {task.runId && (
@@ -447,10 +445,10 @@ export function GroupChat({
               ) && (
                 <div className="live-task">
                   <span>
-                    {t('本轮协作 ·')}{' '}
+                    {t('groupchat.collaboration')}{' '}
                     {deliveries.filter((delivery) => delivery.state === 'completed').length}/
                     {deliveries.length}
-                    {t('已完成')}
+                    {t('common.completed')}
                   </span>
                   <button
                     type="button"
@@ -468,7 +466,7 @@ export function GroupChat({
                       }
                     }}
                   >
-                    {t('停止这轮协作')}
+                    {t('groupchat.stopCollaboration')}
                   </button>
                 </div>
               )}
@@ -481,32 +479,32 @@ export function GroupChat({
         {readOnly && (
           <p className="inline-note" role="status">
             {state.groupActions[bot.id]
-              ? t('群聊操作待核对，历史和草稿保留。请先核对操作结果。')
-              : t('群聊已归档，历史和草稿保留。恢复后可发送新协作。')}
+              ? t('groupchat.groupActionNeedsVerificationHistoryDraftsRetained')
+              : t('groupchat.groupArchivedHistoryDraftsRetainedRestoreSend')}
           </p>
         )}
         {!ready && (
           <p className="inline-note">
             {runtime.enabled
               ? runtime.snapshot.protocolVersion < 15
-                ? t('更新本地运行环境后即可使用群聊。')
-                : t('群聊服务尚未连接。')
-              : t('群聊需要连接本地运行环境。')}
+                ? t('groupchat.updateLocalRuntimeUseGroupChats')
+                : t('groupchat.groupServiceNotConnected')
+              : t('groupchat.groupChatRequiresLocalRuntimeConnection')}
           </p>
         )}
         {error && (
           <p className="form-error" role="alert">
             {error}{' '}
             <button type="button" className="text-button" onClick={read}>
-              {t('重新读取')}
+              {t('groupchat.readAgain')}
             </button>
           </p>
         )}
         {pending && (
           <div className="live-task" role="status">
-            <span>{t('发送结果待确认；重试将核对同一条消息')}</span>
+            <span>{t('groupchat.sendResultUnconfirmedRetryChecksSameMessage')}</span>
             <button type="button" disabled={sending || !ready || readOnly} onClick={send}>
-              {sending ? t('正在确认…') : t('重试发送')}
+              {sending ? t('groupchat.confirming') : t('common.retrySend')}
             </button>
           </div>
         )}
@@ -521,7 +519,7 @@ export function GroupChat({
         >
           {dragging && (
             <p className="inline-note" role="status">
-              {t('松开即可添加附件')}
+              {t('common.dropAddAttachments')}
             </p>
           )}
           {!!attached.length && (
@@ -533,7 +531,7 @@ export function GroupChat({
                     {file.name}
                   </button>
                   <IconButton
-                    label={t('移除附件 {0}', { 0: file.name })}
+                    label={t('common.removeAttachment', { 0: file.name })}
                     disabled={readOnly}
                     onClick={() => dispatch({ type: 'detach', bot: bot.id, file: file.id })}
                   >
@@ -545,12 +543,12 @@ export function GroupChat({
           )}
           {state.attachmentUploads[bot.id] && (
             <p className="inline-note" role="status">
-              {t('正在准备附件…')}
+              {t('common.preparingAttachments')}
             </p>
           )}
           <textarea
-            aria-label={t('发送消息')}
-            placeholder={t('发消息给{0}…', { 0: bot.name })}
+            aria-label={t('common.sendMessage')}
+            placeholder={t('chat.messageRecipient', { 0: bot.name })}
             value={draft}
             rows={2}
             disabled={readOnly}
@@ -566,7 +564,7 @@ export function GroupChat({
           />
           <div className="composer-bottom">
             <IconButton
-              label={t('添加附件')}
+              label={t('common.addAttachment')}
               disabled={
                 !ready || readOnly || sending || !!pending || !!state.attachmentUploads[bot.id]
               }
@@ -578,7 +576,7 @@ export function GroupChat({
               className="sr-only"
               ref={upload}
               type="file"
-              aria-label={t('选择附件')}
+              aria-label={t('common.chooseAttachment')}
               accept=".md,.txt,.csv,.json,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.webp,.gif"
               multiple
               disabled={
@@ -592,9 +590,9 @@ export function GroupChat({
               }}
             />
             <div className="group-recipient">
-              {t('发送给')}{' '}
+              {t('groupchat.send')}{' '}
               <Select
-                label={t('发送给')}
+                label={t('groupchat.send')}
                 value={target}
                 disabled={readOnly || sending || !!pending}
                 onValueChange={(value) =>
@@ -605,7 +603,7 @@ export function GroupChat({
                     ? [
                         {
                           value: target,
-                          label: t('原成员已归档或不可用，请重新选择'),
+                          label: t('groupchat.originalMemberArchivedUnavailableChooseAgain'),
                           disabled: true,
                         },
                       ]
@@ -614,12 +612,12 @@ export function GroupChat({
                     .filter((member) => validTarget || member.id !== target)
                     .map((member) => ({
                       value: member.id,
-                      label: `${member.bot?.name || member.id}${!availableMembers.some((entry) => entry.id === member.id) ? t('（暂不可用）') : ''}`,
+                      label: `${member.bot?.name || member.id}${!availableMembers.some((entry) => entry.id === member.id) ? t('groupchat.temporarilyUnavailable') : ''}`,
                       disabled: !availableMembers.some((entry) => entry.id === member.id),
                     })),
                   ...(!validTarget && target === '*'
                     ? []
-                    : [{ value: '*', label: t('全部可用成员（依次处理）') }]),
+                    : [{ value: '*', label: t('groupchat.allAvailableMembersOrder') }]),
                 ]}
               />
             </div>
@@ -627,7 +625,7 @@ export function GroupChat({
             <button
               type="submit"
               className="send-button"
-              aria-label={t('发送消息')}
+              aria-label={t('common.sendMessage')}
               disabled={
                 recoveryBlocked(runtime.snapshot) ||
                 !ready ||
@@ -646,8 +644,8 @@ export function GroupChat({
           </div>
         </form>
         <div className="composer-hints">
-          <span>{t('Enter 发送 · Shift + Enter 换行 · 可粘贴图片或拖入附件')}</span>
-          <span>{t('群内共享对话 · 各自保留工作记忆')}</span>
+          <span>{t('common.enterSendShiftEnterNewLinePaste')}</span>
+          <span>{t('groupchat.sharedGroupConversationIndependentWorkMemory')}</span>
         </div>
       </div>
     </section>

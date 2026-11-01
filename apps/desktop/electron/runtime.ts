@@ -102,6 +102,7 @@ import {
   workKey,
   workQueryKey,
 } from '@daban/protocol';
+import type { MessageKey } from '../locale';
 import { isTaskReceipt } from '../receipt';
 
 // SSH forwards TCP unchanged. Use Node HTTP so the guest's canonical Host header is preserved.
@@ -604,7 +605,7 @@ export class RuntimeClient {
       }
       return snapshot;
     } catch {
-      return disconnected('offline', '无法连接本地执行环境，请重试连接。');
+      return disconnected('offline', 'errors.runtimeConnectionUnavailable' satisfies MessageKey);
     }
   }
   private async requireRecovery() {

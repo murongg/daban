@@ -38,7 +38,7 @@ const rejected = new Set([
 const notSent = new Set(['INVALID_COMMAND', 'RUNTIME_TOO_OLD', 'RUNTIME_RECOVERY_PENDING']);
 const readError = (error: unknown, subject: string) =>
   error instanceof Error && ['RUNTIME_REQUEST_FAILED', 'RUNTIME_OFFLINE'].includes(error.message)
-    ? t('{0}暂时无法读取。请检查连接后刷新便笺。', { 0: subject })
+    ? t('notecontroller.temporarilyUnreadableCheckConnectionRefreshNotes', { 0: subject })
     : runtimeError(error);
 
 // Notes is keyed by Bot in the workspace: unmounting invalidates reads/acks, never the durable intent.
@@ -145,7 +145,7 @@ export function useNotes(
         setPage(data.current);
       } catch (error) {
         if (mounted.current && listing.current === token)
-          setListError(readError(error, t('便笺列表')));
+          setListError(readError(error, t('common.noteList')));
       } finally {
         if (mounted.current && listing.current === token) setLoading(false);
       }
@@ -157,7 +157,7 @@ export function useNotes(
     data.current = { key: queryKey, items: [] };
     setPage(data.current);
     const timer = setTimeout(() => {
-      load().catch(() => setListError(t('暂时无法读取便笺。')));
+      load().catch(() => setListError(t('notecontroller.noteCannotReadRightNow')));
     }, 150);
     return () => {
       clearTimeout(timer);
@@ -200,8 +200,8 @@ export function useNotes(
         setError('');
         setLatest(undefined);
       }
-      load().catch(() => setListError(t('保存已确认，列表暂未刷新。请稍后刷新核对。')));
-      notify(t('便笺操作已确认。'));
+      load().catch(() => setListError(t('notecontroller.saveConfirmedListHasNotRefreshedYet')));
+      notify(t('notecontroller.noteActionConfirmed'));
     },
     [bot.id, dispatch, keyOf, load, notify, owns, scope],
   );
@@ -256,7 +256,7 @@ export function useNotes(
       clientCache().setItem(storageKey, serialize(updated));
     } catch {
       (resuming ? setOperationError : setError)(
-        t('本机无法保存操作记录。请释放存储空间或导出工作区后重试；你的草稿仍保留。'),
+        t('common.operationRecordsCouldNotSavedLocallyFree'),
       );
       return;
     }
@@ -301,7 +301,7 @@ export function useNotes(
     if (!draft || pending.current) return;
     const request = noteInput(draft);
     if (!request) {
-      setError(t('请填写便笺标题（最多 200 字符），正文最多 4,000 字符。'));
+      setError(t('notecontroller.enterNoteTitleUpCharactersBodyUp'));
       return;
     }
     await send({ request, draft: structuredClone(draft) }, false);
@@ -327,7 +327,7 @@ export function useNotes(
     const previous = current.current.notes?.[bot.id]?.draft;
     setEditorVisible(true);
     if (noteDirty(previous)) {
-      setError(t('先保存或放弃当前修改，再新建便笺。'));
+      setError(t('notecontroller.saveDiscardCurrentEditsCreatingNote'));
       return;
     }
     reader.current++;
@@ -343,7 +343,7 @@ export function useNotes(
     setEditorVisible(true);
     if (!review && previous?.base?.id === id && noteDirty(previous)) return;
     if (!review && noteDirty(previous) && pending.current?.draft.key !== previous?.key) {
-      setError(t('先保存或放弃当前修改，再查看其他便笺。'));
+      setError(t('notecontroller.saveDiscardCurrentEditsOpeningAnotherNote'));
       return;
     }
     const token = ++reader.current;
@@ -367,7 +367,8 @@ export function useNotes(
       if (review && previous) setLatest({ key: previous.key, item: value });
       else dispatch({ type: 'notes-draft', bot: bot.id, previous, draft: noteDraft(scope, value) });
     } catch (error) {
-      if (mounted.current && reader.current === token) setError(readError(error, t('便笺详情')));
+      if (mounted.current && reader.current === token)
+        setError(readError(error, t('notecontroller.noteDetails')));
     } finally {
       if (mounted.current && reader.current === token) setReading(false);
     }

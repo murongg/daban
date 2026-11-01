@@ -79,8 +79,8 @@ export function Archive({
     dispatch({ type: 'lifecycle-clear', bot: bot.id, id: request.id });
     notify(
       request.action === 'archive'
-        ? t('Bot 已归档，历史和草稿保留。')
-        : t('Bot 已恢复，自动任务仍需手动重新启用。'),
+        ? t('archive.botArchivedHistoryDraftsRetained')
+        : t('archive.botRestoredAutomaticTasksMustEnabledAgain'),
     );
     close();
   }
@@ -96,7 +96,7 @@ export function Archive({
       if (mounted.current) {
         setError(
           error instanceof Error && error.message === 'RUNTIME_SESSION_CHANGED'
-            ? t('运行环境已重新连接，请先核对这次 Bot 操作的结果。')
+            ? t('archive.runtimeReconnectedVerifyBotOperationSResult')
             : runtimeError(error),
         );
         setCode(error instanceof Error ? error.message : '');
@@ -134,52 +134,53 @@ export function Archive({
     if (!mounted.current) return;
     dispatch({ type: 'profiles', profiles: [value.profile] });
     if (value.receipt.phase === 'complete') applied(value, pending);
-    else setNotice(t('归档尚未完成。这位 Bot 暂不接收新任务，可继续核对或完成同一次归档。'));
+    else setNotice(t('archive.archivingIncompleteBotCannotAcceptNewTasks'));
   }
   return (
-    <Dialog title={action === 'archive' ? t('归档 Bot') : t('恢复 Bot')} onClose={close}>
+    <Dialog
+      title={action === 'archive' ? t('common.archiveBot') : t('common.restoreBot')}
+      onClose={close}
+    >
       <div className="archive-identity">
         <Avatar bot={bot} />
         <strong>{bot.name}</strong>
       </div>
       <p className="dialog-description">
         {action === 'archive'
-          ? t(
-              '归档会暂停这位 Bot 的使用入口、停用它的定时任务。聊天、文件、资料、偏好和未发送草稿都会保留。',
-            )
-          : t(
-              '恢复这位 Bot 的对话入口，继续使用保留的历史与偏好。电脑和旧任务不会自动启动，定时任务需要手动重新启用。',
-            )}
+          ? t('archive.archivingRemovesBotSActiveEntryDisables')
+          : t('archive.restoreAccessBotSConversationRetainedHistory')}
       </p>
       {!available && (
         <p className="inline-note">
           {runtime.snapshot.protocolVersion < 22
-            ? t('更新本地运行环境后可使用 Bot 归档与恢复。')
-            : t('原 Bot 记录暂未连接，客户端保留的历史仍在。')}
+            ? t('archive.updateLocalRuntimeArchiveRestoreBots')
+            : t('archive.originalBotRecordsDisconnectedLocallyCachedHistory')}
         </p>
       )}
       {task?.running && (
         <div className="inline-note">
-          <p>{t('先结束正在进行的任务，再归档。')}</p>
+          <p>{t('archive.finishOngoingTasksArchiving')}</p>
           <button
             className="secondary"
             type="button"
             onClick={() => navigate(task.conversationId ?? bot.id)}
           >
-            {t('查看当前任务')}
+            {t('archive.viewCurrentTask')}
           </button>
         </div>
       )}
       {connected && (
         <div className="inline-note">
-          <p>{t('先停止电脑并确认已保存其中的内容，再归档。')}</p>
+          <p>{t('archive.stopComputerConfirmContentSavedArchiving')}</p>
           <button className="secondary" type="button" onClick={() => navigate(bot.id, 'computer')}>
-            {t('管理电脑')}
+            {t('archive.manageComputer')}
           </button>
         </div>
       )}
       {resourceUnknown && available && (
-        <p className="inline-note">{t('电脑状态暂不可核对，请恢复运行环境后再操作。')}</p>
+        <p className="inline-note">
+          {t('archive.computerStateCannotVerifiedRecoverRuntimeActing')}
+        </p>
       )}
       {code === 'BOT_GROUP_PENDING' && (
         <div className="inline-note">
@@ -209,14 +210,12 @@ export function Archive({
       )}
       {pending && (
         <p className="inline-note">
-          {t(
-            '这次操作结果待核对。核对只读取回执；重试沿用同一次操作。关闭窗口不会撤回已提交的操作。',
-          )}
+          {t('archive.resultNeedsVerificationCheckingOnlyReadsReceipt')}
         </p>
       )}
       {later && (
         <div className="inline-note">
-          <p>{t('这位 Bot 已有后续操作，可采用当前资料状态。')}</p>
+          <p>{t('archive.botHasSubsequentOperationsCanUseCurrent')}</p>
           <button
             className="secondary"
             type="button"
@@ -226,13 +225,13 @@ export function Archive({
               close();
             }}
           >
-            {t('采用当前资料状态')}
+            {t('archive.useCurrentProfileState')}
           </button>
         </div>
       )}
       <div className="dialog-actions archive-actions">
         <button className="text-button" type="button" disabled={busy} onClick={close}>
-          {t('关闭')}
+          {t('common.close')}
         </button>
         {pending && (
           <button
@@ -241,7 +240,7 @@ export function Archive({
             disabled={busy || !available}
             onClick={() => perform(inspect)}
           >
-            {t('核对操作结果')}
+            {t('common.verifyOperationResult')}
           </button>
         )}
         <button
@@ -251,12 +250,12 @@ export function Archive({
           onClick={() => perform(submit)}
         >
           {busy
-            ? t('正在处理…')
+            ? t('common.processing')
             : pending
-              ? t('重试同一次操作')
+              ? t('common.retrySameOperation')
               : action === 'archive'
-                ? t('确认归档')
-                : t('确认恢复')}
+                ? t('common.confirmArchive')
+                : t('common.confirmRestore')}
         </button>
       </div>
     </Dialog>
@@ -280,11 +279,11 @@ export function ArchiveList({
   );
   return (
     <div className="settings-section">
-      <h2>{t('已归档')}</h2>
+      <h2>{t('common.archived')}</h2>
       <p className="setting-description">
-        {t('历史和草稿保留。Bot 的自动任务需手动重新启用；恢复群聊不会派发旧消息。')}
+        {t('archive.historyDraftsRetainedReEnableBotAutomation')}
       </p>
-      {!bots.length && <p className="inline-note">{t('归档的 Bot 和群聊会出现在这里。')}</p>}
+      {!bots.length && <p className="inline-note">{t('archive.archivedBotsGroupsAppearHere')}</p>}
       {bots.map((bot) => {
         const pending = bot.members
           ? state.groupActions[bot.id]
@@ -298,26 +297,28 @@ export function ArchiveList({
             <Avatar bot={bot} />
             <div className="archive-copy">
               <div className="setting-label">{bot.name}</div>
-              <p className="setting-description">{pending ? t('操作待核对') : t('已归档')}</p>
+              <p className="setting-description">
+                {pending ? t('archive.operationNeedsVerification') : t('common.archived')}
+              </p>
             </div>
             <div className="model-actions">
               <button
                 className="secondary"
                 type="button"
-                aria-label={t('查看历史 {0}', { 0: bot.name })}
+                aria-label={t('archive.viewItemHistory', { 0: bot.name })}
                 onClick={() => dispatch({ type: 'select', bot: bot.id })}
               >
-                {t('查看历史')}
+                {t('archive.viewHistory')}
               </button>
               <button
                 className="secondary"
                 type="button"
-                aria-label={`${pending ? t('核对操作') : t('恢复')} ${bot.name}`}
+                aria-label={`${pending ? t('archive.verifyOperation') : t('common.restore')} ${bot.name}`}
                 disabled={!onAction || runtime.snapshot.protocolVersion < (bot.members ? 28 : 22)}
                 onClick={() => onAction?.(bot.id)}
               >
                 {pending ? <ArchiveIcon /> : <RotateCcw />}
-                {pending ? t('核对操作') : t('恢复')}
+                {pending ? t('archive.verifyOperation') : t('common.restore')}
               </button>
             </div>
           </div>

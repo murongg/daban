@@ -97,7 +97,7 @@ export function knowledgeDraft(document?: KnowledgeDocument): KnowledgeDraft {
         baseContent: document.content,
       }
     : {
-        path: t('新资料.md'),
+        path: t('state.newDocumentMd'),
         content: '',
         revision: 0,
         deleted: false,
@@ -508,7 +508,7 @@ export function reduce(state: State, action: Action): State {
               ? {
                   ...bot,
                   name: group.name,
-                  role: t('{0} 位 Bot 的群聊', { 0: members.length }),
+                  role: t('state.groupBots', { 0: members.length }),
                   members: members as string[],
                   archived: !!group.archived,
                 }
@@ -766,7 +766,7 @@ export function reduce(state: State, action: Action): State {
         const item: WorkspaceFile = {
           id: `runtime:${file.path}`,
           name: file.name,
-          kind: file.name.split('.').at(-1)?.toUpperCase() || t('文件'),
+          kind: file.name.split('.').at(-1)?.toUpperCase() || t('common.files'),
           size: `${(file.size / 1024).toFixed(1)} KB`,
           modified: file.modified,
           content: '',
@@ -797,8 +797,8 @@ export function reduce(state: State, action: Action): State {
           task.result ||
           task.error ||
           (task.phase === 'stopped'
-            ? t('任务已停止，已经保存的文件仍然保留。')
-            : t('任务已结束，请核对输出文件。'));
+            ? t('state.taskStoppedSavedFilesRetained')
+            : t('state.taskFinishedCheckOutputFiles'));
         add({
           id: `runtime-result:${task.runId}`,
           role: 'bot',
@@ -951,13 +951,13 @@ export function reduce(state: State, action: Action): State {
       const message: Message = {
         id: action.id,
         role: 'user',
-        text: text || t('请查看这些文件。'),
+        text: text || t('state.pleaseReviewFiles'),
         ...(files.length ? { files } : {}),
       };
       const notice: Message = {
         id: `${action.id}-notice`,
         role: 'notice',
-        text: t('消息已保存在本机。当前为界面演示，尚未连接模型，不会执行真实任务。'),
+        text: t('state.messageSavedLocallyUiDemoWithoutModel'),
       };
       return {
         ...state,
@@ -968,7 +968,9 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: [...state.messages[action.bot], message, notice],
         },
         bots: state.bots.map((b) =>
-          b.id === action.bot ? { ...b, preview: text || t('添加了文件'), time: action.time } : b,
+          b.id === action.bot
+            ? { ...b, preview: text || t('state.addedFiles'), time: action.time }
+            : b,
         ),
       };
     }
@@ -984,11 +986,11 @@ export function reduce(state: State, action: Action): State {
         id: action.id,
         name,
         role: members
-          ? t('{0} 位 Bot 的群聊', { 0: members.length })
+          ? t('state.groupBots', { 0: members.length })
           : action.role.trim().slice(0, 4000),
         color: action.color,
-        preview: t('从第一条消息开始'),
-        time: t('刚刚'),
+        preview: t('state.startFirstMessage'),
+        time: t('state.justNow'),
         ...(members ? { members } : {}),
         ...(!members && action.model ? { model: action.model } : {}),
       };

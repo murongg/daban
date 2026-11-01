@@ -1,8 +1,9 @@
 import { type ModelApi, type ModelConnection, modelApi } from '@daban/protocol';
+import type { MessageKey } from './locale';
 
 interface Platform {
   id: string;
-  name: string;
+  name: MessageKey;
   baseURL: string;
   api: ModelApi;
 }
@@ -16,96 +17,111 @@ export const apiOptions = [
 
 // Defaults follow vendor API docs; model IDs and regional/account-specific addresses stay explicit.
 export const platforms: readonly Platform[] = [
-  { id: 'custom', name: '自定义接口', baseURL: '', api: 'openai-completions' },
+  { id: 'custom', name: 'providers.customApi', baseURL: '', api: 'openai-completions' },
   // https://developers.openai.com/api/reference/overview
-  { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', api: 'openai-responses' },
+  {
+    id: 'openai',
+    name: 'providers.openai',
+    baseURL: 'https://api.openai.com/v1',
+    api: 'openai-responses',
+  },
   // https://platform.claude.com/docs/en/api/overview
-  { id: 'claude', name: 'Claude', baseURL: 'https://api.anthropic.com', api: 'anthropic-messages' },
+  {
+    id: 'claude',
+    name: 'providers.claude',
+    baseURL: 'https://api.anthropic.com',
+    api: 'anthropic-messages',
+  },
   // https://ai.google.dev/api
   {
     id: 'gemini',
-    name: 'Gemini',
+    name: 'providers.gemini',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta',
     api: 'google-generative-ai',
   },
   // https://docs.x.ai/overview
-  { id: 'xai', name: 'Grok · xAI', baseURL: 'https://api.x.ai/v1', api: 'openai-responses' },
+  { id: 'xai', name: 'providers.grokXai', baseURL: 'https://api.x.ai/v1', api: 'openai-responses' },
   // https://api-docs.deepseek.com/quick_start/agent_integrations/
   {
     id: 'deepseek',
-    name: 'DeepSeek',
+    name: 'providers.deepseek',
     baseURL: 'https://api.deepseek.com/v1',
     api: 'openai-completions',
   },
   // https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope
   {
     id: 'qwen',
-    name: '千问 · 阿里云百炼',
+    name: 'providers.qwenAlibabaCloudModelStudio',
     baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     api: 'openai-completions',
   },
   // https://platform.kimi.com/docs/api/chat
-  { id: 'kimi', name: 'Kimi', baseURL: 'https://api.moonshot.cn/v1', api: 'openai-completions' },
+  {
+    id: 'kimi',
+    name: 'providers.kimi',
+    baseURL: 'https://api.moonshot.cn/v1',
+    api: 'openai-completions',
+  },
   // https://docs.bigmodel.cn/cn/guide/develop/openai/introduction
   {
     id: 'zhipu',
-    name: '智谱',
+    name: 'providers.zhipu',
     baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     api: 'openai-completions',
   },
   // https://platform.minimax.cn/docs/api-reference/text-openai-api
   {
     id: 'minimax',
-    name: 'MiniMax',
+    name: 'providers.minimax',
     baseURL: 'https://api.minimax.cn/v1',
     api: 'openai-completions',
   },
   // https://docs.volcengine.com/docs/ark/base-url-and-authentication
   {
     id: 'ark',
-    name: '豆包 · 火山方舟',
+    name: 'providers.doubaoVolcengineArk',
     baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
     api: 'openai-completions',
   },
   // https://api-docs.siliconflow.cn/docs/usercases/use-siliconcloud-in-KiloCode
   {
     id: 'siliconflow',
-    name: '硅基流动',
+    name: 'providers.siliconflow',
     baseURL: 'https://api.siliconflow.cn/v1',
     api: 'openai-completions',
   },
   // https://openrouter.ai/docs/quickstart
   {
     id: 'openrouter',
-    name: 'OpenRouter',
+    name: 'providers.openrouter',
     baseURL: 'https://openrouter.ai/api/v1',
     api: 'openai-completions',
   },
   // https://cloud.tencent.com/document/product/1729/111007
   {
     id: 'hunyuan',
-    name: '腾讯混元',
+    name: 'providers.tencentHunyuan',
     baseURL: 'https://api.hunyuan.cloud.tencent.com/v1',
     api: 'openai-completions',
   },
   // https://cloud.baidu.com/doc/qianfan/s/Smovaaszj
   {
     id: 'qianfan',
-    name: '百度千帆',
+    name: 'providers.baiduQianfan',
     baseURL: 'https://qianfan.baidubce.com/v2',
     api: 'openai-completions',
   },
   // https://console.groq.com/docs/openai
   {
     id: 'groq',
-    name: 'Groq',
+    name: 'providers.groq',
     baseURL: 'https://api.groq.com/openai/v1',
     api: 'openai-completions',
   },
   // https://docs.together.ai/docs/inference/openai-compatibility
   {
     id: 'together',
-    name: 'Together AI',
+    name: 'providers.togetherAi',
     baseURL: 'https://api.together.ai/v1',
     api: 'openai-completions',
   },

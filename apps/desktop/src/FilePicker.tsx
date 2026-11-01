@@ -10,7 +10,7 @@ export function FilePicker(
   useLocale();
   const input = useRef<HTMLInputElement>(null);
   const [names, setNames] = useState<string[]>([]);
-  const label = props['aria-label'] ?? t('本机文件');
+  const label = props['aria-label'] ?? t('filepicker.localFile');
   return (
     <div className="file-picker">
       <input
@@ -26,21 +26,21 @@ export function FilePicker(
         type="button"
         className="secondary file-picker-button"
         disabled={props.disabled}
-        aria-label={t('选择文件：{0}', { 0: label })}
+        aria-label={t('files.chooseNamedFile', { 0: label })}
         onClick={() => input.current?.click()}
       >
         <Upload aria-hidden="true" />
-        {t('选择文件')}
+        {t('filepicker.chooseFile')}
       </button>
       <Tooltip label={names.length ? names.join('、') : undefined}>
         <input
           className="file-picker-name"
-          aria-label={t('已选文件名称')}
+          aria-label={t('filepicker.selectedFilename')}
           readOnly
           disabled={props.disabled}
           tabIndex={names.length ? 0 : -1}
           value={names.join('、')}
-          placeholder={t('未选择文件')}
+          placeholder={t('filepicker.noFileSelected')}
         />
       </Tooltip>
     </div>

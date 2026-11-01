@@ -13,15 +13,15 @@ import { runtimeError, useRuntime } from './Runtime';
 import type { Bot } from './state';
 
 const stages = {
-  preparing: '正在准备恢复',
-  prepared: '恢复已准备，尚未关机',
-  'stop-issued': '关机请求已发出，结果待核对',
-  stopped: '运行环境已停止',
-  'start-issued': '正在启动运行环境',
-  complete: '运行环境已恢复',
-  cancelled: '本次恢复已取消',
-  rejected: '本次恢复未执行',
-};
+  preparing: 'recovery.preparingRecovery',
+  prepared: 'recovery.recoveryPreparedShutdownNotStarted',
+  'stop-issued': 'recovery.shutdownRequestedResultNeedsVerification',
+  stopped: 'recovery.runtimeStopped',
+  'start-issued': 'recovery.startingRuntime',
+  complete: 'recovery.runtimeRecovered',
+  cancelled: 'recovery.recoveryCancelled',
+  rejected: 'recovery.recoveryNotExecuted',
+} as const;
 const terminal = new Set(['complete', 'cancelled', 'rejected']);
 export function Recovery({
   bots,
@@ -170,42 +170,38 @@ export function Recovery({
     accept(await runtime.command({ type: 'recovery.restart', request }));
   }
   return (
-    <Dialog title={t('恢复整个运行环境')} onClose={close}>
-      <p className="dialog-description">
-        {t(
-          '这会重启本地 Linux，关闭所有 Bot 的电脑和其中的应用。请先保存内容；部分网页可能需要重新登录。',
-        )}
-      </p>
+    <Dialog title={t('recovery.recoverEntireRuntime')} onClose={close}>
+      <p className="dialog-description">{t('recovery.restartsLocalLinuxClosesEveryBotS')}</p>
       <p className="inline-note">
-        {t(
-          '已保存的文件、偏好和聊天保留，电脑需重新连接。你设置的定时和排队工作会继续按原设置运行；结果不明的操作不会自动重放。',
-        )}
+        {t('recovery.savedFilesPreferencesChatsRetainedReconnectComputers')}
       </p>
       {scope && (
-        <section className="recovery-screens" aria-label={t('本次影响的电脑')}>
+        <section className="recovery-screens" aria-label={t('recovery.computersAffectedRecovery')}>
           {scope.screens.length ? (
             scope.screens.map((row) => (
               <div key={row.computer.bot} className="recovery-screen">
                 <span>{name(row.computer.bot)}</span>
                 <span className="muted">
                   {row.computer.phase !== 'connected'
-                    ? t('状态需核对')
+                    ? t('recovery.stateNeedsVerification')
                     : row.lease?.owner === 'human'
-                      ? t('你正在接管')
+                      ? t('common.control')
                       : row.lease?.owner === 'agent'
-                        ? t('Bot 可操作')
-                        : t('状态需核对')}
+                        ? t('recovery.botControlEnabled')
+                        : t('recovery.stateNeedsVerification')}
                 </span>
               </div>
             ))
           ) : (
-            <p className="inline-note">{t('当前未占用 Bot 屏幕；恢复仍会重启整个 Linux。')}</p>
+            <p className="inline-note">
+              {t('recovery.noBotScreensCurrentlyOccupiedRecoveryStill')}
+            </p>
           )}
         </section>
       )}
       {(review?.running.length || running.length) > 0 && (
         <div className="inline-note">
-          <p>{t('先结束正在执行的任务，再恢复。')}</p>
+          <p>{t('recovery.finishRunningTaskRestoring')}</p>
           {[...new Set([...(review?.running ?? []), ...running])].map((id) => (
             <button
               key={id}
@@ -214,17 +210,15 @@ export function Recovery({
               onClick={() => onTask?.(id)}
               disabled={!onTask}
             >
-              {t('查看')}
+              {t('recovery.view')}
               {name(id)}
-              {t('的任务')}
+              {t('recovery.sTasks')}
             </button>
           ))}
         </div>
       )}
       {foreign && (
-        <p className="inline-note">
-          {t('已有恢复由其他客户端发起，请回到发起恢复的客户端核对结果。')}
-        </p>
+        <p className="inline-note">{t('recovery.recoveryWasStartedAnotherClientVerifyResult')}</p>
       )}
       {host && !host.available && (
         <p className="form-error" role="alert">
@@ -238,17 +232,17 @@ export function Recovery({
             <p className="form-error">{runtimeError(new Error(operation.error))}</p>
           )}
           {operation.stage === 'stop-issued' && (
-            <p className="inline-note">{t('先核对当前状态。客户端不会自动重复关机。')}</p>
+            <p className="inline-note">{t('recovery.checkCurrentStateFirstAppWillNot')}</p>
           )}
           {pending && (
             <p className="inline-note">
-              {t('关闭窗口不会撤回已提交的操作；重开客户端后先核对回执。')}
+              {t('recovery.closingWindowDoesNotWithdrawSubmittedOperations')}
             </p>
           )}
         </div>
       )}
       {changed && operation?.stage !== 'complete' && (
-        <p className="inline-note">{t('运行环境或控制状态已变化，请重新核对。')}</p>
+        <p className="inline-note">{t('recovery.runtimeControlStateChangedVerifyAgain')}</p>
       )}
       {error && (
         <p className="form-error" role="alert">
@@ -263,12 +257,12 @@ export function Recovery({
             disabled={active}
             onChange={(event) => setSaved(event.target.checked)}
           />
-          {t('我已保存所有电脑中的内容')}
+          {t('recovery.iSavedContentAllComputers')}
         </label>
       )}
       <div className="dialog-actions recovery-actions">
         <button type="button" className="text-button" onClick={close}>
-          {t('关闭')}
+          {t('common.close')}
         </button>
         {!pending && (
           <button
@@ -277,7 +271,7 @@ export function Recovery({
             disabled={active || runtime.snapshot.phase !== 'ready'}
             onClick={() => perform(loadReview)}
           >
-            {t('重新核对')}
+            {t('recovery.verifyAgain')}
           </button>
         )}
         {pending && (
@@ -291,7 +285,7 @@ export function Recovery({
               )
             }
           >
-            {t('核对恢复结果')}
+            {t('recovery.verifyRecoveryResult')}
           </button>
         )}
         {unissued && operation?.backend?.phase === 'prepared' && (
@@ -305,7 +299,7 @@ export function Recovery({
               )
             }
           >
-            {t('取消未执行的恢复')}
+            {t('recovery.cancelRecoveryExecution')}
           </button>
         )}
         {operation?.stage === 'stopped' || operation?.stage === 'start-issued' ? (
@@ -319,7 +313,7 @@ export function Recovery({
               )
             }
           >
-            {t('启动运行环境')}
+            {t('recovery.startRuntime')}
           </button>
         ) : (
           (!pending || unissued) && (
@@ -329,7 +323,11 @@ export function Recovery({
               disabled={active || !saved || !canRestart}
               onClick={() => perform(restart)}
             >
-              {active ? t('正在处理…') : unissued ? t('继续这次恢复') : t('确认重启整个环境')}
+              {active
+                ? t('common.processing')
+                : unissued
+                  ? t('recovery.continueRecovery')
+                  : t('recovery.confirmEntireEnvironmentRestart')}
             </button>
           )
         )}
@@ -344,11 +342,11 @@ export function RecoveryNotice({ open }: { open: () => unknown }) {
   return (
     <div className="recovery-banner" role="status">
       <div>
-        <strong>{t('运行环境恢复待核对')}</strong>
-        <p>{t('新任务和电脑操作暂缓，草稿仍可编辑，历史和已保存文件可查看。')}</p>
+        <strong>{t('recovery.runtimeRecoveryNeedsVerification')}</strong>
+        <p>{t('recovery.newTasksComputerActionsPausedCanStill')}</p>
       </div>
       <button type="button" className="secondary" onClick={open}>
-        {t('查看恢复')}
+        {t('recovery.viewRecovery')}
       </button>
     </div>
   );
@@ -363,12 +361,14 @@ export function RecoveryEntry({ open }: { open?: () => unknown }) {
   return (
     <div className="setting-row">
       <div>
-        <div className="setting-label">{t('恢复本地运行环境')}</div>
+        <div className="setting-label">{t('recovery.recoverLocalRuntime')}</div>
         <p className="setting-description">
-          {t('电脑回收未确认或运行环境异常时，可核对后恢复整个 Linux。所有 Bot 的电脑都会受影响。')}
+          {t('recovery.ifComputerCleanupUnconfirmedRuntimeUnhealthyVerify')}
         </p>
         {runtime.snapshot.protocolVersion < 24 && (
-          <p className="inline-note">{t('更新运行环境后可用；已有回执仍可核对。')}</p>
+          <p className="inline-note">
+            {t('recovery.availableUpdatingRuntimeExistingReceiptsCanStill')}
+          </p>
         )}
       </div>
       <button
@@ -377,7 +377,7 @@ export function RecoveryEntry({ open }: { open?: () => unknown }) {
         disabled={!open || !runtime.enabled || (!pending && runtime.snapshot.protocolVersion < 24)}
         onClick={open}
       >
-        {pending ? t('查看恢复') : t('检查并恢复')}
+        {pending ? t('recovery.viewRecovery') : t('recovery.checkRecover')}
       </button>
     </div>
   );

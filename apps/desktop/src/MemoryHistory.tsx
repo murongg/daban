@@ -2,15 +2,15 @@ import { agentId, isMemoryPage, type MemoryPage, type MemoryVersion } from '@dab
 import { useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
-import { getLocale, t, useLocale } from './locale';
+import { getLocale, type MessageKey, t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Bot } from './state';
 
-const sources: Record<MemoryVersion['source'], string> = {
-  initial: '初次保存',
-  baseline: '现有内容基线',
-  edit: '手动保存',
-  agent: 'Bot 保存',
+const sources: Record<MemoryVersion['source'], MessageKey> = {
+  initial: 'memoryhistory.firstSave',
+  baseline: 'memoryhistory.existingContentBaseline',
+  edit: 'memoryhistory.savedManually',
+  agent: 'memoryhistory.savedBot',
 };
 export function MemoryHistory({
   bot,
@@ -40,10 +40,10 @@ export function MemoryHistory({
   const reason =
     blocked ||
     (page && (revision !== reviewedRevision || page.profileRevision !== reviewedRevision)
-      ? t('当前偏好已更新，请刷新最近版本后再载入。')
+      ? t('memoryhistory.currentPreferencesChangedRefreshRecentRevisionsLoading')
       : undefined) ||
     (page && selected === page.currentRevision
-      ? t('这是当前保存的偏好。选择较早版本可载入编辑器。')
+      ? t('memoryhistory.currentlySavedPreferencesSelectEarlierRevisionLoad')
       : undefined);
   async function read(before?: number) {
     if (working.current || !available) return;
@@ -88,18 +88,22 @@ export function MemoryHistory({
     };
   }, []);
   return (
-    <Dialog title={t('工作偏好历史')} onClose={close} wide>
+    <Dialog title={t('memoryhistory.workPreferenceHistory')} onClose={close} wide>
       <div className="archive-identity">
         <Avatar bot={bot} />
         <strong>{bot.name}</strong>
       </div>
       <p className="dialog-description preference-description">
-        {t('历史仅供你查看，不会自动交给模型。载入只会填入编辑器，确认保存后才更新当前偏好。')}
+        {t('memoryhistory.historyReviewNotSentModelAutomaticallyLoading')}
       </p>
       <p className="field-help preference-disclosure">
-        {t('最多保留最近 50 个版本；内容较长时保留数量会减少。移除当前偏好不会清除已保留的历史。')}
+        {t('memoryhistory.upRecentRevisionsRetainedLongContentReduces')}
       </p>
-      {!available && <p className="inline-note">{t('连接更新后的本地环境后可读取偏好历史。')}</p>}
+      {!available && (
+        <p className="inline-note">
+          {t('memoryhistory.connectUpdatedLocalEnvironmentReadPreferenceHistory')}
+        </p>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -107,14 +111,21 @@ export function MemoryHistory({
       )}
       {busy && (
         <p className="inline-note" role="status">
-          {t('正在读取偏好历史…')}
+          {t('memoryhistory.loadingPreferenceHistory')}
         </p>
       )}
       {page && (
         <>
-          {page.limited && <p className="inline-note">{t('更早的版本已超出保留范围。')}</p>}
+          {page.limited && (
+            <p className="inline-note">
+              {t('memoryhistory.earlierRevisionsOutsideRetentionRange')}
+            </p>
+          )}
           <div className="preference-layout">
-            <section className="preference-versions" aria-label={t('已保留的工作偏好版本')}>
+            <section
+              className="preference-versions"
+              aria-label={t('memoryhistory.retainedPreferenceRevisions')}
+            >
               {page.items.map((version) => (
                 <button
                   type="button"
@@ -125,8 +136,8 @@ export function MemoryHistory({
                   onClick={() => setSelected(version.revision)}
                 >
                   <span>
-                    {t('版本 {0}', { 0: version.revision })}
-                    {version.revision === page.currentRevision ? t(' · 当前') : ''} ·{' '}
+                    {t('common.numberedRevision', { 0: version.revision })}
+                    {version.revision === page.currentRevision ? t('memoryhistory.current') : ''} ·{' '}
                     {t(sources[version.source])}
                   </span>
                   <time dateTime={version.createdAt}>
@@ -136,19 +147,23 @@ export function MemoryHistory({
               ))}
             </section>
             <div>
-              {!page.items.length && <p className="inline-note">{t('没有更早的保留版本。')}</p>}
+              {!page.items.length && (
+                <p className="inline-note">{t('memoryhistory.noEarlierRetainedRevisions')}</p>
+              )}
               {item && (
                 <label className="field-label preference-content">
-                  {t('版本 {0}的完整内容', { 0: item.revision })}
+                  {t('memoryhistory.fullContentRevision', { 0: item.revision })}
                   <textarea
                     className="field"
-                    aria-label={t('历史工作偏好')}
+                    aria-label={t('memoryhistory.preferenceHistory')}
                     value={item.content}
                     readOnly
                     rows={8}
                   />
                   <span className="field-help">
-                    {item.content ? t('仅查看，不会自动保存。') : t('这个版本没有工作偏好。')}
+                    {item.content
+                      ? t('memoryhistory.viewOnlyChangesNotSavedAutomatically')
+                      : t('memoryhistory.revisionHasNoWorkPreferences')}
                   </span>
                 </label>
               )}
@@ -168,7 +183,7 @@ export function MemoryHistory({
           disabled={busy || !available}
           onClick={() => read()}
         >
-          {t('刷新最近版本')}
+          {t('memoryhistory.refreshRecentRevisions')}
         </button>
         {page?.nextBefore !== undefined && (
           <button
@@ -177,13 +192,13 @@ export function MemoryHistory({
             disabled={busy || !available}
             onClick={() => read(page.nextBefore)}
           >
-            {t('较早版本')}
+            {t('memoryhistory.earlierRevisions')}
           </button>
         )}
       </div>
       <div className="dialog-actions">
         <button type="button" className="text-button" onClick={close}>
-          {t('关闭')}
+          {t('common.close')}
         </button>
         <button
           type="button"
@@ -193,7 +208,7 @@ export function MemoryHistory({
             if (item && page && !error && !reason) stage(item, page.profileRevision);
           }}
         >
-          {t('载入编辑器')}
+          {t('memoryhistory.loadIntoEditor')}
         </button>
       </div>
     </Dialog>

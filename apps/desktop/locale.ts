@@ -1,5 +1,8 @@
 import type { RuntimeReply } from '@daban/protocol';
-import { english } from './locales/en';
+import { english, type MessageKey } from './locales/en';
+import { chinese } from './locales/zh-CN';
+
+export type { MessageKey };
 
 export type Locale = 'zh-CN' | 'en';
 export const localeStorageKey = 'daban.language.v1';
@@ -10,13 +13,10 @@ export interface LocaleBridge {
 }
 export const isLocale = (value: unknown): value is Locale => value === 'zh-CN' || value === 'en';
 // Only application-owned copy belongs in this catalog; authored messages and file bodies stay literal.
-export function translate(locale: Locale, source: string | undefined, values: Parameters = {}) {
-  const copy =
-    source === undefined
-      ? ''
-      : locale === 'en' && Object.hasOwn(english, source)
-        ? english[source]
-        : source;
+export const isMessageKey = (value: unknown): value is MessageKey =>
+  typeof value === 'string' && Object.hasOwn(english, value);
+export function translate(locale: Locale, key: string | undefined, values: Parameters = {}) {
+  const copy = isMessageKey(key) ? (locale === 'en' ? english : chinese)[key] : (key ?? '');
   // Inserted names, user text and paths stay literal, even when they contain another placeholder.
   return copy.replace(/\{(\d+)\}/g, (placeholder, key: string) =>
     Object.hasOwn(values, key) ? String(values[key]) : placeholder,

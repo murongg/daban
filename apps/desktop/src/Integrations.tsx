@@ -25,7 +25,11 @@ const definite = new Set([
   'MCP_NOT_FOUND',
   'MCP_REQUEST_ID_REUSED',
 ]);
-const health = { unchecked: '未检查', ready: '上次检查可用', unavailable: '上次检查失败' };
+const health = {
+  unchecked: 'common.notChecked',
+  ready: 'integrations.availableLastCheck',
+  unavailable: 'integrations.failedLastCheck',
+} as const;
 
 export function Integrations({
   bots,
@@ -121,8 +125,8 @@ export function Integrations({
     setConflict(undefined);
     setNotice(
       value.current.revision === value.receipt.revision
-        ? t('连接已保存，请检查连接并单独为 Bot 选择工具。')
-        : t('这次保存已提交，但连接已有后续更新，请核对当前配置。'),
+        ? t('integrations.connectionSavedCheckSelectToolsSeparatelyEach')
+        : t('integrations.saveWasSubmittedButConnectionHasSince'),
     );
     await load();
   }
@@ -149,26 +153,26 @@ export function Integrations({
   const blocked = !available || busy || !!draft || accessDirty;
   return (
     <div className="settings-section integration-settings">
-      <h2>{t('外部工具')}</h2>
+      <h2>{t('common.externalTools')}</h2>
       <p className="setting-description">
-        {t('连接 MCP 服务，让 Bot 使用你选择的工具。每次实际调用仍需单独审批。')}
+        {t('integrations.connectMcpServicesSelectToolsBotsEach')}
       </p>
       <p className="field-help">
-        {t('当前支持公网 HTTPS 的 Streamable HTTP；本地程序、OAuth 登录和自定义请求头尚未接入。')}
+        {t('integrations.currentlySupportsPublicHttpsStreamableHttpLocal')}
       </p>
       {!available && (
         <p className="inline-note">
           {runtime.snapshot.protocolVersion < 21
-            ? t('更新本地运行环境后可配置外部工具。')
+            ? t('integrations.updateLocalRuntimeConfigureExternalTools')
             : runtime.snapshot.phase !== 'ready'
-              ? t('本地运行环境尚未连接，连接恢复后可管理外部工具。')
-              : t('外部工具服务暂不可用，普通对话和已有工作区仍可使用。')}
+              ? t('integrations.localRuntimeNotConnectedManageExternalTools')
+              : t('integrations.externalToolsTemporarilyUnavailableOrdinaryChatExisting')}
         </p>
       )}
       <div className="integration-actions">
         <button className="secondary" type="button" disabled={blocked} onClick={() => edit()}>
           <Plus />
-          {t('添加连接')}
+          {t('integrations.addConnection')}
         </button>
         <button
           className="secondary"
@@ -180,7 +184,7 @@ export function Integrations({
             setSelected(undefined);
           }}
         >
-          {trash ? t('返回连接') : t('已归档')}
+          {trash ? t('integrations.backConnections') : t('common.archived')}
         </button>
         <button
           className="secondary"
@@ -189,7 +193,7 @@ export function Integrations({
           onClick={() => perform(load)}
         >
           <RefreshCw />
-          {t('刷新列表')}
+          {t('common.refreshList')}
         </button>
       </div>
       {error && !archiving && (
@@ -205,7 +209,7 @@ export function Integrations({
       {draft && (
         <form
           className="inline-form"
-          aria-label={t('连接编辑')}
+          aria-label={t('integrations.editConnection')}
           onSubmit={async (event) => {
             event.preventDefault();
             await perform(save);
@@ -213,7 +217,7 @@ export function Integrations({
         >
           <fieldset className="model-fields" disabled={!available || busy || !!pending}>
             <label className="field-label">
-              {t('连接名称')}
+              {t('integrations.connectionName')}
               <input
                 className="field"
                 required
@@ -223,7 +227,7 @@ export function Integrations({
               />
             </label>
             <label className="field-label">
-              {t('服务地址')}
+              {t('integrations.serviceUrl')}
               <input
                 className="field"
                 type="url"
@@ -255,30 +259,24 @@ export function Integrations({
                   checked={draft.clearBearer}
                   onChange={(event) => setDraft({ ...draft, clearBearer: event.target.checked })}
                 />
-                {t('清除已保存的 Bearer')}
+                {t('integrations.clearSavedBearerToken')}
               </label>
             )}
-            <p className="field-help">
-              {t(
-                '地址与 Token 保存后不回显；编辑时留空沿用当前版本。清除 Bearer 不会移除地址中的凭据，需替换服务地址。未提交输入仅留在设置内存，关闭设置后会清空。',
-              )}
-            </p>
+            <p className="field-help">{t('integrations.savedUrlsTokensNeverShownAgainLeave')}</p>
           </fieldset>
           {pending && !busy && (
             <p className="inline-note">
-              {t(
-                '保存结果未确认。核对只查询回执；重试使用同一次保存。退出编辑不会撤回可能已保存的配置。',
-              )}
+              {t('integrations.saveResultUnconfirmedCheckOnlyQueriesReceipt')}
             </p>
           )}
           {conflict && (
             <div className="inline-note">
               <p>
-                {t('当前配置：')}
+                {t('integrations.currentConfiguration')}
                 {conflict.name}
-                {t('· 版本')}
+                {t('integrations.revision')}
                 {conflict.revision} · {conflict.origin}
-                {t('。未填写的地址和 Token 将沿用这个版本。')}
+                {t('integrations.blankUrlTokenFieldsRetainValuesRevision')}
               </p>
               <button
                 className="secondary"
@@ -290,7 +288,7 @@ export function Integrations({
                   setError('');
                 }}
               >
-                {t('以此版本继续编辑')}
+                {t('integrations.continueEditingRevision')}
               </button>
             </div>
           )}
@@ -313,15 +311,15 @@ export function Integrations({
                     )
                   }
                 >
-                  {t('核对保存结果')}
+                  {t('integrations.verifySaveResult')}
                 </button>
                 <button className="secondary" type="submit" disabled={busy || !available}>
-                  {t('重试这次保存')}
+                  {t('integrations.retrySave')}
                 </button>
               </>
             ) : (
               <button className="primary" type="submit" disabled={busy || !available}>
-                {busy ? t('正在保存…') : t('保存连接')}
+                {busy ? t('common.saving') : t('integrations.saveConnection')}
               </button>
             )}
             {draft.revision > 0 && !pending && (
@@ -339,7 +337,7 @@ export function Integrations({
                   })
                 }
               >
-                {t('核对当前配置')}
+                {t('integrations.verifyCurrentConfiguration')}
               </button>
             )}
             <button
@@ -352,7 +350,7 @@ export function Integrations({
                 setConflict(undefined);
               }}
             >
-              {t('退出编辑')}
+              {t('integrations.leaveEditor')}
             </button>
           </div>
         </form>
@@ -360,8 +358,8 @@ export function Integrations({
       {available && rows.length === 0 && (
         <p className="inline-note">
           {trash
-            ? t('没有已归档的连接。')
-            : t('还没有外部连接。添加后先检查目录，再为 Bot 选择工具。')}
+            ? t('integrations.noArchivedConnections')
+            : t('integrations.noExternalConnectionsYetAddOneCheck')}
         </p>
       )}
       {rows.map((row) => (
@@ -372,8 +370,10 @@ export function Integrations({
             <span className="badge">{t(health[row.health])}</span>
             <span className="field-help">
               {row.toolCount}
-              {t('个工具 ·')}
-              {row.credentialConfigured ? t('已配置凭据') : t('未配置凭据')}
+              {t('integrations.tools')}
+              {row.credentialConfigured
+                ? t('integrations.credentialsConfigured')
+                : t('integrations.noCredentialsConfigured')}
             </span>
           </div>
           <div className="integration-actions">
@@ -381,7 +381,7 @@ export function Integrations({
               <button
                 className="secondary"
                 type="button"
-                aria-label={t('恢复 {0}', { 0: row.name })}
+                aria-label={t('common.restoreNamedItem', { 0: row.name })}
                 disabled={blocked}
                 onClick={() =>
                   perform(async () => {
@@ -391,29 +391,29 @@ export function Integrations({
                       revision: row.revision,
                     });
                     if (mounted.current)
-                      setNotice(t('连接已恢复，需要重新为每位 Bot 选择并启用工具。'));
+                      setNotice(t('integrations.connectionRestoredSelectEnableToolsAgainEach'));
                     await load();
                   })
                 }
               >
                 <RotateCcw />
-                {t('恢复')}
+                {t('common.restore')}
               </button>
             ) : (
               <>
                 <button
                   className="secondary"
                   type="button"
-                  aria-label={t('编辑 {0}', { 0: row.name })}
+                  aria-label={t('common.editNamedItem', { 0: row.name })}
                   disabled={blocked}
                   onClick={() => edit(row)}
                 >
-                  {t('编辑')}
+                  {t('common.edit')}
                 </button>
                 <button
                   className="secondary"
                   type="button"
-                  aria-label={t('检查 {0}', { 0: row.name })}
+                  aria-label={t('integrations.check', { 0: row.name })}
                   disabled={!available || busy || !!draft}
                   onClick={() =>
                     perform(async () => {
@@ -422,31 +422,32 @@ export function Integrations({
                         id: row.id,
                         revision: row.revision,
                       });
-                      if (mounted.current) setNotice(t('检查完成，尚未为任何 Bot 新增工具授权。'));
+                      if (mounted.current)
+                        setNotice(t('integrations.checkCompleteNoAdditionalBotToolPermissions'));
                       await load();
                     })
                   }
                 >
-                  {t('检查连接')}
+                  {t('common.checkConnection')}
                 </button>
                 <button
                   className="secondary"
                   type="button"
-                  aria-label={t('工具与授权 {0}', { 0: row.name })}
+                  aria-label={t('integrations.namedToolsPermissions', { 0: row.name })}
                   disabled={blocked}
                   onClick={() => setSelected(selected?.id === row.id ? undefined : row)}
                 >
-                  {t('工具与授权')}
+                  {t('integrations.toolsPermissions')}
                 </button>
                 <button
                   className="secondary"
                   type="button"
-                  aria-label={t('归档 {0}', { 0: row.name })}
+                  aria-label={t('integrations.archive', { 0: row.name })}
                   disabled={blocked}
                   onClick={() => setArchiving(row)}
                 >
                   <Archive />
-                  {t('归档')}
+                  {t('common.archive')}
                 </button>
               </>
             )}
@@ -463,7 +464,7 @@ export function Integrations({
       )}
       {archiving && (
         <Dialog
-          title={t('归档连接')}
+          title={t('integrations.archiveConnection')}
           onClose={() => {
             if (!busy) setArchiving(undefined);
           }}
@@ -474,14 +475,12 @@ export function Integrations({
             </p>
           )}
           <p>
-            {t('归档“')}
+            {t('integrations.archiveNamePrefix')}
             {archiving.name}
-            {t(
-              '”会停用所有 Bot 对此连接的工具授权，并取消尚未执行的调用。已发出的外部操作可能已经生效。',
-            )}
+            {t('integrations.disablesAllBotsAccessConnectionCancelsCalls')}
           </p>
           <p className="field-help">
-            {t('连接可以恢复，恢复后需要重新为每位 Bot 选择并启用工具。')}
+            {t('integrations.connectionCanRestoredSelectEnableToolsAgain')}
           </p>
           <div className="inline-form-actions">
             <button
@@ -503,7 +502,7 @@ export function Integrations({
                 })
               }
             >
-              {t('确认归档')}
+              {t('common.confirmArchive')}
             </button>
             <button
               className="secondary"
@@ -511,7 +510,7 @@ export function Integrations({
               disabled={busy}
               onClick={() => setArchiving(undefined)}
             >
-              {t('取消')}
+              {t('common.cancel')}
             </button>
           </div>
         </Dialog>

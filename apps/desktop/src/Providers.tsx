@@ -183,11 +183,11 @@ export function Providers() {
           })),
         };
         if (!isModelConnection(connection)) {
-          setError(t('请检查 API 地址和模型配置；模型 ID 不能重复，输出上限不能超过上下文窗口。'));
+          setError(t('models.checkApiUrlModelConfigurationModelIds'));
           return;
         }
         if ((!retainKey && !draft.apiKey) || (draft.apiKey && !isModelKey(draft.apiKey))) {
-          setError(t('请为这个供应商填写完整的 API Key。更换 API 地址或接口协议时需要重新填写。'));
+          setError(t('models.enterCompleteApiKeyProviderChangingApi'));
           return;
         }
         const selectedModel = draft.defaultFirst
@@ -199,7 +199,7 @@ export function Providers() {
         ]);
         // Editing or removing a model must not silently choose a replacement based on its row position.
         if (!nextCatalog.some((entry) => entry.id === selectedModel)) {
-          setError(t('当前默认模型已被移除或改名，请明确将首个模型设为默认后再保存。'));
+          setError(t('models.currentDefaultModelWasRemovedRenamedExplicitly'));
           return;
         }
         input = {
@@ -231,7 +231,7 @@ export function Providers() {
         setDefaultRevision(undefined);
         setPending(undefined);
         setChecked(undefined);
-        setNotice(t('模型设置已保存，下次任务生效。'));
+        setNotice(t('models.modelSettingsSavedChangesApplyNextTask'));
       }
     } catch (failure) {
       if (mounted.current) {
@@ -278,9 +278,9 @@ export function Providers() {
     <div className="provider-settings">
       <div className="setting-row">
         <div>
-          <div className="setting-label">{t('供应商与模型')}</div>
+          <div className="setting-label">{t('models.providersModels')}</div>
           <p className="setting-description">
-            {t('添加常用供应商或自定义接口，为不同 Bot 选择模型。密钥只保存在本机 Agent 服务中。')}
+            {t('models.addCommonProviderCustomApiChooseModels')}
           </p>
         </div>
         <button
@@ -289,7 +289,7 @@ export function Providers() {
           disabled={!available || busy || !!draft || !!pending}
           onClick={() => edit()}
         >
-          {t('添加供应商')}
+          {t('models.addProvider')}
         </button>
       </div>
       {connections.map((connection) => (
@@ -307,28 +307,28 @@ export function Providers() {
           <button
             className="text-button"
             type="button"
-            aria-label={t('编辑 {0}', { 0: connection.name })}
+            aria-label={t('common.editNamedItem', { 0: connection.name })}
             disabled={!available || busy || !!draft || !!pending}
             onClick={() => edit(connection)}
           >
-            {t('编辑')}
+            {t('common.edit')}
           </button>
         </div>
       ))}
       {model.connections === undefined && (
         <p className="inline-note">
-          {t('模型目录暂不可用，未提交输入与待核对操作已保留。恢复连接后可继续编辑。')}
+          {t('models.modelCatalogUnavailableUnsavedInputPendingOperations')}
         </p>
       )}
       {model.connections !== undefined && !connections.length && (
-        <p className="inline-note">{t('先添加一个供应商，再选择工作区和每位 Bot 的模型。')}</p>
+        <p className="inline-note">{t('models.addProviderChoosingWorkspacePerBotModels')}</p>
       )}
       {!draft && catalog.length > 0 && (
         <div className="provider-default">
           <div className="field-label">
-            {t('工作区默认模型')}
+            {t('models.workspaceDefault')}
             <Select
-              label={t('工作区默认模型')}
+              label={t('models.workspaceDefault')}
               value={current}
               disabled={!available || busy || !!pending}
               onValueChange={(value) => {
@@ -340,11 +340,7 @@ export function Providers() {
               options={modelChoices(connections, current)}
             />
           </div>
-          <p className="field-help">
-            {t(
-              '仅影响选择「跟随工作区」的 Bot；运行中的任务继续使用原模型。连接验证可能发送固定的测试请求，产生少量 API 费用，不包含你的聊天内容。',
-            )}
-          </p>
+          <p className="field-help">{t('models.onlyAffectsBotsFollowWorkspaceDefaultRunning')}</p>
           <div className="model-actions">
             <button
               className="secondary"
@@ -357,7 +353,11 @@ export function Providers() {
               }
               onClick={save}
             >
-              {pending ? t('核对并重试保存') : busy ? t('正在保存…') : t('保存默认模型')}
+              {pending
+                ? t('common.verifyRetrySave')
+                : busy
+                  ? t('common.saving')
+                  : t('models.saveDefaultModel')}
             </button>
             <button
               className="text-button"
@@ -365,14 +365,14 @@ export function Providers() {
               disabled={!available || busy || !!pending || !model.configured}
               onClick={check}
             >
-              {t('检查默认连接')}
+              {t('models.checkDefaultConnection')}
             </button>
           </div>
           {code === 'MODEL_SETTINGS_CONFLICT' && (
             <div className="inline-note">
-              <p>{t('模型设置已由其他操作更新，请核对后保留选择重试。')}</p>
+              <p>{t('models.modelSettingsChangedElsewhereReviewThemRetain')}</p>
               <p>
-                {t('当前默认模型：')}
+                {t('models.currentDefaultModel')}
                 {modelName(model.model, connections)}
               </p>
               <button
@@ -384,7 +384,7 @@ export function Providers() {
                   setError('');
                 }}
               >
-                {t('保留输入，按当前版本重试')}
+                {t('models.keepInputRetryCurrentRevision')}
               </button>
             </div>
           )}
@@ -401,9 +401,9 @@ export function Providers() {
           <fieldset className="model-fields" disabled={!available || busy || !!pending}>
             {draft.connection.id !== 'deepseek-official' && (
               <div className="field-label">
-                {t('供应商类型')}
+                {t('models.providerType')}
                 <Select
-                  label={t('供应商类型')}
+                  label={t('models.providerType')}
                   value={draft.preset}
                   disabled={!available || busy || !!pending}
                   options={presets.map((preset) => ({
@@ -429,9 +429,9 @@ export function Providers() {
               </div>
             )}
             <div className="field-label">
-              {t('接口协议')}
+              {t('models.apiProtocol')}
               <Select
-                label={t('接口协议')}
+                label={t('models.apiProtocol')}
                 value={modelApi(draft.connection)}
                 disabled={
                   !available || busy || !!pending || draft.connection.id === 'deepseek-official'
@@ -454,7 +454,7 @@ export function Providers() {
             </div>
             <div className="provider-pair">
               <label className="field-label">
-                {t('供应商名称')}
+                {t('models.providerName')}
                 <input
                   className="field"
                   required
@@ -469,7 +469,7 @@ export function Providers() {
                 />
               </label>
               <label className="field-label">
-                {t('API 地址')}
+                {t('models.apiUrl')}
                 <input
                   className="field"
                   required
@@ -488,21 +488,13 @@ export function Providers() {
               </label>
             </div>
             {draft.connection.id === 'deepseek-official' && (
-              <p className="field-help">
-                {t('DeepSeek 官方连接使用固定地址。如需使用网关，请另外添加供应商。')}
-              </p>
+              <p className="field-help">{t('models.officialDeepseekConnectionUsesFixedUrlAdd')}</p>
             )}
             {modelApi(draft.connection) === 'anthropic-messages' && (
-              <p className="field-help">
-                {t(
-                  'Claude 原生 API 地址填写服务根地址，例如 https://api.anthropic.com，不带 /v1。',
-                )}
-              </p>
+              <p className="field-help">{t('models.claudeSNativeApiEnterServiceRoot')}</p>
             )}
             {modelApi(draft.connection) === 'google-generative-ai' && (
-              <p className="field-help">
-                {t('Gemini 原生 API 使用 /v1beta 地址。模型 ID 从供应商控制台复制。')}
-              </p>
+              <p className="field-help">{t('models.geminiSNativeApiUsesV1betaUrl')}</p>
             )}
             <label className="field-label">
               API Key
@@ -519,15 +511,11 @@ export function Providers() {
             </label>
             <p className="field-help">
               {retainKey
-                ? t('留空保留这个供应商的现有密钥。')
-                : t('新供应商、新的 API 地址或接口协议需要单独填写密钥。')}{' '}
-              {t('密钥不会写入客户端存储；关闭设置后会清空未提交输入。')}
+                ? t('models.leaveBlankRetainProviderSCurrentKey')
+                : t('models.newProviderApiUrlProtocolRequiresOwn')}{' '}
+              {t('models.keysNotWrittenAppStorageUnsavedInput')}
             </p>
-            <p className="inline-note">
-              {t(
-                '使用所选接口协议。请按供应商文档填写模型 ID 和能力。保存时会验证连接；必要时发送固定的测试请求，产生少量 API 费用，不包含你的聊天内容。',
-              )}
-            </p>
+            <p className="inline-note">{t('models.usesSelectedApiProtocolEnterModelId')}</p>
             {query && (
               <ModelCatalog
                 query={query}
@@ -537,25 +525,19 @@ export function Providers() {
               />
             )}
             {model.inspection !== true && (
-              <p className="field-help">
-                {t('更新本机 Agent 后可加载模型、测试调用和匹配上下文。')}
-              </p>
+              <p className="field-help">{t('models.updateLocalAgentLoadModelsTestCalls')}</p>
             )}
-            <p className="field-help">
-              {t(
-                '测试模型会发送固定短提示，可能产生少量 API 费用；不包含聊天内容，也不会保存配置。',
-              )}
-            </p>
+            <p className="field-help">{t('models.testingSendsFixedShortPromptMayIncur')}</p>
             <div className="provider-models">
               {draft.connection.models.map((entry, index) => (
                 <fieldset className="provider-model" key={draft.keys[index]}>
-                  <legend>{t('模型 {0}', { 0: index + 1 })}</legend>
+                  <legend>{t('models.numberedModel', { 0: index + 1 })}</legend>
                   <div className="provider-pair">
                     <label className="field-label">
-                      {t('模型 ID')}
+                      {t('models.modelId')}
                       <input
                         className="field"
-                        aria-label={t('模型 {0} ID', { 0: index + 1 })}
+                        aria-label={t('models.numberedModelId', { 0: index + 1 })}
                         required
                         maxLength={160}
                         spellCheck={false}
@@ -564,10 +546,10 @@ export function Providers() {
                       />
                     </label>
                     <label className="field-label">
-                      {t('显示名称')}
+                      {t('models.displayName')}
                       <input
                         className="field"
-                        aria-label={t('模型 {0} 名称', { 0: index + 1 })}
+                        aria-label={t('models.modelName', { 0: index + 1 })}
                         maxLength={120}
                         value={entry.name}
                         onChange={(event) => updateModel(index, { name: event.target.value })}
@@ -586,19 +568,19 @@ export function Providers() {
                   <label className="provider-vision">
                     <input
                       type="checkbox"
-                      aria-label={t('模型 {0} 支持图片', { 0: index + 1 })}
+                      aria-label={t('models.modelSupportsImages', { 0: index + 1 })}
                       checked={entry.vision}
                       onChange={(event) => updateModel(index, { vision: event.target.checked })}
                     />
-                    {t('支持图片与桌面观察')}
+                    {t('models.supportsImagesDesktopObservation')}
                   </label>
                   <details className="provider-limits">
-                    <summary>{t('上下文与输出上限')}</summary>
+                    <summary>{t('models.contextOutputLimits')}</summary>
                     <div className="provider-pair">
                       <div className="field-label">
-                        {t('上下文窗口')}
+                        {t('models.contextWindow')}
                         <NumberField
-                          label={t('模型 {0} 上下文窗口', { 0: index + 1 })}
+                          label={t('models.modelContextWindow', { 0: index + 1 })}
                           value={String(entry.contextWindow)}
                           required
                           min={4096}
@@ -609,9 +591,9 @@ export function Providers() {
                         />
                       </div>
                       <div className="field-label">
-                        {t('最大输出 Token')}
+                        {t('models.maximumOutputTokens')}
                         <NumberField
-                          label={t('模型 {0} 最大输出', { 0: index + 1 })}
+                          label={t('models.modelMaximumOutput', { 0: index + 1 })}
                           value={String(entry.maxTokens)}
                           required
                           min={128}
@@ -627,7 +609,7 @@ export function Providers() {
                     <button
                       className="text-button"
                       type="button"
-                      aria-label={t('移除模型 {0}', { 0: index + 1 })}
+                      aria-label={t('models.removeNumberedModel', { 0: index + 1 })}
                       onClick={() =>
                         setDraft({
                           ...draft,
@@ -641,7 +623,7 @@ export function Providers() {
                         })
                       }
                     >
-                      {t('移除此模型')}
+                      {t('models.removeThisModel')}
                     </button>
                   )}
                 </fieldset>
@@ -662,7 +644,7 @@ export function Providers() {
                 })
               }
             >
-              {t('添加模型')}
+              {t('models.addModel')}
             </button>
             <label className="provider-default-choice">
               <input
@@ -671,17 +653,17 @@ export function Providers() {
                 disabled={!model.configured}
                 onChange={(event) => setDraft({ ...draft, defaultFirst: event.target.checked })}
               />
-              {t('将首个模型设为工作区默认模型')}
+              {t('models.setFirstModelWorkspaceDefault')}
             </label>
           </fieldset>
           {pending && !busy && (
             <p className="inline-note">
-              {t('保存结果未确认。重试会核对同一次操作，不会改用其他密钥或模型。')}
+              {t('models.saveResultUnconfirmedRetryingChecksSameOperation')}
             </p>
           )}
           {code === 'MODEL_SETTINGS_CONFLICT' && (
             <div className="inline-note">
-              <p>{t('后台设置已更新，请核对后保留输入重试。')}</p>
+              <p>{t('models.serverSettingsChangedReviewThemRetainInput')}</p>
               <button
                 className="secondary"
                 type="button"
@@ -692,7 +674,7 @@ export function Providers() {
                   setError('');
                 }}
               >
-                {t('保留输入，按当前版本重试')}
+                {t('models.keepInputRetryCurrentRevision')}
               </button>
             </div>
           )}
@@ -708,10 +690,14 @@ export function Providers() {
                 setError('');
               }}
             >
-              {t('取消编辑')}
+              {t('models.cancelEditing')}
             </button>
             <button className="primary" type="submit" disabled={!available || busy}>
-              {busy ? t('正在验证并保存…') : pending ? t('核对并重试保存') : t('验证并保存供应商')}
+              {busy
+                ? t('models.verifyingSaving')
+                : pending
+                  ? t('common.verifyRetrySave')
+                  : t('models.verifySaveProvider')}
             </button>
           </div>
         </form>
@@ -728,7 +714,7 @@ export function Providers() {
       )}
       {checked?.revision === model.revision && checked?.model === model.model && (
         <p className="inline-note" role="status">
-          {t('默认连接检查通过 ·')}
+          {t('models.defaultConnectionCheckPassed')}
           {new Date(checked.checkedAt).toLocaleTimeString(getLocale())}
         </p>
       )}

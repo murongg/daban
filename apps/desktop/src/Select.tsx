@@ -46,7 +46,7 @@ export function Select({
       isDisabled={disabled}
       isOpen={open && !disabled}
       onOpenChange={setOpen}
-      placeholder={t('请选择')}
+      placeholder={t('select.selectOption')}
       onSelectionChange={(key) => {
         const option = options.find((item) => `option:${item.value}` === key);
         if (option && !disabled && !option.disabled) onValueChange(option.value);
@@ -57,7 +57,7 @@ export function Select({
           {({ selectedText }) => (
             <span className="select-label">
               {selected?.icon}
-              <span className="select-text">{selectedText || t('请选择')}</span>
+              <span className="select-text">{selectedText || t('select.selectOption')}</span>
             </span>
           )}
         </SelectValue>

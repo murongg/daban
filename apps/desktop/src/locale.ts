@@ -1,7 +1,16 @@
 import { useSyncExternalStore } from 'react';
-import { isLocale, type Locale, localeStorageKey, type Parameters, translate } from '../locale';
+import {
+  isLocale,
+  type Locale,
+  localeStorageKey,
+  type MessageKey,
+  type Parameters,
+  translate,
+} from '../locale';
 import { clientCache } from './cache';
 
+export { isMessageKey } from '../locale';
+export type { MessageKey };
 export { localeStorageKey };
 
 let generation = 0;
@@ -35,8 +44,8 @@ function subscribe(listener: () => unknown) {
 export function useLocale() {
   return useSyncExternalStore(subscribe, getLocale, () => 'zh-CN' as const);
 }
-export function t(source: string | undefined, values?: Parameters) {
-  return translate(getLocale(), source, values);
+export function t(key: MessageKey | undefined, values?: Parameters) {
+  return translate(getLocale(), key, values);
 }
 export async function setLocale(locale: Locale) {
   if (!isLocale(locale)) throw new Error('INVALID_LOCALE');

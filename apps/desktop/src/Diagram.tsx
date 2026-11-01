@@ -59,12 +59,12 @@ export function Diagram({
   const current = !streaming && result?.key === key ? result : undefined;
   const preview = current?.url ? (
     // biome-ignore lint/a11y/noNoninteractiveTabindex: Wide diagrams need an independently keyboard-scrollable surface.
-    <section className="markdown-diagram" tabIndex={0} aria-label={t('Mermaid 图表')}>
+    <section className="markdown-diagram" tabIndex={0} aria-label={t('diagram.mermaidDiagram')}>
       <img
         src={current.url}
         width={current.width}
         height={current.height}
-        alt={current.label || t('Mermaid 图表，描述见源码')}
+        alt={current.label || t('diagram.mermaidDiagramSeeSourceDescription')}
       />
     </section>
   ) : undefined;
@@ -81,8 +81,8 @@ export function Diagram({
           : current
             ? current.url
               ? undefined
-              : t('图表未能绘制，已保留源码。')
-            : t('正在绘制图表…')
+              : t('diagram.diagramCouldNotRenderedSourceRetained')
+            : t('diagram.renderingDiagram')
       }
     >
       {children}

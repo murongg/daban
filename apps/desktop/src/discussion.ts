@@ -28,9 +28,9 @@ const rejected = new Set([
 const notSent = new Set(['INVALID_COMMAND', 'RUNTIME_TOO_OLD', 'RUNTIME_RECOVERY_PENDING']);
 function message(error: unknown) {
   if (error instanceof Error && error.message === 'WORK_CONFLICT')
-    return t('任务已更新，评论正文仍保留。核对最新任务后再发表评论。');
+    return t('discussion.taskUpdatedCommentRetainedReviewLatestTask');
   if (error instanceof Error && error.message === 'WORK_TRASHED')
-    return t('任务已在回收站，评论正文仍保留。恢复任务后可继续发表。');
+    return t('discussion.taskAlreadyTrashCommentRetainedRestoreTask');
   return runtimeError(error);
 }
 export function useComments(
@@ -105,7 +105,7 @@ export function useComments(
         setLoaded(true);
       } catch (error) {
         if (mounted.current && token === listing.current)
-          setListError(t('讨论暂时无法读取。{0}', { 0: runtimeError(error) }));
+          setListError(t('discussion.discussionUnreadableRightNow', { 0: runtimeError(error) }));
       } finally {
         if (mounted.current && token === listing.current) setLoading(false);
       }
@@ -134,14 +134,14 @@ export function useComments(
         throw Error('INVALID_WORK_COMMENT_ACK');
       if (value.state === 'unknown') {
         if (!readOnly) throw Error('INVALID_WORK_COMMENT_ACK');
-        setStatus(t('暂未查到发表记录。正文和原评论请求仍保留，可以继续核对或重试。'));
+        setStatus(t('discussion.noPostingRecordFoundYetCommentOriginal'));
         return;
       }
       pending.current = undefined;
       dispatch({ type: 'comment-settle', receipt: value });
       observe(value.item);
       setError('');
-      setStatus(t('评论已发表。'));
+      setStatus(t('discussion.commentPosted'));
       load().catch(() => {});
     },
     [dispatch, observe, load, owns],
@@ -191,7 +191,7 @@ export function useComments(
       // Persist the exact intent before dispatch: an uncertain reply must recover this request rather than create another.
       clientCache().setItem(storageKey, serialize(updated));
     } catch {
-      setError(t('本机无法保存操作记录，评论尚未发送。请释放存储空间后重试；正文仍保留。'));
+      setError(t('discussion.operationRecordsCouldNotSavedLocallyComment'));
       return;
     }
     if (!resuming) dispatch(action);
@@ -235,7 +235,7 @@ export function useComments(
     if (!available || blocked || busyParent || pending.current || writer.current) return;
     const draft = commentCard(current.current.comments, item.id).draft;
     if (!draft?.body.trim() || draft.body.length > 10000 || draft.body.includes('\0')) {
-      setError(t('请填写评论正文，最多 10,000 字符。'));
+      setError(t('discussion.enterCommentUpCharacters'));
       return;
     }
     const captured = structuredClone(draft),
@@ -260,11 +260,11 @@ export function useComments(
         throw Error('INVALID_WORK_ITEM');
       observe(value);
       if (value.deleted) {
-        setError(t('任务已在回收站，恢复后可继续发表评论。'));
+        setError(t('discussion.taskAlreadyTrashRestorePostMoreComments'));
         return;
       }
       if (!sameWorkContent(previous, value)) {
-        setError(t('任务已有更新。请核对最新任务内容，再发表保留的评论。'));
+        setError(t('discussion.taskHasChangedReviewLatestContentPosting'));
         return;
       }
       const request = {

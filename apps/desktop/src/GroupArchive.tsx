@@ -81,10 +81,10 @@ export function GroupArchive({
     if (!mounted.current) return;
     notify(
       value.group.revision !== value.receipt.revision
-        ? t('此前操作已完成，群聊后来已更新，已显示当前状态。')
+        ? t('grouparchive.earlierOperationCompletedGroupWasUpdatedLater')
         : request.action === 'archive'
-          ? t('群聊已归档，历史、文件和草稿保留。')
-          : t('群聊已恢复，旧消息不会自动派发。'),
+          ? t('grouparchive.groupArchivedHistoryFilesDraftsRetained')
+          : t('grouparchive.groupRestoredOldMessagesNotDispatchedAutomatically'),
     );
     close();
   }
@@ -124,43 +124,46 @@ export function GroupArchive({
     }
   }
   return (
-    <Dialog title={action === 'archive' ? t('归档群聊') : t('恢复群聊')} onClose={close}>
+    <Dialog
+      title={action === 'archive' ? t('common.archiveGroup') : t('common.restoreGroup')}
+      onClose={close}
+    >
       <div className="archive-identity">
         <Avatar bot={bot} />
         <strong>{acknowledged ? bot.name : current?.name || bot.name}</strong>
       </div>
       <p className="dialog-description">
         {action === 'archive'
-          ? t(
-              '归档后不再接受新协作。成员、历史、附件、文件和未发送草稿都会保留，成员的私聊与电脑不受影响。',
-            )
-          : t('恢复群聊的使用入口，旧消息不会自动派发，成员各自的状态和权限保持原样。')}
+          ? t('grouparchive.archivingStopsNewCollaborationMembersHistoryAttachments')
+          : t('grouparchive.restoreAccessGroupOldMessagesNotDispatched')}
       </p>
       {!available && (
-        <p className="inline-note">{t('连接更新后的本地环境，才能归档、恢复或核对这次操作。')}</p>
+        <p className="inline-note">
+          {t('grouparchive.connectUpdatedLocalEnvironmentArchiveRestoreVerify')}
+        </p>
       )}
       {pending && (
         <p className="inline-note">
-          {t('上一次')}
-          {pending.action === 'archive' ? t('归档') : t('恢复')}
-          {t('尚待核对。关闭弹窗不会撤回已提交的操作，请核对结果或重试同一次操作。')}
+          {t('grouparchive.previous')}
+          {pending.action === 'archive' ? t('common.archive') : t('common.restore')}
+          {t('grouparchive.needsVerificationClosingDialogDoesNotWithdraw')}
         </p>
       )}
       {error && (
         <p className="form-error" role="alert">
           {code === 'GROUP_BUSY'
-            ? t('先结束群聊中尚未完成的协作，再归档。成员的独立任务无需停止。')
+            ? t('grouparchive.finishGroupSOngoingCollaborationArchivingMembers')
             : error}
         </p>
       )}
       {code === 'GROUP_BUSY' && navigate && (
         <button className="secondary" type="button" onClick={navigate}>
-          {t('返回群聊')}
+          {t('grouparchive.backGroup')}
         </button>
       )}
       <div className="dialog-actions">
         <button className="text-button" type="button" onClick={close}>
-          {t('关闭')}
+          {t('common.close')}
         </button>
         {pending && (
           <button
@@ -180,7 +183,7 @@ export function GroupArchive({
               )
             }
           >
-            {t('核对操作结果')}
+            {t('common.verifyOperationResult')}
           </button>
         )}
         <button
@@ -190,12 +193,12 @@ export function GroupArchive({
           onClick={() => perform(submit)}
         >
           {busy
-            ? t('正在处理…')
+            ? t('common.processing')
             : pending
-              ? t('重试同一次操作')
+              ? t('common.retrySameOperation')
               : action === 'archive'
-                ? t('确认归档')
-                : t('确认恢复')}
+                ? t('common.confirmArchive')
+                : t('common.confirmRestore')}
         </button>
       </div>
     </Dialog>

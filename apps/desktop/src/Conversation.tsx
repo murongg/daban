@@ -36,35 +36,35 @@ import {
 import { Tooltip } from './Tooltip';
 
 function progress(task: RuntimeTask) {
-  if (task.phase === 'waiting') return t('等待你的回复');
-  if (task.phase === 'paused') return t('等待你交还电脑');
-  if (task.phase === 'starting') return t('正在准备回复');
-  if (task.response?.state === 'streaming' && task.response.text) return t('正在回复');
-  if (!task.toolCount) return t('正在思考');
+  if (task.phase === 'waiting') return t('common.waitingReply');
+  if (task.phase === 'paused') return t('chat.waitingHandBackControl');
+  if (task.phase === 'starting') return t('chat.preparingResponse');
+  if (task.response?.state === 'streaming' && task.response.text) return t('chat.replying');
+  if (!task.toolCount) return t('chat.thinking');
   const tool = task.trace.at(-1);
   if (tool?.surface === 'web')
-    return tool.name === 'web_search' ? t('正在搜索') : t('正在读取网页');
+    return tool.name === 'web_search' ? t('chat.searching') : t('chat.readingWebpage');
   if (tool?.surface === 'browser') {
     const browser: Record<string, string> = {
-      browser_navigate: t('正在浏览网页'),
-      browser_snapshot: t('正在读取页面'),
-      browser_act: t('正在操作网页'),
-      browser_tabs: t('正在管理标签页'),
-      browser_upload: t('正在上传文件'),
-      browser_download: t('正在下载文件'),
+      browser_navigate: t('chat.browsingWeb'),
+      browser_snapshot: t('chat.readingPage'),
+      browser_act: t('chat.interactingWebpage'),
+      browser_tabs: t('chat.managingTabs'),
+      browser_upload: t('chat.uploadingFile'),
+      browser_download: t('chat.downloadingFile'),
     };
-    return browser[tool.name] || t('正在操作浏览器');
+    return browser[tool.name] || t('chat.controllingBrowser');
   }
-  if (tool?.surface === 'desktop') return t('正在操作电脑');
+  if (tool?.surface === 'desktop') return t('chat.controllingComputer');
   const labels: Record<string, string> = {
-    skill: t('正在加载技能'),
-    schedule: t('正在管理定时任务'),
-    memory: t('正在整理工作偏好'),
-    history: t('正在查找历史'),
-    work: t('正在整理待办'),
-    catalog: t('正在查看任务目录'),
+    skill: t('chat.loadingSkill'),
+    schedule: t('chat.managingSchedules'),
+    memory: t('chat.organizingWorkPreferences'),
+    history: t('chat.findingHistory'),
+    work: t('chat.organizingDos'),
+    catalog: t('chat.readingTaskCatalog'),
   };
-  return labels[tool?.surface || ''] || t('正在使用工具');
+  return labels[tool?.surface || ''] || t('chat.usingTools');
 }
 export function Conversation({
   state,
@@ -133,22 +133,22 @@ export function Conversation({
   const modelName = shownModel
     ? displayModel(shownModel, runtime.snapshot.model.connections)
     : task?.running
-      ? t('模型准备中')
-      : t('选择模型');
+      ? t('chat.preparingModel')
+      : t('chat.chooseModel');
   const nextModelName = displayModel(configuredModel, runtime.snapshot.model.connections);
-  let modelLabel = modelPicker ? modelName : t('选择模型');
+  let modelLabel = modelPicker ? modelName : t('chat.chooseModel');
   if (modelPicker && shownModel === 'deepseek-flash') modelLabel = 'Flash';
   if (modelPicker && shownModel === 'deepseek-v4-pro') modelLabel = 'V4 Pro';
-  let modelCaption = t('界面演示 · 尚未连接模型');
+  let modelCaption = t('chat.uiDemoNoModelConnected');
   if (runtime.enabled) {
-    modelCaption = live ? t('通用 Agent') : t('群聊协作尚未接入');
+    modelCaption = live ? t('common.generalAgent') : t('chat.groupCollaborationNotConnectedYet');
     if (modelPicker) {
       modelCaption = task?.running
-        ? t('本轮：{0}{1}', {
+        ? t('chat.task', {
             0: modelName,
-            1: configuredModel !== task.model ? t(' · 下次任务：{0}', { 0: nextModelName }) : '',
+            1: configuredModel !== task.model ? t('chat.nextTask', { 0: nextModelName }) : '',
           })
-        : `${modelName} · ${bot.model ? t('此 Bot 设置') : t('跟随工作区')}`;
+        : `${modelName} · ${bot.model ? t('chat.botSettings') : t('common.followWorkspace')}`;
     }
   }
   const end = useRef<HTMLDivElement>(null);
@@ -197,7 +197,7 @@ export function Conversation({
   function send() {
     if (readOnly || recovering) return;
     if (state.attachmentUploads[bot.id]) {
-      notify(t('请等待附件准备完成后发送。'));
+      notify(t('common.waitUntilAttachmentsReadySending'));
       return;
     }
     if (busyInGroup || computerChanging || (!draft.trim() && !attachments.length)) return;
@@ -318,19 +318,19 @@ export function Conversation({
         {(message.streaming || message.incomplete) && (
           <p className="inline-note reply-state">
             {message.incomplete
-              ? t('回复未完成')
+              ? t('chat.responseIncomplete')
               : task?.phase === 'waiting'
-                ? t('等待你的回复')
+                ? t('common.waitingReply')
                 : task?.phase === 'paused'
-                  ? t('等待交还电脑')
-                  : t('回复进行中')}
+                  ? t('common.waitingComputerHandback')
+                  : t('chat.responding')}
           </p>
         )}
         {message.files?.map(artifact)}
         {message.files?.includes('weekly-summary') && (
           <div className="artifact-note">
             <Check />
-            {t('草稿已就绪，等待你查看')}
+            {t('chat.draftReadyReview')}
           </div>
         )}
         {message.handoff && (
@@ -341,18 +341,18 @@ export function Conversation({
             onClick={() => dispatch({ type: 'panel', panel: 'computer' })}
           >
             <Monitor />
-            {t('查看电脑')}
+            {t('chat.viewComputer')}
           </button>
         )}
       </article>
     );
   }
   return (
-    <section className="conversation" aria-label={t('{0}的对话', { 0: bot.name })}>
+    <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
       <div
         className="transcript"
         role="log"
-        aria-label={t('对话记录')}
+        aria-label={t('chat.conversationRecords')}
         aria-live="polite"
         onScroll={(event) => {
           const element = event.currentTarget;
@@ -362,7 +362,7 @@ export function Conversation({
         {entries.length ? (
           <>
             <div className="message-date">
-              {live ? t('本机任务与对话') : t('今天 10:24 · 示例对话')}
+              {live ? t('chat.localTasksConversations') : t('chat.todayExampleConversation')}
             </div>
             {earlier.map(renderMessage)}
           </>
@@ -370,13 +370,17 @@ export function Conversation({
           <div className="empty-chat">
             <Avatar bot={bot} size="large" />
             <h2>
-              {t('和')}
+              {t('common.and')}
               {bot.name}
-              {t('开始协作')}
+              {t('chat.startCollaboration')}
             </h2>
-            <p>{bot.role || t('给这位 Bot 一个目标，从第一条消息开始。')}</p>
+            <p>{bot.role || t('chat.giveBotGoalStartFirstMessage')}</p>
             <div className="suggestions">
-              {[t('帮我整理一份资料'), t('一起完善这个想法'), t('安排今天的工作')].map((text) => (
+              {[
+                t('chat.organizeReferenceMaterials'),
+                t('chat.exploreIdeaTogether'),
+                t('chat.planTodaySWork'),
+              ].map((text) => (
                 <button
                   type="button"
                   key={text}
@@ -411,10 +415,10 @@ export function Conversation({
       <div className="composer-wrap">
         {!!state.chatRequests[bot.id] && (
           <div className="archive-banner">
-            <p>{t('对话操作待核对，历史和草稿保留。')}</p>
+            <p>{t('chat.conversationActionNeedsVerificationHistoryDraftsRetained')}</p>
             {onNewChat && (
               <button type="button" className="secondary" onClick={onNewChat}>
-                {t('核对对话操作')}
+                {t('common.verifyConversationAction')}
               </button>
             )}
           </div>
@@ -423,21 +427,21 @@ export function Conversation({
           <div className="archive-banner">
             <p>
               {operation
-                ? t('先核对 Bot 操作结果，再发送新任务。')
-                : t('此 Bot 已归档，历史和未发送草稿保留。')}
+                ? t('chat.verifyBotOperationResultSendingNewTask')
+                : t('chat.botArchivedHistoryUnsentDraftsRetained')}
             </p>
             {onLifecycle && (
               <button type="button" className="secondary" onClick={onLifecycle}>
-                {operation ? t('核对 Bot 状态') : t('恢复 Bot')}
+                {operation ? t('chat.verifyBotState') : t('common.restoreBot')}
               </button>
             )}
           </div>
         )}
         {busyInGroup && (
           <div className="live-task" role="status">
-            <span>{t('正在群聊中处理任务')}</span>
+            <span>{t('common.workingGroupTask')}</span>
             <button type="button" onClick={() => dispatch({ type: 'select', bot: busyInGroup })}>
-              {t('前往群聊')}
+              {t('chat.openGroup')}
             </button>
           </div>
         )}
@@ -448,13 +452,13 @@ export function Conversation({
           ['failed', 'stopped', 'interrupted'].includes(task.phase) &&
           task.prompt && (
             <div className="live-task" role="status">
-              <span>{t('任务已中断，已保存文件仍保留')}</span>
+              <span>{t('chat.taskInterruptedSavedFilesRetained')}</span>
               <button
                 type="button"
                 disabled={pending || runtime.snapshot.phase !== 'ready'}
                 onClick={onContinue}
               >
-                {t('继续处理')}
+                {t('chat.continueWorking')}
               </button>
             </div>
           )}
@@ -463,9 +467,9 @@ export function Conversation({
             <span>{progress(task)}</span>
             {task.executedCount > 0 && (
               <span>
-                {t('已调用工具')}
+                {t('chat.toolCalled')}
                 {task.executedCount}
-                {t('次')}
+                {t('chat.times')}
               </span>
             )}
             <button
@@ -476,15 +480,15 @@ export function Conversation({
                   .catch((error) => notify(String(error)))
               }
             >
-              {t('停止任务')}
+              {t('chat.stopTask')}
             </button>
           </div>
         )}
         {pending && (
           <div className="live-task" role="status">
-            <span>{t('正在确认任务是否启动')}</span>
+            <span>{t('chat.verifyingWhetherTaskStarted')}</span>
             <button type="button" onClick={onSend}>
-              {t('重试发送')}
+              {t('common.retrySend')}
             </button>
           </div>
         )}
@@ -499,7 +503,7 @@ export function Conversation({
         >
           {dragging && (
             <p className="inline-note" role="status">
-              {t('松开即可添加附件')}
+              {t('common.dropAddAttachments')}
             </p>
           )}
           {attachments.length > 0 && (
@@ -510,14 +514,14 @@ export function Conversation({
                   <button
                     type="button"
                     className="attachment-open"
-                    aria-label={t('预览附件 {0}', { 0: file.name })}
+                    aria-label={t('chat.previewAttachment', { 0: file.name })}
                     onClick={() => preview(file)}
                   >
                     {file.name}
                   </button>
                   <button
                     type="button"
-                    aria-label={t('移除附件 {0}', { 0: file.name })}
+                    aria-label={t('common.removeAttachment', { 0: file.name })}
                     disabled={readOnly}
                     onClick={() => dispatch({ type: 'detach', bot: bot.id, file: file.id })}
                   >
@@ -529,13 +533,13 @@ export function Conversation({
           )}
           {state.attachmentUploads[bot.id] && (
             <p className="inline-note" role="status">
-              {t('正在准备附件…')}
+              {t('common.preparingAttachments')}
             </p>
           )}
           <textarea
             ref={input}
-            aria-label={t('发送消息')}
-            placeholder={t('发消息给{0}…', { 0: bot.name })}
+            aria-label={t('common.sendMessage')}
+            placeholder={t('chat.messageRecipient', { 0: bot.name })}
             value={draft}
             maxLength={12000}
             rows={2}
@@ -556,7 +560,7 @@ export function Conversation({
           />
           <div className="composer-bottom">
             <IconButton
-              label={t('添加附件')}
+              label={t('common.addAttachment')}
               disabled={readOnly || pending || state.attachmentUploads[bot.id]}
               onClick={() => upload.current?.click()}
             >
@@ -575,12 +579,12 @@ export function Conversation({
                 await attach(files);
               }}
               tabIndex={-1}
-              aria-label={t('选择附件')}
+              aria-label={t('common.chooseAttachment')}
             />
             <Tooltip
               label={
                 modelPicker
-                  ? `${task?.running ? t('本轮模型') : t('下次任务模型')}：${modelName}`
+                  ? `${task?.running ? t('chat.modelTask') : t('chat.modelNextTask')}：${modelName}`
                   : undefined
               }
             >
@@ -589,7 +593,7 @@ export function Conversation({
                 className="model-label"
                 disabled={readOnly}
                 onClick={onModel}
-                aria-label={modelPicker ? t('Bot 模型：{0}', { 0: modelName }) : undefined}
+                aria-label={modelPicker ? t('chat.botModel', { 0: modelName }) : undefined}
               >
                 {modelPicker && modelIcon(shownModel, runtime.snapshot.model.connections)}
                 <span>{modelLabel}</span>
@@ -598,15 +602,15 @@ export function Conversation({
             </Tooltip>
             <span className="spacer" />
             <IconButton
-              label={t('语音输入（暂未接入）')}
-              onClick={() => notify(t('语音输入尚未接入，你可以先输入文字。'))}
+              label={t('chat.voiceInputNotConnectedYet')}
+              onClick={() => notify(t('chat.voiceInputNotConnectedYetCanType'))}
             >
               <Mic />
             </IconButton>
             <button
               type="submit"
               className="send-button"
-              aria-label={t('发送消息')}
+              aria-label={t('common.sendMessage')}
               disabled={
                 readOnly ||
                 recovering ||
@@ -627,7 +631,7 @@ export function Conversation({
           </div>
         </form>
         <div className="composer-hints">
-          <span>{t('Enter 发送 · Shift + Enter 换行 · 可粘贴图片或拖入附件')}</span>
+          <span>{t('common.enterSendShiftEnterNewLinePaste')}</span>
           <span>{modelCaption}</span>
         </div>
       </div>

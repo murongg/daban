@@ -19,10 +19,10 @@ export function modelIcon(id: string | undefined, connections?: ModelConnection[
 }
 
 export function modelName(id: string | undefined, connections?: ModelConnection[]) {
-  if (!id) return t('默认模型');
+  if (!id) return t('modeloptions.defaultModel');
   return (
     modelCatalog(connections).find((entry) => entry.id === id)?.name ||
-    t('{0}（未配置）', { 0: id })
+    t('modeloptions.notConfigured', { 0: id })
   );
 }
 
@@ -39,7 +39,7 @@ export function modelChoices(connections?: ModelConnection[], selected?: string)
   if (selected && !options.some((option) => option.value === selected))
     options.push({
       value: selected,
-      label: t('{0}（未配置）', { 0: selected }),
+      label: t('modeloptions.notConfigured', { 0: selected }),
       disabled: true,
       icon: icon(undefined, connections),
     });

@@ -10,19 +10,29 @@ import { t, useLocale } from './locale';
 export function noticeError(cause: unknown) {
   const code = cause instanceof Error ? cause.message : '';
   const messages: Record<string, string> = {
-    NOTIFICATION_CONFIG_CHANGED: t('通知设置文件已变化，未覆盖现有内容。请重新打开客户端后检查。'),
-    NOTIFICATION_STORE_UNAVAILABLE: t('通知设置无法读取，已有内容保留。请重新打开客户端后检查。'),
-    NOTIFICATION_CONFLICT: t('通知设置已在其他窗口更新，请重新读取后再选择。'),
-    NOTIFICATION_UNSUPPORTED: t('当前系统暂不支持桌面提醒，收件箱仍可使用。'),
-    NOTIFICATION_DISABLED: t('请先开启桌面提醒，再发送测试。'),
-    NOTIFICATION_DELIVERY_FAILED: t('系统未接受提醒。请检查通知设置，或使用支持提醒的客户端版本。'),
-    NOTIFICATION_HISTORY_UNAVAILABLE: t('系统提醒历史暂不可读取，新任务和收件箱仍可使用。'),
-    NOTIFICATION_LIMIT: t('提醒记录已达到上限，请重新打开客户端后检查。'),
-    NOTIFICATION_OPEN_FAILED: t('暂未打开对应提醒，请在收件箱或历史对话中查看。'),
-    NOTIFICATION_SCOPE_CHANGED: t('工作区已切换，未改动其他 Bot。请重新选择。'),
-    NOTIFICATION_BOT_UNAVAILABLE: t('这位 Bot 已归档或暂不可用，请重新打开设置查看。'),
+    NOTIFICATION_CONFIG_CHANGED: t(
+      'notifications.notificationSettingsFileChangedWasNotOverwritten',
+    ),
+    NOTIFICATION_STORE_UNAVAILABLE: t(
+      'notifications.notificationSettingsUnreadableExistingContentRetainedReopen',
+    ),
+    NOTIFICATION_CONFLICT: t('notifications.notificationSettingsChangedAnotherWindowReloadThem'),
+    NOTIFICATION_UNSUPPORTED: t(
+      'notifications.desktopNotificationsUnsupportedSystemInboxRemainsAvailable',
+    ),
+    NOTIFICATION_DISABLED: t('notifications.enableDesktopNotificationsSendingTest'),
+    NOTIFICATION_DELIVERY_FAILED: t(
+      'notifications.systemDidNotAcceptNotificationCheckNotification',
+    ),
+    NOTIFICATION_HISTORY_UNAVAILABLE: t(
+      'notifications.systemNotificationHistoryUnreadableRightNowNew',
+    ),
+    NOTIFICATION_LIMIT: t('notifications.notificationRecordLimitHasBeenReachedReopen'),
+    NOTIFICATION_OPEN_FAILED: t('notifications.notificationTargetCouldNotOpenedCheckInbox'),
+    NOTIFICATION_SCOPE_CHANGED: t('notifications.workspaceChangedOtherBotsWereNotModified'),
+    NOTIFICATION_BOT_UNAVAILABLE: t('notifications.botArchivedUnavailableReopenSettingsCheckAgain'),
   };
-  return messages[code] || t('桌面提醒暂不可用，请稍后重试。');
+  return messages[code] || t('notifications.desktopNotificationsTemporarilyUnavailableRetryLater');
 }
 export function Notifications() {
   useLocale();
@@ -110,15 +120,13 @@ export function Notifications() {
     !status.scope ||
     status.runtime === 'offline';
   return (
-    <section className="settings-section" aria-label={t('桌面提醒')}>
-      <h2>{t('桌面提醒')}</h2>
+    <section className="settings-section" aria-label={t('notifications.title')}>
+      <h2>{t('notifications.title')}</h2>
       <div className="setting-row">
         <div>
-          <div className="setting-label">{t('接收桌面提醒')}</div>
+          <div className="setting-label">{t('notifications.allowDesktopNotifications')}</div>
           <p className="setting-description">
-            {t(
-              '在后台提醒任务完成、失败或等待你处理的请求。提醒只显示类型，不展示任务和问题正文。',
-            )}
+            {t('notifications.notifyBackgroundWhenTasksFinishFailNeed')}
           </p>
         </div>
         <label
@@ -127,7 +135,7 @@ export function Notifications() {
         >
           <input
             type="checkbox"
-            aria-label={t('接收桌面提醒')}
+            aria-label={t('notifications.allowDesktopNotifications')}
             checked={!!status?.enabled}
             disabled={busy || !status?.available || !status.supported}
             onChange={() =>
@@ -135,35 +143,43 @@ export function Notifications() {
               perform({ type: 'configure', revision: status.revision, enabled: !status.enabled })
             }
           />
-          {busy ? t('正在保存…') : status?.enabled ? t('已开启') : t('未开启')}
+          {busy
+            ? t('common.saving')
+            : status?.enabled
+              ? t('notifications.on')
+              : t('notifications.off')}
         </label>
       </div>
       {!bridge && (
         <p className="inline-note">
-          {t('请在桌面客户端中使用系统提醒，网页预览不会请求通知权限。')}
+          {t('notifications.useSystemNotificationsDesktopAppWebPreviews')}
         </p>
       )}
       {bridge && !status && !failure && (
         <p className="inline-note" role="status">
-          {t('正在读取通知设置…')}
+          {t('notifications.loadingNotificationSettings')}
         </p>
       )}
       {status && !status.supported && (
-        <p className="inline-note">{t('当前系统暂不支持桌面提醒，收件箱仍可使用。')}</p>
+        <p className="inline-note">
+          {t('notifications.desktopNotificationsUnsupportedSystemInboxRemainsAvailable')}
+        </p>
       )}
       {status?.runtime === 'partial' && (
         <p className="inline-note">
-          {t('部分任务结果提醒暂不可用，请检查或更新本地运行环境。待处理事项仍可在收件箱查看。')}
+          {t('notifications.someTaskResultNotificationsUnavailableCheckUpdate')}
         </p>
       )}
       {status?.runtime === 'offline' && (
-        <p className="inline-note">{t('运行环境尚未连接。系统提醒测试不需要运行 Bot 任务。')}</p>
+        <p className="inline-note">
+          {t('notifications.runtimeNotConnectedTestingSystemNotificationsDoes')}
+        </p>
       )}
       <div className="setting-row">
         <div>
-          <div className="setting-label">{t('检查系统提醒')}</div>
+          <div className="setting-label">{t('notifications.checkSystemNotifications')}</div>
           <p className="setting-description">
-            {t('是否显示由系统通知设置和勿扰模式决定。测试不会启动任务或提交审批。')}
+            {t('notifications.deliveryDependsSystemNotificationSettingsDoNot')}
           </p>
         </div>
         <button
@@ -172,12 +188,12 @@ export function Notifications() {
           disabled={busy || !status?.available || !status.supported || !status.enabled}
           onClick={() => perform({ type: 'test' })}
         >
-          {t('发送测试提醒')}
+          {t('notifications.sendTestNotification')}
         </button>
       </div>
       {tested && status?.delivery === 'submitted' && !failure && (
         <p className="inline-note" role="status">
-          {t('测试提醒已提交给系统。若未收到，请检查系统通知设置，或使用支持提醒的客户端版本。')}
+          {t('notifications.testNotificationSubmittedSystemIfDoesNot')}
         </p>
       )}
       {failure && (
@@ -186,26 +202,30 @@ export function Notifications() {
         </p>
       )}
       <p className="setting-description">
-        {t(
-          '完整退出客户端后不会发现新的桌面提醒，Linux 中的任务仍会继续。打开客户端可在收件箱和对话中查看结果。',
-        )}
+        {t('notifications.fullyQuittingAppNewDesktopNotificationsNot')}
       </p>
       {status?.bots && (
         <fieldset className="notice-bots" aria-describedby="notice-bots-description">
-          <legend className="setting-label">{t('各 Bot 的私聊提醒')}</legend>
+          <legend className="setting-label">
+            {t('notifications.privateChatNotificationsPerBot')}
+          </legend>
           <p className="setting-description" id="notice-bots-description">
-            {t(
-              '仅在这台电脑上立即生效。关闭后不再弹出这位 Bot 的私聊结果和待处理请求；群聊提醒与收件箱不受影响。',
-            )}
+            {t('notifications.appliesImmediatelyComputerOnlyDisablingStopsBot')}
           </p>
           {!status.enabled && (
-            <p className="inline-note">{t('总开关关闭时不会弹出提醒，以下选择仍会保留。')}</p>
+            <p className="inline-note">
+              {t('notifications.notificationsSuppressedWhileMasterSwitchOffSelections')}
+            </p>
           )}
           {!status.scope && (
-            <p className="inline-note">{t('连接工作区后可修改，已有选择仍保留。')}</p>
+            <p className="inline-note">
+              {t('notifications.editConnectingWorkspaceExistingSelectionsRetained')}
+            </p>
           )}
           {status.scope && !status.bots.length && (
-            <p className="inline-note">{t('创建 Bot 后，可在这里选择它的私聊提醒。')}</p>
+            <p className="inline-note">
+              {t('notifications.createBotChoosePrivateChatNotificationsHere')}
+            </p>
           )}
           {status.bots.map((bot) => (
             <div className="setting-row" key={bot.id}>
@@ -213,12 +233,12 @@ export function Notifications() {
               <label className="secondary skill-toggle" aria-disabled={botsDisabled}>
                 <input
                   type="checkbox"
-                  aria-label={t('{0}的私聊桌面提醒', { 0: bot.name })}
+                  aria-label={t('notifications.botDesktopNotifications', { 0: bot.name })}
                   checked={bot.enabled}
                   disabled={botsDisabled}
                   onChange={() => configureBot(bot)}
                 />
-                {bot.enabled ? t('接收') : t('不接收')}
+                {bot.enabled ? t('notifications.accept') : t('notifications.notAccepted')}
               </label>
             </div>
           ))}

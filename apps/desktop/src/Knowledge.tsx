@@ -128,7 +128,7 @@ export function Knowledge({
   function blocked(target = bot.id) {
     const current = state.knowledgeDrafts[target];
     if (current && knowledgeDirty(current)) {
-      feedback(target, { error: t('请先保存或放弃当前资料的未保存修改；草稿仍保留。') });
+      feedback(target, { error: t('knowledge.saveDiscardUnsavedDocumentEditsFirstDraft') });
       return true;
     }
     return false;
@@ -161,7 +161,7 @@ export function Knowledge({
     };
     if (!isKnowledgeWrite(document)) {
       feedback(target, {
-        error: t('请检查资料名称和正文：名称不能是路径跳转，每份文本最多 200 KB。'),
+        error: t('knowledge.checkDocumentNameContentNamesMustNot'),
       });
       return;
     }
@@ -174,7 +174,7 @@ export function Knowledge({
       });
       dispatch({ type: 'knowledge-load', bot: target, previous: value, document: saved });
       setRefresh((current) => current + 1);
-      notify(t('已保存「{0}」。', { 0: saved.path }));
+      notify(t('knowledge.saved', { 0: saved.path }));
     } catch (error) {
       let conflict: KnowledgeDocument | undefined;
       if (value.id && error instanceof Error && error.message === 'KNOWLEDGE_CONFLICT') {
@@ -208,7 +208,7 @@ export function Knowledge({
       if (previous?.id === file.id && !knowledgeDirty(previous))
         dispatch({ type: 'knowledge-load', bot: target, previous, document });
       setRefresh((current) => current + 1);
-      notify(t('资料已移到回收站，版本历史仍保留。'));
+      notify(t('knowledge.documentMovedTrashRevisionHistoryRetained'));
     } catch (error) {
       feedback(target, { error: runtimeError(error) });
     } finally {
@@ -253,7 +253,7 @@ export function Knowledge({
       dispatch({ type: 'knowledge-load', bot: target, previous, document });
       feedback(target, { versions: undefined });
       setRefresh((current) => current + 1);
-      notify(t('已恢复为新版本，后续历史仍保留。'));
+      notify(t('knowledge.restoredNewRevisionSubsequentHistoryRetained'));
     } catch (error) {
       feedback(target, { error: runtimeError(error) });
     } finally {
@@ -263,16 +263,16 @@ export function Knowledge({
   return (
     <div className="panel-section">
       <div className="panel-heading">
-        <h2>{t('长期资料')}</h2>
+        <h2>{t('knowledge.longTermReferences')}</h2>
         <IconButton
-          label={t('刷新资料库')}
+          label={t('knowledge.refreshDocumentLibrary')}
           disabled={!available}
           onClick={() => setRefresh((current) => current + 1)}
         >
           <RefreshCw />
         </IconButton>
         <IconButton
-          label={t('新建资料')}
+          label={t('knowledge.newDocument')}
           disabled={!available || status.busy}
           onClick={() => {
             if (!blocked()) {
@@ -284,7 +284,7 @@ export function Knowledge({
           <Plus />
         </IconButton>
         <IconButton
-          label={t('导入资料')}
+          label={t('knowledge.importDocument')}
           disabled={!available || status.busy}
           onClick={() => {
             if (!blocked()) picker.current?.click();
@@ -294,20 +294,18 @@ export function Knowledge({
         </IconButton>
       </div>
       <p className="panel-description">
-        {t('只属于')}
+        {t('knowledge.only')}
         {bot.name}
-        {t(
-          '的长期资料。支持文本，以及 PDF、DOCX、XLSX、PPTX。 原文件最多 5 MB，提取后文本最多 200 KB。',
-        )}
+        {t('knowledge.sLongTermReferenceDocumentsSupportsText')}
       </p>
       {!available && (
         <p className="form-error" role="alert">
           {bot.members
-            ? t('群聊资料库尚未接入，请选择一位 Bot。')
+            ? t('knowledge.groupDocumentLibraryNotConnectedYetSelect')
             : !runtime.enabled
-              ? t('资料库需要连接本地运行环境。')
+              ? t('knowledge.documentLibraryRequiresLocalRuntimeConnection')
               : runtime.snapshot.protocolVersion < 9
-                ? t('需要更新本地运行环境后使用资料库。')
+                ? t('knowledge.updateLocalRuntimeUseDocumentLibrary')
                 : runtimeError(
                     new Error(runtime.snapshot.knowledge?.error || 'KNOWLEDGE_UNAVAILABLE'),
                   )}
@@ -322,7 +320,7 @@ export function Knowledge({
         type="file"
         hidden
         ref={picker}
-        aria-label={t('选择资料文件')}
+        aria-label={t('knowledge.chooseDocumentFile')}
         accept=".md,.txt,.csv,.json,.pdf,.docx,.xlsx,.pptx"
         onChange={async (event) => {
           const target = bot.id,
@@ -344,7 +342,7 @@ export function Knowledge({
               });
               dispatch({ type: 'knowledge-load', bot: target, previous, document });
               setRefresh((current) => current + 1);
-              notify(t('已导入文本并保留原件。'));
+              notify(t('knowledge.textImportedOriginalRetained'));
               return;
             }
             if (
@@ -366,11 +364,11 @@ export function Knowledge({
         }}
       />
       <label className="field-label">
-        {t('查找资料')}
+        {t('knowledge.findReferences')}
         <input
           className="field"
           type="search"
-          aria-label={t('搜索资料')}
+          aria-label={t('knowledge.searchDocuments')}
           value={query}
           maxLength={200}
           disabled={!available}
@@ -394,7 +392,7 @@ export function Knowledge({
             }))
           }
         />
-        {t('显示回收站')}
+        {t('common.showTrash')}
       </label>
       <div className="file-list">
         {files.map((file) => (
@@ -402,7 +400,7 @@ export function Knowledge({
             <button
               type="button"
               className="file-open"
-              aria-label={t('打开资料 {0}', { 0: file.path })}
+              aria-label={t('knowledge.openDocument', { 0: file.path })}
               onClick={() => open(file)}
             >
               <span className="file-symbol">
@@ -412,13 +410,13 @@ export function Knowledge({
                 <div className="artifact-name">{file.path}</div>
                 <div className="artifact-meta">
                   v{file.revision} · {(file.size / 1024).toFixed(1)} KB
-                  {file.deleted ? t(' · 回收站') : ''}
+                  {file.deleted ? t('common.trashSuffix') : ''}
                 </div>
               </div>
             </button>
             {!file.deleted && (
               <IconButton
-                label={t('移到回收站 {0}', { 0: file.path })}
+                label={t('knowledge.moveTrash', { 0: file.path })}
                 disabled={status.busy}
                 onClick={() => remove(file)}
               >
@@ -430,7 +428,9 @@ export function Knowledge({
       </div>
       {!files.length && available && (
         <p className="panel-description">
-          {query ? t('没有匹配的资料。') : t('还没有资料，导入文本或在对话中让 Bot 保存。')}
+          {query
+            ? t('knowledge.noMatchingDocuments')
+            : t('knowledge.noDocumentsYetImportTextAskBot')}
         </p>
       )}
       {draft && (
@@ -447,7 +447,7 @@ export function Knowledge({
             disabled={!available || status.busy || draft.deleted}
           >
             <label className="field-label">
-              {t('资料名称')}
+              {t('knowledge.documentName')}
               <input
                 className="field"
                 value={draft.path}
@@ -457,11 +457,11 @@ export function Knowledge({
               />
             </label>
             <label className="field-label">
-              {t('资料正文')}
+              {t('knowledge.documentContent')}
               <textarea
                 className="field knowledge-editor"
                 value={draft.content}
-                aria-label={t('资料正文')}
+                aria-label={t('knowledge.documentContent')}
                 rows={10}
                 maxLength={204800}
                 onChange={(event) => change({ content: event.target.value })}
@@ -470,24 +470,24 @@ export function Knowledge({
           </fieldset>
           <p className="inline-note">
             {draft.deleted
-              ? t('资料在回收站，可从版本历史恢复。')
+              ? t('knowledge.documentTrashCanRestoredRevisionHistory')
               : knowledgeDirty(draft)
-                ? t('未保存修改 · 草稿已暂存')
-                : t('已保存 · v{0}', { 0: draft.revision })}
+                ? t('common.unsavedChangesDraftRetained')
+                : t('knowledge.savedV', { 0: draft.revision })}
           </p>
           {original && (
             <p className="inline-note" style={{ overflowWrap: 'anywhere' }}>
-              {t('导入原件：')}
+              {t('knowledge.importedOriginal')}
               {original.name} · {(original.size / 1024).toFixed(1)}{' '}
-              {t('KB。正文是提取的文本，图片、排版和公式不作完整还原；修改正文不会改动原件。')}
+              {t('knowledge.kbBodyContainsExtractedTextImagesLayout')}
             </p>
           )}
           {status.conflict && (
             <div className="knowledge-conflict">
               <p className="inline-note">
-                {t('当前保存版本 v')}
+                {t('knowledge.currentSavedRevisionV')}
                 {status.conflict.revision}：{status.conflict.path}
-                {status.conflict.deleted ? t('（已在回收站）') : ''}
+                {status.conflict.deleted ? t('knowledge.alreadyTrash') : ''}
               </p>
               <pre>{status.conflict.content}</pre>
               <button
@@ -498,7 +498,7 @@ export function Knowledge({
                   feedback(bot.id, { conflict: undefined, error: '' });
                 }}
               >
-                {t('保留草稿，按此版本重试')}
+                {t('common.keepDraftRetryRevision')}
               </button>
             </div>
           )}
@@ -508,11 +508,13 @@ export function Knowledge({
               className="text-button"
               onClick={() => dispatch({ type: 'knowledge-set', bot: bot.id })}
             >
-              {knowledgeDirty(draft) ? t('放弃未保存修改') : t('关闭资料')}
+              {knowledgeDirty(draft)
+                ? t('knowledge.discardUnsavedChanges')
+                : t('knowledge.closeDocument')}
             </button>
             {draft.id && (
               <IconButton
-                label={t('查看资料版本')}
+                label={t('knowledge.viewDocumentRevisions')}
                 disabled={!available || status.busy}
                 onClick={() => history()}
               >
@@ -521,7 +523,7 @@ export function Knowledge({
             )}
             {draft.id && !draft.deleted && (
               <IconButton
-                label={t('下载已保存版本')}
+                label={t('knowledge.downloadSavedRevision')}
                 disabled={!available || status.busy}
                 onClick={async () => {
                   const target = bot.id;
@@ -536,7 +538,7 @@ export function Knowledge({
                       id: document.id,
                       name: document.path.split('/').at(-1)!,
                       content: document.content,
-                      kind: t('文本'),
+                      kind: t('common.text'),
                       size: `${document.size} B`,
                       modified: document.updatedAt,
                     });
@@ -550,7 +552,7 @@ export function Knowledge({
             )}
             {draft.id && original && (
               <IconButton
-                label={t('下载导入原件')}
+                label={t('knowledge.downloadImportedOriginal')}
                 disabled={!available || runtime.snapshot.protocolVersion < 10 || status.busy}
                 onClick={async () => {
                   const target = bot.id;
@@ -580,18 +582,18 @@ export function Knowledge({
               className="primary"
               disabled={!available || status.busy || draft.deleted}
             >
-              {status.busy ? t('正在处理…') : t('保存资料')}
+              {status.busy ? t('common.processing') : t('common.saveDocument')}
             </button>
           </div>
           {status.versionId === draft.id && status.versions && (
             <div className="schedule-history">
-              <p>{t('版本历史')}</p>
+              <p>{t('knowledge.revisionHistory')}</p>
               {status.versions.map((version) => (
                 <div className="knowledge-version" key={version.revision}>
                   <span>
-                    v{version.revision} · {version.actor === 'bot' ? 'Bot' : t('你')} ·{' '}
+                    v{version.revision} · {version.actor === 'bot' ? 'Bot' : t('common.you')} ·{' '}
                     {new Date(version.at).toLocaleString(getLocale())}
-                    {version.deleted ? t(' · 已删除') : ''}
+                    {version.deleted ? t('knowledge.deleted') : ''}
                   </span>
                   {!version.deleted && (
                     <button
@@ -600,7 +602,7 @@ export function Knowledge({
                       disabled={status.busy}
                       onClick={() => restore(version)}
                     >
-                      {t('恢复 v')}
+                      {t('knowledge.restoreV')}
                       {version.revision}
                     </button>
                   )}
@@ -612,7 +614,7 @@ export function Knowledge({
                   className="text-button"
                   onClick={() => history(status.versions!.at(-1)!.revision)}
                 >
-                  {t('更早版本')}
+                  {t('knowledge.earlierRevisions')}
                 </button>
               )}
             </div>
@@ -620,9 +622,7 @@ export function Knowledge({
         </form>
       )}
       <p className="inline-note" style={{ marginTop: 24 }}>
-        {t(
-          '导入保存的是文本快照，原文件之后的修改不会自动同步。PDF/Office 原件单独保留，扫描件需先做 OCR；加密文件请先解密。Bot 读取资料时将使用你配置的模型服务；资料内容不授予额外权限。移到回收站不会删除版本历史。',
-        )}
+        {t('knowledge.importsSaveTextSnapshotLaterEditsSource')}
       </p>
     </div>
   );

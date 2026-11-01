@@ -1,20 +1,20 @@
 import { agentId, type BotProfileInput, type GroupInput, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar, colors } from './Avatar';
-import { t, useLocale } from './locale';
+import { type MessageKey, t, useLocale } from './locale';
 import { modelChoices, modelIcon, modelName } from './model-options';
 import type { BotPreset } from './presets';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
 import type { Action, Color, State } from './state';
 
-const colorNames: Record<Color, string> = {
-  mint: '薄荷绿',
-  violet: '淡紫',
-  orange: '暖橙',
-  blue: '蓝色',
-  teal: '青色',
-  pink: '粉色',
+const colorNames: Record<Color, MessageKey> = {
+  mint: 'create.mint',
+  violet: 'create.softViolet',
+  orange: 'create.warmOrange',
+  blue: 'create.blue',
+  teal: 'create.teal',
+  pink: 'create.pink',
 };
 export function Create({
   state,
@@ -59,8 +59,8 @@ export function Create({
   }, []);
   return (
     <>
-      <p className="dialog-description">{t('给它一个名字，告诉它你希望一起做什么。')}</p>
-      <div className="form-tabs" role="tablist" aria-label={t('创建类型')}>
+      <p className="dialog-description">{t('create.nameDescribeWhatWantWorkTogether')}</p>
+      <div className="form-tabs" role="tablist" aria-label={t('create.creationType')}>
         <button
           type="button"
           role="tab"
@@ -71,7 +71,7 @@ export function Create({
             setError('');
           }}
         >
-          {t('新建 Bot')}
+          {t('common.newBot')}
         </button>
         <button
           type="button"
@@ -83,7 +83,7 @@ export function Create({
             setError('');
           }}
         >
-          {t('创建群聊')}
+          {t('common.createGroup')}
         </button>
         {onImport && (
           <button
@@ -98,7 +98,7 @@ export function Create({
             }
             onClick={onImport}
           >
-            {t('从文件导入')}
+            {t('create.importFile')}
           </button>
         )}
       </div>
@@ -106,11 +106,11 @@ export function Create({
         onSubmit={async (e) => {
           e.preventDefault();
           if (!name.trim()) {
-            setError(t('请输入一个名称。'));
+            setError(t('create.enterName'));
             return;
           }
           if (isGroup && (members.length < 2 || members.length > 8)) {
-            setError(t('请选择 2–8 位 Bot 加入群聊。'));
+            setError(t('create.selectBotsGroup'));
             return;
           }
           if (saving) return;
@@ -143,7 +143,7 @@ export function Create({
             });
             dispatch({ type: 'select', bot: id });
             close();
-            notify(isGroup ? t('群聊已创建') : t('Bot 已创建，可以开始对话'));
+            notify(isGroup ? t('create.groupCreated') : t('create.botCreatedCanStartChatting'));
           } catch (error) {
             if (mounted.current) setError(runtimeError(error));
           } finally {
@@ -153,23 +153,27 @@ export function Create({
       >
         <div className="form-stack">
           <label className="field-label">
-            {t('名称')}
+            {t('common.name')}
             <input
               className="field"
               data-autofocus
-              aria-label={t('名称')}
+              aria-label={t('common.name')}
               disabled={saving}
               required
               value={name}
               maxLength={30}
               onChange={(e) => setName(e.target.value)}
-              placeholder={isGroup ? t('例如：一起准备发布') : t('例如：我的研究搭档')}
+              placeholder={
+                isGroup
+                  ? t('create.examplePrepareLaunchTogether')
+                  : t('create.exampleMyResearchCompanion')
+              }
             />
           </label>
           {isGroup ? (
             <div className="field-label">
-              <span>{t('群成员')}</span>
-              <span className="field-help">{t('每位 Bot 保留自己的电脑和工作记忆。')}</span>
+              <span>{t('create.groupMembers')}</span>
+              <span className="field-help">{t('create.eachBotKeepsOwnComputerWorkMemory')}</span>
               <div className="member-choices">
                 {state.bots
                   .filter((b) => !b.members && !b.archived)
@@ -180,7 +184,7 @@ export function Create({
                       <input
                         type="checkbox"
                         disabled={saving}
-                        aria-label={t('选择 {0}', { 0: bot.name })}
+                        aria-label={t('common.choose', { 0: bot.name })}
                         checked={members.includes(bot.id)}
                         onChange={(e) =>
                           setMembers((prev) =>
@@ -197,22 +201,24 @@ export function Create({
           ) : (
             <>
               <label className="field-label">
-                {t('职责')}
+                {t('common.role')}
                 <textarea
                   className="field"
-                  aria-label={t('职责')}
+                  aria-label={t('common.role')}
                   disabled={saving}
                   rows={3}
                   maxLength={4000}
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  placeholder={t('例如：帮我查找资料，整理成有依据的结论。')}
+                  placeholder={t('create.exampleFindSourcesOrganizeEvidenceBasedConclusions')}
                 />
-                <span className="field-help">{t('之后也可以在对话中继续交代。')}</span>
+                <span className="field-help">
+                  {t('create.canAddMoreInstructionsConversationLater')}
+                </span>
               </label>
               <div className="field-label">
-                <span>{t('选一个颜色')}</span>
-                <fieldset className="avatar-choices" aria-label={t('Bot 颜色')}>
+                <span>{t('create.chooseColor')}</span>
+                <fieldset className="avatar-choices" aria-label={t('create.botColor')}>
                   {(Object.keys(colors) as Color[]).map((value) => (
                     <button
                       type="button"
@@ -229,9 +235,9 @@ export function Create({
                 </fieldset>
               </div>
               <div className="field-label">
-                {t('此 Bot 的模型')}
+                {t('common.modelBot')}
                 <Select
-                  label={t('此 Bot 的模型')}
+                  label={t('common.modelBot')}
                   value={model}
                   disabled={saving || !modelsAvailable}
                   onValueChange={setModel}
@@ -242,7 +248,7 @@ export function Create({
                         runtime.snapshot.model.model,
                         runtime.snapshot.model.connections,
                       ),
-                      label: t('跟随工作区 · {0}', {
+                      label: t('common.followNamedWorkspace', {
                         0: modelName(
                           runtime.snapshot.model.model,
                           runtime.snapshot.model.connections,
@@ -254,8 +260,8 @@ export function Create({
                 />
                 <span className="field-help">
                   {runtime.snapshot.protocolVersion >= 16
-                    ? t('使用所选供应商的连接。整屏观察需要支持图片的模型。')
-                    : t('使用工作区已配置的连接，之后可在 Bot 资料中修改。')}
+                    ? t('create.usesSelectedProviderConnectionFullScreenObservation')
+                    : t('create.usesConfiguredWorkspaceConnectionCanChangeBot')}
                 </span>
               </div>
             </>
@@ -268,10 +274,14 @@ export function Create({
         </div>
         <div className="dialog-actions">
           <button className="text-button" type="button" onClick={close}>
-            {t('取消')}
+            {t('common.cancel')}
           </button>
           <button className="primary" type="submit" disabled={saving}>
-            {saving ? t('正在创建…') : isGroup ? t('创建群聊') : t('创建 Bot')}
+            {saving
+              ? t('create.creating')
+              : isGroup
+                ? t('common.createGroup')
+                : t('create.createBot')}
           </button>
         </div>
       </form>

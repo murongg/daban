@@ -39,13 +39,17 @@ export function Formula({ source, display = false }: { source: string; display?:
     // biome-ignore lint/security/noDangerouslySetInnerHtml: Only bounded KaTeX output sanitized above crosses this HTML boundary.
     <span dangerouslySetInnerHTML={{ __html: html }} />
   ) : (
-    <span role="note" aria-label={t('公式暂未解析，已保留原文')}>
+    <span role="note" aria-label={t('formula.formulaCouldNotParsedOriginalTextRetained')}>
       <code>{source}</code>
     </span>
   );
   return display ? (
-    // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll wide formulas.
-    <section className="markdown-math-display" tabIndex={0} aria-label={t('独立公式')}>
+    <section
+      className="markdown-math-display"
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll wide formulas.
+      tabIndex={0}
+      aria-label={t('formula.displayFormula')}
+    >
       {content}
     </section>
   ) : (

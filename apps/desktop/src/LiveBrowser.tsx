@@ -87,7 +87,7 @@ export function LiveBrowser({
           setError('');
         }
       } catch {
-        if (live) setError(t('画面暂时不可用，正在重试。'));
+        if (live) setError(t('common.screenTemporarilyUnavailableRetrying'));
       } finally {
         running = false;
       }
@@ -231,7 +231,7 @@ export function LiveBrowser({
         data-remote-keyboard={human ? 'true' : undefined}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The remote keyboard surface needs focus and provides an explicit Escape exit.
         tabIndex={0}
-        aria-label={t('{0}的浏览器画面', { 0: name })}
+        aria-label={t('livebrowser.browserScreen', { 0: name })}
         aria-describedby={human ? help : undefined}
         onKeyDown={keyboard}
         onPointerDown={(event) => pointer(event, 'down')}
@@ -255,7 +255,7 @@ export function LiveBrowser({
           <img
             ref={picture}
             src={frame.image}
-            alt={t('{0}的浏览器', { 0: name })}
+            alt={t('livebrowser.browser', { 0: name })}
             draggable={false}
             onLoad={(event) => {
               if (
@@ -270,17 +270,21 @@ export function LiveBrowser({
             <Globe />
             <span>
               {frame?.paused || state?.pending?.length
-                ? t('网页正在等待你处理')
+                ? t('livebrowser.webpageAwaitingAction')
                 : active?.suspended
-                  ? t('上次页面尚未打开')
+                  ? t('livebrowser.previousPagesNotReopened')
                   : ready
-                    ? t('正在读取浏览器画面…')
-                    : t('正在等待运行环境…')}
+                    ? t('livebrowser.readingBrowserScreen')
+                    : t('common.waitingRuntime')}
             </span>
           </div>
         )}
         <span className="live-view-label">
-          {human ? t('你正在接管') : frame?.paused ? t('等待确认') : t('只读观看')}
+          {human
+            ? t('common.control')
+            : frame?.paused
+              ? t('livebrowser.awaitingConfirmation')
+              : t('common.viewOnly')}
         </span>
         {error && (
           <div className="live-screen-error" role="status">
@@ -289,7 +293,7 @@ export function LiveBrowser({
         )}
       </div>
       <p id={help} className="desktop-keyboard-hint">
-        {t('Esc 退出画面 · Alt+Esc 发送 Escape · 中文可用下方文字框')}
+        {t('livebrowser.escLeaveScreenAltEscSendEscape')}
       </p>
       <form
         className="live-text"
@@ -303,15 +307,19 @@ export function LiveBrowser({
       >
         <input
           ref={field}
-          aria-label={t('发送文字到浏览器')}
+          aria-label={t('livebrowser.sendTextBrowser')}
           autoComplete="off"
           disabled={!human}
-          placeholder={t('输入或粘贴文字，发送到网页…')}
+          placeholder={t('livebrowser.typePasteTextSendWebpage')}
           maxLength={2000}
           value={text}
           onChange={(event) => setText(event.target.value)}
         />
-        <button type="submit" aria-label={t('粘贴到网页')} disabled={!human || !text}>
+        <button
+          type="submit"
+          aria-label={t('livebrowser.pasteIntoWebpage')}
+          disabled={!human || !text}
+        >
           <Send size={15} />
         </button>
       </form>

@@ -40,7 +40,7 @@ function useInspection(query: Query, enabled: boolean, scope = '') {
     const input: ModelInspectionRequest =
       kind === 'list' ? { ...query, kind } : { ...query, kind, model: model ?? '' };
     if (!isModelInspectionRequest(input)) {
-      setState({ identity, error: t('请先填写有效的 API 地址、密钥和模型 ID。') });
+      setState({ identity, error: t('models.enterValidApiUrlKeyModelId') });
       return;
     }
     const request = ++sequence.current;
@@ -133,26 +133,24 @@ export function ModelCatalog({
         ) : (
           <Download size={15} />
         )}
-        {tool.busy === 'list' ? t('正在加载模型…') : t('加载模型列表')}
+        {tool.busy === 'list' ? t('models.loadingModels') : t('models.loadList')}
       </button>
-      <p className="field-help">
-        {t('从当前供应商获取模型，选择后添加到表单；不会自动保存配置。')}
-      </p>
+      <p className="field-help">{t('models.fetchModelsProviderChooseWhichAddConfiguration')}</p>
       {models && (
-        <section className="model-catalog" aria-label={t('可用模型')}>
+        <section className="model-catalog" aria-label={t('models.availableModels')}>
           <label className="model-search">
             <Search size={15} aria-hidden="true" />
             <input
               className="field"
-              aria-label={t('搜索模型')}
-              placeholder={t('按名称或模型 ID 搜索')}
+              aria-label={t('models.searchModels')}
+              placeholder={t('models.searchNameModelId')}
               value={text}
               onChange={(event) => setText(event.target.value)}
             />
           </label>
           <p className="field-help" role="status">
-            {t('找到 {0} 个模型', { 0: filtered.length })}
-            {filtered.length > 80 && t('，显示前 80 项，请搜索缩小范围。')}
+            {t('models.modelsFound', { 0: filtered.length })}
+            {filtered.length > 80 && t('models.showingFirstSearchNarrowList')}
           </p>
           <div className="model-catalog-list">
             {filtered.slice(0, 80).map((model) => {
@@ -162,7 +160,7 @@ export function ModelCatalog({
                   className="model-catalog-item"
                   key={model.id}
                   type="button"
-                  aria-label={t(exists ? '已添加 {0}' : '添加 {0}', { 0: model.id })}
+                  aria-label={t(exists ? 'models.added' : 'models.add', { 0: model.id })}
                   disabled={disabled || !!tool.busy || exists || selected.length >= 50}
                   onClick={() => add(model)}
                 >
@@ -179,8 +177,8 @@ export function ModelCatalog({
             <p className="inline-note">
               {t(
                 models.length
-                  ? '没有匹配的模型，试试其他关键词。'
-                  : '供应商没有返回可添加的模型，你仍可手动填写模型 ID。',
+                  ? 'models.noMatchingModelsTryAnotherSearch'
+                  : 'models.providerReturnedNoModelsAddCanStill',
               )}
             </p>
           )}
@@ -188,11 +186,11 @@ export function ModelCatalog({
       )}
       {added?.identity === tool.identity && (
         <p className="inline-note" role="status">
-          {t('已添加 {0}', { 0: added.model.id })} ·{' '}
+          {t('models.added', { 0: added.model.id })} ·{' '}
           {added.model.contextWindow !== undefined
-            ? t('已匹配上下文 {0} tokens', { 0: added.model.contextWindow })
-            : t('上下文长度未知，请核对默认值或手动填写。')}
-          {added.model.source === 'models.dev' && t('（参考 models.dev，可按供应商限制修改）')}
+            ? t('models.matchedContextTokens', { 0: added.model.contextWindow })
+            : t('models.contextLengthUnknownCheckDefaultEnterManually')}
+          {added.model.source === 'models.dev' && t('models.modelsDevAdjustProviderSLimits')}
         </p>
       )}
       <Feedback error={tool.error} />
@@ -239,17 +237,17 @@ export function ModelInspector({
         <button
           className="text-button"
           type="button"
-          aria-label={t('测试模型 {0}', { 0: index + 1 })}
+          aria-label={t('models.testModel', { 0: index + 1 })}
           disabled={disabled || !!tool.busy || !model.id.trim()}
           onClick={() => run('test')}
         >
           {tool.busy === 'test' && <LoaderCircle size={14} className="model-tool-spinner" />}
-          {tool.busy === 'test' ? t('正在测试…') : t('测试模型')}
+          {tool.busy === 'test' ? t('models.testing') : t('models.test')}
         </button>
         <button
           className="text-button"
           type="button"
-          aria-label={t('匹配模型 {0} 上下文', { 0: index + 1 })}
+          aria-label={t('models.matchContextModel', { 0: index + 1 })}
           disabled={disabled || !!tool.busy || !model.id.trim()}
           onClick={() => run('limits')}
         >
@@ -258,25 +256,25 @@ export function ModelInspector({
           ) : (
             <WandSparkles size={14} />
           )}
-          {tool.busy === 'limits' ? t('正在匹配…') : t('自动匹配上下文')}
+          {tool.busy === 'limits' ? t('models.matching') : t('models.matchContext')}
         </button>
       </div>
       {value?.kind === 'test' && (
         <p className="model-test-success" role="status">
           <Check size={14} />
-          {t('调用成功 · {0} ms', { 0: value.latencyMs })}
+          {t('models.callSucceededMs', { 0: value.latencyMs })}
         </p>
       )}
       {value?.kind === 'limits' && (
         <p className="field-help" role="status">
           {value.model.contextWindow === undefined
-            ? t('未找到可靠的上下文长度，已有设置保持不变，请手动填写。')
-            : t('参考上下文 {0} tokens · {1}', {
+            ? t('models.noReliableContextLengthFoundExistingSettings')
+            : t('models.referenceContextTokens', {
                 0: value.model.contextWindow,
-                1: value.model.source === 'provider' ? t('供应商接口') : 'models.dev',
+                1: value.model.source === 'provider' ? t('models.providerApi') : 'models.dev',
               })}
           {value.model.source === 'models.dev' &&
-            t('。这是公开目录参考值，请以当前供应商限制为准。')}
+            t('models.publicCatalogReferenceProviderSLimitsTake')}
         </p>
       )}
       <Feedback error={tool.error} />

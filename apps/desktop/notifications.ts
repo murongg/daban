@@ -5,7 +5,7 @@ import {
   type RuntimeSnapshot,
   validAgentId,
 } from '@daban/protocol';
-import { type Locale, translate } from './locale';
+import { type Locale, type MessageKey, translate } from './locale';
 
 export type NoticeTarget =
   | { kind: 'settings' }
@@ -192,20 +192,29 @@ export function noticeCandidates(
   return items;
 }
 export function noticeCopy(target: NoticeTarget, locale: Locale = 'zh-CN') {
-  const t = (source: string) => translate(locale, source);
+  const t = (source: MessageKey) => translate(locale, source);
   if (target.kind === 'settings')
-    return { title: t('Daban · 测试提醒'), body: t('桌面提醒已提交，点击返回设置。') };
+    return {
+      title: t('notifications.dabanTestNotification'),
+      body: t('notifications.notificationSubmittedClickReturnSettings'),
+    };
   if (target.kind === 'question')
-    return { title: t('Daban · 需要你的回答'), body: t('有一个问题等待处理，点击查看。') };
+    return {
+      title: t('notifications.dabanNeedsAnswer'),
+      body: t('notifications.questionNeedsAnswerClickView'),
+    };
   if (target.kind === 'approval')
-    return { title: t('Daban · 需要你的确认'), body: t('有一项权限请求等待处理，点击查看。') };
+    return {
+      title: t('notifications.dabanNeedsApproval'),
+      body: t('notifications.permissionRequestNeedsAttentionClickView'),
+    };
   return {
     title:
       target.phase === 'completed'
         ? target.kind === 'group'
-          ? t('Daban · 协作已完成')
-          : t('Daban · 任务已完成')
-        : t('Daban · 任务需要检查'),
-    body: t('点击查看对应的对话与结果。'),
+          ? t('notifications.dabanCollaborationComplete')
+          : t('notifications.dabanTaskComplete')
+        : t('notifications.dabanTaskNeedsAttention'),
+    body: t('notifications.clickViewConversationResults'),
   };
 }

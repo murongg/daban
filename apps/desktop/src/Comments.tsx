@@ -50,14 +50,18 @@ export function Comments({
         </p>
       )}
       {discussion.available && !discussion.loaded && discussion.loading && (
-        <div className="comment-loading" role="status" aria-label={t('正在读取讨论')}>
+        <div className="comment-loading" role="status" aria-label={t('comments.readingDiscussion')}>
           <span />
           <span />
         </div>
       )}
       {!!discussion.rows.length && (
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded history needs a keyboard scrolling target.
-        <section className="comment-history" aria-label={t('任务讨论记录')} tabIndex={0}>
+        <section
+          className="comment-history"
+          aria-label={t('comments.taskDiscussionHistory')}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded history needs a keyboard scrolling target.
+          tabIndex={0}
+        >
           <ol>
             {discussion.rows.map((comment) => (
               <li key={comment.id}>
@@ -74,7 +78,7 @@ export function Comments({
       {discussion.available &&
         discussion.loaded &&
         !discussion.listError &&
-        !discussion.rows.length && <p className="comment-empty">{t('还没有讨论')}</p>}
+        !discussion.rows.length && <p className="comment-empty">{t('comments.noDiscussionYet')}</p>}
       {discussion.next !== undefined && (
         <button
           type="button"
@@ -82,7 +86,7 @@ export function Comments({
           disabled={discussion.loading}
           onClick={() => discussion.load(true).catch(() => {})}
         >
-          {t('加载更早的评论')}
+          {t('comments.loadEarlierComments')}
         </button>
       )}
     </Fragment>
@@ -97,42 +101,46 @@ export function Comments({
       }}
     >
       <label className="field-label">
-        {t('评论正文')}
+        {t('comments.commentBody')}
         <textarea
           className="field"
           rows={3}
           maxLength={10000}
           value={body}
           readOnly={sealed}
-          placeholder={t('补充信息或记录进展…')}
+          placeholder={t('comments.addDetailsProgress')}
           onChange={(event) => discussion.change(event.target.value)}
         />
       </label>
       {body.length >= 9000 && (
         <p className="field-help">
           {body.length.toLocaleString()}
-          {t('/ 10,000 字符')}
+          {t('comments.characters')}
         </p>
       )}
       {item.deleted && (
         <p role="status" className="field-help">
-          {t('任务在回收站，讨论仍保留。恢复后可继续发表评论。')}
+          {t('comments.taskTrashDiscussionRetainedRestorePostMore')}
         </p>
       )}
       {discussion.blocked && (
         <p role="status" className="field-help">
-          {t('运行环境正在恢复，可以编辑正文和核对结果，恢复完成后再发表。')}
+          {t('comments.runtimeRecoveringCanEditTextVerifyResults')}
         </p>
       )}
       {discussion.busyParent && (
         <p role="status" className="field-help">
-          {t('请先核对这张任务的保存结果，再发表评论。')}
+          {t('comments.verifyTaskSSaveResultPostingComment')}
         </p>
       )}
       {card.pending && (
         <div className="comment-pending" role="status">
-          <strong>{discussion.working ? t('正在发表评论…') : t('评论结果待确认')}</strong>
-          <p>{t('正文和原评论请求已保留。重开只核对结果，不会重复发表。')}</p>
+          <strong>
+            {discussion.working
+              ? t('comments.postingComment')
+              : t('comments.commentResultAwaitingConfirmation')}
+          </strong>
+          <p>{t('comments.textOriginalCommentRequestRetainedReopeningOnly')}</p>
           <div className="task-actions">
             <button
               type="button"
@@ -140,7 +148,7 @@ export function Comments({
               disabled={!discussion.available || discussion.checking || discussion.working}
               onClick={() => discussion.check().catch(() => {})}
             >
-              {discussion.checking ? t('正在核对…') : t('核对发表结果')}
+              {discussion.checking ? t('common.verifying') : t('comments.verifyCommentResult')}
             </button>
             <button
               type="button"
@@ -153,7 +161,7 @@ export function Comments({
               }
               onClick={() => discussion.retry().catch(() => {})}
             >
-              {t('重试同一条评论')}
+              {t('comments.retrySameComment')}
             </button>
           </div>
         </div>
@@ -171,7 +179,9 @@ export function Comments({
       {!card.pending && (
         <div className="task-actions">
           <button type="submit" className="primary" disabled={disabled}>
-            {discussion.working && !card.pending ? t('正在核对任务…') : t('发表评论')}
+            {discussion.working && !card.pending
+              ? t('comments.verifyingTask')
+              : t('comments.postComment')}
           </button>
         </div>
       )}
@@ -181,12 +191,12 @@ export function Comments({
     <section
       id={`task-comments-${item.id}`}
       className="task-discussion"
-      aria-label={t('任务讨论')}
+      aria-label={t('comments.taskDiscussion')}
       tabIndex={-1}
     >
       <div className="comment-heading">
         <h3>
-          {t('讨论 ·')}
+          {t('comments.discussion')}
           {item.title}
         </h3>
         <button
@@ -194,23 +204,23 @@ export function Comments({
           className="text-button"
           disabled={!discussion.available || discussion.loading}
           onClick={() => discussion.load().catch(() => {})}
-          aria-label={t('刷新讨论')}
+          aria-label={t('comments.refreshDiscussion')}
         >
           <RefreshCw aria-hidden="true" />
-          {discussion.loading ? t('正在读取…') : t('刷新')}
+          {discussion.loading ? t('common.loading') : t('common.refresh')}
         </button>
       </div>
-      <p className="field-help">{t('与所有 Bot 共享。发表评论不会启动任务。')}</p>
+      <p className="field-help">{t('comments.sharedAllBotsPostingCommentDoesNot')}</p>
       {!discussion.available && (
         <p role="status" className="field-help">
           {runtime.enabled && runtime.snapshot.protocolVersion < 38
-            ? t('更新运行环境后可以读取和发表评论。本机正文仍会保留。')
-            : t('暂未连接讨论服务。本机正文仍会保留，连接后可继续。')}
+            ? t('comments.updateRuntimeReadPostCommentsLocalText')
+            : t('comments.discussionServiceNotConnectedLocalTextRetained')}
         </p>
       )}
       {state.comments?.damaged && (
         <p role="alert" className="form-error">
-          {t('部分本机评论记录无法读取，其他正文仍保留。没有重新发表，请核对讨论内容。')}
+          {t('comments.someLocalCommentRecordsUnreadableOtherText')}
         </p>
       )}
       {!card.pending && history}

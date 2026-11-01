@@ -165,7 +165,7 @@ export function useWork(
     setNext(undefined);
     setRevision(undefined);
     const timer = setTimeout(() => {
-      load().catch(() => setListError(t('暂时无法读取任务。')));
+      load().catch(() => setListError(t('work.taskCannotReadRightNow')));
     }, 150);
     return () => {
       clearTimeout(timer);
@@ -251,7 +251,9 @@ export function useWork(
       }
       remember(value.item, input.request.action === 'create');
       notify(
-        input.request.action === 'create' ? t('任务已创建，尚未自动执行。') : t('任务操作已确认。'),
+        input.request.action === 'create'
+          ? t('work.taskCreatedHasNotRunAutomatically')
+          : t('work.taskActionConfirmed'),
       );
     },
     [dispatch, notify, owns, remember],
@@ -310,7 +312,7 @@ export function useWork(
       clientCache().setItem(storageKey, serialize(updated));
     } catch {
       (resuming ? setOperationError : setError)(
-        t('本机无法保存操作记录。请释放存储空间或导出工作区后重试；你的草稿仍保留。'),
+        t('common.operationRecordsCouldNotSavedLocallyFree'),
       );
       return;
     }
@@ -358,7 +360,7 @@ export function useWork(
       return;
     const request = workInput(draft);
     if (!request) {
-      setError(t('请填写任务标题（最多 500 字符）；说明和进展各最多 4,000 字符。'));
+      setError(t('work.enterTaskTitleUpCharactersDescriptionProgress'));
       return;
     }
     await send({ request, draft: structuredClone(draft) }, false);
@@ -388,7 +390,7 @@ export function useWork(
   function fresh() {
     const previous = current.current.work?.draft;
     if (workDirty(previous) && pending.current?.draft.key !== previous?.key) {
-      setError(t('先保存或放弃当前修改，再新建任务。'));
+      setError(t('work.saveDiscardCurrentEditsCreatingTask'));
       setEditorVisible(true);
       return;
     }
@@ -405,7 +407,7 @@ export function useWork(
     setEditorVisible(true);
     if (!review && previous?.base?.id === id && workDirty(previous)) return;
     if (!review && workDirty(previous) && pending.current?.draft.key !== previous?.key) {
-      setError(t('先保存或放弃当前修改，再查看其他任务。'));
+      setError(t('work.saveDiscardCurrentEditsOpeningAnotherTask'));
       return;
     }
     const token = ++reader.current;

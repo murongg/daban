@@ -10,7 +10,7 @@ export function Language() {
   return (
     <div className="language-control">
       <Select
-        label={t('界面语言')}
+        label={t('settings.language')}
         value={locale}
         disabled={busy}
         options={[
@@ -24,7 +24,7 @@ export function Language() {
           try {
             await setLocale(value);
           } catch {
-            setError(t('语言设置未保存，请重试。'));
+            setError(t('language.languageSettingWasNotSavedPleaseRetry'));
           } finally {
             setBusy(false);
           }

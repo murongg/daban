@@ -16,26 +16,26 @@ export function Desktop({
   useLocale();
   const [app, setApp] = useState<App>('document');
   const apps = [
-    ['files', Folder, t('文件管理器')],
-    ['browser', Globe, t('浏览器')],
-    ['terminal', Terminal, t('终端')],
-    ['document', FileText, t('文档')],
+    ['files', Folder, t('common.fileManager')],
+    ['browser', Globe, t('common.browser')],
+    ['terminal', Terminal, t('common.terminal')],
+    ['document', FileText, t('desktop.document')],
   ] as const;
   return (
     <section
       className={`desktop-preview ${expanded ? 'fullscreen-desktop' : ''}`}
-      aria-label={t('{0}的示例 Linux 桌面', { 0: name })}
+      aria-label={t('desktop.exampleLinuxDesktop', { 0: name })}
     >
       <div className="desktop-topbar">
         <Monitor />
         <span>Daban</span>
         <span className="spacer" />
-        <span>{t('示例桌面')}</span>
+        <span>{t('desktop.exampleDesktop')}</span>
         <Wifi />
         <span>10:28</span>
       </div>
       <div className="desktop-wallpaper" />
-      {human && <div className="desktop-control-state">{t('你正在接管 · 演示状态')}</div>}
+      {human && <div className="desktop-control-state">{t('desktop.controlDemo')}</div>}
       <div className="desktop-window">
         <div className="window-bar">
           <span className="window-dot" />
@@ -44,81 +44,86 @@ export function Desktop({
           <span className="window-path">
             <ShieldCheck />
             {app === 'terminal'
-              ? t('{0} · 终端预览', { 0: name })
+              ? t('desktop.terminalPreview', { 0: name })
               : app === 'files'
-                ? t('/workspace · 共享文件')
+                ? t('desktop.workspaceSharedFiles')
                 : app === 'browser'
-                  ? t('workspace.example.test · 示例页面')
-                  : t('工作区 / 周报草稿')}
+                  ? t('desktop.workspaceExampleTestExamplePage')
+                  : t('desktop.workspaceWeeklyReportDraft')}
           </span>
         </div>
         {app === 'terminal' ? (
           <div className="desktop-terminal">
             <span className="terminal-prompt">bot@daban:~$</span> ls /workspace
             <br />
-            {t('本周工作摘要.md')}
+            {t('desktop.weeklyWorkSummaryMd')}
             <br />
-            {t('项目记录.md')}
+            {t('desktop.projectNotesMd')}
             <br />
-            {t('待办清单.csv')}
+            {t('desktop.doListCsv')}
             <br />
-            {t('产品介绍.md')}
+            {t('desktop.productIntroductionMd')}
             <br />
             <br />
             <span className="terminal-prompt">bot@daban:~$</span> <span>▏</span>
             <p className="terminal-note">
-              {t('终端界面预览')}
+              {t('desktop.terminalInterfacePreview')}
               <br />
-              {t('尚未连接 Linux 运行环境')}
+              {t('desktop.linuxRuntimeNotConnected')}
             </p>
           </div>
         ) : app === 'files' ? (
           <div className="desktop-folder">
-            <div className="desktop-folder-title">{t('共享工作区 / workspace')}</div>
-            {[t('本周工作摘要.md'), t('项目记录.md'), t('待办清单.csv'), t('产品介绍.md')].map(
-              (text, i) => (
-                <div className="desktop-folder-row" key={text}>
-                  <FileText />
-                  <span>{text}</span>
-                  <small>{['2.4 KB', '1.8 KB', '0.6 KB', '1.2 KB'][i]}</small>
-                </div>
-              ),
-            )}
+            <div className="desktop-folder-title">{t('desktop.sharedWorkspaceWorkspace')}</div>
+            {[
+              t('desktop.weeklyWorkSummaryMd'),
+              t('desktop.projectNotesMd'),
+              t('desktop.doListCsv'),
+              t('desktop.productIntroductionMd'),
+            ].map((text, i) => (
+              <div className="desktop-folder-row" key={text}>
+                <FileText />
+                <span>{text}</span>
+                <small>{['2.4 KB', '1.8 KB', '0.6 KB', '1.2 KB'][i]}</small>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="document">
-            <h2>{t('本周工作摘要')}</h2>
-            <p className="document-meta">{t('本周 · 草稿 · 示例内容')}</p>
-            <h3>{t('本周进展')}</h3>
-            {[t('项目资料整理与归档'), t('产品参考与初步方案'), t('第一版内容与文档')].map(
-              (text) => (
-                <div className="document-row" key={text}>
-                  <span>{text}</span>
-                  <small>{t('已完成')}</small>
-                </div>
-              ),
-            )}
-            <h3>{t('需要确认')}</h3>
-            {[t('下一轮评审时间'), t('下周工作的优先顺序')].map((text) => (
+            <h2>{t('desktop.weeklyWorkSummary')}</h2>
+            <p className="document-meta">{t('desktop.weekDraftExampleContent')}</p>
+            <h3>{t('desktop.weekSProgress')}</h3>
+            {[
+              t('desktop.projectReferenceOrganizationArchiving'),
+              t('desktop.productReferencesInitialProposal'),
+              t('desktop.firstVersionContentDocumentation'),
+            ].map((text) => (
+              <div className="document-row" key={text}>
+                <span>{text}</span>
+                <small>{t('common.completed')}</small>
+              </div>
+            ))}
+            <h3>{t('desktop.needsConfirmation')}</h3>
+            {[t('desktop.nextReviewDate'), t('desktop.prioritiesNextWeek')].map((text) => (
               <div className="document-row pending" key={text}>
                 <span>{text}</span>
-                <small>{t('待确认')}</small>
+                <small>{t('common.awaitingConfirmation')}</small>
               </div>
             ))}
             <p className="document-foot">
               <Check />
-              {t('已整理 3 份资料，尚未对外发送')}
+              {t('desktop.organizedDocumentsNothingSentExternally')}
             </p>
           </div>
         )}
       </div>
-      <fieldset className="desktop-dock" aria-label={t('桌面应用预览')}>
+      <fieldset className="desktop-dock" aria-label={t('desktop.desktopApplicationPreview')}>
         {apps.map(([id, Icon, label]) => (
-          <Tooltip label={t('预览{0}', { 0: label })} key={id}>
+          <Tooltip label={t('desktop.preview', { 0: label })} key={id}>
             <button
               type="button"
               className={app === id ? 'active' : ''}
-              aria-label={t('预览{0}', { 0: label })}
+              aria-label={t('desktop.preview', { 0: label })}
               aria-pressed={app === id}
               onClick={() => setApp(id)}
             >

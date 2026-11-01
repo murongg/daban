@@ -28,32 +28,35 @@ export function CodeBlock({
     </pre>
   );
   return (
-    <section className="markdown-code" aria-label={preview ? t('图表与源码') : t('代码块')}>
+    <section
+      className="markdown-code"
+      aria-label={preview ? t('codeblock.diagramSource') : t('codeblock.codeBlock')}
+    >
       <div className="markdown-code-heading">
         <span>{language}</span>
         <button
           type="button"
-          aria-label={copyLabel || t('复制代码')}
+          aria-label={copyLabel || t('codeblock.copyCode')}
           onClick={async () => {
             // HAST adds one terminating newline; retain intentional source whitespace.
             const text = (code.current?.textContent || '').replace(/\n$/, '');
             try {
               await copyText(text);
-              notify(t('已复制代码。'));
+              notify(t('codeblock.codeCopied'));
             } catch {
-              notify(t('复制失败，请选择代码后手动复制。'));
+              notify(t('codeblock.copyFailedSelectCodeCopyManually'));
             }
           }}
         >
           <Copy />
-          {copyLabel || t('复制')}
+          {copyLabel || t('common.copy')}
         </button>
       </div>
       {preview ? (
         <>
           {preview}
           <details className="diagram-source">
-            <summary>{t('查看源码')}</summary>
+            <summary>{t('codeblock.viewSource')}</summary>
             {source}
           </details>
         </>

@@ -18,7 +18,7 @@ import { Dialog } from './Dialog';
 import { download } from './files';
 import { Integrations } from './Integrations';
 import { Language } from './Language';
-import { t, useLocale } from './locale';
+import { isMessageKey, t, useLocale } from './locale';
 import { Models } from './Models';
 import { Notifications } from './Notifications';
 import { RecoveryEntry } from './Recovery';
@@ -50,26 +50,26 @@ export function Settings({
   const sections = [
     {
       id: 'general',
-      label: t('通用'),
+      label: t('settings.general'),
       icon: Settings2,
-      description: t('调整外观和提醒，让工作区按你的习惯工作。'),
+      description: t('settings.adjustAppearanceNotificationsSuitWorkflow'),
       content: (
         <>
           <div className="settings-section">
-            <h2>{t('外观')}</h2>
+            <h2>{t('settings.appearance')}</h2>
             <div className="setting-row">
               <div>
-                <div className="setting-label">{t('主题')}</div>
-                <p className="setting-description">{t('为你的工作区选择一种外观。')}</p>
+                <div className="setting-label">{t('settings.theme')}</div>
+                <p className="setting-description">{t('settings.chooseAppearanceWorkspace')}</p>
               </div>
-              <fieldset className="theme-options" aria-label={t('主题')}>
+              <fieldset className="theme-options" aria-label={t('settings.theme')}>
                 <button
                   type="button"
                   aria-pressed={state.theme === 'light'}
                   onClick={() => dispatch({ type: 'theme', theme: 'light' })}
                 >
                   <Sun />
-                  {t('浅色')}
+                  {t('settings.light')}
                 </button>
                 <button
                   type="button"
@@ -77,17 +77,19 @@ export function Settings({
                   onClick={() => dispatch({ type: 'theme', theme: 'dark' })}
                 >
                   <Moon />
-                  {t('深色')}
+                  {t('settings.dark')}
                 </button>
               </fieldset>
             </div>
           </div>
           <div className="settings-section">
-            <h2>{t('语言')}</h2>
+            <h2>{t('settings.languageSection')}</h2>
             <div className="setting-row">
               <div>
-                <div className="setting-label">{t('界面语言')}</div>
-                <p className="setting-description">{t('立即切换并保存在本机。')}</p>
+                <div className="setting-label">{t('settings.language')}</div>
+                <p className="setting-description">
+                  {t('settings.appliesImmediatelySavedComputer')}
+                </p>
               </div>
               <Language />
             </div>
@@ -98,45 +100,41 @@ export function Settings({
     },
     {
       id: 'models',
-      label: t('模型与供应商'),
+      label: t('models.title'),
       icon: Waypoints,
-      description: t('连接模型服务，为工作区和每位 Bot 选择模型。'),
+      description: t('settings.connectModelServicesChooseWorkspacePerBot'),
       content: <Models />,
     },
     {
       id: 'computer',
-      label: t('电脑与权限'),
+      label: t('settings.computerPermissions'),
       icon: Monitor,
-      description: t('管理本地 Linux 环境，查看连接状态与操作权限。'),
+      description: t('settings.manageLocalLinuxConnectionStateActionPermissions'),
       content: (
         <>
           {runtime.snapshot.agent?.location === 'host' && (
             <div className="settings-section">
-              <h2>{t('执行环境与权限')}</h2>
+              <h2>{t('settings.executionEnvironmentPermissions')}</h2>
               <div className="setting-row">
                 <div>
-                  <div className="setting-label">{t('虚拟机内完整权限')}</div>
+                  <div className="setting-label">{t('settings.fullPermissionsInsideVm')}</div>
                   <p className="setting-description">
-                    {t(
-                      'Bot 可以管理 Linux 系统、使用 sudo 和网络，并安装 npm、Codex 等软件。普通查看、查询和计算自动执行；安装软件、删除文件、修改系统等高风险操作会显示具体命令供你确认，无法判断的操作也会询问。',
-                    )}
+                    {t('settings.botsCanManageLinuxUseSudoNetwork')}
                   </p>
                 </div>
               </div>
               <div className="setting-row">
                 <div>
-                  <div className="setting-label">{t('本机 Agent 服务')}</div>
+                  <div className="setting-label">{t('settings.hostAgentService')}</div>
                   <p className="setting-description">
-                    {t(
-                      '模型、密钥和审批保存在虚拟机外。关闭客户端后，后台任务继续运行；Bot 不会因此获得宿主机的终端或文件权限。',
-                    )}
+                    {t('settings.modelsKeysApprovalsStayOutsideVmBackground')}
                   </p>
                 </div>
               </div>
             </div>
           )}
           <div className="settings-section">
-            <h2>{t('本地 Linux')}</h2>
+            <h2>{t('settings.localLinux')}</h2>
             {error && (
               <p role="alert" className="form-error">
                 {error}
@@ -144,14 +142,14 @@ export function Settings({
             )}
             <div className="setting-row">
               <div>
-                <div className="setting-label">{t('本地 Linux 运行环境')}</div>
+                <div className="setting-label">{t('settings.localLinuxRuntime')}</div>
                 <p className="setting-description">
                   {runtime.enabled
-                    ? t(runtime.snapshot.error) ||
-                      t(
-                        'Bot 的真实桌面、任务和文件都运行在本机虚拟机中。关闭客户端不会关闭 Linux。',
-                      )
-                    : t('电脑面板目前为示例预览，终端、浏览器和文件管理器尚未连接真实系统。')}
+                    ? (isMessageKey(runtime.snapshot.error)
+                        ? t(runtime.snapshot.error)
+                        : runtime.snapshot.error) ||
+                      t('settings.botDesktopsTasksFilesRunLocalVirtual')
+                    : t('settings.computerPanelExamplePreviewNoRealTerminal')}
                 </p>
               </div>
               {runtime.enabled ? (
@@ -167,15 +165,17 @@ export function Settings({
                     }
                   }}
                 >
-                  {runtime.snapshot.phase === 'ready' ? t('重新连接') : t('重试连接')}
+                  {runtime.snapshot.phase === 'ready'
+                    ? t('settings.reconnect')
+                    : t('settings.retryConnection')}
                 </button>
               ) : (
-                <span className="badge">{t('待接入')}</span>
+                <span className="badge">{t('settings.notConnected')}</span>
               )}
             </div>
           </div>
           <div className="settings-section">
-            <h2>{t('运行环境')}</h2>
+            <h2>{t('settings.runtime')}</h2>
             <Diagnostics />
             <RecoveryEntry open={onRecovery} />
           </div>
@@ -184,44 +184,40 @@ export function Settings({
     },
     {
       id: 'integrations',
-      label: t('外部工具'),
+      label: t('common.externalTools'),
       icon: Plug,
-      description: t('连接 MCP 服务，并管理 Bot 可以使用的外部工具。'),
+      description: t('settings.connectMcpServicesManageExternalToolsBots'),
       content: <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />,
     },
     {
       id: 'archive',
-      label: t('归档管理'),
+      label: t('settings.archives'),
       icon: Archive,
-      description: t('查看已归档的 Bot 和群聊，按需恢复使用。'),
+      description: t('settings.viewArchivedBotsGroupsRestoreThemWhen'),
       content: <ArchiveList state={state} dispatch={dispatch} onAction={onLifecycle} />,
     },
     {
       id: 'data',
-      label: t('数据与存储'),
+      label: t('settings.dataStorage'),
       icon: Database,
-      description: t('了解本机保存的内容，并导出工作区副本。'),
+      description: t('settings.seeWhatStoredLocallyExportWorkspaceCopy'),
       content: (
         <div className="settings-section">
-          <h2>{t('工作区数据')}</h2>
+          <h2>{t('settings.workspaceData')}</h2>
           <div className="setting-row">
             <div>
-              <div className="setting-label">{t('本机工作区数据')}</div>
+              <div className="setting-label">{t('settings.localWorkspaceData')}</div>
               <p className="setting-description">
-                {t(
-                  '客户端保存对话缓存、草稿、偏好副本和设置。清除客户端数据会丢失草稿；运行环境中的任务、资料和偏好需另行管理。',
-                )}
+                {t('settings.appStoresChatCachesDraftsPreferenceCopies')}
               </p>
             </div>
-            <span className="badge">{t('本地存储')}</span>
+            <span className="badge">{t('settings.localStorage')}</span>
           </div>
           <div className="setting-row">
             <div>
-              <div className="setting-label">{t('导出工作区')}</div>
+              <div className="setting-label">{t('settings.exportWorkspace')}</div>
               <p className="setting-description">
-                {t(
-                  '导出私聊缓存、草稿、偏好、设置及附件引用的 JSON 副本。群聊记录、附件原件、资料库和 Linux 产出保存在运行环境中，不包含在这个副本里。',
-                )}
+                {t('settings.exportJsonCopyPrivateChatCachesDrafts')}
               </p>
             </div>
             <button
@@ -239,7 +235,7 @@ export function Settings({
               }
             >
               <Download />
-              {t('导出')}
+              {t('settings.export')}
             </button>
           </div>
         </div>
@@ -247,16 +243,16 @@ export function Settings({
     },
     {
       id: 'about',
-      label: t('关于'),
+      label: t('settings.about'),
       icon: Info,
-      description: t('版本信息与后续计划。'),
+      description: t('settings.versionInformationFuturePlans'),
       content: (
         <div className="settings-section">
-          <h2>{t('关于 Daban')}</h2>
+          <h2>{t('common.aboutDaban')}</h2>
           <div className="setting-row">
             <div>
               <div className="setting-label">Daban</div>
-              <p className="setting-description">{t('你的 AI 工作伙伴。')}</p>
+              <p className="setting-description">{t('settings.aiWorkCompanion')}</p>
             </div>
             <span className="muted">
               0.1.0 · {runtime.enabled ? 'Local Agent Preview' : 'UI Preview'}
@@ -264,8 +260,8 @@ export function Settings({
           </div>
           <p className="inline-note">
             {runtime.enabled
-              ? t('已接入本机 Linux 与 DSH；移动端、跨设备同步和正式安装包仍在后续计划。')
-              : t('本轮只包含客户端界面。移动端、跨设备同步和正式安装包尚未实现。')}
+              ? t('settings.localLinuxDshConnectedMobileCrossDevice')
+              : t('settings.previewIncludesOnlyAppInterfaceMobileCross')}
           </p>
         </div>
       ),
@@ -273,7 +269,7 @@ export function Settings({
   ];
   return (
     <Dialog
-      title={t('设置')}
+      title={t('settings.title')}
       onClose={onClose}
       active={active && !connectionDialog}
       className="settings-dialog"
@@ -285,7 +281,11 @@ export function Settings({
         onSelectionChange={(key) => setCategory(String(key))}
         className="settings-layout"
       >
-        <TabList aria-label={t('设置分类')} className="settings-nav" items={sections}>
+        <TabList
+          aria-label={t('settings.settingsCategories')}
+          className="settings-nav"
+          items={sections}
+        >
           {(section) => (
             <Tab
               id={section.id}

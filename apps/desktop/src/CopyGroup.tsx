@@ -52,11 +52,11 @@ function CopyEditor({
     const profile = runtime.snapshot.profiles.find((entry) => entry.id === member);
     const cached = state.bots.find((entry) => !entry.members && agentId(entry.id) === member);
     const status = !profile
-      ? t('资料未同步')
+      ? t('copygroup.profileNotSynced')
       : profile.archived
-        ? t('已归档')
+        ? t('common.archived')
         : profile.lifecycle?.phase === 'pending' || (cached && state.lifecycleRequests[cached.id])
-          ? t('状态变更中')
+          ? t('copygroup.stateChanging')
           : '';
     return { id: member, name: profile?.name ?? cached?.name ?? member, status };
   });
@@ -70,7 +70,7 @@ function CopyEditor({
     !!state.groupActions[source.id] ||
     missingMember;
   return (
-    <Dialog title={t('复制群聊')} onClose={close}>
+    <Dialog title={t('common.copyGroup')} onClose={close}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -83,39 +83,33 @@ function CopyEditor({
           }).catch(() => {});
         }}
       >
-        <p className="dialog-description">
-          {t(
-            '使用原群聊的 Bot，创建空的新群聊。Bot 的资料与设置保持共享；不迁移聊天记录或附件，也不会自动运行任务。',
-          )}
-        </p>
+        <p className="dialog-description">{t('copygroup.createEmptyGroupSameBotsBotProfiles')}</p>
         {!available && (
           <p className="form-error" role="alert">
-            {t('请先更新并连接本地运行环境，再复制群聊。')}
+            {t('copygroup.updateConnectLocalRuntimeCopyingGroup')}
           </p>
         )}
         {blocked && (
-          <p className="inline-note">
-            {t('运行环境正在恢复，可以核对结果，恢复完成后可重试复制。')}
-          </p>
+          <p className="inline-note">{t('common.runtimeRecoveringCanVerifyResultsRetryCopying')}</p>
         )}
         {pending ? (
           <div className="bundle-progress" role="status">
             <strong>{pending.name}</strong>
             <p className="inline-note">
-              {t('来源：')}
+              {t('common.source')}
               {source?.name ?? latest?.name ?? pending.group}
             </p>
-            <p>{t('复制结果尚未确认。关闭后仍会保留原请求；重开只核对结果。')}</p>
-            <p className="inline-note">{t('重试沿用同一次请求，不会重复创建群聊。')}</p>
+            <p>{t('common.copyResultUnconfirmedOriginalRequestRemainsClosing')}</p>
+            <p className="inline-note">{t('copygroup.retryUsesSameRequestDoesNotCreate')}</p>
           </div>
         ) : source ? (
           <div className="form-stack">
             <p className="inline-note">
-              {t('来源：')}
+              {t('common.source')}
               {source.name}
             </p>
             <label className="field-label">
-              {t('新群聊名称')}
+              {t('copygroup.newGroupName')}
               <input
                 className="field"
                 data-autofocus
@@ -126,25 +120,27 @@ function CopyEditor({
             </label>
             <div>
               <h3 className="bundle-heading">
-                {t('群聊成员 ·')}
+                {t('groups.membersSuffix')}
                 {members.length}
               </h3>
-              <ul className="copy-members" aria-label={t('群聊成员')}>
+              <ul className="copy-members" aria-label={t('copygroup.groupMembers')}>
                 {members.map((member) => (
                   <li className="bundle-row" key={member.id}>
                     <span className="bundle-path">{member.name}</span>
-                    <span className="inline-note">{member.status || t('现有 Bot')}</span>
+                    <span className="inline-note">
+                      {member.status || t('copygroup.existingBots')}
+                    </span>
                   </li>
                 ))}
               </ul>
             </div>
             {missingMember && (
               <p className="form-error" role="alert">
-                {t('含不可用成员。请先恢复成员或修改原群聊，再载入最新来源；成员不会被自动移除。')}
+                {t('copygroup.someMembersUnavailableRestoreThemEditOriginal')}
               </p>
             )}
             {latest && latest.revision !== source.revision && (
-              <p className="inline-note">{t('原群聊已有更新，请载入后核对；新名称会保留。')}</p>
+              <p className="inline-note">{t('copygroup.originalGroupHasUpdatesLoadReviewNew')}</p>
             )}
             {latest && (
               <button
@@ -153,19 +149,19 @@ function CopyEditor({
                 disabled={!available || !!latest.archived || !!state.groupActions[latest.id]}
                 onClick={() => setSource(structuredClone(latest))}
               >
-                {t('载入最新来源')}
+                {t('common.loadLatestSource')}
               </button>
             )}
             {inactive && !missingMember && (
               <p className="form-error" role="alert">
-                {t('来源群聊暂不可复制，请核对归档或恢复状态。')}
+                {t('copygroup.sourceGroupCannotCopiedRightNowCheck')}
               </p>
             )}
           </div>
         ) : (
           <>
             <p className="form-error" role="alert">
-              {t('未找到来源群聊，请重新连接后核对。')}
+              {t('copygroup.sourceGroupNotFoundReconnectVerify')}
             </p>
             {latest && (
               <button
@@ -173,7 +169,7 @@ function CopyEditor({
                 className="secondary"
                 onClick={() => setSource(structuredClone(latest))}
               >
-                {t('载入最新来源')}
+                {t('common.loadLatestSource')}
               </button>
             )}
           </>
@@ -185,7 +181,7 @@ function CopyEditor({
         )}
         <div className="dialog-actions">
           <button type="button" className="secondary" onClick={close}>
-            {t('关闭')}
+            {t('common.close')}
           </button>
           {pending ? (
             <>
@@ -195,7 +191,7 @@ function CopyEditor({
                 disabled={!available || reading}
                 onClick={() => check().catch(() => {})}
               >
-                {reading ? t('正在核对…') : t('核对复制结果')}
+                {reading ? t('common.verifying') : t('common.verifyCopyResult')}
               </button>
               <button
                 type="button"
@@ -203,7 +199,7 @@ function CopyEditor({
                 disabled={!available || blocked || working}
                 onClick={() => submit(pending).catch(() => {})}
               >
-                {working ? t('正在复制…') : t('重试同一次复制')}
+                {working ? t('common.copying') : t('common.retrySameCopy')}
               </button>
             </>
           ) : (
@@ -214,7 +210,7 @@ function CopyEditor({
                 !available || blocked || working || inactive || !name.trim() || name.includes('\0')
               }
             >
-              {t('创建副本')}
+              {t('common.createCopy')}
             </button>
           )}
         </div>

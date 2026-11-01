@@ -73,7 +73,7 @@ export function RuntimeFiles({
     return {
       id: `runtime:${file.path}`,
       name: file.name,
-      kind: file.name.split('.').at(-1)?.toUpperCase() || t('文件'),
+      kind: file.name.split('.').at(-1)?.toUpperCase() || t('common.files'),
       size: `${(file.size / 1024).toFixed(1)} KB`,
       modified: file.modified,
       content: '',
@@ -83,7 +83,7 @@ export function RuntimeFiles({
   return (
     <div className="panel-section">
       <div className="panel-heading">
-        <h2>{t('工作区文件')}</h2>
+        <h2>{t('common.workspaceFiles')}</h2>
         {attachBot && (
           <button
             type="button"
@@ -91,18 +91,14 @@ export function RuntimeFiles({
             disabled={runtime.snapshot.protocolVersion < 12 || runtime.snapshot.phase !== 'ready'}
             onClick={() => setManager(attachBot)}
           >
-            {t('管理聊天附件')}
+            {t('runtimefiles.manageChatAttachments')}
           </button>
         )}
-        <IconButton label={t('刷新工作区文件')} onClick={refresh}>
+        <IconButton label={t('runtimefiles.refreshWorkspaceFiles')} onClick={refresh}>
           <RefreshCw />
         </IconButton>
       </div>
-      <p className="panel-description">
-        {t(
-          '所有 Bot 共享这些文件。可加入文本、PDF/Office 文档和 PNG/JPEG 图片，每次最多 4 个；文本最多 200 KB，文档原件最多 5 MB。',
-        )}
-      </p>
+      <p className="panel-description">{t('runtimefiles.allBotsShareFilesAddTextPdf')}</p>
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -132,7 +128,7 @@ export function RuntimeFiles({
             </button>
             {attach && (
               <IconButton
-                label={t('添加 {0} 到消息', { 0: file.name })}
+                label={t('runtimefiles.addMessage', { 0: file.name })}
                 disabled={attaching || attachmentLimit}
                 onClick={async () => {
                   // A read may finish after switching Bots; retain the initiating Bot's callback.
@@ -179,7 +175,7 @@ export function RuntimeFiles({
               </IconButton>
             )}
             <IconButton
-              label={t('下载 {0}', { 0: file.name })}
+              label={t('runtimefiles.download', { 0: file.name })}
               onClick={async () => {
                 try {
                   if (runtime.snapshot.protocolVersion >= 11) {
@@ -212,10 +208,10 @@ export function RuntimeFiles({
         ))}
       </div>
       {!files.length && !error && (
-        <p className="panel-description">{t('生成文件后会显示在这里。')}</p>
+        <p className="panel-description">{t('runtimefiles.generatedFilesAppearHere')}</p>
       )}
       {manager && (
-        <Dialog title={t('聊天附件')} onClose={closeManager} wide>
+        <Dialog title={t('runtimefiles.chatAttachments')} onClose={closeManager} wide>
           <Attachments key={manager} bot={manager} notify={notify} />
         </Dialog>
       )}

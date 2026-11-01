@@ -60,7 +60,7 @@ export function useInputs(
   async function attach(files: File[]) {
     if (blocked || !files.length) return;
     if (active.current.has(bot.id) || state.attachmentUploads[bot.id]) {
-      notify(t('附件仍在准备，请完成后再添加。'));
+      notify(t('inputs.attachmentsStillPreparingWaitAddingMore'));
       return;
     }
     const targetBot = bot.id;
@@ -75,7 +75,7 @@ export function useInputs(
           continue;
         }
         if (count >= 4) {
-          notify(t('每次任务最多添加 4 个附件。'));
+          notify(t('inputs.upAttachmentsPerTask'));
           break;
         }
         if (isDocumentName(file.name) || imageMime(file.name)) {
@@ -99,11 +99,11 @@ export function useInputs(
           continue;
         }
         if (!/\.(txt|md|csv|json)$/i.test(file.name)) {
-          notify(t('请选择文本、PDF/Office 文档或 PNG、JPEG、WebP、GIF 图片。'));
+          notify(t('inputs.selectTextPdfOfficeDocumentsPngJpeg'));
           continue;
         }
         if (file.size > 200 * 1024) {
-          notify(t('这个文件超过 200 KB，请选择更小的文本文件。'));
+          notify(t('common.fileExceedsKbChooseSmallerTextFile'));
           continue;
         }
         try {
@@ -124,7 +124,7 @@ export function useInputs(
                 'FILE_ENCODING',
               ].includes(error.message)
               ? runtimeError(error)
-              : t('无法读取这个文件，请重新选择。'),
+              : t('inputs.fileCouldNotReadSelectAgain'),
           );
         }
       }
@@ -187,7 +187,7 @@ export function useInputs(
       event.preventDefault();
       resetDrag();
       const files = transferFiles(event.dataTransfer);
-      if (!blocked && !files.length) notify(t('未读取到文件，请使用“添加附件”重新选择。'));
+      if (!blocked && !files.length) notify(t('inputs.noFileWasReadSelectAgainUsing'));
       await attach(files);
     },
   };

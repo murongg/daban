@@ -161,7 +161,7 @@ export function IntegrationTools({
       await runtime.command({ type: 'mcp.bind', bot, input });
       if (!mounted.current) return;
       setPending(undefined);
-      setNotice(t('工具选择已保存；实际调用仍需本次审批。'));
+      setNotice(t('integrationtools.toolSelectionSavedActualCallsStillNeed'));
       await load(true);
     } catch (error) {
       if (
@@ -197,21 +197,21 @@ export function IntegrationTools({
   return (
     <section
       className="integration-access"
-      aria-label={t('{0} 的工具设置', { 0: connection.name })}
+      aria-label={t('integrationtools.tools', { 0: connection.name })}
     >
       <div className="integration-access-heading">
         <h3>
-          {t('工具与授权 ·')}
+          {t('integrationtools.toolsPermissions')}
           {connection.name}
         </h3>
         <button className="secondary" type="button" disabled={locked} onClick={onClose}>
-          {t('关闭工具设置')}
+          {t('integrationtools.closeToolSettings')}
         </button>
       </div>
       <div className="field-label">
-        {t('使用工具的 Bot')}
+        {t('integrationtools.botsUsingTools')}
         <Select
-          label={t('使用工具的 Bot')}
+          label={t('integrationtools.botsUsingTools')}
           value={bot}
           disabled={locked || !available}
           onValueChange={(value) => {
@@ -223,14 +223,20 @@ export function IntegrationTools({
           }}
           options={[
             ...(!choices.some((entry) => agentId(entry.id) === bot) && bot
-              ? [{ value: bot, label: t('原 Bot 已归档或不可用'), disabled: true }]
+              ? [
+                  {
+                    value: bot,
+                    label: t('integrationtools.originalBotArchivedUnavailable'),
+                    disabled: true,
+                  },
+                ]
               : []),
             ...choices.map((item) => ({ value: agentId(item.id), label: item.name })),
           ]}
         />
       </div>
       {choices.length === 0 && (
-        <p className="inline-note">{t('先创建并同步一位 Bot，再选择工具。')}</p>
+        <p className="inline-note">{t('integrationtools.createSyncBotSelectingTools')}</p>
       )}
       {error && (
         <p className="form-error" role="alert">
@@ -243,10 +249,14 @@ export function IntegrationTools({
         </p>
       )}
       {!available && (
-        <p className="inline-note">{t('外部工具服务暂不可用，未保存的选择仍留在本页。')}</p>
+        <p className="inline-note">
+          {t('integrationtools.externalToolsTemporarilyUnavailableUnsavedSelectionsRemain')}
+        </p>
       )}
       {locked && (
-        <p className="field-help">{t('先保存、核对或放弃当前修改，再切换 Bot 或连接。')}</p>
+        <p className="field-help">
+          {t('integrationtools.saveVerifyDiscardCurrentEditsSwitchingBots')}
+        </p>
       )}
       {current && draft && (
         <form
@@ -256,18 +266,20 @@ export function IntegrationTools({
           }}
         >
           <p className="field-help">
-            {t('目录来自')}
+            {t('integrationtools.catalog')}
             {current.catalog.current.origin}
-            {t('。工具说明与返回内容不授予权限；可展开参数定义，核对后再保存。')}
+            {t('integrationtools.toolDescriptionsResultsDoNotGrantPermission')}
           </p>
           {current.entry.enabled && !current.entry.available && (
             <p className="inline-note">
-              {t('上次工具授权已失效，核对当前目录后再次保存才会启用。')}
+              {t('integrationtools.previousToolAuthorizationHasExpiredReviewCurrent')}
             </p>
           )}
           {changed && (
             <div className="inline-note">
-              <p>{t('目录或授权已变化。你的选择仍保留，请核对当前版本。')}</p>
+              <p>
+                {t('integrationtools.catalogPermissionsChangedSelectionsRetainedReviewCurrent')}
+              </p>
               <button
                 className="secondary"
                 type="button"
@@ -287,7 +299,7 @@ export function IntegrationTools({
                   });
                 }}
               >
-                {t('按当前版本继续编辑')}
+                {t('integrationtools.continueEditingCurrentRevision')}
               </button>
             </div>
           )}
@@ -296,7 +308,9 @@ export function IntegrationTools({
             disabled={!available || busy || !!pending || changed}
           >
             {current.catalog.tools.length === 0 && (
-              <p className="inline-note">{t('没有可选择的工具，请先检查连接。')}</p>
+              <p className="inline-note">
+                {t('integrationtools.noToolsSelectCheckConnectionFirst')}
+              </p>
             )}
             {current.catalog.tools.map((tool) => (
               <div className="integration-tool" key={tool.name}>
@@ -320,9 +334,9 @@ export function IntegrationTools({
                 </label>
                 <p className="setting-description">{tool.description}</p>
                 <details>
-                  <summary>{t('参数定义')}</summary>
+                  <summary>{t('integrations.parameterSchema')}</summary>
                   <ScrollText
-                    label={t('{0} 参数定义', { 0: tool.name })}
+                    label={t('integrations.namedParameterSchema', { 0: tool.name })}
                     value={JSON.stringify(tool.inputSchema, null, 2)}
                   />
                 </details>
@@ -336,15 +350,15 @@ export function IntegrationTools({
                   setDraft({ ...draft, input: { ...draft.input, enabled: event.target.checked } })
                 }
               />
-              {t('允许这位 Bot 使用所选工具')}
+              {t('integrationtools.allowBotUseSelectedTools')}
             </label>
           </fieldset>
           <p className="field-help">
-            {t('新任务会使用已保存的选择。停用会取消尚未发出的调用；已发出的操作可能已经生效。')}
+            {t('integrationtools.newTasksUseSavedSelectionDisablingCancels')}
           </p>
           <div className="inline-form-actions">
             <button className="primary" type="submit" disabled={!canSave}>
-              {t('保存工具选择')}
+              {t('integrationtools.saveToolSelection')}
             </button>
             {pending && (
               <button
@@ -371,13 +385,13 @@ export function IntegrationTools({
                       throw new Error('MCP_BINDING_UNCONFIRMED');
                     if (mounted.current) {
                       setPending(undefined);
-                      setNotice(t('已核对这次工具选择。'));
+                      setNotice(t('integrationtools.toolSelectionVerified'));
                     }
                     await load(true);
                   })
                 }
               >
-                {t('核对授权结果')}
+                {t('integrationtools.verifyAuthorizationResult')}
               </button>
             )}
             <button
@@ -393,12 +407,14 @@ export function IntegrationTools({
                 }
               }}
             >
-              {pending ? t('退出授权编辑') : t('放弃选择修改')}
+              {pending
+                ? t('integrationtools.leavePermissionEditor')
+                : t('integrationtools.discardSelectionChanges')}
             </button>
           </div>
           {pending && (
             <p className="inline-note">
-              {t('授权结果未确认，核对不会重发请求。退出编辑不会撤回可能已提交的授权。')}
+              {t('integrationtools.authorizationResultUnconfirmedCheckingDoesNotResend')}
             </p>
           )}
         </form>
@@ -416,13 +432,13 @@ export function IntegrationTools({
 }
 
 const phases = {
-  claimed: '等待审批',
-  dispatched: '已发出',
-  settled: '已返回',
-  denied: '已拒绝',
-  cancelled: '已取消',
-  unknown: '结果不确定',
-};
+  claimed: 'integrationtools.awaitingApproval',
+  dispatched: 'integrationtools.sent',
+  settled: 'integrationtools.returned',
+  denied: 'common.declined',
+  cancelled: 'integrationtools.cancelled',
+  unknown: 'integrationtools.outcomeUncertain',
+} as const;
 function CallHistory({
   bot,
   connection,
@@ -464,17 +480,15 @@ function CallHistory({
   }, [available, bot, connection, runtime.command, revision]);
   return (
     <div className="integration-history">
-      <h3>{t('最近调用')}</h3>
-      <p className="field-help">
-        {t('仅显示这位 Bot 在此连接上的最近 20 次调用。回执查询不会重新执行工具。')}
-      </p>
+      <h3>{t('integrationtools.recentCalls')}</h3>
+      <p className="field-help">{t('integrationtools.showsOnlyBotSLatestCallsConnection')}</p>
       {error && (
         <p className="form-error" role="alert">
           {error}
         </p>
       )}
       {history?.items.length === 0 && (
-        <p className="inline-note">{t('这位 Bot 还没有调用过此连接。')}</p>
+        <p className="inline-note">{t('integrationtools.botHasNotUsedConnectionYet')}</p>
       )}
       {history?.items.map((item) => (
         <div className="integration-call" key={item.id}>
@@ -484,12 +498,12 @@ function CallHistory({
           </div>
           {item.phase === 'unknown' && (
             <p className="inline-note">
-              {t('操作可能已经执行，请先到目标服务核对，不要重复提交。')}
+              {t('common.operationMayAlreadyHaveExecutedCheckDestination')}
             </p>
           )}
           <p className="field-help">
             {new Date(item.createdAt).toLocaleString()}
-            {t('· 连接版本')}
+            {t('integrationtools.connectionRevision')}
             {item.configRevision}
           </p>
           <button
@@ -514,7 +528,7 @@ function CallHistory({
               }
             }}
           >
-            {t('查看回执')}
+            {t('integrationtools.checkReceipt')}
           </button>
         </div>
       ))}
@@ -523,17 +537,17 @@ function CallHistory({
           <h4>
             {receipt.tool} · {t(phases[receipt.phase])}
           </h4>
-          <p className="field-help">{t('参数')}</p>
-          <ScrollText label={t('调用参数')} value={receipt.preview} />
+          <p className="field-help">{t('integrationtools.parameters')}</p>
+          <ScrollText label={t('integrationtools.callParameters')} value={receipt.preview} />
           {receipt.result && (
             <>
-              <p className="field-help">{t('返回内容')}</p>
-              <ScrollText label={t('返回内容')} value={receipt.result} />
+              <p className="field-help">{t('integrationtools.backContent')}</p>
+              <ScrollText label={t('integrationtools.backContent')} value={receipt.result} />
             </>
           )}
           {receipt.error && <p className="inline-note">{runtimeError(new Error(receipt.error))}</p>}
           <button className="secondary" type="button" onClick={() => setReceipt(undefined)}>
-            {t('收起回执')}
+            {t('integrationtools.collapseReceipt')}
           </button>
         </div>
       )}

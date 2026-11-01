@@ -9,14 +9,14 @@ import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
 import type { Action, Bot, State } from './state';
 
-const states = { open: '待处理', parked: '暂存', done: '已完成' };
+const states = { open: 'common.do', parked: 'notes.later', done: 'common.completed' } as const;
 const filters = {
-  active: '未完成',
-  all: '全部',
-  open: '待处理',
-  parked: '暂存',
-  done: '已完成',
-  trash: '回收站',
+  active: 'common.incomplete',
+  all: 'common.all',
+  open: 'common.do',
+  parked: 'notes.later',
+  done: 'common.completed',
+  trash: 'common.trash',
 } as const;
 const time = (value: string) =>
   new Date(value).toLocaleString(getLocale(), {
@@ -59,19 +59,19 @@ export function Notes({
     if (draft && !readOnly) dispatch({ type: 'notes-change', bot: bot.id, key: draft.key, patch });
   };
   return (
-    <section className="panel-section notes-panel" aria-label={t('{0}的便笺', { 0: bot.name })}>
+    <section className="panel-section notes-panel" aria-label={t('notes.notes', { 0: bot.name })}>
       <header className="notes-heading">
         <div>
-          <h2>{t('便笺')}</h2>
+          <h2>{t('common.notes')}</h2>
           <p>
-            {t('只供')}
+            {t('notes.only')}
             {bot.name}
-            {t('和你查看、修改。')}
+            {t('notes.viewEdit')}
           </p>
         </div>
         <div className="notes-actions">
           <IconButton
-            label={t('刷新便笺')}
+            label={t('notes.refreshNotes')}
             disabled={!notes.available || notes.loading}
             onClick={() => run(notes.load())}
           >
@@ -87,42 +87,44 @@ export function Notes({
             }}
           >
             <Plus size={14} />
-            {t('新建便笺')}
+            {t('notes.newNote')}
           </button>
         </div>
       </header>
-      <p className="inline-note">{t('便笺用于记录事项；保存或标为完成都不会启动任务。')}</p>
+      <p className="inline-note">{t('notes.notesRecordItemsSavingMarkingThemDone')}</p>
       {!notes.available && (
         <div className="notes-notice" role="status">
           <strong>
             {runtime.enabled && runtime.snapshot.protocolVersion < 37
-              ? t('需要更新运行环境')
-              : t('便笺暂不可用')}
+              ? t('common.runtimeUpdateRequired')
+              : t('notes.notesUnavailable')}
           </strong>
           <p>
             {runtime.snapshot.notes?.available === false
               ? runtimeError(Error(runtime.snapshot.notes.error))
-              : t('连接支持便笺的运行环境后可查看和保存，已有草稿仍保留。')}
+              : t('notes.connectRuntimeNotesSupportViewSaveNotes')}
           </p>
         </div>
       )}
       {notes.history && (
-        <p className="notes-notice">{t('这位 Bot 已归档或正在处理归档操作，便笺只能查看。')}</p>
+        <p className="notes-notice">{t('notes.botArchivedBeingArchivedNotesReadOnly')}</p>
       )}
       {notes.blocked && !notes.history && (
         <p className="notes-notice">
-          {t('运行环境正在恢复，暂时只能查看和编辑草稿。恢复完成后再保存。')}
+          {t('notes.runtimeRecoveringOnlyViewingEditingDraftsAvailable')}
         </p>
       )}
       {cache.damaged && (
         <p className="notes-notice" role="status">
-          {t('部分本机便笺缓存无法恢复。其余草稿和后台记录仍保留；请先核对列表，再继续编辑。')}
+          {t('notes.someLocalNoteCachesCouldNotRestored')}
         </p>
       )}
       {pending && (
-        <section className="notes-notice" aria-label={t('待确认的便笺操作')}>
-          <strong>{notes.working ? t('正在提交便笺…') : t('这次操作的结果尚未确认')}</strong>
-          <p>{t('原请求已保存在本机。重新打开只会核对回执，手动重试会使用同一次操作。')}</p>
+        <section className="notes-notice" aria-label={t('notes.unconfirmedNoteOperation')}>
+          <strong>
+            {notes.working ? t('notes.submittingNote') : t('notes.operationSResultUnconfirmed')}
+          </strong>
+          <p>{t('notes.originalRequestSavedLocallyReopeningOnlyChecks')}</p>
           {notes.operationError && <p role="status">{notes.operationError}</p>}
           <div className="notes-actions">
             <button
@@ -131,7 +133,7 @@ export function Notes({
               disabled={!notes.available || notes.checking}
               onClick={() => run(notes.check())}
             >
-              {notes.checking ? t('正在核对…') : t('核对操作结果')}
+              {notes.checking ? t('common.verifying') : t('common.verifyOperationResult')}
             </button>
             <button
               type="button"
@@ -139,7 +141,7 @@ export function Notes({
               disabled={!notes.available || notes.blocked || notes.working}
               onClick={() => run(notes.retry())}
             >
-              {t('重试同一次操作')}
+              {t('common.retrySameOperation')}
             </button>
           </div>
         </section>
@@ -150,7 +152,7 @@ export function Notes({
         </p>
       )}
       {editor ? (
-        <section className="note-editor" aria-label={t('便笺编辑器')}>
+        <section className="note-editor" aria-label={t('notes.noteEditor')}>
           <button
             type="button"
             className="text-button note-back"
@@ -160,57 +162,57 @@ export function Notes({
             }}
           >
             <ArrowLeft size={14} />
-            {t('返回便笺列表')}
+            {t('notes.backNotes')}
           </button>
-          {notes.reading && <p role="status">{t('正在读取便笺…')}</p>}
+          {notes.reading && <p role="status">{t('notes.loadingNotes')}</p>}
           {draft && (
             <>
               <div className="note-meta" role="status">
                 {sealed
-                  ? t('等待确认，原稿已锁定')
+                  ? t('notes.awaitingConfirmationOriginalTextLocked')
                   : noteDirty(draft)
-                    ? t('修改保留在本机，尚未保存到便笺')
+                    ? t('notes.changesLocalHaveNotBeenSavedNote')
                     : draft.base
-                      ? t('已保存到便笺')
-                      : t('尚未填写')}
+                      ? t('notes.savedNotes')
+                      : t('notes.notEntered')}
                 {draft.base && (
                   <span>
                     {draft.base.deleted
-                      ? t('已在回收站')
-                      : t('版本 {0}', { 0: draft.base.revision })}{' '}
-                    · {draft.base.updatedBy.kind === 'human' ? t('你') : bot.name}
-                    {t('更新于')}{' '}
+                      ? t('notes.alreadyTrash')
+                      : t('common.numberedRevision', { 0: draft.base.revision })}{' '}
+                    · {draft.base.updatedBy.kind === 'human' ? t('common.you') : bot.name}
+                    {t('notes.updated')}{' '}
                     <time dateTime={draft.base.updatedAt}>{time(draft.base.updatedAt)}</time>
                   </span>
                 )}
               </div>
               <label className="field-label">
-                {t('便笺标题')}
+                {t('notes.noteTitle')}
                 <input
                   className="field"
                   value={draft.title}
                   readOnly={readOnly}
                   maxLength={200}
-                  placeholder={t('需要记住的事项')}
+                  placeholder={t('notes.thingsRemember')}
                   onChange={(event) => mutate({ title: event.target.value })}
                 />
               </label>
               <label className="field-label">
-                {t('便笺正文')}
+                {t('notes.noteBody')}
                 <textarea
                   className="field note-body"
                   rows={8}
                   value={draft.body}
                   readOnly={readOnly}
                   maxLength={4000}
-                  placeholder={t('补充信息、记录进展或留个想法')}
+                  placeholder={t('notes.addDetailsProgressIdea')}
                   onChange={(event) => mutate({ body: event.target.value })}
                 />
               </label>
               <div className="field-label">
-                {t('便笺状态')}
+                {t('notes.noteStatus')}
                 <Select
-                  label={t('便笺状态')}
+                  label={t('notes.noteStatus')}
                   value={draft.status}
                   disabled={readOnly}
                   onValueChange={(value) => mutate({ status: value as NoteFields['status'] })}
@@ -222,39 +224,35 @@ export function Notes({
               </div>
               {draft.base?.completedAt && (
                 <p className="inline-note">
-                  {t('完成于')}{' '}
+                  {t('notes.completed')}{' '}
                   <time dateTime={draft.base.completedAt}>{time(draft.base.completedAt)}</time>
                 </p>
               )}
               {latest && (
-                <section className="note-conflict" aria-label={t('便笺版本核对')}>
-                  <h3>{t('核对不同版本')}</h3>
-                  <p>
-                    {t(
-                      '你正在编辑的内容仍在上方。保留更改会把你改过的字段合入最新版本；采用最新版本会放弃这些本机更改。',
-                    )}
-                  </p>
+                <section className="note-conflict" aria-label={t('notes.reviewNoteRevisions')}>
+                  <h3>{t('notes.compareRevisions')}</h3>
+                  <p>{t('notes.editsRemainAboveKeepChangesMergesEdited')}</p>
                   {/* This bounded comparison needs keyboard scrolling without moving focus into the editor. */}
                   <section
                     className="note-versions"
                     // biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded version comparison needs keyboard scrolling without focusing its editor.
                     tabIndex={0}
-                    aria-label={t('修改前和最新便笺内容')}
+                    aria-label={t('notes.originalLatestNoteContent')}
                   >
                     <h4>
-                      {t('修改前 · 版本')}
+                      {t('notes.editsRevision')}
                       {draft.base?.revision}
                     </h4>
                     <strong>{draft.base?.title}</strong>
-                    <p>{draft.base?.body || t('没有正文')}</p>
+                    <p>{draft.base?.body || t('notes.noContent')}</p>
                     <p>{draft.base && t(states[draft.base.status])}</p>
                     <h4>
-                      {t('最新 · 版本')}
+                      {t('notes.latestRevision')}
                       {latest.revision}
-                      {latest.deleted ? t(' · 已在回收站') : ''}
+                      {latest.deleted ? t('notes.alreadyInTrashSuffix') : ''}
                     </h4>
                     <strong>{latest.title}</strong>
-                    <p>{latest.body || t('没有正文')}</p>
+                    <p>{latest.body || t('notes.noContent')}</p>
                     <p>{t(states[latest.status])}</p>
                   </section>
                   <div className="notes-actions">
@@ -264,7 +262,7 @@ export function Notes({
                       disabled={!!pending || notes.history}
                       onClick={() => notes.merge(true)}
                     >
-                      {t('保留我的更改')}
+                      {t('common.keepMyChanges')}
                     </button>
                     <button
                       type="button"
@@ -272,7 +270,7 @@ export function Notes({
                       disabled={!!pending}
                       onClick={() => notes.merge(false)}
                     >
-                      {t('采用最新版本')}
+                      {t('notes.useLatestRevision')}
                     </button>
                   </div>
                 </section>
@@ -291,7 +289,7 @@ export function Notes({
                   }
                   onClick={() => run(notes.save())}
                 >
-                  {t('保存便笺')}
+                  {t('notes.saveNote')}
                 </button>
                 {noteDirty(draft) && (
                   <button
@@ -303,7 +301,7 @@ export function Notes({
                       notes.discard();
                     }}
                   >
-                    {t('放弃本次修改')}
+                    {t('notes.discardChanges')}
                   </button>
                 )}
               </div>
@@ -315,7 +313,7 @@ export function Notes({
                     disabled={!notes.available || !!pending || notes.reading}
                     onClick={() => run(notes.open(draft.base!.id, true))}
                   >
-                    {t('核对最新版本')}
+                    {t('common.reviewLatestRevision')}
                   </button>
                   {draft.base.deleted ? (
                     <button
@@ -326,11 +324,14 @@ export function Notes({
                       }
                       onClick={() => run(notes.changeStatus('restore'))}
                     >
-                      {t('恢复便笺')}
+                      {t('notes.restoreNote')}
                     </button>
                   ) : confirming ? (
-                    <fieldset className="note-trash-confirm" aria-label={t('确认移入回收站')}>
-                      <p>{t('便笺将移入回收站，之后可以恢复。')}</p>
+                    <fieldset
+                      className="note-trash-confirm"
+                      aria-label={t('notes.confirmMoveTrash')}
+                    >
+                      <p>{t('notes.noteWillMoveTrashCanRestoredLater')}</p>
                       <button
                         type="button"
                         className="secondary danger-text"
@@ -343,14 +344,14 @@ export function Notes({
                         }
                         onClick={() => run(notes.changeStatus('trash'))}
                       >
-                        {t('确认移入')}
+                        {t('common.confirmMove')}
                       </button>
                       <button
                         type="button"
                         className="text-button"
                         onClick={() => setConfirm(undefined)}
                       >
-                        {t('取消')}
+                        {t('common.cancel')}
                       </button>
                     </fieldset>
                   ) : (
@@ -373,7 +374,7 @@ export function Notes({
                         })
                       }
                     >
-                      {t('移入回收站')}
+                      {t('common.moveTrash')}
                     </button>
                   )}
                 </div>
@@ -382,15 +383,15 @@ export function Notes({
           )}
         </section>
       ) : (
-        <section className="notes-collection" aria-label={t('便笺列表')}>
+        <section className="notes-collection" aria-label={t('common.noteList')}>
           {draft && (
             <button
               type="button"
               className="text-button note-resume"
               onClick={() => notes.setEditorVisible(true)}
             >
-              {t('继续')}
-              {noteDirty(draft) ? t('未保存的编辑') : t('上次查看的便笺')}
+              {t('notes.continue')}
+              {noteDirty(draft) ? t('notes.unsavedEdits') : t('notes.lastViewedNotes')}
             </button>
           )}
           <div className="notes-filters">
@@ -398,8 +399,8 @@ export function Notes({
               <Search size={14} />
               <input
                 className="field"
-                aria-label={t('搜索便笺')}
-                placeholder={t('搜索标题和正文')}
+                aria-label={t('notes.searchNotes')}
+                placeholder={t('notes.searchTitlesContent')}
                 maxLength={200}
                 value={cache.text}
                 onChange={(event) =>
@@ -412,7 +413,7 @@ export function Notes({
               />
             </label>
             <Select
-              label={t('便笺筛选')}
+              label={t('notes.filterNotes')}
               value={cache.filter}
               onValueChange={(value) =>
                 dispatch({
@@ -434,7 +435,7 @@ export function Notes({
           )}
           {(notes.loading || (notes.available && !notes.loaded && !notes.listError)) && (
             <p className="inline-note" role="status">
-              {t('正在读取便笺…')}
+              {t('notes.loadingNotes')}
             </p>
           )}
           <ul className="notes-list">
@@ -444,7 +445,7 @@ export function Notes({
                   type="button"
                   className="note-row"
                   disabled={!!pending}
-                  aria-label={t('查看便笺 {0}', { 0: row.title })}
+                  aria-label={t('notes.viewNote', { 0: row.title })}
                   onClick={() => {
                     setConfirm(undefined);
                     run(notes.open(row.id));
@@ -474,7 +475,7 @@ export function Notes({
               disabled={notes.loading}
               onClick={() => run(notes.load(true))}
             >
-              {t('加载更早便笺')}
+              {t('notes.loadEarlierNotes')}
             </button>
           )}
           {notes.available &&
@@ -486,15 +487,15 @@ export function Notes({
                 <StickyNote />
                 <h3>
                   {cache.text
-                    ? t('没有匹配的便笺')
+                    ? t('notes.noMatchingNotes')
                     : cache.filter === 'trash'
-                      ? t('回收站是空的')
-                      : t('这里还没有便笺')}
+                      ? t('common.trashEmpty')
+                      : t('notes.noNotesHereYet')}
                 </h3>
                 <p>
                   {cache.text
-                    ? t('换个关键词或筛选再试。')
-                    : t('你可以在这里记录，也可以让这位 Bot 在对话中记下事项。')}
+                    ? t('notes.tryAnotherSearchTermFilter')
+                    : t('notes.writeNotesHereAskBotRememberItems')}
                 </p>
               </div>
             )}

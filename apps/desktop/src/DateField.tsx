@@ -65,25 +65,25 @@ export function DateField({
           <DateInput className="date-segments">
             {(segment) => <DateSegment segment={segment} className="date-segment" />}
           </DateInput>
-          <Button className="date-trigger" aria-label={t('选择{0}', { 0: label })}>
+          <Button className="date-trigger" aria-label={t('datefield.choose', { 0: label })}>
             <CalendarDays aria-hidden="true" />
           </Button>
         </Group>
-        <FieldError className="control-error">{t('请选择有效日期。')}</FieldError>
+        <FieldError className="control-error">{t('datefield.selectValidDate')}</FieldError>
         <Popover
           className="control-popover calendar-popover"
           data-daban-popup="true"
           placement="bottom start"
           offset={5}
         >
-          <Dialog className="calendar-dialog" aria-label={t('选择{0}', { 0: label })}>
+          <Dialog className="calendar-dialog" aria-label={t('datefield.choose', { 0: label })}>
             <Calendar>
               <header className="calendar-heading">
-                <Button slot="previous" aria-label={t('上个月')}>
+                <Button slot="previous" aria-label={t('datefield.previousMonth')}>
                   <ChevronLeft aria-hidden="true" />
                 </Button>
                 <Heading />
-                <Button slot="next" aria-label={t('下个月')}>
+                <Button slot="next" aria-label={t('datefield.nextMonth')}>
                   <ChevronRight aria-hidden="true" />
                 </Button>
               </header>

@@ -25,7 +25,7 @@ export function useNotices(
       if (document.querySelector('[role="dialog"]')) {
         if (deferred.current !== value.id) {
           deferred.current = value.id;
-          reporter.current(t('收到桌面提醒，关闭当前弹窗后会打开。'));
+          reporter.current(t('notices.desktopNotificationReceivedWillOpenCurrentDialog'));
         }
         return;
       }
@@ -39,10 +39,11 @@ export function useNotices(
       bridge
         .invoke({ type: 'ack', id: value.id })
         .then((reply) => {
-          if (live && !reply.ok) reporter.current(t('提醒已打开，确认记录暂未保存。'));
+          if (live && !reply.ok)
+            reporter.current(t('notices.notificationOpenedButAcknowledgmentHasNotBeen'));
         })
         .catch(() => {
-          if (live) reporter.current(t('提醒已打开，确认记录暂未保存。'));
+          if (live) reporter.current(t('notices.notificationOpenedButAcknowledgmentHasNotBeen'));
         });
     };
     attempt.current = check;

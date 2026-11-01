@@ -33,30 +33,41 @@ function rule(form: RoutineDraft): ScheduleRule {
   return { kind: 'daily', time: form.time, timeZone };
 }
 function timing(value: ScheduleRule) {
-  if (value.kind === 'every') return t('每隔 {0} 分钟', { 0: value.everySeconds / 60 });
+  if (value.kind === 'every') return t('schedules.everyMinutes', { 0: value.everySeconds / 60 });
   if (value.kind === 'cron') return `${value.expression} · ${value.timeZone}`;
   const prefix =
     value.kind === 'daily'
-      ? t('每天')
+      ? t('common.daily')
       : value.kind === 'once'
         ? value.date
-        : t('每周 {0}', {
+        : t('schedules.weekly', {
             0: value.weekdays
-              .map((day) => [t('日'), t('一'), t('二'), t('三'), t('四'), t('五'), t('六')][day])
+              .map(
+                (day) =>
+                  [
+                    t('schedules.sun'),
+                    t('schedules.mon'),
+                    t('schedules.tue'),
+                    t('schedules.wed'),
+                    t('schedules.thu'),
+                    t('schedules.fri'),
+                    t('schedules.sat'),
+                  ][day],
+              )
               .join('、'),
           });
   return `${prefix} ${value.time} · ${value.timeZone}`;
 }
 const phases = {
-  pending: '等待 Bot 空闲',
-  claimed: '正在启动',
-  running: '执行中',
-  completed: '已完成',
-  failed: '失败',
-  interrupted: '已中断',
-  cancelled: '已撤销',
-  coalesced: '已合并到待运行触发',
-};
+  pending: 'schedules.waitingBotAvailability',
+  claimed: 'schedules.starting',
+  running: 'common.running',
+  completed: 'common.completed',
+  failed: 'common.failed',
+  interrupted: 'common.interrupted',
+  cancelled: 'schedules.withdrawn',
+  coalesced: 'schedules.mergedIntoPendingTrigger',
+} as const;
 const definite = [
   // IPC validation rejects this before dispatch; editing cannot duplicate a schedule effect.
   'INVALID_COMMAND',
@@ -142,7 +153,7 @@ export function Schedules({
         requests.set(item.id, requestId);
         await runtime.command({ type: 'schedule.run', id: item.id, requestId });
         requests.delete(item.id);
-        notify(t('已提交「{0}」，Bot 空闲后执行。', { 0: item.title }));
+        notify(t('schedules.submittedWillRunWhenBotAvailable', { 0: item.title }));
       } else if (action === 'remove')
         await runtime.command({ type: 'schedule.remove', id: item.id, revision: item.revision });
       else
@@ -187,24 +198,22 @@ export function Schedules({
   return (
     <div className="panel-section">
       <div className="panel-heading">
-        <h2>{t('定时任务')}</h2>
+        <h2>{t('common.scheduledTasks')}</h2>
         <IconButton
-          label={t('新建定时任务')}
+          label={t('common.newScheduledTask')}
           disabled={!available || !!status.busy}
           onClick={() => change({ open: true })}
         >
           <Plus />
         </IconButton>
       </div>
-      <p className="panel-description">
-        {t('交代一次，让这位 Bot 按时开始。执行结果会回到它的对话。')}
-      </p>
+      <p className="panel-description">{t('schedules.giveInstructionsOnceBotWillStartSchedule')}</p>
       {!available && (
         <p className="form-error" role="alert">
           {bot.members
-            ? t('群聊定时任务尚未接入，请选择一位 Bot。')
+            ? t('schedules.groupSchedulesNotConnectedYetSelectIndividual')
             : runtime.snapshot.protocolVersion < 5
-              ? t('需要更新本地运行环境后使用定时任务。')
+              ? t('schedules.updateLocalRuntimeUseScheduledTasks')
               : runtimeError(new Error(catalog?.error || 'SCHEDULE_UNAVAILABLE'))}
         </p>
       )}
@@ -221,7 +230,7 @@ export function Schedules({
               type="button"
               className="toggle"
               role="switch"
-              aria-label={`${item.enabled ? t('停用') : t('启用')} ${item.title}`}
+              aria-label={`${item.enabled ? t('common.disable') : t('common.enable')} ${item.title}`}
               aria-checked={item.enabled}
               disabled={!available || !!status.busy}
               onClick={() => operate(item, 'toggle')}
@@ -234,22 +243,24 @@ export function Schedules({
           <p className="panel-description">{item.prompt}</p>
           <p className="inline-note">
             {item.enabled && item.nextRunAt
-              ? t('下次：{0}', {
+              ? t('schedules.nextRunTime', {
                   0: localTime(
                     item.nextRunAt,
                     'timeZone' in item.rule ? item.rule.timeZone : 'Asia/Shanghai',
                   ),
                 })
               : item.rule.kind === 'once' && item.history.length
-                ? t('单次任务已触发')
-                : t('已暂停')}
+                ? t('schedules.oneTimeTaskTriggered')
+                : t('common.paused')}
           </p>
           <div className="routine-bottom">
-            <span>{item.history[0] ? t(phases[item.history[0].state]) : t('尚未触发')}</span>
+            <span>
+              {item.history[0] ? t(phases[item.history[0].state]) : t('schedules.notTriggeredYet')}
+            </span>
             <span className="spacer" />
             <IconButton
-              label={t('{0}定时任务 {1}', {
-                0: item.locked ? t('解锁') : t('锁定'),
+              label={t('schedules.scheduledTask', {
+                0: item.locked ? t('schedules.unlock') : t('schedules.lock'),
                 1: item.title,
               })}
               aria-pressed={!!item.locked}
@@ -259,21 +270,21 @@ export function Schedules({
               {item.locked ? <Lock /> : <LockOpen />}
             </IconButton>
             <IconButton
-              label={t('立即运行 {0}', { 0: item.title })}
+              label={t('schedules.runNow', { 0: item.title })}
               disabled={!available || !!status.busy}
               onClick={() => operate(item, 'run')}
             >
               <Play />
             </IconButton>
             <IconButton
-              label={t('编辑定时任务 {0}', { 0: item.title })}
+              label={t('schedules.editScheduledTask', { 0: item.title })}
               disabled={!!status.busy || !!form.pending}
               onClick={() => edit(item)}
             >
               <Pencil />
             </IconButton>
             <IconButton
-              label={t('删除定时任务 {0}', { 0: item.title })}
+              label={t('common.deleteSchedule', { 0: item.title })}
               disabled={!available || !!status.busy}
               onClick={() => operate(item, 'remove')}
             >
@@ -282,7 +293,7 @@ export function Schedules({
           </div>
           {!!item.history.length && (
             <details className="schedule-history">
-              <summary>{t('最近触发')}</summary>
+              <summary>{t('schedules.recentTriggers')}</summary>
               <ul>
                 {item.history.map((firing) => (
                   <li key={firing.id}>
@@ -304,11 +315,11 @@ export function Schedules({
       {!items.length && !form.open && available && (
         <div className="empty-panel">
           <Clock3 />
-          <h3>{t('让 Bot 记得按时开始')}</h3>
-          <p>{t('例如每周整理进展，或每天汇总待办。')}</p>
+          <h3>{t('common.letBotStartTime')}</h3>
+          <p>{t('common.exampleSummarizeProgressWeeklyDosDaily')}</p>
           <button type="button" className="secondary" onClick={() => change({ open: true })}>
             <Plus />
-            {t('创建定时任务')}
+            {t('common.createSchedule')}
           </button>
         </div>
       )}
@@ -368,7 +379,7 @@ export function Schedules({
             disabled={!!status.busy || !!form.pending || !available}
           >
             <label className="field-label">
-              {t('任务名称')}
+              {t('common.taskName')}
               <input
                 className="field"
                 value={form.title}
@@ -378,7 +389,7 @@ export function Schedules({
               />
             </label>
             <label className="field-label">
-              {t('需要 Bot 做什么')}
+              {t('common.whatShouldBotDo')}
               <textarea
                 className="field"
                 value={form.instruction}
@@ -389,23 +400,30 @@ export function Schedules({
               />
             </label>
             <div className="field-label">
-              {t('重复')}
+              {t('common.repeat')}
               <Select
-                label={t('重复')}
+                label={t('common.repeat')}
                 value={form.frequency}
                 disabled={!!status.busy || !!form.pending || !available}
                 onValueChange={(value) => change({ frequency: value })}
-                options={['每天', '工作日', '每周五', '每周', '间隔', '单次', 'Cron'].map(
-                  (value) => ({ value, label: t(value) }),
-                )}
+                // Saved frequency values remain stable; only their labels are message keys.
+                options={[
+                  { value: '每天', label: t('common.daily') },
+                  { value: '工作日', label: t('workspace.weekdays') },
+                  { value: '每周五', label: t('workspace.everyFriday') },
+                  { value: '每周', label: t('common.weekly') },
+                  { value: '间隔', label: t('common.interval') },
+                  { value: '单次', label: t('common.once') },
+                  { value: 'Cron', label: t('schedules.cron') },
+                ]}
               />
             </div>
             {form.frequency === '间隔' ? (
               <>
                 <div className="field-label">
-                  {t('间隔分钟')}
+                  {t('schedules.intervalMinutes')}
                   <NumberField
-                    label={t('间隔分钟')}
+                    label={t('schedules.intervalMinutes')}
                     value={form.interval ?? '60'}
                     onValueChange={(value) => change({ interval: value })}
                     min={1}
@@ -416,7 +434,7 @@ export function Schedules({
                 </div>
                 {Number(form.interval || 60) < 15 && (
                   <p className="inline-note">
-                    {t('每次触发都可能调用模型并产生费用，建议使用较长间隔。')}
+                    {t('schedules.eachTriggerMayCallModelIncurCharges')}
                   </p>
                 )}
               </>
@@ -424,9 +442,9 @@ export function Schedules({
               <>
                 {form.frequency === '单次' && (
                   <div className="field-label">
-                    {t('日期')}
+                    {t('schedules.date')}
                     <DateField
-                      label={t('日期')}
+                      label={t('schedules.date')}
                       value={form.date || ''}
                       onValueChange={(value) => change({ date: value })}
                       required
@@ -436,7 +454,7 @@ export function Schedules({
                 )}
                 {form.frequency === 'Cron' ? (
                   <label className="field-label">
-                    {t('Cron 表达式')}
+                    {t('schedules.cronExpression')}
                     <input
                       className="field"
                       required
@@ -447,9 +465,9 @@ export function Schedules({
                   </label>
                 ) : (
                   <div className="field-label">
-                    {t('时间')}
+                    {t('common.time')}
                     <TimeField
-                      label={t('时间')}
+                      label={t('common.time')}
                       value={form.time}
                       onValueChange={(value) => change({ time: value })}
                       required
@@ -460,7 +478,7 @@ export function Schedules({
                 {form.frequency === '每周' && (
                   <fieldset
                     className="schedule-days schedule-fields"
-                    aria-label={t('每周执行日期')}
+                    aria-label={t('schedules.weeklyRunDays')}
                   >
                     {[1, 2, 3, 4, 5, 6, 0].map((day) => (
                       <label key={day}>
@@ -475,14 +493,24 @@ export function Schedules({
                             })
                           }
                         />
-                        {t('周')}
-                        {[t('日'), t('一'), t('二'), t('三'), t('四'), t('五'), t('六')][day]}
+                        {t('schedules.week')}
+                        {
+                          [
+                            t('schedules.sun'),
+                            t('schedules.mon'),
+                            t('schedules.tue'),
+                            t('schedules.wed'),
+                            t('schedules.thu'),
+                            t('schedules.fri'),
+                            t('schedules.sat'),
+                          ][day]
+                        }
                       </label>
                     ))}
                   </fieldset>
                 )}
                 <label className="field-label">
-                  {t('时区')}
+                  {t('schedules.timeZone')}
                   <input
                     className="field"
                     required
@@ -498,7 +526,7 @@ export function Schedules({
           ) : (
             !!preview.times.length && (
               <div className="schedule-preview">
-                <p>{t('接下来')}</p>
+                <p>{t('schedules.upcoming')}</p>
                 {preview.times.map((time) => (
                   <div key={time}>
                     {localTime(
@@ -512,13 +540,13 @@ export function Schedules({
           )}
           {form.pending && !status.busy && (
             <p className="inline-note">
-              {t('上次保存结果未确认。重试会核对同一份内容，不会重复创建。')}
+              {t('schedules.previousSaveUnconfirmedRetryingChecksSameContent')}
             </p>
           )}
           {status.conflict && (
             <div className="inline-note">
               <p>
-                {t('后台当前版本：')}
+                {t('schedules.currentServerRevision')}
                 {status.conflict.title} · {timing(status.conflict.rule)}
               </p>
               <p>{status.conflict.prompt}</p>
@@ -530,28 +558,26 @@ export function Schedules({
                   feedback(bot.id, {});
                 }}
               >
-                {t('保留草稿，按此版本重试')}
+                {t('common.keepDraftRetryRevision')}
               </button>
             </div>
           )}
           <div className="inline-form-actions">
             <button type="button" className="text-button" onClick={() => change({ open: false })}>
-              {t('关闭')}
+              {t('common.close')}
             </button>
             <button type="submit" className="primary" disabled={!!status.busy || !available}>
               {status.busy
-                ? t('正在保存…')
+                ? t('common.saving')
                 : form.pending
-                  ? t('核对并重试保存')
-                  : t('保存定时任务')}
+                  ? t('common.verifyRetrySave')
+                  : t('common.saveSchedule')}
             </button>
           </div>
         </form>
       )}
       <p className="inline-note" style={{ marginTop: 25 }}>
-        {t(
-          '锁定后 Bot 只能读取这项计划，你仍可编辑、暂停或删除。 本机和运行环境启动时执行；关闭客户端不停止任务。Bot 忙时排队，后续待运行触发会合并。暂停或删除会撤销尚未开始的触发；正在执行的任务可在对话中停止。',
-        )}
+        {t('schedules.lockingMakesPlanReadOnlyBotCan')}
       </p>
     </div>
   );
