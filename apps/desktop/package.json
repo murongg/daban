@@ -13,6 +13,7 @@
     "start": "electron ."
   },
   "dependencies": {
+    "@daban/engine": "0.1.0",
     "@daban/protocol": "0.1.0",
     "@internationalized/date": "3.12.4",
     "dompurify": "3.4.17",
@@ -27,8 +28,7 @@
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
     "remark-math": "6.0.0",
-    "yaml": "2.9.1",
-    "@daban/engine": "0.1.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "7.0.1",
@@ -41,5 +41,9 @@
     "electron": "45.0.0",
     "vite": "8.3.5",
     "vitest": "5.0.5"
+  },
+  "optionalDependencies": {
+    "@computer-use/libnut-darwin": "2.7.1",
+    "@computer-use/libnut-win32": "2.7.1"
   }
 }

@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { secureDirectory } from '@daban/engine/local-computer';
 import {
   type DiagnosticReport,
   diagnosticIds,
   disconnected,
+  isLocalComputerCommand,
   isRebootStatus,
+  modelCatalog,
+  modelHasVision,
   type RebootStatus,
   type RuntimeCommand,
   type RuntimeReply,
@@ -19,6 +23,8 @@ import { AgentSetup } from './agent-setup';
 import { Daemon, daemonScope } from './daemon';
 import { loadHost, type ManagedHost } from './host';
 import { parseCommand, trustedSender } from './ipc';
+import type { LocalComputer } from './local-computer';
+import { NativeDaemon } from './native-daemon';
 import { RuntimeClient } from './runtime';
 import { Setup } from './setup';
 import { controlSocket } from './socket';
@@ -38,6 +44,7 @@ export function runtimeService(
   resources = join(__dirname, '..', 'resources/environment'),
   onSnapshot?: (snapshot: RuntimeSnapshot, scope?: string) => Promise<unknown>,
   agent?: AgentConfig,
+  local?: LocalComputer,
 ) {
   const dataRoot = agent?.dataRoot ?? join(userData, 'agent');
   const vmConfig = agent?.vmConfig ?? join(userData, 'runtime.json');
@@ -51,7 +58,8 @@ export function runtimeService(
         socketPath: agent.socketPath ?? controlSocket(join(userData, 'agent.sock'), agentScope!),
       }
     : undefined;
-  let daemon: Daemon | undefined;
+  let daemon: Daemon | NativeDaemon | undefined;
+  const nativeMode = !!agentConfig && process.platform === 'win32';
   const agentTransport = new AbortController();
   let setup: Setup | AgentSetup | undefined;
   let setupState: SetupStatus | undefined;
@@ -105,7 +113,9 @@ export function runtimeService(
   }
   function privateClient() {
     if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
-    const fetcher = unixFetch(agentConfig.socketPath);
+    const fetcher = unixFetch(agentConfig.socketPath, {
+      key: () => readAgentToken(agentConfig.dataRoot),
+    });
     return new RuntimeClient({
       origin: 'http://127.0.0.1:8766',
       agent: true,
@@ -119,6 +129,12 @@ export function runtimeService(
   }
   async function connectAgent() {
     if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
+    if (nativeMode) {
+      await secureDirectory(agentConfig.dataRoot);
+      const native = daemon instanceof NativeDaemon ? daemon : new NativeDaemon(agentConfig);
+      daemon = native;
+      return native.ensure();
+    }
     // A partial configuration does not clear a user pause or authorize a legacy VM installation.
     const progress = await installation().status();
     if (progress.required) {
@@ -274,6 +290,10 @@ export function runtimeService(
         await refresh();
       } catch (error) {
         if (agentConfig) client = undefined;
+        if (nativeMode) {
+          publish(disconnected('offline', 'errors.runtimeConnectionUnavailable'));
+          return state;
+        }
         if (
           (error instanceof Error && error.message === 'SETUP_REQUIRED') ||
           (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
@@ -288,6 +308,35 @@ export function runtimeService(
     return connecting;
   }
   async function dispatch(command: RuntimeCommand): Promise<unknown> {
+    if (isLocalComputerCommand(command)) {
+      if (!local || !agentConfig || !state.localComputer)
+        throw new Error('LOCAL_AGENT_UPDATE_REQUIRED');
+      if (command.type === 'local.status') return local.status();
+      if (command.type === 'local.permissions') return local.requestPermissions();
+      if (command.type === 'local.preview') return local.preview(command.session, command.revision);
+      if (command.type === 'local.connect') {
+        await refresh();
+        const profile = state.profiles.find((profile) => profile.id === command.bot);
+        if (!profile || profile.archived) throw new Error('BOT_NOT_REGISTERED');
+        if (state.agents[command.bot]?.running) throw new Error('LOCAL_TASK_BUSY');
+        const model = profile.model || state.model.model;
+        if (model !== command.model || (state.model.revision ?? 0) !== command.modelRevision)
+          throw new Error('LOCAL_MODEL_CHANGED');
+        if (!modelHasVision(model, modelCatalog(state.model.connections)))
+          throw new Error('MODEL_COMPUTER_UNSUPPORTED');
+        const result = await local.connect(command);
+        publish({ ...state, localComputer: result });
+        return result;
+      }
+      const result =
+        command.type === 'local.pause'
+          ? await local.pause(command.session, command.revision)
+          : command.type === 'local.resume'
+            ? await local.resume(command.session, command.revision)
+            : await local.disconnect(command.session, command.revision);
+      publish({ ...state, localComputer: result });
+      return result;
+    }
     if (command.type === 'clipboard.write') {
       clipboard.writeText(command.text);
       return { copied: true };
@@ -302,6 +351,7 @@ export function runtimeService(
       command.type === 'setup.start' ||
       command.type === 'setup.cancel'
     ) {
+      if (nativeMode) return { required: false, phase: 'complete' };
       const owner = installation();
       const value =
         command.type === 'setup.start'

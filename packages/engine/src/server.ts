@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile } from 'node:fs/promises';
-import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -69,6 +69,8 @@ import { integrationCommand } from './integration-api.js';
 import { BotLifecycle } from './lifecycle.js';
 import { Machine } from './machine.js';
 import { ModelRuns } from './model.js';
+import { NativeWorkspace } from './native-workspace.js';
+import { privateServer } from './private-channel.js';
 import { Recovery } from './recovery.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
 import { Risk } from './risk.js';
@@ -215,6 +217,8 @@ export interface PrototypeOptions {
   desktop?: boolean | Partial<Pick<DesktopOptions, 'dir' | 'displayBase'>>;
 }
 export interface HostComposition {
+  localComputer?: import('./local-computer.js').LocalComputerClient;
+  nativeWorkspace?: string;
   offlineWorkspaceRoot?: string;
   identity?: { dataRoot: string; socketPath: string };
   reboot?: {
@@ -224,7 +228,7 @@ export interface HostComposition {
   dataRoot: string;
   socketPath: string;
   scope: string;
-  execution: Pick<Executor, 'ready' | 'snapshot' | 'refresh'> & WorkspaceExecutor;
+  execution?: Pick<Executor, 'ready' | 'snapshot' | 'refresh'> & WorkspaceExecutor;
   sdkFile: string;
   stdioEntry?: string;
 }
@@ -252,6 +256,7 @@ export async function startPrototype({
   computers,
   host,
 }: PrototypeOptions = {}): Promise<Prototype> {
+  if (host && !host.execution && !host.nativeWorkspace) throw new Fault('AGENT_REMOTE_REQUIRED');
   if (computers && desktop) throw new Fault('INVALID_COMPUTER_CONFIG', 400);
   profileDir ||= host
     ? path.join(host.dataRoot, 'browser', 'profile')
@@ -322,10 +327,10 @@ export async function startPrototype({
     });
   }
   function refreshExecution(): Promise<ExecutionSnapshot> {
-    if (!host) throw new Fault('AGENT_REMOTE_REQUIRED');
+    if (!host?.execution) throw new Fault('AGENT_REMOTE_REQUIRED');
     if (refreshingExecution) return refreshingExecution;
     refreshingExecution = (async () => {
-      const snapshot = await host.execution.refresh();
+      const snapshot = await host.execution!.refresh();
       if (!isExecutionSnapshot(snapshot)) throw new Fault('EXECUTION_INVALID_RESPONSE');
       const previous = executionSnapshot;
       if (previous && (snapshot.boot !== previous.boot || snapshot.nonce !== previous.nonce)) {
@@ -347,7 +352,7 @@ export async function startPrototype({
         }
       } else executionSnapshot = snapshot;
       if (host.offlineWorkspaceRoot) {
-        const root = await host.execution.call('workspace.base', {});
+        const root = await host.execution!.call('workspace.base', {});
         if (root !== host.offlineWorkspaceRoot) throw new Fault('WORKSPACE_CHANGED');
       }
       computerAvailable = true;
@@ -419,6 +424,7 @@ export async function startPrototype({
     }),
     computers: () => {
       if (!host && !(runtime instanceof Computers)) return { state: 'unsupported' };
+      if (host?.nativeWorkspace) return { state: 'unsupported' };
       const status = host ? executionSnapshot!.status : (runtime as Computers).status();
       if (!status.available || (host && !computerAvailable)) return { state: 'unavailable' };
       const affected = status.items.filter((row) =>
@@ -431,10 +437,10 @@ export async function startPrototype({
       : desktopDependencies,
   });
   const documentAbort = new AbortController();
-  const documents = host
+  const documents = host?.execution
     ? {
         async extract(file: Parameters<Documents['extract']>[0], signal?: AbortSignal) {
-          const value = await host.execution.call(
+          const value = await host.execution!.call(
             'documents.extract',
             { ...file },
             AbortSignal.any([documentAbort.signal, ...(signal ? [signal] : [])]),
@@ -466,1110 +472,1154 @@ export async function startPrototype({
   };
   const json = (res: ServerResponse, data: unknown, status = 200) =>
     reply(res, status, 'application/json; charset=utf-8', JSON.stringify(data));
-  const server = http.createServer(async (req, res) => {
-    let releaseMutation: (() => unknown) | undefined;
-    try {
-      if (req.headers.host !== new URL(origin).host) throw new Fault('INVALID_HOST', 403);
-      if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
-        throw new Fault('FOREIGN_ORIGIN', 403);
-      const url = new URL(req.url || '/', origin);
-      if (host && url.pathname === '/agent/identity' && req.method === 'GET' && !url.search)
-        return json(res, {
-          role: 'agent',
-          scope: host.scope,
-          dataRoot: host.identity?.dataRoot || host.dataRoot,
-          socketPath: host.identity?.socketPath || host.socketPath,
-        });
-      const groupProtocol = req.headers['x-daban-client-protocol'];
-      const groupVersion =
-        typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
-          ? Number(groupProtocol)
-          : 0;
-      // Archive-aware group shapes start at28; current supported versions must not fall back to legacy.
-      const modernGroups =
-        Number.isSafeInteger(groupVersion) && groupVersion >= 28 && groupVersion <= managedProtocol;
-      const coordinatedWork = groupVersion >= 39 && groupVersion <= managedProtocol;
-      const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
-      if (mcp) {
-        if (recovery && !recovery.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
-        if (!models) throw new Fault('STARTING', 503);
-        if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-        const result = await models.rpc(mcp[1], req.headers.authorization, await body(req));
-        if (result === null) {
-          res.writeHead(202);
-          res.end();
-          return;
+  const server = privateServer(
+    async (req, res) => {
+      let releaseMutation: (() => unknown) | undefined;
+      try {
+        if (req.headers.host !== new URL(origin).host) throw new Fault('INVALID_HOST', 403);
+        if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
+          throw new Fault('FOREIGN_ORIGIN', 403);
+        const url = new URL(req.url || '/', origin);
+        if (
+          host?.nativeWorkspace &&
+          (/^\/api\/(computers|browser|native|worker|control)(?:\/|$)/.test(url.pathname) ||
+            /^\/api\/(frame|app)$/.test(url.pathname))
+        )
+          throw new Fault('LOCAL_VM_UNAVAILABLE', 503);
+        if (host && url.pathname === '/agent/identity' && req.method === 'GET' && !url.search)
+          return json(res, {
+            role: 'agent',
+            scope: host.scope,
+            dataRoot: host.identity?.dataRoot || host.dataRoot,
+            socketPath: host.identity?.socketPath || host.socketPath,
+          });
+        const groupProtocol = req.headers['x-daban-client-protocol'];
+        const groupVersion =
+          typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
+            ? Number(groupProtocol)
+            : 0;
+        // Archive-aware group shapes start at28; current supported versions must not fall back to legacy.
+        const modernGroups =
+          Number.isSafeInteger(groupVersion) &&
+          groupVersion >= 28 &&
+          groupVersion <= managedProtocol;
+        const coordinatedWork = groupVersion >= 39 && groupVersion <= managedProtocol;
+        const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
+        if (mcp) {
+          if (recovery && !recovery.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
+          if (!models) throw new Fault('STARTING', 503);
+          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+          const result = await models.rpc(mcp[1], req.headers.authorization, await body(req));
+          if (result === null) {
+            res.writeHead(202);
+            res.end();
+            return;
+          }
+          return json(res, result);
         }
-        return json(res, result);
-      }
-      const viewer = url.pathname.match(/^\/viewer\/([a-zA-Z0-9_-]{1,80})(\/input)?$/);
-      if (viewer) {
-        const [, bot, action] = viewer;
-        const instance = viewers.instance(req.headers['x-prototype-token'], bot);
-        if (!instance) throw new Fault('UNAUTHORIZED', 403);
-        if (!ready) throw new Fault('STARTING', 503);
-        if (!(runtime instanceof Computers) && !(runtime instanceof Desktop))
-          throw new Fault('COMPUTER_NOT_CONNECTED', 503);
-        runtime.assertInstance(bot, instance);
-        const browser = runtime instanceof Computers ? runtime.browserFor(bot) : runtime.browser;
-        if (req.method === 'GET' && !action) {
-          const view = await browser.view(bot);
+        const viewer = url.pathname.match(/^\/viewer\/([a-zA-Z0-9_-]{1,80})(\/input)?$/);
+        if (viewer) {
+          const [, bot, action] = viewer;
+          const instance = viewers.instance(req.headers['x-prototype-token'], bot);
+          if (!instance) throw new Fault('UNAUTHORIZED', 403);
+          if (!ready) throw new Fault('STARTING', 503);
+          if (!(runtime instanceof Computers) && !(runtime instanceof Desktop))
+            throw new Fault('COMPUTER_NOT_CONNECTED', 503);
+          runtime.assertInstance(bot, instance);
+          const browser = runtime instanceof Computers ? runtime.browserFor(bot) : runtime.browser;
+          if (req.method === 'GET' && !action) {
+            const view = await browser.view(bot);
+            if (viewers.instance(req.headers['x-prototype-token'], bot) !== instance)
+              throw new Fault('UNAUTHORIZED', 403);
+            runtime.assertInstance(bot, instance);
+            const { owner, epoch } = runtime.control.state(bot);
+            if (view.epoch !== epoch) throw new Fault('STALE_CONTROL');
+            return json(res, { lease: { owner, epoch }, view });
+          }
+          if (req.method !== 'POST' || action !== '/input')
+            throw new Fault('METHOD_NOT_ALLOWED', 405);
+          if (recovery) releaseMutation = recovery.enter();
+          const input = boundInput(await body(req));
           if (viewers.instance(req.headers['x-prototype-token'], bot) !== instance)
             throw new Fault('UNAUTHORIZED', 403);
           runtime.assertInstance(bot, instance);
-          const { owner, epoch } = runtime.control.state(bot);
-          if (view.epoch !== epoch) throw new Fault('STALE_CONTROL');
-          return json(res, { lease: { owner, epoch }, view });
-        }
-        if (req.method !== 'POST' || action !== '/input')
-          throw new Fault('METHOD_NOT_ALLOWED', 405);
-        if (recovery) releaseMutation = recovery.enter();
-        const input = boundInput(await body(req));
-        if (viewers.instance(req.headers['x-prototype-token'], bot) !== instance)
-          throw new Fault('UNAUTHORIZED', 403);
-        runtime.assertInstance(bot, instance);
-        await browser.boundInput(bot, input.epoch, input.binding, input.input);
-        return json(res, { ok: true });
-      }
-      if (url.pathname.startsWith('/api/')) {
-        if (!authority.accepts(req.headers['x-prototype-token']))
-          throw new Fault('UNAUTHORIZED', 403);
-        if (!ready) throw new Fault('STARTING', 503);
-        if (host && url.pathname === '/api/host/recovery') {
-          if (!host.reboot) throw new Fault('RECOVERY_UNAVAILABLE', 503);
-          if (req.method !== 'POST' || url.search) throw new Fault('INVALID_RECOVERY_REQUEST', 400);
-          const command = await body(req);
-          const type = command.type;
-          const valid = ['recovery.status', 'recovery.review'].includes(String(type))
-            ? Object.keys(command).every((key) => key === 'type')
-            : type === 'recovery.restart'
-              ? Object.keys(command).every((key) => ['type', 'request'].includes(key)) &&
-                isRecoveryRequest(command.request)
-              : ['recovery.inspect', 'recovery.cancel', 'recovery.start'].includes(String(type)) &&
-                Object.keys(command).every((key) => ['type', 'id'].includes(key)) &&
-                validAgentId(command.id);
-          if (!valid) throw new Fault('INVALID_RECOVERY_REQUEST', 400);
-          return json(res, await host.reboot.invoke(command as unknown as RuntimeCommand));
-        }
-        if (url.pathname === '/api/recovery' || url.pathname === '/api/recovery/review') {
-          if (!recovery) throw new Fault('RECOVERY_UNAVAILABLE', 503);
-          if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
-          if (url.search) throw new Fault('INVALID_RECOVERY_REQUEST', 400);
-          if (host && url.pathname.endsWith('/review')) await refreshExecution();
-          return json(
-            res,
-            url.pathname.endsWith('/review') ? recovery.review() : recovery.status(),
-          );
-        }
-        if (url.pathname.startsWith('/api/recovery/')) {
-          if (!recovery) throw new Fault('RECOVERY_UNAVAILABLE', 503);
-          if (req.method !== 'POST' || url.search) throw new Fault('INVALID_RECOVERY_REQUEST', 400);
-          const data = await body(req);
-          if (host && url.pathname === '/api/recovery/prepare') await refreshExecution();
-          if (url.pathname === '/api/recovery/prepare')
-            return json(res, await recovery.prepare(data));
-          if (
-            !validAgentId(data.id) ||
-            Object.keys(data).some((key) => !['id', 'revision'].includes(key))
-          )
-            throw new Fault('INVALID_RECOVERY_REQUEST', 400);
-          if (url.pathname === '/api/recovery/receipt' && Object.keys(data).length === 1)
-            return json(res, recovery.receipt(data.id));
-          if (!Number.isSafeInteger(data.revision) || Number(data.revision) < 0)
-            throw new Fault('INVALID_RECOVERY_REQUEST', 400);
-          if (url.pathname === '/api/recovery/claim')
-            return json(res, await recovery.claim(data.id, Number(data.revision)));
-          if (url.pathname === '/api/recovery/cancel')
-            return json(res, await recovery.cancel(data.id, Number(data.revision)));
-          throw new Fault('INVALID_RECOVERY_REQUEST', 400);
-        }
-        if (
-          recovery &&
-          req.method !== 'GET' &&
-          !recoveryReads.has(url.pathname) &&
-          !/^\/api\/bots\/[a-zA-Z0-9_-]{1,80}\/(browser-receipt|lifecycle-receipt|copy-receipt)$/.test(
-            url.pathname,
-          ) &&
-          !/^\/api\/groups\/[a-zA-Z0-9_-]{1,80}\/copy-receipt$/.test(url.pathname)
-        ) {
-          const input = url.pathname.match(/^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/input$/);
-          if (
-            !recovery.admit() &&
-            input &&
-            req.method === 'POST' &&
-            (host || runtime instanceof Computers)
-          ) {
-            const data = await body(req);
-            // Releasing held keys/buttons reduces authority and must remain possible while recovery fences new input.
-            if (
-              Object.keys(data).every((key) => ['epoch', 'input', 'instance'].includes(key)) &&
-              Number.isSafeInteger(data.epoch) &&
-              validAgentId(data.instance) &&
-              data.input &&
-              typeof data.input === 'object' &&
-              'type' in data.input &&
-              data.input.type === 'release'
-            ) {
-              if (host)
-                await host.execution.call('computer.request', {
-                  method: 'POST',
-                  path: url.pathname,
-                  body: data,
-                });
-              else
-                await (runtime as Computers).input(
-                  input[1],
-                  Number(data.epoch),
-                  data.input,
-                  data.instance,
-                );
-              return json(res, { ok: true });
-            }
-            throw new Fault('RUNTIME_RECOVERY_PENDING');
-          }
-          releaseMutation = recovery.enter();
-        }
-        const remoteRoute = url.pathname.match(
-          /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(frame|browser-frame|control|input|app|browser-state|browser-view|browser-command|browser-answer|browser-receipt|browser-bound-input|browser-input)$/,
-        );
-        if (
-          host &&
-          (remoteRoute ||
-            ['/api/computers/action', '/api/computers/receipt'].includes(url.pathname))
-        ) {
-          if (!models) throw new Fault('STARTING', 503);
-          if (!['GET', 'POST'].includes(req.method || ''))
-            throw new Fault('METHOD_NOT_ALLOWED', 405);
-          const data = req.method === 'POST' ? await body(req) : undefined;
-          const action = url.pathname === '/api/computers/action';
-          let bot = remoteRoute?.[1];
-          if (!remoteRoute) {
-            if (req.method !== 'POST' || url.search || !data)
-              throw new Fault('INVALID_COMPUTER_REQUEST', 400);
-            if (
-              action
-                ? !isComputerRequest(data)
-                : Object.keys(data).some((key) => !['id', 'bot'].includes(key)) ||
-                  !validAgentId(data.id) ||
-                  !validAgentId(data.bot)
-            )
-              throw new Fault('INVALID_COMPUTER_REQUEST', 400);
-            bot = String(data.bot);
-          }
-          models.profiles.assertRegistered(bot!);
-          if (action) {
-            models.profiles.assertActive(bot!);
-            if (models.running(bot!)) throw new Fault('COMPUTER_BUSY');
-            if (changing.has(bot!)) throw new Fault('COMPUTER_CHANGING');
-            changing.add(bot!);
-          }
-          try {
-            if (action) {
-              await models.drainComputer(bot!);
-              models.profiles.assertActive(bot!);
-            }
-            const result = await host.execution.call('computer.request', {
-              method: req.method,
-              path: url.pathname + url.search,
-              ...(data ? { body: data } : {}),
-            });
-            if (
-              remoteRoute &&
-              req.method === 'GET' &&
-              ['frame', 'browser-frame'].includes(remoteRoute[2])
-            ) {
-              const frame = result as { mimeType?: unknown; data?: unknown };
-              if (
-                frame?.mimeType !== 'image/jpeg' ||
-                typeof frame.data !== 'string' ||
-                frame.data.length > 12 * 1024 * 1024 ||
-                Buffer.from(frame.data, 'base64').toString('base64') !== frame.data
-              )
-                throw new Fault('EXECUTION_INVALID_RESPONSE');
-              return reply(res, 200, 'image/jpeg', Buffer.from(frame.data, 'base64'));
-            }
-            return json(res, result);
-          } finally {
-            if (action) changing.delete(bot!);
-          }
-        }
-        if (url.pathname.startsWith('/api/notes/')) {
-          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-          if (url.search) throw new Fault('INVALID_NOTE_REQUEST', 400);
-          if (!models) throw new Fault('NOTES_UNAVAILABLE', 503);
-          const data = await body(req);
-          const command = { ...data, type: `notes.${url.pathname.slice('/api/notes/'.length)}` };
-          if (Object.hasOwn(data, 'type') || !isNoteCommand(command))
-            throw new Fault('INVALID_NOTE_REQUEST', 400);
-          if (!(await models.profiles.get(command.bot)))
-            throw new Fault('BOT_PROFILE_NOT_FOUND', 404);
-          if (command.type === 'notes.status')
-            return json(res, { bot: command.bot, status: await models.notes.status(command.bot) });
-          if (command.type === 'notes.list')
-            return json(res, {
-              bot: command.bot,
-              query: command.query,
-              page: await models.notes.list(command.bot, command.query),
-            });
-          if (command.type === 'notes.read')
-            return json(res, await models.notes.get(command.bot, command.id));
-          // This authenticated channel belongs to the Human; no client author or Bot impersonation is accepted.
-          return json(
-            res,
-            command.type === 'notes.write'
-              ? await models.notes.write(command.bot, command.request, { kind: 'human' })
-              : await models.notes.receipt(command.bot, command.request, { kind: 'human' }),
-          );
-        }
-        if (url.pathname.startsWith('/api/work/')) {
-          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-          if (url.search) throw new Fault('INVALID_WORK_REQUEST', 400);
-          if (!models) throw new Fault('WORK_UNAVAILABLE', 503);
-          const data = await body(req);
-          if (url.pathname === '/api/work/comments' && isWorkCommentQuery(data))
-            return json(res, { query: data, page: await models.work.comments(data) });
-          if (isWorkCommentWrite(data)) {
-            if (
-              url.pathname === '/api/work/comment' ||
-              url.pathname === '/api/work/comment-receipt'
-            ) {
-              const value =
-                url.pathname === '/api/work/comment'
-                  ? await models.work.comment(data, { kind: 'human' })
-                  : await models.work.commentReceipt(data, { kind: 'human' });
-              return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
-            }
-          }
-          if (url.pathname === '/api/work/list' && isWorkQuery(data)) {
-            if (!coordinatedWork && !isLegacyWorkQuery(data))
-              throw new Fault('INVALID_WORK_QUERY', 400);
-            const value = { query: data, page: await models.work.list(data) };
-            return json(res, coordinatedWork ? value : legacyWorkList(value));
-          }
-          if (
-            url.pathname === '/api/work/read' &&
-            validAgentId(data.id) &&
-            Object.keys(data).every((key) => key === 'id')
-          ) {
-            const value = await models.work.get(data.id);
-            return json(res, coordinatedWork ? value : legacyWorkItem(value));
-          }
-          // Human provenance and compatibility are decided by the channel, never by payload fields.
-          if (isWorkWrite(data)) {
-            if (!coordinatedWork && !isLegacyWorkWrite(data))
-              throw new Fault('INVALID_WORK_WRITE', 400);
-            if (url.pathname === '/api/work/write') {
-              const value = coordinatedWork
-                ? await models.work.write(data, { kind: 'human' })
-                : await models.work.writeLegacy(data, { kind: 'human' });
-              return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
-            }
-            if (url.pathname === '/api/work/receipt') {
-              const value = await models.work.receipt(data, { kind: 'human' });
-              return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
-            }
-          }
-          throw new Fault('INVALID_WORK_REQUEST', 400);
-        }
-        if (url.pathname.startsWith('/api/bundles/')) {
-          if (!models) throw new Fault('STARTING', 503);
-          if (url.search) throw new Fault('INVALID_BOT_BUNDLE', 400);
-          const action = url.pathname.slice('/api/bundles/'.length);
-          if (action.startsWith('status/') && req.method === 'GET') {
-            const id = action.slice('status/'.length);
-            if (!validAgentId(id)) throw new Fault('INVALID_BOT_IMPORT', 400);
-            return json(res, await models.bundles.status(id));
-          }
-          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-          if (action.startsWith('submit/')) {
-            const id = action.slice('submit/'.length);
-            if (!validAgentId(id)) throw new Fault('INVALID_BOT_IMPORT', 400);
-            // Admission precedes the large body, so concurrent uploads cannot multiply JSON allocation.
-            return json(
-              res,
-              await models.bundles.receive(id, () => body(req, botBundleLimit + 64 * 1024)),
-            );
-          }
-          const data = await body(req);
-          if (action === 'export' && isBotExportRequest(data))
-            return json(res, await models.bundles.export(data));
-          if ((action === 'begin' || action === 'cancel') && isBotImportHeader(data))
-            return json(
-              res,
-              action === 'begin'
-                ? await models.bundles.begin(data)
-                : await models.bundles.cancel(data),
-            );
-          if (action === 'retry' && Object.keys(data).length === 1 && validAgentId(data.id))
-            return json(res, await models.bundles.retry(data.id));
-          throw new Fault('INVALID_BOT_BUNDLE', 400);
-        }
-        if (url.pathname === '/api/diagnostics') {
-          if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
-          if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
-          return json(res, await diagnostics.inspect());
-        }
-        if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
-          if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
-          const data = await body(req);
-          if (!isMcpCommand(data) || data.type !== `mcp.${url.pathname.slice('/api/mcp/'.length)}`)
-            throw new Fault('INVALID_MCP_CONFIG', 400);
-          const controller = new AbortController();
-          const cancel = () => controller.abort();
-          res.once('close', cancel);
-          try {
-            return json(res, await integrationCommand(models, data, controller.signal));
-          } finally {
-            res.off('close', cancel);
-          }
-        }
-        if (url.pathname.startsWith('/api/skills/') && req.method === 'POST') {
-          if (!models) throw new Fault('SKILLS_UNAVAILABLE', 503);
-          const data = await body(req),
-            action = url.pathname.slice('/api/skills/'.length);
-          const fields: Record<string, string[]> = {
-            list: ['bot', 'includeDeleted'],
-            read: ['bot', 'id'],
-            import: ['bot', 'content'],
-            update: ['bot', 'id', 'revision', 'content'],
-            recycle: ['bot', 'id', 'revision'],
-            restore: ['bot', 'id', 'revision'],
-            bind: ['bot', 'binding'],
-          };
-          if (
-            !fields[action] ||
-            Object.keys(data).some((key) => !fields[action].includes(key)) ||
-            !validAgentId(data.bot)
-          )
-            throw new Fault('INVALID_SKILL', 400);
-          if (!(await models.profiles.get(data.bot))) throw new Fault('SKILL_BOT_NOT_FOUND', 404);
-          if (
-            action === 'list' &&
-            (data.includeDeleted === undefined || typeof data.includeDeleted === 'boolean')
-          )
-            return json(res, {
-              bot: data.bot,
-              catalog: await models.skills.list(
-                data.bot,
-                data.includeDeleted as boolean | undefined,
-              ),
-            });
-          if (action === 'import' && isSkillContent(data.content))
-            return json(res, await models.skills.import(data.content));
-          if (action === 'bind' && isSkillBinding(data.binding))
-            return json(res, {
-              bot: data.bot,
-              entry: await models.skills.bind(data.bot, data.binding),
-            });
-          if (validAgentId(data.id)) {
-            if (action === 'read') return json(res, await models.skills.read(data.id));
-            if (Number.isSafeInteger(data.revision) && Number(data.revision) > 0) {
-              if (action === 'update' && isSkillContent(data.content))
-                return json(
-                  res,
-                  await models.skills.update(data.id, Number(data.revision), data.content),
-                );
-              if (action === 'recycle')
-                return json(res, await models.skills.recycle(data.id, Number(data.revision)));
-              if (action === 'restore')
-                return json(res, await models.skills.restore(data.id, Number(data.revision)));
-            }
-          }
-          throw new Fault('INVALID_SKILL', 400);
-        }
-        if (url.pathname.startsWith('/api/computers/') && req.method === 'POST') {
-          if (!(runtime instanceof Computers)) throw new Fault('COMPUTER_SERVICE_UNAVAILABLE', 503);
-          const data = await body(req);
-          if (url.pathname === '/api/computers/action' && isComputerRequest(data))
-            return json(res, await runtime.operate(data));
-          if (
-            url.pathname === '/api/computers/receipt' &&
-            Object.keys(data).every((key) => ['id', 'bot'].includes(key)) &&
-            validAgentId(data.id) &&
-            validAgentId(data.bot)
-          )
-            return json(res, await runtime.receipt(data.id, data.bot));
-          throw new Fault('INVALID_COMPUTER_REQUEST', 400);
-        }
-        if (url.pathname === '/api/memory/history' && req.method === 'POST') {
-          if (!models) throw new Fault('MEMORY_UNAVAILABLE', 503);
-          const data = await body(req);
-          if (
-            !Object.keys(data).every((key) => ['bot', 'query'].includes(key)) ||
-            !validAgentId(data.bot) ||
-            !isMemoryQuery(data.query)
-          )
-            throw new Fault('INVALID_MEMORY_QUERY', 400);
-          return json(res, await models.profiles.history(data.bot, data.query));
-        }
-        if (url.pathname.startsWith('/api/transcripts/') && req.method === 'POST') {
-          if (!models) throw new Fault('TRANSCRIPT_UNAVAILABLE', 503);
-          const data = await body(req);
-          if (url.pathname === '/api/transcripts/list' && isTranscriptQuery(data))
-            return json(res, await models.transcript(data.scope, data.after));
-          if (url.pathname === '/api/transcripts/content' && isTranscriptContentQuery(data))
-            return json(res, await models.transcriptContent(data.scope, data.seq, data.offset));
-          throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
-        }
-        if (url.pathname.startsWith('/api/chats/') && req.method === 'POST') {
-          if (!models) throw new Fault('CHAT_UNAVAILABLE', 503);
-          const data = await body(req);
-          if (url.pathname === '/api/chats/new') {
-            if (!isChatRequest(data)) throw new Fault('INVALID_CHAT_REQUEST', 400);
-            if (!(await models.profiles.get(data.bot)))
-              throw new Fault('BOT_PROFILE_NOT_FOUND', 404);
-            return json(res, await models.chats.renew(data));
-          }
-          if (!validAgentId(data.bot)) throw new Fault('INVALID_CHAT_REQUEST', 400);
-          if (
-            url.pathname === '/api/chats/receipt' &&
-            validAgentId(data.id) &&
-            Object.keys(data).every((key) => ['bot', 'id'].includes(key))
-          )
-            return json(res, await models.chats.receipt(data.bot, data.id));
-          if (
-            url.pathname === '/api/chats/history' &&
-            Object.keys(data).every((key) => ['bot', 'revision', 'before', 'runId'].includes(key))
-          ) {
-            if (
-              typeof data.revision !== 'number' ||
-              (data.before !== undefined && typeof data.before !== 'string') ||
-              (data.runId !== undefined && typeof data.runId !== 'string')
-            )
-              throw new Fault('INVALID_CHAT_QUERY', 400);
-            return json(
-              res,
-              await models.chatHistory(data.bot, data.revision, data.before, data.runId),
-            );
-          }
-          throw new Fault('INVALID_CHAT_REQUEST', 400);
-        }
-        const groupCopy = url.pathname.match(
-          /^\/api\/groups\/([a-zA-Z0-9_-]{1,80})\/(copy|copy-receipt)$/,
-        );
-        if (groupCopy) {
-          if (!groups) throw new Fault('GROUP_UNAVAILABLE', 503);
-          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-          const data = await body(req);
-          if (url.search || !isGroupCopyRequest(data) || data.group !== groupCopy[1])
-            throw new Fault('INVALID_GROUP_COPY', 400);
-          return json(
-            res,
-            groupCopy[2] === 'copy' ? await groups.copy(data) : await groups.copyReceipt(data),
-          );
-        }
-        if (url.pathname.startsWith('/api/groups/') && req.method === 'POST') {
-          if (!groups) throw new Fault('GROUP_UNAVAILABLE', 503);
-          const data = await body(req),
-            action = url.pathname.slice('/api/groups/'.length);
-          if (action === 'register')
-            return json(res, groupReply(await groups.register(data), modernGroups));
-          if (action === 'send')
-            return json(res, groupReply(await groups.send(data), modernGroups));
-          if (action === 'action') return json(res, await groups.action(data));
-          if (!validAgentId(data.group)) throw new Fault('INVALID_GROUP', 400);
-          if (
-            action === 'action-receipt' &&
-            Object.keys(data).every((key) => ['group', 'id'].includes(key)) &&
-            validAgentId(data.id)
-          )
-            return json(res, await groups.actionReceipt(data.group, data.id));
-          if (
-            action === 'input' &&
-            Object.keys(data).every((key) => ['group', 'sourceId', 'name'].includes(key)) &&
-            validAgentId(data.sourceId) &&
-            isTaskFileName(data.name)
-          )
-            return json(res, {
-              group: data.group,
-              sourceId: data.sourceId,
-              file: await groups.inputSource(data.group, data.sourceId, data.name),
-            });
-          if (
-            action === 'read' &&
-            Object.keys(data).every((key) => ['group', 'before'].includes(key))
-          )
-            return json(
-              res,
-              groupReply(
-                await groups.read(data.group, data.before as number | undefined),
-                modernGroups,
-              ),
-            );
-          if (
-            action === 'update' &&
-            Object.keys(data).every((key) => ['group', 'revision', 'input'].includes(key)) &&
-            typeof data.revision === 'number'
-          )
-            return json(
-              res,
-              groupReply(await groups.update(data.group, data.revision, data.input), modernGroups),
-            );
-          if (
-            action === 'cancel' &&
-            Object.keys(data).every((key) => ['group', 'sourceId'].includes(key)) &&
-            validAgentId(data.sourceId)
-          )
-            return json(
-              res,
-              groupReply(await groups.cancel(data.group, data.sourceId), modernGroups),
-            );
-          throw new Fault('INVALID_GROUP', 400);
-        }
-        if (url.pathname.startsWith('/api/attachments/') && req.method === 'POST') {
-          if (!models) throw new Fault('ATTACHMENT_UNAVAILABLE', 503);
-          const data = await body(req),
-            action = url.pathname.slice('/api/attachments/'.length);
-          if (!validAgentId(data.bot)) throw new Fault('INVALID_ATTACHMENT', 400);
-          if (
-            action === 'list' &&
-            Object.keys(data).every((key) => ['bot', 'query'].includes(key)) &&
-            isAttachmentQuery(data.query)
-          )
-            return json(res, await models.attachments.list(data.bot, data.query));
-          if (
-            ['trash', 'restore', 'purge'].includes(action) &&
-            isAttachmentId(data.id) &&
-            isAttachmentVersion(data.version) &&
-            Object.keys(data).every((key) =>
-              ['bot', 'id', 'version', ...(action === 'purge' ? ['confirmation'] : [])].includes(
-                key,
-              ),
-            ) &&
-            (action !== 'purge' || isTaskFileName(data.confirmation))
-          )
-            return json(
-              res,
-              await models.attachmentAction(data.bot, {
-                id: data.id,
-                version: data.version,
-                action: action as 'trash' | 'restore' | 'purge',
-                ...(action === 'purge' ? { confirmation: data.confirmation as string } : {}),
-              }),
-            );
-          if (
-            (action === 'source' || action === 'read') &&
-            Object.keys(data).every((key) => ['bot', 'id'].includes(key)) &&
-            isAttachmentId(data.id)
-          )
-            return json(
-              res,
-              action === 'source'
-                ? await models.attachments.source(data.bot, data.id)
-                : (await models.attachments.read(data.bot, data.id)).receipt,
-            );
-          if (
-            action === 'upload' &&
-            Object.keys(data).every((key) => ['bot', 'file'].includes(key)) &&
-            isAttachmentUpload(data.file) &&
-            isTaskFileName(data.file.name)
-          ) {
-            const abort = new AbortController();
-            const disconnect = () => {
-              if (!res.writableEnded) abort.abort();
-            };
-            res.once('close', disconnect);
-            try {
-              return json(
-                res,
-                await models.attachments.upload(
-                  data.bot,
-                  data.file,
-                  (file, signal) => documents.extract(file, signal),
-                  abort.signal,
-                ),
-              );
-            } finally {
-              res.removeListener('close', disconnect);
-            }
-          }
-          throw new Fault('INVALID_ATTACHMENT', 400);
-        }
-        if (url.pathname.startsWith('/api/knowledge/') && req.method === 'POST') {
-          if (!models) throw new Fault('KNOWLEDGE_UNAVAILABLE', 503);
-          const data = await body(req),
-            action = url.pathname.slice('/api/knowledge/'.length),
-            store = models.knowledge;
-          if (!validAgentId(data.bot)) throw new Fault('INVALID_KNOWLEDGE', 400);
-          const exact = (allowed: string[]) =>
-            Object.keys(data).every((key) => allowed.includes(key));
-          if (
-            action === 'list' &&
-            exact(['bot', 'query', 'includeDeleted']) &&
-            (data.includeDeleted === undefined || typeof data.includeDeleted === 'boolean') &&
-            (data.query === undefined ||
-              (typeof data.query === 'string' &&
-                data.query.length <= 200 &&
-                !data.query.includes('\0')))
-          ) {
-            const files = await store.list(data.bot, data.includeDeleted === true);
-            if (typeof data.query === 'string' && data.query.trim()) {
-              const found = new Set(
-                (await store.search(data.bot, data.query, 100)).map((file) => file.id),
-              );
-              return json(
-                res,
-                files.filter(
-                  (file) =>
-                    found.has(file.id) ||
-                    (file.deleted &&
-                      file.path.toLowerCase().includes(String(data.query).toLowerCase())),
-                ),
-              );
-            }
-            return json(res, files);
-          }
-          if (action === 'write' && exact(['bot', 'document']) && isKnowledgeWrite(data.document))
-            return json(res, await store.write(data.bot, data.document));
-          if (action === 'import' && exact(['bot', 'file']) && isDocumentUpload(data.file)) {
-            const abort = new AbortController();
-            const disconnect = () => {
-              if (!res.writableEnded) abort.abort();
-            };
-            res.once('close', disconnect);
-            try {
-              const content = await documents.extract(data.file, abort.signal);
-              abort.signal.throwIfAborted();
-              return json(
-                res,
-                await store.importDocument(data.bot, data.file, content, abort.signal),
-              );
-            } finally {
-              res.removeListener('close', disconnect);
-            }
-          }
-          if (!validAgentId(data.id)) throw new Fault('INVALID_KNOWLEDGE', 400);
-          if (action === 'source' && exact(['bot', 'id']))
-            return json(res, await store.source(data.bot, data.id));
-          if (
-            action === 'read' &&
-            exact(['bot', 'id', 'version']) &&
-            (data.version === undefined || typeof data.version === 'number')
-          )
-            return json(res, await store.read(data.bot, data.id, data.version));
-          if (
-            action === 'versions' &&
-            exact(['bot', 'id', 'before']) &&
-            (data.before === undefined || typeof data.before === 'number')
-          )
-            return json(res, await store.versions(data.bot, data.id, data.before));
-          if (
-            action === 'remove' &&
-            exact(['bot', 'id', 'revision']) &&
-            typeof data.revision === 'number'
-          )
-            return json(res, await store.remove(data.bot, data.id, data.revision));
-          if (
-            action === 'restore' &&
-            exact(['bot', 'id', 'revision', 'targetRevision']) &&
-            typeof data.revision === 'number' &&
-            typeof data.targetRevision === 'number'
-          )
-            return json(
-              res,
-              await store.restore(data.bot, data.id, data.revision, data.targetRevision),
-            );
-          throw new Fault('INVALID_KNOWLEDGE', 400);
-        }
-        if (url.pathname.startsWith('/api/schedules/') && req.method === 'POST') {
-          if (!schedules) throw new Fault('SCHEDULE_UNAVAILABLE', 503);
-          const data = await body(req);
-          const action = url.pathname.slice('/api/schedules/'.length);
-          if (action === 'create') return json(res, await schedules.create(data));
-          if (action === 'preview' && Object.keys(data).every((key) => key === 'rule'))
-            return json(res, await schedules.preview(data.rule));
-          if (!validAgentId(data.id)) throw new Fault('INVALID_SCHEDULE', 400);
-          if (action === 'get' && Object.keys(data).every((key) => key === 'id'))
-            return json(res, await schedules.get(data.id));
-          if (
-            action === 'update' &&
-            typeof data.revision === 'number' &&
-            Object.keys(data).every((key) => ['id', 'revision', 'patch'].includes(key))
-          )
-            return json(res, await schedules.update(data.id, data.revision, data.patch));
-          if (
-            action === 'remove' &&
-            typeof data.revision === 'number' &&
-            Object.keys(data).every((key) => ['id', 'revision'].includes(key))
-          )
-            return json(res, await schedules.remove(data.id, data.revision));
-          if (
-            action === 'run' &&
-            Object.keys(data).every((key) => ['id', 'requestId'].includes(key)) &&
-            validAgentId(data.requestId)
-          )
-            return json(res, await schedules.run(data.id, data.requestId));
-          throw new Fault('INVALID_SCHEDULE', 400);
-        }
-        if (url.pathname === '/api/model/settings') {
-          if (req.method === 'GET')
-            return json(res, await settings.status(url.searchParams.get('catalog') === '1'));
-          if (req.method === 'POST') return json(res, await settings.save(await body(req)));
-          throw new Fault('METHOD_NOT_ALLOWED', 405);
-        }
-        if (url.pathname === '/api/model/configure' && req.method === 'POST')
-          return json(res, await settings.configure(await body(req)));
-        if (url.pathname === '/api/model/inspect' && req.method === 'POST')
-          return json(res, await settings.inspect(await body(req)));
-        if (url.pathname === '/api/model/check' && req.method === 'POST') {
-          const data = await body(req);
-          if (
-            typeof data.revision !== 'number' ||
-            Object.keys(data).some((key) => key !== 'revision')
-          )
-            throw new Fault('INVALID_MODEL_SETTINGS', 400);
-          return json(res, await settings.check(data.revision));
-        }
-        if (url.pathname === '/api/files' && req.method === 'GET' && files)
-          return json(res, await files.list());
-        if (
-          ['/api/files/read', '/api/files/download'].includes(url.pathname) &&
-          req.method === 'POST' &&
-          files
-        ) {
-          const data = await body(req);
-          if (typeof data.path !== 'string' || Object.keys(data).some((key) => key !== 'path'))
-            throw new Fault('INVALID_FILE', 400);
-          return json(
-            res,
-            url.pathname.endsWith('/download')
-              ? await files.download(data.path)
-              : await files.read(data.path),
-          );
-        }
-        if (url.pathname === '/api/bots') {
-          if (!models) throw new Fault('STARTING', 503);
-          if (req.method === 'GET') return json(res, await models.profiles.list());
-          if (req.method === 'POST')
-            return json(res, await models.profiles.register(await body(req)));
-          throw new Fault('METHOD_NOT_ALLOWED', 405);
-        }
-        if (req.method === 'GET' && url.pathname === '/api/state')
-          return json(res, {
-            ...(host
-              ? await remoteComputerSnapshot()
-              : runtime
-                ? await runtime.snapshot()
-                : {
-                    mode: 'agent',
-                    computerError: 'COMPUTER_START_FAILED',
-                    sharedLogin: false,
-                    viewport: { width: 0, height: 0 },
-                    environment: {
-                      platform: platform(),
-                      arch: arch(),
-                      kernel: release(),
-                      node: process.version,
-                      browser: '',
-                    },
-                    events: [],
-                    bots: {},
-                  }),
-            clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
-            ...(host
-              ? {
-                  agent: {
-                    location: 'host',
-                    execution: 'linux-vm',
-                    privilege: 'sudo',
-                    approvals: 'host',
-                  },
-                }
-              : {}),
-            ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
-            notices: await noticeStatus(models, groups),
-            chats: models
-              ? await models.chats.status()
-              : { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' },
-            ...(recovery ? { recovery: recovery.status() } : {}),
-            mcp: models
-              ? await models.integrations.status()
-              : { available: false, error: 'MCP_STORE_UNAVAILABLE' },
-            ...(models?.tools.software ? { software: await models.tools.software.status() } : {}),
-            skills: models
-              ? await models.skills.status()
-              : { available: false, error: 'SKILLS_UNAVAILABLE' },
-            ...(host
-              ? {
-                  computers: computerAvailable
-                    ? executionSnapshot!.status
-                    : {
-                        ...executionSnapshot!.status,
-                        available: false,
-                        error: 'COMPUTER_RUNTIME_UNAVAILABLE',
-                      },
-                }
-              : runtime instanceof Computers
-                ? { computers: runtime.status() }
-                : {}),
-            groups: await groupStatus(groups, modernGroups),
-            work: models
-              ? await models.work.status()
-              : { available: false, error: 'WORK_UNAVAILABLE' },
-            notes: models
-              ? await models.notes.availability()
-              : { available: false, error: 'NOTES_UNAVAILABLE' },
-            knowledge: models ? await models.knowledge.status() : { available: false },
-            profiles: models ? await models.profiles.list() : [],
-            interactions: models ? await models.interactions.list() : [],
-            schedules: schedules ? await schedules.status() : { available: false, items: [] },
-            // Capability metadata stays outside saved-model status so older clients can still validate that status.
-            model: { ...models?.status(), ...(await settings.status(true)), inspection: true },
-          });
-        const browserRoute = url.pathname.match(
-          /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/browser-(state|view|command|answer|receipt|bound-input|input)$/,
-        );
-        if (browserRoute) {
-          if (!runtime) throw new Fault('COMPUTER_NOT_CONNECTED', 503);
-          const [, bot, action] = browserRoute;
-          const browser =
-            runtime instanceof Computers
-              ? runtime.browserFor(bot)
-              : 'browser' in runtime
-                ? runtime.browser
-                : runtime;
-          const tabs = browser.tabs;
-          if (!tabs) throw new Fault('BROWSER_UNAVAILABLE', 503);
-          if (req.method === 'GET') {
-            if (action === 'state') return json(res, await tabs.state(bot));
-            if (action === 'view') return json(res, await browser.view(bot));
-          }
-          if (req.method !== 'POST' || ['state', 'view'].includes(action))
-            throw new Fault('METHOD_NOT_ALLOWED', 405);
-          const data = await body(req);
-          if (action === 'answer') {
-            if (!isBrowserAnswerRequest(data)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
-            return json(res, await tabs.answer(bot, data));
-          }
-          if (action === 'command') {
-            if (!isBrowserCommandRequest(data)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
-            return json(res, await tabs.human(bot, data));
-          }
-          if (action === 'receipt') {
-            if (Object.keys(data).some((key) => key !== 'id') || !validAgentId(data.id))
-              throw new Fault('INVALID_BROWSER_REQUEST', 400);
-            return json(res, await tabs.receipt(bot, data.id));
-          }
-          const input = boundInput(data);
           await browser.boundInput(bot, input.epoch, input.binding, input.input);
           return json(res, { ok: true });
         }
-        const match = url.pathname.match(
-          /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(control|worker|model|profile|reply|input|frame|app|browser-frame|browser-input|lifecycle|lifecycle-receipt|copy|copy-receipt)$/,
-        );
-        if (!match) throw new Fault('NOT_FOUND', 404);
-        const [, id, action] = match;
-        if (
-          [
-            'model',
-            'profile',
-            'reply',
-            'lifecycle',
-            'lifecycle-receipt',
-            'copy',
-            'copy-receipt',
-          ].includes(action)
-        ) {
-          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-          const data = await body(req);
-          if (action === 'copy' || action === 'copy-receipt') {
-            if (!models) throw new Fault('STARTING', 503);
-            if (url.search || !isBotCopyRequest(data) || data.bot !== id)
-              throw new Fault('INVALID_BOT_COPY', 400);
+        if (url.pathname.startsWith('/api/')) {
+          if (!authority.accepts(req.headers['x-prototype-token']))
+            throw new Fault('UNAUTHORIZED', 403);
+          if (!ready) throw new Fault('STARTING', 503);
+          if (host && url.pathname === '/api/host/recovery') {
+            if (!host.reboot) throw new Fault('RECOVERY_UNAVAILABLE', 503);
+            if (req.method !== 'POST' || url.search)
+              throw new Fault('INVALID_RECOVERY_REQUEST', 400);
+            const command = await body(req);
+            const type = command.type;
+            const valid = ['recovery.status', 'recovery.review'].includes(String(type))
+              ? Object.keys(command).every((key) => key === 'type')
+              : type === 'recovery.restart'
+                ? Object.keys(command).every((key) => ['type', 'request'].includes(key)) &&
+                  isRecoveryRequest(command.request)
+                : ['recovery.inspect', 'recovery.cancel', 'recovery.start'].includes(
+                    String(type),
+                  ) &&
+                  Object.keys(command).every((key) => ['type', 'id'].includes(key)) &&
+                  validAgentId(command.id);
+            if (!valid) throw new Fault('INVALID_RECOVERY_REQUEST', 400);
+            return json(res, await host.reboot.invoke(command as unknown as RuntimeCommand));
+          }
+          if (url.pathname === '/api/recovery' || url.pathname === '/api/recovery/review') {
+            if (!recovery) throw new Fault('RECOVERY_UNAVAILABLE', 503);
+            if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_RECOVERY_REQUEST', 400);
+            if (host && url.pathname.endsWith('/review')) await refreshExecution();
             return json(
               res,
-              action === 'copy'
-                ? await models.profiles.copy(data)
-                : await models.profiles.copyReceipt(data),
+              url.pathname.endsWith('/review') ? recovery.review() : recovery.status(),
             );
           }
-          if (action === 'lifecycle' || action === 'lifecycle-receipt') {
-            if (!lifecycle) throw new Fault('BOT_LIFECYCLE_UNAVAILABLE', 503);
-            if (action === 'lifecycle') {
-              if (!isBotLifecycleRequest(data) || data.bot !== id)
-                throw new Fault('INVALID_BOT_LIFECYCLE', 400);
-              return json(res, await lifecycle.operate(data));
-            }
-            if (Object.keys(data).some((key) => key !== 'id') || !validAgentId(data.id))
-              throw new Fault('INVALID_BOT_LIFECYCLE', 400);
-            return json(res, await lifecycle.receipt(id, data.id));
-          }
-          if (action === 'reply' && models) {
+          if (url.pathname.startsWith('/api/recovery/')) {
+            if (!recovery) throw new Fault('RECOVERY_UNAVAILABLE', 503);
+            if (req.method !== 'POST' || url.search)
+              throw new Fault('INVALID_RECOVERY_REQUEST', 400);
+            const data = await body(req);
+            if (host && url.pathname === '/api/recovery/prepare') await refreshExecution();
+            if (url.pathname === '/api/recovery/prepare')
+              return json(res, await recovery.prepare(data));
             if (
-              Object.keys(data).some((key) => !['id', 'runId', 'reply'].includes(key)) ||
               !validAgentId(data.id) ||
-              !validAgentId(data.runId) ||
-              !isUserReply(data.reply)
+              Object.keys(data).some((key) => !['id', 'revision'].includes(key))
             )
-              throw new Fault('INVALID_INTERACTION_REPLY', 400);
-            return json(res, await models.interactions.reply(id, data.runId, data.id, data.reply));
+              throw new Fault('INVALID_RECOVERY_REQUEST', 400);
+            if (url.pathname === '/api/recovery/receipt' && Object.keys(data).length === 1)
+              return json(res, recovery.receipt(data.id));
+            if (!Number.isSafeInteger(data.revision) || Number(data.revision) < 0)
+              throw new Fault('INVALID_RECOVERY_REQUEST', 400);
+            if (url.pathname === '/api/recovery/claim')
+              return json(res, await recovery.claim(data.id, Number(data.revision)));
+            if (url.pathname === '/api/recovery/cancel')
+              return json(res, await recovery.cancel(data.id, Number(data.revision)));
+            throw new Fault('INVALID_RECOVERY_REQUEST', 400);
           }
-          if (action === 'profile' && models) {
-            if (Object.keys(data).some((key) => !['revision', 'patch'].includes(key)))
-              throw new Fault('INVALID_BOT_PROFILE', 400);
-            return json(res, await models.profiles.update(id, data.revision, data.patch));
+          if (
+            recovery &&
+            req.method !== 'GET' &&
+            !recoveryReads.has(url.pathname) &&
+            !/^\/api\/bots\/[a-zA-Z0-9_-]{1,80}\/(browser-receipt|lifecycle-receipt|copy-receipt)$/.test(
+              url.pathname,
+            ) &&
+            !/^\/api\/groups\/[a-zA-Z0-9_-]{1,80}\/copy-receipt$/.test(url.pathname)
+          ) {
+            const input = url.pathname.match(/^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/input$/);
+            if (
+              !recovery.admit() &&
+              input &&
+              req.method === 'POST' &&
+              (host || runtime instanceof Computers)
+            ) {
+              const data = await body(req);
+              // Releasing held keys/buttons reduces authority and must remain possible while recovery fences new input.
+              if (
+                Object.keys(data).every((key) => ['epoch', 'input', 'instance'].includes(key)) &&
+                Number.isSafeInteger(data.epoch) &&
+                validAgentId(data.instance) &&
+                data.input &&
+                typeof data.input === 'object' &&
+                'type' in data.input &&
+                data.input.type === 'release'
+              ) {
+                if (host)
+                  await host.execution!.call('computer.request', {
+                    method: 'POST',
+                    path: url.pathname,
+                    body: data,
+                  });
+                else
+                  await (runtime as Computers).input(
+                    input[1],
+                    Number(data.epoch),
+                    data.input,
+                    data.instance,
+                  );
+                return json(res, { ok: true });
+              }
+              throw new Fault('RUNTIME_RECOVERY_PENDING');
+            }
+            releaseMutation = recovery.enter();
           }
-          if (action === 'model' && models && typeof data.running === 'boolean') {
-            if ((host || runtime instanceof Computers) && data.running && data.task === undefined)
-              throw new Fault('TASK_REQUIRED', 400);
-            if (data.running) return json(res, await models.start(id, data.task));
-            await models.stop(id);
+          const remoteRoute = url.pathname.match(
+            /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(frame|browser-frame|control|input|app|browser-state|browser-view|browser-command|browser-answer|browser-receipt|browser-bound-input|browser-input)$/,
+          );
+          if (
+            host &&
+            (remoteRoute ||
+              ['/api/computers/action', '/api/computers/receipt'].includes(url.pathname))
+          ) {
+            if (!models) throw new Fault('STARTING', 503);
+            if (!['GET', 'POST'].includes(req.method || ''))
+              throw new Fault('METHOD_NOT_ALLOWED', 405);
+            const data = req.method === 'POST' ? await body(req) : undefined;
+            const action = url.pathname === '/api/computers/action';
+            let bot = remoteRoute?.[1];
+            if (!remoteRoute) {
+              if (req.method !== 'POST' || url.search || !data)
+                throw new Fault('INVALID_COMPUTER_REQUEST', 400);
+              if (
+                action
+                  ? !isComputerRequest(data)
+                  : Object.keys(data).some((key) => !['id', 'bot'].includes(key)) ||
+                    !validAgentId(data.id) ||
+                    !validAgentId(data.bot)
+              )
+                throw new Fault('INVALID_COMPUTER_REQUEST', 400);
+              bot = String(data.bot);
+            }
+            models.profiles.assertRegistered(bot!);
+            if (action) {
+              models.profiles.assertActive(bot!);
+              if (models.running(bot!)) throw new Fault('COMPUTER_BUSY');
+              if (changing.has(bot!)) throw new Fault('COMPUTER_CHANGING');
+              changing.add(bot!);
+            }
+            try {
+              if (action) {
+                await models.drainComputer(bot!);
+                models.profiles.assertActive(bot!);
+              }
+              const result = await host.execution!.call('computer.request', {
+                method: req.method,
+                path: url.pathname + url.search,
+                ...(data ? { body: data } : {}),
+              });
+              if (
+                remoteRoute &&
+                req.method === 'GET' &&
+                ['frame', 'browser-frame'].includes(remoteRoute[2])
+              ) {
+                const frame = result as { mimeType?: unknown; data?: unknown };
+                if (
+                  frame?.mimeType !== 'image/jpeg' ||
+                  typeof frame.data !== 'string' ||
+                  frame.data.length > 12 * 1024 * 1024 ||
+                  Buffer.from(frame.data, 'base64').toString('base64') !== frame.data
+                )
+                  throw new Fault('EXECUTION_INVALID_RESPONSE');
+                return reply(res, 200, 'image/jpeg', Buffer.from(frame.data, 'base64'));
+              }
+              return json(res, result);
+            } finally {
+              if (action) changing.delete(bot!);
+            }
+          }
+          if (url.pathname.startsWith('/api/notes/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_NOTE_REQUEST', 400);
+            if (!models) throw new Fault('NOTES_UNAVAILABLE', 503);
+            const data = await body(req);
+            const command = { ...data, type: `notes.${url.pathname.slice('/api/notes/'.length)}` };
+            if (Object.hasOwn(data, 'type') || !isNoteCommand(command))
+              throw new Fault('INVALID_NOTE_REQUEST', 400);
+            if (!(await models.profiles.get(command.bot)))
+              throw new Fault('BOT_PROFILE_NOT_FOUND', 404);
+            if (command.type === 'notes.status')
+              return json(res, {
+                bot: command.bot,
+                status: await models.notes.status(command.bot),
+              });
+            if (command.type === 'notes.list')
+              return json(res, {
+                bot: command.bot,
+                query: command.query,
+                page: await models.notes.list(command.bot, command.query),
+              });
+            if (command.type === 'notes.read')
+              return json(res, await models.notes.get(command.bot, command.id));
+            // This authenticated channel belongs to the Human; no client author or Bot impersonation is accepted.
+            return json(
+              res,
+              command.type === 'notes.write'
+                ? await models.notes.write(command.bot, command.request, { kind: 'human' })
+                : await models.notes.receipt(command.bot, command.request, { kind: 'human' }),
+            );
+          }
+          if (url.pathname.startsWith('/api/work/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_WORK_REQUEST', 400);
+            if (!models) throw new Fault('WORK_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (url.pathname === '/api/work/comments' && isWorkCommentQuery(data))
+              return json(res, { query: data, page: await models.work.comments(data) });
+            if (isWorkCommentWrite(data)) {
+              if (
+                url.pathname === '/api/work/comment' ||
+                url.pathname === '/api/work/comment-receipt'
+              ) {
+                const value =
+                  url.pathname === '/api/work/comment'
+                    ? await models.work.comment(data, { kind: 'human' })
+                    : await models.work.commentReceipt(data, { kind: 'human' });
+                return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
+              }
+            }
+            if (url.pathname === '/api/work/list' && isWorkQuery(data)) {
+              if (!coordinatedWork && !isLegacyWorkQuery(data))
+                throw new Fault('INVALID_WORK_QUERY', 400);
+              const value = { query: data, page: await models.work.list(data) };
+              return json(res, coordinatedWork ? value : legacyWorkList(value));
+            }
+            if (
+              url.pathname === '/api/work/read' &&
+              validAgentId(data.id) &&
+              Object.keys(data).every((key) => key === 'id')
+            ) {
+              const value = await models.work.get(data.id);
+              return json(res, coordinatedWork ? value : legacyWorkItem(value));
+            }
+            // Human provenance and compatibility are decided by the channel, never by payload fields.
+            if (isWorkWrite(data)) {
+              if (!coordinatedWork && !isLegacyWorkWrite(data))
+                throw new Fault('INVALID_WORK_WRITE', 400);
+              if (url.pathname === '/api/work/write') {
+                const value = coordinatedWork
+                  ? await models.work.write(data, { kind: 'human' })
+                  : await models.work.writeLegacy(data, { kind: 'human' });
+                return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
+              }
+              if (url.pathname === '/api/work/receipt') {
+                const value = await models.work.receipt(data, { kind: 'human' });
+                return json(res, coordinatedWork ? value : legacyWorkReceipt(value));
+              }
+            }
+            throw new Fault('INVALID_WORK_REQUEST', 400);
+          }
+          if (url.pathname.startsWith('/api/bundles/')) {
+            if (!models) throw new Fault('STARTING', 503);
+            if (url.search) throw new Fault('INVALID_BOT_BUNDLE', 400);
+            const action = url.pathname.slice('/api/bundles/'.length);
+            if (action.startsWith('status/') && req.method === 'GET') {
+              const id = action.slice('status/'.length);
+              if (!validAgentId(id)) throw new Fault('INVALID_BOT_IMPORT', 400);
+              return json(res, await models.bundles.status(id));
+            }
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (action.startsWith('submit/')) {
+              const id = action.slice('submit/'.length);
+              if (!validAgentId(id)) throw new Fault('INVALID_BOT_IMPORT', 400);
+              // Admission precedes the large body, so concurrent uploads cannot multiply JSON allocation.
+              return json(
+                res,
+                await models.bundles.receive(id, () => body(req, botBundleLimit + 64 * 1024)),
+              );
+            }
+            const data = await body(req);
+            if (action === 'export' && isBotExportRequest(data))
+              return json(res, await models.bundles.export(data));
+            if ((action === 'begin' || action === 'cancel') && isBotImportHeader(data))
+              return json(
+                res,
+                action === 'begin'
+                  ? await models.bundles.begin(data)
+                  : await models.bundles.cancel(data),
+              );
+            if (action === 'retry' && Object.keys(data).length === 1 && validAgentId(data.id))
+              return json(res, await models.bundles.retry(data.id));
+            throw new Fault('INVALID_BOT_BUNDLE', 400);
+          }
+          if (url.pathname === '/api/diagnostics') {
+            if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
+            return json(res, await diagnostics.inspect());
+          }
+          if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
+            if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (
+              !isMcpCommand(data) ||
+              data.type !== `mcp.${url.pathname.slice('/api/mcp/'.length)}`
+            )
+              throw new Fault('INVALID_MCP_CONFIG', 400);
+            const controller = new AbortController();
+            const cancel = () => controller.abort();
+            res.once('close', cancel);
+            try {
+              return json(res, await integrationCommand(models, data, controller.signal));
+            } finally {
+              res.off('close', cancel);
+            }
+          }
+          if (url.pathname.startsWith('/api/skills/') && req.method === 'POST') {
+            if (!models) throw new Fault('SKILLS_UNAVAILABLE', 503);
+            const data = await body(req),
+              action = url.pathname.slice('/api/skills/'.length);
+            const fields: Record<string, string[]> = {
+              list: ['bot', 'includeDeleted'],
+              read: ['bot', 'id'],
+              import: ['bot', 'content'],
+              update: ['bot', 'id', 'revision', 'content'],
+              recycle: ['bot', 'id', 'revision'],
+              restore: ['bot', 'id', 'revision'],
+              bind: ['bot', 'binding'],
+            };
+            if (
+              !fields[action] ||
+              Object.keys(data).some((key) => !fields[action].includes(key)) ||
+              !validAgentId(data.bot)
+            )
+              throw new Fault('INVALID_SKILL', 400);
+            if (!(await models.profiles.get(data.bot))) throw new Fault('SKILL_BOT_NOT_FOUND', 404);
+            if (
+              action === 'list' &&
+              (data.includeDeleted === undefined || typeof data.includeDeleted === 'boolean')
+            )
+              return json(res, {
+                bot: data.bot,
+                catalog: await models.skills.list(
+                  data.bot,
+                  data.includeDeleted as boolean | undefined,
+                ),
+              });
+            if (action === 'import' && isSkillContent(data.content))
+              return json(res, await models.skills.import(data.content));
+            if (action === 'bind' && isSkillBinding(data.binding))
+              return json(res, {
+                bot: data.bot,
+                entry: await models.skills.bind(data.bot, data.binding),
+              });
+            if (validAgentId(data.id)) {
+              if (action === 'read') return json(res, await models.skills.read(data.id));
+              if (Number.isSafeInteger(data.revision) && Number(data.revision) > 0) {
+                if (action === 'update' && isSkillContent(data.content))
+                  return json(
+                    res,
+                    await models.skills.update(data.id, Number(data.revision), data.content),
+                  );
+                if (action === 'recycle')
+                  return json(res, await models.skills.recycle(data.id, Number(data.revision)));
+                if (action === 'restore')
+                  return json(res, await models.skills.restore(data.id, Number(data.revision)));
+              }
+            }
+            throw new Fault('INVALID_SKILL', 400);
+          }
+          if (url.pathname.startsWith('/api/computers/') && req.method === 'POST') {
+            if (!(runtime instanceof Computers))
+              throw new Fault('COMPUTER_SERVICE_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (url.pathname === '/api/computers/action' && isComputerRequest(data))
+              return json(res, await runtime.operate(data));
+            if (
+              url.pathname === '/api/computers/receipt' &&
+              Object.keys(data).every((key) => ['id', 'bot'].includes(key)) &&
+              validAgentId(data.id) &&
+              validAgentId(data.bot)
+            )
+              return json(res, await runtime.receipt(data.id, data.bot));
+            throw new Fault('INVALID_COMPUTER_REQUEST', 400);
+          }
+          if (url.pathname === '/api/memory/history' && req.method === 'POST') {
+            if (!models) throw new Fault('MEMORY_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (
+              !Object.keys(data).every((key) => ['bot', 'query'].includes(key)) ||
+              !validAgentId(data.bot) ||
+              !isMemoryQuery(data.query)
+            )
+              throw new Fault('INVALID_MEMORY_QUERY', 400);
+            return json(res, await models.profiles.history(data.bot, data.query));
+          }
+          if (url.pathname.startsWith('/api/transcripts/') && req.method === 'POST') {
+            if (!models) throw new Fault('TRANSCRIPT_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (url.pathname === '/api/transcripts/list' && isTranscriptQuery(data))
+              return json(res, await models.transcript(data.scope, data.after));
+            if (url.pathname === '/api/transcripts/content' && isTranscriptContentQuery(data))
+              return json(res, await models.transcriptContent(data.scope, data.seq, data.offset));
+            throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
+          }
+          if (url.pathname.startsWith('/api/chats/') && req.method === 'POST') {
+            if (!models) throw new Fault('CHAT_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (url.pathname === '/api/chats/new') {
+              if (!isChatRequest(data)) throw new Fault('INVALID_CHAT_REQUEST', 400);
+              if (!(await models.profiles.get(data.bot)))
+                throw new Fault('BOT_PROFILE_NOT_FOUND', 404);
+              return json(res, await models.chats.renew(data));
+            }
+            if (!validAgentId(data.bot)) throw new Fault('INVALID_CHAT_REQUEST', 400);
+            if (
+              url.pathname === '/api/chats/receipt' &&
+              validAgentId(data.id) &&
+              Object.keys(data).every((key) => ['bot', 'id'].includes(key))
+            )
+              return json(res, await models.chats.receipt(data.bot, data.id));
+            if (
+              url.pathname === '/api/chats/history' &&
+              Object.keys(data).every((key) => ['bot', 'revision', 'before', 'runId'].includes(key))
+            ) {
+              if (
+                typeof data.revision !== 'number' ||
+                (data.before !== undefined && typeof data.before !== 'string') ||
+                (data.runId !== undefined && typeof data.runId !== 'string')
+              )
+                throw new Fault('INVALID_CHAT_QUERY', 400);
+              return json(
+                res,
+                await models.chatHistory(data.bot, data.revision, data.before, data.runId),
+              );
+            }
+            throw new Fault('INVALID_CHAT_REQUEST', 400);
+          }
+          const groupCopy = url.pathname.match(
+            /^\/api\/groups\/([a-zA-Z0-9_-]{1,80})\/(copy|copy-receipt)$/,
+          );
+          if (groupCopy) {
+            if (!groups) throw new Fault('GROUP_UNAVAILABLE', 503);
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            const data = await body(req);
+            if (url.search || !isGroupCopyRequest(data) || data.group !== groupCopy[1])
+              throw new Fault('INVALID_GROUP_COPY', 400);
+            return json(
+              res,
+              groupCopy[2] === 'copy' ? await groups.copy(data) : await groups.copyReceipt(data),
+            );
+          }
+          if (url.pathname.startsWith('/api/groups/') && req.method === 'POST') {
+            if (!groups) throw new Fault('GROUP_UNAVAILABLE', 503);
+            const data = await body(req),
+              action = url.pathname.slice('/api/groups/'.length);
+            if (action === 'register')
+              return json(res, groupReply(await groups.register(data), modernGroups));
+            if (action === 'send')
+              return json(res, groupReply(await groups.send(data), modernGroups));
+            if (action === 'action') return json(res, await groups.action(data));
+            if (!validAgentId(data.group)) throw new Fault('INVALID_GROUP', 400);
+            if (
+              action === 'action-receipt' &&
+              Object.keys(data).every((key) => ['group', 'id'].includes(key)) &&
+              validAgentId(data.id)
+            )
+              return json(res, await groups.actionReceipt(data.group, data.id));
+            if (
+              action === 'input' &&
+              Object.keys(data).every((key) => ['group', 'sourceId', 'name'].includes(key)) &&
+              validAgentId(data.sourceId) &&
+              isTaskFileName(data.name)
+            )
+              return json(res, {
+                group: data.group,
+                sourceId: data.sourceId,
+                file: await groups.inputSource(data.group, data.sourceId, data.name),
+              });
+            if (
+              action === 'read' &&
+              Object.keys(data).every((key) => ['group', 'before'].includes(key))
+            )
+              return json(
+                res,
+                groupReply(
+                  await groups.read(data.group, data.before as number | undefined),
+                  modernGroups,
+                ),
+              );
+            if (
+              action === 'update' &&
+              Object.keys(data).every((key) => ['group', 'revision', 'input'].includes(key)) &&
+              typeof data.revision === 'number'
+            )
+              return json(
+                res,
+                groupReply(
+                  await groups.update(data.group, data.revision, data.input),
+                  modernGroups,
+                ),
+              );
+            if (
+              action === 'cancel' &&
+              Object.keys(data).every((key) => ['group', 'sourceId'].includes(key)) &&
+              validAgentId(data.sourceId)
+            )
+              return json(
+                res,
+                groupReply(await groups.cancel(data.group, data.sourceId), modernGroups),
+              );
+            throw new Fault('INVALID_GROUP', 400);
+          }
+          if (url.pathname.startsWith('/api/attachments/') && req.method === 'POST') {
+            if (!models) throw new Fault('ATTACHMENT_UNAVAILABLE', 503);
+            const data = await body(req),
+              action = url.pathname.slice('/api/attachments/'.length);
+            if (!validAgentId(data.bot)) throw new Fault('INVALID_ATTACHMENT', 400);
+            if (
+              action === 'list' &&
+              Object.keys(data).every((key) => ['bot', 'query'].includes(key)) &&
+              isAttachmentQuery(data.query)
+            )
+              return json(res, await models.attachments.list(data.bot, data.query));
+            if (
+              ['trash', 'restore', 'purge'].includes(action) &&
+              isAttachmentId(data.id) &&
+              isAttachmentVersion(data.version) &&
+              Object.keys(data).every((key) =>
+                ['bot', 'id', 'version', ...(action === 'purge' ? ['confirmation'] : [])].includes(
+                  key,
+                ),
+              ) &&
+              (action !== 'purge' || isTaskFileName(data.confirmation))
+            )
+              return json(
+                res,
+                await models.attachmentAction(data.bot, {
+                  id: data.id,
+                  version: data.version,
+                  action: action as 'trash' | 'restore' | 'purge',
+                  ...(action === 'purge' ? { confirmation: data.confirmation as string } : {}),
+                }),
+              );
+            if (
+              (action === 'source' || action === 'read') &&
+              Object.keys(data).every((key) => ['bot', 'id'].includes(key)) &&
+              isAttachmentId(data.id)
+            )
+              return json(
+                res,
+                action === 'source'
+                  ? await models.attachments.source(data.bot, data.id)
+                  : (await models.attachments.read(data.bot, data.id)).receipt,
+              );
+            if (
+              action === 'upload' &&
+              Object.keys(data).every((key) => ['bot', 'file'].includes(key)) &&
+              isAttachmentUpload(data.file) &&
+              isTaskFileName(data.file.name)
+            ) {
+              const abort = new AbortController();
+              const disconnect = () => {
+                if (!res.writableEnded) abort.abort();
+              };
+              res.once('close', disconnect);
+              try {
+                return json(
+                  res,
+                  await models.attachments.upload(
+                    data.bot,
+                    data.file,
+                    (file, signal) => documents.extract(file, signal),
+                    abort.signal,
+                  ),
+                );
+              } finally {
+                res.removeListener('close', disconnect);
+              }
+            }
+            throw new Fault('INVALID_ATTACHMENT', 400);
+          }
+          if (url.pathname.startsWith('/api/knowledge/') && req.method === 'POST') {
+            if (!models) throw new Fault('KNOWLEDGE_UNAVAILABLE', 503);
+            const data = await body(req),
+              action = url.pathname.slice('/api/knowledge/'.length),
+              store = models.knowledge;
+            if (!validAgentId(data.bot)) throw new Fault('INVALID_KNOWLEDGE', 400);
+            const exact = (allowed: string[]) =>
+              Object.keys(data).every((key) => allowed.includes(key));
+            if (
+              action === 'list' &&
+              exact(['bot', 'query', 'includeDeleted']) &&
+              (data.includeDeleted === undefined || typeof data.includeDeleted === 'boolean') &&
+              (data.query === undefined ||
+                (typeof data.query === 'string' &&
+                  data.query.length <= 200 &&
+                  !data.query.includes('\0')))
+            ) {
+              const files = await store.list(data.bot, data.includeDeleted === true);
+              if (typeof data.query === 'string' && data.query.trim()) {
+                const found = new Set(
+                  (await store.search(data.bot, data.query, 100)).map((file) => file.id),
+                );
+                return json(
+                  res,
+                  files.filter(
+                    (file) =>
+                      found.has(file.id) ||
+                      (file.deleted &&
+                        file.path.toLowerCase().includes(String(data.query).toLowerCase())),
+                  ),
+                );
+              }
+              return json(res, files);
+            }
+            if (action === 'write' && exact(['bot', 'document']) && isKnowledgeWrite(data.document))
+              return json(res, await store.write(data.bot, data.document));
+            if (action === 'import' && exact(['bot', 'file']) && isDocumentUpload(data.file)) {
+              const abort = new AbortController();
+              const disconnect = () => {
+                if (!res.writableEnded) abort.abort();
+              };
+              res.once('close', disconnect);
+              try {
+                const content = await documents.extract(data.file, abort.signal);
+                abort.signal.throwIfAborted();
+                return json(
+                  res,
+                  await store.importDocument(data.bot, data.file, content, abort.signal),
+                );
+              } finally {
+                res.removeListener('close', disconnect);
+              }
+            }
+            if (!validAgentId(data.id)) throw new Fault('INVALID_KNOWLEDGE', 400);
+            if (action === 'source' && exact(['bot', 'id']))
+              return json(res, await store.source(data.bot, data.id));
+            if (
+              action === 'read' &&
+              exact(['bot', 'id', 'version']) &&
+              (data.version === undefined || typeof data.version === 'number')
+            )
+              return json(res, await store.read(data.bot, data.id, data.version));
+            if (
+              action === 'versions' &&
+              exact(['bot', 'id', 'before']) &&
+              (data.before === undefined || typeof data.before === 'number')
+            )
+              return json(res, await store.versions(data.bot, data.id, data.before));
+            if (
+              action === 'remove' &&
+              exact(['bot', 'id', 'revision']) &&
+              typeof data.revision === 'number'
+            )
+              return json(res, await store.remove(data.bot, data.id, data.revision));
+            if (
+              action === 'restore' &&
+              exact(['bot', 'id', 'revision', 'targetRevision']) &&
+              typeof data.revision === 'number' &&
+              typeof data.targetRevision === 'number'
+            )
+              return json(
+                res,
+                await store.restore(data.bot, data.id, data.revision, data.targetRevision),
+              );
+            throw new Fault('INVALID_KNOWLEDGE', 400);
+          }
+          if (url.pathname.startsWith('/api/schedules/') && req.method === 'POST') {
+            if (!schedules) throw new Fault('SCHEDULE_UNAVAILABLE', 503);
+            const data = await body(req);
+            const action = url.pathname.slice('/api/schedules/'.length);
+            if (action === 'create') return json(res, await schedules.create(data));
+            if (action === 'preview' && Object.keys(data).every((key) => key === 'rule'))
+              return json(res, await schedules.preview(data.rule));
+            if (!validAgentId(data.id)) throw new Fault('INVALID_SCHEDULE', 400);
+            if (action === 'get' && Object.keys(data).every((key) => key === 'id'))
+              return json(res, await schedules.get(data.id));
+            if (
+              action === 'update' &&
+              typeof data.revision === 'number' &&
+              Object.keys(data).every((key) => ['id', 'revision', 'patch'].includes(key))
+            )
+              return json(res, await schedules.update(data.id, data.revision, data.patch));
+            if (
+              action === 'remove' &&
+              typeof data.revision === 'number' &&
+              Object.keys(data).every((key) => ['id', 'revision'].includes(key))
+            )
+              return json(res, await schedules.remove(data.id, data.revision));
+            if (
+              action === 'run' &&
+              Object.keys(data).every((key) => ['id', 'requestId'].includes(key)) &&
+              validAgentId(data.requestId)
+            )
+              return json(res, await schedules.run(data.id, data.requestId));
+            throw new Fault('INVALID_SCHEDULE', 400);
+          }
+          if (url.pathname === '/api/model/settings') {
+            if (req.method === 'GET')
+              return json(res, await settings.status(url.searchParams.get('catalog') === '1'));
+            if (req.method === 'POST') return json(res, await settings.save(await body(req)));
+            throw new Fault('METHOD_NOT_ALLOWED', 405);
+          }
+          if (url.pathname === '/api/model/configure' && req.method === 'POST')
+            return json(res, await settings.configure(await body(req)));
+          if (url.pathname === '/api/model/inspect' && req.method === 'POST')
+            return json(res, await settings.inspect(await body(req)));
+          if (url.pathname === '/api/model/check' && req.method === 'POST') {
+            const data = await body(req);
+            if (
+              typeof data.revision !== 'number' ||
+              Object.keys(data).some((key) => key !== 'revision')
+            )
+              throw new Fault('INVALID_MODEL_SETTINGS', 400);
+            return json(res, await settings.check(data.revision));
+          }
+          if (url.pathname === '/api/files' && req.method === 'GET' && files)
+            return json(res, await files.list());
+          if (
+            ['/api/files/read', '/api/files/download'].includes(url.pathname) &&
+            req.method === 'POST' &&
+            files
+          ) {
+            const data = await body(req);
+            if (typeof data.path !== 'string' || Object.keys(data).some((key) => key !== 'path'))
+              throw new Fault('INVALID_FILE', 400);
+            return json(
+              res,
+              url.pathname.endsWith('/download')
+                ? await files.download(data.path)
+                : await files.read(data.path),
+            );
+          }
+          if (url.pathname === '/api/bots') {
+            if (!models) throw new Fault('STARTING', 503);
+            if (req.method === 'GET') return json(res, await models.profiles.list());
+            if (req.method === 'POST')
+              return json(res, await models.profiles.register(await body(req)));
+            throw new Fault('METHOD_NOT_ALLOWED', 405);
+          }
+          if (req.method === 'GET' && url.pathname === '/api/state')
+            return json(res, {
+              ...(host?.execution
+                ? await remoteComputerSnapshot()
+                : runtime
+                  ? await runtime.snapshot()
+                  : {
+                      mode: 'agent',
+                      computerError: host?.nativeWorkspace ? undefined : 'COMPUTER_START_FAILED',
+                      sharedLogin: false,
+                      viewport: { width: 1280, height: 800 },
+                      environment: {
+                        platform: platform(),
+                        arch: arch(),
+                        kernel: release(),
+                        node: process.version,
+                        browser: '',
+                      },
+                      events: [],
+                      bots: {},
+                    }),
+              clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
+              ...(host
+                ? {
+                    agent: {
+                      location: 'host',
+                      execution: host.nativeWorkspace ? 'local-workspace' : 'linux-vm',
+                      privilege: host.nativeWorkspace ? 'workspace' : 'sudo',
+                      approvals: 'host',
+                    },
+                  }
+                : {}),
+              ...(host?.localComputer ? { localComputer: await host.localComputer.status() } : {}),
+              ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
+              notices: await noticeStatus(models, groups),
+              chats: models
+                ? await models.chats.status()
+                : { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' },
+              ...(recovery ? { recovery: recovery.status() } : {}),
+              mcp: models
+                ? await models.integrations.status()
+                : { available: false, error: 'MCP_STORE_UNAVAILABLE' },
+              ...(models?.tools.software ? { software: await models.tools.software.status() } : {}),
+              skills: models
+                ? await models.skills.status()
+                : { available: false, error: 'SKILLS_UNAVAILABLE' },
+              ...(host
+                ? {
+                    computers: host.nativeWorkspace
+                      ? {
+                          available: false,
+                          revision: 0,
+                          limit: 1,
+                          items: [],
+                          error: 'LOCAL_VM_UNAVAILABLE',
+                        }
+                      : computerAvailable
+                        ? executionSnapshot!.status
+                        : {
+                            ...executionSnapshot!.status,
+                            available: false,
+                            error: 'COMPUTER_RUNTIME_UNAVAILABLE',
+                          },
+                  }
+                : runtime instanceof Computers
+                  ? { computers: runtime.status() }
+                  : {}),
+              groups: await groupStatus(groups, modernGroups),
+              work: models
+                ? await models.work.status()
+                : { available: false, error: 'WORK_UNAVAILABLE' },
+              notes: models
+                ? await models.notes.availability()
+                : { available: false, error: 'NOTES_UNAVAILABLE' },
+              knowledge: models ? await models.knowledge.status() : { available: false },
+              profiles: models ? await models.profiles.list() : [],
+              interactions: models ? await models.interactions.list() : [],
+              schedules: schedules ? await schedules.status() : { available: false, items: [] },
+              // Capability metadata stays outside saved-model status so older clients can still validate that status.
+              model: { ...models?.status(), ...(await settings.status(true)), inspection: true },
+            });
+          const browserRoute = url.pathname.match(
+            /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/browser-(state|view|command|answer|receipt|bound-input|input)$/,
+          );
+          if (browserRoute) {
+            if (!runtime) throw new Fault('COMPUTER_NOT_CONNECTED', 503);
+            const [, bot, action] = browserRoute;
+            const browser =
+              runtime instanceof Computers
+                ? runtime.browserFor(bot)
+                : 'browser' in runtime
+                  ? runtime.browser
+                  : runtime;
+            const tabs = browser.tabs;
+            if (!tabs) throw new Fault('BROWSER_UNAVAILABLE', 503);
+            if (req.method === 'GET') {
+              if (action === 'state') return json(res, await tabs.state(bot));
+              if (action === 'view') return json(res, await browser.view(bot));
+            }
+            if (req.method !== 'POST' || ['state', 'view'].includes(action))
+              throw new Fault('METHOD_NOT_ALLOWED', 405);
+            const data = await body(req);
+            if (action === 'answer') {
+              if (!isBrowserAnswerRequest(data)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
+              return json(res, await tabs.answer(bot, data));
+            }
+            if (action === 'command') {
+              if (!isBrowserCommandRequest(data)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
+              return json(res, await tabs.human(bot, data));
+            }
+            if (action === 'receipt') {
+              if (Object.keys(data).some((key) => key !== 'id') || !validAgentId(data.id))
+                throw new Fault('INVALID_BROWSER_REQUEST', 400);
+              return json(res, await tabs.receipt(bot, data.id));
+            }
+            const input = boundInput(data);
+            await browser.boundInput(bot, input.epoch, input.binding, input.input);
+            return json(res, { ok: true });
+          }
+          const match = url.pathname.match(
+            /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(control|worker|model|profile|reply|input|frame|app|browser-frame|browser-input|lifecycle|lifecycle-receipt|copy|copy-receipt)$/,
+          );
+          if (!match) throw new Fault('NOT_FOUND', 404);
+          const [, id, action] = match;
+          if (
+            [
+              'model',
+              'profile',
+              'reply',
+              'lifecycle',
+              'lifecycle-receipt',
+              'copy',
+              'copy-receipt',
+            ].includes(action)
+          ) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            const data = await body(req);
+            if (action === 'copy' || action === 'copy-receipt') {
+              if (!models) throw new Fault('STARTING', 503);
+              if (url.search || !isBotCopyRequest(data) || data.bot !== id)
+                throw new Fault('INVALID_BOT_COPY', 400);
+              return json(
+                res,
+                action === 'copy'
+                  ? await models.profiles.copy(data)
+                  : await models.profiles.copyReceipt(data),
+              );
+            }
+            if (action === 'lifecycle' || action === 'lifecycle-receipt') {
+              if (!lifecycle) throw new Fault('BOT_LIFECYCLE_UNAVAILABLE', 503);
+              if (action === 'lifecycle') {
+                if (!isBotLifecycleRequest(data) || data.bot !== id)
+                  throw new Fault('INVALID_BOT_LIFECYCLE', 400);
+                return json(res, await lifecycle.operate(data));
+              }
+              if (Object.keys(data).some((key) => key !== 'id') || !validAgentId(data.id))
+                throw new Fault('INVALID_BOT_LIFECYCLE', 400);
+              return json(res, await lifecycle.receipt(id, data.id));
+            }
+            if (action === 'reply' && models) {
+              if (
+                Object.keys(data).some((key) => !['id', 'runId', 'reply'].includes(key)) ||
+                !validAgentId(data.id) ||
+                !validAgentId(data.runId) ||
+                !isUserReply(data.reply)
+              )
+                throw new Fault('INVALID_INTERACTION_REPLY', 400);
+              return json(
+                res,
+                await models.interactions.reply(id, data.runId, data.id, data.reply),
+              );
+            }
+            if (action === 'profile' && models) {
+              if (Object.keys(data).some((key) => !['revision', 'patch'].includes(key)))
+                throw new Fault('INVALID_BOT_PROFILE', 400);
+              return json(res, await models.profiles.update(id, data.revision, data.patch));
+            }
+            if (action === 'model' && models && typeof data.running === 'boolean') {
+              if ((host || runtime instanceof Computers) && data.running && data.task === undefined)
+                throw new Fault('TASK_REQUIRED', 400);
+              if (data.running) return json(res, await models.start(id, data.task));
+              await models.stop(id);
+              return json(res, { ok: true });
+            }
+            throw new Fault('INVALID_REQUEST', 400);
+          }
+          if (!runtime) throw new Fault('COMPUTER_NOT_CONNECTED', 503);
+          runtime.page(id);
+          const native =
+            runtime instanceof Desktop || runtime instanceof Computers ? runtime : undefined;
+          if (native && req.method === 'GET' && ['frame', 'browser-frame'].includes(action)) {
+            const instance = url.searchParams.get('instance'),
+              rawEpoch = url.searchParams.get('epoch');
+            if (
+              [...url.searchParams.keys()].length !== 2 ||
+              [...url.searchParams.keys()].some((key) => !['instance', 'epoch'].includes(key)) ||
+              !validAgentId(instance) ||
+              !/^(0|[1-9]\d*)$/.test(rawEpoch || '') ||
+              !Number.isSafeInteger(Number(rawEpoch))
+            )
+              throw new Fault('INVALID_REQUEST', 400);
+            const epoch = Number(rawEpoch);
+            const check = () => {
+              native.assertInstance(id, instance);
+              if (native.control.state(id).epoch !== epoch) throw new Fault('STALE_CONTROL');
+            };
+            check();
+            const image =
+              action === 'frame'
+                ? await native.frame(id, instance, epoch)
+                : await native.browserFrame(id);
+            check();
+            return reply(res, 200, 'image/jpeg', image);
+          }
+          if (action === 'frame' && req.method === 'GET')
+            return reply(res, 200, 'image/jpeg', await runtime.frame(id));
+          if (action === 'browser-frame' && req.method === 'GET' && 'browserFrame' in runtime)
+            return reply(res, 200, 'image/jpeg', await runtime.browserFrame(id));
+          if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+          const data = await body(req);
+          if (native) {
+            const fields: Record<string, string[]> = {
+              control: ['epoch', 'owner', 'instance'],
+              input: ['epoch', 'input', 'instance'],
+              app: ['epoch', 'app', 'instance'],
+              worker: ['running', 'instance'],
+            };
+            if (
+              !fields[action] ||
+              Object.keys(data).some((key) => !fields[action].includes(key)) ||
+              !validAgentId(data.instance) ||
+              (action !== 'worker' && (!Number.isSafeInteger(data.epoch) || Number(data.epoch) < 0))
+            )
+              throw new Fault('INVALID_REQUEST', 400);
+            native.assertInstance(id, data.instance);
+          }
+          if (action === 'control')
+            return json(
+              res,
+              native
+                ? await native.transfer(
+                    id,
+                    Number(data.epoch),
+                    String(data.owner),
+                    String(data.instance),
+                  )
+                : await runtime.transfer(
+                    id,
+                    typeof data.epoch === 'number' ? data.epoch : -1,
+                    String(data.owner),
+                  ),
+            );
+          if (action === 'input') {
+            if (native)
+              await native.input(id, Number(data.epoch), data.input, String(data.instance));
+            else
+              await runtime.input(id, typeof data.epoch === 'number' ? data.epoch : -1, data.input);
+            return json(res, { ok: true });
+          }
+          if (action === 'app' && 'openApp' in runtime) {
+            await runtime.openApp(
+              id,
+              typeof data.epoch === 'number' ? data.epoch : -1,
+              String(data.app),
+              String(data.instance),
+            );
+            return json(res, { ok: true });
+          }
+          if (action === 'worker' && typeof data.running === 'boolean') {
+            if (data.running && models?.running(id)) throw new Fault('MODEL_ALREADY_RUNNING');
+            await (data.running ? runtime.startWorker(id) : runtime.stopWorker(id));
             return json(res, { ok: true });
           }
           throw new Fault('INVALID_REQUEST', 400);
         }
-        if (!runtime) throw new Fault('COMPUTER_NOT_CONNECTED', 503);
-        runtime.page(id);
-        const native =
-          runtime instanceof Desktop || runtime instanceof Computers ? runtime : undefined;
-        if (native && req.method === 'GET' && ['frame', 'browser-frame'].includes(action)) {
-          const instance = url.searchParams.get('instance'),
-            rawEpoch = url.searchParams.get('epoch');
-          if (
-            [...url.searchParams.keys()].length !== 2 ||
-            [...url.searchParams.keys()].some((key) => !['instance', 'epoch'].includes(key)) ||
-            !validAgentId(instance) ||
-            !/^(0|[1-9]\d*)$/.test(rawEpoch || '') ||
-            !Number.isSafeInteger(Number(rawEpoch))
-          )
-            throw new Fault('INVALID_REQUEST', 400);
-          const epoch = Number(rawEpoch);
-          const check = () => {
-            native.assertInstance(id, instance);
-            if (native.control.state(id).epoch !== epoch) throw new Fault('STALE_CONTROL');
-          };
-          check();
-          const image =
-            action === 'frame'
-              ? await native.frame(id, instance, epoch)
-              : await native.browserFrame(id);
-          check();
-          return reply(res, 200, 'image/jpeg', image);
+        if (host) throw new Fault('NOT_FOUND', 404);
+        const signedIn = /(?:^|;\s*)demo_session=synthetic-user(?:;|$)/.test(
+          req.headers.cookie || '',
+        );
+        if (req.method === 'GET' && url.pathname === '/fixture/session')
+          return json(res, { user: signedIn ? '示例用户' : null });
+        if (req.method === 'POST' && ['/fixture/login', '/fixture/logout'].includes(url.pathname)) {
+          const login = url.pathname === '/fixture/login';
+          // shortcut: this deliberately public synthetic identity tests cookie mechanics, never real authentication.
+          res.setHeader(
+            'set-cookie',
+            `demo_session=${login ? 'synthetic-user' : ''}; HttpOnly; SameSite=Strict; Path=/fixture; Max-Age=${login ? 86400 : 0}`,
+          );
+          return json(res, { user: login ? '示例用户' : null });
         }
-        if (action === 'frame' && req.method === 'GET')
-          return reply(res, 200, 'image/jpeg', await runtime.frame(id));
-        if (action === 'browser-frame' && req.method === 'GET' && 'browserFrame' in runtime)
-          return reply(res, 200, 'image/jpeg', await runtime.browserFrame(id));
-        if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-        const data = await body(req);
-        if (native) {
-          const fields: Record<string, string[]> = {
-            control: ['epoch', 'owner', 'instance'],
-            input: ['epoch', 'input', 'instance'],
-            app: ['epoch', 'app', 'instance'],
-            worker: ['running', 'instance'],
-          };
-          if (
-            !fields[action] ||
-            Object.keys(data).some((key) => !fields[action].includes(key)) ||
-            !validAgentId(data.instance) ||
-            (action !== 'worker' && (!Number.isSafeInteger(data.epoch) || Number(data.epoch) < 0))
-          )
-            throw new Fault('INVALID_REQUEST', 400);
-          native.assertInstance(id, data.instance);
-        }
-        if (action === 'control')
-          return json(
+        if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
+        if (url.pathname === '/' && !authority.accepts(req.headers['x-prototype-token']))
+          return json(res, { service: 'daban', authentication: 'ssh-file' });
+        if (url.pathname === '/')
+          return reply(
             res,
-            native
-              ? await native.transfer(
-                  id,
-                  Number(data.epoch),
-                  String(data.owner),
-                  String(data.instance),
-                )
-              : await runtime.transfer(
-                  id,
-                  typeof data.epoch === 'number' ? data.epoch : -1,
-                  String(data.owner),
-                ),
+            200,
+            'text/html; charset=utf-8',
+            assets
+              .get(runtime instanceof Computers ? 'managed.html' : 'index.html')!
+              .toString()
+              .replace('__PROTOTYPE_TOKEN__', token),
           );
-        if (action === 'input') {
-          if (native) await native.input(id, Number(data.epoch), data.input, String(data.instance));
-          else
-            await runtime.input(id, typeof data.epoch === 'number' ? data.epoch : -1, data.input);
-          return json(res, { ok: true });
-        }
-        if (action === 'app' && 'openApp' in runtime) {
-          await runtime.openApp(
-            id,
-            typeof data.epoch === 'number' ? data.epoch : -1,
-            String(data.app),
-            String(data.instance),
+        if (
+          url.pathname === '/fixture/page' &&
+          (runtime instanceof Computers
+            ? validAgentId(url.searchParams.get('bot'))
+            : ['a', 'b'].includes(url.searchParams.get('bot') || ''))
+        )
+          return reply(
+            res,
+            200,
+            'text/html; charset=utf-8',
+            assets
+              .get('fixture.html')!
+              .toString()
+              .replaceAll('__BOT__', url.searchParams.get('bot')!.toUpperCase()),
           );
-          return json(res, { ok: true });
-        }
-        if (action === 'worker' && typeof data.running === 'boolean') {
-          if (data.running && models?.running(id)) throw new Fault('MODEL_ALREADY_RUNNING');
-          await (data.running ? runtime.startWorker(id) : runtime.stopWorker(id));
-          return json(res, { ok: true });
-        }
-        throw new Fault('INVALID_REQUEST', 400);
+        const publicAssets: Record<string, [string, string]> = {
+          '/style.css': ['style.css', 'text/css'],
+          '/app.js': ['app.js', 'text/javascript'],
+          '/fixture/style.css': ['fixture.css', 'text/css'],
+          '/fixture/app.js': ['fixture.js', 'text/javascript'],
+        };
+        const asset = publicAssets[url.pathname];
+        if (asset) return reply(res, 200, `${asset[1]}; charset=utf-8`, assets.get(asset[0]));
+        throw new Fault('NOT_FOUND', 404);
+      } catch (error) {
+        if (!res.headersSent)
+          json(
+            res,
+            { error: errorCode(error) || 'INTERNAL_ERROR' },
+            error instanceof Fault ? error.status : 500,
+          );
+        else res.end();
+      } finally {
+        releaseMutation?.();
       }
-      if (host) throw new Fault('NOT_FOUND', 404);
-      const signedIn = /(?:^|;\s*)demo_session=synthetic-user(?:;|$)/.test(
-        req.headers.cookie || '',
-      );
-      if (req.method === 'GET' && url.pathname === '/fixture/session')
-        return json(res, { user: signedIn ? '示例用户' : null });
-      if (req.method === 'POST' && ['/fixture/login', '/fixture/logout'].includes(url.pathname)) {
-        const login = url.pathname === '/fixture/login';
-        // shortcut: this deliberately public synthetic identity tests cookie mechanics, never real authentication.
-        res.setHeader(
-          'set-cookie',
-          `demo_session=${login ? 'synthetic-user' : ''}; HttpOnly; SameSite=Strict; Path=/fixture; Max-Age=${login ? 86400 : 0}`,
-        );
-        return json(res, { user: login ? '示例用户' : null });
-      }
-      if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
-      if (url.pathname === '/' && !authority.accepts(req.headers['x-prototype-token']))
-        return json(res, { service: 'daban', authentication: 'ssh-file' });
-      if (url.pathname === '/')
-        return reply(
-          res,
-          200,
-          'text/html; charset=utf-8',
-          assets
-            .get(runtime instanceof Computers ? 'managed.html' : 'index.html')!
-            .toString()
-            .replace('__PROTOTYPE_TOKEN__', token),
-        );
-      if (
-        url.pathname === '/fixture/page' &&
-        (runtime instanceof Computers
-          ? validAgentId(url.searchParams.get('bot'))
-          : ['a', 'b'].includes(url.searchParams.get('bot') || ''))
-      )
-        return reply(
-          res,
-          200,
-          'text/html; charset=utf-8',
-          assets
-            .get('fixture.html')!
-            .toString()
-            .replaceAll('__BOT__', url.searchParams.get('bot')!.toUpperCase()),
-        );
-      const publicAssets: Record<string, [string, string]> = {
-        '/style.css': ['style.css', 'text/css'],
-        '/app.js': ['app.js', 'text/javascript'],
-        '/fixture/style.css': ['fixture.css', 'text/css'],
-        '/fixture/app.js': ['fixture.js', 'text/javascript'],
-      };
-      const asset = publicAssets[url.pathname];
-      if (asset) return reply(res, 200, `${asset[1]}; charset=utf-8`, assets.get(asset[0]));
-      throw new Fault('NOT_FOUND', 404);
-    } catch (error) {
-      if (!res.headersSent)
-        json(
-          res,
-          { error: errorCode(error) || 'INTERNAL_ERROR' },
-          error instanceof Fault ? error.status : 500,
-        );
-      else res.end();
-    } finally {
-      releaseMutation?.();
-    }
-  });
+    },
+    (identity) =>
+      identity === 'control'
+        ? token
+        : identity.startsWith('mcp:')
+          ? models?.jobs.get(identity.slice(4))?.token
+          : undefined,
+    host ? process.platform : 'darwin',
+  );
   await new Promise<unknown>((resolve, reject) => {
     server.once('error', reject);
     if (host) server.listen(host.socketPath, () => resolve(undefined));
@@ -1577,7 +1627,7 @@ export async function startPrototype({
   });
   const address = server.address();
   if (!address || (!host && typeof address === 'string')) throw new Error('Invalid server address');
-  if (host) await chmod(host.socketPath, 0o600);
+  if (host && process.platform !== 'win32') await chmod(host.socketPath, 0o600);
   else origin = `http://127.0.0.1:${(address as import('node:net').AddressInfo).port}`;
   let closing: Promise<unknown> | undefined;
   const close = () => {
@@ -1611,11 +1661,29 @@ export async function startPrototype({
   try {
     // Publish only after binding: a pre-existing listener must never receive the new credential.
     await authority.publish();
-    if (host) {
-      const snapshot = await host.execution.ready;
+    if (host?.execution) {
+      const snapshot = await host.execution!.ready;
       if (!isExecutionSnapshot(snapshot)) throw new Fault('EXECUTION_INVALID_RESPONSE');
       executionSnapshot = snapshot;
       recovery = createHostRecovery(snapshot);
+      await recovery.ready;
+    } else if (host?.nativeWorkspace) {
+      recovery = new Recovery({
+        file: path.join(modelDir, 'recovery.json'),
+        boot: `native-${host.scope.slice(0, 24)}`,
+        instance: `native-${randomBytes(18).toString('base64url')}`,
+        quiesce: async () => {
+          await Promise.all([groups?.drain(), schedules?.drain()]);
+        },
+        snapshot: () => ({
+          computersRevision: 0,
+          screens: [],
+          running: [...(models?.jobs.values() || [])]
+            .filter((job) => job.running)
+            .map((job) => job.bot),
+          changing: changing.size > 0 || !!models?.bundles.busy,
+        }),
+      });
       await recovery.ready;
     } else if (computers) {
       const options = typeof computers === 'object' ? computers : {};
@@ -1695,14 +1763,16 @@ export async function startPrototype({
           : typeof desktop === 'object' && desktop.dir
             ? desktop.dir
             : path.resolve(profileDir, '../desktops');
-      files = host
-        ? new RemoteWorkspace(
-            host.execution,
-            host.offlineWorkspaceRoot,
-            undefined,
-            host.offlineWorkspaceRoot,
-          )
-        : new WorkspaceFiles(path.join(desktopDir, 'shared'));
+      files = host?.nativeWorkspace
+        ? new NativeWorkspace(host.nativeWorkspace)
+        : host
+          ? new RemoteWorkspace(
+              host.execution!,
+              host.offlineWorkspaceRoot,
+              undefined,
+              host.offlineWorkspaceRoot,
+            )
+          : new WorkspaceFiles(path.join(desktopDir, 'shared'));
       await files.prepare();
       models = new ModelRuns({
         ...(host ? { documents } : {}),
@@ -1711,7 +1781,9 @@ export async function startPrototype({
           !replacingRecovery && (!host || computerAvailable) && (recovery?.admit() ?? true),
         ...(host
           ? {
-              execution: host.execution,
+              execution: host.nativeWorkspace ? undefined : host.execution!,
+              nativeOnly: !!host.nativeWorkspace,
+              localComputer: host.localComputer,
               sdkFile: host.sdkFile,
               bridgeSocket: host.socketPath,
               stdioEntry: host.stdioEntry,
@@ -1726,7 +1798,7 @@ export async function startPrototype({
         dir: modelDir,
       });
       await models.ready;
-      if (host) {
+      if (host?.execution) {
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),
           interactions: models.interactions,
@@ -1790,6 +1862,12 @@ export async function startPrototype({
           assertIdle: async (bot) => {
             if (models!.running(bot)) throw new Fault('BOT_TASK_RUNNING');
             if (changing.has(bot)) throw new Fault('BOT_COMPUTER_CONNECTED');
+            if (host?.nativeWorkspace) {
+              if ((await host.localComputer?.status())?.session?.bot === bot)
+                throw new Fault('BOT_COMPUTER_CONNECTED');
+              if (await groups!.hasPendingBot(bot)) throw new Fault('BOT_GROUP_PENDING');
+              return;
+            }
             const status = host
               ? (await refreshExecution()).status
               : (computers as Computers).status();

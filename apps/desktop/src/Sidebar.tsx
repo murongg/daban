@@ -135,6 +135,7 @@ export function Sidebar({
     const target = computerTarget(runtime.snapshot, bot.id);
     const computer = target ? runtime.snapshot.bots[target] : undefined;
     const connection = runtime.snapshot.computers?.items.find((item) => item.bot === target);
+    const local = runtime.snapshot.localComputer?.session;
     let preview =
       state.controls[bot.id] === 'human' ? t('sidebar.controllingBotSComputer') : bot.preview;
     if (runtime.enabled) {
@@ -154,6 +155,8 @@ export function Sidebar({
       else if (computer) preview = t('sidebar.localLinuxIndependentDesktop');
       else preview = t('sidebar.chatAvailableNoComputerConnected');
     }
+    if (local?.bot === agentId(bot.id) && !agentTask(runtime.snapshot, bot.id)?.running)
+      preview = local.owner === 'human' ? t('localComputer.paused') : t('localComputer.connected');
     return (
       <div
         key={bot.id}
@@ -451,7 +454,9 @@ export function Sidebar({
                 <span className="status-dot" />
                 {runtime.enabled
                   ? runtime.snapshot.phase === 'ready'
-                    ? t('sidebar.linuxConnectedRunningLocally')
+                    ? runtime.snapshot.agent?.execution === 'local-workspace'
+                      ? t('localComputer.workspace')
+                      : t('sidebar.linuxConnectedRunningLocally')
                     : runtime.snapshot.phase === 'connecting'
                       ? t('sidebar.startingLinux')
                       : t('sidebar.runtimeDisconnected')

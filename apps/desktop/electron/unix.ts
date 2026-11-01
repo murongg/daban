@@ -1,8 +1,10 @@
 import { once } from 'node:events';
 import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
-import { request } from 'node:http';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { isAbsolute, join } from 'node:path';
+import { privateClientOptions, privateMetadata } from '@daban/engine/local-computer';
 import { botBundleLimit } from '@daban/protocol';
 import { socketReady } from './socket';
 
@@ -14,15 +16,15 @@ const aborted = () => new DOMException('Agent request aborted', 'AbortError');
 export async function readAgentToken(dataRoot: string) {
   // Returning undefined would authorize RuntimeClient's legacy HTML-token fallback.
   const uid = process.getuid?.();
-  if (uid === undefined || !isAbsolute(dataRoot)) throw new Error('AGENT_AUTH_UNAVAILABLE');
+  if ((process.platform !== 'win32' && uid === undefined) || !isAbsolute(dataRoot))
+    throw new Error('AGENT_AUTH_UNAVAILABLE');
   try {
     for (const folder of [dataRoot, join(dataRoot, 'model')]) {
       const info = await fs.lstat(folder);
       if (
         !info.isDirectory() ||
         info.isSymbolicLink() ||
-        info.uid !== uid ||
-        (info.mode & 0o777) !== 0o700
+        !(await privateMetadata(folder, info, 0o700))
       )
         throw new Error('AGENT_AUTH_UNAVAILABLE');
     }
@@ -34,9 +36,8 @@ export async function readAgentToken(dataRoot: string) {
       const info = await file.stat();
       if (
         !info.isFile() ||
-        info.uid !== uid ||
+        !(await privateMetadata(join(dataRoot, 'model/control-token'), info, 0o600)) ||
         info.nlink !== 1 ||
-        (info.mode & 0o777) !== 0o600 ||
         info.size < 64 ||
         info.size > 65
       )
@@ -54,7 +55,10 @@ export async function readAgentToken(dataRoot: string) {
   }
 }
 
-export function unixFetch(socketPath: string, options: { maxBytes?: number } = {}) {
+export function unixFetch(
+  socketPath: string,
+  options: { maxBytes?: number; key?: () => Promise<string> } = {},
+) {
   const limit = options.maxBytes ?? uploadLimit;
   if (
     !isAbsolute(socketPath) ||
@@ -89,8 +93,10 @@ export function unixFetch(socketPath: string, options: { maxBytes?: number } = {
       throw new Error('AGENT_REQUEST_TOO_LARGE');
     try {
       if (!(await socketReady(socketPath))) throw new Error('AGENT_SOCKET_UNSAFE');
-      const info = await fs.lstat(socketPath);
-      if (!info.isSocket()) throw new Error('AGENT_SOCKET_UNSAFE');
+      if (process.platform !== 'win32') {
+        const info = await fs.lstat(socketPath);
+        if (!info.isSocket()) throw new Error('AGENT_SOCKET_UNSAFE');
+      }
     } catch {
       throw new Error('AGENT_SOCKET_UNSAFE');
     }
@@ -101,11 +107,17 @@ export function unixFetch(socketPath: string, options: { maxBytes?: number } = {
     headers.set('host', new URL(origin).host);
     if (body?.headers.has('content-type') && !headers.has('content-type'))
       headers.set('content-type', body.headers.get('content-type')!);
+    const key =
+      process.platform === 'win32'
+        ? headers.get('x-prototype-token') || (await options.key?.())
+        : '';
+    const request = process.platform === 'win32' ? httpsRequest : httpRequest;
     let requestError = 'AGENT_REQUEST_UNAVAILABLE';
     try {
       return await new Promise<Response>((done, reject) => {
         const connection = request(
           {
+            ...privateClientOptions(key || '', 'control'),
             socketPath,
             // Model proxy configuration must never reroute this private control connection.
             agent: false,

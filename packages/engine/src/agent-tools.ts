@@ -27,6 +27,7 @@ import type { HistoryTools } from './history.js';
 import type { IntegrationTools } from './integration-tools.js';
 import type { McpSnapshot } from './integrations.js';
 import type { KnowledgeTools } from './knowledge-tools.js';
+import type { LocalComputerPort } from './local-computer.js';
 import type { MemoryTools } from './memory.js';
 import type { NotesTools } from './notes-tools.js';
 import type { WorkspaceExecutor } from './remote-workspace.js';
@@ -113,6 +114,8 @@ const inside = (root: string, file: string) => file === root || file.startsWith(
 
 export class AgentTools {
   readonly browser?: BrowserTools;
+  localComputer?: LocalComputerPort;
+  private readonly localRuns = new WeakMap<AgentToolRun, boolean>();
   groups?: GroupTools;
   memory?: MemoryTools;
   history?: HistoryTools;
@@ -142,7 +145,7 @@ export class AgentTools {
   constructor(
     runtime: ComputerFacade | undefined,
     readonly workspace: AgentWorkspace,
-    readonly options: { execution?: WorkspaceExecutor } = {},
+    readonly options: { execution?: WorkspaceExecutor; nativeOnly?: boolean } = {},
   ) {
     if (runtime) {
       this.computer = new ComputerTools(runtime);
@@ -153,7 +156,11 @@ export class AgentTools {
         });
     }
   }
-  hasComputer(bot: string, model?: ModelId, vision?: boolean) {
+  localSelected(bot: string, run?: AgentToolRun) {
+    return run ? this.localRuns.get(run) === true : this.localComputer?.selected(bot) === true;
+  }
+  hasComputer(bot: string, model?: ModelId, vision?: boolean, run?: AgentToolRun) {
+    if (this.localSelected(bot, run)) return vision ?? (!model || modelHasVision(model));
     if (this.options.execution)
       return (
         (vision ?? (!model || modelHasVision(model))) &&
@@ -168,7 +175,8 @@ export class AgentTools {
       return false;
     }
   }
-  hasBrowser(bot: string) {
+  hasBrowser(bot: string, run?: AgentToolRun) {
+    if (this.localSelected(bot, run)) return false;
     if (this.options.execution)
       return !!this.remoteCatalogs.get(bot)?.some((tool) => tool.name === 'browser_snapshot');
     if (!this.browser || !this.computer) return false;
@@ -190,9 +198,22 @@ export class AgentTools {
       : this.hasComputer(bot, model, run?.vision)
         ? agentToolList
         : workspaceToolList;
+    const local = this.localSelected(bot, run);
+    const offered = this.options.nativeOnly
+      ? tools.filter((tool) => !workspaceToolList.some((item) => item.name === tool.name))
+      : tools;
     return [
-      ...tools,
-      ...(!this.options.execution && this.hasBrowser(bot) ? this.browser?.list || [] : []),
+      ...(local
+        ? offered.filter(
+            (tool) =>
+              !computerToolList.some((item) => item.name === tool.name) &&
+              !tool.name.startsWith('browser_'),
+          )
+        : offered),
+      ...(local && (run?.vision ?? (!model || modelHasVision(model)))
+        ? this.localComputer?.list || []
+        : []),
+      ...(!this.options.execution && this.hasBrowser(bot, run) ? this.browser?.list || [] : []),
       ...(this.schedules ? scheduleToolList : []),
       ...(this.memory?.list || []),
       ...(this.history?.list || []),
@@ -208,6 +229,8 @@ export class AgentTools {
     ];
   }
   async open(run: AgentToolRun) {
+    if (!this.localRuns.has(run))
+      this.localRuns.set(run, (await this.localComputer?.prepare(run)) ?? false);
     if (!this.options.execution || this.opened.has(run)) return;
     const capabilities =
       this.options.execution.snapshot?.capabilities.includes(modelExecutionCapability);
@@ -267,12 +290,14 @@ export class AgentTools {
   }
   async drain(run: AgentToolRun) {
     await Promise.allSettled([...(this.active.get(run) || [])]);
+    if (this.localRuns.get(run)) await this.localComputer?.cancel(run);
     if (this.options.execution && this.opened.has(run)) {
       await this.options.execution.call('tools.drain', { runId: run.id });
       this.opened.delete(run);
     }
   }
   async cancel(run: AgentToolRun) {
+    if (this.localRuns.get(run)) await this.localComputer?.cancel(run);
     if (this.options.execution && this.opened.has(run))
       await this.options.execution.call('tools.cancel', { runId: run.id });
   }
@@ -483,6 +508,7 @@ export class AgentTools {
     }
   }
   async writeText(run: AgentToolRun, value: unknown, content: unknown, createOnly = false) {
+    if (this.options.nativeOnly) throw new Fault('NATIVE_WORKSPACE_TOOL_UNAVAILABLE');
     if (
       typeof value !== 'string' ||
       !value ||
@@ -667,7 +693,21 @@ export class AgentTools {
     args: Record<string, unknown>,
     wireId?: string,
   ): Promise<ToolResult> {
+    const unavailable =
+      this.options.nativeOnly && (Object.hasOwn(fields, name) || name.startsWith('process_'))
+        ? 'NATIVE_WORKSPACE_TOOL_UNAVAILABLE'
+        : this.localRuns.get(run) && name.startsWith('browser_')
+          ? 'LOCAL_BROWSER_SURFACE_UNAVAILABLE'
+          : undefined;
+    if (!unavailable && this.localRuns.get(run)) {
+      if (computerToolList.some((tool) => tool.name === name)) {
+        await this.authorizeComputer?.(run);
+        if (!this.localComputer) throw new Fault('LOCAL_CLIENT_UNAVAILABLE');
+        return this.localComputer.invoke(run, name, args);
+      }
+    }
     if (
+      !unavailable &&
       this.options.execution &&
       (Object.hasOwn(fields, name) ||
         computerToolList.some((tool) => tool.name === name) ||
@@ -705,6 +745,7 @@ export class AgentTools {
         run.onLimit?.();
         throw new Fault('TOOL_LIMIT');
       }
+      if (unavailable) throw new Fault(unavailable);
       if (external) {
         if (!args || typeof args !== 'object' || Array.isArray(args))
           throw new Fault('INVALID_TOOL_ARGS', 400);

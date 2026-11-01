@@ -127,8 +127,12 @@ export async function buildExecutor(target: string) {
   return graph;
 }
 export async function packageHost(target: string, nodeDirectory: string) {
+  const nodeFile =
+    process.platform === 'win32'
+      ? path.join(nodeDirectory, 'node.exe')
+      : path.join(nodeDirectory, 'bin/node');
   assert.equal(
-    execFileSync(path.join(nodeDirectory, 'bin/node'), ['--version'], { encoding: 'utf8' }).trim(),
+    execFileSync(nodeFile, ['--version'], { encoding: 'utf8' }).trim(),
     'v24.22.1',
     'HOST_NODE_VERSION',
   );
@@ -169,17 +173,30 @@ export async function packageHost(target: string, nodeDirectory: string) {
   for (const name of await readdir(path.join(root, 'dist-agent')))
     if (name.endsWith('.js') && !name.includes('.test.'))
       await copyFile(path.join(root, 'dist-agent', name), path.join(target, name));
-  await mkdir(path.join(target, 'node/bin'), { recursive: true });
-  await copyFile(path.join(nodeDirectory, 'bin/node'), path.join(target, 'node/bin/node'));
-  await chmod(path.join(target, 'node/bin/node'), 0o755);
+  const runtimeNode =
+    process.platform === 'win32'
+      ? path.join(target, 'node/node.exe')
+      : path.join(target, 'node/bin/node');
+  await mkdir(path.dirname(runtimeNode), { recursive: true });
+  await copyFile(nodeFile, runtimeNode);
+  await chmod(runtimeNode, 0o755);
   await copyFile(path.join(nodeDirectory, 'LICENSE'), path.join(target, 'node/LICENSE'));
   await copyFile(
     path.join(root, 'apps/agent/standalone-lock.json'),
     path.join(target, 'package-lock.json'),
   );
+  const npmProgram = process.platform === 'win32' ? process.execPath : 'npm';
+  const npmPrefix =
+    process.platform === 'win32'
+      ? [
+          process.env.npm_execpath ||
+            path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
+        ]
+      : [];
   execFileSync(
-    'npm',
+    npmProgram,
     [
+      ...npmPrefix,
       'ci',
       '--omit=dev',
       '--ignore-scripts',

@@ -1,23 +1,26 @@
-import { lstat, mkdir, realpath, unlink } from 'node:fs/promises';
+import { lstat, unlink } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { Fault } from './control.js';
+import { windowsPrivatePipe } from './private-channel.js';
+import { secureDirectory } from './private-files.js';
 import { type HostComposition, startPrototype } from './server.js';
 
-export type AgentOptions = HostComposition;
+export type AgentOptions = HostComposition & {
+  execution: NonNullable<HostComposition['execution']>;
+};
 async function privateDirectory(directory: string) {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const metadata = await lstat(directory);
-  if (
-    !metadata.isDirectory() ||
-    metadata.isSymbolicLink() ||
-    metadata.uid !== process.getuid?.() ||
-    (metadata.mode & 0o777) !== 0o700
-  )
+  try {
+    return await secureDirectory(directory);
+  } catch {
     throw new Fault('AGENT_UNSAFE_DIRECTORY');
-  return realpath(directory);
+  }
 }
 async function prepareSocket(socketPath: string) {
+  if (process.platform === 'win32') {
+    if (!windowsPrivatePipe(socketPath)) throw new Fault('AGENT_UNSAFE_SOCKET');
+    return;
+  }
   const previous = await lstat(socketPath).catch((error) => {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
       return undefined;
@@ -114,6 +117,31 @@ export async function startAgent(options: AgentOptions) {
       return prototype.recovery;
     },
     refreshExecution: prototype.refreshExecution!,
+    close: prototype.close,
+  };
+}
+
+export async function startNativeAgent(options: HostComposition & { nativeWorkspace: string }) {
+  if (
+    !path.isAbsolute(options.dataRoot) ||
+    !path.isAbsolute(options.nativeWorkspace) ||
+    !path.isAbsolute(options.sdkFile) ||
+    !/^[a-f0-9]{64}$/.test(options.scope)
+  )
+    throw new Fault('AGENT_INVALID_CONFIG');
+  const sdk = await lstat(options.sdkFile);
+  if (!sdk.isFile() || sdk.isSymbolicLink()) throw new Fault('AGENT_SDK_UNAVAILABLE');
+  const dataRoot = await secureDirectory(options.dataRoot);
+  if (process.platform !== 'win32') await secureDirectory(path.dirname(options.socketPath));
+  await prepareSocket(options.socketPath);
+  const prototype = await startPrototype({ host: { ...options, dataRoot } });
+  return {
+    url: prototype.url,
+    models: prototype.models!,
+    recovery: prototype.recovery,
+    refreshExecution: async () => {
+      throw new Fault('LOCAL_VM_UNAVAILABLE');
+    },
     close: prototype.close,
   };
 }

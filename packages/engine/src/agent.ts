@@ -13,3 +13,6 @@ export { startAgent } from './host-server.js';
 export { ModelRuns } from './model.js';
 export { ModelSettings } from './settings.js';
 export const mcpStdioEntry = fileURLToPath(new URL('./mcp-stdio.js', import.meta.url));
+
+export { startNativeAgent } from './host-server.js';
+export { LocalComputerClient, localComputerPaths } from './local-computer.js';

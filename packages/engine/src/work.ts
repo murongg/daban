@@ -34,6 +34,7 @@ import {
   workPriorities,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
+import { privateMetadata } from './private-files.js';
 
 type Row = Record<string, unknown>;
 const capacity = 1000,
@@ -69,7 +70,7 @@ export class Work {
       (!existing.isFile() ||
         existing.isSymbolicLink() ||
         existing.nlink !== 1 ||
-        existing.uid !== process.getuid?.())
+        !(await privateMetadata(this.file, existing)))
     )
       throw new Fault('WORK_CORRUPT');
     if (!existing) await (await open(this.file, 'wx', 0o600)).close();

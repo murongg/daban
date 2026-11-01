@@ -38,6 +38,7 @@ import {
   isKnowledgeVersion,
   isLegacyWorkQuery,
   isLegacyWorkWrite,
+  isLocalComputerStatus,
   isMcpAssignments,
   isMcpBindingResult,
   isMcpCatalog,
@@ -96,6 +97,7 @@ import {
   type RuntimeTask,
   recoveryBlocked,
   sameTranscriptScope,
+  unavailableLocalComputer,
   validAgentId,
   workCommentKey,
   workCommentQueryKey,
@@ -338,6 +340,7 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         clientProtocol?: number;
+        localComputer?: unknown;
         chats?: unknown;
         notices?: unknown;
         recovery?: unknown;
@@ -430,31 +433,57 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      if (this.agent && raw.localComputer !== undefined)
+        snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
+          ? raw.localComputer
+          : unavailableLocalComputer('LOCAL_INVALID_STATUS');
       if (this.agent) {
-        if (!isRebootStatus(raw.reboot)) throw new Error('INVALID_RUNTIME_STATE');
-        snapshot.reboot = raw.reboot;
-        if (raw.agent !== undefined) {
-          const role = raw.agent;
+        if (
+          raw.agent &&
+          typeof raw.agent === 'object' &&
+          'execution' in raw.agent &&
+          raw.agent.execution === 'local-workspace'
+        ) {
+          const role = raw.agent as Record<string, unknown>;
           if (
-            !role ||
-            typeof role !== 'object' ||
             Object.keys(role).length !== 4 ||
-            !('location' in role) ||
             role.location !== 'host' ||
-            !('execution' in role) ||
-            role.execution !== 'linux-vm' ||
-            !('privilege' in role) ||
-            role.privilege !== 'sudo' ||
-            !('approvals' in role) ||
+            role.privilege !== 'workspace' ||
             role.approvals !== 'host'
           )
             throw new Error('INVALID_RUNTIME_STATE');
           snapshot.agent = {
             location: 'host',
-            execution: 'linux-vm',
-            privilege: 'sudo',
+            execution: 'local-workspace',
+            privilege: 'workspace',
             approvals: 'host',
           };
+        } else {
+          if (!isRebootStatus(raw.reboot)) throw new Error('INVALID_RUNTIME_STATE');
+          snapshot.reboot = raw.reboot;
+          if (raw.agent !== undefined) {
+            const role = raw.agent;
+            if (
+              !role ||
+              typeof role !== 'object' ||
+              Object.keys(role).length !== 4 ||
+              !('location' in role) ||
+              role.location !== 'host' ||
+              !('execution' in role) ||
+              role.execution !== 'linux-vm' ||
+              !('privilege' in role) ||
+              role.privilege !== 'sudo' ||
+              !('approvals' in role) ||
+              role.approvals !== 'host'
+            )
+              throw new Error('INVALID_RUNTIME_STATE');
+            snapshot.agent = {
+              location: 'host',
+              execution: 'linux-vm',
+              privilege: 'sudo',
+              approvals: 'host',
+            };
+          }
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.

@@ -1,10 +1,21 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, dialog, Notification, session } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  Notification,
+  powerMonitor,
+  session,
+} from 'electron';
 import { type MessageKey, type Parameters, translate } from '../locale';
+import { LocalComputer } from './local-computer';
+import { localServer } from './local-server';
 import { LocalePreferences } from './locale';
 import { localeIpc } from './locale-ipc';
 import { localizeMenu } from './menu';
+import { desktopDriver } from './native';
 import { noticeIpc } from './notification-ipc';
 import { Notifications } from './notifications';
 import { runtimeService } from './service';
@@ -19,6 +30,9 @@ let preferences: LocalePreferences | undefined;
 let mainWindow: BrowserWindow | undefined;
 let windowReady = false;
 let nativeLaunchId: string | undefined;
+let localComputer: LocalComputer | undefined;
+let closeLocalServer: (() => Promise<unknown>) | undefined;
+const localShortcut = 'Control+Alt+Escape';
 app.on('ready', (_event, launchInfo) => {
   const value: unknown = launchInfo;
   if (
@@ -65,15 +79,17 @@ function createWindow() {
       mainWindow = undefined;
       windowReady = false;
     }
+    localComputer?.revoke().catch(() => console.error('Local computer cleanup failed'));
     service?.releaseInputs().catch(() => console.error('Desktop input cleanup failed'));
   });
   window.once('ready-to-show', () => {
     if (mainWindow === window) windowReady = true;
     window.show();
   });
-  window.on('focus', () =>
-    notifications?.focus().catch(() => console.error('Notification focus cleanup failed')),
-  );
+  window.on('focus', () => {
+    localComputer?.interrupt().catch(() => console.error('Local computer pause failed'));
+    notifications?.focus().catch(() => console.error('Notification focus cleanup failed'));
+  });
   // Bot webpages stay inside Linux; the privileged local renderer must never navigate.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
@@ -142,6 +158,31 @@ if (primary) {
       const agentDirectory = app.isPackaged
         ? join(process.resourcesPath, 'agent')
         : join(__dirname, '..', 'resources/agent');
+      const shortcut =
+        ['darwin', 'win32'].includes(process.platform) &&
+        globalShortcut.register(localShortcut, () => {
+          localComputer?.interrupt().catch(() => console.error('Local computer pause failed'));
+          focusWindow();
+        });
+      localComputer = new LocalComputer(
+        desktopDriver(() => mainWindow),
+        shortcut,
+      );
+      const pauseLocal = () => {
+        localComputer?.interrupt().catch(() => console.error('Local computer pause failed'));
+      };
+      powerMonitor.on('lock-screen', pauseLocal);
+      powerMonitor.on('suspend', pauseLocal);
+      if (['darwin', 'win32'].includes(process.platform)) {
+        try {
+          closeLocalServer = await localServer(
+            join(app.getPath('userData'), 'agent'),
+            localComputer,
+          );
+        } catch {
+          console.error('Local computer bridge unavailable');
+        }
+      }
       service = runtimeService(
         app.getPath('userData'),
         pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href,
@@ -151,8 +192,12 @@ if (primary) {
         (snapshot, scope) => notifications!.observe(snapshot, scope),
         {
           entry: join(agentDirectory, 'main.js'),
-          executable: join(agentDirectory, 'node/bin/node'),
+          executable:
+            process.platform === 'win32'
+              ? join(agentDirectory, 'node/node.exe')
+              : join(agentDirectory, 'node/bin/node'),
         },
+        localComputer,
       );
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
         callback(false),
@@ -160,7 +205,7 @@ if (primary) {
       createWindow();
       if (nativeLaunchId) await notifications.activate(nativeLaunchId);
       app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+        focusWindow();
       });
       await service.connect();
     })
@@ -180,6 +225,8 @@ if (primary) {
     event.preventDefault();
     exiting = true;
     try {
+      globalShortcut.unregister(localShortcut);
+      await closeLocalServer?.();
       closeNoticeIpc?.();
       closeLocaleIpc?.();
       await notifications?.close();

@@ -40,6 +40,7 @@ export interface RawModelTask {
   trace?: { name: string; surface: string; phase: string; code?: string; at: string }[];
 }
 export interface LegacySnapshot {
+  localComputer?: import('@daban/protocol').LocalComputerStatus;
   browsers?: Record<string, BrowserState>;
   mode?: 'browser' | 'desktop' | 'agent';
   computerError?: 'COMPUTER_START_FAILED';

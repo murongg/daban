@@ -36,6 +36,10 @@
     "./host": {
       "types": "./dist/host.d.ts",
       "import": "./dist/host.js"
+    },
+    "./local-computer": {
+      "types": "./dist/local-computer.d.ts",
+      "import": "./dist/local-computer.js"
     }
   }
 }

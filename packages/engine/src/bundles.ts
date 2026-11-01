@@ -18,6 +18,7 @@ import {
 import { errorCode, Fault } from './control.js';
 import { Documents } from './documents.js';
 import type { Knowledge } from './knowledge.js';
+import { privateMetadata } from './private-files.js';
 import type { BotProfiles } from './profiles.js';
 import { parseSkill, type Skills } from './skills.js';
 
@@ -135,8 +136,7 @@ export class BotBundles {
     if (
       !info.isDirectory() ||
       info.isSymbolicLink() ||
-      info.uid !== process.getuid?.() ||
-      (info.mode & 0o777) !== 0o700
+      !(await privateMetadata(this.options.directory, info, 0o700))
     )
       throw new Fault('BOT_IMPORT_STORE');
     this.canonical = await realpath(this.options.directory);
@@ -166,8 +166,7 @@ export class BotBundles {
       if (
         !info.isFile() ||
         info.nlink !== 1 ||
-        info.uid !== process.getuid?.() ||
-        (info.mode & 0o077) !== 0 ||
+        !(await privateMetadata(file, info, info.mode & 0o700)) ||
         info.size > 16384
       )
         throw new Fault('BOT_IMPORT_STORE');
@@ -241,8 +240,11 @@ export class BotBundles {
         !record.payload ||
         !info.isFile() ||
         info.nlink !== 1 ||
-        info.uid !== process.getuid?.() ||
-        (info.mode & 0o077) !== 0 ||
+        !(await privateMetadata(
+          path.join(this.canonical, `${record.header.id}.bundle`),
+          info,
+          info.mode & 0o700,
+        )) ||
         info.dev !== record.payload.dev ||
         info.ino !== record.payload.ino ||
         info.size > record.header.size

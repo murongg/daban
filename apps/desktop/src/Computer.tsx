@@ -1,4 +1,4 @@
-import { computerTarget, recoveryBlocked } from '@daban/protocol';
+import { agentId, computerTarget, recoveryBlocked } from '@daban/protocol';
 import {
   Check,
   FileText,
@@ -9,17 +9,18 @@ import {
   ShieldCheck,
   Terminal,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Browser } from './Browser';
 import { IconButton } from './Button';
 import { Connection } from './Connection';
 import { LiveDesktop } from './LiveDesktop';
+import { LocalComputer } from './LocalComputer';
 import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Bot } from './state';
 export type ComputerSurface = 'desktop' | 'browser';
 
-export function Computer({
+function VirtualComputer({
   bot,
   notify,
   expand,
@@ -225,5 +226,53 @@ export function Computer({
         </span>
       </div>
     </div>
+  );
+}
+
+export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
+  const runtime = useRuntime();
+  const local = runtime.snapshot.localComputer;
+  const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
+  const canonical = agentId(props.bot.id);
+  const [source, setSource] = useState<'vm' | 'local'>(nativeOnly ? 'local' : 'vm');
+  useEffect(() => {
+    if (nativeOnly || local?.session?.bot === canonical) setSource('local');
+  }, [nativeOnly, local?.session?.bot, canonical]);
+  async function choose(next: 'vm' | 'local') {
+    if (next === 'vm' && local?.session?.bot === canonical) {
+      if (runtime.snapshot.agents[canonical]?.running) return;
+      try {
+        await runtime.command({
+          type: 'local.disconnect',
+          session: local.session.id,
+          revision: local.session.revision,
+        });
+      } catch (error) {
+        props.notify(runtimeError(error));
+        return;
+      }
+    }
+    setSource(next);
+  }
+  return (
+    <>
+      {local && !nativeOnly && !props.expanded && (
+        <nav className="computer-modes" aria-label={t('localComputer.source')}>
+          {!nativeOnly && (
+            <button type="button" aria-pressed={source === 'vm'} onClick={() => choose('vm')}>
+              {t('localComputer.virtual')}
+            </button>
+          )}
+          <button type="button" aria-pressed={source === 'local'} onClick={() => choose('local')}>
+            {local.platform === 'win32' ? t('localComputer.windows') : t('localComputer.mac')}
+          </button>
+        </nav>
+      )}
+      {source === 'local' && local ? (
+        <LocalComputer bot={props.bot} />
+      ) : (
+        <VirtualComputer {...props} />
+      )}
+    </>
   );
 }

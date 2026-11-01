@@ -123,6 +123,19 @@ export function useRuntime() {
 export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
+    LOCAL_PLATFORM_UNSUPPORTED: t('localComputer.platformUnsupported'),
+    LOCAL_SCREEN_PERMISSION: t('localComputer.screenRequired'),
+    LOCAL_ACCESSIBILITY_PERMISSION: t('localComputer.inputRequired'),
+    LOCAL_MODEL_CHANGED: t('localComputer.modelChanged'),
+    LOCAL_COMPUTER_BUSY: t('localComputer.occupied'),
+    LOCAL_TASK_BUSY: t('localComputer.taskBusy'),
+    LOCAL_AGENT_UPDATE_REQUIRED: t('localComputer.updateRequired'),
+    LOCAL_CLIENT_UNAVAILABLE: t('localComputer.unavailable'),
+    LOCAL_SESSION_STALE: t('localComputer.stateChanged'),
+    LOCAL_DRIVER_UNAVAILABLE: t('localComputer.driverUnavailable'),
+    LOCAL_DRIVER_FAILED: t('localComputer.driverUnavailable'),
+    LOCAL_SHORTCUT_UNAVAILABLE: t('localComputer.shortcutUnavailable'),
+    LOCAL_OTHER_DISPLAY: t('localComputer.primaryDisplay'),
     NOTE_CONFLICT: t('errors.noteUpdatedEditsRetainedReviewLatestRevision'),
     NOTE_TRASHED: t('errors.noteMovedTrashEditsRetainedReviewLatest'),
     NOTE_NOT_FOUND: t('errors.noteNotFoundYetDraftRetainedRefresh'),

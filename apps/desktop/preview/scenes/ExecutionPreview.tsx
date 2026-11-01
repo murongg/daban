@@ -21,7 +21,7 @@ import '../../src/styles.css';
 const query = new URLSearchParams(location.search),
   mode = query.get('mode') || 'normal';
 const seed = initialState();
-seed.panel = null;
+seed.panel = mode === 'local' ? 'computer' : null;
 seed.selected = mode === 'group' ? 'crew' : 'research';
 seed.theme = query.get('theme') === 'dark' ? 'dark' : 'light';
 for (const bot of seed.bots) {
@@ -59,6 +59,46 @@ snapshot.model = {
   model: 'deepseek-flash',
   revision: 1,
 };
+if (mode === 'local') {
+  snapshot.agent = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  snapshot.localComputer = {
+    platform: query.get('platform') === 'win32' ? 'win32' : 'darwin',
+    available: true,
+    permissions: {
+      screen: query.get('permissions') !== 'missing',
+      accessibility: query.get('permissions') !== 'missing',
+    },
+    shortcut: true,
+  };
+  snapshot.model = {
+    configured: true,
+    available: true,
+    provider: 'mock-provider',
+    model: 'provider:mock-provider:mock-vision',
+    revision: 1,
+    connections: [
+      {
+        id: 'mock-provider',
+        name: '合成供应商',
+        baseURL: 'https://model.example.test/v1',
+        models: [
+          {
+            id: 'mock-vision',
+            name: '合成视觉模型',
+            vision: true,
+            contextWindow: 64000,
+            maxTokens: 4096,
+          },
+        ],
+      },
+    ],
+  };
+}
 snapshot.profiles = seed.bots
   .filter((bot) => !bot.members)
   .map((bot) => ({
@@ -215,6 +255,39 @@ const items: TranscriptItem[] = bodies.map((text, index) => ({
 const listeners = new Set<Parameters<RuntimeBridge['subscribe']>[0]>();
 function fixture(command: RuntimeCommand): unknown {
   if (command.type === 'status') return snapshot;
+  if (mode === 'local' && command.type.startsWith('local.')) {
+    if (command.type === 'local.connect')
+      snapshot.localComputer = {
+        ...snapshot.localComputer!,
+        session: {
+          id: 'mock-local-session',
+          bot: command.bot,
+          revision: 1,
+          owner: 'agent',
+          model: command.model,
+          modelRevision: command.modelRevision,
+        },
+      };
+    else if (command.type === 'local.permissions')
+      snapshot.localComputer = {
+        ...snapshot.localComputer!,
+        permissions: { screen: true, accessibility: true },
+      };
+    else if (command.type === 'local.disconnect')
+      snapshot.localComputer = { ...snapshot.localComputer!, session: undefined };
+    else if (command.type === 'local.pause' || command.type === 'local.resume')
+      snapshot.localComputer = {
+        ...snapshot.localComputer!,
+        session: {
+          ...snapshot.localComputer!.session!,
+          owner: command.type === 'local.pause' ? 'human' : 'agent',
+          revision: snapshot.localComputer!.session!.revision + 1,
+        },
+      };
+    else if (command.type === 'local.preview') return undefined;
+    for (const listener of listeners) listener({ ...snapshot });
+    return snapshot.localComputer;
+  }
   if (command.type === 'task.stop' && mode === 'empty') {
     const current = snapshot.agents[command.bot];
     if (!current) throw new Error('SYNTHETIC_TASK_NOT_FOUND');

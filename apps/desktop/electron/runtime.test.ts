@@ -1210,3 +1210,59 @@ it('reads an additive shared software capability without a version gate and isol
   expect(state.phase).toBe('ready');
   expect(state.software?.available).toBe(false);
 });
+
+it('validates exact local-computer consent commands and accepts metadata only from the trusted host', async () => {
+  const consent = {
+    type: 'local.connect',
+    id: 'mock-grant',
+    bot: 'mock-bot',
+    model: 'mock-model',
+    modelRevision: 1,
+  };
+  expect(parseCommand(consent)).toEqual(consent);
+  for (const invalid of [
+    { ...consent, apiKey: 'SYNTHETIC-MUST-NOT-PASS' },
+    { ...consent, modelRevision: -1 },
+    { type: 'local.resume', session: '../other', revision: 1 },
+    { type: 'local.status', extra: true },
+  ])
+    expect(() => parseCommand(invalid)).toThrow('INVALID_COMMAND');
+  const status = {
+    platform: 'darwin',
+    available: true,
+    permissions: { screen: true, accessibility: true },
+    shortcut: true,
+    session: {
+      id: 'mock-session',
+      bot: 'mock-bot',
+      revision: 1,
+      owner: 'agent',
+      model: 'mock-model',
+      modelRevision: 1,
+    },
+  };
+  let metadata: unknown = status;
+  const fetcher = async () =>
+    Response.json({
+      ...raw,
+      reboot: { available: true, revision: 0, busy: false, vm: 'running' },
+      localComputer: metadata,
+    });
+  const host = new RuntimeClient({
+    agent: true,
+    origin: 'http://127.0.0.1:8766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  expect((await host.status()).localComputer).toEqual(status);
+  metadata = { ...status, session: { ...status.session, secret: 'SYNTHETIC-NOT-A-PUBLIC-FIELD' } };
+  expect((await host.status()).phase).toBe('ready');
+  expect((await host.status()).localComputer?.available).toBe(false);
+  metadata = status;
+  const guest = new RuntimeClient({
+    origin: 'http://127.0.0.1:8766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  expect((await guest.status()).localComputer).toBeUndefined();
+});

@@ -587,3 +587,83 @@ test('a parent replaced after validation cannot make a tool create even an empty
   assert.equal(redirected, true);
   await assert.rejects(fs.access(path.join(privateRoot, 'new.txt')));
 });
+
+test('an explicitly selected host computer is pinned to the run and never falls back to VM inputs', async () => {
+  let selected = true;
+  let hostCalls = 0;
+  const remoteCalls: string[] = [];
+  const tools = Object.assign(
+    new AgentTools(undefined, new WorkspaceFiles('/mock-guest'), {
+      execution: {
+        async call(method) {
+          remoteCalls.push(method);
+          if (method === 'tools.open')
+            return { tools: [{ name: 'screenshot', description: 'Mock VM', inputSchema: {} }] };
+          return {
+            phase: 'settled',
+            result: { content: [{ type: 'text', text: 'MOCK VM SCREEN' }] },
+          };
+        },
+      },
+    }),
+    {
+      localComputer: {
+        list: [{ name: 'screenshot', description: 'Mock host computer', inputSchema: {} }],
+        selected: () => selected,
+        prepare: async () => selected,
+        cancel: async () => {},
+        async invoke(run: AgentToolRun): Promise<ToolResult> {
+          hostCalls++;
+          run.toolCount++;
+          return { content: [{ type: 'text', text: 'MOCK HOST SCREEN' }] };
+        },
+      },
+    },
+  );
+  const run: AgentToolRun = {
+    id: 'mock-native-run',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    vision: true,
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    workdir: '/mock-guest/task',
+    canonicalRoot: '/mock-guest/task',
+  };
+  await tools.open(run);
+  selected = false;
+  const result = await tools.invoke(run, 'screenshot', { surface: 'desktop' });
+  assert.deepEqual(result.content, [{ type: 'text', text: 'MOCK HOST SCREEN' }]);
+  assert.equal(hostCalls, 1);
+  assert.equal(remoteCalls.includes('tools.invoke'), false);
+  tools.localComputer.invoke = async () => {
+    throw new Error('MOCK_HOST_DISCONNECTED');
+  };
+  await assert.rejects(
+    tools.invoke(run, 'screenshot', { surface: 'desktop' }),
+    /MOCK_HOST_DISCONNECTED/,
+  );
+  assert.equal(remoteCalls.includes('tools.invoke'), false);
+});
+
+test('unavailable native-only tools still consume the run budget and report its limit', async () => {
+  const tools = new AgentTools(undefined, new WorkspaceFiles('/synthetic'), { nativeOnly: true });
+  const run: AgentToolRun = {
+    id: 'mock-native-budget',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 1,
+    seen: {},
+    trace: [],
+    workdir: '/synthetic',
+    canonicalRoot: '/synthetic',
+  };
+  const first = await tools.invoke(run, 'shell', { command: 'synthetic' });
+  assert.match(JSON.stringify(first), /NATIVE_WORKSPACE_TOOL_UNAVAILABLE/);
+  assert.equal(run.toolCount, 1);
+  const second = await tools.invoke(run, 'read_file', { path: 'synthetic.txt' });
+  assert.match(JSON.stringify(second), /TOOL_LIMIT/);
+});

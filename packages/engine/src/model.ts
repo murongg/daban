@@ -45,6 +45,7 @@ import { Integrations, type McpSnapshot } from './integrations.js';
 import { Interactions } from './interactions.js';
 import { Knowledge } from './knowledge.js';
 import { KnowledgeTools } from './knowledge-tools.js';
+import type { LocalComputerClient } from './local-computer.js';
 import { MemoryTools } from './memory.js';
 import { Notes } from './notes.js';
 import { NotesTools } from './notes-tools.js';
@@ -440,6 +441,8 @@ interface Rpc {
   params?: Record<string, unknown>;
 }
 interface ModelOptions {
+  nativeOnly?: boolean;
+  localComputer?: LocalComputerClient;
   documents?: BundleDocuments;
   bridgeSocket?: string;
   stdioEntry?: string;
@@ -504,6 +507,8 @@ export class ModelRuns {
     stdioEntry = fileURLToPath(new URL('./mcp-stdio.js', import.meta.url)),
     admitBot = () => true,
     documents,
+    localComputer,
+    nativeOnly,
   }: ModelOptions) {
     this.runtime = runtime;
     this.settings = settings;
@@ -525,7 +530,10 @@ export class ModelRuns {
                 runtime?.screens.screen('a').workspace ||
                 path.resolve(dir, '../workspace'),
             );
-    this.tools = new AgentTools(computer, this.workspace, { execution });
+    this.tools = new AgentTools(computer, this.workspace, { execution, nativeOnly });
+    this.tools.localComputer = localComputer;
+    if (localComputer)
+      localComputer.modelRevision = async () => (await this.settings.status()).revision ?? 0;
     this.journal = new TaskJournal(path.join(dir, 'task-journal'));
     this.transcripts = new Transcripts(path.join(dir, 'transcripts.sqlite'));
     this.tools.history = new HistoryTools(this.journal);
@@ -612,6 +620,13 @@ export class ModelRuns {
       )
         throw new Fault('WEB_APPROVAL_REJECTED');
     };
+    if (localComputer)
+      localComputer.authorize = async (run) => {
+        const current = this.jobs.get(run.bot);
+        if (!current || current !== run || !current.running || current.abort.signal.aborted)
+          throw new Fault('MODEL_CANCELLED');
+        await this.tools.authorizeComputer?.(run);
+      };
     if (this.tools.computer) this.tools.computer.authorize = this.tools.authorizeComputer;
     this.ready = this.restore();
   }
@@ -1207,6 +1222,13 @@ export class ModelRuns {
       job.abort.signal.throwIfAborted();
       await inputDirectory.verify();
       await this.tools.open(job);
+      // A Mac grant and a VM connection must never resume each other's native SDK tool context.
+      if (this.tools.localSelected(job.bot, job))
+        job.binding = createHash('sha256')
+          .update(
+            `${config.binding}:local-desktop:${this.tools.options.nativeOnly ? 'native' : 'vm'}`,
+          )
+          .digest('hex');
       const patch = path.join(job.privateDir, 'computer.patch.yml');
       await writeFile(
         patch,
@@ -1338,7 +1360,7 @@ export class ModelRuns {
             job.profile
               ? `Your Bot name is ${JSON.stringify(job.profile.name)}. Standing user persona: ${job.profile.instructions}. These preferences do not grant additional tool permissions.`
               : '',
-            agentInstructionsFor(!!this.execution),
+            agentInstructionsFor(!!this.execution, !!this.tools.options.nativeOnly),
           ]
             .filter(Boolean)
             .join('\n\n')
@@ -1379,7 +1401,7 @@ export class ModelRuns {
       const previous =
         saved?.persona === job.persona &&
         saved.model === config.model &&
-        saved.binding === config.binding &&
+        saved.binding === job.binding &&
         saved.skills === (job.skills?.key ?? '') &&
         saved.mcp === (job.integrations?.key ?? '')
           ? saved.id
@@ -1436,16 +1458,18 @@ export class ModelRuns {
             job.workdir,
             { ...job.task, memory: job.task.memory ?? job.profile?.memory },
             job.inputs,
-            this.tools.hasComputer(job.bot, job.model, job.vision),
+            this.tools.hasComputer(job.bot, job.model, job.vision, job),
             job.profile,
             !!this.tools.schedules,
             !!this.tools.memory,
             !!this.tools.history,
             !!this.tools.knowledge,
             job.documentInputs,
-            this.tools.hasBrowser(job.bot),
+            this.tools.hasBrowser(job.bot, job),
             !!this.tools.work,
             !!this.tools.notes,
+            this.tools.localSelected(job.bot, job),
+            !!this.tools.options.nativeOnly,
           ) +
           (job.skills?.available === false
             ? '\n本轮技能服务暂不可用；普通对话和现有工具仍可使用。不要声称已加载或执行技能。'
@@ -1483,7 +1507,7 @@ export class ModelRuns {
             id: result.sessionId,
             persona: job.persona,
             model: config.model,
-            binding: config.binding,
+            binding: job.binding,
             skills: job.skills?.key ?? '',
             mcp: job.integrations?.key ?? '',
           });

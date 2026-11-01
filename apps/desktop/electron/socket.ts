@@ -8,6 +8,11 @@ function owner() {
   return uid;
 }
 export function controlSocket(logical: string, target: string) {
+  if (process.platform === 'win32')
+    return `\\\\.\\pipe\\daban-agent-${createHash('sha256')
+      .update(JSON.stringify([resolve(logical), target]))
+      .digest('hex')
+      .slice(0, 32)}`;
   // OpenSSH appends a temporary suffix; leave headroom under macOS's 104-byte Unix address limit.
   if (Buffer.byteLength(logical) <= 80) return logical;
   const key = createHash('sha256')
@@ -26,6 +31,7 @@ async function stat(file: string) {
   }
 }
 export async function socketReady(socket: string) {
+  if (process.platform === 'win32') return socket.startsWith('\\\\.\\pipe\\daban-agent-');
   const uid = owner();
   const folder = await stat(dirname(socket));
   if (!folder) return false;
@@ -45,6 +51,10 @@ export async function socketReady(socket: string) {
   return true;
 }
 export async function prepareSocket(socket: string) {
+  if (process.platform === 'win32') {
+    if (!(await socketReady(socket))) throw new Error('RUNTIME_CONTROL_PATH_UNSAFE');
+    return;
+  }
   try {
     await fs.mkdir(dirname(socket), { mode: 0o700 });
   } catch (error) {

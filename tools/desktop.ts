@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { environmentVersions, verifyAsset } from './environment.ts';
 import { writeIcon } from './icon.ts';
+import { packageNative } from './native.ts';
 import { buildExecutor, packageHost, sealHostPackage } from './roles.ts';
 
 // Build-time macOS app assembly. Never reuse a user directory or package a Lima home.
@@ -105,6 +106,7 @@ await writeFile(
     2,
   ) + '\n',
 );
+await packageNative(app, path.join(root, 'apps/desktop/package.json'));
 const environment = path.join(resources, 'environment');
 await mkdir(environment);
 for (const file of ['manifest.json', 'system.raw.gz', 'lima.tar.gz', 'COMPONENTS.md'])

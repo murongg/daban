@@ -4,6 +4,7 @@ import { lstat, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { validAgentId } from '@daban/protocol';
 import { Fault } from './control.js';
+import { privateMetadata } from './private-files.js';
 
 export class Authority {
   readonly token = randomBytes(32).toString('hex');
@@ -18,11 +19,7 @@ export class Authority {
     const directory = path.dirname(this.file);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const parent = await lstat(directory);
-    if (
-      !parent.isDirectory() ||
-      parent.uid !== process.getuid?.() ||
-      (parent.mode & 0o777) !== 0o700
-    )
+    if (!parent.isDirectory() || !(await privateMetadata(directory, parent, 0o700)))
       throw new Fault('CONTROL_AUTH_UNSAFE', 503);
     const file = await open(
       this.file,
@@ -34,8 +31,7 @@ export class Authority {
       if (
         !metadata.isFile() ||
         metadata.nlink !== 1 ||
-        metadata.uid !== process.getuid?.() ||
-        (metadata.mode & 0o777) !== 0o600
+        !(await privateMetadata(this.file, metadata, 0o600))
       )
         throw new Fault('CONTROL_AUTH_UNSAFE', 503);
       // Validate the opened inode before truncation; a hard link must never destroy another file.

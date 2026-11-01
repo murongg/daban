@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { isAbsolute } from 'node:path';
+import { privateClientOptions } from './private-channel.js';
 
 export interface BridgeConfig {
   url: string;
@@ -24,8 +26,10 @@ function unixRequest(config: BridgeConfig, body: string, signal: AbortSignal) {
     throw new Error('BRIDGE_UNAVAILABLE');
   return new Promise<Response>((resolve, reject) => {
     // An explicit socket is the authority boundary; an unavailable endpoint must never fall back to TCP.
-    const request = httpRequest(
+    const send = process.platform === 'win32' ? httpsRequest : httpRequest;
+    const request = send(
       {
+        ...privateClientOptions(config.capability || '', `mcp:${url.pathname.split('/').at(-1)}`),
         socketPath: config.socketPath,
         // LLM proxy settings can configure the global agent; private callbacks must bypass it.
         agent: false,

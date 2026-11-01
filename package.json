@@ -28,7 +28,8 @@
     "bundle:desktop": "npm run build && node --experimental-strip-types tools/desktop.ts",
     "build:engine": "npm run build:protocol && npm run build --workspace @daban/engine",
     "build:agent": "npm run build:engine && npm run build --workspace @daban/agent",
-    "test:agent": "npm run build:agent && node --experimental-sqlite --test dist-agent/*.test.js"
+    "test:agent": "npm run build:agent && node --experimental-sqlite --test dist-agent/*.test.js",
+    "bundle:windows": "npm run build && node --experimental-strip-types tools/windows.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",

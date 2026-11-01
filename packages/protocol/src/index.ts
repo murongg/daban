@@ -1,4 +1,7 @@
+import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
+
 export * from './execution.js';
+export * from './local-computer.js';
 
 import { isSoftwarePlan, type SoftwarePlan, type SoftwareState } from './software.js';
 
@@ -1301,7 +1304,13 @@ export interface SetupStatus {
   error?: string;
 }
 export interface RuntimeSnapshot {
-  agent?: { location: 'host'; execution: 'linux-vm'; privilege: 'sudo'; approvals: 'host' };
+  localComputer?: LocalComputerStatus;
+  agent?: {
+    location: 'host';
+    execution: 'linux-vm' | 'local-workspace';
+    privilege: 'sudo' | 'workspace';
+    approvals: 'host';
+  };
   notes?: NoteAvailability;
   work?: WorkStatus;
   notices?: RuntimeNoticeStatus;
@@ -3657,6 +3666,7 @@ export type RuntimeCommand =
   | { type: 'skill.update'; bot: string; id: string; revision: number; content: string }
   | { type: 'skill.recycle' | 'skill.restore'; bot: string; id: string; revision: number }
   | { type: 'skill.bind'; bot: string; binding: SkillBinding }
+  | LocalComputerCommand
   | { type: 'computer.action'; request: ComputerRequest }
   | { type: 'computer.receipt'; id: string; bot: string }
   | ({ type: 'browser.answer'; bot: RuntimeBot } & BrowserAnswerRequest)

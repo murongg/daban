@@ -21,6 +21,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
+import { privateMetadata } from './private-files.js';
 
 type Row = Record<string, unknown>;
 const capacity = 1000,
@@ -54,7 +55,7 @@ export class Notes {
         (!existing.isFile() ||
           existing.isSymbolicLink() ||
           existing.nlink !== 1 ||
-          existing.uid !== process.getuid?.())
+          !(await privateMetadata(this.file, existing)))
       )
         throw new Fault('NOTES_CORRUPT');
       if (!existing) await (await open(this.file, 'wx', 0o600)).close();

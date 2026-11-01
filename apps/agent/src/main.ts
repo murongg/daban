@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { type AgentOptions, type Executor, mcpStdioEntry, startAgent } from '@daban/engine/agent';
+import {
+  type AgentOptions,
+  type Executor,
+  LocalComputerClient,
+  mcpStdioEntry,
+  startAgent,
+  startNativeAgent,
+} from '@daban/engine/agent';
 import type {
   ExecutionSnapshot,
   RebootStatus,
@@ -26,6 +33,7 @@ export interface AgentArguments {
   dataRoot: string;
   socketPath: string;
   vmConfigFile: string;
+  mode?: 'native';
 }
 interface Assets {
   packDirectory: string;
@@ -87,7 +95,7 @@ export function parseAgentArguments(args: string[]): AgentArguments {
     const flag = args[index],
       value = args[index + 1];
     if (
-      !['--data', '--socket', '--vm-config'].includes(flag) ||
+      !['--data', '--socket', '--vm-config', '--mode'].includes(flag) ||
       values.has(flag) ||
       !value ||
       value.startsWith('--') ||
@@ -95,13 +103,21 @@ export function parseAgentArguments(args: string[]): AgentArguments {
       value.includes('\0')
     )
       throw new Error('AGENT_ARGUMENTS_INVALID');
-    values.set(flag, path.resolve(value));
+    if (flag === '--mode' && value !== 'native') throw new Error('AGENT_ARGUMENTS_INVALID');
+    values.set(flag, flag === '--mode' ? value : path.resolve(value));
   }
-  if (values.size !== 3) throw new Error('AGENT_ARGUMENTS_INVALID');
+  if (
+    ![3, 4].includes(values.size) ||
+    !values.has('--data') ||
+    !values.has('--socket') ||
+    !values.has('--vm-config')
+  )
+    throw new Error('AGENT_ARGUMENTS_INVALID');
   return {
     dataRoot: values.get('--data')!,
     socketPath: values.get('--socket')!,
     vmConfigFile: values.get('--vm-config')!,
+    ...(values.has('--mode') ? { mode: 'native' as const } : {}),
   };
 }
 export function agentScope(dataRoot: string, configFile: string) {
@@ -134,6 +150,19 @@ export async function startAgentProcess(
   factory: MainDependencies = dependencies,
   signal?: AbortSignal,
 ) {
+  if (options.mode === 'native') {
+    const scope = agentScope(options.dataRoot, options.vmConfigFile);
+    const native = await startNativeAgent({
+      dataRoot: options.dataRoot,
+      socketPath: options.socketPath,
+      scope,
+      sdkFile: factory.sdk(),
+      stdioEntry: mcpStdioEntry,
+      nativeWorkspace: path.join(options.dataRoot, 'workspace'),
+      localComputer: new LocalComputerClient(options.dataRoot),
+    });
+    return { scope, close: native.close };
+  }
   let link: Link | undefined,
     connection: Connection | undefined,
     power: Power | undefined,
@@ -285,6 +314,9 @@ export async function startAgentProcess(
       socketPath: options.socketPath,
       scope,
       execution,
+      ...(factory === dependencies
+        ? { localComputer: new LocalComputerClient(options.dataRoot) }
+        : {}),
       sdkFile: factory.sdk(),
       stdioEntry: mcpStdioEntry,
       ...(!connection.connected ? { offlineWorkspaceRoot: root } : {}),
