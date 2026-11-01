@@ -2021,6 +2021,68 @@ textarea.skill-source {
   line-height: 1.8;
   margin-top: 12px;
 }
+.request-purpose {
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-bottom: 6px;
+}
+.request-details {
+  margin-top: 12px;
+  min-width: 0;
+}
+.request-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.request-details > summary::-webkit-details-marker {
+  display: none;
+}
+.request-details > summary:hover {
+  color: var(--ink);
+}
+.request-details > summary svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+}
+.request-details[open] > summary svg {
+  transform: rotate(0deg);
+}
+.request-record > summary {
+  width: 100%;
+}
+.request-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 13px;
+}
+.request-more {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.approval.is-settled {
+  padding-block: 14px;
+}
+.is-settled .approval-author {
+  margin-bottom: 0;
+}
+.is-settled .request-result {
+  margin-top: 8px;
+}
 .request-arguments {
   max-height: 240px;
   overflow: auto;

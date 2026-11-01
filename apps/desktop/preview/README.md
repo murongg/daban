@@ -18,7 +18,7 @@
 | `/preview/tasks.html`         | 共享任务与讨论           | `mode=discussion`、`discussion-long`、`pending`、`many`     |
 | `/preview/notes.html`         | 便笺与版本冲突           | `mode=editor`、`conflict`、`pending`、`empty`               |
 | `/preview/preferences.html`   | 工作偏好与历史           | `mode=dirty`、`long`、`error`                               |
-| `/preview/execution.html`     | 执行记录                 | `mode=group`、`history`、`long`、`incomplete`               |
+| `/preview/execution.html`     | 执行记录                 | `mode=group`、`history`、`long`、`incomplete`、`approval`   |
 | `/preview/inputs.html`        | 附件、粘贴与拖入         | `mode=paste`、`hover`、`group`、`error`                     |
 | `/preview/notifications.html` | 模拟桌面提醒             | `mode=on`、`task`、`defer`、`unsupported`                   |
 | `/preview/render.html`        | Markdown、公式与图表     | 使用页面内工具栏                                            |

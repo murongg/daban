@@ -1,16 +1,56 @@
 import { agentId, type Interaction, matchesReply, type UserReply } from '@daban/protocol';
-import { Check, Inbox, X } from 'lucide-react';
+import { Check, ChevronDown, Inbox, X } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Command } from './Command';
 import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
-import { Software } from './Software';
+import { Software, SoftwareStatus } from './Software';
 import type { Action, State } from './state';
 
 function draftAnswer(drafts: State['replyDrafts'][string], id: string) {
   // Model-provided question IDs must never read inherited object properties as saved answers.
   return Object.hasOwn(drafts, id) ? drafts[id] : { selected: [], custom: '' };
+}
+
+function Approval({ request }: { request: Extract<Interaction, { kind: 'approval' }> }) {
+  return (
+    <>
+      {request.tool === 'vm_command' && <Command request={request} />}
+      {request.tool === 'web_fetch' && (
+        <>
+          <p className="approval-description">{t('requests.allowOnlyPublicWebpageReadDoesNot')}</p>
+          <p className="request-value">{request.url}</p>
+        </>
+      )}
+      {request.tool === 'software_install' && <Software request={request} />}
+      {request.tool === 'mcp_call' && (
+        <>
+          <p className="approval-description">
+            {t('requests.sendParametersConnectionWhichMayPerformExternal')}
+          </p>
+          <p className="request-value">
+            {request.name} · {request.operation}
+          </p>
+          <p className="request-value">{request.origin}</p>
+          <details className="request-details" open={request.status !== 'pending'}>
+            <summary>
+              <ChevronDown />
+              <span>{t('requests.viewArguments')}</span>
+            </summary>
+            <section
+              className="request-arguments"
+              aria-label={t('requests.toolCallParameters')}
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: Long tool arguments need a keyboard-focusable scrolling surface.
+              tabIndex={0}
+            >
+              <pre className="request-value">{request.arguments}</pre>
+            </section>
+          </details>
+        </>
+      )}
+    </>
+  );
 }
 
 function Request({
@@ -52,6 +92,7 @@ function Request({
         : [],
   };
   const frozen = saving || !!submitted;
+  const settled = current.kind === 'approval' && current.status !== 'pending';
   const savedAnswers = current.reply?.kind === 'answer' ? current.reply.answers : [];
   async function submit(reply: UserReply) {
     if (saving) return;
@@ -91,7 +132,7 @@ function Request({
     }
   }
   return (
-    <article className="approval user-request">
+    <article className={`approval user-request${settled ? ' is-settled' : ''}`}>
       <div className="approval-author">
         {bot && <Avatar bot={bot} size="small" />}
         <span>{bot?.name || 'Bot'}</span>
@@ -102,54 +143,46 @@ function Request({
           </span>
         )}
         <span className="spacer" />
-        <span>
-          {current.kind === 'question'
-            ? t('requests.needsAnswer')
-            : t('requests.oneTimePermission')}
-        </span>
+        {!settled && (
+          <span>
+            {current.kind === 'question'
+              ? t('requests.needsAnswer')
+              : t('requests.oneTimePermission')}
+          </span>
+        )}
       </div>
-      <h3 className="approval-title">
-        {current.kind === 'question'
-          ? t('requests.addDetailsContinue')
-          : current.tool === 'vm_command'
-            ? t('requests.allowCommandLinuxVirtualMachine')
-            : current.tool === 'software_install'
-              ? t('requests.allowInstallationSoftware')
-              : current.tool === 'mcp_call'
-                ? t('requests.allowExternalToolCall')
-                : t('requests.allowReadingUrl')}
-      </h3>
-      {current.kind === 'approval' && current.tool === 'vm_command' && (
-        <Command request={current} />
+      {!settled && (
+        <h3 className="approval-title">
+          {current.kind === 'question'
+            ? t('requests.addDetailsContinue')
+            : current.tool === 'vm_command'
+              ? t('requests.allowCommandLinuxVirtualMachine')
+              : current.tool === 'software_install'
+                ? t('requests.allowInstallationSoftware')
+                : current.tool === 'mcp_call'
+                  ? t('requests.allowExternalToolCall')
+                  : t('requests.allowReadingUrl')}
+        </h3>
       )}
-      {current.kind === 'approval' && current.tool === 'web_fetch' && (
-        <>
-          <p className="approval-description">{t('requests.allowOnlyPublicWebpageReadDoesNot')}</p>
-          <p className="request-value">{current.url}</p>
-        </>
-      )}
-      {current.kind === 'approval' && current.tool === 'software_install' && (
-        <Software request={current} />
-      )}
-      {current.kind === 'approval' && current.tool === 'mcp_call' && (
-        <>
-          <p className="approval-description">
-            {t('requests.sendParametersConnectionWhichMayPerformExternal')}
-          </p>
-          <p className="request-value">
-            {current.name} · {current.operation}
-          </p>
-          <p className="request-value">{current.origin}</p>
-          <section
-            className="request-arguments"
-            aria-label={t('requests.toolCallParameters')}
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: Long tool arguments need a keyboard-focusable scrolling surface.
-            tabIndex={0}
-          >
-            <pre className="request-value">{current.arguments}</pre>
-          </section>
-        </>
-      )}
+      {current.kind === 'approval' &&
+        (settled ? (
+          <details className="request-details request-record">
+            <summary>
+              <ChevronDown />
+              <span className="request-subject">
+                {current.tool === 'vm_command' || current.tool === 'software_install'
+                  ? current.purpose
+                  : current.tool === 'mcp_call'
+                    ? `${current.name} · ${current.operation}`
+                    : current.url}
+              </span>
+              <span className="request-more">{t('requests.viewOperationDetails')}</span>
+            </summary>
+            <Approval request={current} />
+          </details>
+        ) : (
+          <Approval request={current} />
+        ))}
       {current.status === 'pending' ? (
         <>
           {current.kind === 'question' && (
@@ -323,6 +356,9 @@ function Request({
             </dl>
           )}
         </div>
+      )}
+      {current.kind === 'approval' && current.tool === 'software_install' && (
+        <SoftwareStatus request={current} />
       )}
       {error && (
         <p className="form-error" role="alert">

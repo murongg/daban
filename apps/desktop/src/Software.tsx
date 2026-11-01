@@ -1,4 +1,5 @@
 import type { Interaction } from '@daban/protocol';
+import { ChevronDown } from 'lucide-react';
 import { t, useLocale } from './locale';
 import { useRuntime } from './Runtime';
 
@@ -12,6 +13,41 @@ const statuses = {
 } as const;
 export function Software({ request }: { request: InstallRequest }) {
   useLocale();
+  return (
+    <>
+      <p className="request-purpose">{request.purpose}</p>
+      <p className="request-value">{request.plan.requested.join(' · ')}</p>
+      <p className="approval-description">{t('software.sharedScope')}</p>
+      <p className="field-help">{t('software.officialDebianRepositories')}</p>
+      <details className="request-details" open={request.status !== 'pending'}>
+        <summary>
+          <ChevronDown />
+          <span>{t('software.viewPlan')}</span>
+        </summary>
+        <section
+          className="request-arguments"
+          aria-label={t('software.softwareInstallationList')}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: A long immutable package plan needs keyboard scrolling.
+          tabIndex={0}
+        >
+          {request.plan.packages.map((item) => (
+            <p className="request-value" key={item.name}>
+              {item.name} · {item.version}
+            </p>
+          ))}
+        </section>
+        <p className="field-help">{t('software.softwareInstalledSharedLinuxAvailableAllBots')}</p>
+        <p className="field-help">
+          {t('software.approvalAppliesOnlyPlanChangesPackagesDependencies')}
+        </p>
+      </details>
+    </>
+  );
+}
+
+// Consent never proves installation: keep the matching receipt visible even when details are closed.
+export function SoftwareStatus({ request }: { request: InstallRequest }) {
+  useLocale();
   const { snapshot } = useRuntime();
   const receipt = snapshot.software?.items.find(
     (item) => item.plan.id === request.plan.id && item.plan.digest === request.plan.digest,
@@ -20,26 +56,6 @@ export function Software({ request }: { request: InstallRequest }) {
     request.status === 'resolved' && request.reply?.kind === 'decision' && request.reply.allow;
   return (
     <>
-      <p className="approval-description">
-        {t('software.softwareInstalledSharedLinuxAvailableAllBots')}
-      </p>
-      <p className="request-value">{request.purpose}</p>
-      <p className="field-help">{t('software.officialDebianRepositories')}</p>
-      <section
-        className="request-arguments"
-        aria-label={t('software.softwareInstallationList')}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: A long immutable package plan needs keyboard scrolling.
-        tabIndex={0}
-      >
-        {request.plan.packages.map((item) => (
-          <p className="request-value" key={item.name}>
-            {item.name} · {item.version}
-          </p>
-        ))}
-      </section>
-      <p className="field-help">
-        {t('software.approvalAppliesOnlyPlanChangesPackagesDependencies')}
-      </p>
       {approved && (
         <p role="status" className="inline-note">
           {receipt

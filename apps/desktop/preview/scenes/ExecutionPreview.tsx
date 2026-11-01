@@ -1,6 +1,7 @@
 import {
   agentId,
   type GroupPage,
+  type Interaction,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeTask,
@@ -46,15 +47,16 @@ seed.messages.research = [
   },
   { id: `runtime-result:${scope.runId}`, role: 'bot', text: reply },
 ];
+if (mode === 'approval') seed.messages.research = seed.messages.research.slice(0, 2);
 clientCache().setItem(storageKey, serialize(seed));
 const snapshot = previewSnapshot(mode === 'legacy' ? 32 : undefined);
 snapshot.model = {
   ...snapshot.model,
-  configured: false,
+  configured: true,
   available: true,
   provider: 'deepseek-official',
   model: 'deepseek-flash',
-  revision: 0,
+  revision: 1,
 };
 snapshot.profiles = seed.bots
   .filter((bot) => !bot.members)
@@ -91,6 +93,27 @@ const task: RuntimeTask = {
   history: [],
 };
 snapshot.agents[scope.bot] = task;
+if (mode === 'approval') {
+  snapshot.agents[scope.bot] = { ...task, running: true, phase: 'waiting', result: '' };
+  snapshot.interactions = [
+    {
+      id: 'mock-command-review',
+      bot: scope.bot,
+      runId: scope.runId,
+      sessionId: 'mock-session',
+      kind: 'approval',
+      tool: 'vm_command',
+      target: 'linux-vm',
+      purpose: '在独立终端里打开示例工具',
+      cwd: '/mock/workspace/shared/model-runs/mock-session/mock-bot',
+      command:
+        'cd /mock/workspace/shared/model-runs/mock-session/mock-bot && x-terminal-emulator -e /opt/mock/bin/mock-cli --no-alt-screen',
+      status: 'pending',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+  ];
+}
 const group = {
   id: 'crew',
   name: '合成协作小组',
@@ -176,6 +199,15 @@ const items: TranscriptItem[] = bodies.map((text, index) => ({
 }));
 function fixture(command: RuntimeCommand): unknown {
   if (command.type === 'status') return snapshot;
+  if (command.type === 'interaction.reply' && mode === 'approval') {
+    const request = snapshot.interactions?.find((item) => item.id === command.id);
+    if (!request) throw new Error('SYNTHETIC_REQUEST_NOT_FOUND');
+    const updated: Interaction = { ...request, status: 'resolved', reply: command.reply };
+    snapshot.interactions = snapshot.interactions?.map((item) =>
+      item.id === updated.id ? updated : item,
+    );
+    return updated;
+  }
   if (command.type === 'bot.register')
     return snapshot.profiles.find((profile) => profile.id === command.profile.id);
   if (command.type === 'group.read') return groupPage;
