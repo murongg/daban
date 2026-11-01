@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { isInteractionInput, validAgentId } from '@daban/protocol';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
+import { syncDirectory } from './durability.js';
 import type { Interactions } from './interactions.js';
 
 export interface CommandRun {
@@ -92,7 +93,7 @@ export class Commands {
       constants.O_RDONLY | constants.O_DIRECTORY,
     );
     try {
-      await directory.sync();
+      await syncDirectory(directory);
     } finally {
       await directory.close();
     }

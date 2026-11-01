@@ -17,6 +17,7 @@ import {
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
 import { Documents } from './documents.js';
+import { syncDirectory } from './durability.js';
 import type { Knowledge } from './knowledge.js';
 import { privateMetadata } from './private-files.js';
 import type { BotProfiles } from './profiles.js';
@@ -216,7 +217,7 @@ export class BotBundles {
       await rename(temporary, destination);
       const directory = await open(this.canonical, constants.O_RDONLY);
       try {
-        await directory.sync();
+        await syncDirectory(directory);
       } finally {
         await directory.close();
       }

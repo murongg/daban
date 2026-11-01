@@ -13,6 +13,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
+import { syncDirectory } from './durability.js';
 
 interface Options {
   file: string;
@@ -164,7 +165,7 @@ export class Recovery {
       await rename(temporary, this.options.file);
       const directory = await open(this.canonical, 'r');
       try {
-        await directory.sync();
+        await syncDirectory(directory);
       } finally {
         await directory.close();
       }

@@ -91,10 +91,7 @@ async function packageLibrary(target: string, files: string[]) {
     path.join(target, 'node_modules/@daban/protocol'),
     {
       recursive: true,
-      filter: (source) =>
-        !source.includes('/node_modules') &&
-        !source.includes('/src') &&
-        !source.endsWith('tsconfig.json'),
+      filter: (source) => hostPackageFile(path.join(root, 'packages/protocol'), source),
     },
   );
 }
@@ -154,10 +151,7 @@ export async function packageHost(target: string, nodeDirectory: string) {
   ]);
   await cp(path.join(root, 'packages/protocol'), path.join(vendor, 'protocol'), {
     recursive: true,
-    filter: (source) =>
-      !source.includes('/node_modules') &&
-      !source.includes('/src') &&
-      !source.endsWith('tsconfig.json'),
+    filter: (source) => hostPackageFile(path.join(root, 'packages/protocol'), source),
   });
   const engineFile = path.join(vendor, 'engine/package.json'),
     engine = JSON.parse(await readFile(engineFile, 'utf8'));
@@ -291,7 +285,8 @@ export async function sealHostPackage(target: string) {
     await rename(temporary, path.join(directory, 'manifest.json'));
     const parent = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY);
     try {
-      await parent.sync();
+      // Directory fsync is unsupported on Windows; the manifest file has already been flushed before rename.
+      if (process.platform !== 'win32') await parent.sync();
     } finally {
       await parent.close();
     }

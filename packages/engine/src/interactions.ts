@@ -11,6 +11,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { Fault } from './control.js';
+import { syncDirectory } from './durability.js';
 
 export class Interactions {
   readonly ready: Promise<unknown>;
@@ -73,7 +74,7 @@ export class Interactions {
     const directory = await open(this.directory, constants.O_RDONLY | constants.O_DIRECTORY);
     try {
       // A rename alone can disappear after power loss; persist its directory entry before granting authority.
-      await directory.sync();
+      await syncDirectory(directory);
     } finally {
       await directory.close();
     }

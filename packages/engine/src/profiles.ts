@@ -21,6 +21,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { Fault } from './control.js';
+import { syncDirectory } from './durability.js';
 
 export function personaKey(profile?: Pick<BotProfile, 'name' | 'instructions'>) {
   // Effective model routes are fenced separately; changing inheritance alone must not reset the persona session.
@@ -190,7 +191,7 @@ export class BotProfiles {
       await rename(temporary, destination);
       const directory = await open(this.directory, 'r');
       try {
-        await directory.sync();
+        await syncDirectory(directory);
       } finally {
         await directory.close();
       }

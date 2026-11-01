@@ -14,6 +14,7 @@ import {
   type RecoveryReview,
   validAgentId,
 } from '@daban/protocol';
+import { syncDirectory } from './durability.js';
 
 type Binding = Pick<RecoveryRequest, 'id' | 'revision' | 'review'>;
 type Vm = 'running' | 'stopped' | 'unknown';
@@ -188,7 +189,7 @@ export class Reboot {
       await rename(temporary, this.options.file);
       const parent = await open(directory, 'r');
       try {
-        await parent.sync();
+        await syncDirectory(parent);
       } finally {
         await parent.close();
       }

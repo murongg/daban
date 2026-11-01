@@ -27,6 +27,7 @@ import type { ToolResult } from './computer-tools.js';
 import { Computers } from './computers.js';
 import { errorCode, Fault } from './control.js';
 import { Documents } from './documents.js';
+import { syncDirectory } from './durability.js';
 import { Machine } from './machine.js';
 import type { ProcessSnapshot } from './processes.js';
 import { ProcessManager } from './processes.js';
@@ -378,7 +379,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
       constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
     );
     try {
-      await parent.sync();
+      await syncDirectory(parent);
     } finally {
       await parent.close();
     }

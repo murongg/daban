@@ -5,6 +5,7 @@ import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { isExecutionParams, validAgentId } from '@daban/protocol';
 import { Fault } from './control.js';
+import { syncDirectory } from './durability.js';
 
 export interface ProcessSnapshot {
   id: string;
@@ -149,7 +150,7 @@ export class ProcessManager {
           );
           try {
             // The claim must survive a reboot before any command may be dispatched.
-            await parent.sync();
+            await syncDirectory(parent);
           } finally {
             await parent.close();
           }

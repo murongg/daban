@@ -1266,3 +1266,48 @@ it('validates exact local-computer consent commands and accepts metadata only fr
   });
   expect((await guest.status()).localComputer).toBeUndefined();
 });
+
+it('accepts a native-only host without a VM, reboot service, or connected Linux screens', async () => {
+  const role = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  const client = new RuntimeClient({
+    agent: true,
+    origin: 'http://127.0.0.1:8766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (url) =>
+      url.endsWith('/api/model/settings')
+        ? Response.json({
+            configured: true,
+            provider: 'deepseek-official',
+            model: 'deepseek-flash',
+            revision: 0,
+          })
+        : Response.json({
+            ...raw,
+            clientProtocol: 39,
+            mode: 'agent',
+            sharedLogin: false,
+            bots: {},
+            computers: {
+              available: false,
+              revision: 0,
+              limit: 1,
+              items: [],
+              error: 'LOCAL_VM_UNAVAILABLE',
+            },
+            chats: { available: true, revision: 1, items: [] },
+            recovery: { available: true, revision: 1 },
+            mcp: { available: true, revision: 1 },
+            skills: { available: true, revision: 1 },
+            agent: role,
+          }),
+  });
+  const state = await client.status();
+  expect(state.phase).toBe('ready');
+  expect(state.agent).toEqual(role);
+  expect(state.reboot).toBeUndefined();
+});
