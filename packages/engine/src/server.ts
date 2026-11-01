@@ -1202,7 +1202,8 @@ export async function startPrototype({
           throw new Fault('INVALID_SCHEDULE', 400);
         }
         if (url.pathname === '/api/model/settings') {
-          if (req.method === 'GET') return json(res, await settings.status());
+          if (req.method === 'GET')
+            return json(res, await settings.status(url.searchParams.get('catalog') === '1'));
           if (req.method === 'POST') return json(res, await settings.save(await body(req)));
           throw new Fault('METHOD_NOT_ALLOWED', 405);
         }
@@ -1310,7 +1311,7 @@ export async function startPrototype({
             profiles: models ? await models.profiles.list() : [],
             interactions: models ? await models.interactions.list() : [],
             schedules: schedules ? await schedules.status() : { available: false, items: [] },
-            model: { ...models?.status(), ...(await settings.status()) },
+            model: { ...models?.status(), ...(await settings.status(true)) },
           });
         const browserRoute = url.pathname.match(
           /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/browser-(state|view|command|answer|receipt|bound-input|input)$/,
@@ -1726,7 +1727,10 @@ export async function startPrototype({
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),
           interactions: models.interactions,
-          review: new Risk({ settings }).review,
+          review: new Risk({
+            settings,
+            resolve: async (request) => models?.reviewModel(request.bot, request.runId) ?? null,
+          }).review,
           assertLive: (run) => {
             if (replacingRecovery || !recovery!.admit())
               throw new Fault('RUNTIME_RECOVERY_PENDING');

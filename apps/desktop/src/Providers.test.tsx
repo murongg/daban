@@ -1,0 +1,289 @@
+import {
+  disconnected,
+  type RuntimeBridge,
+  type RuntimeCommand,
+  type RuntimeReply,
+  type RuntimeSnapshot,
+} from '@daban/protocol';
+import { act, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, expect, it, vi } from 'vitest';
+import { demoState } from './fixtures';
+import { Models } from './Models';
+import { RuntimeProvider } from './Runtime';
+import { selectControl, selectOption } from './select.fixture';
+import { restore, serialize } from './storage';
+
+afterEach(() => Reflect.deleteProperty(window, 'daban'));
+
+const connection = {
+  id: 'synthetic-provider',
+  name: '示例供应商',
+  baseURL: 'https://models.example.test/v1',
+  models: [
+    { id: 'model-alpha', name: '示例 Alpha', vision: true, contextWindow: 128000, maxTokens: 8192 },
+    { id: 'model-beta', name: '示例 Beta', vision: false, contextWindow: 64000, maxTokens: 4096 },
+  ],
+};
+function connect(failFirst: boolean | string = false, saved = connection, model = 'model-alpha') {
+  let snapshot = disconnected('ready');
+  snapshot.protocolVersion = 39;
+  snapshot.model = {
+    configured: true,
+    available: true,
+    provider: saved.id,
+    model: `provider:${saved.id}:${model}`,
+    revision: 3,
+    ...{ connections: [saved] },
+  };
+  const readySnapshot = structuredClone(snapshot);
+  const writes: RuntimeCommand[] = [];
+  const listeners = new Set<(snapshot: RuntimeSnapshot) => unknown>();
+  const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
+    if (command.type === 'model.configure') {
+      writes.push(command);
+      if (failFirst && writes.length === 1) {
+        if (failFirst === 'MODEL_SETTINGS_CONFLICT') {
+          snapshot = { ...snapshot, model: { ...snapshot.model, revision: 4 } };
+          for (const listener of listeners) listener(snapshot);
+        }
+        return {
+          ok: false,
+          error: typeof failFirst === 'string' ? failFirst : 'RUNTIME_UNAVAILABLE',
+        };
+      }
+      snapshot.model = { ...snapshot.model, model: command.input.model, revision: 4 };
+      for (const listener of listeners) listener(snapshot);
+      return { ok: true, value: { ...snapshot.model, requestId: command.input.requestId } };
+    }
+    return { ok: true, value: snapshot };
+  });
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: {
+      runtime: {
+        invoke,
+        subscribe: (listener: (snapshot: RuntimeSnapshot) => unknown) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      } as RuntimeBridge,
+    },
+  });
+  return {
+    invoke,
+    writes,
+    disconnect() {
+      snapshot = disconnected('offline');
+      act(() => {
+        for (const listener of listeners) listener(snapshot);
+      });
+    },
+    reconnect(withCatalog = true) {
+      snapshot = structuredClone(readySnapshot);
+      if (!withCatalog) delete snapshot.model.connections;
+      act(() => {
+        for (const listener of listeners) listener(snapshot);
+      });
+    },
+  };
+}
+function mount() {
+  return render(
+    <RuntimeProvider>
+      <Models />
+    </RuntimeProvider>,
+  );
+}
+
+it('lists configured suppliers and changes the workspace default without copying a key', async () => {
+  const { writes } = connect();
+  mount();
+  expect(await screen.findByText('示例供应商')).toBeVisible();
+  await selectOption(
+    userEvent,
+    selectControl('工作区默认模型'),
+    'provider:synthetic-provider:model-beta',
+  );
+  await userEvent.click(screen.getByRole('button', { name: '保存默认模型' }));
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({
+    type: 'model.configure',
+    input: { model: 'provider:synthetic-provider:model-beta', revision: 3 },
+  });
+  expect(writes[0]).not.toHaveProperty('input.apiKey');
+  expect(writes[0]).not.toHaveProperty('input.connection');
+});
+
+it('adds multiple models and keeps exact ambiguous-save retries and secret input out of storage', async () => {
+  const { writes } = connect(true);
+  const view = mount();
+  await userEvent.click(await screen.findByRole('button', { name: '添加供应商' }));
+  await userEvent.type(screen.getByLabelText('供应商名称'), '第二供应商');
+  await userEvent.type(screen.getByLabelText('API 地址'), 'https://second.example.test/v1');
+  await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-second-provider-key');
+  await userEvent.click(screen.getByLabelText('将首个模型设为工作区默认模型'));
+  await userEvent.type(screen.getByLabelText('模型 1 ID'), 'model-one');
+  await userEvent.type(screen.getByLabelText('模型 1 名称'), '模型一');
+  await userEvent.click(screen.getByLabelText('模型 1 支持图片'));
+  await userEvent.click(screen.getByRole('button', { name: '添加模型' }));
+  await userEvent.type(screen.getByLabelText('模型 2 ID'), 'model-two');
+  await userEvent.type(screen.getByLabelText('模型 2 名称'), '模型二');
+  expect(JSON.stringify(localStorage)).not.toContain('synthetic-second-provider-key');
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await userEvent.click(await screen.findByRole('button', { name: '核对并重试保存' }));
+  expect(writes).toHaveLength(2);
+  expect(writes[1]).toEqual(writes[0]);
+  expect(writes[0]).toMatchObject({
+    type: 'model.configure',
+    input: {
+      connection: {
+        name: '第二供应商',
+        baseURL: 'https://second.example.test/v1',
+        models: [
+          { id: 'model-one', name: '模型一', vision: true },
+          { id: 'model-two', name: '模型二', vision: false },
+        ],
+      },
+      apiKey: 'synthetic-second-provider-key',
+    },
+  });
+  if (writes[0].type === 'model.configure') {
+    expect(writes[0].input.model).toBe(`provider:${writes[0].input.connection!.id}:model-one`);
+  }
+  expect(screen.queryByLabelText('API Key')).not.toBeInTheDocument();
+  view.unmount();
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '添加供应商' }));
+  expect(screen.getByLabelText('API Key')).toHaveValue('');
+});
+
+it('requires a fresh key when editing an existing provider endpoint', async () => {
+  const { writes } = connect();
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  expect(screen.getByLabelText('API Key')).toHaveValue('');
+  await userEvent.clear(screen.getByLabelText('API 地址'));
+  await userEvent.type(screen.getByLabelText('API 地址'), 'https://changed.example.test/v1');
+  expect(screen.getByLabelText('API Key')).toBeRequired();
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  expect(writes).toHaveLength(0);
+});
+
+it('keeps the reserved official DeepSeek endpoint fixed while allowing model and key edits', async () => {
+  connect(false, {
+    ...connection,
+    id: 'deepseek-official',
+    name: 'DeepSeek',
+    baseURL: 'https://api.deepseek.com/v1',
+  });
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 DeepSeek' }));
+  expect(screen.getByLabelText('API 地址')).toHaveAttribute('readonly');
+  expect(screen.queryByRole('button', { name: '供应商类型' })).not.toBeInTheDocument();
+  expect(screen.getByLabelText('供应商名称')).not.toHaveAttribute('readonly');
+  expect(screen.getByLabelText('模型 1 ID')).not.toHaveAttribute('readonly');
+  expect(screen.getByLabelText('API Key')).toBeEnabled();
+});
+
+it('does not change the intent after a storage failure with an unknown save outcome', async () => {
+  const { writes } = connect('MODEL_CONFIG_UNAVAILABLE');
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await userEvent.click(await screen.findByRole('button', { name: '核对并重试保存' }));
+  expect(writes).toHaveLength(2);
+  expect(writes[1]).toEqual(writes[0]);
+});
+
+it('keeps supplier key drafts and pending intent through offline or catalog-missing snapshots', async () => {
+  const backend = connect(true);
+  const view = mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-pending-key');
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await screen.findByRole('button', { name: '核对并重试保存' });
+  backend.disconnect();
+  expect(screen.getByLabelText('API Key')).toHaveValue('synthetic-pending-key');
+  expect(screen.getByRole('button', { name: '核对并重试保存' })).toBeDisabled();
+  backend.reconnect(false);
+  expect(screen.getByLabelText('API Key')).toHaveValue('synthetic-pending-key');
+  expect(screen.getByRole('button', { name: '核对并重试保存' })).toBeDisabled();
+  backend.reconnect();
+  await userEvent.click(screen.getByRole('button', { name: '核对并重试保存' }));
+  expect(backend.writes).toHaveLength(2);
+  expect(backend.writes[1]).toEqual(backend.writes[0]);
+  expect(JSON.stringify(localStorage)).not.toContain('synthetic-pending-key');
+  view.unmount();
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  expect(screen.getByLabelText('API Key')).toHaveValue('');
+});
+
+it.each(['MODEL_UNAVAILABLE', 'MODEL_CREDENTIAL_REQUIRED'])(
+  'keeps the editor repairable after the definitive %s decision',
+  async (code) => {
+    const { writes } = connect(code);
+    mount();
+    await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+    await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+    expect(await screen.findByRole('alert')).toBeVisible();
+    expect(screen.getByLabelText('模型 1 ID')).toBeEnabled();
+    expect(screen.getByLabelText('API Key')).toBeEnabled();
+    expect(writes).toHaveLength(1);
+  },
+);
+
+it.each([
+  { action: 'rename', index: 2, model: 'model-beta', replacement: 'model-alpha' },
+  { action: 'remove', index: 2, model: 'model-beta', replacement: 'model-alpha' },
+  { action: 'rename', index: 1, model: 'model-alpha', replacement: 'renamed-model' },
+  { action: 'remove', index: 1, model: 'model-alpha', replacement: 'model-beta' },
+])(
+  'requires an explicit replacement before saving a $action of default model $index',
+  async ({ action, index, model, replacement }) => {
+    const { writes } = connect(false, connection, model);
+    mount();
+    await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+    if (action === 'rename') {
+      await userEvent.clear(screen.getByLabelText(`模型 ${index} ID`));
+      await userEvent.type(screen.getByLabelText(`模型 ${index} ID`), 'renamed-model');
+    } else await userEvent.click(screen.getByRole('button', { name: `移除模型 ${index}` }));
+    await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+    expect(writes).toHaveLength(0);
+    expect(screen.getByRole('alert')).toHaveTextContent('默认模型');
+    expect(screen.getByLabelText('模型 1 ID')).toBeEnabled();
+    await userEvent.click(screen.getByLabelText('将首个模型设为工作区默认模型'));
+    await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      input: { model: `provider:synthetic-provider:${replacement}` },
+    });
+  },
+);
+
+it('requires explicit review before rebasing a conflicting workspace-default edit', async () => {
+  const { writes } = connect('MODEL_SETTINGS_CONFLICT');
+  mount();
+  await screen.findByText('示例供应商');
+  await selectOption(
+    userEvent,
+    selectControl('工作区默认模型'),
+    'provider:synthetic-provider:model-beta',
+  );
+  await userEvent.click(screen.getByRole('button', { name: '保存默认模型' }));
+  await userEvent.click(await screen.findByRole('button', { name: '保留输入，按当前版本重试' }));
+  await userEvent.click(screen.getByRole('button', { name: '保存默认模型' }));
+  expect(writes).toHaveLength(2);
+  expect(writes[0]).toMatchObject({ input: { revision: 3 } });
+  expect(writes[1]).toMatchObject({
+    input: { revision: 4, model: 'provider:synthetic-provider:model-beta' },
+  });
+});
+
+it('retains a configured model route when reopening a workspace without the provider catalog', () => {
+  const state = demoState();
+  Object.assign(state.bots[0], { model: 'provider:synthetic-provider:model-alpha' });
+  const reopened = restore(serialize(state));
+  expect(reopened.bots[0].model).toBe('provider:synthetic-provider:model-alpha');
+});

@@ -8,6 +8,166 @@ import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
 
+test('a captured supplier route controls DSH endpoint, model capabilities and independent key environment', () => {
+  const route = {
+    model: 'provider:mock-supplier:mock-chat',
+    apiModel: 'mock-chat',
+    provider: 'mock-supplier',
+    baseURL: 'https://models.example.test/v1',
+    apiKey: 'synthetic-route-secret',
+    vision: false,
+    contextWindow: 64000,
+    maxTokens: 4096,
+    binding: 'a'.repeat(64),
+    secrets: ['synthetic-route-secret'],
+  };
+  const patch = Reflect.apply(sdkPatch, undefined, [
+    'http://127.0.0.1:8766',
+    'mock-bot',
+    'mock-token',
+    { requestId: 'mock-route-patch', prompt: 'Mock task.' },
+    60,
+    'deepseek-flash',
+    { available: true, key: '', skills: [] },
+    undefined,
+    route,
+  ]) as ReturnType<typeof sdkPatch>;
+  const plugins = patch.flatMap((entry) => ('insert' in entry ? entry.insert : []));
+  const provider = plugins.find((entry) => entry.id === 'desktop-model-provider')!;
+  const config = (
+    provider as unknown as {
+      config: {
+        providers: Record<
+          string,
+          {
+            apiKeyEnv: string;
+            baseURL: string;
+            models: { id: string; input: string[]; contextWindow: number; maxTokens: number }[];
+          }
+        >;
+      };
+    }
+  ).config;
+  assert.equal(config.providers['mock-supplier']?.apiKeyEnv, 'DABAN_MODEL_KEY');
+  assert.equal(config.providers['mock-supplier']?.baseURL, route.baseURL);
+  assert.deepEqual(config.providers['mock-supplier']?.models, [
+    {
+      id: 'mock-chat',
+      input: ['text'],
+      contextWindow: 64000,
+      maxTokens: 4096,
+      reasoningEfforts: false,
+    },
+  ]);
+  assert.equal(
+    plugins.some((entry) => entry.id === 'web-deepseek-api'),
+    false,
+  );
+  const web = plugins.find((entry) => entry.id === 'tool-web')!;
+  assert.equal((web as unknown as { config: { search: boolean } }).config.search, false);
+  assert.equal(JSON.stringify(patch).includes(route.apiKey), false);
+});
+
+test('two suppliers with the same API model keep separate keys, capabilities and native session bindings', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-supplier-routes-'));
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+    Response.json({ data: [{ id: 'mock-chat' }] }),
+  );
+  const captured: { provider: string; model: string; env: NodeJS.ProcessEnv }[] = [];
+  const resumed: string[] = [];
+  let session = 0;
+  class Harness {
+    constructor(options: { provider: string; model: string; env: NodeJS.ProcessEnv }) {
+      captured.push(options);
+    }
+    async start() {}
+    async close() {}
+    session(id = `mock-session-${++session}`) {
+      return { id, run: async () => ({ sessionId: id, finalResponse: 'Synthetic completed.' }) };
+    }
+    async resumeSession(id: string) {
+      resumed.push(id);
+      return this.session(id);
+    }
+  }
+  const models = new ModelRuns({
+    settings,
+    Harness,
+    workspace: path.join(root, 'workspace'),
+    dir: path.join(root, 'model'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  const connection = (id: string, vision: boolean) => ({
+    id,
+    name: id,
+    baseURL: `https://${id}.example.test/v1`,
+    models: [
+      { id: 'mock-chat', name: 'Synthetic chat', vision, contextWindow: 64000, maxTokens: 4096 },
+    ],
+  });
+  try {
+    for (const [index, id] of ['mock-one', 'mock-two'].entries())
+      await settings.configure({
+        revision: index,
+        requestId: `mock-config-${index}`,
+        model: 'provider:mock-one:mock-chat',
+        apiKey: `synthetic-key-${id}`,
+        connection: connection(id, index === 1),
+      });
+    for (const [id, supplier] of [
+      ['mock-a', 'mock-one'],
+      ['mock-b', 'mock-two'],
+    ])
+      await models.profiles.register({
+        id,
+        name: id,
+        color: 'mint',
+        instructions: '',
+        memory: '',
+        model: `provider:${supplier}:mock-chat`,
+      });
+    const run = async (bot: string, requestId: string) => {
+      await models.start(bot, { requestId, prompt: 'Synthetic request.' });
+      await models.jobs.get(bot)!.done;
+      assert.equal(models.jobs.get(bot)!.phase, 'completed');
+    };
+    await run('mock-a', 'mock-one-first');
+    await run('mock-b', 'mock-two-first');
+    assert.deepEqual(
+      captured.map(({ provider, model }) => [provider, model]),
+      [
+        ['mock-one', 'mock-chat'],
+        ['mock-two', 'mock-chat'],
+      ],
+    );
+    assert.equal(captured[0].env.DABAN_MODEL_KEY, 'synthetic-key-mock-one');
+    assert.equal(captured[1].env.DABAN_MODEL_KEY, 'synthetic-key-mock-two');
+    assert.equal(captured[0].env.DEEPSEEK_API_KEY, undefined);
+    assert.equal(models.jobs.get('mock-a')!.vision, false);
+    assert.equal(models.jobs.get('mock-b')!.vision, true);
+    await run('mock-a', 'mock-one-same-route');
+    assert.equal(resumed.length, 1);
+    await settings.configure({
+      revision: 2,
+      requestId: 'mock-one-edit',
+      model: 'provider:mock-one:mock-chat',
+      apiKey: 'synthetic-rotated-key',
+      connection: { ...connection('mock-one', true), baseURL: 'https://new-route.example.test/v1' },
+    });
+    await run('mock-a', 'mock-one-changed-route');
+    assert.equal(
+      resumed.length,
+      1,
+      'a changed endpoint or credential must retire the native session',
+    );
+    assert.equal(captured.at(-1)!.env.DABAN_MODEL_KEY, 'synthetic-rotated-key');
+    assert.equal(captured[0].env.DABAN_MODEL_KEY, 'synthetic-key-mock-one');
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('host DSH callbacks and MCP stdio use only the private agent socket', () => {
   const patch = sdkPatch(
     'http://127.0.0.1:8766',
@@ -27,10 +187,11 @@ test('host DSH callbacks and MCP stdio use only the private agent socket', () =>
       '/mock/private/agent.sock',
     );
   }
-  const mcp = plugins.find((entry) => entry.id === 'computer-tools')!.config as unknown as Record<
-    string,
-    unknown
-  >;
+  const mcp = (
+    plugins.find((entry) => entry.id === 'computer-tools')! as unknown as {
+      config: Record<string, unknown>;
+    }
+  ).config;
   assert.equal(mcp.transport, 'stdio');
   assert.equal(mcp.command, process.execPath);
   assert.deepEqual(mcp.args, ['/mock/owned/mcp-stdio.js']);

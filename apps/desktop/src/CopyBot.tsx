@@ -1,7 +1,8 @@
-import { agentId, type BotCopyRequest, type BotProfile, modelOptions } from '@daban/protocol';
+import { agentId, type BotCopyRequest, type BotProfile } from '@daban/protocol';
 import { useState } from 'react';
 import { type CopyProps, copyName, useCopy } from './copies';
 import { Dialog } from './Dialog';
+import { modelName } from './model-options';
 import { useRuntime } from './Runtime';
 
 export function CopyBot(props: CopyProps & { bot?: string }) {
@@ -103,7 +104,7 @@ function CopyEditor({
             <p className="inline-note">
               模型：
               {source.model
-                ? modelOptions.find((model) => model.id === source.model)?.name
+                ? modelName(source.model, runtime.snapshot.model.connections)
                 : '跟随工作区'}
             </p>
             <label className="bundle-choice">

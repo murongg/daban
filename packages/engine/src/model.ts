@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   BotProfile,
-  DeepSeekModel,
+  ModelId,
   ReplyStream,
   RuntimeFile,
   RuntimeTaskSummary,
@@ -19,8 +19,8 @@ import {
   imageMime,
   isAttachmentId,
   isChatPage,
-  isDeepSeekModel,
   isInteractionInput,
+  isModelId,
   isReplyStream,
   isTaskFileName,
   isTaskPlan,
@@ -52,7 +52,7 @@ import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
 import { redact, redactStream } from './redaction.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
-import type { ModelSettings } from './settings.js';
+import type { ModelSettings, ResolvedModel } from './settings.js';
 import { invokedSkills } from './skill-provider.js';
 import { type SkillSnapshot, Skills } from './skills.js';
 import type { RawModelTask } from './snapshot.js';
@@ -93,10 +93,12 @@ export function sdkPatch(
   capability: string,
   task?: TaskRequest,
   limit = 60,
-  selectedModel: DeepSeekModel = model,
+  selectedModel: ModelId = model,
   skills: SkillSnapshot = { available: true, key: '', skills: [] },
   bridge?: { socketPath: string; stdioEntry: string },
+  route?: ResolvedModel,
 ) {
+  const search = route ? !!route.searchApiKey : true;
   return [
     {
       id: 'compaction-basic',
@@ -169,18 +171,25 @@ export function sdkPatch(
               {
                 id: 'web',
                 name: '@deepseek-ai/dsh-web',
-                config: { fetchProvider: 'http', searchProvider: 'deepseek-search-api' },
-              },
-              {
-                id: 'web-deepseek-api',
-                name: '@deepseek-ai/dsh-web-deepseek-api',
                 config: {
-                  apiKeyEnv: 'DEEPSEEK_API_KEY',
-                  baseURL: 'https://api.deepseek.com/v1/tools',
-                  count: 5,
-                  sendOriginalQuestion: false,
+                  fetchProvider: 'http',
+                  ...(search ? { searchProvider: 'deepseek-search-api' } : {}),
                 },
               },
+              ...(search
+                ? [
+                    {
+                      id: 'web-deepseek-api',
+                      name: '@deepseek-ai/dsh-web-deepseek-api',
+                      config: {
+                        apiKeyEnv: 'DEEPSEEK_API_KEY',
+                        baseURL: 'https://api.deepseek.com/v1/tools',
+                        count: 5,
+                        sendOriginalQuestion: false,
+                      },
+                    },
+                  ]
+                : []),
               { id: 'tool-timeouts', name: '@deepseek-ai/dsh-tool-call-timeout-policy' },
               {
                 id: 'web-fetch-http',
@@ -196,7 +205,7 @@ export function sdkPatch(
                 id: 'tool-web',
                 name: '@deepseek-ai/dsh-tool-web',
                 config: {
-                  search: true,
+                  search,
                   fetch: true,
                   searchMaxResults: 5,
                   searchMaxQueries: 4,
@@ -212,18 +221,21 @@ export function sdkPatch(
           name: '@deepseek-ai/dsh-llm-pi-ai',
           config: {
             providers: {
-              'deepseek-official': {
-                apiKeyEnv: 'DEEPSEEK_API_KEY',
+              [route?.provider || 'deepseek-official']: {
+                apiKeyEnv: route ? 'DABAN_MODEL_KEY' : 'DEEPSEEK_API_KEY',
                 api: 'openai-completions',
-                baseURL: 'https://api.deepseek.com/v1',
-                defaultInput: ['text', 'image'],
+                baseURL: route?.baseURL || 'https://api.deepseek.com/v1',
+                defaultInput: ['text'],
                 retryPolicy: { mode: 'normal', maxRetries: 2 },
                 models: [
                   {
-                    id: selectedModel,
-                    input: modelHasVision(selectedModel) ? ['text', 'image'] : ['text'],
-                    contextWindow: 1000000,
-                    maxTokens: 8192,
+                    id: route?.apiModel || selectedModel,
+                    input:
+                      (route?.vision ?? modelHasVision(selectedModel))
+                        ? ['text', 'image']
+                        : ['text'],
+                    contextWindow: route?.contextWindow || 1000000,
+                    maxTokens: route?.maxTokens || 8192,
                     reasoningEfforts: false,
                   },
                 ],
@@ -364,6 +376,9 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  route?: ResolvedModel;
+  vision?: boolean;
+  binding?: string;
   restoredActivity?: ReturnType<typeof taskActivity>;
   transcript?: TranscriptScope;
   transcriptFailed?: boolean;
@@ -372,7 +387,7 @@ interface ModelJob extends ToolRun {
   integrations?: McpSnapshot;
   conversationId?: string;
   conversationContext?: string;
-  model?: DeepSeekModel;
+  model?: ModelId;
   attachmentIds?: string[];
   documentInputs?: DocumentInput[];
   imageInputs?: ImageBlock[];
@@ -464,7 +479,7 @@ export class ModelRuns {
   private readonly botAdmission: (bot: string) => boolean;
   private readonly sessions = new Map<
     string,
-    { id: string; persona: string; model: DeepSeekModel; skills: string; mcp: string }
+    { id: string; persona: string; model: ModelId; skills: string; mcp: string; binding?: string }
   >();
   private readonly Harness?: HarnessConstructor;
   private readonly admission: () => boolean;
@@ -617,7 +632,7 @@ export class ModelRuns {
         model:
           latest.sessionModel === undefined
             ? model
-            : isDeepSeekModel(latest.sessionModel)
+            : isModelId(latest.sessionModel)
               ? latest.sessionModel
               : undefined,
         response: isReplyStream(latest.response) ? latest.response : undefined,
@@ -666,7 +681,7 @@ export class ModelRuns {
           latest.kind === 'chat' &&
           latest.phase === 'completed' &&
           latest.sessionId &&
-          (latest.sessionModel === undefined || isDeepSeekModel(latest.sessionModel)) &&
+          (latest.sessionModel === undefined || isModelId(latest.sessionModel)) &&
           latest.sessionProfile === sessionProfile &&
           (latest.sessionSkills === undefined ||
             (typeof latest.sessionSkills === 'string' &&
@@ -680,6 +695,7 @@ export class ModelRuns {
             id: latest.sessionId,
             persona: latest.sessionPersona!,
             model: latest.sessionModel || model,
+            binding: latest.sessionBinding,
             skills: latest.sessionSkills ?? '',
             mcp: latest.sessionMcp ?? '',
           });
@@ -868,6 +884,12 @@ export class ModelRuns {
   running(bot: string) {
     return this.jobs.get(bot)?.running === true;
   }
+  reviewModel(bot: string, runId: string) {
+    const job = this.jobs.get(bot);
+    return job?.id === runId && job.running && !job.abort.signal.aborted
+      ? (job.route ?? null)
+      : null;
+  }
   groupRunning(group: string) {
     return Array.from(this.jobs.values()).some(
       (job) => job.running && job.conversationId === group,
@@ -891,8 +913,7 @@ export class ModelRuns {
       error: source.error,
       response: source.response,
       files: source.files,
-      model:
-        current?.model || (isDeepSeekModel(saved?.sessionModel) ? saved.sessionModel : undefined),
+      model: current?.model || (isModelId(saved?.sessionModel) ? saved.sessionModel : undefined),
     };
   }
   async stopRequest(bot: string, requestId: string, conversationId: string) {
@@ -937,6 +958,7 @@ export class ModelRuns {
               sessionProfile,
               sessionPersona: job.persona,
               sessionModel: job.model,
+              sessionBinding: job.binding,
               sessionSkills: job.skills?.key ?? '',
               sessionMcp: job.integrations?.key ?? '',
             }
@@ -1109,15 +1131,15 @@ export class ModelRuns {
         : { available: true, key: '', connections: [], warnings: [] };
       job.profile = await this.profiles.get(bot);
       job.persona = personaKey(job.profile);
-      const stored = await this.settings.privateConfig();
-      if (!stored?.apiKey) throw new Fault('MODEL_NOT_CONFIGURED');
       // Per-Bot choice is captured with the task; it never edits the shared credential or a running job.
-      const config = { ...stored, model: job.profile?.model ?? stored.model };
+      const config = await this.settings.resolve(job.profile?.model);
+      job.route = config;
       job.model = config.model;
-      if (!task && !modelHasVision(config.model))
-        throw new Fault('MODEL_COMPUTER_UNSUPPORTED', 400);
+      job.vision = config.vision;
+      job.binding = config.binding;
+      if (!task && !config.vision) throw new Fault('MODEL_COMPUTER_UNSUPPORTED', 400);
       const secrets = [
-        config.apiKey,
+        ...config.secrets,
         job.token,
         ...(await this.tools.integrations!.secrets(job.integrations)),
       ];
@@ -1152,7 +1174,7 @@ export class ModelRuns {
             const mapping = job.documentInputs.find((item) => item.name === file.name)!;
             job.abort.signal.throwIfAborted();
             if (imageMime(uploaded.receipt.name)) {
-              if (!modelHasVision(config.model)) throw new Fault('MODEL_IMAGE_UNSUPPORTED', 400);
+              if (!config.vision) throw new Fault('MODEL_IMAGE_UNSUPPORTED', 400);
               const { data, mimeType } = imageInput({
                 name: uploaded.receipt.name,
                 data: uploaded.data.toString('base64'),
@@ -1193,6 +1215,7 @@ export class ModelRuns {
             config.model,
             job.skills,
             this.bridge,
+            config,
           ),
         ),
         {
@@ -1254,11 +1277,7 @@ export class ModelRuns {
       return this.attachments.purge(bot, request.id, request.version, request.confirmation || '');
     return this.attachments[request.action](bot, request.id, request.version);
   }
-  private async execute(
-    job: ModelJob,
-    config: { apiKey: string; model: DeepSeekModel },
-    patchFile: string,
-  ) {
+  private async execute(job: ModelJob, config: ResolvedModel, patchFile: string) {
     const clean = (value: unknown) => job.redact!(String(value || '')).slice(0, 12000);
     const complete = (value: string) => {
       const text = job.redact!(value);
@@ -1326,9 +1345,9 @@ export class ModelRuns {
         // Native tools use scoped RPC; keep SDK discovery/config reads away from desktop-writable task files.
         processCwd: job.privateDir,
         cwd: job.privateDir,
-        provider: 'deepseek-official',
-        model: config.model,
-        maxTokens: 8192,
+        provider: config.provider,
+        model: config.apiModel,
+        maxTokens: config.maxTokens,
         initializeTimeoutMs: 40000,
         env: {
           PATH: process.env.PATH,
@@ -1336,7 +1355,8 @@ export class ModelRuns {
             ? { ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE }
             : {}),
           LANG: 'C.UTF-8',
-          DEEPSEEK_API_KEY: config.apiKey,
+          DABAN_MODEL_KEY: config.apiKey,
+          ...(config.searchApiKey ? { DEEPSEEK_API_KEY: config.searchApiKey } : {}),
           DSH_SYSTEM_PROMPT: system,
           ...(proxy
             ? { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy }
@@ -1354,6 +1374,7 @@ export class ModelRuns {
       const previous =
         saved?.persona === job.persona &&
         saved.model === config.model &&
+        saved.binding === config.binding &&
         saved.skills === (job.skills?.key ?? '') &&
         saved.mcp === (job.integrations?.key ?? '')
           ? saved.id
@@ -1410,7 +1431,7 @@ export class ModelRuns {
             job.workdir,
             { ...job.task, memory: job.task.memory ?? job.profile?.memory },
             job.inputs,
-            this.tools.hasComputer(job.bot, job.model),
+            this.tools.hasComputer(job.bot, job.model, job.vision),
             job.profile,
             !!this.tools.schedules,
             !!this.tools.memory,
@@ -1457,6 +1478,7 @@ export class ModelRuns {
             id: result.sessionId,
             persona: job.persona,
             model: config.model,
+            binding: config.binding,
             skills: job.skills?.key ?? '',
             mcp: job.integrations?.key ?? '',
           });

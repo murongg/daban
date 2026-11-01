@@ -5,7 +5,8 @@ import {
   type GroupPage,
   type GroupSend,
   imageMime,
-  isDeepSeekModel,
+  isModelId,
+  modelCatalog,
   modelHasVision,
   recoveryBlocked,
   type TaskFile,
@@ -169,10 +170,13 @@ export function GroupChat({
       const unsupported = input.recipients.some((id) => {
         const selected = state.bots.find((member) => agentId(member.id) === id);
         const model = selected?.model || runtime.snapshot.model.model;
-        return !isDeepSeekModel(model) || !modelHasVision(model);
+        return (
+          !isModelId(model) ||
+          !modelHasVision(model, modelCatalog(runtime.snapshot.model.connections))
+        );
       });
       if (unsupported) {
-        notify('所选成员中有模型不支持图片，请切换为 Flash 后发送；草稿已保留。');
+        notify('所选成员中有模型不支持图片，请切换为支持图片的模型后发送；草稿已保留。');
         return;
       }
     }

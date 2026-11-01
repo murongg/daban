@@ -12,6 +12,44 @@ import { Control } from './control.js';
 import { Interactions } from './interactions.js';
 import { WorkspaceFiles } from './workspace.js';
 
+test('host negotiates model capabilities before sending new execution fields to older Linux guests', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const execution = {
+    snapshot: { capabilities: [] as string[] },
+    async call(_method: string, params: Record<string, unknown>) {
+      calls.push(params);
+      return { tools: [] };
+    },
+  };
+  const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), { execution });
+  const run: AgentToolRun = {
+    id: 'mock-legacy-run',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    model: 'deepseek-flash',
+    vision: true,
+    workdir: '/mock/task',
+    canonicalRoot: '/mock/task',
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+  };
+  await tools.open(run);
+  assert.equal(
+    'vision' in calls[0],
+    false,
+    'legacy exact validators must receive only known fields',
+  );
+  assert.equal(calls[0].model, 'deepseek-flash');
+  const custom = { ...run, id: 'mock-custom-run', model: 'provider:mock-provider:mock-chat' };
+  await assert.rejects(tools.open(custom), { code: 'EXECUTION_UPGRADE_REQUIRED' });
+  assert.equal(calls.length, 1);
+  execution.snapshot.capabilities.push('model-capabilities-v1');
+  await tools.open(custom);
+  assert.equal(calls[1].vision, true);
+});
+
 test('model RPC identities retain Host deduplication and become stable bounded Guest wire IDs', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-remote-wire-'));
   const hostIds: (string | undefined)[] = [];

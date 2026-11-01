@@ -1,12 +1,7 @@
-import {
-  agentId,
-  type BotProfileInput,
-  type GroupInput,
-  isDeepSeekModel,
-  modelOptions,
-} from '@daban/protocol';
+import { agentId, type BotProfileInput, type GroupInput, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar, colors } from './Avatar';
+import { modelChoices, modelName } from './model-options';
 import type { BotPreset } from './presets';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
@@ -132,7 +127,7 @@ export function Create({
                 instructions: role.trim(),
                 memory: '',
                 color,
-                ...(isDeepSeekModel(model) ? { model } : {}),
+                ...(isModelId(model) ? { model } : {}),
               });
             if (!mounted.current) return;
             dispatch({
@@ -142,7 +137,7 @@ export function Create({
               role,
               color,
               ...(isGroup ? { members } : {}),
-              ...(!isGroup && isDeepSeekModel(model) ? { model } : {}),
+              ...(!isGroup && isModelId(model) ? { model } : {}),
             });
             dispatch({ type: 'select', bot: id });
             close();
@@ -241,15 +236,15 @@ export function Create({
                   options={[
                     {
                       value: '',
-                      label: `跟随工作区 · ${modelOptions.find((option) => option.id === runtime.snapshot.model.model)?.name || '默认模型'}`,
+                      label: `跟随工作区 · ${modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections)}`,
                     },
-                    ...modelOptions.map((option) => ({ value: option.id, label: option.name })),
+                    ...modelChoices(runtime.snapshot.model.connections, model),
                   ]}
                 />
                 <span className="field-help">
                   {runtime.snapshot.protocolVersion >= 16
-                    ? '共用工作区 DeepSeek 连接。Pro 可操作已连接浏览器的 DOM，整屏观察需要 Flash。'
-                    : '共用工作区 DeepSeek 连接。之后可在 Bot 资料中修改；V4 Pro 不提供模型电脑操作。'}
+                    ? '使用所选供应商的连接。整屏观察需要支持图片的模型。'
+                    : '使用工作区已配置的连接，之后可在 Bot 资料中修改。'}
                 </span>
               </div>
             </>

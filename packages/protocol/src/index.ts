@@ -1203,7 +1203,7 @@ export function isTranscriptContent(value: unknown): value is TranscriptContent 
 export interface RuntimeTask {
   chatRevision?: number;
   conversationId?: string;
-  model?: DeepSeekModel;
+  model?: ModelId;
   response?: ReplyStream;
   plan?: TaskPlan;
   running: boolean;
@@ -1328,6 +1328,7 @@ export interface RuntimeSnapshot {
     provider: string;
     model: string;
     revision?: number;
+    connections?: ModelConnection[];
   };
   bots: Partial<
     Record<RuntimeBot, { instance?: string; owner: RuntimeOwner; epoch: number; task: RuntimeTask }>
@@ -1505,7 +1506,7 @@ export interface GroupMessage {
   author?: string;
   name?: string;
   phase?: TaskPhase;
-  model?: DeepSeekModel;
+  model?: ModelId;
   files?: RuntimeFile[];
 }
 export type GroupDeliveryState =
@@ -1578,7 +1579,7 @@ export function isGroupMessage(value: unknown): value is GroupMessage {
       (typeof value.name === 'string' && value.name.length <= 80 && !value.name.includes('\0'))) &&
     (value.phase === undefined ||
       ['completed', 'failed', 'stopped', 'interrupted'].includes(String(value.phase))) &&
-    (value.model === undefined || isDeepSeekModel(value.model)) &&
+    (value.model === undefined || isModelId(value.model)) &&
     (value.files === undefined ||
       (Array.isArray(value.files) &&
         value.files.length <= 20 &&
@@ -1897,7 +1898,7 @@ export interface BotProfileInput {
   instructions: string;
   memory: string;
   color: BotColor;
-  model?: DeepSeekModel;
+  model?: ModelId;
 }
 export interface BotProfile extends BotProfileInput {
   revision: number;
@@ -1923,7 +1924,7 @@ export interface BotLifecycleAck {
   profile: BotProfile;
 }
 export type BotProfilePatch = Partial<Omit<BotProfileInput, 'id' | 'model'>> & {
-  model?: DeepSeekModel | null;
+  model?: ModelId | null;
 };
 export interface BotCopyRequest {
   id: string;
@@ -2039,37 +2040,155 @@ export const modelOptions = [
   { id: 'deepseek-flash', name: 'DeepSeek V4.1 Flash' },
   { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
 ] as const;
+export type ModelId = string;
 export type DeepSeekModel = (typeof modelOptions)[number]['id'];
+export interface ModelDefinition {
+  id: string;
+  name: string;
+  vision: boolean;
+  contextWindow: number;
+  maxTokens: number;
+}
+export interface ModelConnection {
+  id: string;
+  name: string;
+  baseURL: string;
+  models: ModelDefinition[];
+}
+export interface ModelOption {
+  id: ModelId;
+  name: string;
+  provider: string;
+  vision: boolean;
+}
+const upstreamModelId = (value: unknown): value is string =>
+  typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/@+-]{0,159}$/.test(value);
+export const isModelId = (value: unknown): value is ModelId =>
+  typeof value === 'string' &&
+  (modelOptions.some((option) => option.id === value) ||
+    /^provider:[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}:[a-zA-Z0-9][a-zA-Z0-9._:/@+-]{0,159}$/.test(value));
+// Legacy official-only callers must not accept a foreign route and reuse its key as a DeepSeek key.
+export const isDeepSeekModel = (value: unknown): value is DeepSeekModel =>
+  modelOptions.some((option) => option.id === value);
+export function modelReference(connection: string, model: string): ModelId {
+  return connection === 'deepseek-official' && modelOptions.some((option) => option.id === model)
+    ? model
+    : `provider:${connection}:${model}`;
+}
+export function modelCatalog(connections?: ModelConnection[]): ModelOption[] {
+  if (connections === undefined)
+    return modelOptions.map((option) => ({
+      ...option,
+      provider: 'deepseek-official',
+      vision: option.id === 'deepseek-flash',
+    }));
+  return connections.flatMap((connection) =>
+    connection.models.map((model) => ({
+      id: modelReference(connection.id, model.id),
+      name: model.name,
+      provider: connection.id,
+      vision: model.vision,
+    })),
+  );
+}
+export const modelHasVision = (model: ModelId, catalog?: ModelOption[]) =>
+  catalog === undefined
+    ? model === 'deepseek-flash'
+    : catalog.some((item) => item.id === model && item.vision);
+const modelText = (value: string) =>
+  [...value].every((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127);
+export function isModelBaseURL(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2048 || !modelText(value) || /[\s?#]/.test(value))
+    return false;
+  try {
+    const url = new URL(value);
+    return (
+      !url.username &&
+      !url.password &&
+      (url.protocol === 'https:' ||
+        (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+    );
+  } catch {
+    return false;
+  }
+}
+export function isModelDefinition(value: unknown): value is ModelDefinition {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) =>
+      ['id', 'name', 'vision', 'contextWindow', 'maxTokens'].includes(key),
+    ) &&
+    upstreamModelId(value.id) &&
+    typeof value.name === 'string' &&
+    value.name.trim().length > 0 &&
+    value.name.length <= 120 &&
+    modelText(value.name) &&
+    typeof value.vision === 'boolean' &&
+    Number.isSafeInteger(value.contextWindow) &&
+    Number(value.contextWindow) >= 4096 &&
+    Number(value.contextWindow) <= 4000000 &&
+    Number.isSafeInteger(value.maxTokens) &&
+    Number(value.maxTokens) >= 128 &&
+    Number(value.maxTokens) <= 262144 &&
+    Number(value.maxTokens) <= Number(value.contextWindow)
+  );
+}
+export function isModelConnection(value: unknown): value is ModelConnection {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) => ['id', 'name', 'baseURL', 'models'].includes(key)) &&
+    validAgentId(value.id) &&
+    typeof value.name === 'string' &&
+    value.name.trim().length > 0 &&
+    value.name.length <= 80 &&
+    modelText(value.name) &&
+    isModelBaseURL(value.baseURL) &&
+    // Legacy key-only writes address this reserved route, so its destination must remain fixed.
+    (value.id !== 'deepseek-official' || value.baseURL === 'https://api.deepseek.com/v1') &&
+    Array.isArray(value.models) &&
+    value.models.length >= 1 &&
+    value.models.length <= 50 &&
+    value.models.every(isModelDefinition) &&
+    new Set(value.models.map((model) => model.id)).size === value.models.length
+  );
+}
+export const isModelConnections = (value: unknown): value is ModelConnection[] =>
+  Array.isArray(value) &&
+  value.length <= 20 &&
+  value.every(isModelConnection) &&
+  new Set(value.map((connection) => connection.id)).size === value.length;
 export interface ModelStatus {
-  provider: 'deepseek-official';
-  model: DeepSeekModel;
+  provider: string;
+  model: ModelId;
   configured: boolean;
   revision: number;
   requestId?: string;
+  connections?: ModelConnection[];
 }
 export interface ModelUpdate {
-  model: DeepSeekModel;
+  model: ModelId;
   apiKey?: string;
   revision: number;
   requestId: string;
+  connection?: ModelConnection;
 }
 export interface ModelCheck {
-  model: DeepSeekModel;
+  model: ModelId;
   revision: number;
   checkedAt: string;
 }
-export const isDeepSeekModel = (value: unknown): value is DeepSeekModel =>
-  modelOptions.some((option) => option.id === value);
-export const modelHasVision = (model: DeepSeekModel) => model === 'deepseek-flash';
 export const isModelKey = (value: unknown): value is string =>
   typeof value === 'string' && /^[!-~]{10,512}$/.test(value);
 const modelRevision = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0;
 export function isModelUpdate(value: unknown): value is ModelUpdate {
   return (
     profileObject(value) &&
-    Object.keys(value).every((key) => ['model', 'apiKey', 'revision', 'requestId'].includes(key)) &&
-    isDeepSeekModel(value.model) &&
+    Object.keys(value).every((key) =>
+      ['model', 'apiKey', 'revision', 'requestId', 'connection'].includes(key),
+    ) &&
+    isModelId(value.model) &&
     (value.apiKey === undefined || isModelKey(value.apiKey)) &&
+    (value.connection === undefined || isModelConnection(value.connection)) &&
     modelRevision(value.revision) &&
     validAgentId(value.requestId)
   );
@@ -2078,11 +2197,12 @@ export function isModelStatus(value: unknown): value is ModelStatus {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['provider', 'model', 'configured', 'revision', 'requestId'].includes(key),
+      ['provider', 'model', 'configured', 'revision', 'requestId', 'connections'].includes(key),
     ) &&
-    value.provider === 'deepseek-official' &&
-    isDeepSeekModel(value.model) &&
+    validAgentId(value.provider) &&
+    isModelId(value.model) &&
     typeof value.configured === 'boolean' &&
+    (value.connections === undefined || isModelConnections(value.connections)) &&
     modelRevision(value.revision) &&
     (value.requestId === undefined || validAgentId(value.requestId))
   );
@@ -2091,7 +2211,7 @@ export function isModelCheck(value: unknown): value is ModelCheck {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) => ['model', 'revision', 'checkedAt'].includes(key)) &&
-    isDeepSeekModel(value.model) &&
+    isModelId(value.model) &&
     modelRevision(value.revision) &&
     typeof value.checkedAt === 'string' &&
     Number.isFinite(Date.parse(value.checkedAt))
@@ -2112,7 +2232,7 @@ function profileFields(value: Record<string, unknown>) {
     !value.memory.includes('\0') &&
     typeof value.color === 'string' &&
     ['mint', 'violet', 'orange', 'blue', 'teal', 'pink'].includes(value.color) &&
-    (value.model === undefined || isDeepSeekModel(value.model))
+    (value.model === undefined || isModelId(value.model))
   );
 }
 export function isBotProfileInput(value: unknown): value is BotProfileInput {

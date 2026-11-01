@@ -16,6 +16,12 @@ const request = (command: string, tool = 'shell'): CommandReview => ({
 });
 const settings = {
   file: '/mock/private/credentials.json',
+  resolve: async () => ({
+    apiKey: 'mock-private-key',
+    apiModel: 'deepseek-flash',
+    baseURL: 'https://api.deepseek.com/v1',
+    secrets: ['mock-private-key'],
+  }),
   privateConfig: async () => ({
     apiKey: 'mock-private-key',
     model: 'deepseek-flash' as const,
@@ -27,7 +33,7 @@ function reviewer(content = '{"risk":"low"}') {
   const risk = new Risk({
     settings,
     fetcher: async (url, init) => {
-      assert.equal(url, 'https://api.deepseek.com/chat/completions');
+      assert.equal(url, 'https://api.deepseek.com/v1/chat/completions');
       bodies.push(JSON.parse(String(init?.body)));
       return Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] });
     },
@@ -169,7 +175,7 @@ test('risk service failure, truncation, redirects and missing settings fall back
     assert.equal(await risk.review(request('python3 -c "print(1+1)"')), 'ask');
   }
   assert.equal(
-    await new Risk({ settings: { ...settings, privateConfig: async () => null } }).review(
+    await new Risk({ settings: { ...settings, resolve: async () => null } }).review(
       request('node -p "1+1"'),
     ),
     'ask',
@@ -177,4 +183,57 @@ test('risk service failure, truncation, redirects and missing settings fall back
   const abort = new AbortController();
   abort.abort();
   await assert.rejects(reviewer().risk.review(request('pwd'), abort.signal));
+});
+
+test('risk review uses the configured provider and never sends its key to DeepSeek', async () => {
+  const calls: { url: string; body: Record<string, unknown> }[] = [];
+  const customSettings = {
+    ...settings,
+    resolve: async () => ({
+      model: 'provider:mock-supplier:mock-chat',
+      apiModel: 'mock-chat',
+      provider: 'mock-supplier',
+      baseURL: 'https://models.example.test/v1',
+      apiKey: 'synthetic-supplier-key',
+      secrets: ['synthetic-supplier-key', 'synthetic-other-supplier-key'],
+    }),
+  };
+  const risk = new Risk({
+    settings: customSettings,
+    fetcher: async (url, init) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      assert.equal(new Headers(init.headers).get('authorization'), 'Bearer synthetic-supplier-key');
+      return Response.json({
+        choices: [{ finish_reason: 'stop', message: { content: '{"risk":"low"}' } }],
+      });
+    },
+  });
+  assert.equal(await risk.review(request('python3 -c "print(2+3)"')), 'allow');
+  assert.equal(calls[0]?.url, 'https://models.example.test/v1/chat/completions');
+  assert.equal(calls[0]?.body.model, 'mock-chat');
+  assert.equal(calls[0]?.body.thinking, undefined);
+  assert.equal(await risk.review(request('echo synthetic-other-supplier-key')), 'ask');
+  assert.equal(calls.length, 1);
+});
+
+test('a live task review uses its captured route rather than a later workspace default', async () => {
+  const destinations: string[] = [];
+  const options = {
+    settings,
+    resolve: async () => ({
+      baseURL: 'https://task-provider.example.test/v1',
+      apiModel: 'mock-task-model',
+      apiKey: 'synthetic-task-key',
+      secrets: ['synthetic-task-key'],
+    }),
+    fetcher: async (url: string, init: RequestInit) => {
+      destinations.push(url);
+      assert.equal(new Headers(init.headers).get('authorization'), 'Bearer synthetic-task-key');
+      return Response.json({
+        choices: [{ finish_reason: 'stop', message: { content: '{"risk":"low"}' } }],
+      });
+    },
+  };
+  assert.equal(await new Risk(options).review(request('node -p "1+2"')), 'allow');
+  assert.deepEqual(destinations, ['https://task-provider.example.test/v1/chat/completions']);
 });

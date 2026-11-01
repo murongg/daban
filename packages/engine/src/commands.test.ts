@@ -42,7 +42,7 @@ const run = () => ({
 test('production risk policy auto-runs reads once but opens a human approval for deletion', async () => {
   const context = await fixture();
   const policy = new Risk({
-    settings: { file: '/mock/credentials.json', privateConfig: async () => null },
+    settings: { file: '/mock/credentials.json', resolve: async () => null },
   });
   const commands = new Commands({ ...context, review: policy.review });
   let dispatched = 0;

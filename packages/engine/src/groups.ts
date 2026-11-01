@@ -4,7 +4,6 @@ import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  type DeepSeekModel,
   type Group,
   type GroupActionAck,
   type GroupActionReceipt,
@@ -24,6 +23,7 @@ import {
   isGroupSend,
   isTaskFile,
   isTaskFileName,
+  type ModelId,
   type RuntimeFile,
   type RuntimeNotice,
   replyLimit,
@@ -289,7 +289,7 @@ export class Groups {
       ...(row.author ? { author: String(row.author) } : {}),
       ...(row.name ? { name: String(row.name) } : {}),
       ...(row.phase ? { phase: row.phase as GroupMessage['phase'] } : {}),
-      ...(row.model ? { model: row.model as DeepSeekModel } : {}),
+      ...(row.model ? { model: row.model as ModelId } : {}),
       ...(row.files ? { files: JSON.parse(String(row.files)) as RuntimeFile[] } : {}),
     };
   }

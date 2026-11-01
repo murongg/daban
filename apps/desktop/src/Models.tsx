@@ -7,25 +7,19 @@ import {
   modelOptions,
 } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
+import { definitiveModelErrors } from './model-errors';
+import { Providers } from './Providers';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
 
-const definite = new Set([
-  'INVALID_CREDENTIAL',
-  'INVALID_MODEL_SETTINGS',
-  'MODEL_NOT_CONFIGURED',
-  'MODEL_SETTINGS_CONFLICT',
-  'MODEL_SETTINGS_ID_REUSED',
-  'MODEL_SETTINGS_LIMIT',
-  'MODEL_API_UNAUTHORIZED',
-  'MODEL_API_BALANCE',
-  'MODEL_API_RATE_LIMIT',
-  'MODEL_API_UNAVAILABLE',
-  'MODEL_API_INVALID_RESPONSE',
-  'MODEL_API_MODEL_UNAVAILABLE',
-  'RUNTIME_TOO_OLD',
-]);
 export function Models() {
+  const runtime = useRuntime();
+  const providers = useRef(false);
+  // A transient disconnect must not unmount secret drafts or an exact pending configuration intent.
+  if (runtime.snapshot.model.connections !== undefined) providers.current = true;
+  return providers.current ? <Providers /> : <LegacyModels />;
+}
+function LegacyModels() {
   const runtime = useRuntime();
   const model = runtime.snapshot.model;
   const available =
@@ -97,7 +91,7 @@ export function Models() {
         setError(runtimeError(error));
         const code = error instanceof Error ? error.message : '';
         setCode(code);
-        if (definite.has(code)) setPending(undefined);
+        if (definitiveModelErrors.has(code)) setPending(undefined);
       }
     } finally {
       if (mounted.current) setBusy(false);
@@ -194,7 +188,8 @@ export function Models() {
           </fieldset>
           <p className="inline-note">
             密钥由工作区共用，默认模型仅影响选择“跟随工作区”的 Bot。
-            保存前检查官方模型列表，不发送对话内容。更换模型会开启新推理会话，聊天记录保留；当前任务不受影响。
+            保存时验证连接，必要时发送固定测试请求，可能产生少量 API
+            费用，不包含你的聊天内容。更换模型会开启新推理会话，聊天记录保留；当前任务不受影响。
             {runtime.snapshot.protocolVersion >= 16
               ? 'Flash 支持整屏观察；V4 Pro 可使用已连接浏览器的 DOM 工具，不接收整屏截图。'
               : 'Flash 支持桌面观察；V4 Pro 当前用于文本任务，不提供模型电脑操作。'}

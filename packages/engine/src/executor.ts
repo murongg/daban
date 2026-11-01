@@ -17,6 +17,7 @@ import {
   isComputerRequest,
   isDocumentUpload,
   isExecutionRequest,
+  modelExecutionCapability,
   validAgentId,
 } from '@daban/protocol';
 import type { AgentToolRun } from './agent-tools.js';
@@ -402,7 +403,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
   }
   function catalog(run: AgentToolRun) {
     return [
-      ...tools.list(run.bot, run.model).map((tool) =>
+      ...tools.list(run.bot, run.model, undefined, run).map((tool) =>
         tool.name === 'shell'
           ? {
               ...tool,
@@ -493,7 +494,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         version: 1,
         boot,
         nonce,
-        capabilities: [...executionCapabilities],
+        capabilities: [...executionCapabilities, modelExecutionCapability],
         computer: {
           mode: raw.mode,
           bots: raw.bots,

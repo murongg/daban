@@ -8,6 +8,7 @@ seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemo
 import {
   type BotProfile,
   disconnected,
+  type ModelConnection,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeReply,
@@ -107,6 +108,10 @@ function connect(protocol = 14) {
   return {
     invoke,
     profiles,
+    catalog(connections: ModelConnection[], model: string) {
+      snapshot = { ...snapshot, model: { ...snapshot.model, connections, model } };
+      act(publish);
+    },
     advance(id: string, patch: Partial<BotProfile>) {
       const current = profiles.get(id)!;
       profiles.set(id, { ...current, ...patch, revision: current.revision + 1 });
@@ -132,6 +137,38 @@ function connect(protocol = 14) {
     },
   };
 }
+
+it('selects a model from another supplier for one Bot and preserves an unavailable saved route', async () => {
+  const backend = connect(39);
+  backend.catalog(
+    [
+      {
+        id: 'synthetic-provider',
+        name: '示例供应商',
+        baseURL: 'https://models.example.test/v1',
+        models: [
+          { id: 'alpha', name: '示例 Alpha', vision: true, contextWindow: 128000, maxTokens: 8192 },
+          { id: 'beta', name: '示例 Beta', vision: false, contextWindow: 64000, maxTokens: 4096 },
+        ],
+      },
+    ],
+    'provider:synthetic-provider:alpha',
+  );
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: 'Bot 模型：示例 Alpha' }));
+  await selectOption(userEvent, selectControl('此 Bot 的模型'), 'provider:synthetic-provider:beta');
+  await userEvent.click(screen.getByRole('button', { name: '保存资料' }));
+  expect(await screen.findByRole('button', { name: 'Bot 模型：示例 Beta' })).toBeVisible();
+  expect(backend.profiles.get('a')?.model).toBe('provider:synthetic-provider:beta');
+  expect(backend.profiles.get('b')?.model).toBe('deepseek-v4-pro');
+  backend.advance('a', { model: 'provider:missing-provider:missing-model' });
+  await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
+  expect(selectControl('此 Bot 的模型')).toHaveAttribute(
+    'data-value',
+    'provider:missing-provider:missing-model',
+  );
+  expect(selectControl('此 Bot 的模型')).toHaveTextContent('未配置');
+});
 
 it('edits one Bot model from the composer without changing the workspace or another Bot', async () => {
   const backend = connect();

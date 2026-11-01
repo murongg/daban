@@ -1,14 +1,15 @@
 import { validAgentId } from './id.js';
-import type { BrowserState, ComputerStatus, DeepSeekModel } from './index.js';
+import type { BrowserState, ComputerStatus, ModelId } from './index.js';
 import {
   documentLimit,
   isBrowserState,
   isComputerStatus,
-  isDeepSeekModel,
   isDocumentUpload,
+  isModelId,
 } from './index.js';
 
 export const executionVersion = 1;
+export const modelExecutionCapability = 'model-capabilities-v1';
 export const executionCapabilities = [
   'workspace',
   'tools',
@@ -66,7 +67,8 @@ export interface ExecutionRun {
   bot: string;
   workdir: string;
   canonicalRoot: string;
-  model?: DeepSeekModel;
+  model?: ModelId;
+  vision?: boolean;
   limit: number;
 }
 export const executionMethods = [
@@ -123,12 +125,13 @@ const scope = (value: Record<string, unknown>) =>
 export function isExecutionRun(value: unknown): value is ExecutionRun {
   return (
     executionRecord(value) &&
-    executionKeys(value, ['id', 'bot', 'workdir', 'canonicalRoot', 'model', 'limit']) &&
+    executionKeys(value, ['id', 'bot', 'workdir', 'canonicalRoot', 'model', 'vision', 'limit']) &&
     validAgentId(value.id) &&
     validAgentId(value.bot) &&
     absolute(value.workdir) &&
     absolute(value.canonicalRoot) &&
-    (value.model === undefined || isDeepSeekModel(value.model)) &&
+    (value.model === undefined || isModelId(value.model)) &&
+    (value.vision === undefined || typeof value.vision === 'boolean') &&
     integer(value.limit) &&
     Number(value.limit) >= 1 &&
     Number(value.limit) <= 1000
@@ -289,7 +292,11 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length !== executionCapabilities.length ||
+    value.capabilities.length > executionCapabilities.length + 1 ||
+    new Set(value.capabilities).size !== value.capabilities.length ||
+    !value.capabilities.every((capability) =>
+      [...executionCapabilities, modelExecutionCapability].includes(capability),
+    ) ||
     !executionCapabilities.every(
       (capability) => Array.isArray(value.capabilities) && value.capabilities.includes(capability),
     ) ||

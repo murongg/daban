@@ -8,7 +8,8 @@ import {
   type DocumentOriginal,
   type Group,
   imageMime,
-  isDeepSeekModel,
+  isModelId,
+  modelCatalog,
   modelHasVision,
   type RuntimeDownload,
   type RuntimeFile,
@@ -319,8 +320,11 @@ function Workbench() {
     ) {
       const model =
         state.bots.find((entry) => entry.id === botId)?.model || runtime.snapshot.model.model;
-      if (!isDeepSeekModel(model) || !modelHasVision(model)) {
-        notify('当前模型不支持图片，请切换为 Flash 后发送；文字和附件已保留。');
+      if (
+        !isModelId(model) ||
+        !modelHasVision(model, modelCatalog(runtime.snapshot.model.connections))
+      ) {
+        notify('当前模型不支持图片，请切换为支持图片的模型后发送；文字和附件已保留。');
         return;
       }
     }

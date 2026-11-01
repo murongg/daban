@@ -5,6 +5,52 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
 
+it('projects the key-free model catalog from the same revision and preserves custom task model references', async () => {
+  const connection = {
+    id: 'mock-provider',
+    name: '合成供应商',
+    baseURL: 'https://model.example.test/v1',
+    models: [
+      { id: 'mock-chat', name: '合成模型', vision: true, contextWindow: 64000, maxTokens: 4096 },
+    ],
+  };
+  const settings = {
+    provider: 'mock-provider',
+    model: 'provider:mock-provider:mock-chat',
+    configured: true,
+    revision: 3,
+  };
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (url) =>
+      Response.json(
+        url.endsWith('/api/model/settings')
+          ? settings
+          : {
+              ...raw,
+              clientProtocol: 17,
+              mode: 'agent',
+              computerError: 'COMPUTER_START_FAILED',
+              bots: {},
+              sharedLogin: false,
+              model: {
+                ...raw.model,
+                ...settings,
+                connections: [connection],
+                bots: {
+                  a: { ...raw.model.bots.a, model: settings.model },
+                },
+              },
+            },
+      ),
+  });
+  const state = await client.status();
+  expect(state.phase).toBe('ready');
+  expect(state.model.connections).toEqual([connection]);
+  expect(state.agents.a.model).toBe(settings.model);
+});
+
 it('requires protocol31 for GIF/WebP while preserving protocol26 PNG/JPEG support', async () => {
   const data = Buffer.from('synthetic raster source').toString('base64');
   const fetcher = vi.fn(async () => Response.json({}));

@@ -9,7 +9,6 @@ import {
   type ChatRequest,
   type ChatState,
   type ChatStatus,
-  type DeepSeekModel,
   type Group,
   type GroupActionRequest,
   type GroupCopyRequest,
@@ -27,6 +26,7 @@ import {
   isKnowledgeDocument,
   isSkillDocument,
   type KnowledgeDocument,
+  type ModelId,
   type RuntimeTaskSummary,
   type ScheduleInput,
   type SkillDocument,
@@ -111,7 +111,7 @@ export type Theme = 'light' | 'dark';
 export type View = 'chat' | 'inbox' | 'settings' | 'tasks' | 'gallery';
 export interface Bot {
   archived?: boolean;
-  model?: DeepSeekModel;
+  model?: ModelId;
   id: string;
   name: string;
   role: string;
@@ -288,7 +288,7 @@ export type Action =
       role: string;
       color: Color;
       members?: string[];
-      model?: DeepSeekModel;
+      model?: ModelId;
     }
   | { type: 'routine-add'; routine: Routine }
   | { type: 'routine-toggle'; id: string }

@@ -4,6 +4,7 @@ import { Fault } from './control.js';
 import type { AgentWorkspace, TaskDirectory, WorkspaceFile } from './workspace.js';
 
 export interface WorkspaceExecutor {
+  readonly snapshot?: { capabilities: string[] };
   call(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 }
 interface DirectoryReference {

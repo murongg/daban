@@ -2,7 +2,7 @@ import { lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/prom
 import path from 'node:path';
 import type {
   BotProfile,
-  DeepSeekModel,
+  ModelId,
   ReplyStream,
   RuntimeFile,
   RuntimeNotice,
@@ -207,7 +207,8 @@ export interface TaskRecord {
   sessionId?: string;
   sessionProfile?: string;
   sessionPersona?: string;
-  sessionModel?: DeepSeekModel;
+  sessionModel?: ModelId;
+  sessionBinding?: string;
   sessionSkills?: string;
   sessionMcp?: string;
   outputDirectory?: string;
@@ -265,7 +266,7 @@ export interface RunReceipt {
   result?: string;
   error?: string;
   files?: RuntimeFile[];
-  model?: DeepSeekModel;
+  model?: ModelId;
   response?: ReplyStream;
 }
 export interface DocumentInput {
@@ -343,6 +344,7 @@ export class TaskJournal {
       'sessionProfile',
       'sessionPersona',
       'sessionModel',
+      'sessionBinding',
       'sessionSkills',
       'sessionMcp',
       'outputDirectory',

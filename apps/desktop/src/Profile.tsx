@@ -1,5 +1,6 @@
-import { type BotProfile, isDeepSeekModel, modelOptions } from '@daban/protocol';
+import { type BotProfile, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
+import { modelChoices, modelName } from './model-options';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
@@ -68,7 +69,7 @@ export function Profile({
               patch: {
                 name: name.trim(),
                 instructions,
-                ...(modelsAvailable ? { model: isDeepSeekModel(model) ? model : null } : {}),
+                ...(modelsAvailable ? { model: isModelId(model) ? model : null } : {}),
               },
             });
             dispatch({ type: 'profiles', profiles: [updated] });
@@ -123,16 +124,16 @@ export function Profile({
             options={[
               {
                 value: '',
-                label: `跟随工作区 · ${modelOptions.find((option) => option.id === runtime.snapshot.model.model)?.name || '默认模型'}`,
+                label: `跟随工作区 · ${modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections)}`,
               },
-              ...modelOptions.map((option) => ({ value: option.id, label: option.name })),
+              ...modelChoices(runtime.snapshot.model.connections, model),
             ]}
           />
           <span className="field-help">
             {modelsAvailable
               ? runtime.snapshot.protocolVersion >= 16
-                ? '共用工作区 DeepSeek 连接，只影响后续任务。Pro 可操作已连接浏览器的 DOM，整屏观察需要 Flash。'
-                : '共用工作区 DeepSeek 连接，只影响这位 Bot 的后续任务。V4 Pro 不提供模型电脑操作。'
+                ? '使用所选供应商的连接，只影响后续任务。整屏观察需要支持图片的模型。'
+                : '使用工作区已配置的连接，只影响这位 Bot 的后续任务。'
               : '更新本地运行环境后，可为每位 Bot 单独选择模型。'}
           </span>
         </div>
@@ -162,7 +163,9 @@ export function Profile({
             {modelsAvailable && (
               <p className="panel-description">
                 当前模型：
-                {modelOptions.find((option) => option.id === conflict.model)?.name || '跟随工作区'}
+                {conflict.model
+                  ? modelName(conflict.model, runtime.snapshot.model.connections)
+                  : '跟随工作区'}
               </p>
             )}
             <button

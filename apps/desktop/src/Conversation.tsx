@@ -1,11 +1,4 @@
-import {
-  agentId,
-  agentTask,
-  isDeepSeekModel,
-  modelOptions,
-  type RuntimeTask,
-  recoveryBlocked,
-} from '@daban/protocol';
+import { agentId, agentTask, isModelId, type RuntimeTask, recoveryBlocked } from '@daban/protocol';
 import {
   ArrowUp,
   Check,
@@ -26,6 +19,7 @@ import { Execution } from './Execution';
 import { demoIds } from './fixtures';
 import { useInputs } from './inputs';
 import { Markdown } from './Markdown';
+import { modelName as displayModel } from './model-options';
 import { Plan } from './Plan';
 import { Requests } from './Requests';
 import { useRuntime } from './Runtime';
@@ -131,19 +125,20 @@ export function Conversation({
   const modelPicker = live && runtime.snapshot.protocolVersion >= 14;
   const configuredModel =
     bot.model ||
-    (isDeepSeekModel(runtime.snapshot.model.model) ? runtime.snapshot.model.model : undefined);
+    (isModelId(runtime.snapshot.model.model) ? runtime.snapshot.model.model : undefined);
   const shownModel = task?.running ? task.model : configuredModel;
-  const modelName =
-    modelOptions.find((option) => option.id === shownModel)?.name ||
-    (task?.running ? '模型准备中' : 'DeepSeek');
-  const nextModelName =
-    modelOptions.find((option) => option.id === configuredModel)?.name || 'DeepSeek';
-  let modelLabel = 'DeepSeek';
+  const modelName = shownModel
+    ? displayModel(shownModel, runtime.snapshot.model.connections)
+    : task?.running
+      ? '模型准备中'
+      : '选择模型';
+  const nextModelName = displayModel(configuredModel, runtime.snapshot.model.connections);
+  let modelLabel = modelPicker ? modelName : '选择模型';
   if (modelPicker && shownModel === 'deepseek-flash') modelLabel = 'Flash';
   if (modelPicker && shownModel === 'deepseek-v4-pro') modelLabel = 'V4 Pro';
   let modelCaption = '界面演示 · 尚未连接模型';
   if (runtime.enabled) {
-    modelCaption = live ? 'DeepSeek · 通用 Agent' : '群聊协作尚未接入';
+    modelCaption = live ? '通用 Agent' : '群聊协作尚未接入';
     if (modelPicker) {
       modelCaption = task?.running
         ? `本轮：${modelName}${configuredModel !== task.model ? ` · 下次任务：${nextModelName}` : ''}`
@@ -578,7 +573,7 @@ export function Conversation({
                 onClick={onModel}
                 aria-label={modelPicker ? `Bot 模型：${modelName}` : undefined}
               >
-                {modelLabel}
+                <span>{modelLabel}</span>
                 <ChevronDown />
               </button>
             </Tooltip>

@@ -26,7 +26,6 @@ import {
   isChatStatus,
   isComputerAck,
   isComputerStatus,
-  isDeepSeekModel,
   isDiagnosticReport,
   isDocumentOriginal,
   isGroup,
@@ -51,6 +50,8 @@ import {
   isMcpStatus,
   isMemoryPage,
   isModelCheck,
+  isModelConnection,
+  isModelId,
   isModelStatus,
   isNoteAvailability,
   isNoteCommand,
@@ -167,7 +168,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   return {
     chatRevision: task.chatRevision,
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
-    ...(isDeepSeekModel(task.model) ? { model: task.model } : {}),
+    ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
     plan: isTaskPlan(task.plan) ? task.plan : undefined,
     phase: task.phase || 'idle',
@@ -356,6 +357,8 @@ export class RuntimeClient {
         computerError?: unknown;
         sharedLogin?: boolean;
         model?: {
+          connections?: unknown;
+          revision?: number;
           available?: boolean;
           provider?: string;
           model?: string;
@@ -414,6 +417,13 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       }
       if ((raw.clientProtocol || 0) >= 13 && !isModelStatus(settings))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        raw.model?.connections !== undefined &&
+        (!Array.isArray(raw.model.connections) ||
+          raw.model.connections.length > 20 ||
+          !raw.model.connections.every(isModelConnection))
+      )
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
@@ -551,7 +561,14 @@ export class RuntimeClient {
         provider: raw.model?.provider || '',
         model: raw.model?.model || '',
         ...(isModelStatus(settings)
-          ? { model: settings.model, provider: settings.provider, revision: settings.revision }
+          ? {
+              model: settings.model,
+              provider: settings.provider,
+              revision: settings.revision,
+              ...(Array.isArray(raw.model?.connections) && raw.model.revision === settings.revision
+                ? { connections: raw.model.connections }
+                : {}),
+            }
           : {}),
       };
       for (const [id, value] of Object.entries(raw.model?.bots || {})) {

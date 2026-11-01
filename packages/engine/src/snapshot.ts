@@ -1,6 +1,6 @@
 import type {
   BrowserState,
-  DeepSeekModel,
+  ModelId,
   ReplyStream,
   RuntimeFile,
   RuntimeTaskSummary,
@@ -20,7 +20,7 @@ export interface WindowInfo {
 export interface RawModelTask {
   chatRevision?: number;
   conversationId?: string;
-  model?: DeepSeekModel;
+  model?: ModelId;
   response?: ReplyStream;
   plan?: TaskPlan;
   files: RuntimeFile[];

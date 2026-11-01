@@ -5,11 +5,11 @@ import {
   isBotImportReference,
   isBotLifecycleRequest,
   isChatRequest,
-  isDeepSeekModel,
   isGroupActionRequest,
   isGroupCopyRequest,
   isGroupSend,
   isKnowledgeContent,
+  isModelId,
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
@@ -83,7 +83,7 @@ export function restore(raw: string | null): State {
       return initialState();
     // A damaged optional model cache must not discard the user's otherwise valid messages and drafts.
     for (const bot of s.bots)
-      if (record(bot) && bot.model !== undefined && !isDeepSeekModel(bot.model)) delete bot.model;
+      if (record(bot) && bot.model !== undefined && !isModelId(bot.model)) delete bot.model;
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
     // Optional private editor damage must not reset chats or another Bot's pending operation.

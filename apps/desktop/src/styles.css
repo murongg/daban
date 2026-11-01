@@ -945,10 +945,18 @@ textarea.field {
   font-size: 10px;
   color: var(--muted);
   border-radius: 6px;
+  min-width: 0;
+  max-width: min(40%, 220px);
+}
+.model-label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .model-label svg {
   width: 12px;
   height: 12px;
+  flex-shrink: 0;
 }
 .model-label:hover {
   background: var(--soft);
@@ -4416,5 +4424,73 @@ textarea.skill-source {
   }
   .gallery-bot:hover > svg {
     transform: translateX(3px);
+  }
+}
+
+.provider-settings {
+  min-width: 0;
+}
+.provider-row > div {
+  min-width: 0;
+}
+.provider-address {
+  overflow-wrap: anywhere;
+}
+.provider-default {
+  padding: 20px 0;
+}
+.provider-default .model-actions {
+  margin-top: 14px;
+}
+.provider-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.provider-models {
+  margin: 22px 0 16px;
+}
+.provider-model {
+  min-width: 0;
+  margin: 0;
+  padding: 16px 0 20px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.provider-model legend {
+  padding: 0 8px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.provider-vision,
+.provider-default-choice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+  font-size: 12px;
+}
+.provider-limits {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.provider-limits summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.provider-limits[open] summary {
+  margin-bottom: 8px;
+}
+.provider-editor > fieldset > .field-label {
+  margin-top: 14px;
+}
+.provider-default-choice {
+  margin-top: 22px;
+}
+@media (max-width: 720px) {
+  .provider-pair {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 }

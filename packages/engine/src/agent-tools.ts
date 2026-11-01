@@ -4,9 +4,10 @@ import { constants } from 'node:fs';
 import { type FileHandle, link, lstat, open, realpath, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
-  type DeepSeekModel,
   documentLimit,
   isTaskFileName,
+  type ModelId,
+  modelExecutionCapability,
   modelHasVision,
   type TaskRequest,
 } from '@daban/protocol';
@@ -37,11 +38,12 @@ import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  vision?: boolean;
   skills?: SkillSnapshot;
   sessionId?: string;
   integrations?: McpSnapshot;
   task?: TaskRequest;
-  model?: DeepSeekModel;
+  model?: ModelId;
   intentId?: string;
   redact?: (value: string) => string;
   redactResponse?: (value: string) => string;
@@ -151,13 +153,13 @@ export class AgentTools {
         });
     }
   }
-  hasComputer(bot: string, model?: DeepSeekModel) {
+  hasComputer(bot: string, model?: ModelId, vision?: boolean) {
     if (this.options.execution)
       return (
-        (!model || modelHasVision(model)) &&
+        (vision ?? (!model || modelHasVision(model))) &&
         !!this.remoteCatalogs.get(bot)?.some((tool) => tool.name === 'screenshot')
       );
-    if (!this.computer || (model && !modelHasVision(model))) return false;
+    if (!this.computer || !(vision ?? (!model || modelHasVision(model)))) return false;
     try {
       if (this.computer.runtime.available?.(bot) === false) return false;
       this.computer.runtime.control.state(bot);
@@ -182,10 +184,10 @@ export class AgentTools {
       return false;
     }
   }
-  list(bot: string, model?: DeepSeekModel, conversationId?: string, run?: AgentToolRun) {
+  list(bot: string, model?: ModelId, conversationId?: string, run?: AgentToolRun) {
     const tools = this.options.execution
       ? this.remoteCatalogs.get(bot) || workspaceToolList
-      : this.hasComputer(bot, model)
+      : this.hasComputer(bot, model, run?.vision)
         ? agentToolList
         : workspaceToolList;
     return [
@@ -207,6 +209,16 @@ export class AgentTools {
   }
   async open(run: AgentToolRun) {
     if (!this.options.execution || this.opened.has(run)) return;
+    const capabilities =
+      this.options.execution.snapshot?.capabilities.includes(modelExecutionCapability);
+    // Older guests validate exact fields and know only the two original model IDs.
+    if (
+      !capabilities &&
+      run.model &&
+      (!['deepseek-flash', 'deepseek-v4-pro'].includes(run.model) ||
+        (run.vision !== undefined && run.vision !== modelHasVision(run.model)))
+    )
+      throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
     // Pick execution fields explicitly: the live job also contains host credentials and private DSH paths.
     const result = (await this.options.execution.call(
       'tools.open',
@@ -216,6 +228,7 @@ export class AgentTools {
         workdir: run.workdir,
         canonicalRoot: run.canonicalRoot,
         ...(run.model ? { model: run.model } : {}),
+        ...(capabilities && run.vision !== undefined ? { vision: run.vision } : {}),
         limit: run.limit,
       },
       run.abort.signal,
@@ -666,9 +679,9 @@ export class AgentTools {
       return this.schedules.invoke(run, name, args);
     if (computerToolList.some((tool) => tool.name === name)) {
       // Screen actions return images; a text-only route must not operate blindly or receive unsupported image content.
-      if (run.model && !modelHasVision(run.model))
+      if (!(run.vision ?? (!run.model || modelHasVision(run.model))))
         return { isError: true, content: [{ type: 'text', text: 'MODEL_COMPUTER_UNSUPPORTED' }] };
-      return this.computer && this.hasComputer(run.bot, run.model)
+      return this.computer && this.hasComputer(run.bot, run.model, run.vision)
         ? this.computer.invoke(run, name, args)
         : { isError: true, content: [{ type: 'text', text: 'COMPUTER_NOT_CONNECTED' }] };
     }
