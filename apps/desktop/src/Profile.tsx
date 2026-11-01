@@ -1,6 +1,6 @@
 import { type BotProfile, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
-import { modelChoices, modelName } from './model-options';
+import { modelChoices, modelIcon, modelName } from './model-options';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
@@ -124,6 +124,7 @@ export function Profile({
             options={[
               {
                 value: '',
+                icon: modelIcon(runtime.snapshot.model.model, runtime.snapshot.model.connections),
                 label: `跟随工作区 · ${modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections)}`,
               },
               ...modelChoices(runtime.snapshot.model.connections, model),

@@ -63,7 +63,11 @@ Bot 共用 VM、文件、软件和浏览器登录，但各有独立屏幕与控�
 
 ## 模型连接
 
-在设置中添加供应商，每个连接分别保存 API 地址、密钥和多个模型。第一批使用 OpenAI Chat Completions 兼容接口，提供 DeepSeek、千问、Kimi、智谱及自定义地址预设；其他原生协议尚未接入。模型需支持工具调用，图片与整屏观察按各模型明确配置的能力开放。
+在设置中添加供应商，每个连接分别保存 API 地址、协议、密钥和多个模型。支持 OpenAI Chat Completions、OpenAI Responses、Claude Messages 和 Gemini GenerateContent；预设会填写相应的协议与地址，仍可添加自定义连接。模型需支持工具调用，图片与整屏观察按各模型明确配置的能力开放。
+
+平台预设包括 OpenAI、Claude、Gemini、Grok、DeepSeek、千问、Kimi、智谱、MiniMax、豆包、硅基流动、OpenRouter、腾讯混元、百度千帆、Groq 和 Together AI。地区、账户或部署专属地址仍需按供应商文档调整。Azure 部署与 AWS Bedrock 等需要额外鉴权参数的平台尚未接入。
+
+Claude 的 API 地址填写根地址（默认 `https://api.anthropic.com`），SDK 会追加 `/v1/messages`；Gemini 默认地址包含 `/v1beta`。两者直接使用原生接口与认证头，密钥不放入 URL。切换接口协议需要重新填写密钥；已有未声明协议的连接继续使用 Chat Completions，未保存的请求和原有配置保留。
 
 连接验证优先读取模型列表；接口不提供列表时，会发送固定的短测试请求，可能产生少量 API 费用，不包含用户对话。工作区默认模型和各 Bot 的模型分别选择，修改从下次任务生效；运行中的任务保留原连接，会话不会跨供应商复用。
 

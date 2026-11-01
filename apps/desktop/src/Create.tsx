@@ -1,7 +1,7 @@
 import { agentId, type BotProfileInput, type GroupInput, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar, colors } from './Avatar';
-import { modelChoices, modelName } from './model-options';
+import { modelChoices, modelIcon, modelName } from './model-options';
 import type { BotPreset } from './presets';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
@@ -236,6 +236,10 @@ export function Create({
                   options={[
                     {
                       value: '',
+                      icon: modelIcon(
+                        runtime.snapshot.model.model,
+                        runtime.snapshot.model.connections,
+                      ),
                       label: `跟随工作区 · ${modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections)}`,
                     },
                     ...modelChoices(runtime.snapshot.model.connections, model),

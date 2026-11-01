@@ -19,7 +19,7 @@ import { Execution } from './Execution';
 import { demoIds } from './fixtures';
 import { useInputs } from './inputs';
 import { Markdown } from './Markdown';
-import { modelName as displayModel } from './model-options';
+import { modelName as displayModel, modelIcon } from './model-options';
 import { Plan } from './Plan';
 import { Requests } from './Requests';
 import { useRuntime } from './Runtime';
@@ -573,6 +573,7 @@ export function Conversation({
                 onClick={onModel}
                 aria-label={modelPicker ? `Bot 模型：${modelName}` : undefined}
               >
+                {modelPicker && modelIcon(shownModel, runtime.snapshot.model.connections)}
                 <span>{modelLabel}</span>
                 <ChevronDown />
               </button>

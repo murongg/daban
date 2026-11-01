@@ -16,6 +16,275 @@ import {
 } from '@daban/protocol';
 import { ModelSettings } from './settings.js';
 
+test('native Claude discovery uses its Messages API credential and protocol survives persistence', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-native-claude-'));
+  const calls: { url: string; init?: RequestInit }[] = [];
+  try {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json({ type: 'model', id: 'mock-claude' });
+    });
+    await settings.configure({
+      model: 'provider:mock-claude:mock-claude',
+      apiKey: 'synthetic-claude-key',
+      revision: 0,
+      requestId: 'mock-native-claude',
+      connection: {
+        id: 'mock-claude',
+        name: 'Synthetic Claude',
+        baseURL: 'https://claude.example.test',
+        api: 'anthropic-messages',
+        models: [
+          {
+            id: 'mock-claude',
+            name: 'Mock Claude',
+            vision: true,
+            contextWindow: 64000,
+            maxTokens: 4096,
+          },
+        ],
+      },
+    });
+    assert.equal(calls[0].url, 'https://claude.example.test/v1/models/mock-claude');
+    assert.equal(new Headers(calls[0].init?.headers).get('x-api-key'), 'synthetic-claude-key');
+    assert.equal(new Headers(calls[0].init?.headers).get('anthropic-version'), '2023-06-01');
+    assert.equal(new Headers(calls[0].init?.headers).get('authorization'), null);
+    assert.equal(
+      Reflect.get((await settings.status(true)).connections![0], 'api'),
+      'anthropic-messages',
+    );
+    assert.equal(Reflect.get(await settings.resolve(), 'api'), 'anthropic-messages');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native Gemini checks each configured model resource without query credentials', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-native-gemini-'));
+  const calls: { url: string; init?: RequestInit }[] = [];
+  try {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
+      calls.push({ url: String(url), init });
+      const name = String(url).split('/').at(-1)!;
+      return Response.json({
+        name: `models/${name}`,
+        supportedGenerationMethods: ['generateContent'],
+      });
+    });
+    await settings.configure({
+      model: 'provider:mock-google:models/mock-gemini',
+      apiKey: 'synthetic-google-key',
+      revision: 0,
+      requestId: 'mock-native-google',
+      connection: {
+        id: 'mock-google',
+        name: 'Synthetic Gemini',
+        baseURL: 'https://google.example.test/v1beta',
+        api: 'google-generative-ai',
+        models: ['models/mock-gemini', 'mock-gemini-two'].map((id) => ({
+          id,
+          name: id,
+          vision: true,
+          contextWindow: 64000,
+          maxTokens: 4096,
+        })),
+      },
+    });
+    assert.deepEqual(
+      calls.map((item) => item.url),
+      [
+        'https://google.example.test/v1beta/models/mock-gemini',
+        'https://google.example.test/v1beta/models/mock-gemini-two',
+      ],
+    );
+    assert.equal(
+      calls.every((item) => !item.url.includes('synthetic-google-key')),
+      true,
+    );
+    assert.equal(new Headers(calls[0].init?.headers).get('x-goog-api-key'), 'synthetic-google-key');
+    assert.equal(new Headers(calls[0].init?.headers).get('authorization'), null);
+    assert.equal((await settings.resolve()).apiModel, 'mock-gemini');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native Claude aliases are verified by resource lookup without replacing the requested alias', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-claude-alias-'));
+  const calls: string[] = [];
+  try {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url) => {
+      calls.push(String(url));
+      return Response.json({ type: 'model', id: 'mock-claude-versioned' });
+    });
+    await settings.configure({
+      model: 'provider:mock-claude:mock-claude-latest',
+      apiKey: 'synthetic-claude-key',
+      revision: 0,
+      requestId: 'mock-native-alias',
+      connection: {
+        id: 'mock-claude',
+        name: 'Synthetic Claude',
+        api: 'anthropic-messages',
+        baseURL: 'https://claude.example.test',
+        models: [
+          {
+            id: 'mock-claude-latest',
+            name: 'Mock Claude',
+            vision: true,
+            contextWindow: 64000,
+            maxTokens: 4096,
+          },
+        ],
+      },
+    });
+    assert.deepEqual(calls, ['https://claude.example.test/v1/models/mock-claude-latest']);
+    assert.equal((await settings.resolve()).apiModel, 'mock-claude-latest');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('model API selectors reject nonstring values and native Google path traversal', async () => {
+  const { isModelApi, modelApi } = await import('@daban/protocol');
+  assert.equal(isModelApi({ toString: () => 'anthropic-messages' }), false);
+  assert.equal(modelApi({}), 'openai-completions');
+  for (const id of ['../mock-model', 'models/../mock-model', 'models/one/two'])
+    assert.equal(
+      isModelConnection({
+        ...syntheticConnection(),
+        api: 'google-generative-ai',
+        models: [{ ...syntheticConnection().models[0], id }],
+      }),
+      false,
+    );
+  assert.equal(
+    isModelConnection({
+      ...syntheticConnection('deepseek-official', 'https://api.deepseek.com/v1'),
+      api: 'anthropic-messages',
+    }),
+    false,
+  );
+});
+
+test('changing protocol requires explicit credentials and retires the prior captured model binding', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-protocol-change-'));
+  let calls = 0;
+  try {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url) => {
+      calls++;
+      return String(url).includes('/v1/models/')
+        ? Response.json({ type: 'model', id: 'mock-model' })
+        : Response.json({ data: [{ id: 'mock-model' }] });
+    });
+    const connection = {
+      id: 'mock-protocol',
+      name: 'Synthetic protocol',
+      baseURL: 'https://model.example.test',
+      models: [
+        { id: 'mock-model', name: 'Mock', vision: true, contextWindow: 64000, maxTokens: 4096 },
+      ],
+    };
+    const original = {
+      model: 'provider:mock-protocol:mock-model',
+      connection,
+      apiKey: 'synthetic-original-key',
+      revision: 0,
+      requestId: 'mock-protocol-original',
+    };
+    await settings.configure(original);
+    const first = await settings.resolve();
+    const before = await readFile(settings.file, 'utf8');
+    const next = {
+      model: original.model,
+      connection: { ...connection, api: 'anthropic-messages' },
+      revision: 1,
+      requestId: 'mock-protocol-change',
+    };
+    await assert.rejects(settings.configure(next), { code: 'MODEL_CREDENTIAL_REQUIRED' });
+    assert.equal(calls, 1);
+    assert.equal(await readFile(settings.file, 'utf8'), before);
+    const input = { ...next, apiKey: 'synthetic-new-protocol-key' };
+    const saved = await settings.configure(input);
+    assert.notEqual((await settings.resolve()).binding, first.binding);
+    assert.equal((await settings.resolve()).api, 'anthropic-messages');
+    assert.deepEqual(await settings.configure(input), saved);
+    assert.equal(calls, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('absent native model-discovery routes probe only their native completion protocol', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-native-fallback-'));
+  try {
+    for (const [api, endpoint, reply] of [
+      [
+        'anthropic-messages',
+        '/v1/messages',
+        {
+          type: 'message',
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'OK' }],
+        },
+      ],
+      [
+        'google-generative-ai',
+        '/models/mock-model:generateContent',
+        { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'OK' }] } }] },
+      ],
+      [
+        'openai-responses',
+        '/responses',
+        {
+          status: 'completed',
+          output: [
+            { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'OK' }] },
+          ],
+        },
+      ],
+    ] as const) {
+      const calls: { url: string; init?: RequestInit }[] = [];
+      const settings = new ModelSettings(path.join(root, `${api}.json`), async (url, init) => {
+        calls.push({ url: String(url), init });
+        return calls.length === 1 ? new Response(null, { status: 404 }) : Response.json(reply);
+      });
+      const input = {
+        model: 'provider:mock-native:mock-model',
+        revision: 0,
+        requestId: 'mock-native-fallback',
+        apiKey: 'synthetic-native-key',
+        connection: {
+          id: 'mock-native',
+          name: 'Synthetic native',
+          baseURL: 'https://native.example.test',
+          api,
+          models: [
+            {
+              id: 'mock-model',
+              name: 'Mock',
+              vision: false,
+              contextWindow: 64000,
+              maxTokens: 4096,
+            },
+          ],
+        },
+      };
+      const result = await settings.configure(input);
+      assert.equal(calls.length, 2);
+      assert.equal(calls[1].url, `https://native.example.test${endpoint}`);
+      assert.equal(calls[1].url.includes(input.apiKey), false);
+      assert.equal(String(calls[1].init?.body).includes('Reply OK.'), true);
+      assert.equal(calls[1].init?.redirect, 'error');
+      assert.deepEqual(await settings.configure(input), result);
+      assert.equal(calls.length, 2);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('the legacy DeepSeek guard does not authorize a foreign provider model reference', async () => {
   const { isDeepSeekModel, isModelId } = await import('@daban/protocol');
   assert.equal(isModelId('provider:mock-provider:mock-chat'), true);

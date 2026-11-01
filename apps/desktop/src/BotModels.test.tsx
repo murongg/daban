@@ -170,6 +170,17 @@ it('selects a model from another supplier for one Bot and preserves an unavailab
   expect(selectControl('此 Bot 的模型')).toHaveTextContent('未配置');
 });
 
+it('shows the inherited supplier mark when a Bot follows the workspace model', async () => {
+  connect();
+  render(<App />);
+  const picker = await screen.findByRole('button', { name: 'Bot 模型：DeepSeek V4.1 Flash' });
+  expect(picker.querySelector('[data-provider="deepseek"] img')).toBeInTheDocument();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 Bot 资料' }));
+  expect(
+    selectControl('此 Bot 的模型').querySelector('[data-provider="deepseek"] img'),
+  ).toBeInTheDocument();
+});
+
 it('edits one Bot model from the composer without changing the workspace or another Bot', async () => {
   const backend = connect();
   render(<App />);

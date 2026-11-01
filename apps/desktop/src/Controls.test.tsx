@@ -52,6 +52,29 @@ it('draws a selectable list, skips disabled options and restores trigger focus o
   await waitFor(() => expect(trigger).toHaveFocus());
 });
 
+it('keeps icon-decorated selection labels searchable and keyboard-selectable', async () => {
+  const change = vi.fn();
+  const decorated = [
+    {
+      value: 'alpha',
+      label: 'Alpha model',
+      icon: <span aria-hidden="true" data-model-icon="alpha" />,
+    },
+    {
+      value: 'beta',
+      label: 'Beta model',
+      icon: <span aria-hidden="true" data-model-icon="beta" />,
+    },
+  ];
+  render(<Select label="合成图标选择" value="alpha" options={decorated} onValueChange={change} />);
+  const trigger = screen.getByRole('button', { name: /合成图标选择$/ });
+  expect(trigger.querySelector('[data-model-icon="alpha"]')).toBeInTheDocument();
+  await userEvent.click(trigger);
+  expect(screen.getByRole('option', { name: 'Beta model' })).toBeVisible();
+  await userEvent.keyboard('b{Enter}');
+  expect(change).toHaveBeenCalledWith('beta');
+});
+
 it('closes only the topmost popup, then allows the enclosing dialog to close', async () => {
   const close = vi.fn();
   render(

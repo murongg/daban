@@ -2042,6 +2042,18 @@ export const modelOptions = [
 ] as const;
 export type ModelId = string;
 export type DeepSeekModel = (typeof modelOptions)[number]['id'];
+export type ModelApi =
+  | 'openai-completions'
+  | 'openai-responses'
+  | 'anthropic-messages'
+  | 'google-generative-ai';
+export const isModelApi = (value: unknown): value is ModelApi =>
+  typeof value === 'string' &&
+  ['openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai'].includes(
+    value,
+  );
+export const modelApi = (connection: { api?: ModelApi }): ModelApi =>
+  connection.api ?? 'openai-completions';
 export interface ModelDefinition {
   id: string;
   name: string;
@@ -2053,6 +2065,7 @@ export interface ModelConnection {
   id: string;
   name: string;
   baseURL: string;
+  api?: ModelApi;
   models: ModelDefinition[];
 }
 export interface ModelOption {
@@ -2136,19 +2149,26 @@ export function isModelDefinition(value: unknown): value is ModelDefinition {
 export function isModelConnection(value: unknown): value is ModelConnection {
   return (
     profileObject(value) &&
-    Object.keys(value).every((key) => ['id', 'name', 'baseURL', 'models'].includes(key)) &&
+    Object.keys(value).every((key) => ['id', 'name', 'baseURL', 'api', 'models'].includes(key)) &&
     validAgentId(value.id) &&
     typeof value.name === 'string' &&
     value.name.trim().length > 0 &&
     value.name.length <= 80 &&
     modelText(value.name) &&
     isModelBaseURL(value.baseURL) &&
+    (value.api === undefined || isModelApi(value.api)) &&
     // Legacy key-only writes address this reserved route, so its destination must remain fixed.
-    (value.id !== 'deepseek-official' || value.baseURL === 'https://api.deepseek.com/v1') &&
+    (value.id !== 'deepseek-official' ||
+      (value.baseURL === 'https://api.deepseek.com/v1' &&
+        (value.api === undefined || value.api === 'openai-completions'))) &&
     Array.isArray(value.models) &&
     value.models.length >= 1 &&
     value.models.length <= 50 &&
     value.models.every(isModelDefinition) &&
+    (value.api !== 'google-generative-ai' ||
+      value.models.every((model) =>
+        /^(?:models\/)?[a-zA-Z0-9][a-zA-Z0-9._-]{0,159}$/.test(model.id),
+      )) &&
     new Set(value.models.map((model) => model.id)).size === value.models.length
   );
 }

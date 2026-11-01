@@ -81,6 +81,9 @@ import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './works
 const defaultSdkFile =
   '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
 const model = 'deepseek-flash';
+// Every task owns its Harness process, so the native Google catalog route cannot alias another connection's key or session.
+const sdkProvider = (route: Pick<ResolvedModel, 'provider' | 'api'>) =>
+  route.api === 'google-generative-ai' ? 'google' : route.provider;
 // Risk-based approval replaces the all-command approval context; keep chat history, retire its SDK session.
 const sessionProfile = 'general-v11-risk-context';
 const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
@@ -221,9 +224,11 @@ export function sdkPatch(
           name: '@deepseek-ai/dsh-llm-pi-ai',
           config: {
             providers: {
-              [route?.provider || 'deepseek-official']: {
+              [route ? sdkProvider(route) : 'deepseek-official']: {
                 apiKeyEnv: route ? 'DABAN_MODEL_KEY' : 'DEEPSEEK_API_KEY',
-                api: 'openai-completions',
+                ...(route?.api === 'google-generative-ai'
+                  ? {}
+                  : { api: route?.api || 'openai-completions' }),
                 baseURL: route?.baseURL || 'https://api.deepseek.com/v1',
                 defaultInput: ['text'],
                 retryPolicy: { mode: 'normal', maxRetries: 2 },
@@ -1345,7 +1350,7 @@ export class ModelRuns {
         // Native tools use scoped RPC; keep SDK discovery/config reads away from desktop-writable task files.
         processCwd: job.privateDir,
         cwd: job.privateDir,
-        provider: config.provider,
+        provider: sdkProvider(config),
         model: config.apiModel,
         maxTokens: config.maxTokens,
         initializeTimeoutMs: 40000,

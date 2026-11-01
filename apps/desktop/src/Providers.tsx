@@ -1,10 +1,12 @@
 import {
+  isModelApi,
   isModelConnection,
   isModelKey,
   type ModelCheck,
   type ModelConnection,
   type ModelDefinition,
   type ModelUpdate,
+  modelApi,
   modelCatalog,
   modelReference,
 } from '@daban/protocol';
@@ -12,16 +14,11 @@ import { useEffect, useRef, useState } from 'react';
 import { definitiveModelErrors } from './model-errors';
 import { modelChoices, modelName } from './model-options';
 import { NumberField } from './NumberField';
+import { ProviderIcon } from './ProviderIcon';
+import { apiOptions, platforms as presets, providerIdentity } from './platforms';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
 
-const presets = [
-  { id: 'custom', name: '自定义兼容接口', baseURL: '' },
-  { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1' },
-  { id: 'qwen', name: '千问', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { id: 'kimi', name: 'Kimi', baseURL: 'https://api.moonshot.cn/v1' },
-  { id: 'zhipu', name: '智谱', baseURL: 'https://open.bigmodel.cn/api/paas/v4' },
-];
 const newModel = (): ModelDefinition => ({
   id: '',
   name: '',
@@ -67,7 +64,11 @@ export function Providers() {
     };
   }, []);
   const original = connections.find((connection) => connection.id === draft?.connection.id);
-  const retainKey = !!original && original.baseURL === draft?.connection.baseURL;
+  const retainKey =
+    !!original &&
+    !!draft &&
+    original.baseURL === draft.connection.baseURL &&
+    modelApi(original) === modelApi(draft.connection);
   const current = selected ?? model.model;
   function edit(connection?: ModelConnection) {
     setDraft({
@@ -78,8 +79,12 @@ export function Providers() {
       revision: model.revision!,
       selected: model.configured ? model.model : '',
       preset:
-        presets.find((preset) => preset.baseURL && preset.baseURL === connection?.baseURL)?.id ||
-        'custom',
+        presets.find(
+          (preset) =>
+            preset.baseURL &&
+            preset.baseURL === connection?.baseURL &&
+            preset.api === modelApi(connection || {}),
+        )?.id || 'custom',
       keys: (connection?.models || [null]).map(() => crypto.randomUUID()),
       defaultFirst: !model.configured,
     });
@@ -108,7 +113,7 @@ export function Providers() {
           return;
         }
         if ((!retainKey && !draft.apiKey) || (draft.apiKey && !isModelKey(draft.apiKey))) {
-          setError('请为这个供应商填写完整的 API Key。更换 API 地址时需要重新填写。');
+          setError('请为这个供应商填写完整的 API Key。更换 API 地址或接口协议时需要重新填写。');
           return;
         }
         const selectedModel = draft.defaultFirst
@@ -201,7 +206,7 @@ export function Providers() {
         <div>
           <div className="setting-label">供应商与模型</div>
           <p className="setting-description">
-            添加多个兼容接口，为不同 Bot 选择适合的模型。密钥只保存在本机 Agent 服务中。
+            添加常用供应商或自定义接口，为不同 Bot 选择模型。密钥只保存在本机 Agent 服务中。
           </p>
         </div>
         <button
@@ -215,12 +220,15 @@ export function Providers() {
       </div>
       {connections.map((connection) => (
         <div className="setting-row provider-row" key={connection.id}>
-          <div>
-            <div className="setting-label">{connection.name}</div>
-            <p className="setting-description provider-address">{connection.baseURL}</p>
-            <p className="setting-description">
-              {connection.models.map((entry) => entry.name).join(' · ')}
-            </p>
+          <div className="provider-identity">
+            <ProviderIcon platform={providerIdentity(connection)} size="large" />
+            <div>
+              <div className="setting-label">{connection.name}</div>
+              <p className="setting-description provider-address">{connection.baseURL}</p>
+              <p className="setting-description">
+                {connection.models.map((entry) => entry.name).join(' · ')}
+              </p>
+            </div>
           </div>
           <button
             className="text-button"
@@ -321,7 +329,11 @@ export function Providers() {
                   label="供应商类型"
                   value={draft.preset}
                   disabled={!available || busy || !!pending}
-                  options={presets.map((preset) => ({ value: preset.id, label: preset.name }))}
+                  options={presets.map((preset) => ({
+                    value: preset.id,
+                    label: preset.name,
+                    icon: <ProviderIcon platform={preset.id} />,
+                  }))}
                   onValueChange={(value) => {
                     const preset = presets.find((entry) => entry.id === value);
                     if (preset)
@@ -332,13 +344,37 @@ export function Providers() {
                           ...draft.connection,
                           ...(preset.id === 'custom'
                             ? {}
-                            : { name: preset.name, baseURL: preset.baseURL }),
+                            : { name: preset.name, baseURL: preset.baseURL, api: preset.api }),
                         },
                       });
                   }}
                 />
               </div>
             )}
+            <div className="field-label">
+              接口协议
+              <Select
+                label="接口协议"
+                value={modelApi(draft.connection)}
+                disabled={
+                  !available || busy || !!pending || draft.connection.id === 'deepseek-official'
+                }
+                options={apiOptions}
+                onValueChange={(value) => {
+                  if (!isModelApi(value)) return;
+                  const { api: _api, ...connection } = draft.connection;
+                  // Leaving an unchanged legacy connection absent preserves its original save fingerprint.
+                  setDraft({
+                    ...draft,
+                    preset: 'custom',
+                    connection:
+                      original?.api === undefined && value === 'openai-completions'
+                        ? connection
+                        : { ...connection, api: value },
+                  });
+                }}
+              />
+            </div>
             <div className="provider-pair">
               <label className="field-label">
                 供应商名称
@@ -379,6 +415,16 @@ export function Providers() {
                 DeepSeek 官方连接使用固定地址。如需使用网关，请另外添加供应商。
               </p>
             )}
+            {modelApi(draft.connection) === 'anthropic-messages' && (
+              <p className="field-help">
+                Claude 原生 API 地址填写服务根地址，例如 https://api.anthropic.com，不带 /v1。
+              </p>
+            )}
+            {modelApi(draft.connection) === 'google-generative-ai' && (
+              <p className="field-help">
+                Gemini 原生 API 使用 /v1beta 地址。模型 ID 从供应商控制台复制。
+              </p>
+            )}
             <label className="field-label">
               API Key
               <input
@@ -395,11 +441,11 @@ export function Providers() {
             <p className="field-help">
               {retainKey
                 ? '留空保留这个供应商的现有密钥。'
-                : '新供应商或新的 API 地址需要单独填写密钥。'}{' '}
+                : '新供应商、新的 API 地址或接口协议需要单独填写密钥。'}{' '}
               密钥不会写入客户端存储；离开此页会清空未提交输入。
             </p>
             <p className="inline-note">
-              使用 OpenAI Chat Completions 兼容接口。请按供应商文档填写模型 ID
+              使用所选接口协议。请按供应商文档填写模型 ID
               和能力。保存时会验证连接；必要时发送固定的测试请求，产生少量 API
               费用，不包含你的聊天内容。
             </p>

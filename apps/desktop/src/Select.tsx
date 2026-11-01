@@ -1,5 +1,5 @@
 import { Check, ChevronDown } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import {
   Select as AriaSelect,
   Button,
@@ -14,6 +14,7 @@ export interface SelectOption {
   value: string;
   label: string;
   disabled?: boolean;
+  icon?: ReactNode;
 }
 export function Select({
   label,
@@ -30,6 +31,7 @@ export function Select({
   disabled?: boolean;
   className?: string;
 }) {
+  const selected = options.find((option) => option.value === value);
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (disabled) setOpen(false);
@@ -49,7 +51,14 @@ export function Select({
       }}
     >
       <Button aria-label={label} className="field select-trigger" data-value={value}>
-        <SelectValue>{({ selectedText }) => selectedText || '请选择'}</SelectValue>
+        <SelectValue>
+          {({ selectedText }) => (
+            <span className="select-label">
+              {selected?.icon}
+              <span className="select-text">{selectedText || '请选择'}</span>
+            </span>
+          )}
+        </SelectValue>
         <ChevronDown aria-hidden="true" />
       </Button>
       <Popover
@@ -68,7 +77,10 @@ export function Select({
               data-value={option.value}
               className="select-option"
             >
-              <span>{option.label}</span>
+              <span className="select-label">
+                {option.icon}
+                <span className="select-text">{option.label}</span>
+              </span>
               <Check aria-hidden="true" />
             </ListBoxItem>
           ))}

@@ -8,6 +8,53 @@ import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
 
+test('native model routes select their actual DSH wire protocol without changing domain connection identity', () => {
+  for (const [api, key, expectedApi] of [
+    ['anthropic-messages', 'mock-native', 'anthropic-messages'],
+    ['google-generative-ai', 'google', undefined],
+    ['openai-responses', 'mock-native', 'openai-responses'],
+  ] as const) {
+    const route = {
+      api,
+      provider: 'mock-native',
+      model: 'provider:mock-native:mock-model',
+      apiModel: 'mock-model',
+      baseURL: 'https://native.example.test',
+      apiKey: 'synthetic-native-key',
+      vision: true,
+      contextWindow: 128000,
+      maxTokens: 8192,
+      binding: 'a'.repeat(64),
+      secrets: ['synthetic-native-key'],
+    };
+    const patch = Reflect.apply(sdkPatch, undefined, [
+      'http://127.0.0.1:8766',
+      'mock-bot',
+      'mock-token',
+      undefined,
+      60,
+      route.model,
+      { available: true, key: '', skills: [] },
+      undefined,
+      route,
+    ]) as ReturnType<typeof sdkPatch>;
+    const plugin = patch
+      .flatMap((entry) => ('insert' in entry ? entry.insert : []))
+      .find((entry) => entry.id === 'desktop-model-provider');
+    const profiles = (
+      plugin as unknown as {
+        config: { providers: Record<string, { api?: string; apiKeyEnv: string; baseURL: string }> };
+      }
+    ).config.providers;
+    assert.ok(profiles[key], api);
+    assert.equal(profiles[key].api, expectedApi, api);
+    assert.equal(profiles[key].apiKeyEnv, 'DABAN_MODEL_KEY');
+    assert.equal(profiles[key].baseURL, route.baseURL);
+    assert.equal(route.provider, 'mock-native');
+    assert.equal(JSON.stringify(patch).includes(route.apiKey), false);
+  }
+});
+
 test('a captured supplier route controls DSH endpoint, model capabilities and independent key environment', () => {
   const route = {
     model: 'provider:mock-supplier:mock-chat',

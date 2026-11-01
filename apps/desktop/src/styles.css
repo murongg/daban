@@ -4433,6 +4433,17 @@ textarea.skill-source {
 .provider-row > div {
   min-width: 0;
 }
+.provider-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.provider-identity > div {
+  min-width: 0;
+}
+.provider-identity > .provider-icon {
+  margin-top: 2px;
+}
 .provider-address {
   overflow-wrap: anywhere;
 }

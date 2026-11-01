@@ -40,6 +40,74 @@ function reviewer(content = '{"risk":"low"}') {
   });
   return { risk, bodies };
 }
+
+test('native risk review uses the captured protocol headers and reads only a complete native decision', async () => {
+  const verdict = '{"risk":"low"}';
+  for (const [api, baseURL, endpoint, header, response] of [
+    [
+      'anthropic-messages',
+      'https://claude.example.test',
+      'https://claude.example.test/v1/messages',
+      'x-api-key',
+      {
+        type: 'message',
+        role: 'assistant',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: verdict }],
+      },
+    ],
+    [
+      'google-generative-ai',
+      'https://gemini.example.test/v1beta',
+      'https://gemini.example.test/v1beta/models/mock-model:generateContent',
+      'x-goog-api-key',
+      {
+        candidates: [
+          { content: { role: 'model', parts: [{ text: verdict }] }, finishReason: 'STOP' },
+        ],
+      },
+    ],
+    [
+      'openai-responses',
+      'https://responses.example.test/v1',
+      'https://responses.example.test/v1/responses',
+      'authorization',
+      {
+        status: 'completed',
+        output: [
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: verdict }] },
+        ],
+      },
+    ],
+  ] as const) {
+    let called = 0;
+    const source = {
+      file: '/mock/private/credentials.json',
+      resolve: async () => ({
+        api,
+        baseURL,
+        apiModel: 'mock-model',
+        apiKey: 'synthetic-native-key',
+        secrets: ['synthetic-native-key'],
+      }),
+    };
+    const risk = new Risk({
+      settings: source,
+      fetcher: async (url, init) => {
+        called++;
+        assert.equal(url, endpoint);
+        assert.equal(
+          new Headers(init.headers).get(header),
+          header === 'authorization' ? 'Bearer synthetic-native-key' : 'synthetic-native-key',
+        );
+        assert.equal(url.includes('synthetic-native-key'), false);
+        return Response.json(response);
+      },
+    });
+    assert.equal(await risk.review(request('node -p "1+2"')), 'allow', api);
+    assert.equal(called, 1);
+  }
+});
 test('ordinary reads, metadata and safe pipelines execute without a reviewer or human', async () => {
   const { risk, bodies } = reviewer();
   for (const command of [

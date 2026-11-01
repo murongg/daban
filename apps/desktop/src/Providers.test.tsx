@@ -1,5 +1,6 @@
 import {
   disconnected,
+  type ModelConnection,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeReply,
@@ -25,7 +26,11 @@ const connection = {
     { id: 'model-beta', name: '示例 Beta', vision: false, contextWindow: 64000, maxTokens: 4096 },
   ],
 };
-function connect(failFirst: boolean | string = false, saved = connection, model = 'model-alpha') {
+function connect(
+  failFirst: boolean | string = false,
+  saved: ModelConnection = connection,
+  model = 'model-alpha',
+) {
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 39;
   snapshot.model = {
@@ -95,6 +100,108 @@ function mount() {
     </RuntimeProvider>,
   );
 }
+
+it.each([
+  ['claude', 'https://api.anthropic.com', 'anthropic-messages', 'Claude Messages'],
+  [
+    'gemini',
+    'https://generativelanguage.googleapis.com/v1beta',
+    'google-generative-ai',
+    'Gemini GenerateContent',
+  ],
+  ['openai', 'https://api.openai.com/v1', 'openai-responses', 'OpenAI Responses'],
+])(
+  'uses the native %s preset and submits its actual protocol',
+  async (preset, baseURL, api, label) => {
+    const { writes } = connect();
+    mount();
+    await userEvent.click(await screen.findByRole('button', { name: '添加供应商' }));
+    await selectOption(userEvent, selectControl('供应商类型'), preset);
+    expect(screen.getByLabelText('API 地址')).toHaveValue(baseURL);
+    expect(selectControl('接口协议')).toHaveTextContent(label);
+    await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-native-provider-key');
+    await userEvent.type(screen.getByLabelText('模型 1 ID'), 'synthetic-native-model');
+    await userEvent.click(screen.getByLabelText('将首个模型设为工作区默认模型'));
+    await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+    expect(writes[0]).toMatchObject({
+      type: 'model.configure',
+      input: { connection: { baseURL, api } },
+    });
+  },
+);
+
+it('offers mainstream platform presets with explicit protocols instead of placeholder providers', async () => {
+  connect();
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '添加供应商' }));
+  await userEvent.click(selectControl('供应商类型'));
+  const text = screen.getByRole('listbox').textContent;
+  for (const name of [
+    'OpenAI',
+    'Claude',
+    'Gemini',
+    'Grok',
+    'DeepSeek',
+    '千问',
+    'Kimi',
+    '智谱',
+    'MiniMax',
+    '豆包',
+    '硅基流动',
+    'OpenRouter',
+    '腾讯混元',
+    '百度千帆',
+    'Groq',
+    'Together',
+  ])
+    expect(text).toContain(name);
+});
+
+it('uses endpoint identity for vendor icons in provider rows and model choices, never an editable name', async () => {
+  connect(false, {
+    ...connection,
+    name: '任意连接名称',
+    baseURL: 'https://api.anthropic.com',
+    api: 'anthropic-messages',
+  });
+  const view = mount();
+  await screen.findByRole('button', { name: '编辑 任意连接名称' });
+  expect(
+    view.container.querySelector('.provider-row [data-provider="claude"] img'),
+  ).toBeInTheDocument();
+  expect(
+    selectControl('工作区默认模型').querySelector('[data-provider="claude"] img'),
+  ).toBeInTheDocument();
+});
+
+it.each(['https://model.example.test/v1', 'https://api.anthropic.com/proxy'])(
+  'keeps a custom endpoint generic even when its name claims a vendor: %s',
+  async (baseURL) => {
+    connect(false, { ...connection, name: 'Claude', baseURL, api: 'anthropic-messages' });
+    const view = mount();
+    await screen.findByRole('button', { name: '编辑 Claude' });
+    expect(
+      view.container.querySelector('.provider-row [data-provider="custom"]'),
+    ).toBeInTheDocument();
+    expect(
+      view.container.querySelector('.provider-row [data-provider="claude"]'),
+    ).not.toBeInTheDocument();
+  },
+);
+
+it('requires a fresh key when changing a saved connection protocol and preserves missing legacy api metadata', async () => {
+  const { writes } = connect();
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await selectOption(userEvent, selectControl('接口协议'), 'anthropic-messages');
+  expect(screen.getByLabelText('API Key')).toBeRequired();
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  expect(writes).toHaveLength(0);
+  await selectOption(userEvent, selectControl('接口协议'), 'openai-completions');
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).not.toHaveProperty('input.connection.api');
+});
 
 it('lists configured suppliers and changes the workspace default without copying a key', async () => {
   const { writes } = connect();

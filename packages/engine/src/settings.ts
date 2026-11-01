@@ -6,15 +6,18 @@ import {
   isModelId,
   isModelKey,
   isModelUpdate,
+  type ModelApi,
   type ModelCheck,
   type ModelConnection,
   type ModelId,
   type ModelStatus,
+  modelApi,
   modelOptions,
   modelReference,
   validAgentId,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
+import { inferenceRequest, inferenceText } from './inference.js';
 
 interface PrivateConnection extends ModelConnection {
   apiKey: string;
@@ -28,6 +31,7 @@ interface PrivateConfig {
   receipt?: { id: string; fingerprint: string };
 }
 export interface ResolvedModel {
+  api: ModelApi;
   model: ModelId;
   apiModel: string;
   provider: string;
@@ -218,6 +222,7 @@ export class ModelSettings {
     if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
     const { connection, model } = selected;
     const official = (item: PrivateConnection) =>
+      modelApi(item) === 'openai-completions' &&
       item.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1';
     // The configured destination authorizes this key; generated connection IDs do not identify the vendor.
     const search = official(connection)
@@ -226,7 +231,11 @@ export class ModelSettings {
         connections.find(official);
     return {
       model: modelReference(connection.id, model.id),
-      apiModel: model.id,
+      api: modelApi(connection),
+      apiModel:
+        modelApi(connection) === 'google-generative-ai'
+          ? model.id.replace(/^models\//, '')
+          : model.id,
       provider: connection.id,
       baseURL: connection.baseURL.replace(/\/+$/, ''),
       apiKey: connection.apiKey,
@@ -236,6 +245,7 @@ export class ModelSettings {
       binding: digest([
         connection.id,
         connection.baseURL,
+        modelApi(connection),
         model,
         digest(connection.apiKey),
         search ? digest(search.apiKey) : null,
@@ -292,52 +302,72 @@ export class ModelSettings {
   private async probe(connection: PrivateConnection, models: string[]) {
     try {
       const signal = AbortSignal.timeout(15000);
-      const response = await this.fetcher(`${connection.baseURL.replace(/\/+$/, '')}/models`, {
-        headers: { authorization: `Bearer ${connection.apiKey}`, accept: 'application/json' },
+      const api = modelApi(connection);
+      const base = connection.baseURL.replace(/\/+$/, '');
+      const headers = new Headers({ accept: 'application/json' });
+      if (api === 'anthropic-messages') {
+        headers.set('x-api-key', connection.apiKey);
+        headers.set('anthropic-version', '2023-06-01');
+      } else if (api === 'google-generative-ai') headers.set('x-goog-api-key', connection.apiKey);
+      else headers.set('authorization', `Bearer ${connection.apiKey}`);
+      const completion = async (model: string) => {
+        const request = inferenceRequest(
+          { ...connection, apiModel: model },
+          { prompt: 'Reply OK.', maxTokens: 8 },
+        );
+        const response = await this.fetcher(request.url, { ...request.init, signal });
+        const data = await responseJSON(response, 65536);
+        if (inferenceText(api, data, true) === null)
+          throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
+      };
+      const absent = async (response: Response, model: string) => {
+        if (response.status !== 404 && response.status !== 405) return false;
+        await response.body?.cancel();
+        await completion(model);
+        return true;
+      };
+      if (api === 'google-generative-ai' || api === 'anthropic-messages') {
+        for (const model of models) {
+          signal.throwIfAborted();
+          const id = api === 'google-generative-ai' ? model.replace(/^models\//, '') : model;
+          const resource = api === 'anthropic-messages' ? `${base}/v1/models` : `${base}/models`;
+          const response = await this.fetcher(`${resource}/${encodeURIComponent(id)}`, {
+            headers,
+            redirect: 'error',
+            signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+          });
+          if (await absent(response, model)) continue;
+          const data = await responseJSON(response, 65536);
+          // Claude's resource lookup intentionally resolves aliases to a different canonical ID.
+          if (api === 'anthropic-messages') {
+            if (
+              !object(data) ||
+              data.type !== 'model' ||
+              typeof data.id !== 'string' ||
+              !isModelId(modelReference(connection.id, data.id))
+            )
+              throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
+          } else if (
+            !object(data) ||
+            data.name !== `models/${id}` ||
+            !Array.isArray(data.supportedGenerationMethods) ||
+            !data.supportedGenerationMethods.includes('generateContent')
+          )
+            throw new Fault('MODEL_API_MODEL_UNAVAILABLE', 400);
+        }
+        return;
+      }
+      const response = await this.fetcher(`${base}/models`, {
+        headers,
         redirect: 'error',
         signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
       });
-      // OpenAI compatibility does not guarantee model discovery; only an absent route may use a paid probe.
+      // Discovery is optional for gateways; only an absent route may use a paid native probe.
       if (response.status === 404 || response.status === 405) {
         await response.body?.cancel();
         for (const model of models) {
           signal.throwIfAborted();
-          const completion = await this.fetcher(
-            `${connection.baseURL.replace(/\/+$/, '')}/chat/completions`,
-            {
-              method: 'POST',
-              headers: {
-                authorization: `Bearer ${connection.apiKey}`,
-                'content-type': 'application/json',
-                accept: 'application/json',
-              },
-              redirect: 'error',
-              signal,
-              body: JSON.stringify({
-                model,
-                messages: [{ role: 'user', content: 'Reply OK.' }],
-                stream: false,
-                max_tokens: 8,
-              }),
-            },
-          );
-          const data = await responseJSON(completion, 65536);
-          const choice =
-            object(data) && Array.isArray(data.choices) && data.choices.length === 1
-              ? data.choices[0]
-              : undefined;
-          if (
-            !object(choice) ||
-            !['stop', 'length'].includes(String(choice.finish_reason)) ||
-            !object(choice.message) ||
-            choice.message.role !== 'assistant' ||
-            !(
-              typeof choice.message.content === 'string' ||
-              (choice.message.content == null &&
-                typeof choice.message.reasoning_content === 'string')
-            )
-          )
-            throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
+          await completion(model);
         }
         return;
       }
@@ -383,7 +413,8 @@ export class ModelSettings {
     if (
       value.connection &&
       existing &&
-      existing.baseURL !== value.connection.baseURL &&
+      (existing.baseURL !== value.connection.baseURL ||
+        modelApi(existing) !== modelApi(value.connection)) &&
       !value.apiKey
     )
       throw new Fault('MODEL_CREDENTIAL_REQUIRED', 400);
