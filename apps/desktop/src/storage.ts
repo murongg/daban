@@ -14,9 +14,9 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { restoreComments } from './comments-state';
-import { removeSamples } from './fixtures';
 import { restoreNotes } from './notes-state';
 import { restoreOrganization } from './organization';
+import { removeSamples } from './samples';
 import { initialState, routineDraft, type State } from './state';
 import { restoreWork } from './work-state';
 

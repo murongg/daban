@@ -27,7 +27,7 @@ export function hostPackageFile(directory: string, source: string) {
   return (
     !name.split(path.sep).some((part) => ['node_modules', 'src', 'web'].includes(part)) &&
     !/^tsconfig(?:\.web)?\.json$/.test(name) &&
-    !/\.(?:test|acceptance|integration)\./.test(name)
+    !/\.(?:test|acceptance|integration|fixture)\./.test(name)
   );
 }
 export async function moduleGraph(directory: string, entries: string[]) {

@@ -231,13 +231,6 @@ export const files: WorkspaceFile[] = [
   },
 ];
 
-// Shipped sample replies must never be presented as completed runtime history.
-export const demoIds = new Set(
-  Object.values(messages)
-    .flat()
-    .map((message) => message.id),
-);
-
 // Private previews and tests opt into sample data; normal startup always uses initialState().
 export function demoState(): State {
   const memories = Object.fromEntries(
@@ -263,31 +256,5 @@ export function demoState(): State {
     approvals: structuredClone(approvals),
     files: structuredClone(files),
     attachments: Object.fromEntries(bots.map((bot) => [bot.id, []])),
-  };
-}
-
-export function removeSamples(state: State): State {
-  if (state.sampleRevision === 1) return state;
-  // Only shipped sample content is disposable; authored edits and actual runtime artifacts stay.
-  const examples = Object.values(messages).flat();
-  const same = (value: unknown, originals: unknown[]) =>
-    originals.some((original) => JSON.stringify(original) === JSON.stringify(value));
-  // A status click or toggle does not turn a shipped example into user-authored content.
-  const sampleApprovals = approvals.map((item) => ({ ...item, status: 'pending' }));
-  const sampleRoutines = routines.map((item) => ({ ...item, enabled: false }));
-  return {
-    ...state,
-    sampleRevision: 1,
-    messages: Object.fromEntries(
-      Object.entries(state.messages).map(([id, items]) => [
-        id,
-        items.filter((item) => !same(item, examples)),
-      ]),
-    ),
-    files: state.files.filter((item) => !same(item, files)),
-    routines: state.routines.filter((item) => !same({ ...item, enabled: false }, sampleRoutines)),
-    approvals: state.approvals.filter(
-      (item) => !same({ ...item, status: 'pending' }, sampleApprovals),
-    ),
   };
 }

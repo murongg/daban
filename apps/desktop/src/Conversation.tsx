@@ -16,7 +16,6 @@ import { type Dispatch, useCallback, useEffect, useRef } from 'react';
 import { Avatar } from './Avatar';
 import { IconButton } from './Button';
 import { Execution } from './Execution';
-import { demoIds } from './fixtures';
 import { useInputs } from './inputs';
 import { Markdown } from './Markdown';
 import { modelName as displayModel, modelIcon } from './model-options';
@@ -24,6 +23,7 @@ import { Plan } from './Plan';
 import { Requests } from './Requests';
 import { useRuntime } from './Runtime';
 import { type DisplayMessage, visibleMessages } from './response';
+import { demoIds } from './samples';
 import {
   type Action,
   type Bot,

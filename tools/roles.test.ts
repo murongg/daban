@@ -14,6 +14,9 @@ test('host packaging excludes source directories but preserves web and runtime m
   assert.equal(hostPackageFile(root, `${root}/web/diagnostic.test.ts`), false);
   assert.equal(hostPackageFile(root, `${root}/src/model.ts`), false);
   assert.equal(hostPackageFile(root, `${root}/dist/model.test.js`), false);
+  assert.equal(hostPackageFile(root, `${root}/dist/documents.fixture.js`), false);
+  assert.equal(hostPackageFile(root, `${root}/dist/images.fixture.d.ts`), false);
+  assert.equal(hostPackageFile(root, `${root}/dist/tls.fixture.js`), false);
   assert.equal(hostPackageFile(root, `${root}/node_modules/mock/index.js`), false);
 });
 

@@ -177,7 +177,7 @@ export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
 export interface State {
-  sampleRevision?: 1;
+  sampleRevision?: 1 | 2;
   comments?: CommentsState;
   notes?: Record<string, NotesState | undefined>;
   work?: WorkState;
@@ -299,7 +299,7 @@ export type Action =
 
 export function initialState(): State {
   return {
-    sampleRevision: 1,
+    sampleRevision: 2,
     organization: organization(),
     lifecycleRequests: {},
     skillDrafts: {},

@@ -52,7 +52,44 @@ it('removes unchanged legacy sample records once while preserving edited and use
   expect(recovered.files.map((file) => file.id)).toEqual(['mock-kept-file']);
   expect(recovered.routines).toEqual([]);
   expect(recovered.approvals).toEqual([]);
-  expect(recovered.sampleRevision).toBe(1);
+  expect(recovered.sampleRevision).toBe(2);
+});
+
+it.each([undefined, 1] as const)(
+  'cleans both shipped brand variants after sample migration revision %s without deleting edits',
+  (revision) => {
+    const state = fixture.demoState();
+    state.sampleRevision = revision;
+    const original = {
+      id: 'outline',
+      name: '产品介绍.md',
+      kind: 'Markdown',
+      size: '1.2 KB',
+      modified: '今天 09:46',
+      content:
+        '# 产品介绍\n\n示例草稿\n\ndaban 是你的 AI 工作伙伴。把任务交给不同的 Bot，在同一个地方查看对话、电脑和文件。\n\n每位 Bot 有自己的工作空间。需要时，你可以接管电脑，完成后再交还。\n\n当前项目为客户端界面演示，模型和电脑运行环境尚未接入。',
+    };
+    const renamed = { ...original, content: original.content.replace('daban 是', 'Daban 是') };
+    const edited = { ...original, content: 'SYNTHETIC AUTHOR EDIT' };
+    state.files = [original, renamed, edited];
+    const recovered = restore(serialize(state));
+    expect(recovered.files).toEqual([edited]);
+    expect(recovered.sampleRevision).toBe(2);
+    expect(restore(serialize(recovered))).toEqual(recovered);
+  },
+);
+
+it('keeps shipped migration matching independent of mutable preview data', () => {
+  const state = fixture.demoState();
+  delete state.sampleRevision;
+  const original = fixture.files.find((file) => file.id === 'notes')!;
+  const content = original.content;
+  try {
+    original.content = 'SYNTHETIC FUTURE PREVIEW COPY';
+    expect(restore(serialize(state)).files.some((file) => file.id === 'notes')).toBe(false);
+  } finally {
+    original.content = content;
+  }
 });
 
 it('opens an empty workspace, searches presets, edits a preset and creates a fresh Bot without a desktop', async () => {

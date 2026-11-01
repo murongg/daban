@@ -27,10 +27,10 @@ import {
 import { type Dispatch, type RefObject, useCallback, useEffect, useState } from 'react';
 import { Avatar, Brand } from './Avatar';
 import { IconButton } from './Button';
-import { demoIds } from './fixtures';
 import { useRuntime } from './Runtime';
 import { SectionDialog, type SectionEdit } from './SectionDialog';
 import { type SidebarAnchor, type SidebarEntry, SidebarMenu } from './SidebarMenu';
+import { demoIds } from './samples';
 import type { Action, Bot, State } from './state';
 
 export function Sidebar({

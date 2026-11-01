@@ -3,10 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { Execution } from './Execution';
-import { demoIds } from './fixtures';
 import { Markdown } from './Markdown';
 import { NumberField } from './NumberField';
 import { runtimeError, useRuntime } from './Runtime';
+import { demoIds } from './samples';
 import type { Bot, Message, WorkspaceFile } from './state';
 
 export function ChatHistory({
