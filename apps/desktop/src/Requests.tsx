@@ -3,6 +3,7 @@ import { Check, Inbox, X } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Command } from './Command';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import { Software } from './Software';
 import type { Action, State } from './state';
@@ -23,6 +24,7 @@ function Request({
   dispatch: Dispatch<Action>;
   notify: (message: string) => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [saving, setSaving] = useState(false),
     [error, setError] = useState(''),
@@ -68,7 +70,7 @@ function Request({
       if (mounted.current) {
         setReceipt(saved);
         setSubmitted(undefined);
-        notify('回复已提交。');
+        notify(t('回复已提交。'));
       }
     } catch (error) {
       if (mounted.current) {
@@ -94,21 +96,23 @@ function Request({
         {bot && <Avatar bot={bot} size="small" />}
         <span>{bot?.name || 'Bot'}</span>
         {current.conversationId && (
-          <span>{state.bots.find((bot) => bot.id === current.conversationId)?.name || '群聊'}</span>
+          <span>
+            {state.bots.find((bot) => bot.id === current.conversationId)?.name || t('群聊')}
+          </span>
         )}
         <span className="spacer" />
-        <span>{current.kind === 'question' ? '需要你的回答' : '单次权限确认'}</span>
+        <span>{current.kind === 'question' ? t('需要你的回答') : t('单次权限确认')}</span>
       </div>
       <h3 className="approval-title">
         {current.kind === 'question'
-          ? '补充信息后继续'
+          ? t('补充信息后继续')
           : current.tool === 'vm_command'
-            ? '允许在 Linux 虚拟机中执行这个命令吗？'
+            ? t('允许在 Linux 虚拟机中执行这个命令吗？')
             : current.tool === 'software_install'
-              ? '允许安装这些软件吗？'
+              ? t('允许安装这些软件吗？')
               : current.tool === 'mcp_call'
-                ? '允许调用这个外部工具吗？'
-                : '允许读取这个链接吗？'}
+                ? t('允许调用这个外部工具吗？')
+                : t('允许读取这个链接吗？')}
       </h3>
       {current.kind === 'approval' && current.tool === 'vm_command' && (
         <Command request={current} />
@@ -116,7 +120,7 @@ function Request({
       {current.kind === 'approval' && current.tool === 'web_fetch' && (
         <>
           <p className="approval-description">
-            仅允许这一次公开网页读取；不会授予登录状态或其他网址的权限。
+            {t('仅允许这一次公开网页读取；不会授予登录状态或其他网址的权限。')}
           </p>
           <p className="request-value">{current.url}</p>
         </>
@@ -127,14 +131,16 @@ function Request({
       {current.kind === 'approval' && current.tool === 'mcp_call' && (
         <>
           <p className="approval-description">
-            将下列参数发送至这个连接，可能执行外部操作。仅允许本次调用，不会授予其他工具或后续调用的权限。
+            {t(
+              '将下列参数发送至这个连接，可能执行外部操作。仅允许本次调用，不会授予其他工具或后续调用的权限。',
+            )}
           </p>
           <p className="request-value">
             {current.name} · {current.operation}
           </p>
           <p className="request-value">{current.origin}</p>
           {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Long tool arguments need a keyboard-focusable scrolling surface. */}
-          <section className="request-arguments" aria-label="本次工具调用参数" tabIndex={0}>
+          <section className="request-arguments" aria-label={t('本次工具调用参数')} tabIndex={0}>
             <pre className="request-value">{current.arguments}</pre>
           </section>
         </>
@@ -182,7 +188,7 @@ function Request({
                       </label>
                     ))}
                     <label className="field-label">
-                      {question.options?.length ? '补充回答' : '你的回答'}
+                      {question.options?.length ? t('补充回答') : t('你的回答')}
                       <textarea
                         className="field"
                         rows={2}
@@ -207,7 +213,7 @@ function Request({
                   className="primary"
                   disabled={saving || !matchesReply(current, submitted || answer)}
                 >
-                  {saving ? '正在提交…' : submitted ? '重试提交' : '提交回复'}
+                  {saving ? t('正在提交…') : submitted ? t('重试提交') : t('提交回复')}
                 </button>
               </div>
             </form>
@@ -221,7 +227,7 @@ function Request({
                   disabled={saving}
                   onClick={() => submit(submitted)}
                 >
-                  {saving ? '正在提交…' : '重试提交'}
+                  {saving ? t('正在提交…') : t('重试提交')}
                 </button>
               ) : (
                 <>
@@ -232,10 +238,10 @@ function Request({
                     onClick={() => submit({ kind: 'decision', allow: true })}
                   >
                     {current.tool === 'vm_command'
-                      ? '确认执行'
+                      ? t('确认执行')
                       : current.tool === 'software_install'
-                        ? '确认安装'
-                        : '仅允许这一次'}
+                        ? t('确认安装')
+                        : t('仅允许这一次')}
                   </button>
                   <button
                     type="button"
@@ -243,7 +249,7 @@ function Request({
                     disabled={saving}
                     onClick={() => submit({ kind: 'decision', allow: false })}
                   >
-                    拒绝
+                    {t('拒绝')}
                   </button>
                 </>
               )}
@@ -256,7 +262,7 @@ function Request({
             current.reply?.kind === 'answer' ? (
               <span className="approval-state">
                 <Check />
-                已回复
+                {t('已回复')}
               </span>
             ) : (
               <span className="approval-state">
@@ -264,15 +270,15 @@ function Request({
                   <>
                     <Check />
                     {current.kind === 'approval' && current.tool === 'vm_command'
-                      ? '已确认本次虚拟机命令'
+                      ? t('已确认本次虚拟机命令')
                       : current.kind === 'approval' && current.tool === 'software_install'
-                        ? '已确认本次安装'
-                        : '已允许这一次'}
+                        ? t('已确认本次安装')
+                        : t('已允许这一次')}
                   </>
                 ) : (
                   <>
                     <X />
-                    已拒绝
+                    {t('已拒绝')}
                   </>
                 )}
               </span>
@@ -280,7 +286,9 @@ function Request({
           ) : (
             <span className="approval-state">
               <X />
-              {current.status === 'interrupted' ? '任务已中断，这个请求不能再回复' : '请求已撤销'}
+              {current.status === 'interrupted'
+                ? t('任务已中断，这个请求不能再回复')
+                : t('请求已撤销')}
             </span>
           )}
           {current.kind === 'question' && (
@@ -308,7 +316,7 @@ function Request({
       {error && (
         <p className="form-error" role="alert">
           {error}
-          {submitted && ' 请核对连接后重试；会提交同一份回复。'}
+          {submitted && t(' 请核对连接后重试；会提交同一份回复。')}
         </p>
       )}
     </article>
@@ -329,6 +337,7 @@ export function Requests({
   runs?: readonly string[];
   focus?: string;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [filter, setFilter] = useState<'pending' | 'done'>('pending');
   const requests = runtime.snapshot.interactions || [];
@@ -351,14 +360,15 @@ export function Requests({
   const content = (
     <>
       {!bot && !runs && !focus && (
-        <div className="filter-tabs" role="tablist" aria-label="收件箱筛选">
+        <div className="filter-tabs" role="tablist" aria-label={t('收件箱筛选')}>
           <button
             type="button"
             role="tab"
             aria-selected={filter === 'pending'}
             onClick={() => setFilter('pending')}
           >
-            待处理 {pending.length ? `· ${pending.length}` : ''}
+            {t('待处理')}
+            {pending.length ? `· ${pending.length}` : ''}
           </button>
           <button
             type="button"
@@ -366,7 +376,7 @@ export function Requests({
             aria-selected={filter === 'done'}
             onClick={() => setFilter('done')}
           >
-            已处理
+            {t('已处理')}
           </button>
         </div>
       )}
@@ -376,8 +386,8 @@ export function Requests({
       {!bot && !runs && !entries.length && (
         <div className="empty-panel">
           <Inbox />
-          <h3>{filter === 'pending' ? '暂时没有需要确认的事' : '还没有处理记录'}</h3>
-          <p>真实任务需要你的回答或确认时，会集中显示在这里。</p>
+          <h3>{filter === 'pending' ? t('暂时没有需要确认的事') : t('还没有处理记录')}</h3>
+          <p>{t('真实任务需要你的回答或确认时，会集中显示在这里。')}</p>
         </div>
       )}
     </>
@@ -385,10 +395,10 @@ export function Requests({
   return bot || runs ? (
     <div className="request-list">{content}</div>
   ) : (
-    <section className="full-page" aria-label="收件箱">
+    <section className="full-page" aria-label={t('收件箱')}>
       <div className="page-inner">
-        <h2 className="page-heading">需要你看一眼</h2>
-        <p className="page-subtitle">回答问题或确认这一次操作，让 Bot 继续。</p>
+        <h2 className="page-heading">{t('需要你看一眼')}</h2>
+        <p className="page-subtitle">{t('回答问题或确认这一次操作，让 Bot 继续。')}</p>
         {content}
       </div>
     </section>

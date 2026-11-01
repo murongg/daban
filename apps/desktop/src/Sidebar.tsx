@@ -27,6 +27,7 @@ import {
 import { type Dispatch, type RefObject, useCallback, useEffect, useState } from 'react';
 import { Avatar, Brand } from './Avatar';
 import { IconButton } from './Button';
+import { t, useLocale } from './locale';
 import { useRuntime } from './Runtime';
 import { SectionDialog, type SectionEdit } from './SectionDialog';
 import { type SidebarAnchor, type SidebarEntry, SidebarMenu } from './SidebarMenu';
@@ -60,6 +61,7 @@ export function Sidebar({
   close: () => unknown;
   settingsOpen?: boolean;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [menu, setMenu] = useState<{
     kind: 'bot' | 'section';
@@ -133,7 +135,7 @@ export function Sidebar({
     const target = computerTarget(runtime.snapshot, bot.id);
     const computer = target ? runtime.snapshot.bots[target] : undefined;
     const connection = runtime.snapshot.computers?.items.find((item) => item.bot === target);
-    let preview = state.controls[bot.id] === 'human' ? '你正在接管这位 Bot 的电脑' : bot.preview;
+    let preview = state.controls[bot.id] === 'human' ? t('你正在接管这位 Bot 的电脑') : bot.preview;
     if (runtime.enabled) {
       if (bot.members)
         preview =
@@ -141,14 +143,14 @@ export function Sidebar({
           runtime.snapshot.protocolVersion >= 15 &&
           runtime.snapshot.groups?.available &&
           runtime.snapshot.groups.items.some((group) => group.id === bot.id)
-            ? '群聊 · 已连接'
-            : '群聊 · 未连接';
-      else if (computer?.owner === 'human') preview = '你正在接管这位 Bot 的电脑';
-      else if (agentTask(runtime.snapshot, bot.id)?.running) preview = '正在处理你的消息';
-      else if (connection?.phase === 'connecting') preview = '正在连接电脑';
-      else if (connection?.phase === 'stopping') preview = '正在停止电脑';
-      else if (computer) preview = '本机 Linux · 独立桌面';
-      else preview = '可对话 · 未连接电脑';
+            ? t('群聊 · 已连接')
+            : t('群聊 · 未连接');
+      else if (computer?.owner === 'human') preview = t('你正在接管这位 Bot 的电脑');
+      else if (agentTask(runtime.snapshot, bot.id)?.running) preview = t('正在处理你的消息');
+      else if (connection?.phase === 'connecting') preview = t('正在连接电脑');
+      else if (connection?.phase === 'stopping') preview = t('正在停止电脑');
+      else if (computer) preview = t('本机 Linux · 独立桌面');
+      else preview = t('可对话 · 未连接电脑');
     }
     return (
       <div
@@ -188,10 +190,10 @@ export function Sidebar({
                 <span
                   id={`sidebar-unread-${bot.id}`}
                   role="status"
-                  aria-label={`${bot.name}有未读消息`}
+                  aria-label={t('{0}有未读消息', { 0: bot.name })}
                   className="sidebar-unread"
                 >
-                  <span className="sr-only">未读</span>
+                  <span className="sr-only">{t('未读')}</span>
                 </span>
               )}
             </div>
@@ -200,7 +202,7 @@ export function Sidebar({
         </button>
         <IconButton
           id={`sidebar-actions-${bot.id}`}
-          label={`整理 ${bot.name}`}
+          label={t('整理 {0}', { 0: bot.name })}
           className="bot-actions"
           aria-haspopup="menu"
           aria-expanded={menu?.kind === 'bot' && menu.id === bot.id}
@@ -214,16 +216,16 @@ export function Sidebar({
   return (
     <>
       {open && <div className="sidebar-scrim" onClick={close} aria-hidden="true" />}
-      <aside className={`sidebar ${open ? 'open' : ''}`} aria-label="侧栏">
+      <aside className={`sidebar ${open ? 'open' : ''}`} aria-label={t('侧栏')}>
         <header className="sidebar-brand">
           <Brand />
           <span className="wordmark">Daban</span>
           <span className="brand-beta">preview</span>
           <span className="spacer" />
-          <IconButton label="新建 Bot" onClick={() => onCreate()}>
+          <IconButton label={t('新建 Bot')} onClick={() => onCreate()}>
             <Plus />
           </IconButton>
-          <IconButton className="sidebar-close" label="关闭侧栏" onClick={close}>
+          <IconButton className="sidebar-close" label={t('关闭侧栏')} onClick={close}>
             <X />
           </IconButton>
         </header>
@@ -232,8 +234,8 @@ export function Sidebar({
           <input
             ref={searchRef}
             type="search"
-            aria-label="搜索 Bot 和对话"
-            placeholder="搜索 Bot 和对话"
+            aria-label={t('搜索 Bot 和对话')}
+            placeholder={t('搜索 Bot 和对话')}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -249,19 +251,20 @@ export function Sidebar({
             }}
           >
             <Store />
-            Bot 广场
+            {t('Bot 广场')}
           </button>
           <button
             type="button"
             className={`nav-row ${state.view === 'tasks' ? 'selected' : ''}`}
-            aria-label={state.work?.pending ? '任务 · 操作待确认' : '任务'}
+            aria-label={state.work?.pending ? t('任务 · 操作待确认') : t('任务')}
             onClick={() => {
               dispatch({ type: 'view', view: 'tasks' });
               close();
             }}
           >
             <ListTodo />
-            任务{state.work?.pending && <span className="nav-count">待确认</span>}
+            {t('任务')}
+            {state.work?.pending && <span className="nav-count">{t('待确认')}</span>}
           </button>
           <button
             type="button"
@@ -272,7 +275,8 @@ export function Sidebar({
             }}
           >
             <Inbox />
-            收件箱{pending > 0 && <span className="count">{pending}</span>}
+            {t('收件箱')}
+            {pending > 0 && <span className="count">{pending}</span>}
           </button>
           <button
             type="button"
@@ -283,33 +287,33 @@ export function Sidebar({
             }}
           >
             <MessageSquare />
-            对话
+            {t('对话')}
           </button>
         </div>
         <div className="sidebar-scroll">
           <div className="section-label">
-            <span>你的 Bot</span>
+            <span>{t('你的 Bot')}</span>
             <span className="spacer" />
             <IconButton
               id="sidebar-create-section"
-              label="新建分组"
+              label={t('新建分组')}
               onClick={() => setEdit({ kind: 'create', focusId: 'sidebar-create-section' })}
             >
               <FolderPlus />
             </IconButton>
-            <IconButton label="创建 Bot 群聊" onClick={() => onCreate(true)}>
+            <IconButton label={t('创建 Bot 群聊')} onClick={() => onCreate(true)}>
               <Users />
             </IconButton>
-            <IconButton label="添加 Bot" onClick={() => onCreate()}>
+            <IconButton label={t('添加 Bot')} onClick={() => onCreate()}>
               <Plus />
             </IconButton>
           </div>
-          <nav aria-label="Bot 列表">
+          <nav aria-label={t('Bot 列表')}>
             {organization.pins.some((id) => filtered.some((bot) => bot.id === id)) && (
-              <fieldset aria-label="置顶" className="sidebar-block">
+              <fieldset aria-label={t('置顶')} className="sidebar-block">
                 <div className="section-label">
                   <Pin aria-hidden="true" />
-                  <span>置顶</span>
+                  <span>{t('置顶')}</span>
                 </div>
                 {organization.pins
                   .flatMap((id) => filtered.find((bot) => bot.id === id) || [])
@@ -331,7 +335,7 @@ export function Sidebar({
                       type="button"
                       className="section-toggle"
                       disabled={!!query}
-                      aria-label={`${expanded ? '收起' : '展开'} ${section.name}`}
+                      aria-label={`${expanded ? t('收起') : t('展开')} ${section.name}`}
                       aria-expanded={expanded}
                       onClick={() =>
                         dispatch({
@@ -350,7 +354,7 @@ export function Sidebar({
                     </button>
                     <IconButton
                       id={`sidebar-section-${section.id}`}
-                      label={`整理分组 ${section.name}`}
+                      label={t('整理分组 {0}', { 0: section.name })}
                       aria-haspopup="menu"
                       aria-expanded={menu?.kind === 'section' && menu.id === section.id}
                       onClick={(event) => openMenu('section', section.id, event.currentTarget)}
@@ -362,7 +366,7 @@ export function Sidebar({
                     (members.length ? (
                       members.map(row)
                     ) : (
-                      <p className="section-empty">还没有 Bot，使用列表旁的整理菜单移入。</p>
+                      <p className="section-empty">{t('还没有 Bot，使用列表旁的整理菜单移入。')}</p>
                     ))}
                 </fieldset>
               );
@@ -370,10 +374,10 @@ export function Sidebar({
             {organization.sections.length > 0 &&
               filtered.some(
                 (bot) => !organization.placements[bot.id] && !organization.pins.includes(bot.id),
-              ) && <div className="section-label">未分组</div>}
+              ) && <div className="section-label">{t('未分组')}</div>}
             {state.bots.some((entry) => !entry.members) &&
               state.bots.every((entry) => entry.members || entry.archived) && (
-                <p className="no-results">所有 Bot 都已归档</p>
+                <p className="no-results">{t('所有 Bot 都已归档')}</p>
               )}
             {filtered
               .filter(
@@ -386,9 +390,9 @@ export function Sidebar({
                 b.members && !organization.pins.includes(b.id) && !organization.placements[b.id],
             ) && (
               <div className="section-label">
-                <span>群聊</span>
+                <span>{t('群聊')}</span>
                 <span className="spacer" />
-                <IconButton label="添加群聊" onClick={() => onCreate(true)}>
+                <IconButton label={t('添加群聊')} onClick={() => onCreate(true)}>
                   <Plus />
                 </IconButton>
               </div>
@@ -401,15 +405,16 @@ export function Sidebar({
               .map(row)}
             {!state.bots.length && !query && (
               <div className="no-results">
-                还没有 Bot
+                {t('还没有 Bot')}
                 <br />
-                从广场挑一个，或创建自己的搭档。
+                {t('从广场挑一个，或创建自己的搭档。')}
               </div>
             )}
             {!filtered.length && !!query && (
               <div className="no-results">
-                没有找到「{query}」<br />
-                试试 Bot 名称或对话内容。
+                {t('没有找到「')}
+                {query}」<br />
+                {t('试试 Bot 名称或对话内容。')}
               </div>
             )}
           </nav>
@@ -417,17 +422,17 @@ export function Sidebar({
         <footer className="sidebar-footer">
           {state.groupCopy && onCopyGroup && (
             <button className="bundle-import-entry" type="button" onClick={() => onCopyGroup()}>
-              群聊复制 · 核对进度
+              {t('群聊复制 · 核对进度')}
             </button>
           )}
           {state.botCopy && onCopy && (
             <button className="bundle-import-entry" type="button" onClick={() => onCopy()}>
-              Bot 复制 · 核对进度
+              {t('Bot 复制 · 核对进度')}
             </button>
           )}
           {state.botImport && onImport && (
             <button className="bundle-import-entry" type="button" onClick={onImport}>
-              Bot 导入 · 查看进度
+              {t('Bot 导入 · 查看进度')}
             </button>
           )}
           <div className="local-workspace">
@@ -435,21 +440,21 @@ export function Sidebar({
               <Laptop />
             </span>
             <div>
-              <div className="workspace-name">本机工作区</div>
+              <div className="workspace-name">{t('本机工作区')}</div>
               <div className="demo-label">
                 <span className="status-dot" />
                 {runtime.enabled
                   ? runtime.snapshot.phase === 'ready'
-                    ? 'Linux 已连接 · 本机运行'
+                    ? t('Linux 已连接 · 本机运行')
                     : runtime.snapshot.phase === 'connecting'
-                      ? '正在启动 Linux…'
-                      : '运行环境连接中断'
-                  : '界面演示 · 本机保存'}
+                      ? t('正在启动 Linux…')
+                      : t('运行环境连接中断')
+                  : t('界面演示 · 本机保存')}
               </div>
             </div>
             <span className="spacer" />
             <IconButton
-              label="设置"
+              label={t('设置')}
               className={settingsOpen || state.view === 'settings' ? 'active' : ''}
               aria-haspopup="dialog"
               aria-expanded={settingsOpen}
@@ -465,7 +470,7 @@ export function Sidebar({
       </aside>
       {menu && (
         <SidebarMenu
-          label={menu.kind === 'bot' ? 'Bot 整理' : '分组整理'}
+          label={menu.kind === 'bot' ? t('Bot 整理') : t('分组整理')}
           anchor={menu.anchor}
           focusId={menu.focusId}
           onClose={closeMenu}
@@ -482,7 +487,7 @@ export function Sidebar({
                           {
                             id: 'copy-group',
                             kind: 'action' as const,
-                            label: '复制群聊',
+                            label: t('复制群聊'),
                             icon: <Copy />,
                             disabled:
                               !!state.groupCopy ||
@@ -503,7 +508,7 @@ export function Sidebar({
                           {
                             id: 'copy',
                             kind: 'action' as const,
-                            label: '复制 Bot',
+                            label: t('复制 Bot'),
                             icon: <Copy />,
                             disabled:
                               !!state.botCopy ||
@@ -525,23 +530,23 @@ export function Sidebar({
                     {
                       id: 'pin',
                       kind: 'action',
-                      label: pinned ? '取消置顶' : '置顶',
+                      label: pinned ? t('取消置顶') : t('置顶'),
                       icon: pinned ? <PinOff /> : <Pin />,
                       onSelect: () => dispatch({ type: 'bot-pin', bot: bot.id, pinned: !pinned }),
                     },
                     {
                       id: 'unread',
                       kind: 'action',
-                      label: unread ? '标为已读' : '标为未读',
+                      label: unread ? t('标为已读') : t('标为未读'),
                       icon: unread ? <MailOpen /> : <Mail />,
                       onSelect: () => dispatch({ type: 'bot-read', bot: bot.id, unread: !unread }),
                     },
                     { id: 'placement-divider', kind: 'separator' },
-                    { id: 'placement-label', kind: 'label', label: '移到分组' },
+                    { id: 'placement-label', kind: 'label', label: t('移到分组') },
                     {
                       id: 'unassigned',
                       kind: 'action',
-                      label: '移出自定义分组',
+                      label: t('移出自定义分组'),
                       checked: !organization.placements[bot.id],
                       onSelect: () => dispatch({ type: 'bot-section', bot: bot.id }),
                     },
@@ -549,7 +554,7 @@ export function Sidebar({
                       (section): SidebarEntry => ({
                         id: `placement-${section.id}`,
                         kind: 'action',
-                        label: `移到 ${section.name}`,
+                        label: t('移到 {0}', { 0: section.name }),
                         checked: organization.placements[bot.id] === section.id,
                         onSelect: () =>
                           dispatch({ type: 'bot-section', bot: bot.id, section: section.id }),
@@ -559,7 +564,7 @@ export function Sidebar({
                     {
                       id: 'create-section',
                       kind: 'action',
-                      label: '新建分组…',
+                      label: t('新建分组…'),
                       icon: <FolderPlus />,
                       onSelect: () =>
                         setEdit({ kind: 'create', bot: bot.id, focusId: menu.focusId }),
@@ -575,7 +580,7 @@ export function Sidebar({
                     {
                       id: 'rename',
                       kind: 'action',
-                      label: '重命名分组',
+                      label: t('重命名分组'),
                       icon: <Pencil />,
                       onSelect: () =>
                         setEdit({ kind: 'rename', id: menu.id, focusId: menu.focusId }),
@@ -583,7 +588,7 @@ export function Sidebar({
                     {
                       id: 'move-up',
                       kind: 'action',
-                      label: '分组上移',
+                      label: t('分组上移'),
                       icon: <ArrowUp />,
                       disabled: index <= 0,
                       onSelect: () =>
@@ -592,7 +597,7 @@ export function Sidebar({
                     {
                       id: 'move-down',
                       kind: 'action',
-                      label: '分组下移',
+                      label: t('分组下移'),
                       icon: <ArrowDown />,
                       disabled: index < 0 || index >= organization.sections.length - 1,
                       onSelect: () => dispatch({ type: 'section-move', id: menu.id, direction: 1 }),
@@ -601,7 +606,7 @@ export function Sidebar({
                     {
                       id: 'remove',
                       kind: 'action',
-                      label: '移除分组',
+                      label: t('移除分组'),
                       icon: <Trash2 />,
                       onSelect: () =>
                         setEdit({ kind: 'remove', id: menu.id, focusId: menu.focusId }),

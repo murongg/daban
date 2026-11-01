@@ -2,6 +2,7 @@ import type { BrowserBinding, BrowserPrompt, BrowserState } from '@daban/protoco
 import { useState } from 'react';
 import { type BrowserAnswer, browserFiles } from './browsing';
 import { FilePicker } from './FilePicker';
+import { t, useLocale } from './locale';
 import { runtimeError } from './Runtime';
 
 export function BrowserRequest({
@@ -19,6 +20,7 @@ export function BrowserRequest({
   disabled: boolean;
   send: (answer: BrowserAnswer) => Promise<unknown>;
 }) {
+  useLocale();
   const [text, setText] = useState(prompt.kind === 'dialog' ? prompt.defaultValue : ''),
     [files, setFiles] = useState<File[]>([]),
     [error, setError] = useState(''),
@@ -26,7 +28,7 @@ export function BrowserRequest({
   return (
     <form
       className="browser-request"
-      aria-label={prompt.kind === 'dialog' ? '网页请求' : '网页选文件请求'}
+      aria-label={prompt.kind === 'dialog' ? t('网页请求') : t('网页选文件请求')}
       onSubmit={async (event) => {
         event.preventDefault();
         if (disabled || reading) return;
@@ -55,30 +57,33 @@ export function BrowserRequest({
         }
       }}
     >
-      <h3>{prompt.kind === 'dialog' ? '网页等待你确认' : '网页需要选择文件'}</h3>
+      <h3>{prompt.kind === 'dialog' ? t('网页等待你确认') : t('网页需要选择文件')}</h3>
       <p className="browser-request-source">
-        <span>请求所在标签：{tab.title || '新标签页'}</span>
+        <span>
+          {t('请求所在标签：')}
+          {tab.title || t('新标签页')}
+        </span>
         <span>{tab.url}</span>
       </p>
       {show && (
         <button type="button" className="text-button" disabled={disabled || reading} onClick={show}>
-          显示请求所在标签
+          {t('显示请求所在标签')}
         </button>
       )}
       {prompt.kind === 'dialog' ? (
         <>
-          <p className="browser-request-message">{prompt.message || '网页未提供说明。'}</p>
+          <p className="browser-request-message">{prompt.message || t('网页未提供说明。')}</p>
           {prompt.truncated && (
             <p className="form-error" role="alert">
-              说明过长，当前显示不完整，已禁止确认。请取消后联系网站处理。
+              {t('说明过长，当前显示不完整，已禁止确认。请取消后联系网站处理。')}
             </p>
           )}
           {prompt.dialog === 'prompt' && (
             <label className="field-label">
-              网页回复
+              {t('网页回复')}
               <input
                 className="field"
-                aria-label="网页回复"
+                aria-label={t('网页回复')}
                 autoComplete="off"
                 maxLength={2000}
                 value={text}
@@ -90,11 +95,15 @@ export function BrowserRequest({
         </>
       ) : (
         <>
-          <p>选择要交给此网页的本机文件，最多 {prompt.multiple ? '4 份' : '1 份'}，合计 5 MB。</p>
+          <p>
+            {t('选择要交给此网页的本机文件，最多')}
+            {prompt.multiple ? t('4 份') : t('1 份')}
+            {t('，合计 5 MB。')}
+          </p>
           <div className="field-label">
-            选择本机文件
+            {t('选择本机文件')}
             <FilePicker
-              aria-label="选择发送给网页的文件"
+              aria-label={t('选择发送给网页的文件')}
               multiple={prompt.multiple}
               disabled={disabled || reading}
               onChange={(event) => {
@@ -108,8 +117,8 @@ export function BrowserRequest({
       )}
       <p className="inline-note">
         {disabled
-          ? '接管电脑后可以处理。'
-          : '回复和文件仅交给上方标签内的这个网页请求，不会保存到聊天草稿。'}
+          ? t('接管电脑后可以处理。')
+          : t('回复和文件仅交给上方标签内的这个网页请求，不会保存到聊天草稿。')}
       </p>
       {error && (
         <p className="form-error" role="alert">
@@ -129,7 +138,7 @@ export function BrowserRequest({
             );
           }}
         >
-          {prompt.kind === 'dialog' ? '取消网页请求' : '取消选文件'}
+          {prompt.kind === 'dialog' ? t('取消网页请求') : t('取消选文件')}
         </button>
         <button
           type="submit"
@@ -138,7 +147,11 @@ export function BrowserRequest({
             disabled || reading || (prompt.kind === 'dialog' ? prompt.truncated : !files.length)
           }
         >
-          {reading ? '正在处理…' : prompt.kind === 'dialog' ? '确认网页请求' : '发送文件到网页'}
+          {reading
+            ? t('正在处理…')
+            : prompt.kind === 'dialog'
+              ? t('确认网页请求')
+              : t('发送文件到网页')}
         </button>
       </div>
     </form>

@@ -1,7 +1,9 @@
 import type { SetupStatus } from '@daban/protocol';
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { Setup } from './Setup';
+import { selectControl, selectOption } from './select.fixture';
 
 const mocks = vi.hoisted(() => ({
   state: { required: true, phase: 'available' } as SetupStatus,
@@ -39,4 +41,13 @@ it('makes missing bundles and unsupported hosts explicit without a fake install 
   mocks.state = { required: true, phase: 'unavailable', error: 'SETUP_PLATFORM' };
   view.rerender(<Setup />);
   expect(screen.getByRole('alert')).toHaveTextContent('Apple 芯片');
+});
+
+it('offers a language choice before installing Linux without starting setup', async () => {
+  mocks.state = { required: true, phase: 'available' };
+  mocks.command.mockClear();
+  render(<Setup />);
+  await selectOption(userEvent, selectControl('界面语言'), 'en');
+  expect(screen.getByRole('heading', { name: 'Give your Bot a local workspace' })).toBeVisible();
+  expect(mocks.command).not.toHaveBeenCalled();
 });

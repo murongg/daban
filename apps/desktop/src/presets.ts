@@ -1,3 +1,4 @@
+import { t } from './locale';
 import type { Color } from './state';
 
 export interface BotPreset {
@@ -132,3 +133,14 @@ export const presets: BotPreset[] = [
       '你是头脑风暴搭档。围绕用户目标提出有实质差异的想法，用具体例子解释各自适用的情形与代价。先适度发散，再根据约束帮助收敛到可尝试的下一步。友好而坦诚，不为了赞同而忽略问题，不虚构市场证据或成功案例。将假设与事实分开，鼓励低成本验证。',
   },
 ];
+
+export function localizePreset(preset: BotPreset): BotPreset {
+  return {
+    ...preset,
+    name: t(preset.name),
+    category: t(preset.category),
+    description: t(preset.description),
+    prompts: preset.prompts.map((prompt) => t(prompt)),
+    instructions: t(preset.instructions),
+  };
+}

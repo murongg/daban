@@ -10,6 +10,7 @@ import {
   recoveryBlocked,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
+import { t } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import { type Action, reduce, type State } from './state';
 import { serialize, storageKey } from './storage';
@@ -24,7 +25,7 @@ export interface CopyProps {
 }
 // Reserve the suffix within the name limit without splitting an emoji's surrogate pair.
 export const copyName = (name: string) =>
-  `${name.slice(0, 27).replace(/[\uD800-\uDBFF]$/, '')} 副本`;
+  t('{0} 副本', { 0: name.slice(0, 27).replace(/[\uD800-\uDBFF]$/, '') });
 const keyOf = (request: CopyRequest) =>
   'bot' in request ? botCopyKey(request) : groupCopyKey(request);
 const hold = (request: CopyRequest): Action =>
@@ -110,7 +111,7 @@ export function useCopy(
         if (!target.archived) dispatch({ type: 'select', bot: target.id });
         close();
       }
-      notify(`已复制 ${target.name}。`);
+      notify(t('已复制 {0}。', { 0: target.name }));
     },
     [owns, dispatch, close, notify],
   );
@@ -149,12 +150,12 @@ export function useCopy(
       if (live && pending.current)
         timer = setTimeout(() => {
           tick().catch(() => {
-            if (live) setError('暂时无法核对复制结果。');
+            if (live) setError(t('暂时无法核对复制结果。'));
           });
         }, 1000);
     }
     tick().catch(() => {
-      if (live) setError('暂时无法核对复制结果。');
+      if (live) setError(t('暂时无法核对复制结果。'));
     });
     return () => {
       live = false;
@@ -176,7 +177,7 @@ export function useCopy(
       // Persist before the effect, and never create a placeholder that legacy registration could occupy.
       localStorage.setItem(storageKey, serialize(reduce(state, action)));
     } catch {
-      setError('本机无法保存复制请求。请先释放存储空间或导出工作区，再重试。');
+      setError(t('本机无法保存复制请求。请先释放存储空间或导出工作区，再重试。'));
       return;
     }
     pending.current = request;
@@ -197,7 +198,7 @@ export function useCopy(
       if (owns(request)) {
         setError(
           error instanceof Error && error.message === 'GROUP_CONFLICT'
-            ? '原群聊已更新，新名称仍保留。请核对来源后重试。'
+            ? t('原群聊已更新，新名称仍保留。请核对来源后重试。')
             : runtimeError(error),
         );
         // Rejecting this retry before dispatch cannot disprove an earlier unconfirmed submission.

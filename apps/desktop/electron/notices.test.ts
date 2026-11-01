@@ -98,7 +98,9 @@ it('collects only scoped metadata, distinguishes groups/requests and never puts 
       expect.stringContaining('mock-question'),
     ]),
   );
-  expect(JSON.stringify(candidates.map(noticeCopy))).not.toContain('SYNTHETIC PRIVATE');
+  expect(JSON.stringify(candidates.map((target) => noticeCopy(target)))).not.toContain(
+    'SYNTHETIC PRIVATE',
+  );
   expect(isNoticeTarget({ ...candidates[0], prompt: 'SYNTHETIC INJECTION' })).toBe(false);
   expect(() =>
     parseNoticeCommand({ type: 'configure', revision: 0, enabled: true, command: 'SYNTHETIC' }),

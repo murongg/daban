@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { IconButton } from './Button';
+import { t, useLocale } from './locale';
 import { useDialogMotion } from './motion';
 
 // A closed native disclosure is still keyboard-focusable; result readers must not trap Tab before it.
@@ -30,6 +31,7 @@ export function Dialog({
   active?: boolean;
   motion?: boolean;
 }) {
+  useLocale();
   const label = useId();
   const ref = useRef<HTMLDivElement>(null);
   const backdrop = useRef<HTMLDivElement>(null);
@@ -142,7 +144,7 @@ export function Dialog({
       >
         <header className="dialog-header">
           <h2 id={label}>{title}</h2>
-          <IconButton label="关闭对话框" onClick={dismiss}>
+          <IconButton label={t('关闭对话框')} onClick={dismiss}>
             <X />
           </IconButton>
         </header>

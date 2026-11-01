@@ -86,6 +86,8 @@ npm run test:runtime  # 执行与领域服务测试
 npm run build         # 构建全部工作区
 ```
 
+界面文案以 `apps/desktop/locale.ts` 的翻译入口和 `apps/desktop/locales/en.ts` 的英文目录维护，中文原文同时作为默认文案；插值使用 `{0}`、`{1}` 等占位符。只翻译应用自身文案，保留用户内容、模型回复、稳定标识、枚举值和审批参数；历史样例迁移数据不可随文案修改。
+
 格式化使用 `npm run format`。行为变更先写使用合成数据的失败测试，再运行相关检查；不要把真实用户内容或凭据放进测试。
 
 修改独立部署依赖时，同步根 `package-lock.json` 与相关的 `apps/agent/standalone-lock.json` 或 `apps/runtime/standalone-lock.json`。不要依赖开发机的 workspace 链接部署服务。

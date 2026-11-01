@@ -10,6 +10,7 @@ import {
 } from '@daban/protocol';
 import { ChevronDown, ListChecks } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
 const phases: Partial<Record<TaskPhase, string>> = {
@@ -37,13 +38,14 @@ const tools: Record<string, string> = {
   skill: '加载技能',
 };
 function label(item: TranscriptItem, name?: string) {
-  const tool = name ? tools[name.split('__').at(-1)!] || name : '工具';
-  if (item.kind === 'call') return `${tool} · 调用`;
-  if (item.kind === 'result') return `${tool} · ${item.isError ? '失败' : '结果'}`;
-  return { assistant: '阶段回复', plan: '任务计划', interaction: '提问与审批' }[item.kind];
+  const tool = name ? t(tools[name.split('__').at(-1)!]) || name : t('工具');
+  if (item.kind === 'call') return t('{0} · 调用', { 0: tool });
+  if (item.kind === 'result') return `${tool} · ${item.isError ? t('失败') : t('结果')}`;
+  return { assistant: t('阶段回复'), plan: t('任务计划'), interaction: t('提问与审批') }[item.kind];
 }
 
 function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem }) {
+  useLocale();
   const runtime = useRuntime();
   const [content, setContent] = useState<Pick<TranscriptContent, 'text' | 'nextOffset'>>();
   const [busy, setBusy] = useState(false),
@@ -100,7 +102,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
       working.current = false;
     };
   }, [read]);
-  const regionLabel = `第 ${item.seq} 条记录内容`;
+  const regionLabel = t('第 {0} 条记录内容', { 0: item.seq });
   return (
     <div className="execution-body">
       {content && (
@@ -111,7 +113,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
       )}
       {busy && (
         <p className="inline-note" role="status">
-          正在读取内容…
+          {t('正在读取内容…')}
         </p>
       )}
       {error && (
@@ -120,7 +122,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
         </p>
       )}
       {content?.nextOffset !== undefined && (
-        <p className="field-help">内容较长，当前显示部分。继续读取可查看余下内容。</p>
+        <p className="field-help">{t('内容较长，当前显示部分。继续读取可查看余下内容。')}</p>
       )}
       {(error || content?.nextOffset !== undefined) && (
         <button
@@ -131,7 +133,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
             await read(error ? (saved.current?.nextOffset ?? 0) : content?.nextOffset);
           }}
         >
-          {error ? '重新读取内容' : '继续读取内容'}
+          {error ? t('重新读取内容') : t('继续读取内容')}
         </button>
       )}
     </div>
@@ -147,6 +149,7 @@ function Entry({
   item: TranscriptItem;
   name?: string;
 }) {
+  useLocale();
   const [open, setOpen] = useState(false);
   return (
     <li>
@@ -154,7 +157,7 @@ function Entry({
         <summary>
           <ChevronDown className="execution-chevron" />
           <span>{label(item, name)}</span>
-          <span className="execution-sequence">第 {item.seq} 条</span>
+          <span className="execution-sequence">{t('第 {0} 条', { 0: item.seq })}</span>
           {item.code && <span className="form-error">{item.code}</span>}
         </summary>
         {open && <Content scope={scope} item={item} />}
@@ -164,6 +167,7 @@ function Entry({
 }
 
 function Reader({ scope }: { scope: TranscriptScope }) {
+  useLocale();
   const runtime = useRuntime();
   const [target] = useState(() => ({ ...scope }));
   const [page, setPage] = useState<TranscriptPage>();
@@ -239,15 +243,17 @@ function Reader({ scope }: { scope: TranscriptScope }) {
   return (
     <div className="execution-reader">
       <p className="field-help">
-        只读执行记录，不会重新运行工具或沿用旧审批。非文本输出保留说明，不在此重复保存。
+        {t('只读执行记录，不会重新运行工具或沿用旧审批。非文本输出保留说明，不在此重复保存。')}
       </p>
-      {page?.state === 'unavailable' && <p className="inline-note">这次任务没有保留执行详情。</p>}
-      {page?.state === 'interrupted' && <p className="form-error">执行记录不完整</p>}
+      {page?.state === 'unavailable' && (
+        <p className="inline-note">{t('这次任务没有保留执行详情。')}</p>
+      )}
+      {page?.state === 'interrupted' && <p className="form-error">{t('执行记录不完整')}</p>}
       {page?.state === 'interrupted' && (
-        <p className="field-help">以下仅是已保存的部分，不能据此确认后续操作。</p>
+        <p className="field-help">{t('以下仅是已保存的部分，不能据此确认后续操作。')}</p>
       )}
       {page && page.state !== 'unavailable' && !page.items.length && !busy && (
-        <p className="inline-note">本次没有记录到工具或交互步骤。</p>
+        <p className="inline-note">{t('本次没有记录到工具或交互步骤。')}</p>
       )}
       {!!page?.items.length && (
         <ol className="execution-list">
@@ -263,7 +269,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
       )}
       {busy && (
         <p className="inline-note" role="status">
-          正在读取记录…
+          {t('正在读取记录…')}
         </p>
       )}
       {error && (
@@ -280,7 +286,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
             await read();
           }}
         >
-          {error ? '重新读取记录' : '刷新记录'}
+          {error ? t('重新读取记录') : t('刷新记录')}
         </button>
         {page?.nextAfter && (
           <button
@@ -291,7 +297,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
               await read(page.nextAfter);
             }}
           >
-            加载后续记录
+            {t('加载后续记录')}
           </button>
         )}
       </div>
@@ -300,6 +306,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
 }
 
 function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhase }) {
+  useLocale();
   const runtime = useRuntime();
   const [open, setOpen] = useState(false);
   const ready = runtime.enabled && runtime.snapshot.phase === 'ready';
@@ -315,18 +322,18 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
     >
       <summary>
         <ListChecks />
-        <span>执行过程</span>
-        {phase && <span className="execution-phase">{phases[phase]}</span>}
+        <span>{t('执行过程')}</span>
+        {phase && <span className="execution-phase">{t(phases[phase])}</span>}
         <ChevronDown className="execution-chevron" />
       </summary>
       {open &&
         (preparing ? (
-          <p className="field-help">任务正在准备，执行开始后会显示记录。</p>
+          <p className="field-help">{t('任务正在准备，执行开始后会显示记录。')}</p>
         ) : available ? (
           <Reader scope={scope} />
         ) : (
           <p className="field-help">
-            {ready ? '更新本地环境后可查看执行过程。' : '重新连接本地环境后可查看执行过程。'}
+            {ready ? t('更新本地环境后可查看执行过程。') : t('重新连接本地环境后可查看执行过程。')}
           </p>
         ))}
     </details>
@@ -334,6 +341,7 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
 }
 
 export function Execution(props: { scope: TranscriptScope; phase?: TaskPhase }) {
+  useLocale();
   const { scope } = props;
   return (
     <Disclosure

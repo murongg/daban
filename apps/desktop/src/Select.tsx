@@ -8,6 +8,7 @@ import {
   Popover,
   SelectValue,
 } from 'react-aria-components';
+import { t, useLocale } from './locale';
 import './controls.css';
 
 export interface SelectOption {
@@ -31,6 +32,7 @@ export function Select({
   disabled?: boolean;
   className?: string;
 }) {
+  useLocale();
   const selected = options.find((option) => option.value === value);
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -44,7 +46,7 @@ export function Select({
       isDisabled={disabled}
       isOpen={open && !disabled}
       onOpenChange={setOpen}
-      placeholder="请选择"
+      placeholder={t('请选择')}
       onSelectionChange={(key) => {
         const option = options.find((item) => `option:${item.value}` === key);
         if (option && !disabled && !option.disabled) onValueChange(option.value);
@@ -55,7 +57,7 @@ export function Select({
           {({ selectedText }) => (
             <span className="select-label">
               {selected?.icon}
-              <span className="select-text">{selectedText || '请选择'}</span>
+              <span className="select-text">{selectedText || t('请选择')}</span>
             </span>
           )}
         </SelectValue>

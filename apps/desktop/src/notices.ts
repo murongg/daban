@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { isNoticeActivation, type NoticeActivation } from '../notifications';
+import { t } from './locale';
 
 export function useNotices(
   route: (activation: NoticeActivation) => boolean,
@@ -24,7 +25,7 @@ export function useNotices(
       if (document.querySelector('[role="dialog"]')) {
         if (deferred.current !== value.id) {
           deferred.current = value.id;
-          reporter.current('收到桌面提醒，关闭当前弹窗后会打开。');
+          reporter.current(t('收到桌面提醒，关闭当前弹窗后会打开。'));
         }
         return;
       }
@@ -38,10 +39,10 @@ export function useNotices(
       bridge
         .invoke({ type: 'ack', id: value.id })
         .then((reply) => {
-          if (live && !reply.ok) reporter.current('提醒已打开，确认记录暂未保存。');
+          if (live && !reply.ok) reporter.current(t('提醒已打开，确认记录暂未保存。'));
         })
         .catch(() => {
-          if (live) reporter.current('提醒已打开，确认记录暂未保存。');
+          if (live) reporter.current(t('提醒已打开，确认记录暂未保存。'));
         });
     };
     attempt.current = check;

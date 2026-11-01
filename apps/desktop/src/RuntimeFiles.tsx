@@ -11,6 +11,7 @@ import { Attachments } from './Attachments';
 import { IconButton } from './Button';
 import { Dialog } from './Dialog';
 import { attachment, download, downloadBlob, stagedAttachment } from './files';
+import { getLocale, t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { WorkspaceFile } from './state';
 
@@ -29,6 +30,7 @@ export function RuntimeFiles({
   onAttaching?: (busy: boolean) => unknown;
   attachmentLimit?: boolean;
 }) {
+  useLocale();
   const runtime = useRuntime(),
     [files, setFiles] = useState<RuntimeFile[]>([]),
     [error, setError] = useState(''),
@@ -71,7 +73,7 @@ export function RuntimeFiles({
     return {
       id: `runtime:${file.path}`,
       name: file.name,
-      kind: file.name.split('.').at(-1)?.toUpperCase() || '文件',
+      kind: file.name.split('.').at(-1)?.toUpperCase() || t('文件'),
       size: `${(file.size / 1024).toFixed(1)} KB`,
       modified: file.modified,
       content: '',
@@ -81,7 +83,7 @@ export function RuntimeFiles({
   return (
     <div className="panel-section">
       <div className="panel-heading">
-        <h2>工作区文件</h2>
+        <h2>{t('工作区文件')}</h2>
         {attachBot && (
           <button
             type="button"
@@ -89,16 +91,17 @@ export function RuntimeFiles({
             disabled={runtime.snapshot.protocolVersion < 12 || runtime.snapshot.phase !== 'ready'}
             onClick={() => setManager(attachBot)}
           >
-            管理聊天附件
+            {t('管理聊天附件')}
           </button>
         )}
-        <IconButton label="刷新工作区文件" onClick={refresh}>
+        <IconButton label={t('刷新工作区文件')} onClick={refresh}>
           <RefreshCw />
         </IconButton>
       </div>
       <p className="panel-description">
-        所有 Bot 共享这些文件。可加入文本、PDF/Office 文档和 PNG/JPEG 图片，每次最多 4 个；文本最多
-        200 KB，文档原件最多 5 MB。
+        {t(
+          '所有 Bot 共享这些文件。可加入文本、PDF/Office 文档和 PNG/JPEG 图片，每次最多 4 个；文本最多 200 KB，文档原件最多 5 MB。',
+        )}
       </p>
       {error && (
         <p className="form-error" role="alert">
@@ -116,7 +119,7 @@ export function RuntimeFiles({
                 <div className="artifact-name">{file.name}</div>
                 <div className="artifact-meta">
                   {(file.size / 1024).toFixed(1)} KB ·{' '}
-                  {new Date(file.modified).toLocaleString('zh-CN', {
+                  {new Date(file.modified).toLocaleString(getLocale(), {
                     timeZone: 'Asia/Shanghai',
                     month: 'numeric',
                     day: 'numeric',
@@ -129,7 +132,7 @@ export function RuntimeFiles({
             </button>
             {attach && (
               <IconButton
-                label={`添加 ${file.name} 到消息`}
+                label={t('添加 {0} 到消息', { 0: file.name })}
                 disabled={attaching || attachmentLimit}
                 onClick={async () => {
                   // A read may finish after switching Bots; retain the initiating Bot's callback.
@@ -176,7 +179,7 @@ export function RuntimeFiles({
               </IconButton>
             )}
             <IconButton
-              label={`下载 ${file.name}`}
+              label={t('下载 {0}', { 0: file.name })}
               onClick={async () => {
                 try {
                   if (runtime.snapshot.protocolVersion >= 11) {
@@ -208,9 +211,11 @@ export function RuntimeFiles({
           </div>
         ))}
       </div>
-      {!files.length && !error && <p className="panel-description">生成文件后会显示在这里。</p>}
+      {!files.length && !error && (
+        <p className="panel-description">{t('生成文件后会显示在这里。')}</p>
+      )}
       {manager && (
-        <Dialog title="聊天附件" onClose={closeManager} wide>
+        <Dialog title={t('聊天附件')} onClose={closeManager} wide>
           <Attachments key={manager} bot={manager} notify={notify} />
         </Dialog>
       )}

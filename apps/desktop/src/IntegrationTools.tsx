@@ -9,6 +9,7 @@ import {
   type McpReceipt,
 } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
 import type { Bot } from './state';
@@ -55,6 +56,7 @@ export function IntegrationTools({
   onClose: () => unknown;
   onDirty?: (value: boolean) => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const choices = bots.filter(
     (bot) =>
@@ -159,7 +161,7 @@ export function IntegrationTools({
       await runtime.command({ type: 'mcp.bind', bot, input });
       if (!mounted.current) return;
       setPending(undefined);
-      setNotice('工具选择已保存；实际调用仍需本次审批。');
+      setNotice(t('工具选择已保存；实际调用仍需本次审批。'));
       await load(true);
     } catch (error) {
       if (
@@ -193,17 +195,23 @@ export function IntegrationTools({
     (!draft.input.enabled ||
       (draft.input.tools.length > 0 && current.catalog.current.health === 'ready'));
   return (
-    <section className="integration-access" aria-label={`${connection.name} 的工具设置`}>
+    <section
+      className="integration-access"
+      aria-label={t('{0} 的工具设置', { 0: connection.name })}
+    >
       <div className="integration-access-heading">
-        <h3>工具与授权 · {connection.name}</h3>
+        <h3>
+          {t('工具与授权 ·')}
+          {connection.name}
+        </h3>
         <button className="secondary" type="button" disabled={locked} onClick={onClose}>
-          关闭工具设置
+          {t('关闭工具设置')}
         </button>
       </div>
       <div className="field-label">
-        使用工具的 Bot
+        {t('使用工具的 Bot')}
         <Select
-          label="使用工具的 Bot"
+          label={t('使用工具的 Bot')}
           value={bot}
           disabled={locked || !available}
           onValueChange={(value) => {
@@ -215,13 +223,15 @@ export function IntegrationTools({
           }}
           options={[
             ...(!choices.some((entry) => agentId(entry.id) === bot) && bot
-              ? [{ value: bot, label: '原 Bot 已归档或不可用', disabled: true }]
+              ? [{ value: bot, label: t('原 Bot 已归档或不可用'), disabled: true }]
               : []),
             ...choices.map((item) => ({ value: agentId(item.id), label: item.name })),
           ]}
         />
       </div>
-      {choices.length === 0 && <p className="inline-note">先创建并同步一位 Bot，再选择工具。</p>}
+      {choices.length === 0 && (
+        <p className="inline-note">{t('先创建并同步一位 Bot，再选择工具。')}</p>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -232,8 +242,12 @@ export function IntegrationTools({
           {notice}
         </p>
       )}
-      {!available && <p className="inline-note">外部工具服务暂不可用，未保存的选择仍留在本页。</p>}
-      {locked && <p className="field-help">先保存、核对或放弃当前修改，再切换 Bot 或连接。</p>}
+      {!available && (
+        <p className="inline-note">{t('外部工具服务暂不可用，未保存的选择仍留在本页。')}</p>
+      )}
+      {locked && (
+        <p className="field-help">{t('先保存、核对或放弃当前修改，再切换 Bot 或连接。')}</p>
+      )}
       {current && draft && (
         <form
           onSubmit={async (event) => {
@@ -242,15 +256,18 @@ export function IntegrationTools({
           }}
         >
           <p className="field-help">
-            目录来自 {current.catalog.current.origin}
-            。工具说明与返回内容不授予权限；可展开参数定义，核对后再保存。
+            {t('目录来自')}
+            {current.catalog.current.origin}
+            {t('。工具说明与返回内容不授予权限；可展开参数定义，核对后再保存。')}
           </p>
           {current.entry.enabled && !current.entry.available && (
-            <p className="inline-note">上次工具授权已失效，核对当前目录后再次保存才会启用。</p>
+            <p className="inline-note">
+              {t('上次工具授权已失效，核对当前目录后再次保存才会启用。')}
+            </p>
           )}
           {changed && (
             <div className="inline-note">
-              <p>目录或授权已变化。你的选择仍保留，请核对当前版本。</p>
+              <p>{t('目录或授权已变化。你的选择仍保留，请核对当前版本。')}</p>
               <button
                 className="secondary"
                 type="button"
@@ -270,7 +287,7 @@ export function IntegrationTools({
                   });
                 }}
               >
-                按当前版本继续编辑
+                {t('按当前版本继续编辑')}
               </button>
             </div>
           )}
@@ -279,7 +296,7 @@ export function IntegrationTools({
             disabled={!available || busy || !!pending || changed}
           >
             {current.catalog.tools.length === 0 && (
-              <p className="inline-note">没有可选择的工具，请先检查连接。</p>
+              <p className="inline-note">{t('没有可选择的工具，请先检查连接。')}</p>
             )}
             {current.catalog.tools.map((tool) => (
               <div className="integration-tool" key={tool.name}>
@@ -303,9 +320,9 @@ export function IntegrationTools({
                 </label>
                 <p className="setting-description">{tool.description}</p>
                 <details>
-                  <summary>参数定义</summary>
+                  <summary>{t('参数定义')}</summary>
                   <ScrollText
-                    label={`${tool.name} 参数定义`}
+                    label={t('{0} 参数定义', { 0: tool.name })}
                     value={JSON.stringify(tool.inputSchema, null, 2)}
                   />
                 </details>
@@ -319,15 +336,15 @@ export function IntegrationTools({
                   setDraft({ ...draft, input: { ...draft.input, enabled: event.target.checked } })
                 }
               />
-              允许这位 Bot 使用所选工具
+              {t('允许这位 Bot 使用所选工具')}
             </label>
           </fieldset>
           <p className="field-help">
-            新任务会使用已保存的选择。停用会取消尚未发出的调用；已发出的操作可能已经生效。
+            {t('新任务会使用已保存的选择。停用会取消尚未发出的调用；已发出的操作可能已经生效。')}
           </p>
           <div className="inline-form-actions">
             <button className="primary" type="submit" disabled={!canSave}>
-              保存工具选择
+              {t('保存工具选择')}
             </button>
             {pending && (
               <button
@@ -354,13 +371,13 @@ export function IntegrationTools({
                       throw new Error('MCP_BINDING_UNCONFIRMED');
                     if (mounted.current) {
                       setPending(undefined);
-                      setNotice('已核对这次工具选择。');
+                      setNotice(t('已核对这次工具选择。'));
                     }
                     await load(true);
                   })
                 }
               >
-                核对授权结果
+                {t('核对授权结果')}
               </button>
             )}
             <button
@@ -376,12 +393,12 @@ export function IntegrationTools({
                 }
               }}
             >
-              {pending ? '退出授权编辑' : '放弃选择修改'}
+              {pending ? t('退出授权编辑') : t('放弃选择修改')}
             </button>
           </div>
           {pending && (
             <p className="inline-note">
-              授权结果未确认，核对不会重发请求。退出编辑不会撤回可能已提交的授权。
+              {t('授权结果未确认，核对不会重发请求。退出编辑不会撤回可能已提交的授权。')}
             </p>
           )}
         </form>
@@ -415,6 +432,7 @@ function CallHistory({
   connection: string;
   available: boolean;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const revision = runtime.snapshot.mcp?.available ? runtime.snapshot.mcp.revision : undefined;
   const [history, setHistory] = useState<McpHistory>();
@@ -446,27 +464,33 @@ function CallHistory({
   }, [available, bot, connection, runtime.command, revision]);
   return (
     <div className="integration-history">
-      <h3>最近调用</h3>
+      <h3>{t('最近调用')}</h3>
       <p className="field-help">
-        仅显示这位 Bot 在此连接上的最近 20 次调用。回执查询不会重新执行工具。
+        {t('仅显示这位 Bot 在此连接上的最近 20 次调用。回执查询不会重新执行工具。')}
       </p>
       {error && (
         <p className="form-error" role="alert">
           {error}
         </p>
       )}
-      {history?.items.length === 0 && <p className="inline-note">这位 Bot 还没有调用过此连接。</p>}
+      {history?.items.length === 0 && (
+        <p className="inline-note">{t('这位 Bot 还没有调用过此连接。')}</p>
+      )}
       {history?.items.map((item) => (
         <div className="integration-call" key={item.id}>
           <div>
             <strong>{item.tool}</strong>
-            <span className="badge">{phases[item.phase]}</span>
+            <span className="badge">{t(phases[item.phase])}</span>
           </div>
           {item.phase === 'unknown' && (
-            <p className="inline-note">操作可能已经执行，请先到目标服务核对，不要重复提交。</p>
+            <p className="inline-note">
+              {t('操作可能已经执行，请先到目标服务核对，不要重复提交。')}
+            </p>
           )}
           <p className="field-help">
-            {new Date(item.createdAt).toLocaleString()} · 连接版本 {item.configRevision}
+            {new Date(item.createdAt).toLocaleString()}
+            {t('· 连接版本')}
+            {item.configRevision}
           </p>
           <button
             className="secondary"
@@ -490,26 +514,26 @@ function CallHistory({
               }
             }}
           >
-            查看回执
+            {t('查看回执')}
           </button>
         </div>
       ))}
       {receipt && (
         <div className="integration-receipt">
           <h4>
-            {receipt.tool} · {phases[receipt.phase]}
+            {receipt.tool} · {t(phases[receipt.phase])}
           </h4>
-          <p className="field-help">参数</p>
-          <ScrollText label="调用参数" value={receipt.preview} />
+          <p className="field-help">{t('参数')}</p>
+          <ScrollText label={t('调用参数')} value={receipt.preview} />
           {receipt.result && (
             <>
-              <p className="field-help">返回内容</p>
-              <ScrollText label="返回内容" value={receipt.result} />
+              <p className="field-help">{t('返回内容')}</p>
+              <ScrollText label={t('返回内容')} value={receipt.result} />
             </>
           )}
           {receipt.error && <p className="inline-note">{runtimeError(new Error(receipt.error))}</p>}
           <button className="secondary" type="button" onClick={() => setReceipt(undefined)}>
-            收起回执
+            {t('收起回执')}
           </button>
         </div>
       )}
@@ -518,6 +542,7 @@ function CallHistory({
 }
 
 function ScrollText({ label, value }: { label: string; value: string }) {
+  useLocale();
   return (
     // biome-ignore lint/a11y/noNoninteractiveTabindex: Bounded text must be focusable for keyboard scrolling.
     <section className="integration-scroll" aria-label={label} tabIndex={0}>

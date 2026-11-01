@@ -4,6 +4,7 @@ import { type FileHandle, mkdir, open, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { type RuntimeSnapshot, recoveryBlocked, validAgentId } from '@daban/protocol';
 import { Notification } from 'electron';
+import type { Locale } from '../locale';
 import {
   isNoticeActivation,
   isNoticeScope,
@@ -93,6 +94,7 @@ export class Notifications {
     readonly file: string,
     readonly options: {
       foreground: () => boolean;
+      locale?: () => Locale;
       open: (value: NoticeActivation) => unknown;
       changed: (value: NoticeMessage) => unknown;
     },
@@ -296,7 +298,7 @@ export class Notifications {
     // Banner dismissal is not delivery retirement; Action/Notification Center may still emit a later click.
   }
   private show(row: NoticeActivation) {
-    const copy = noticeCopy(row.target);
+    const copy = noticeCopy(row.target, this.options.locale?.() ?? 'zh-CN');
     try {
       const xml =
         process.platform === 'win32'

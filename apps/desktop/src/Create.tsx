@@ -1,6 +1,7 @@
 import { agentId, type BotProfileInput, type GroupInput, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar, colors } from './Avatar';
+import { t, useLocale } from './locale';
 import { modelChoices, modelIcon, modelName } from './model-options';
 import type { BotPreset } from './presets';
 import { runtimeError, useRuntime } from './Runtime';
@@ -36,6 +37,7 @@ export function Create({
   onImport?: () => unknown;
   preset?: BotPreset;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const modelsAvailable = runtime.enabled && runtime.snapshot.protocolVersion >= 14;
   const [model, setModel] = useState('');
@@ -57,8 +59,8 @@ export function Create({
   }, []);
   return (
     <>
-      <p className="dialog-description">给它一个名字，告诉它你希望一起做什么。</p>
-      <div className="form-tabs" role="tablist" aria-label="创建类型">
+      <p className="dialog-description">{t('给它一个名字，告诉它你希望一起做什么。')}</p>
+      <div className="form-tabs" role="tablist" aria-label={t('创建类型')}>
         <button
           type="button"
           role="tab"
@@ -69,7 +71,7 @@ export function Create({
             setError('');
           }}
         >
-          新建 Bot
+          {t('新建 Bot')}
         </button>
         <button
           type="button"
@@ -81,7 +83,7 @@ export function Create({
             setError('');
           }}
         >
-          创建群聊
+          {t('创建群聊')}
         </button>
         {onImport && (
           <button
@@ -96,7 +98,7 @@ export function Create({
             }
             onClick={onImport}
           >
-            从文件导入
+            {t('从文件导入')}
           </button>
         )}
       </div>
@@ -104,11 +106,11 @@ export function Create({
         onSubmit={async (e) => {
           e.preventDefault();
           if (!name.trim()) {
-            setError('请输入一个名称。');
+            setError(t('请输入一个名称。'));
             return;
           }
           if (isGroup && (members.length < 2 || members.length > 8)) {
-            setError('请选择 2–8 位 Bot 加入群聊。');
+            setError(t('请选择 2–8 位 Bot 加入群聊。'));
             return;
           }
           if (saving) return;
@@ -141,7 +143,7 @@ export function Create({
             });
             dispatch({ type: 'select', bot: id });
             close();
-            notify(isGroup ? '群聊已创建' : 'Bot 已创建，可以开始对话');
+            notify(isGroup ? t('群聊已创建') : t('Bot 已创建，可以开始对话'));
           } catch (error) {
             if (mounted.current) setError(runtimeError(error));
           } finally {
@@ -151,23 +153,23 @@ export function Create({
       >
         <div className="form-stack">
           <label className="field-label">
-            名称
+            {t('名称')}
             <input
               className="field"
               data-autofocus
-              aria-label="名称"
+              aria-label={t('名称')}
               disabled={saving}
               required
               value={name}
               maxLength={30}
               onChange={(e) => setName(e.target.value)}
-              placeholder={isGroup ? '例如：一起准备发布' : '例如：我的研究搭档'}
+              placeholder={isGroup ? t('例如：一起准备发布') : t('例如：我的研究搭档')}
             />
           </label>
           {isGroup ? (
             <div className="field-label">
-              <span>群成员</span>
-              <span className="field-help">每位 Bot 保留自己的电脑和工作记忆。</span>
+              <span>{t('群成员')}</span>
+              <span className="field-help">{t('每位 Bot 保留自己的电脑和工作记忆。')}</span>
               <div className="member-choices">
                 {state.bots
                   .filter((b) => !b.members && !b.archived)
@@ -178,7 +180,7 @@ export function Create({
                       <input
                         type="checkbox"
                         disabled={saving}
-                        aria-label={`选择 ${bot.name}`}
+                        aria-label={t('选择 {0}', { 0: bot.name })}
                         checked={members.includes(bot.id)}
                         onChange={(e) =>
                           setMembers((prev) =>
@@ -195,28 +197,28 @@ export function Create({
           ) : (
             <>
               <label className="field-label">
-                职责
+                {t('职责')}
                 <textarea
                   className="field"
-                  aria-label="职责"
+                  aria-label={t('职责')}
                   disabled={saving}
                   rows={3}
                   maxLength={4000}
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  placeholder="例如：帮我查找资料，整理成有依据的结论。"
+                  placeholder={t('例如：帮我查找资料，整理成有依据的结论。')}
                 />
-                <span className="field-help">之后也可以在对话中继续交代。</span>
+                <span className="field-help">{t('之后也可以在对话中继续交代。')}</span>
               </label>
               <div className="field-label">
-                <span>选一个颜色</span>
-                <fieldset className="avatar-choices" aria-label="Bot 颜色">
+                <span>{t('选一个颜色')}</span>
+                <fieldset className="avatar-choices" aria-label={t('Bot 颜色')}>
                   {(Object.keys(colors) as Color[]).map((value) => (
                     <button
                       type="button"
                       className="avatar-choice"
                       disabled={saving}
-                      aria-label={colorNames[value]}
+                      aria-label={t(colorNames[value])}
                       aria-pressed={color === value}
                       key={value}
                       onClick={() => setColor(value)}
@@ -227,9 +229,9 @@ export function Create({
                 </fieldset>
               </div>
               <div className="field-label">
-                此 Bot 的模型
+                {t('此 Bot 的模型')}
                 <Select
-                  label="此 Bot 的模型"
+                  label={t('此 Bot 的模型')}
                   value={model}
                   disabled={saving || !modelsAvailable}
                   onValueChange={setModel}
@@ -240,15 +242,20 @@ export function Create({
                         runtime.snapshot.model.model,
                         runtime.snapshot.model.connections,
                       ),
-                      label: `跟随工作区 · ${modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections)}`,
+                      label: t('跟随工作区 · {0}', {
+                        0: modelName(
+                          runtime.snapshot.model.model,
+                          runtime.snapshot.model.connections,
+                        ),
+                      }),
                     },
                     ...modelChoices(runtime.snapshot.model.connections, model),
                   ]}
                 />
                 <span className="field-help">
                   {runtime.snapshot.protocolVersion >= 16
-                    ? '使用所选供应商的连接。整屏观察需要支持图片的模型。'
-                    : '使用工作区已配置的连接，之后可在 Bot 资料中修改。'}
+                    ? t('使用所选供应商的连接。整屏观察需要支持图片的模型。')
+                    : t('使用工作区已配置的连接，之后可在 Bot 资料中修改。')}
                 </span>
               </div>
             </>
@@ -261,10 +268,10 @@ export function Create({
         </div>
         <div className="dialog-actions">
           <button className="text-button" type="button" onClick={close}>
-            取消
+            {t('取消')}
           </button>
           <button className="primary" type="submit" disabled={saving}>
-            {saving ? '正在创建…' : isGroup ? '创建群聊' : '创建 Bot'}
+            {saving ? t('正在创建…') : isGroup ? t('创建群聊') : t('创建 Bot')}
           </button>
         </div>
       </form>

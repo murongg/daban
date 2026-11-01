@@ -13,6 +13,7 @@ import {
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { commentCard } from './comments-state';
+import { t } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import { type Action, reduce, type State } from './state';
 import { serialize, storageKey } from './storage';
@@ -163,7 +164,7 @@ export function useWork(
     setNext(undefined);
     setRevision(undefined);
     const timer = setTimeout(() => {
-      load().catch(() => setListError('暂时无法读取任务。'));
+      load().catch(() => setListError(t('暂时无法读取任务。')));
     }, 150);
     return () => {
       clearTimeout(timer);
@@ -248,7 +249,9 @@ export function useWork(
         setLatest(undefined);
       }
       remember(value.item, input.request.action === 'create');
-      notify(input.request.action === 'create' ? '任务已创建，尚未自动执行。' : '任务操作已确认。');
+      notify(
+        input.request.action === 'create' ? t('任务已创建，尚未自动执行。') : t('任务操作已确认。'),
+      );
     },
     [dispatch, notify, owns, remember],
   );
@@ -306,7 +309,7 @@ export function useWork(
       localStorage.setItem(storageKey, serialize(updated));
     } catch {
       (resuming ? setOperationError : setError)(
-        '本机无法保存操作记录。请释放存储空间或导出工作区后重试；你的草稿仍保留。',
+        t('本机无法保存操作记录。请释放存储空间或导出工作区后重试；你的草稿仍保留。'),
       );
       return;
     }
@@ -354,7 +357,7 @@ export function useWork(
       return;
     const request = workInput(draft);
     if (!request) {
-      setError('请填写任务标题（最多 500 字符）；说明和进展各最多 4,000 字符。');
+      setError(t('请填写任务标题（最多 500 字符）；说明和进展各最多 4,000 字符。'));
       return;
     }
     await send({ request, draft: structuredClone(draft) }, false);
@@ -384,7 +387,7 @@ export function useWork(
   function fresh() {
     const previous = current.current.work?.draft;
     if (workDirty(previous) && pending.current?.draft.key !== previous?.key) {
-      setError('先保存或放弃当前修改，再新建任务。');
+      setError(t('先保存或放弃当前修改，再新建任务。'));
       setEditorVisible(true);
       return;
     }
@@ -401,7 +404,7 @@ export function useWork(
     setEditorVisible(true);
     if (!review && previous?.base?.id === id && workDirty(previous)) return;
     if (!review && workDirty(previous) && pending.current?.draft.key !== previous?.key) {
-      setError('先保存或放弃当前修改，再查看其他任务。');
+      setError(t('先保存或放弃当前修改，再查看其他任务。'));
       return;
     }
     const token = ++reader.current;

@@ -21,11 +21,12 @@ import {
   forgetAddress,
 } from './browsing';
 import { LiveBrowser } from './LiveBrowser';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
 function outcome({ error, uncertain }: Pick<BrowserAck, 'error' | 'uncertain'>) {
   // A settled receipt may still have an unknown page outcome; it must not become retry advice.
-  if (uncertain) return '操作可能已经发生。不会自动重试，请先核对网页状态，再决定后续操作。';
+  if (uncertain) return t('操作可能已经发生。不会自动重试，请先核对网页状态，再决定后续操作。');
   return error ? runtimeError(new Error(error)) : '';
 }
 
@@ -40,6 +41,7 @@ export function Browser({
   notify: (message: string) => unknown;
   expanded?: boolean;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const incoming = runtime.snapshot.browsers?.[bot];
   const [data, setData] = useState<BrowserState | undefined>(incoming),
@@ -126,7 +128,7 @@ export function Browser({
           id: pending.id,
         });
         if (receipt.phase !== 'settled') {
-          setError('操作结果未确认，系统不会自动重试。请核对页面后继续。');
+          setError(t('操作结果未确认，系统不会自动重试。请核对页面后继续。'));
           return;
         }
         clearBrowserRequest(bot, pending.id);
@@ -138,7 +140,7 @@ export function Browser({
         setError(
           receipt?.phase === 'settled'
             ? outcome(receipt) ||
-                '本次请求已处理，暂时无法刷新网页状态。请先查看页面，避免重复提交。'
+                t('本次请求已处理，暂时无法刷新网页状态。请先查看页面，避免重复提交。')
             : outcome({ uncertain: true }),
         );
       }
@@ -184,7 +186,7 @@ export function Browser({
       }
     } catch (error) {
       setError(
-        claimed ? '操作结果未确认，系统不会自动重试。请核对页面后继续。' : runtimeError(error),
+        claimed ? t('操作结果未确认，系统不会自动重试。请核对页面后继续。') : runtimeError(error),
       );
     } finally {
       setBusy(false);
@@ -193,9 +195,9 @@ export function Browser({
   return (
     <section
       className={`browser-panel ${expanded ? 'expanded' : ''}`}
-      aria-label={`${name}的浏览器面板`}
+      aria-label={t('{0}的浏览器面板', { 0: name })}
     >
-      <nav className="browser-tabs" aria-label="浏览器标签">
+      <nav className="browser-tabs" aria-label={t('浏览器标签')}>
         {state?.tabs.map((tab) => (
           <div key={tab.id} className={`browser-tab ${tab.id === state.active ? 'active' : ''}`}>
             <button
@@ -204,10 +206,10 @@ export function Browser({
               aria-pressed={tab.id === state.active}
               onClick={() => send({ action: 'select', tab: tab.id })}
             >
-              {tab.title || (tab.suspended ? '待恢复页面' : '新标签页')}
+              {tab.title || (tab.suspended ? t('待恢复页面') : t('新标签页'))}
             </button>
             <IconButton
-              label={`关闭${tab.title || '新标签页'}`}
+              label={t('关闭{0}', { 0: tab.title || t('新标签页') })}
               disabled={blocked}
               onClick={() => send({ action: 'close', tab: tab.id })}
             >
@@ -216,7 +218,7 @@ export function Browser({
           </div>
         ))}
         <IconButton
-          label="新建浏览器标签"
+          label={t('新建浏览器标签')}
           disabled={blocked || (state?.tabs.length || 0) >= 8}
           onClick={() => send({ action: 'new' })}
         >
@@ -230,7 +232,7 @@ export function Browser({
           if (!selected || blocked) return;
           const url = address.includes('://') ? address.trim() : `https://${address.trim()}`;
           if (!publicUrl(url) || !address.trim()) {
-            setError('请输入有效的网页地址。');
+            setError(t('请输入有效的网页地址。'));
             return;
           }
           send({ action: 'navigate', tab: selected.id, url }).catch((error) =>
@@ -239,29 +241,29 @@ export function Browser({
         }}
       >
         <IconButton
-          label="上一页"
+          label={t('上一页')}
           disabled={blocked || !selected || selected.suspended || selected.url === 'about:blank'}
           onClick={() => selected && send({ action: 'back', tab: selected.id })}
         >
           <ArrowLeft />
         </IconButton>
         <IconButton
-          label="下一页"
+          label={t('下一页')}
           disabled={blocked || !selected || selected.suspended || selected.url === 'about:blank'}
           onClick={() => selected && send({ action: 'forward', tab: selected.id })}
         >
           <ArrowRight />
         </IconButton>
         <IconButton
-          label="重新加载网页"
+          label={t('重新加载网页')}
           disabled={blocked || !selected || selected.suspended}
           onClick={() => selected && send({ action: 'reload', tab: selected.id })}
         >
           <RefreshCw />
         </IconButton>
         <input
-          aria-label="网页地址"
-          placeholder="输入网址"
+          aria-label={t('网页地址')}
+          placeholder={t('输入网址')}
           value={address}
           disabled={blocked}
           maxLength={2048}
@@ -272,33 +274,33 @@ export function Browser({
             setEdit((value) => value + 1);
           }}
         />
-        <button type="submit" aria-label="打开网页" disabled={blocked || !address.trim()}>
+        <button type="submit" aria-label={t('打开网页')} disabled={blocked || !address.trim()}>
           <CornerDownLeft size={16} />
         </button>
       </form>
       {selected?.suspended && (
         <div className="browser-notice">
-          <p>上次的页面尚未重新打开，登录数据仍保留。</p>
+          <p>{t('上次的页面尚未重新打开，登录数据仍保留。')}</p>
           <button
             type="button"
             className="secondary"
             disabled={blocked}
             onClick={() => send({ action: 'resume', tab: selected.id })}
           >
-            重新打开此页
+            {t('重新打开此页')}
           </button>
         </div>
       )}
       {nonce && !busy && (
         <div className="browser-notice" role="status">
-          <p>{error || '操作结果未确认，不会自动重试。'}</p>
+          <p>{error || t('操作结果未确认，不会自动重试。')}</p>
           <button
             type="button"
             className="text-button"
             disabled={busy || !ready}
             onClick={() => inspect(nonce)}
           >
-            核对结果
+            {t('核对结果')}
           </button>
           <button
             type="button"
@@ -333,7 +335,7 @@ export function Browser({
               }
             }}
           >
-            核对后继续
+            {t('核对后继续')}
           </button>
         </div>
       )}
@@ -369,7 +371,7 @@ export function Browser({
       />
       {!human && (
         <p className="inline-note browser-feedback">
-          接管电脑后，可以打开网页、切换标签和处理网页请求。
+          {t('接管电脑后，可以打开网页、切换标签和处理网页请求。')}
         </p>
       )}
     </section>

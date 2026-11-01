@@ -1,6 +1,8 @@
 import type { SetupPhase } from '@daban/protocol';
 import { ArrowRight, CircleCheck, HardDrive, Monitor, Pause } from 'lucide-react';
 import { useState } from 'react';
+import { Language } from './Language';
+import { t, useLocale } from './locale';
 import { useRuntime } from './Runtime';
 
 const busy = new Set<SetupPhase>([
@@ -39,6 +41,7 @@ const errors: Record<string, string> = {
   SETUP_RECOVERY: '检测到已有环境的恢复记录，安装已暂停。请先恢复原连接配置，已有数据会保留。',
 };
 export function Setup() {
+  useLocale();
   const runtime = useRuntime();
   const status = runtime.snapshot.setup!;
   const [pending, setPending] = useState(false);
@@ -51,7 +54,7 @@ export function Setup() {
     try {
       await runtime.command({ type });
     } catch {
-      setError('暂时无法处理安装请求。进度已保留，请重试或重新打开客户端。');
+      setError(t('暂时无法处理安装请求。进度已保留，请重试或重新打开客户端。'));
     } finally {
       setPending(false);
     }
@@ -59,54 +62,58 @@ export function Setup() {
   const problem =
     error ||
     (status.error
-      ? (errors[status.error] ?? '安装未完成，已有环境和数据会保留。请继续安装以重试。')
+      ? t(errors[status.error] ?? '安装未完成，已有环境和数据会保留。请继续安装以重试。')
       : '');
   return (
     <main className="setup-page">
       <header className="setup-header">
         <span>Daban</span>
-        <span className="setup-local">
-          <HardDrive size={15} />
-          本机运行
-        </span>
+        <div className="setup-actions">
+          <Language />
+          <span className="setup-local">
+            <HardDrive size={15} />
+            {t('本机运行')}
+          </span>
+        </div>
       </header>
       <section className="setup-content" aria-labelledby="setup-title">
         <div className="setup-symbol">
           <Monitor size={34} strokeWidth={1.4} />
         </div>
-        <h1 id="setup-title">给 Bot 一个本地工作空间</h1>
+        <h1 id="setup-title">{t('给 Bot 一个本地工作空间')}</h1>
         <p className="setup-description">
-          让 Bot 在独立的 Linux 环境里工作。每位 Bot
-          有自己的屏幕，共享文件和浏览器登录，你可以随时接管。
+          {t(
+            '让 Bot 在独立的 Linux 环境里工作。每位 Bot 有自己的屏幕，共享文件和浏览器登录，你可以随时接管。',
+          )}
         </p>
         {status.phase !== 'unavailable' && (
           <>
             <div className="setup-details">
               <span>
                 <CircleCheck size={17} />
-                环境随客户端提供
+                {t('环境随客户端提供')}
               </span>
               <span>
                 <CircleCheck size={17} />
-                无需单独安装 Docker 或 DSH
+                {t('无需单独安装 Docker 或 DSH')}
               </span>
             </div>
             <p className="setup-budget">
-              默认分配 3 GiB 内存、16 GiB 虚拟磁盘。首次安装请预留至少 36 GB 可用空间。
+              {t('默认分配 3 GiB 内存、16 GiB 虚拟磁盘。首次安装请预留至少 36 GB 可用空间。')}
             </p>
           </>
         )}
         {status.phase !== 'available' && (
           <div className="setup-progress" aria-live="polite">
             <div className="setup-step">
-              <span>{labels[status.phase] ?? '准备本地环境'}</span>
+              <span>{t(labels[status.phase] ?? '准备本地环境')}</span>
               {status.phase === 'extracting' && <span>{status.progress ?? 0}%</span>}
             </div>
             {status.phase === 'extracting' && (
               <div
                 className="setup-track"
                 role="progressbar"
-                aria-label="Linux 系统解包进度"
+                aria-label={t('Linux 系统解包进度')}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={status.progress ?? 0}
@@ -115,9 +122,11 @@ export function Setup() {
               </div>
             )}
             {status.phase === 'cancelling' && (
-              <p>当前创建或启动步骤结束后暂停，已创建的环境会保留。</p>
+              <p>{t('当前创建或启动步骤结束后暂停，已创建的环境会保留。')}</p>
             )}
-            {status.phase === 'cancelled' && <p>继续安装会先核对已有进度，不会删除工作空间。</p>}
+            {status.phase === 'cancelled' && (
+              <p>{t('继续安装会先核对已有进度，不会删除工作空间。')}</p>
+            )}
           </div>
         )}
         {problem && (
@@ -134,7 +143,7 @@ export function Setup() {
               onClick={() => act('setup.cancel')}
             >
               <Pause size={15} />
-              暂停安装
+              {t('暂停安装')}
             </button>
           ) : (
             status.phase !== 'unavailable' && (
@@ -144,14 +153,14 @@ export function Setup() {
                 disabled={pending}
                 onClick={() => act('setup.start')}
               >
-                {status.phase === 'available' ? '创建本地环境' : '继续安装'}
+                {status.phase === 'available' ? t('创建本地环境') : t('继续安装')}
                 <ArrowRight size={17} />
               </button>
             )
           )}
         </div>
         <p className="setup-footnote">
-          任务在本机运行。关闭客户端不会删除环境，模型连接在环境就绪后单独配置。
+          {t('任务在本机运行。关闭客户端不会删除环境，模型连接在环境就绪后单独配置。')}
         </p>
       </section>
     </main>

@@ -9,6 +9,7 @@ import {
 } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
 import { downloadBlob } from './files';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
 export function ExportBot({
@@ -20,6 +21,7 @@ export function ExportBot({
   close: () => unknown;
   notify: (message: string) => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [profile] = useState<BotProfile | undefined>(() =>
     runtime.snapshot.profiles.find((profile) => profile.id === agentId(bot)),
@@ -54,7 +56,7 @@ export function ExportBot({
         .catch((error) => {
           if (live) setError(runtimeError(error));
         });
-    else setError('Bot 资料尚未同步，请重新打开后查看。');
+    else setError(t('Bot 资料尚未同步，请重新打开后查看。'));
     return () => {
       live = false;
       mounted.current = false;
@@ -95,7 +97,7 @@ export function ExportBot({
             `${filename}.daban.json`,
             new Blob([botBundleText(value)], { type: 'application/json;charset=utf-8' }),
           );
-          notify('Bot 导出包已下载。');
+          notify(t('Bot 导出包已下载。'));
           close();
         } catch (error) {
           if (mounted.current) setError(runtimeError(error));
@@ -105,43 +107,46 @@ export function ExportBot({
       }}
     >
       <p className="dialog-description">
-        包含选中的已保存内容。导入会创建新 Bot，不会迁移聊天、模型连接、授权或浏览器登录。
+        {t('包含选中的已保存内容。导入会创建新 Bot，不会迁移聊天、模型连接、授权或浏览器登录。')}
       </p>
       {profile && (
         <div className="form-stack">
           <label className="field-label">
-            名称
+            {t('名称')}
             <input className="field" value={profile.name} readOnly />
           </label>
           <label className="field-label">
-            职责
+            {t('职责')}
             <textarea className="field" rows={3} value={profile.instructions} readOnly />
           </label>
           <label className="bundle-choice">
             <input
               type="checkbox"
-              aria-label="包含工作偏好"
+              aria-label={t('包含工作偏好')}
               checked={memory}
               disabled={saving}
               onChange={(event) => setMemory(event.target.checked)}
             />
-            <span>包含工作偏好</span>
+            <span>{t('包含工作偏好')}</span>
           </label>
           {memory && (
             <textarea
               className="field"
-              aria-label="已保存的工作偏好"
+              aria-label={t('已保存的工作偏好')}
               rows={3}
               value={profile.memory}
               readOnly
             />
           )}
           <div>
-            <h3 className="bundle-heading">技能说明 · {skills.length}</h3>
+            <h3 className="bundle-heading">
+              {t('技能说明 ·')}
+              {skills.length}
+            </h3>
             {!loaded ? (
-              <p className="inline-note">正在读取…</p>
+              <p className="inline-note">{t('正在读取…')}</p>
             ) : !skills.length ? (
-              <p className="inline-note">这位 Bot 没有启用技能。</p>
+              <p className="inline-note">{t('这位 Bot 没有启用技能。')}</p>
             ) : (
               skills.map((item) => (
                 <label className="bundle-choice" key={item.id}>
@@ -157,8 +162,11 @@ export function ExportBot({
             )}
           </div>
           <div>
-            <h3 className="bundle-heading">当前资料 · {documents.length}</h3>
-            {loaded && !documents.length && <p className="inline-note">没有当前资料。</p>}
+            <h3 className="bundle-heading">
+              {t('当前资料 ·')}
+              {documents.length}
+            </h3>
+            {loaded && !documents.length && <p className="inline-note">{t('没有当前资料。')}</p>}
             {documents.map((item) => (
               <label className="bundle-choice" key={item.id}>
                 <input
@@ -168,22 +176,24 @@ export function ExportBot({
                   onChange={() => setSelectedDocs(toggle(selectedDocs, item.id))}
                 />
                 <span className="bundle-path">{item.path}</span>
-                <span className="muted">{item.source ? '有原件' : '文本'}</span>
+                <span className="muted">{item.source ? t('有原件') : t('文本')}</span>
               </label>
             ))}
           </div>
           <label className="bundle-choice">
             <input
               type="checkbox"
-              aria-label="包含资料原件"
+              aria-label={t('包含资料原件')}
               checked={originals}
               disabled={saving}
               onChange={(event) => setOriginals(event.target.checked)}
             />
-            <span>包含 PDF / Office 原件</span>
+            <span>{t('包含 PDF / Office 原件')}</span>
           </label>
           <p className="field-help">
-            原件可能保留未出现在当前正文中的内容。请检查勾选内容后再分享；历史版本不包含在包中。
+            {t(
+              '原件可能保留未出现在当前正文中的内容。请检查勾选内容后再分享；历史版本不包含在包中。',
+            )}
           </p>
         </div>
       )}
@@ -194,14 +204,14 @@ export function ExportBot({
       )}
       <div className="dialog-actions">
         <button className="text-button" type="button" onClick={close}>
-          取消
+          {t('取消')}
         </button>
         <button
           className="primary"
           type="submit"
           disabled={!loaded || saving || runtime.snapshot.phase !== 'ready'}
         >
-          {saving ? '正在准备…' : '下载导出包'}
+          {saving ? t('正在准备…') : t('下载导出包')}
         </button>
       </div>
     </form>

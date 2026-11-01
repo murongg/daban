@@ -343,3 +343,16 @@ input.field {
   font-size: 11px;
   line-height: 1.7;
 }
+
+.language-control {
+  min-width: 160px;
+  max-width: 240px;
+}
+.language-control .select-field {
+  width: 100%;
+}
+.setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}

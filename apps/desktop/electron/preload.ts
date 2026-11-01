@@ -1,5 +1,6 @@
 import type { RuntimeBridge, RuntimeSnapshot } from '@daban/protocol';
 import { contextBridge, ipcRenderer } from 'electron';
+import type { LocaleBridge } from '../locale';
 import { isNoticeMessage, type NoticeBridge } from '../notifications';
 
 const runtime: RuntimeBridge = {
@@ -21,7 +22,8 @@ const notifications: NoticeBridge = {
     return () => ipcRenderer.removeListener('daban:notification-message', listener);
   },
 };
+const locale: LocaleBridge = { invoke: (command) => ipcRenderer.invoke('daban:locale', command) };
 contextBridge.exposeInMainWorld(
   'daban',
-  Object.freeze({ platform: process.platform, runtime, notifications }),
+  Object.freeze({ platform: process.platform, runtime, notifications, locale }),
 );

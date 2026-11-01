@@ -7,6 +7,7 @@ import {
   I18nProvider,
   Input,
 } from 'react-aria-components';
+import { getLocale, t, useLocale } from './locale';
 import './controls.css';
 
 export function NumberField({
@@ -26,9 +27,10 @@ export function NumberField({
   min?: number;
   max?: number;
 }) {
+  useLocale();
   const number = value.trim() ? Number(value) : Number.NaN;
   return (
-    <I18nProvider locale="zh-CN">
+    <I18nProvider locale={getLocale()}>
       <AriaNumberField
         aria-label={label}
         value={number}
@@ -44,16 +46,16 @@ export function NumberField({
         commitBehavior="validate"
       >
         <Group className="field number-control">
-          <Button slot="decrement" aria-label={`减少${label}`}>
+          <Button slot="decrement" aria-label={t('减少{0}', { 0: label })}>
             <Minus aria-hidden="true" />
           </Button>
           {/* Persist raw edits before blur so closing an editor cannot discard the draft. */}
           <Input onChange={(event) => onValueChange(event.currentTarget.value)} />
-          <Button slot="increment" aria-label={`增加${label}`}>
+          <Button slot="increment" aria-label={t('增加{0}', { 0: label })}>
             <Plus aria-hidden="true" />
           </Button>
         </Group>
-        <FieldError className="control-error">请输入范围内的有效整数。</FieldError>
+        <FieldError className="control-error">{t('请输入范围内的有效整数。')}</FieldError>
       </AriaNumberField>
     </I18nProvider>
   );

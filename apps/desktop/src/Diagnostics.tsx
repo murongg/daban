@@ -5,6 +5,7 @@ import {
   isDiagnosticReport,
 } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
+import { getLocale, t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
 const labels: Record<DiagnosticId, string> = {
@@ -36,45 +37,47 @@ const states = {
   timeout: '检查超时',
 };
 function detail(row: DiagnosticCheck) {
-  if (row.state === 'timeout') return '这项检查仍未返回，稍后可重新检查。';
+  if (row.state === 'timeout') return t('这项检查仍未返回，稍后可重新检查。');
   if (row.state === 'degraded')
     return row.id === 'computers'
-      ? `${row.affected} 位 Bot 的电脑需要处理，未确认回收的资源仍占用名额。`
-      : `有 ${row.affected} 份记录暂不可用，原文件仍保留。`;
+      ? t('{0} 位 Bot 的电脑需要处理，未确认回收的资源仍占用名额。', { 0: row.affected ?? '—' })
+      : t('有 {0} 份记录暂不可用，原文件仍保留。', { 0: row.affected ?? '—' });
   if (row.state === 'unconfigured')
     return row.id === 'model'
-      ? '请先在上方配置 DeepSeek 连接。'
-      : '尚未配置本地运行环境，完成配置后可重新检查。';
+      ? t('请先在上方配置 DeepSeek 连接。')
+      : t('尚未配置本地运行环境，完成配置后可重新检查。');
   if (row.state !== 'unavailable') return '';
-  if (row.id === 'vm') return '无法确认虚拟机已运行。可先重试连接，再重新检查。';
-  if (row.id === 'tunnel') return '客户端通道暂不可用，可先重试连接。';
+  if (row.id === 'vm') return t('无法确认虚拟机已运行。可先重试连接，再重新检查。');
+  if (row.id === 'tunnel') return t('客户端通道暂不可用，可先重试连接。');
   if (row.id === 'service' || row.id === 'agent')
-    return '本地服务暂未就绪，可先重试连接；检查不会强制重启电脑。';
+    return t('本地服务暂未就绪，可先重试连接；检查不会强制重启电脑。');
   if (row.id === 'graphics')
-    return '部分桌面命令依赖未找到，电脑连接需要补齐依赖；其他能力请查看对应检查项。';
-  return '此项暂不可用，请保留现有数据，修复对应服务后重新检查。';
+    return t('部分桌面命令依赖未找到，电脑连接需要补齐依赖；其他能力请查看对应检查项。');
+  return t('此项暂不可用，请保留现有数据，修复对应服务后重新检查。');
 }
 function Check({ row }: { row: DiagnosticCheck }) {
+  useLocale();
   const text = detail(row);
   return (
     <div className="setting-row diagnostic-row">
       <div>
-        <div className="setting-label">{labels[row.id]}</div>
+        <div className="setting-label">{t(labels[row.id])}</div>
         {text && <p className="setting-description">{text}</p>}
       </div>
       <span
         className={`badge ${row.state === 'degraded' || row.state === 'unavailable' || row.state === 'timeout' ? 'diagnostic-attention' : ''}`}
       >
         {row.state === 'ready' && row.id === 'model'
-          ? '已保存'
+          ? t('已保存')
           : row.state === 'ready' && ['dsh', 'graphics'].includes(row.id)
-            ? '已找到'
-            : states[row.state]}
+            ? t('已找到')
+            : t(states[row.state])}
       </span>
     </div>
   );
 }
 export function Diagnostics() {
+  useLocale();
   const runtime = useRuntime();
   const [report, setReport] = useState<DiagnosticReport>();
   const [expanded, setExpanded] = useState(false);
@@ -113,9 +116,9 @@ export function Diagnostics() {
     <div className="diagnostics">
       <div className="setting-row">
         <div>
-          <div className="setting-label">运行环境检查</div>
+          <div className="setting-label">{t('运行环境检查')}</div>
           <p className="setting-description">
-            读取虚拟机、连接和各项服务的状态，帮助定位使用问题。
+            {t('读取虚拟机、连接和各项服务的状态，帮助定位使用问题。')}
           </p>
         </div>
         <button
@@ -124,12 +127,12 @@ export function Diagnostics() {
           disabled={!runtime.enabled || busy}
           onClick={inspect}
         >
-          {busy ? '正在检查…' : '检查运行环境'}
+          {busy ? t('正在检查…') : t('检查运行环境')}
         </button>
       </div>
       {busy && (
         <p className="inline-note" role="status">
-          正在核对本地状态，请稍候…
+          {t('正在核对本地状态，请稍候…')}
         </p>
       )}
       {error && (
@@ -138,26 +141,30 @@ export function Diagnostics() {
         </p>
       )}
       {report && (
-        <section aria-label="运行环境检查结果" className="diagnostic-report">
+        <section aria-label={t('运行环境检查结果')} className="diagnostic-report">
           <p className="setting-description" role="status">
-            {issues.length ? '有项目需要处理' : '本次状态检查已完成'}
+            {issues.length ? t('有项目需要处理') : t('本次状态检查已完成')}
             <span className="diagnostic-time">
-              上次检查{' '}
+              {t('上次检查')}{' '}
               <time dateTime={report.checkedAt}>
-                {new Date(report.checkedAt).toLocaleTimeString('zh-CN', { hour12: false })}
+                {new Date(report.checkedAt).toLocaleTimeString(getLocale(), { hour12: false })}
               </time>
             </span>
           </p>
           {report.checks.some((row) => row.state === 'unsupported') && (
-            <p className="inline-note">当前运行环境暂不支持部分检查，已核对的连接结果仍可查看。</p>
+            <p className="inline-note">
+              {t('当前运行环境暂不支持部分检查，已核对的连接结果仍可查看。')}
+            </p>
           )}
           {report.checks.some((row) => row.state === 'unchecked') && (
-            <p className="inline-note">部分项目尚未取得检查结果，可处理已显示的问题后重新检查。</p>
+            <p className="inline-note">
+              {t('部分项目尚未取得检查结果，可处理已显示的问题后重新检查。')}
+            </p>
           )}
           {(expanded ? report.checks : issues).length > 0 && (
             <section
               className={`diagnostic-checks ${expanded ? 'expanded' : ''}`}
-              aria-label="检查条目"
+              aria-label={t('检查条目')}
               tabIndex={expanded ? 0 : undefined}
             >
               {(expanded ? report.checks : issues).map((row) => (
@@ -171,11 +178,12 @@ export function Diagnostics() {
             aria-expanded={expanded}
             onClick={() => setExpanded((value) => !value)}
           >
-            {expanded ? '收起检查项' : `查看全部检查项（${report.checks.length}）`}
+            {expanded ? t('收起检查项') : t('查看全部检查项（{0}）', { 0: report.checks.length })}
           </button>
           <p className="inline-note">
-            模型项仅核对已保存的配置；API
-            连通性请使用上方“检查连接”。桌面项仅检查命令依赖，完整桌面需连接后验证。
+            {t(
+              '模型项仅核对已保存的配置；API 连通性请使用上方“检查连接”。桌面项仅检查命令依赖，完整桌面需连接后验证。',
+            )}
           </p>
         </section>
       )}

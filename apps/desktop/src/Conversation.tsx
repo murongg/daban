@@ -17,6 +17,7 @@ import { Avatar } from './Avatar';
 import { IconButton } from './Button';
 import { Execution } from './Execution';
 import { useInputs } from './inputs';
+import { getLocale, t, useLocale } from './locale';
 import { Markdown } from './Markdown';
 import { modelName as displayModel, modelIcon } from './model-options';
 import { Plan } from './Plan';
@@ -35,34 +36,35 @@ import {
 import { Tooltip } from './Tooltip';
 
 function progress(task: RuntimeTask) {
-  if (task.phase === 'waiting') return '等待你的回复';
-  if (task.phase === 'paused') return '等待你交还电脑';
-  if (task.phase === 'starting') return '正在准备回复';
-  if (task.response?.state === 'streaming' && task.response.text) return '正在回复';
-  if (!task.toolCount) return '正在思考';
+  if (task.phase === 'waiting') return t('等待你的回复');
+  if (task.phase === 'paused') return t('等待你交还电脑');
+  if (task.phase === 'starting') return t('正在准备回复');
+  if (task.response?.state === 'streaming' && task.response.text) return t('正在回复');
+  if (!task.toolCount) return t('正在思考');
   const tool = task.trace.at(-1);
-  if (tool?.surface === 'web') return tool.name === 'web_search' ? '正在搜索' : '正在读取网页';
+  if (tool?.surface === 'web')
+    return tool.name === 'web_search' ? t('正在搜索') : t('正在读取网页');
   if (tool?.surface === 'browser') {
     const browser: Record<string, string> = {
-      browser_navigate: '正在浏览网页',
-      browser_snapshot: '正在读取页面',
-      browser_act: '正在操作网页',
-      browser_tabs: '正在管理标签页',
-      browser_upload: '正在上传文件',
-      browser_download: '正在下载文件',
+      browser_navigate: t('正在浏览网页'),
+      browser_snapshot: t('正在读取页面'),
+      browser_act: t('正在操作网页'),
+      browser_tabs: t('正在管理标签页'),
+      browser_upload: t('正在上传文件'),
+      browser_download: t('正在下载文件'),
     };
-    return browser[tool.name] || '正在操作浏览器';
+    return browser[tool.name] || t('正在操作浏览器');
   }
-  if (tool?.surface === 'desktop') return '正在操作电脑';
+  if (tool?.surface === 'desktop') return t('正在操作电脑');
   const labels: Record<string, string> = {
-    skill: '正在加载技能',
-    schedule: '正在管理定时任务',
-    memory: '正在整理工作偏好',
-    history: '正在查找历史',
-    work: '正在整理待办',
-    catalog: '正在查看任务目录',
+    skill: t('正在加载技能'),
+    schedule: t('正在管理定时任务'),
+    memory: t('正在整理工作偏好'),
+    history: t('正在查找历史'),
+    work: t('正在整理待办'),
+    catalog: t('正在查看任务目录'),
   };
-  return labels[tool?.surface || ''] || '正在使用工具';
+  return labels[tool?.surface || ''] || t('正在使用工具');
 }
 export function Conversation({
   state,
@@ -89,6 +91,7 @@ export function Conversation({
   onLifecycle?: () => unknown;
   onNewChat?: () => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const openLink = useCallback(
     (url: string) => runtime.command({ type: 'link.open', url }),
@@ -130,19 +133,22 @@ export function Conversation({
   const modelName = shownModel
     ? displayModel(shownModel, runtime.snapshot.model.connections)
     : task?.running
-      ? '模型准备中'
-      : '选择模型';
+      ? t('模型准备中')
+      : t('选择模型');
   const nextModelName = displayModel(configuredModel, runtime.snapshot.model.connections);
-  let modelLabel = modelPicker ? modelName : '选择模型';
+  let modelLabel = modelPicker ? modelName : t('选择模型');
   if (modelPicker && shownModel === 'deepseek-flash') modelLabel = 'Flash';
   if (modelPicker && shownModel === 'deepseek-v4-pro') modelLabel = 'V4 Pro';
-  let modelCaption = '界面演示 · 尚未连接模型';
+  let modelCaption = t('界面演示 · 尚未连接模型');
   if (runtime.enabled) {
-    modelCaption = live ? '通用 Agent' : '群聊协作尚未接入';
+    modelCaption = live ? t('通用 Agent') : t('群聊协作尚未接入');
     if (modelPicker) {
       modelCaption = task?.running
-        ? `本轮：${modelName}${configuredModel !== task.model ? ` · 下次任务：${nextModelName}` : ''}`
-        : `${modelName} · ${bot.model ? '此 Bot 设置' : '跟随工作区'}`;
+        ? t('本轮：{0}{1}', {
+            0: modelName,
+            1: configuredModel !== task.model ? t(' · 下次任务：{0}', { 0: nextModelName }) : '',
+          })
+        : `${modelName} · ${bot.model ? t('此 Bot 设置') : t('跟随工作区')}`;
     }
   }
   const end = useRef<HTMLDivElement>(null);
@@ -191,7 +197,7 @@ export function Conversation({
   function send() {
     if (readOnly || recovering) return;
     if (state.attachmentUploads[bot.id]) {
-      notify('请等待附件准备完成后发送。');
+      notify(t('请等待附件准备完成后发送。'));
       return;
     }
     if (busyInGroup || computerChanging || (!draft.trim() && !attachments.length)) return;
@@ -204,7 +210,7 @@ export function Conversation({
       type: 'send',
       bot: bot.id,
       id: crypto.randomUUID(),
-      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      time: new Date().toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' }),
     });
     input.current?.focus();
   }
@@ -312,19 +318,19 @@ export function Conversation({
         {(message.streaming || message.incomplete) && (
           <p className="inline-note reply-state">
             {message.incomplete
-              ? '回复未完成'
+              ? t('回复未完成')
               : task?.phase === 'waiting'
-                ? '等待你的回复'
+                ? t('等待你的回复')
                 : task?.phase === 'paused'
-                  ? '等待交还电脑'
-                  : '回复进行中'}
+                  ? t('等待交还电脑')
+                  : t('回复进行中')}
           </p>
         )}
         {message.files?.map(artifact)}
         {message.files?.includes('weekly-summary') && (
           <div className="artifact-note">
             <Check />
-            草稿已就绪，等待你查看
+            {t('草稿已就绪，等待你查看')}
           </div>
         )}
         {message.handoff && (
@@ -335,18 +341,18 @@ export function Conversation({
             onClick={() => dispatch({ type: 'panel', panel: 'computer' })}
           >
             <Monitor />
-            查看电脑
+            {t('查看电脑')}
           </button>
         )}
       </article>
     );
   }
   return (
-    <section className="conversation" aria-label={`${bot.name}的对话`}>
+    <section className="conversation" aria-label={t('{0}的对话', { 0: bot.name })}>
       <div
         className="transcript"
         role="log"
-        aria-label="对话记录"
+        aria-label={t('对话记录')}
         aria-live="polite"
         onScroll={(event) => {
           const element = event.currentTarget;
@@ -355,16 +361,22 @@ export function Conversation({
       >
         {entries.length ? (
           <>
-            <div className="message-date">{live ? '本机任务与对话' : '今天 10:24 · 示例对话'}</div>
+            <div className="message-date">
+              {live ? t('本机任务与对话') : t('今天 10:24 · 示例对话')}
+            </div>
             {earlier.map(renderMessage)}
           </>
         ) : (
           <div className="empty-chat">
             <Avatar bot={bot} size="large" />
-            <h2>和{bot.name}开始协作</h2>
-            <p>{bot.role || '给这位 Bot 一个目标，从第一条消息开始。'}</p>
+            <h2>
+              {t('和')}
+              {bot.name}
+              {t('开始协作')}
+            </h2>
+            <p>{bot.role || t('给这位 Bot 一个目标，从第一条消息开始。')}</p>
             <div className="suggestions">
-              {['帮我整理一份资料', '一起完善这个想法', '安排今天的工作'].map((text) => (
+              {[t('帮我整理一份资料'), t('一起完善这个想法'), t('安排今天的工作')].map((text) => (
                 <button
                   type="button"
                   key={text}
@@ -399,10 +411,10 @@ export function Conversation({
       <div className="composer-wrap">
         {!!state.chatRequests[bot.id] && (
           <div className="archive-banner">
-            <p>对话操作待核对，历史和草稿保留。</p>
+            <p>{t('对话操作待核对，历史和草稿保留。')}</p>
             {onNewChat && (
               <button type="button" className="secondary" onClick={onNewChat}>
-                核对对话操作
+                {t('核对对话操作')}
               </button>
             )}
           </div>
@@ -411,21 +423,21 @@ export function Conversation({
           <div className="archive-banner">
             <p>
               {operation
-                ? '先核对 Bot 操作结果，再发送新任务。'
-                : '此 Bot 已归档，历史和未发送草稿保留。'}
+                ? t('先核对 Bot 操作结果，再发送新任务。')
+                : t('此 Bot 已归档，历史和未发送草稿保留。')}
             </p>
             {onLifecycle && (
               <button type="button" className="secondary" onClick={onLifecycle}>
-                {operation ? '核对 Bot 状态' : '恢复 Bot'}
+                {operation ? t('核对 Bot 状态') : t('恢复 Bot')}
               </button>
             )}
           </div>
         )}
         {busyInGroup && (
           <div className="live-task" role="status">
-            <span>正在群聊中处理任务</span>
+            <span>{t('正在群聊中处理任务')}</span>
             <button type="button" onClick={() => dispatch({ type: 'select', bot: busyInGroup })}>
-              前往群聊
+              {t('前往群聊')}
             </button>
           </div>
         )}
@@ -436,20 +448,26 @@ export function Conversation({
           ['failed', 'stopped', 'interrupted'].includes(task.phase) &&
           task.prompt && (
             <div className="live-task" role="status">
-              <span>任务已中断，已保存文件仍保留</span>
+              <span>{t('任务已中断，已保存文件仍保留')}</span>
               <button
                 type="button"
                 disabled={pending || runtime.snapshot.phase !== 'ready'}
                 onClick={onContinue}
               >
-                继续处理
+                {t('继续处理')}
               </button>
             </div>
           )}
         {live && task?.running && (
           <div className="live-task" role="status">
             <span>{progress(task)}</span>
-            {task.executedCount > 0 && <span>已调用工具 {task.executedCount} 次</span>}
+            {task.executedCount > 0 && (
+              <span>
+                {t('已调用工具')}
+                {task.executedCount}
+                {t('次')}
+              </span>
+            )}
             <button
               type="button"
               onClick={() =>
@@ -458,15 +476,15 @@ export function Conversation({
                   .catch((error) => notify(String(error)))
               }
             >
-              停止任务
+              {t('停止任务')}
             </button>
           </div>
         )}
         {pending && (
           <div className="live-task" role="status">
-            <span>正在确认任务是否启动</span>
+            <span>{t('正在确认任务是否启动')}</span>
             <button type="button" onClick={onSend}>
-              重试发送
+              {t('重试发送')}
             </button>
           </div>
         )}
@@ -481,7 +499,7 @@ export function Conversation({
         >
           {dragging && (
             <p className="inline-note" role="status">
-              松开即可添加附件
+              {t('松开即可添加附件')}
             </p>
           )}
           {attachments.length > 0 && (
@@ -492,14 +510,14 @@ export function Conversation({
                   <button
                     type="button"
                     className="attachment-open"
-                    aria-label={`预览附件 ${file.name}`}
+                    aria-label={t('预览附件 {0}', { 0: file.name })}
                     onClick={() => preview(file)}
                   >
                     {file.name}
                   </button>
                   <button
                     type="button"
-                    aria-label={`移除附件 ${file.name}`}
+                    aria-label={t('移除附件 {0}', { 0: file.name })}
                     disabled={readOnly}
                     onClick={() => dispatch({ type: 'detach', bot: bot.id, file: file.id })}
                   >
@@ -511,13 +529,13 @@ export function Conversation({
           )}
           {state.attachmentUploads[bot.id] && (
             <p className="inline-note" role="status">
-              正在准备附件…
+              {t('正在准备附件…')}
             </p>
           )}
           <textarea
             ref={input}
-            aria-label="发送消息"
-            placeholder={`发消息给${bot.name}…`}
+            aria-label={t('发送消息')}
+            placeholder={t('发消息给{0}…', { 0: bot.name })}
             value={draft}
             maxLength={12000}
             rows={2}
@@ -538,7 +556,7 @@ export function Conversation({
           />
           <div className="composer-bottom">
             <IconButton
-              label="添加附件"
+              label={t('添加附件')}
               disabled={readOnly || pending || state.attachmentUploads[bot.id]}
               onClick={() => upload.current?.click()}
             >
@@ -557,12 +575,12 @@ export function Conversation({
                 await attach(files);
               }}
               tabIndex={-1}
-              aria-label="选择附件"
+              aria-label={t('选择附件')}
             />
             <Tooltip
               label={
                 modelPicker
-                  ? `${task?.running ? '本轮模型' : '下次任务模型'}：${modelName}`
+                  ? `${task?.running ? t('本轮模型') : t('下次任务模型')}：${modelName}`
                   : undefined
               }
             >
@@ -571,7 +589,7 @@ export function Conversation({
                 className="model-label"
                 disabled={readOnly}
                 onClick={onModel}
-                aria-label={modelPicker ? `Bot 模型：${modelName}` : undefined}
+                aria-label={modelPicker ? t('Bot 模型：{0}', { 0: modelName }) : undefined}
               >
                 {modelPicker && modelIcon(shownModel, runtime.snapshot.model.connections)}
                 <span>{modelLabel}</span>
@@ -580,15 +598,15 @@ export function Conversation({
             </Tooltip>
             <span className="spacer" />
             <IconButton
-              label="语音输入（暂未接入）"
-              onClick={() => notify('语音输入尚未接入，你可以先输入文字。')}
+              label={t('语音输入（暂未接入）')}
+              onClick={() => notify(t('语音输入尚未接入，你可以先输入文字。'))}
             >
               <Mic />
             </IconButton>
             <button
               type="submit"
               className="send-button"
-              aria-label="发送消息"
+              aria-label={t('发送消息')}
               disabled={
                 readOnly ||
                 recovering ||
@@ -609,7 +627,7 @@ export function Conversation({
           </div>
         </form>
         <div className="composer-hints">
-          <span>Enter 发送 · Shift + Enter 换行 · 可粘贴图片或拖入附件</span>
+          <span>{t('Enter 发送 · Shift + Enter 换行 · 可粘贴图片或拖入附件')}</span>
           <span>{modelCaption}</span>
         </div>
       </div>

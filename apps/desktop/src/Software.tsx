@@ -1,4 +1,5 @@
 import type { Interaction } from '@daban/protocol';
+import { t, useLocale } from './locale';
 import { useRuntime } from './Runtime';
 
 type InstallRequest = Extract<Interaction, { tool: 'software_install' }>;
@@ -10,6 +11,7 @@ const statuses = {
   unknown: '安装结果待核对，请勿重复安装',
 };
 export function Software({ request }: { request: InstallRequest }) {
+  useLocale();
   const { snapshot } = useRuntime();
   const receipt = snapshot.software?.items.find(
     (item) => item.plan.id === request.plan.id && item.plan.digest === request.plan.digest,
@@ -19,35 +21,37 @@ export function Software({ request }: { request: InstallRequest }) {
   return (
     <>
       <p className="approval-description">
-        安装到共享 Linux 后，所有 Bot 都能使用。仅确认以下软件和依赖，不会授予 Bot 管理员终端权限。
+        {t(
+          '安装到共享 Linux 后，所有 Bot 都能使用。仅确认以下软件和依赖，不会授予 Bot 管理员终端权限。',
+        )}
       </p>
       <p className="request-value">{request.purpose}</p>
-      <p className="field-help">Debian 官方软件源</p>
+      <p className="field-help">{t('Debian 官方软件源')}</p>
       {/* biome-ignore lint/a11y/noNoninteractiveTabindex: A long immutable package plan needs keyboard scrolling. */}
-      <section className="request-arguments" aria-label="本次软件安装清单" tabIndex={0}>
+      <section className="request-arguments" aria-label={t('本次软件安装清单')} tabIndex={0}>
         {request.plan.packages.map((item) => (
           <p className="request-value" key={item.name}>
             {item.name} · {item.version}
           </p>
         ))}
       </section>
-      <p className="field-help">确认仅对本次计划有效；软件或依赖发生变化时需重新确认。</p>
+      <p className="field-help">{t('确认仅对本次计划有效；软件或依赖发生变化时需重新确认。')}</p>
       {approved && (
         <p role="status" className="inline-note">
           {receipt
-            ? statuses[receipt.phase]
+            ? t(statuses[receipt.phase])
             : snapshot.agent?.location === 'host'
-              ? '这是迁移前已确认的安装记录；可让 Bot 核对当前虚拟机中的软件。'
-              : '正在核对安装结果，请勿重复安装'}
+              ? t('这是迁移前已确认的安装记录；可让 Bot 核对当前虚拟机中的软件。')
+              : t('正在核对安装结果，请勿重复安装')}
         </p>
       )}
       {approved && receipt?.error && (
         <p className="inline-note">
           {receipt.error === 'SOFTWARE_PLAN_EXPIRED'
-            ? '安装计划已过期，请让 Bot 重新生成计划。'
+            ? t('安装计划已过期，请让 Bot 重新生成计划。')
             : receipt.error === 'SOFTWARE_PLAN_CHANGED'
-              ? '依赖发生变化，请让 Bot 重新生成计划并确认。'
-              : '可以让 Bot 查询软件安装结果；不要直接重复提交。'}
+              ? t('依赖发生变化，请让 Bot 重新生成计划并确认。')
+              : t('可以让 Bot 查询软件安装结果；不要直接重复提交。')}
         </p>
       )}
     </>

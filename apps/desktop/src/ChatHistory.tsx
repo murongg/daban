@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { Execution } from './Execution';
+import { t, useLocale } from './locale';
 import { Markdown } from './Markdown';
 import { NumberField } from './NumberField';
 import { runtimeError, useRuntime } from './Runtime';
@@ -30,6 +31,7 @@ export function ChatHistory({
   initialRevision?: number;
   runId?: string;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [number, setNumber] = useState(
     String(initialRevision === undefined ? Math.max(1, revision) : initialRevision + 1),
@@ -98,15 +100,19 @@ export function ChatHistory({
     };
   }, [available]);
   return (
-    <Dialog title={runId ? '任务结果' : '历史对话'} onClose={close} wide>
+    <Dialog title={runId ? t('任务结果') : t('历史对话')} onClose={close} wide>
       <div className="archive-identity">
         <Avatar bot={bot} />
         <strong>{bot.name}</strong>
       </div>
       <p className="dialog-description">
         {runId
-          ? '本页只读已保存的任务结果，不会恢复模型上下文或重新执行任务。文件会读取当前保留的内容，旧记录不能证明文件仍存在。'
-          : '旧对话只供阅读，不会恢复模型上下文或重新执行任务。文件会读取当前保留的内容，旧记录不能证明文件仍存在。'}
+          ? t(
+              '本页只读已保存的任务结果，不会恢复模型上下文或重新执行任务。文件会读取当前保留的内容，旧记录不能证明文件仍存在。',
+            )
+          : t(
+              '旧对话只供阅读，不会恢复模型上下文或重新执行任务。文件会读取当前保留的内容，旧记录不能证明文件仍存在。',
+            )}
       </p>
       {!runId && (
         <form
@@ -117,9 +123,9 @@ export function ChatHistory({
           }}
         >
           <div className="field-label">
-            对话编号{' '}
+            {t('对话编号')}{' '}
             <NumberField
-              label="对话编号"
+              label={t('对话编号')}
               value={number}
               onValueChange={setNumber}
               min={1}
@@ -128,12 +134,12 @@ export function ChatHistory({
             />
           </div>
           <button type="submit" className="secondary" disabled={busy || !available || !valid}>
-            读取记录
+            {t('读取记录')}
           </button>
         </form>
       )}
-      {!available && <p className="inline-note">连接更新后的本地环境后可读取历史对话。</p>}
-      {!revision && <p className="inline-note">还没有较早的对话。</p>}
+      {!available && <p className="inline-note">{t('连接更新后的本地环境后可读取历史对话。')}</p>}
+      {!revision && <p className="inline-note">{t('还没有较早的对话。')}</p>}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -141,14 +147,14 @@ export function ChatHistory({
       )}
       {busy && (
         <p className="inline-note" role="status">
-          正在读取…
+          {t('正在读取…')}
         </p>
       )}
       {page && (
-        <section aria-label={`第 ${page.revision + 1} 次对话记录`}>
+        <section aria-label={t('第 {0} 次对话记录', { 0: page.revision + 1 })}>
           {!!local.length && (
             <details className="activity">
-              <summary>本机旧缓存（可能与后端记录重复）</summary>
+              <summary>{t('本机旧缓存（可能与后端记录重复）')}</summary>
               {local.map((message) => (
                 <article key={message.id} className={`message ${message.role}`}>
                   <div className="bubble">
@@ -171,13 +177,19 @@ export function ChatHistory({
               ))}
             </details>
           )}
-          <p className="inline-note">第 {page.revision + 1} 次对话 · 只读</p>
-          {!page.items.length && <p className="inline-note">这次对话没有已保存的任务记录。</p>}
+          <p className="inline-note">
+            {t('第')}
+            {page.revision + 1}
+            {t('次对话 · 只读')}
+          </p>
+          {!page.items.length && (
+            <p className="inline-note">{t('这次对话没有已保存的任务记录。')}</p>
+          )}
           {page.items.map((item) => {
             const files: WorkspaceFile[] = (item.files || []).map((file) => ({
               id: `runtime:${file.path}`,
               name: file.name,
-              kind: file.name.split('.').at(-1)?.toUpperCase() || '文件',
+              kind: file.name.split('.').at(-1)?.toUpperCase() || t('文件'),
               size: `${(file.size / 1024).toFixed(1)} KB`,
               modified: file.modified,
               content: '',
@@ -191,10 +203,10 @@ export function ChatHistory({
                 {item.phase !== 'completed' && (
                   <p className="inline-note">
                     {item.phase === 'failed'
-                      ? '未完成'
+                      ? t('未完成')
                       : item.phase === 'stopped'
-                        ? '已停止'
-                        : '已中断'}
+                        ? t('已停止')
+                        : t('已中断')}
                     {item.error ? ` · ${item.error}` : ''}
                   </p>
                 )}
@@ -205,7 +217,9 @@ export function ChatHistory({
                   />
                   <div className="bubble">
                     <Markdown
-                      text={item.result || item.response?.text || item.error || '没有保存的回复。'}
+                      text={
+                        item.result || item.response?.text || item.error || t('没有保存的回复。')
+                      }
                       streaming={item.phase !== 'completed'}
                       files={files}
                       fileIds={files.map((file) => file.id)}
@@ -241,7 +255,7 @@ export function ChatHistory({
                 disabled={busy || !available}
                 onClick={() => read()}
               >
-                最新记录
+                {t('最新记录')}
               </button>
               <button
                 className="secondary"
@@ -249,7 +263,7 @@ export function ChatHistory({
                 disabled={busy || !available || !page.nextBefore || page.revision !== selected}
                 onClick={() => read(page.nextBefore)}
               >
-                更早记录
+                {t('更早记录')}
               </button>
             </div>
           )}

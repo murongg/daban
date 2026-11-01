@@ -1,12 +1,15 @@
 import type { TaskPlan } from '@daban/protocol';
 import { Check, Circle, LoaderCircle } from 'lucide-react';
+import { t, useLocale } from './locale';
 
 export function Plan({ items }: { items: TaskPlan }) {
+  useLocale();
   if (!items.length) return null;
   return (
     <details className="task-plan" open>
       <summary>
-        任务计划 · {items.filter((item) => item.status === 'completed').length}/{items.length}
+        {t('任务计划 ·')}
+        {items.filter((item) => item.status === 'completed').length}/{items.length}
       </summary>
       <ol>
         {items.map((item) => (
@@ -21,10 +24,10 @@ export function Plan({ items }: { items: TaskPlan }) {
             <span>{item.content}</span>
             <span className="inline-note">
               {item.status === 'completed'
-                ? '已完成'
+                ? t('已完成')
                 : item.status === 'in_progress'
-                  ? '进行中'
-                  : '待处理'}
+                  ? t('进行中')
+                  : t('待处理')}
             </span>
           </li>
         ))}

@@ -8,6 +8,7 @@ import {
 } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Bot } from './state';
 
@@ -31,6 +32,7 @@ export function Recovery({
   close: () => unknown;
   onTask?: (id: string) => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [local, setLocal] = useState<RebootStatus>();
   const [review, setReview] = useState<RecoveryReview>();
@@ -168,39 +170,42 @@ export function Recovery({
     accept(await runtime.command({ type: 'recovery.restart', request }));
   }
   return (
-    <Dialog title="恢复整个运行环境" onClose={close}>
+    <Dialog title={t('恢复整个运行环境')} onClose={close}>
       <p className="dialog-description">
-        这会重启本地 Linux，关闭所有 Bot
-        的电脑和其中的应用。请先保存内容；部分网页可能需要重新登录。
+        {t(
+          '这会重启本地 Linux，关闭所有 Bot 的电脑和其中的应用。请先保存内容；部分网页可能需要重新登录。',
+        )}
       </p>
       <p className="inline-note">
-        已保存的文件、偏好和聊天保留，电脑需重新连接。你设置的定时和排队工作会继续按原设置运行；结果不明的操作不会自动重放。
+        {t(
+          '已保存的文件、偏好和聊天保留，电脑需重新连接。你设置的定时和排队工作会继续按原设置运行；结果不明的操作不会自动重放。',
+        )}
       </p>
       {scope && (
-        <section className="recovery-screens" aria-label="本次影响的电脑">
+        <section className="recovery-screens" aria-label={t('本次影响的电脑')}>
           {scope.screens.length ? (
             scope.screens.map((row) => (
               <div key={row.computer.bot} className="recovery-screen">
                 <span>{name(row.computer.bot)}</span>
                 <span className="muted">
                   {row.computer.phase !== 'connected'
-                    ? '状态需核对'
+                    ? t('状态需核对')
                     : row.lease?.owner === 'human'
-                      ? '你正在接管'
+                      ? t('你正在接管')
                       : row.lease?.owner === 'agent'
-                        ? 'Bot 可操作'
-                        : '状态需核对'}
+                        ? t('Bot 可操作')
+                        : t('状态需核对')}
                 </span>
               </div>
             ))
           ) : (
-            <p className="inline-note">当前未占用 Bot 屏幕；恢复仍会重启整个 Linux。</p>
+            <p className="inline-note">{t('当前未占用 Bot 屏幕；恢复仍会重启整个 Linux。')}</p>
           )}
         </section>
       )}
       {(review?.running.length || running.length) > 0 && (
         <div className="inline-note">
-          <p>先结束正在执行的任务，再恢复。</p>
+          <p>{t('先结束正在执行的任务，再恢复。')}</p>
           {[...new Set([...(review?.running ?? []), ...running])].map((id) => (
             <button
               key={id}
@@ -209,13 +214,17 @@ export function Recovery({
               onClick={() => onTask?.(id)}
               disabled={!onTask}
             >
-              查看 {name(id)} 的任务
+              {t('查看')}
+              {name(id)}
+              {t('的任务')}
             </button>
           ))}
         </div>
       )}
       {foreign && (
-        <p className="inline-note">已有恢复由其他客户端发起，请回到发起恢复的客户端核对结果。</p>
+        <p className="inline-note">
+          {t('已有恢复由其他客户端发起，请回到发起恢复的客户端核对结果。')}
+        </p>
       )}
       {host && !host.available && (
         <p className="form-error" role="alert">
@@ -224,20 +233,22 @@ export function Recovery({
       )}
       {operation && (
         <div className="recovery-result" role="status">
-          <strong>{stages[operation.stage]}</strong>
+          <strong>{t(stages[operation.stage])}</strong>
           {operation.error && (
             <p className="form-error">{runtimeError(new Error(operation.error))}</p>
           )}
           {operation.stage === 'stop-issued' && (
-            <p className="inline-note">先核对当前状态。客户端不会自动重复关机。</p>
+            <p className="inline-note">{t('先核对当前状态。客户端不会自动重复关机。')}</p>
           )}
           {pending && (
-            <p className="inline-note">关闭窗口不会撤回已提交的操作；重开客户端后先核对回执。</p>
+            <p className="inline-note">
+              {t('关闭窗口不会撤回已提交的操作；重开客户端后先核对回执。')}
+            </p>
           )}
         </div>
       )}
       {changed && operation?.stage !== 'complete' && (
-        <p className="inline-note">运行环境或控制状态已变化，请重新核对。</p>
+        <p className="inline-note">{t('运行环境或控制状态已变化，请重新核对。')}</p>
       )}
       {error && (
         <p className="form-error" role="alert">
@@ -252,12 +263,12 @@ export function Recovery({
             disabled={active}
             onChange={(event) => setSaved(event.target.checked)}
           />
-          我已保存所有电脑中的内容
+          {t('我已保存所有电脑中的内容')}
         </label>
       )}
       <div className="dialog-actions recovery-actions">
         <button type="button" className="text-button" onClick={close}>
-          关闭
+          {t('关闭')}
         </button>
         {!pending && (
           <button
@@ -266,7 +277,7 @@ export function Recovery({
             disabled={active || runtime.snapshot.phase !== 'ready'}
             onClick={() => perform(loadReview)}
           >
-            重新核对
+            {t('重新核对')}
           </button>
         )}
         {pending && (
@@ -280,7 +291,7 @@ export function Recovery({
               )
             }
           >
-            核对恢复结果
+            {t('核对恢复结果')}
           </button>
         )}
         {unissued && operation?.backend?.phase === 'prepared' && (
@@ -294,7 +305,7 @@ export function Recovery({
               )
             }
           >
-            取消未执行的恢复
+            {t('取消未执行的恢复')}
           </button>
         )}
         {operation?.stage === 'stopped' || operation?.stage === 'start-issued' ? (
@@ -308,7 +319,7 @@ export function Recovery({
               )
             }
           >
-            启动运行环境
+            {t('启动运行环境')}
           </button>
         ) : (
           (!pending || unissued) && (
@@ -318,7 +329,7 @@ export function Recovery({
               disabled={active || !saved || !canRestart}
               onClick={() => perform(restart)}
             >
-              {active ? '正在处理…' : unissued ? '继续这次恢复' : '确认重启整个环境'}
+              {active ? t('正在处理…') : unissued ? t('继续这次恢复') : t('确认重启整个环境')}
             </button>
           )
         )}
@@ -327,21 +338,23 @@ export function Recovery({
   );
 }
 export function RecoveryNotice({ open }: { open: () => unknown }) {
+  useLocale();
   const runtime = useRuntime();
   if (!recoveryBlocked(runtime.snapshot)) return null;
   return (
     <div className="recovery-banner" role="status">
       <div>
-        <strong>运行环境恢复待核对</strong>
-        <p>新任务和电脑操作暂缓，草稿仍可编辑，历史和已保存文件可查看。</p>
+        <strong>{t('运行环境恢复待核对')}</strong>
+        <p>{t('新任务和电脑操作暂缓，草稿仍可编辑，历史和已保存文件可查看。')}</p>
       </div>
       <button type="button" className="secondary" onClick={open}>
-        查看恢复
+        {t('查看恢复')}
       </button>
     </div>
   );
 }
 export function RecoveryEntry({ open }: { open?: () => unknown }) {
+  useLocale();
   const runtime = useRuntime();
   const operation = runtime.snapshot.reboot?.available
     ? runtime.snapshot.reboot.operation
@@ -350,12 +363,12 @@ export function RecoveryEntry({ open }: { open?: () => unknown }) {
   return (
     <div className="setting-row">
       <div>
-        <div className="setting-label">恢复本地运行环境</div>
+        <div className="setting-label">{t('恢复本地运行环境')}</div>
         <p className="setting-description">
-          电脑回收未确认或运行环境异常时，可核对后恢复整个 Linux。所有 Bot 的电脑都会受影响。
+          {t('电脑回收未确认或运行环境异常时，可核对后恢复整个 Linux。所有 Bot 的电脑都会受影响。')}
         </p>
         {runtime.snapshot.protocolVersion < 24 && (
-          <p className="inline-note">更新运行环境后可用；已有回执仍可核对。</p>
+          <p className="inline-note">{t('更新运行环境后可用；已有回执仍可核对。')}</p>
         )}
       </div>
       <button
@@ -364,7 +377,7 @@ export function RecoveryEntry({ open }: { open?: () => unknown }) {
         disabled={!open || !runtime.enabled || (!pending && runtime.snapshot.protocolVersion < 24)}
         onClick={open}
       >
-        {pending ? '查看恢复' : '检查并恢复'}
+        {pending ? t('查看恢复') : t('检查并恢复')}
       </button>
     </div>
   );

@@ -8,6 +8,7 @@ import {
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
 import { FilePicker } from './FilePicker';
+import { t, useLocale } from './locale';
 import { bundleFile, bundleHeader } from './portable';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Action, State } from './state';
@@ -39,6 +40,7 @@ export function ImportBot({
   close: () => unknown;
   notify: (message: string) => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [selected, setSelected] = useState<BotBundle>(),
     [name, setName] = useState(''),
@@ -100,14 +102,14 @@ export function ImportBot({
         }
         notify(
           wasCancelled
-            ? '保存已完成，新 Bot 已保留，可在资料中归档。'
-            : `已导入 ${value.profile.name}，技能说明保持关闭。`,
+            ? t('保存已完成，新 Bot 已保留，可在资料中归档。')
+            : t('已导入 {0}，技能说明保持关闭。', { 0: value.profile.name }),
         );
       } else if (value.state === 'cancelled') {
         dispatch({ type: 'bot-import-clear', id: captured.id, sha256: captured.sha256 });
         setSelected(undefined);
         setError('');
-        notify('Bot 导入已取消。');
+        notify(t('Bot 导入已取消。'));
       }
     },
     [dispatch, close, notify],
@@ -146,7 +148,7 @@ export function ImportBot({
       } finally {
         if (live && reference.current?.id === captured!.id)
           timer = setTimeout(() => {
-            tick().catch(() => setError('暂时无法核对导入进度。'));
+            tick().catch(() => setError(t('暂时无法核对导入进度。')));
           }, 1000);
       }
     }
@@ -250,32 +252,34 @@ export function ImportBot({
   if (!open) return null;
   const needsFile = !pending || !receipt || ['unknown', 'awaiting'].includes(receipt.state);
   return (
-    <Dialog title="导入 Bot" onClose={close}>
+    <Dialog title={t('导入 Bot')} onClose={close}>
       <p className="dialog-description">
-        从 Daban 导出包创建独立的新 Bot。连接设置、聊天和登录不迁移；所含技能说明不会自动启用。
+        {t(
+          '从 Daban 导出包创建独立的新 Bot。连接设置、聊天和登录不迁移；所含技能说明不会自动启用。',
+        )}
       </p>
       {!available && (
         <p className="form-error" role="alert">
-          请先更新并连接本地运行环境，再导入 Bot。
+          {t('请先更新并连接本地运行环境，再导入 Bot。')}
         </p>
       )}
       {pending && (
         <div className="bundle-progress" role="status">
           <strong>{pending.name}</strong>
-          <p>{progressNames[receipt?.state ?? 'unknown']}</p>
+          <p>{t(progressNames[receipt?.state ?? 'unknown'])}</p>
           {receipt?.progress && (
             <p>
               {receipt.progress.done} / {receipt.progress.total}
             </p>
           )}
-          <p className="field-help">关闭弹窗不取消已提交的导入。保存开始后，请等待完成。</p>
+          <p className="field-help">{t('关闭弹窗不取消已提交的导入。保存开始后，请等待完成。')}</p>
         </div>
       )}
       {needsFile && (
         <div className="field-label">
-          选择 Bot 导出包
+          {t('选择 Bot 导出包')}
           <FilePicker
-            aria-label="选择 Bot 导出包"
+            aria-label={t('选择 Bot 导出包')}
             accept=".json,application/json"
             disabled={!available || working || reading || !!pending?.cancelRequested}
             onChange={async (event) => {
@@ -308,19 +312,19 @@ export function ImportBot({
             }}
           />
           <span className="field-help">
-            UTF-8 JSON，最多 100 MiB。已有未确认操作时，请重新选择同一内容，或先取消该操作。
+            {t('UTF-8 JSON，最多 100 MiB。已有未确认操作时，请重新选择同一内容，或先取消该操作。')}
           </span>
         </div>
       )}
       {reading && (
         <p className="inline-note" role="status">
-          正在读取导出包…
+          {t('正在读取导出包…')}
         </p>
       )}
       {selected && (
         <div className="form-stack">
           <label className="field-label">
-            新 Bot 名称
+            {t('新 Bot 名称')}
             <input
               className="field"
               maxLength={30}
@@ -330,7 +334,7 @@ export function ImportBot({
             />
           </label>
           <label className="field-label">
-            职责
+            {t('职责')}
             <textarea className="field" rows={3} value={selected.profile.instructions} readOnly />
           </label>
           <label className="bundle-choice">
@@ -340,12 +344,12 @@ export function ImportBot({
               disabled={working || !!pending}
               onChange={(event) => setMemory(event.target.checked)}
             />
-            <span>包含工作偏好</span>
+            <span>{t('包含工作偏好')}</span>
           </label>
           {memory && (
             <textarea
               className="field"
-              aria-label="导入的工作偏好"
+              aria-label={t('导入的工作偏好')}
               rows={3}
               value={selected.preferences}
               readOnly
@@ -358,7 +362,7 @@ export function ImportBot({
               disabled={working || !!pending}
               onChange={(event) => setWithSkills(event.target.checked)}
             />
-            <span>包含 {selected.skills.length} 份技能说明</span>
+            <span>{t('包含 {0} 份技能说明', { 0: selected.skills.length })}</span>
           </label>
           {selected.skills.map((skill) => (
             <div className="bundle-row" key={skill.name}>
@@ -368,7 +372,7 @@ export function ImportBot({
                 className="text-button"
                 onClick={() => setView({ title: skill.name, content: skill.content })}
               >
-                查看说明
+                {t('查看说明')}
               </button>
             </div>
           ))}
@@ -379,20 +383,20 @@ export function ImportBot({
               disabled={working || !!pending}
               onChange={(event) => setWithKnowledge(event.target.checked)}
             />
-            <span>包含 {selected.knowledge.length} 份当前资料</span>
+            <span>{t('包含 {0} 份当前资料', { 0: selected.knowledge.length })}</span>
           </label>
           {selected.knowledge.map((document) => (
             <div className="bundle-row" key={document.path}>
               <span className="bundle-path">
                 {document.path}
-                {document.original ? ' · 含原件' : ''}
+                {document.original ? t(' · 含原件') : ''}
               </span>
               <button
                 type="button"
                 className="text-button"
                 onClick={() => setView({ title: document.path, content: document.content })}
               >
-                查看正文
+                {t('查看正文')}
               </button>
             </div>
           ))}
@@ -403,16 +407,18 @@ export function ImportBot({
                 className="field"
                 rows={7}
                 value={view.content}
-                aria-label="导入内容预览"
+                aria-label={t('导入内容预览')}
                 readOnly
               />
               <button type="button" className="text-button" onClick={() => setView(undefined)}>
-                收起预览
+                {t('收起预览')}
               </button>
             </div>
           )}
           <p className="field-help">
-            内容将成为新 Bot 的职责、偏好和参考资料，请确认来源与内容。不会自动运行任务或连接电脑。
+            {t(
+              '内容将成为新 Bot 的职责、偏好和参考资料，请确认来源与内容。不会自动运行任务或连接电脑。',
+            )}
           </p>
         </div>
       )}
@@ -429,11 +435,11 @@ export function ImportBot({
             disabled={working || !available}
             onClick={cancel}
           >
-            取消导入
+            {t('取消导入')}
           </button>
         )}
         <button type="button" className="text-button" onClick={close}>
-          关闭
+          {t('关闭')}
         </button>
         {pending && receipt?.state === 'failed' && (
           <button
@@ -442,7 +448,7 @@ export function ImportBot({
             disabled={working || !available}
             onClick={retry}
           >
-            继续核对并保存
+            {t('继续核对并保存')}
           </button>
         )}
         {needsFile && (
@@ -459,7 +465,7 @@ export function ImportBot({
             }
             onClick={submit}
           >
-            {working ? '正在提交…' : pending ? '重新提交同一内容' : '导入为新 Bot'}
+            {working ? t('正在提交…') : pending ? t('重新提交同一内容') : t('导入为新 Bot')}
           </button>
         )}
       </div>

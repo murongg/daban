@@ -65,6 +65,7 @@ vi.mock('electron', () => ({
       return mock.windows.filter((window) => !window.destroyed);
     }
   },
+  Menu: { buildFromTemplate: vi.fn((value) => value), setApplicationMenu: vi.fn() },
   Notification: { handleActivation: vi.fn() },
   dialog: { showErrorBox: vi.fn() },
   session: {
@@ -106,6 +107,7 @@ vi.mock('./notifications', () => ({
   },
 }));
 vi.mock('./notification-ipc', () => ({ noticeIpc: () => () => {} }));
+vi.mock('./locale-ipc', () => ({ localeIpc: () => () => {} }));
 
 it.each([false, true])(
   'captures notifications and always selects the host agent transport (packaged=%s)',

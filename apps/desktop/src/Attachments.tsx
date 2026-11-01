@@ -8,6 +8,7 @@ import { Download, FileText, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { IconButton } from './Button';
 import { downloadBlob } from './files';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
 const size = (bytes: number) =>
@@ -23,6 +24,7 @@ export function Attachments({
   bot: string;
   notify: (message: string) => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [page, setPage] = useState<AttachmentPage>();
   const [query, setQuery] = useState('');
@@ -97,7 +99,9 @@ export function Attachments({
         version: entry.version,
       });
       setNote(
-        entry.deleted ? '附件已恢复，旧引用可继续使用。' : '已移到回收站，恢复前不能作为任务输入。',
+        entry.deleted
+          ? t('附件已恢复，旧引用可继续使用。')
+          : t('已移到回收站，恢复前不能作为任务输入。'),
       );
       setRefresh((value) => value + 1);
     } catch (failure) {
@@ -123,8 +127,8 @@ export function Attachments({
       setPurge(undefined);
       setConfirmed(false);
       const message = result.checkpointed
-        ? '保留内容已永久删除，额度已释放。'
-        : '保留内容已删除、额度已释放；数据库整理暂未完成。';
+        ? t('保留内容已永久删除，额度已释放。')
+        : t('保留内容已删除、额度已释放；数据库整理暂未完成。');
       setNote(message);
       notify(message);
       setRefresh((value) => value + 1);
@@ -159,16 +163,19 @@ export function Attachments({
   return (
     <div className="retained-panel">
       <p className="panel-description">
-        管理此 Bot 保留的聊天附件。回收站仍占保留额度；永久删除后可继续上传。
+        {t('管理此 Bot 保留的聊天附件。回收站仍占保留额度；永久删除后可继续上传。')}
       </p>
       {page && (
         <p className="inline-note">
-          保留原件：{size(page.originalBytes)} / 50 MB · 提取文本：{size(page.textBytes)} / 20 MB
+          {t('保留原件：')}
+          {size(page.originalBytes)}
+          {t('/ 50 MB · 提取文本：')}
+          {size(page.textBytes)} / 20 MB
         </p>
       )}
       <div className="panel-heading">
         <label className="field-label">
-          查找附件
+          {t('查找附件')}
           <input
             className="field"
             type="search"
@@ -179,7 +186,7 @@ export function Attachments({
           />
         </label>
         <IconButton
-          label="刷新保留附件"
+          label={t('刷新保留附件')}
           disabled={busy || !!purge}
           onClick={() => setRefresh((value) => value + 1)}
         >
@@ -193,7 +200,7 @@ export function Attachments({
           disabled={busy || !!purge}
           onChange={(event) => setTrash(event.target.checked)}
         />
-        显示回收站
+        {t('显示回收站')}
       </label>
       {error && (
         <p className="form-error" role="alert">
@@ -207,7 +214,7 @@ export function Attachments({
       )}
       {loading && (
         <p className="inline-note" role="status">
-          正在读取附件…
+          {t('正在读取附件…')}
         </p>
       )}
       {purge && (
@@ -218,9 +225,14 @@ export function Attachments({
             await remove();
           }}
         >
-          <h3>永久删除「{purge.name}」</h3>
+          <h3>
+            {t('永久删除「')}
+            {purge.name}」
+          </h3>
           <p>
-            将删除此处保留的原件和提取文本，无法从回收站恢复。旧消息中的下载和任务重试可能失效。工作区副本、已下载文件与备份仍保留。
+            {t(
+              '将删除此处保留的原件和提取文本，无法从回收站恢复。旧消息中的下载和任务重试可能失效。工作区副本、已下载文件与备份仍保留。',
+            )}
           </p>
           <label className="request-option">
             <input
@@ -230,7 +242,7 @@ export function Attachments({
               disabled={busy}
               onChange={(event) => setConfirmed(event.target.checked)}
             />
-            我理解旧下载和任务重试可能失效
+            {t('我理解旧下载和任务重试可能失效')}
           </label>
           <div className="inline-form-actions">
             <button
@@ -242,14 +254,14 @@ export function Attachments({
                 setConfirmed(false);
               }}
             >
-              取消
+              {t('取消')}
             </button>
             <button
               type="submit"
               className="primary retained-danger"
               disabled={!confirmed || busy || !available}
             >
-              {busy ? '正在删除…' : '永久删除保留内容'}
+              {busy ? t('正在删除…') : t('永久删除保留内容')}
             </button>
           </div>
         </form>
@@ -264,20 +276,23 @@ export function Attachments({
               <div>
                 <div className="artifact-name">{entry.name}</div>
                 <div className="artifact-meta">
-                  原件 {size(entry.size)} · 文本 {size(entry.textSize)}
-                  {entry.deleted ? ' · 回收站' : ''}
+                  {t('原件')}
+                  {size(entry.size)}
+                  {t('· 文本')}
+                  {size(entry.textSize)}
+                  {entry.deleted ? t(' · 回收站') : ''}
                 </div>
               </div>
             </div>
             <IconButton
-              label={`下载原件 ${entry.name}`}
+              label={t('下载原件 {0}', { 0: entry.name })}
               disabled={busy}
               onClick={() => original(entry)}
             >
               <Download />
             </IconButton>
             <IconButton
-              label={`${entry.deleted ? '恢复' : '移到回收站'} ${entry.name}`}
+              label={`${entry.deleted ? t('恢复') : t('移到回收站')} ${entry.name}`}
               disabled={busy || !!purge || loading}
               onClick={() => change(entry)}
             >
@@ -285,7 +300,7 @@ export function Attachments({
             </IconButton>
             {entry.deleted && (
               <IconButton
-                label={`永久删除 ${entry.name}`}
+                label={t('永久删除 {0}', { 0: entry.name })}
                 disabled={busy || !!purge || loading}
                 onClick={() => {
                   setPurge(entry);
@@ -300,7 +315,7 @@ export function Attachments({
         ))}
       </div>
       {page && !page.items.length && !loading && (
-        <p className="panel-description">{trash ? '回收站为空。' : '没有匹配的保留附件。'}</p>
+        <p className="panel-description">{trash ? t('回收站为空。') : t('没有匹配的保留附件。')}</p>
       )}
       {page?.next && (
         <button
@@ -309,12 +324,12 @@ export function Attachments({
           disabled={busy || loading || !!purge}
           onClick={more}
         >
-          更多附件
+          {t('更多附件')}
         </button>
       )}
       {!available && (
         <p className="form-error" role="alert">
-          连接已更新的本地运行环境后可管理附件。
+          {t('连接已更新的本地运行环境后可管理附件。')}
         </p>
       )}
     </div>

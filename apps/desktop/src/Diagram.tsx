@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
 import { CodeBlock } from './CodeBlock';
 import { renderDiagram } from './diagrams';
+import { t, useLocale } from './locale';
 
 function appearance() {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
@@ -23,6 +24,7 @@ export function Diagram({
   notify: (message: string) => unknown;
   copyText: (text: string) => unknown;
 }) {
+  useLocale();
   const theme = useSyncExternalStore(subscribe, appearance, () => 'light');
   const key = `${theme}\n${source}`;
   const [result, setResult] = useState<{
@@ -57,12 +59,12 @@ export function Diagram({
   const current = !streaming && result?.key === key ? result : undefined;
   const preview = current?.url ? (
     // biome-ignore lint/a11y/noNoninteractiveTabindex: Wide diagrams need an independently keyboard-scrollable surface.
-    <section className="markdown-diagram" tabIndex={0} aria-label="Mermaid 图表">
+    <section className="markdown-diagram" tabIndex={0} aria-label={t('Mermaid 图表')}>
       <img
         src={current.url}
         width={current.width}
         height={current.height}
-        alt={current.label || 'Mermaid 图表，描述见源码'}
+        alt={current.label || t('Mermaid 图表，描述见源码')}
       />
     </section>
   ) : undefined;
@@ -79,8 +81,8 @@ export function Diagram({
           : current
             ? current.url
               ? undefined
-              : '图表未能绘制，已保留源码。'
-            : '正在绘制图表…'
+              : t('图表未能绘制，已保留源码。')
+            : t('正在绘制图表…')
       }
     >
       {children}

@@ -1,5 +1,6 @@
 import { type DocumentOriginal, imageMime, type RuntimeDownload } from '@daban/protocol';
 import { useEffect, useState } from 'react';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { WorkspaceFile } from './state';
 
@@ -35,6 +36,7 @@ async function firstFrame(data: string, mime: string) {
 }
 
 export function ImagePreview({ file }: { file: WorkspaceFile }) {
+  useLocale();
   const runtime = useRuntime();
   const upload = file.upload;
   const [image, setImage] = useState('');
@@ -90,7 +92,7 @@ export function ImagePreview({ file }: { file: WorkspaceFile }) {
   if (!image)
     return (
       <p className="inline-note" role="status">
-        正在读取图片…
+        {t('正在读取图片…')}
       </p>
     );
   return (
@@ -101,12 +103,12 @@ export function ImagePreview({ file }: { file: WorkspaceFile }) {
         alt={upload?.name || file.name}
         onError={() => {
           setImage('');
-          setError('图片无法显示，可下载原件检查文件。');
+          setError(t('图片无法显示，可下载原件检查文件。'));
         }}
       />
       {['image/gif', 'image/webp'].includes(imageMime(upload?.name || file.name) || '') && (
         <p className="inline-note">
-          此处预览静态首帧；发送图片时，模型服务也只读取首帧。原件下载保留动画。
+          {t('此处预览静态首帧；发送图片时，模型服务也只读取首帧。原件下载保留动画。')}
         </p>
       )}
     </>

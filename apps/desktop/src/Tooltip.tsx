@@ -11,12 +11,14 @@ import {
 } from 'react';
 import { useOverlayPosition } from 'react-aria/useOverlayPosition';
 import { createPortal } from 'react-dom';
+import { useLocale } from './locale';
 import './controls.css';
 
 type Trigger = ReactElement<
   HTMLAttributes<HTMLElement> & RefAttributes<HTMLElement> & { disabled?: boolean }
 >;
 export function Tooltip({ label, children }: { label?: string; children: Trigger }) {
+  useLocale();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement>(null);
   const overlay = useRef<HTMLDivElement>(null);

@@ -1,4 +1,5 @@
 import { Plug } from 'lucide-react';
+import { useLocale } from './locale';
 import { platforms } from './platforms';
 import './provider-icon.css';
 
@@ -11,6 +12,7 @@ export function ProviderIcon({
   platform?: string;
   size?: 'small' | 'large';
 }) {
+  useLocale();
   const known = platform !== 'custom' && platforms.some((entry) => entry.id === platform);
   const identity = known ? platform : 'custom';
   return (

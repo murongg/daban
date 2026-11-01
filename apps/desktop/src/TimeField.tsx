@@ -7,6 +7,7 @@ import {
   FieldError,
   I18nProvider,
 } from 'react-aria-components';
+import { getLocale, t, useLocale } from './locale';
 import './controls.css';
 
 export function TimeField({
@@ -22,6 +23,7 @@ export function TimeField({
   disabled?: boolean;
   required?: boolean;
 }) {
+  useLocale();
   let time = null;
   try {
     time = value ? parseTime(value) : null;
@@ -29,7 +31,7 @@ export function TimeField({
     /* Preserve the scheduler's invalid-input path without inventing a different time. */
   }
   return (
-    <I18nProvider locale="zh-CN">
+    <I18nProvider locale={getLocale()}>
       <AriaTimeField
         aria-label={label}
         value={time}
@@ -48,7 +50,7 @@ export function TimeField({
           </DateInput>
           <Clock3 aria-hidden="true" />
         </div>
-        <FieldError className="control-error">请输入有效时间（00:00–23:59）。</FieldError>
+        <FieldError className="control-error">{t('请输入有效时间（00:00–23:59）。')}</FieldError>
       </AriaTimeField>
     </I18nProvider>
   );

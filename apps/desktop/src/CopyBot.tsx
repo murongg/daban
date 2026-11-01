@@ -2,10 +2,12 @@ import { agentId, type BotCopyRequest, type BotProfile } from '@daban/protocol';
 import { useState } from 'react';
 import { type CopyProps, copyName, useCopy } from './copies';
 import { Dialog } from './Dialog';
+import { t, useLocale } from './locale';
 import { modelName } from './model-options';
 import { useRuntime } from './Runtime';
 
 export function CopyBot(props: CopyProps & { bot?: string }) {
+  useLocale();
   const controls = useCopy('bot', props);
   if (!props.open) return null;
   return (
@@ -36,6 +38,7 @@ function CopyEditor({
   check: () => Promise<unknown>;
   close: () => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const id = bot ? agentId(bot) : pending?.bot;
   const [source, setSource] = useState<BotProfile | undefined>(() => {
@@ -52,7 +55,7 @@ function CopyEditor({
     latest?.archived ||
     latest?.lifecycle?.phase === 'pending';
   return (
-    <Dialog title="复制 Bot" onClose={close}>
+    <Dialog title={t('复制 Bot')} onClose={close}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -67,28 +70,34 @@ function CopyEditor({
         }}
       >
         <p className="dialog-description">
-          创建独立的新
-          Bot，复制已保存的职责、颜色和模型选择。资料与技能可通过导入导出迁移；聊天、日程和工具授权不复制。
+          {t(
+            '创建独立的新 Bot，复制已保存的职责、颜色和模型选择。资料与技能可通过导入导出迁移；聊天、日程和工具授权不复制。',
+          )}
         </p>
         {!available && (
           <p className="form-error" role="alert">
-            请先更新并连接本地运行环境，再复制 Bot。
+            {t('请先更新并连接本地运行环境，再复制 Bot。')}
           </p>
         )}
         {blocked && (
-          <p className="inline-note">运行环境正在恢复，可以核对结果，恢复完成后可重试复制。</p>
+          <p className="inline-note">
+            {t('运行环境正在恢复，可以核对结果，恢复完成后可重试复制。')}
+          </p>
         )}
         {pending ? (
           <div className="bundle-progress" role="status">
             <strong>{pending.name}</strong>
-            <p>复制结果尚未确认。关闭后仍会保留原请求；重开只核对结果。</p>
-            <p className="inline-note">重试沿用同一次请求，不会重复创建 Bot。</p>
+            <p>{t('复制结果尚未确认。关闭后仍会保留原请求；重开只核对结果。')}</p>
+            <p className="inline-note">{t('重试沿用同一次请求，不会重复创建 Bot。')}</p>
           </div>
         ) : source ? (
           <div className="form-stack">
-            <p className="inline-note">来源：{source.name}</p>
+            <p className="inline-note">
+              {t('来源：')}
+              {source.name}
+            </p>
             <label className="field-label">
-              新 Bot 名称
+              {t('新 Bot 名称')}
               <input
                 className="field"
                 data-autofocus
@@ -98,14 +107,14 @@ function CopyEditor({
               />
             </label>
             <label className="field-label">
-              职责
+              {t('职责')}
               <textarea className="field" rows={3} value={source.instructions} readOnly />
             </label>
             <p className="inline-note">
-              模型：
+              {t('模型：')}
               {source.model
                 ? modelName(source.model, runtime.snapshot.model.connections)
-                : '跟随工作区'}
+                : t('跟随工作区')}
             </p>
             <label className="bundle-choice">
               <input
@@ -113,12 +122,12 @@ function CopyEditor({
                 checked={memory}
                 onChange={(event) => setMemory(event.target.checked)}
               />
-              <span>包含工作偏好</span>
+              <span>{t('包含工作偏好')}</span>
             </label>
             {memory && (
               <textarea
                 className="field"
-                aria-label="已保存的工作偏好"
+                aria-label={t('已保存的工作偏好')}
                 rows={3}
                 value={source.memory}
                 readOnly
@@ -126,7 +135,7 @@ function CopyEditor({
             )}
             {latest && latest.revision !== source.revision && (
               <p className="inline-note">
-                来源资料已有更新，请载入后核对；新名称和偏好选择会保留。
+                {t('来源资料已有更新，请载入后核对；新名称和偏好选择会保留。')}
               </p>
             )}
             {latest && (
@@ -136,18 +145,18 @@ function CopyEditor({
                 disabled={!available || !!latest.archived || latest.lifecycle?.phase === 'pending'}
                 onClick={() => setSource({ ...latest })}
               >
-                载入最新来源
+                {t('载入最新来源')}
               </button>
             )}
             {inactive && (
               <p className="form-error" role="alert">
-                来源 Bot 暂不可复制，请核对归档或恢复状态。
+                {t('来源 Bot 暂不可复制，请核对归档或恢复状态。')}
               </p>
             )}
           </div>
         ) : (
           <p className="form-error" role="alert">
-            未找到来源资料，请关闭后重新选择 Bot。
+            {t('未找到来源资料，请关闭后重新选择 Bot。')}
           </p>
         )}
         {error && (
@@ -157,7 +166,7 @@ function CopyEditor({
         )}
         <div className="dialog-actions">
           <button type="button" className="secondary" onClick={close}>
-            关闭
+            {t('关闭')}
           </button>
           {pending ? (
             <>
@@ -167,7 +176,7 @@ function CopyEditor({
                 disabled={!available || reading}
                 onClick={() => check().catch(() => {})}
               >
-                {reading ? '正在核对…' : '核对复制结果'}
+                {reading ? t('正在核对…') : t('核对复制结果')}
               </button>
               <button
                 type="button"
@@ -175,7 +184,7 @@ function CopyEditor({
                 disabled={!available || blocked || working}
                 onClick={() => submit(pending).catch(() => {})}
               >
-                {working ? '正在复制…' : '重试同一次复制'}
+                {working ? t('正在复制…') : t('重试同一次复制')}
               </button>
             </>
           ) : (
@@ -186,7 +195,7 @@ function CopyEditor({
                 !available || blocked || working || inactive || !name.trim() || name.includes('\0')
               }
             >
-              创建副本
+              {t('创建副本')}
             </button>
           )}
         </div>

@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
 import type { MermaidConfig } from 'mermaid';
+import { t } from './locale';
 
 export interface DiagramImage {
   svg: string;
@@ -67,7 +68,7 @@ export function diagramImage(svg: string): DiagramImage | undefined {
       .map((node) => node.textContent?.trim())
       .filter(Boolean)
       .join('；') ||
-    '图表，描述见源码';
+    t('图表，描述见源码');
   return {
     svg: new XMLSerializer().serializeToString(root),
     width: Math.ceil(box[2]),
@@ -141,7 +142,7 @@ export async function renderDiagram(
       const child = scratch.querySelector('iframe');
       if (!child?.contentDocument || frame.document) return;
       child.tabIndex = -1;
-      child.title = '图表布局计算';
+      child.title = t('图表布局计算');
       frame.document = child.contentDocument;
       const policy = frame.document.createElement('meta');
       policy.httpEquiv = 'Content-Security-Policy';

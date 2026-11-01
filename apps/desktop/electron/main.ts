@@ -1,6 +1,10 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, Notification, session } from 'electron';
+import { type Parameters, translate } from '../locale';
+import { LocalePreferences } from './locale';
+import { localeIpc } from './locale-ipc';
+import { localizeMenu } from './menu';
 import { noticeIpc } from './notification-ipc';
 import { Notifications } from './notifications';
 import { runtimeService } from './service';
@@ -10,6 +14,8 @@ app.setPath('userData', join(app.getPath('appData'), 'daban-preview'));
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
 if (process.platform === 'win32') app.setAppUserModelId('dev.daban.app');
+let closeLocaleIpc: (() => unknown) | undefined;
+let preferences: LocalePreferences | undefined;
 let mainWindow: BrowserWindow | undefined;
 let windowReady = false;
 let nativeLaunchId: string | undefined;
@@ -23,6 +29,9 @@ app.on('ready', (_event, launchInfo) => {
   )
     nativeLaunchId = value.identifier;
 });
+
+const text = (source: string, values?: Parameters) =>
+  translate(preferences?.current ?? 'zh-CN', source, values);
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -70,10 +79,10 @@ function createWindow() {
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.loadFile(join(__dirname, '..', 'dist', 'index.html')).catch((error) => {
     dialog.showErrorBox(
-      'Daban 启动失败',
+      text('Daban 启动失败'),
       app.isPackaged
-        ? '客户端文件无法载入，请重新获取完整安装包。已保存的任务和文件不会被清除。'
-        : `无法载入客户端界面。请先运行 npm run build。\n${error.message}`,
+        ? text('客户端文件无法载入，请重新获取完整安装包。已保存的任务和文件不会被清除。')
+        : text('无法载入客户端界面。请先运行 npm run build。\n{0}', { 0: error.message }),
     );
     app.quit();
   });
@@ -107,7 +116,12 @@ if (primary) {
       if (process.platform === 'darwin')
         app.dock?.setIcon(join(__dirname, '..', 'dist', 'app-icon.png'));
       const renderer = pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href;
+      preferences = new LocalePreferences(join(app.getPath('userData'), 'locale.json'));
+      await preferences.ready;
+      localizeMenu(preferences.current);
+      closeLocaleIpc = localeIpc(preferences, renderer, localizeMenu);
       notifications = new Notifications(join(app.getPath('userData'), 'notifications.json'), {
+        locale: () => preferences?.current ?? 'zh-CN',
         foreground: () => !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused(),
         open: () => {
           focusWindow();
@@ -152,7 +166,10 @@ if (primary) {
     })
     .catch(() => {
       console.error('Daban initialization failed');
-      dialog.showErrorBox('Daban 启动失败', '请重新打开客户端；已保存的任务和文件不会被清除。');
+      dialog.showErrorBox(
+        text('Daban 启动失败'),
+        text('请重新打开客户端；已保存的任务和文件不会被清除。'),
+      );
     });
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
@@ -164,6 +181,7 @@ if (primary) {
     exiting = true;
     try {
       closeNoticeIpc?.();
+      closeLocaleIpc?.();
       await notifications?.close();
       await service?.close();
     } catch {

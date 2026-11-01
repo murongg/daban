@@ -1,5 +1,6 @@
 import { type BotProfile, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
+import { t, useLocale } from './locale';
 import { modelChoices, modelIcon, modelName } from './model-options';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
@@ -25,6 +26,7 @@ export function Profile({
   onArchive?: () => unknown;
   onExport?: () => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const modelsAvailable = runtime.enabled && runtime.snapshot.protocolVersion >= 14;
   const [model, setModel] = useState(bot.model || '');
@@ -75,7 +77,7 @@ export function Profile({
             dispatch({ type: 'profiles', profiles: [updated] });
           } else dispatch({ type: 'profile-local', bot: bot.id, name: name.trim(), instructions });
           if (mounted.current) {
-            notify('Bot 资料已保存，下次对话生效。');
+            notify(t('Bot 资料已保存，下次对话生效。'));
             close();
           }
         } catch (error) {
@@ -98,14 +100,14 @@ export function Profile({
       }}
     >
       <p className="dialog-description">
-        名称、职责和模型会用于下一次任务；当前任务和聊天记录会保留。
+        {t('名称、职责和模型会用于下一次任务；当前任务和聊天记录会保留。')}
       </p>
       <div className="form-stack">
         <label className="field-label">
-          名称
+          {t('名称')}
           <input
             className="field"
-            aria-label="名称"
+            aria-label={t('名称')}
             data-autofocus
             required
             maxLength={30}
@@ -115,9 +117,9 @@ export function Profile({
           />
         </label>
         <div className="field-label">
-          此 Bot 的模型
+          {t('此 Bot 的模型')}
           <Select
-            label="此 Bot 的模型"
+            label={t('此 Bot 的模型')}
             value={model}
             disabled={saving || !modelsAvailable}
             onValueChange={setModel}
@@ -125,7 +127,9 @@ export function Profile({
               {
                 value: '',
                 icon: modelIcon(runtime.snapshot.model.model, runtime.snapshot.model.connections),
-                label: `跟随工作区 · ${modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections)}`,
+                label: t('跟随工作区 · {0}', {
+                  0: modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections),
+                }),
               },
               ...modelChoices(runtime.snapshot.model.connections, model),
             ]}
@@ -133,23 +137,25 @@ export function Profile({
           <span className="field-help">
             {modelsAvailable
               ? runtime.snapshot.protocolVersion >= 16
-                ? '使用所选供应商的连接，只影响后续任务。整屏观察需要支持图片的模型。'
-                : '使用工作区已配置的连接，只影响这位 Bot 的后续任务。'
-              : '更新本地运行环境后，可为每位 Bot 单独选择模型。'}
+                ? t('使用所选供应商的连接，只影响后续任务。整屏观察需要支持图片的模型。')
+                : t('使用工作区已配置的连接，只影响这位 Bot 的后续任务。')
+              : t('更新本地运行环境后，可为每位 Bot 单独选择模型。')}
           </span>
         </div>
         <label className="field-label">
-          职责
+          {t('职责')}
           <textarea
             className="field"
-            aria-label="职责"
+            aria-label={t('职责')}
             rows={5}
             maxLength={4000}
             value={instructions}
             disabled={saving}
             onChange={(event) => setInstructions(event.target.value)}
           />
-          <span className="field-help">描述希望它如何协助你，不会因此获得额外工具权限。</span>
+          <span className="field-help">
+            {t('描述希望它如何协助你，不会因此获得额外工具权限。')}
+          </span>
         </label>
         {error && (
           <p className="form-error" role="alert">
@@ -158,15 +164,15 @@ export function Profile({
         )}
         {conflict && (
           <div>
-            <p className="inline-note">当前已保存的名称与职责：</p>
+            <p className="inline-note">{t('当前已保存的名称与职责：')}</p>
             <p>{conflict.name}</p>
-            <p className="panel-description">{conflict.instructions || '未设置职责'}</p>
+            <p className="panel-description">{conflict.instructions || t('未设置职责')}</p>
             {modelsAvailable && (
               <p className="panel-description">
-                当前模型：
+                {t('当前模型：')}
                 {conflict.model
                   ? modelName(conflict.model, runtime.snapshot.model.connections)
-                  : '跟随工作区'}
+                  : t('跟随工作区')}
               </p>
             )}
             <button
@@ -178,7 +184,7 @@ export function Profile({
                 setError('');
               }}
             >
-              保留编辑，按此版本重试
+              {t('保留编辑，按此版本重试')}
             </button>
           </div>
         )}
@@ -191,7 +197,7 @@ export function Profile({
             disabled={saving || dirty || version === undefined}
             onClick={onExport}
           >
-            导出 Bot
+            {t('导出 Bot')}
           </button>
         )}
         {onArchive && runtime.snapshot.protocolVersion >= 22 && (
@@ -201,14 +207,14 @@ export function Profile({
             disabled={saving || dirty}
             onClick={onArchive}
           >
-            归档 Bot
+            {t('归档 Bot')}
           </button>
         )}
         <button type="button" className="text-button" onClick={close}>
-          取消
+          {t('取消')}
         </button>
         <button type="submit" className="primary" disabled={saving || !!conflict || !name.trim()}>
-          {saving ? '正在保存…' : '保存资料'}
+          {saving ? t('正在保存…') : t('保存资料')}
         </button>
       </div>
     </form>

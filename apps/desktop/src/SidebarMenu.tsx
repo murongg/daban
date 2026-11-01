@@ -1,6 +1,7 @@
 import { Check } from 'lucide-react';
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useLocale } from './locale';
 
 export type SidebarEntry =
   | { id: string; kind: 'label'; label: string }
@@ -36,6 +37,7 @@ export function SidebarMenu({
   items: SidebarEntry[];
   onClose: (restoreFocus: boolean) => unknown;
 }) {
+  useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: anchor.left, top: anchor.bottom });
   useLayoutEffect(() => {

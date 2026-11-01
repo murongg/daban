@@ -7,6 +7,7 @@ import {
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Action, Bot, State } from './state';
 
@@ -37,6 +38,7 @@ export function GroupArchive({
   notify: (message: string) => unknown;
   navigate?: () => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime(),
     current = runtime.snapshot.groups?.items.find((group) => group.id === bot.id);
   // A committed acknowledgement can arrive before the next snapshot; never offer its opposite operation from stale metadata.
@@ -79,10 +81,10 @@ export function GroupArchive({
     if (!mounted.current) return;
     notify(
       value.group.revision !== value.receipt.revision
-        ? '此前操作已完成，群聊后来已更新，已显示当前状态。'
+        ? t('此前操作已完成，群聊后来已更新，已显示当前状态。')
         : request.action === 'archive'
-          ? '群聊已归档，历史、文件和草稿保留。'
-          : '群聊已恢复，旧消息不会自动派发。',
+          ? t('群聊已归档，历史、文件和草稿保留。')
+          : t('群聊已恢复，旧消息不会自动派发。'),
     );
     close();
   }
@@ -122,40 +124,43 @@ export function GroupArchive({
     }
   }
   return (
-    <Dialog title={action === 'archive' ? '归档群聊' : '恢复群聊'} onClose={close}>
+    <Dialog title={action === 'archive' ? t('归档群聊') : t('恢复群聊')} onClose={close}>
       <div className="archive-identity">
         <Avatar bot={bot} />
         <strong>{acknowledged ? bot.name : current?.name || bot.name}</strong>
       </div>
       <p className="dialog-description">
         {action === 'archive'
-          ? '归档后不再接受新协作。成员、历史、附件、文件和未发送草稿都会保留，成员的私聊与电脑不受影响。'
-          : '恢复群聊的使用入口，旧消息不会自动派发，成员各自的状态和权限保持原样。'}
+          ? t(
+              '归档后不再接受新协作。成员、历史、附件、文件和未发送草稿都会保留，成员的私聊与电脑不受影响。',
+            )
+          : t('恢复群聊的使用入口，旧消息不会自动派发，成员各自的状态和权限保持原样。')}
       </p>
       {!available && (
-        <p className="inline-note">连接更新后的本地环境，才能归档、恢复或核对这次操作。</p>
+        <p className="inline-note">{t('连接更新后的本地环境，才能归档、恢复或核对这次操作。')}</p>
       )}
       {pending && (
         <p className="inline-note">
-          上一次{pending.action === 'archive' ? '归档' : '恢复'}
-          尚待核对。关闭弹窗不会撤回已提交的操作，请核对结果或重试同一次操作。
+          {t('上一次')}
+          {pending.action === 'archive' ? t('归档') : t('恢复')}
+          {t('尚待核对。关闭弹窗不会撤回已提交的操作，请核对结果或重试同一次操作。')}
         </p>
       )}
       {error && (
         <p className="form-error" role="alert">
           {code === 'GROUP_BUSY'
-            ? '先结束群聊中尚未完成的协作，再归档。成员的独立任务无需停止。'
+            ? t('先结束群聊中尚未完成的协作，再归档。成员的独立任务无需停止。')
             : error}
         </p>
       )}
       {code === 'GROUP_BUSY' && navigate && (
         <button className="secondary" type="button" onClick={navigate}>
-          返回群聊
+          {t('返回群聊')}
         </button>
       )}
       <div className="dialog-actions">
         <button className="text-button" type="button" onClick={close}>
-          关闭
+          {t('关闭')}
         </button>
         {pending && (
           <button
@@ -175,7 +180,7 @@ export function GroupArchive({
               )
             }
           >
-            核对操作结果
+            {t('核对操作结果')}
           </button>
         )}
         <button
@@ -185,12 +190,12 @@ export function GroupArchive({
           onClick={() => perform(submit)}
         >
           {busy
-            ? '正在处理…'
+            ? t('正在处理…')
             : pending
-              ? '重试同一次操作'
+              ? t('重试同一次操作')
               : action === 'archive'
-                ? '确认归档'
-                : '确认恢复'}
+                ? t('确认归档')
+                : t('确认恢复')}
         </button>
       </div>
     </Dialog>

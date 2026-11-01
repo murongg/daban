@@ -15,6 +15,7 @@ import {
   watchComputers,
 } from './connections';
 import { Dialog } from './Dialog';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
 const definite = new Set([
@@ -45,6 +46,7 @@ export function Connection(props: {
   notify: (text: string) => unknown;
   onRecovery?: () => unknown;
 }) {
+  useLocale();
   return <ConnectionControl key={props.bot} {...props} />;
 }
 function ConnectionControl({
@@ -58,6 +60,7 @@ function ConnectionControl({
   notify: (text: string) => unknown;
   onRecovery?: () => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime(),
     status = runtime.snapshot.computers;
   const computer = status?.items.find((item) => item.bot === bot) ?? {
@@ -113,7 +116,7 @@ function ConnectionControl({
           setError(message);
           if (message) notify(message);
         }
-      } else if (live.current) setError('电脑操作仍待核对，不会自动重试。');
+      } else if (live.current) setError(t('电脑操作仍待核对，不会自动重试。'));
     },
     [bot, notify],
   );
@@ -148,7 +151,7 @@ function ConnectionControl({
       const existing = pendingComputer(bot);
       if (existing) {
         setPending(existing);
-        setError('已有电脑操作待核对，请先核对结果。');
+        setError(t('已有电脑操作待核对，请先核对结果。'));
         return;
       }
       if (action === 'stop' && (!stop?.saved || stale)) return;
@@ -184,7 +187,7 @@ function ConnectionControl({
         if (live.current) {
           const message = definite.has(code)
             ? runtimeError(cause)
-            : '操作结果未确认，请核对电脑状态；不会自动重试。';
+            : t('操作结果未确认，请核对电脑状态；不会自动重试。');
           setError(message);
           notify(message);
         }
@@ -210,14 +213,18 @@ function ConnectionControl({
     storageError ||
     recoveryBlocked(runtime.snapshot);
   const inspectButton = pending && (
-    <IconButton label="核对电脑操作" disabled={busy || !ready} onClick={() => inspect(pending)}>
+    <IconButton
+      label={t('核对电脑操作')}
+      disabled={busy || !ready}
+      onClick={() => inspect(pending)}
+    >
       <CircleAlert size={16} />
     </IconButton>
   );
   const dialog = stop && (
-    <Dialog title={`停止${name}的电脑`} onClose={closeStop}>
+    <Dialog title={t('停止{0}的电脑', { 0: name })} onClose={closeStop}>
       <p className="dialog-description">
-        该屏幕中的应用将关闭。聊天、资料、已保存文件和浏览器资料会保留。
+        {t('该屏幕中的应用将关闭。聊天、资料、已保存文件和浏览器资料会保留。')}
       </p>
       <label className="connection-confirm">
         <input
@@ -228,11 +235,11 @@ function ConnectionControl({
             setStop((current) => (current ? { ...current, saved: event.target.checked } : current))
           }
         />
-        已保存这台电脑中未保存的内容
+        {t('已保存这台电脑中未保存的内容')}
       </label>
       {stale && (
         <p role="alert" className="connection-error">
-          电脑状态已变化，请关闭此确认后重新核对。
+          {t('电脑状态已变化，请关闭此确认后重新核对。')}
         </p>
       )}
       {error && (
@@ -242,7 +249,7 @@ function ConnectionControl({
       )}
       <div className="dialog-actions">
         <button type="button" className="secondary" onClick={closeStop}>
-          取消
+          {t('取消')}
         </button>
         <button
           type="button"
@@ -250,7 +257,7 @@ function ConnectionControl({
           disabled={!stop.saved || stale || locked}
           onClick={() => run('stop')}
         >
-          {busy ? '正在停止…' : '停止电脑'}
+          {busy ? t('正在停止…') : t('停止电脑')}
         </button>
       </div>
     </Dialog>
@@ -259,7 +266,7 @@ function ConnectionControl({
     return (
       <>
         {inspectButton}
-        <IconButton label="停止电脑" disabled={locked} onClick={stopButton}>
+        <IconButton label={t('停止电脑')} disabled={locked} onClick={stopButton}>
           <Power size={16} />
         </IconButton>
         {(pending || error || running) && (
@@ -267,45 +274,51 @@ function ConnectionControl({
             role={error ? 'alert' : 'status'}
             className={`connection-feedback ${error ? 'connection-error' : ''}`}
           >
-            {pending && <span>电脑操作结果待核对，不会自动重试。请点击“核对电脑操作”。</span>}
+            {pending && (
+              <span>{t('电脑操作结果待核对，不会自动重试。请点击“核对电脑操作”。')}</span>
+            )}
             {error && <span>{error}</span>}
-            {running && <span>这位 Bot 还有任务在执行，结束后再停止电脑。</span>}
+            {running && <span>{t('这位 Bot 还有任务在执行，结束后再停止电脑。')}</span>}
           </p>
         )}
         {dialog}
       </>
     );
   return (
-    <section className="panel-section connection" aria-label={`${name}的电脑连接`}>
-      <h2>{status?.available === false ? '电脑服务暂不可用' : headings[computer.phase]}</h2>
+    <section className="panel-section connection" aria-label={t('{0}的电脑连接', { 0: name })}>
+      <h2>{status?.available === false ? t('电脑服务暂不可用') : t(headings[computer.phase])}</h2>
       <p className="connection-description">
         {changing
-          ? '连接或停止期间，这位 Bot 暂不能发送新任务，草稿会保留。其他 Bot 可继续使用。'
-          : '本机运行，每位 Bot 拥有独立屏幕，共享文件和浏览器登录。普通对话和工作区工具仍可使用。'}
+          ? t('连接或停止期间，这位 Bot 暂不能发送新任务，草稿会保留。其他 Bot 可继续使用。')
+          : t(
+              '本机运行，每位 Bot 拥有独立屏幕，共享文件和浏览器登录。普通对话和工作区工具仍可使用。',
+            )}
       </p>
       {changing && (
         <p role="status" className="connection-description">
           {computer.phase === 'connecting'
-            ? '正在启动独立屏幕，请稍候…'
-            : '正在关闭这位 Bot 的应用并核对资源…'}
+            ? t('正在启动独立屏幕，请稍候…')
+            : t('正在关闭这位 Bot 的应用并核对资源…')}
         </p>
       )}
       {computer.recovery === 'restart' ? (
         <div role="status" className="connection-description">
-          <p>上次资源回收未确认，名额仍被保留。请保存其他电脑中的内容后，恢复整个运行环境。</p>
+          <p>
+            {t('上次资源回收未确认，名额仍被保留。请保存其他电脑中的内容后，恢复整个运行环境。')}
+          </p>
           {onRecovery && runtime.snapshot.protocolVersion >= 24 ? (
             <button type="button" className="secondary" onClick={onRecovery}>
-              检查并恢复整个环境
+              {t('检查并恢复整个环境')}
             </button>
           ) : (
-            <p>当前需手动重启本地虚拟机后再连接。</p>
+            <p>{t('当前需手动重启本地虚拟机后再连接。')}</p>
           )}
         </div>
       ) : (
         <div className="connection-actions">
           {computer.reserved ? (
             <button type="button" className="secondary" disabled={locked} onClick={stopButton}>
-              {changing ? '请稍候…' : '重试停止'}
+              {changing ? t('请稍候…') : t('重试停止')}
             </button>
           ) : (
             <button
@@ -314,7 +327,7 @@ function ConnectionControl({
               disabled={locked || full || !registered}
               onClick={() => run('connect')}
             >
-              连接电脑
+              {t('连接电脑')}
             </button>
           )}
           {inspectButton}
@@ -322,15 +335,17 @@ function ConnectionControl({
       )}
       {status && (
         <p className="connection-capacity">
-          当前执行环境已占用 {occupied}/{status.limit} 个电脑名额
-          {full ? '，请先停止另一位 Bot 的电脑。' : '。'}
+          {t('当前执行环境已占用')}
+          {occupied}/{status.limit}
+          {t('个电脑名额')}
+          {full ? t('，请先停止另一位 Bot 的电脑。') : '。'}
         </p>
       )}
       {running && (
-        <p className="connection-description">这位 Bot 还有任务在执行，结束后再操作电脑。</p>
+        <p className="connection-description">{t('这位 Bot 还有任务在执行，结束后再操作电脑。')}</p>
       )}
       {!registered && ready && (
-        <p className="connection-description">正在同步 Bot 资料，请稍候。</p>
+        <p className="connection-description">{t('正在同步 Bot 资料，请稍候。')}</p>
       )}
       {error && (
         <p role="alert" className="connection-error">

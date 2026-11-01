@@ -1,6 +1,7 @@
 import { agentId, type Group } from '@daban/protocol';
 import { type Dispatch, useState } from 'react';
 import { Avatar } from './Avatar';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { Action, Bot, State } from './state';
 
@@ -15,6 +16,7 @@ export function GroupEditor({
   dispatch: Dispatch<Action>;
   close: () => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const current = runtime.snapshot.groups?.items.find((group) => group.id === bot.id);
   const [revision] = useState(current?.revision);
@@ -52,14 +54,14 @@ export function GroupEditor({
       }}
     >
       <p className="dialog-description">
-        选择 2–8 位成员。进行中的协作结束或停止后，才能修改成员。
+        {t('选择 2–8 位成员。进行中的协作结束或停止后，才能修改成员。')}
       </p>
       <div className="form-stack">
         <label className="field-label">
-          群聊名称
+          {t('群聊名称')}
           <input
             className="field"
-            aria-label="群聊名称"
+            aria-label={t('群聊名称')}
             data-autofocus
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -79,7 +81,7 @@ export function GroupEditor({
                 <span>{bot.name}</span>
                 <input
                   type="checkbox"
-                  aria-label={`选择 ${bot.name}`}
+                  aria-label={t('选择 {0}', { 0: bot.name })}
                   checked={members.includes(bot.id)}
                   disabled={saving}
                   onChange={(event) =>
@@ -95,23 +97,25 @@ export function GroupEditor({
         </div>
         {(error || !available) && (
           <p className="form-error" role="alert">
-            {error || '连接新版群聊服务后才能修改。'}
+            {error || t('连接新版群聊服务后才能修改。')}
           </p>
         )}
         {current?.revision !== revision && (
-          <p className="inline-note">群聊已更新。请关闭编辑后重新核对当前成员；这份草稿仍保留。</p>
+          <p className="inline-note">
+            {t('群聊已更新。请关闭编辑后重新核对当前成员；这份草稿仍保留。')}
+          </p>
         )}
       </div>
       <div className="dialog-actions">
         <button type="button" className="text-button" disabled={saving} onClick={close}>
-          取消
+          {t('取消')}
         </button>
         <button
           type="submit"
           className="primary"
           disabled={!available || saving || members.length < 2 || members.length > 8}
         >
-          {saving ? '正在保存…' : '保存群聊'}
+          {saving ? t('正在保存…') : t('保存群聊')}
         </button>
       </div>
     </form>

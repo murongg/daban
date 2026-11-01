@@ -1,6 +1,7 @@
 import type { RootContent } from 'hast';
 import { common, createLowlight } from 'lowlight';
 import { type ReactNode, useMemo } from 'react';
+import { useLocale } from './locale';
 
 const lowlight = createLowlight(common);
 
@@ -25,6 +26,7 @@ function tokens(nodes: readonly RootContent[], parent = 'code'): ReactNode {
 }
 
 export function Highlight({ code, language }: { code: string; language: string }) {
+  useLocale();
   return useMemo(() => {
     const name = language.toLowerCase();
     // shortcut: tokenize at most 20K characters synchronously; move work off the UI thread before increasing this bound.

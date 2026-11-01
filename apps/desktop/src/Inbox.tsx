@@ -1,6 +1,7 @@
 import { Check, FileText, Inbox as InboxIcon, Monitor, X } from 'lucide-react';
 import { type Dispatch, useState } from 'react';
 import { Avatar } from './Avatar';
+import { t, useLocale } from './locale';
 import { Requests } from './Requests';
 import { useRuntime } from './Runtime';
 import type { Action, State, WorkspaceFile } from './state';
@@ -20,6 +21,7 @@ export function Inbox({
   focus?: string;
   clearFocus?: () => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime();
   const [filter, setFilter] = useState<'pending' | 'done'>('pending');
   if (runtime.enabled)
@@ -27,9 +29,9 @@ export function Inbox({
       <>
         {focus && (
           <div className="archive-banner">
-            <p>已定位桌面提醒对应的请求。</p>
+            <p>{t('已定位桌面提醒对应的请求。')}</p>
             <button className="secondary" type="button" onClick={clearFocus}>
-              查看全部
+              {t('查看全部')}
             </button>
           </div>
         )}
@@ -41,18 +43,19 @@ export function Inbox({
     filter === 'pending' ? a.status === 'pending' : a.status !== 'pending',
   );
   return (
-    <section className="full-page" aria-label="收件箱">
+    <section className="full-page" aria-label={t('收件箱')}>
       <div className="page-inner">
-        <h2 className="page-heading">需要你看一眼</h2>
-        <p className="page-subtitle">确认、补充，或接手一步。让 Bot 知道接下来怎么做。</p>
-        <div className="filter-tabs" role="tablist" aria-label="收件箱筛选">
+        <h2 className="page-heading">{t('需要你看一眼')}</h2>
+        <p className="page-subtitle">{t('确认、补充，或接手一步。让 Bot 知道接下来怎么做。')}</p>
+        <div className="filter-tabs" role="tablist" aria-label={t('收件箱筛选')}>
           <button
             type="button"
             role="tab"
             aria-selected={filter === 'pending'}
             onClick={() => setFilter('pending')}
           >
-            待处理 {pending.length > 0 && `· ${pending.length}`}
+            {t('待处理')}
+            {pending.length > 0 && `· ${pending.length}`}
           </button>
           <button
             type="button"
@@ -60,7 +63,7 @@ export function Inbox({
             aria-selected={filter === 'done'}
             onClick={() => setFilter('done')}
           >
-            已处理
+            {t('已处理')}
           </button>
         </div>
         {entries.map((approval) => {
@@ -72,7 +75,7 @@ export function Inbox({
                 <Avatar bot={bot} size="small" />
                 <span>{bot.name}</span>
                 <span className="spacer" />
-                <span>示例请求</span>
+                <span>{t('示例请求')}</span>
               </div>
               <h3 className="approval-title">{approval.title}</h3>
               <p className="approval-description">{approval.description}</p>
@@ -91,11 +94,11 @@ export function Inbox({
                           dispatch({ type: 'select', bot: bot.id });
                           dispatch({ type: 'panel', panel: 'computer' });
                           dispatch({ type: 'control', bot: bot.id, owner: 'human' });
-                          notify('已进入接管状态（演示）');
+                          notify(t('已进入接管状态（演示）'));
                         }}
                       >
                         <Monitor />
-                        前往接管
+                        {t('前往接管')}
                       </button>
                       <button
                         type="button"
@@ -104,7 +107,7 @@ export function Inbox({
                           dispatch({ type: 'approval', id: approval.id, status: 'approved' })
                         }
                       >
-                        标为已处理
+                        {t('标为已处理')}
                       </button>
                     </>
                   ) : (
@@ -114,11 +117,11 @@ export function Inbox({
                         className="primary"
                         onClick={() => {
                           dispatch({ type: 'approval', id: approval.id, status: 'approved' });
-                          notify('已记录确认（演示），不会写入外部文件');
+                          notify(t('已记录确认（演示），不会写入外部文件'));
                         }}
                       >
                         <Check />
-                        确认草稿
+                        {t('确认草稿')}
                       </button>
                       <button
                         type="button"
@@ -128,17 +131,17 @@ export function Inbox({
                           if (file) preview(file);
                         }}
                       >
-                        查看文件
+                        {t('查看文件')}
                       </button>
                       <button
                         type="button"
                         className="text-button"
                         onClick={() => {
                           dispatch({ type: 'approval', id: approval.id, status: 'rejected' });
-                          notify('已记录退回（演示）');
+                          notify(t('已记录退回（演示）'));
                         }}
                       >
-                        退回修改
+                        {t('退回修改')}
                       </button>
                     </>
                   )}
@@ -147,7 +150,8 @@ export function Inbox({
                 <div className="approval-actions">
                   <span className="approval-state">
                     {approval.status === 'approved' ? <Check /> : <X />}
-                    {approval.status === 'approved' ? '已处理' : '已退回修改'} · 仅记录于本机
+                    {approval.status === 'approved' ? t('已处理') : t('已退回修改')}
+                    {t('· 仅记录于本机')}
                   </span>
                 </div>
               )}
@@ -157,11 +161,11 @@ export function Inbox({
         {!entries.length && (
           <div className="empty-panel">
             <InboxIcon />
-            <h3>{filter === 'pending' ? '暂时没有需要确认的事' : '还没有处理记录'}</h3>
+            <h3>{filter === 'pending' ? t('暂时没有需要确认的事') : t('还没有处理记录')}</h3>
             <p>
               {filter === 'pending'
-                ? '需要你接手或确认时，会集中显示在这里。'
-                : '处理后的请求会保留在这里，方便回看。'}
+                ? t('需要你接手或确认时，会集中显示在这里。')
+                : t('处理后的请求会保留在这里，方便回看。')}
             </p>
           </div>
         )}

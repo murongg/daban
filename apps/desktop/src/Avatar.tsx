@@ -1,3 +1,4 @@
+import { useLocale } from './locale';
 import type { Bot, Color } from './state';
 
 export const colors: Record<Color, string> = {
@@ -17,6 +18,7 @@ export function Avatar({
   size?: 'small' | 'large' | '';
   human?: boolean;
 }) {
+  useLocale();
   if (bot.members)
     return (
       <span className="avatar-group" aria-hidden="true">
@@ -33,6 +35,7 @@ export function Avatar({
   );
 }
 export function Brand() {
+  useLocale();
   return (
     <img
       className="brand-mark"

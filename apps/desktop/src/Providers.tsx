@@ -11,6 +11,7 @@ import {
   modelReference,
 } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
+import { getLocale, t, useLocale } from './locale';
 import { definitiveModelErrors } from './model-errors';
 import { modelChoices, modelName } from './model-options';
 import { NumberField } from './NumberField';
@@ -38,6 +39,7 @@ interface Draft {
 }
 
 export function Providers() {
+  useLocale();
   const runtime = useRuntime();
   const model = runtime.snapshot.model;
   const connections = model.connections || [];
@@ -109,11 +111,11 @@ export function Providers() {
           })),
         };
         if (!isModelConnection(connection)) {
-          setError('请检查 API 地址和模型配置；模型 ID 不能重复，输出上限不能超过上下文窗口。');
+          setError(t('请检查 API 地址和模型配置；模型 ID 不能重复，输出上限不能超过上下文窗口。'));
           return;
         }
         if ((!retainKey && !draft.apiKey) || (draft.apiKey && !isModelKey(draft.apiKey))) {
-          setError('请为这个供应商填写完整的 API Key。更换 API 地址或接口协议时需要重新填写。');
+          setError(t('请为这个供应商填写完整的 API Key。更换 API 地址或接口协议时需要重新填写。'));
           return;
         }
         const selectedModel = draft.defaultFirst
@@ -125,7 +127,7 @@ export function Providers() {
         ]);
         // Editing or removing a model must not silently choose a replacement based on its row position.
         if (!nextCatalog.some((entry) => entry.id === selectedModel)) {
-          setError('当前默认模型已被移除或改名，请明确将首个模型设为默认后再保存。');
+          setError(t('当前默认模型已被移除或改名，请明确将首个模型设为默认后再保存。'));
           return;
         }
         input = {
@@ -157,7 +159,7 @@ export function Providers() {
         setDefaultRevision(undefined);
         setPending(undefined);
         setChecked(undefined);
-        setNotice('模型设置已保存，下次任务生效。');
+        setNotice(t('模型设置已保存，下次任务生效。'));
       }
     } catch (failure) {
       if (mounted.current) {
@@ -204,9 +206,9 @@ export function Providers() {
     <div className="provider-settings">
       <div className="setting-row">
         <div>
-          <div className="setting-label">供应商与模型</div>
+          <div className="setting-label">{t('供应商与模型')}</div>
           <p className="setting-description">
-            添加常用供应商或自定义接口，为不同 Bot 选择模型。密钥只保存在本机 Agent 服务中。
+            {t('添加常用供应商或自定义接口，为不同 Bot 选择模型。密钥只保存在本机 Agent 服务中。')}
           </p>
         </div>
         <button
@@ -215,7 +217,7 @@ export function Providers() {
           disabled={!available || busy || !!draft || !!pending}
           onClick={() => edit()}
         >
-          添加供应商
+          {t('添加供应商')}
         </button>
       </div>
       {connections.map((connection) => (
@@ -233,28 +235,28 @@ export function Providers() {
           <button
             className="text-button"
             type="button"
-            aria-label={`编辑 ${connection.name}`}
+            aria-label={t('编辑 {0}', { 0: connection.name })}
             disabled={!available || busy || !!draft || !!pending}
             onClick={() => edit(connection)}
           >
-            编辑
+            {t('编辑')}
           </button>
         </div>
       ))}
       {model.connections === undefined && (
         <p className="inline-note">
-          模型目录暂不可用，未提交输入与待核对操作已保留。恢复连接后可继续编辑。
+          {t('模型目录暂不可用，未提交输入与待核对操作已保留。恢复连接后可继续编辑。')}
         </p>
       )}
       {model.connections !== undefined && !connections.length && (
-        <p className="inline-note">先添加一个供应商，再选择工作区和每位 Bot 的模型。</p>
+        <p className="inline-note">{t('先添加一个供应商，再选择工作区和每位 Bot 的模型。')}</p>
       )}
       {!draft && catalog.length > 0 && (
         <div className="provider-default">
           <div className="field-label">
-            工作区默认模型
+            {t('工作区默认模型')}
             <Select
-              label="工作区默认模型"
+              label={t('工作区默认模型')}
               value={current}
               disabled={!available || busy || !!pending}
               onValueChange={(value) => {
@@ -267,9 +269,9 @@ export function Providers() {
             />
           </div>
           <p className="field-help">
-            仅影响选择「跟随工作区」的
-            Bot；运行中的任务继续使用原模型。连接验证可能发送固定的测试请求，产生少量 API
-            费用，不包含你的聊天内容。
+            {t(
+              '仅影响选择「跟随工作区」的 Bot；运行中的任务继续使用原模型。连接验证可能发送固定的测试请求，产生少量 API 费用，不包含你的聊天内容。',
+            )}
           </p>
           <div className="model-actions">
             <button
@@ -283,7 +285,7 @@ export function Providers() {
               }
               onClick={save}
             >
-              {pending ? '核对并重试保存' : busy ? '正在保存…' : '保存默认模型'}
+              {pending ? t('核对并重试保存') : busy ? t('正在保存…') : t('保存默认模型')}
             </button>
             <button
               className="text-button"
@@ -291,13 +293,16 @@ export function Providers() {
               disabled={!available || busy || !!pending || !model.configured}
               onClick={check}
             >
-              检查默认连接
+              {t('检查默认连接')}
             </button>
           </div>
           {code === 'MODEL_SETTINGS_CONFLICT' && (
             <div className="inline-note">
-              <p>模型设置已由其他操作更新，请核对后保留选择重试。</p>
-              <p>当前默认模型：{modelName(model.model, connections)}</p>
+              <p>{t('模型设置已由其他操作更新，请核对后保留选择重试。')}</p>
+              <p>
+                {t('当前默认模型：')}
+                {modelName(model.model, connections)}
+              </p>
               <button
                 className="secondary"
                 type="button"
@@ -307,7 +312,7 @@ export function Providers() {
                   setError('');
                 }}
               >
-                保留输入，按当前版本重试
+                {t('保留输入，按当前版本重试')}
               </button>
             </div>
           )}
@@ -324,14 +329,14 @@ export function Providers() {
           <fieldset className="model-fields" disabled={!available || busy || !!pending}>
             {draft.connection.id !== 'deepseek-official' && (
               <div className="field-label">
-                供应商类型
+                {t('供应商类型')}
                 <Select
-                  label="供应商类型"
+                  label={t('供应商类型')}
                   value={draft.preset}
                   disabled={!available || busy || !!pending}
                   options={presets.map((preset) => ({
                     value: preset.id,
-                    label: preset.name,
+                    label: t(preset.name),
                     icon: <ProviderIcon platform={preset.id} />,
                   }))}
                   onValueChange={(value) => {
@@ -344,7 +349,7 @@ export function Providers() {
                           ...draft.connection,
                           ...(preset.id === 'custom'
                             ? {}
-                            : { name: preset.name, baseURL: preset.baseURL, api: preset.api }),
+                            : { name: t(preset.name), baseURL: preset.baseURL, api: preset.api }),
                         },
                       });
                   }}
@@ -352,9 +357,9 @@ export function Providers() {
               </div>
             )}
             <div className="field-label">
-              接口协议
+              {t('接口协议')}
               <Select
-                label="接口协议"
+                label={t('接口协议')}
                 value={modelApi(draft.connection)}
                 disabled={
                   !available || busy || !!pending || draft.connection.id === 'deepseek-official'
@@ -377,7 +382,7 @@ export function Providers() {
             </div>
             <div className="provider-pair">
               <label className="field-label">
-                供应商名称
+                {t('供应商名称')}
                 <input
                   className="field"
                   required
@@ -392,7 +397,7 @@ export function Providers() {
                 />
               </label>
               <label className="field-label">
-                API 地址
+                {t('API 地址')}
                 <input
                   className="field"
                   required
@@ -412,17 +417,19 @@ export function Providers() {
             </div>
             {draft.connection.id === 'deepseek-official' && (
               <p className="field-help">
-                DeepSeek 官方连接使用固定地址。如需使用网关，请另外添加供应商。
+                {t('DeepSeek 官方连接使用固定地址。如需使用网关，请另外添加供应商。')}
               </p>
             )}
             {modelApi(draft.connection) === 'anthropic-messages' && (
               <p className="field-help">
-                Claude 原生 API 地址填写服务根地址，例如 https://api.anthropic.com，不带 /v1。
+                {t(
+                  'Claude 原生 API 地址填写服务根地址，例如 https://api.anthropic.com，不带 /v1。',
+                )}
               </p>
             )}
             {modelApi(draft.connection) === 'google-generative-ai' && (
               <p className="field-help">
-                Gemini 原生 API 使用 /v1beta 地址。模型 ID 从供应商控制台复制。
+                {t('Gemini 原生 API 使用 /v1beta 地址。模型 ID 从供应商控制台复制。')}
               </p>
             )}
             <label className="field-label">
@@ -440,25 +447,25 @@ export function Providers() {
             </label>
             <p className="field-help">
               {retainKey
-                ? '留空保留这个供应商的现有密钥。'
-                : '新供应商、新的 API 地址或接口协议需要单独填写密钥。'}{' '}
-              密钥不会写入客户端存储；关闭设置后会清空未提交输入。
+                ? t('留空保留这个供应商的现有密钥。')
+                : t('新供应商、新的 API 地址或接口协议需要单独填写密钥。')}{' '}
+              {t('密钥不会写入客户端存储；关闭设置后会清空未提交输入。')}
             </p>
             <p className="inline-note">
-              使用所选接口协议。请按供应商文档填写模型 ID
-              和能力。保存时会验证连接；必要时发送固定的测试请求，产生少量 API
-              费用，不包含你的聊天内容。
+              {t(
+                '使用所选接口协议。请按供应商文档填写模型 ID 和能力。保存时会验证连接；必要时发送固定的测试请求，产生少量 API 费用，不包含你的聊天内容。',
+              )}
             </p>
             <div className="provider-models">
               {draft.connection.models.map((entry, index) => (
                 <fieldset className="provider-model" key={draft.keys[index]}>
-                  <legend>模型 {index + 1}</legend>
+                  <legend>{t('模型 {0}', { 0: index + 1 })}</legend>
                   <div className="provider-pair">
                     <label className="field-label">
-                      模型 ID
+                      {t('模型 ID')}
                       <input
                         className="field"
-                        aria-label={`模型 ${index + 1} ID`}
+                        aria-label={t('模型 {0} ID', { 0: index + 1 })}
                         required
                         maxLength={160}
                         spellCheck={false}
@@ -467,10 +474,10 @@ export function Providers() {
                       />
                     </label>
                     <label className="field-label">
-                      显示名称
+                      {t('显示名称')}
                       <input
                         className="field"
-                        aria-label={`模型 ${index + 1} 名称`}
+                        aria-label={t('模型 {0} 名称', { 0: index + 1 })}
                         maxLength={120}
                         value={entry.name}
                         onChange={(event) => updateModel(index, { name: event.target.value })}
@@ -480,19 +487,19 @@ export function Providers() {
                   <label className="provider-vision">
                     <input
                       type="checkbox"
-                      aria-label={`模型 ${index + 1} 支持图片`}
+                      aria-label={t('模型 {0} 支持图片', { 0: index + 1 })}
                       checked={entry.vision}
                       onChange={(event) => updateModel(index, { vision: event.target.checked })}
                     />
-                    支持图片与桌面观察
+                    {t('支持图片与桌面观察')}
                   </label>
                   <details className="provider-limits">
-                    <summary>上下文与输出上限</summary>
+                    <summary>{t('上下文与输出上限')}</summary>
                     <div className="provider-pair">
                       <div className="field-label">
-                        上下文窗口
+                        {t('上下文窗口')}
                         <NumberField
-                          label={`模型 ${index + 1} 上下文窗口`}
+                          label={t('模型 {0} 上下文窗口', { 0: index + 1 })}
                           value={String(entry.contextWindow)}
                           required
                           min={4096}
@@ -503,9 +510,9 @@ export function Providers() {
                         />
                       </div>
                       <div className="field-label">
-                        最大输出 Token
+                        {t('最大输出 Token')}
                         <NumberField
-                          label={`模型 ${index + 1} 最大输出`}
+                          label={t('模型 {0} 最大输出', { 0: index + 1 })}
                           value={String(entry.maxTokens)}
                           required
                           min={128}
@@ -521,7 +528,7 @@ export function Providers() {
                     <button
                       className="text-button"
                       type="button"
-                      aria-label={`移除模型 ${index + 1}`}
+                      aria-label={t('移除模型 {0}', { 0: index + 1 })}
                       onClick={() =>
                         setDraft({
                           ...draft,
@@ -535,7 +542,7 @@ export function Providers() {
                         })
                       }
                     >
-                      移除此模型
+                      {t('移除此模型')}
                     </button>
                   )}
                 </fieldset>
@@ -556,7 +563,7 @@ export function Providers() {
                 })
               }
             >
-              添加模型
+              {t('添加模型')}
             </button>
             <label className="provider-default-choice">
               <input
@@ -565,17 +572,17 @@ export function Providers() {
                 disabled={!model.configured}
                 onChange={(event) => setDraft({ ...draft, defaultFirst: event.target.checked })}
               />
-              将首个模型设为工作区默认模型
+              {t('将首个模型设为工作区默认模型')}
             </label>
           </fieldset>
           {pending && !busy && (
             <p className="inline-note">
-              保存结果未确认。重试会核对同一次操作，不会改用其他密钥或模型。
+              {t('保存结果未确认。重试会核对同一次操作，不会改用其他密钥或模型。')}
             </p>
           )}
           {code === 'MODEL_SETTINGS_CONFLICT' && (
             <div className="inline-note">
-              <p>后台设置已更新，请核对后保留输入重试。</p>
+              <p>{t('后台设置已更新，请核对后保留输入重试。')}</p>
               <button
                 className="secondary"
                 type="button"
@@ -586,7 +593,7 @@ export function Providers() {
                   setError('');
                 }}
               >
-                保留输入，按当前版本重试
+                {t('保留输入，按当前版本重试')}
               </button>
             </div>
           )}
@@ -602,10 +609,10 @@ export function Providers() {
                 setError('');
               }}
             >
-              取消编辑
+              {t('取消编辑')}
             </button>
             <button className="primary" type="submit" disabled={!available || busy}>
-              {busy ? '正在验证并保存…' : pending ? '核对并重试保存' : '验证并保存供应商'}
+              {busy ? t('正在验证并保存…') : pending ? t('核对并重试保存') : t('验证并保存供应商')}
             </button>
           </div>
         </form>
@@ -622,7 +629,8 @@ export function Providers() {
       )}
       {checked?.revision === model.revision && checked?.model === model.model && (
         <p className="inline-note" role="status">
-          默认连接检查通过 · {new Date(checked.checkedAt).toLocaleTimeString('zh-CN')}
+          {t('默认连接检查通过 ·')}
+          {new Date(checked.checkedAt).toLocaleTimeString(getLocale())}
         </p>
       )}
     </div>

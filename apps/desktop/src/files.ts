@@ -8,6 +8,7 @@ import {
   isTaskFileName,
   type TaskFile,
 } from '@daban/protocol';
+import { t } from './locale';
 import type { WorkspaceFile } from './state';
 
 export async function readUtf8(file: File) {
@@ -42,9 +43,9 @@ export function stagedAttachment(receipt: AttachmentReceipt): WorkspaceFile {
   return {
     id: crypto.randomUUID(),
     name: receipt.name,
-    kind: `${receipt.name.split('.').at(-1)!.toUpperCase()} · ${imageMime(receipt.name) ? '图片' : '提取文本'}`,
-    size: `${(receipt.size / 1024).toFixed(1)} KB 原件`,
-    modified: '刚刚上传',
+    kind: `${receipt.name.split('.').at(-1)!.toUpperCase()} · ${imageMime(receipt.name) ? t('图片') : t('提取文本')}`,
+    size: t('{0} KB 原件', { 0: (receipt.size / 1024).toFixed(1) }),
+    modified: t('刚刚上传'),
     content,
     upload,
   };
@@ -66,7 +67,7 @@ export function attachment(name: string, content: string): WorkspaceFile {
     name,
     kind: name.split('.').at(-1)!.toUpperCase(),
     size: `${(bytes / 1024).toFixed(1)} KB`,
-    modified: '刚刚添加',
+    modified: t('刚刚添加'),
     content,
   };
 }

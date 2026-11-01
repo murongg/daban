@@ -1,5 +1,6 @@
 import { type ModelConnection, modelCatalog } from '@daban/protocol';
 import { createElement } from 'react';
+import { t } from './locale';
 import { ProviderIcon } from './ProviderIcon';
 import { providerIdentity } from './platforms';
 
@@ -18,8 +19,11 @@ export function modelIcon(id: string | undefined, connections?: ModelConnection[
 }
 
 export function modelName(id: string | undefined, connections?: ModelConnection[]) {
-  if (!id) return '默认模型';
-  return modelCatalog(connections).find((entry) => entry.id === id)?.name || `${id}（未配置）`;
+  if (!id) return t('默认模型');
+  return (
+    modelCatalog(connections).find((entry) => entry.id === id)?.name ||
+    t('{0}（未配置）', { 0: id })
+  );
 }
 
 export function modelChoices(connections?: ModelConnection[], selected?: string) {
@@ -35,7 +39,7 @@ export function modelChoices(connections?: ModelConnection[], selected?: string)
   if (selected && !options.some((option) => option.value === selected))
     options.push({
       value: selected,
-      label: `${selected}（未配置）`,
+      label: t('{0}（未配置）', { 0: selected }),
       disabled: true,
       icon: icon(undefined, connections),
     });

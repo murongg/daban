@@ -1,5 +1,7 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { demoState as seedDemoState } from './fixtures';
+import { setLocale } from './locale';
+import { selectControl, selectOption } from './select.fixture';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
@@ -255,4 +257,65 @@ it('keeps an ambiguous create payload and ID intact for an exact retry', async (
   expect(creates).toHaveLength(2);
   expect(creates[0]).toEqual(creates[1]);
   expect(await screen.findByText('合成重试日程')).toBeVisible();
+});
+
+it('keeps schedule rule values and instructions stable while editing in English', async () => {
+  let submitted!: ScheduleInput;
+  connect(async (input) => {
+    submitted = input;
+    return record(input);
+  });
+  await setLocale('en');
+  render(<App />);
+  await userEvent.click(screen.getByRole('tab', { name: 'Schedules' }));
+  await userEvent.click(screen.getByRole('button', { name: 'New scheduled task' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Task name' }), 'SYNTHETIC-WEEKDAY');
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'What should this Bot do?' }),
+    'SYNTHETIC literal 设置',
+  );
+  await selectOption(userEvent, selectControl('Repeat'), '工作日');
+  await userEvent.click(screen.getByRole('button', { name: 'Save schedule' }));
+  expect(submitted).toMatchObject({
+    title: 'SYNTHETIC-WEEKDAY',
+    prompt: 'SYNTHETIC literal 设置',
+    rule: { kind: 'weekly', weekdays: [1, 2, 3, 4, 5], time: '09:00', timeZone: 'Asia/Shanghai' },
+  });
+  expect(parseCommand({ type: 'schedule.create', input: submitted })).toMatchObject({
+    type: 'schedule.create',
+    input: submitted,
+  });
+});
+
+it('retains an existing weekly rule when opening its editor in English', async () => {
+  const rule = {
+    kind: 'weekly' as const,
+    weekdays: [2, 4],
+    time: '14:30',
+    timeZone: 'Asia/Shanghai',
+  };
+  const original = record({
+    id: 'mock-weekly-locale',
+    bot: 'a',
+    title: 'SYNTHETIC WEEKLY',
+    prompt: 'SYNTHETIC PROMPT',
+    rule,
+  });
+  const invoke = connect(undefined, [original]);
+  await setLocale('en');
+  render(<App />);
+  await userEvent.click(screen.getByRole('tab', { name: 'Schedules' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Edit scheduled task SYNTHETIC WEEKLY' }),
+  );
+  expect(selectControl('Repeat')).toHaveAttribute('data-value', '每周');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Task name' }), ' UPDATED');
+  await userEvent.click(screen.getByRole('button', { name: 'Save schedule' }));
+  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual(
+    expect.objectContaining({
+      type: 'schedule.update',
+      id: original.id,
+      patch: expect.objectContaining({ title: 'SYNTHETIC WEEKLY UPDATED', rule }),
+    }),
+  );
 });

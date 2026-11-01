@@ -1,5 +1,3 @@
-// biome-ignore-all lint/a11y/noNoninteractiveTabindex: The remote keyboard surface has an explicit Escape exit to the text field.
-
 import {
   type BrowserBinding,
   type BrowserState,
@@ -13,6 +11,7 @@ import {
 import { Globe, Send } from 'lucide-react';
 import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from 'react';
 import { desktopPoint } from './coordinates';
+import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 
 export function LiveBrowser({
@@ -32,6 +31,7 @@ export function LiveBrowser({
   disabled: boolean;
   notify: (message: string) => unknown;
 }) {
+  useLocale();
   const runtime = useRuntime(),
     help = useId();
   const [frame, setFrame] = useState<BrowserView>(),
@@ -87,7 +87,7 @@ export function LiveBrowser({
           setError('');
         }
       } catch {
-        if (live) setError('画面暂时不可用，正在重试。');
+        if (live) setError(t('画面暂时不可用，正在重试。'));
       } finally {
         running = false;
       }
@@ -229,8 +229,9 @@ export function LiveBrowser({
         style={{ aspectRatio: '1.5' }}
         role="application"
         data-remote-keyboard={human ? 'true' : undefined}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: The remote keyboard surface needs focus and provides an explicit Escape exit.
         tabIndex={0}
-        aria-label={`${name}的浏览器画面`}
+        aria-label={t('{0}的浏览器画面', { 0: name })}
         aria-describedby={human ? help : undefined}
         onKeyDown={keyboard}
         onPointerDown={(event) => pointer(event, 'down')}
@@ -254,7 +255,7 @@ export function LiveBrowser({
           <img
             ref={picture}
             src={frame.image}
-            alt={`${name}的浏览器`}
+            alt={t('{0}的浏览器', { 0: name })}
             draggable={false}
             onLoad={(event) => {
               if (
@@ -269,17 +270,17 @@ export function LiveBrowser({
             <Globe />
             <span>
               {frame?.paused || state?.pending?.length
-                ? '网页正在等待你处理'
+                ? t('网页正在等待你处理')
                 : active?.suspended
-                  ? '上次页面尚未打开'
+                  ? t('上次页面尚未打开')
                   : ready
-                    ? '正在读取浏览器画面…'
-                    : '正在等待运行环境…'}
+                    ? t('正在读取浏览器画面…')
+                    : t('正在等待运行环境…')}
             </span>
           </div>
         )}
         <span className="live-view-label">
-          {human ? '你正在接管' : frame?.paused ? '等待确认' : '只读观看'}
+          {human ? t('你正在接管') : frame?.paused ? t('等待确认') : t('只读观看')}
         </span>
         {error && (
           <div className="live-screen-error" role="status">
@@ -288,7 +289,7 @@ export function LiveBrowser({
         )}
       </div>
       <p id={help} className="desktop-keyboard-hint">
-        Esc 退出画面 · Alt+Esc 发送 Escape · 中文可用下方文字框
+        {t('Esc 退出画面 · Alt+Esc 发送 Escape · 中文可用下方文字框')}
       </p>
       <form
         className="live-text"
@@ -302,15 +303,15 @@ export function LiveBrowser({
       >
         <input
           ref={field}
-          aria-label="发送文字到浏览器"
+          aria-label={t('发送文字到浏览器')}
           autoComplete="off"
           disabled={!human}
-          placeholder="输入或粘贴文字，发送到网页…"
+          placeholder={t('输入或粘贴文字，发送到网页…')}
           maxLength={2000}
           value={text}
           onChange={(event) => setText(event.target.value)}
         />
-        <button type="submit" aria-label="粘贴到网页" disabled={!human || !text}>
+        <button type="submit" aria-label={t('粘贴到网页')} disabled={!human || !text}>
           <Send size={15} />
         </button>
       </form>

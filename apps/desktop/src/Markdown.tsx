@@ -7,6 +7,7 @@ import { CodeBlock } from './CodeBlock';
 import { Diagram } from './Diagram';
 import { Formula } from './Formula';
 import { Highlight } from './Highlight';
+import { t } from './locale';
 import type { WorkspaceFile } from './state';
 import { Tooltip } from './Tooltip';
 
@@ -67,7 +68,7 @@ export const Markdown = memo(function Markdown({
             try {
               await openLink(href);
             } catch {
-              notify('链接打开失败，请复制地址后手动打开。');
+              notify(t('链接打开失败，请复制地址后手动打开。'));
             }
           }}
         >
@@ -94,7 +95,7 @@ export const Markdown = memo(function Markdown({
         const file = href ? known.get(href) : undefined;
         if (file && preview)
           return (
-            <Tooltip label={`预览文件 ${file.name}`}>
+            <Tooltip label={t('预览文件 {0}', { 0: file.name })}>
               <button
                 type="button"
                 className="markdown-file"
@@ -102,7 +103,7 @@ export const Markdown = memo(function Markdown({
                   try {
                     await preview(file);
                   } catch {
-                    notify('文件打开失败，请使用文件面板重试。');
+                    notify(t('文件打开失败，请使用文件面板重试。'));
                   }
                 }}
               >
@@ -136,8 +137,9 @@ export const Markdown = memo(function Markdown({
       },
       img: ({ src, alt }) => (
         <span className="markdown-image">
-          图片：{alt || '未命名图片'}
-          {typeof src === 'string' && publicUrl(src) ? <> · {web(src, '打开图片')}</> : null}
+          {t('图片：')}
+          {alt || t('未命名图片')}
+          {typeof src === 'string' && publicUrl(src) ? <> · {web(src, t('打开图片'))}</> : null}
         </span>
       ),
       pre: ({ node, children }) => {
@@ -170,7 +172,7 @@ export const Markdown = memo(function Markdown({
         }
         return (
           <CodeBlock
-            language={typeof language === 'string' ? language.slice(9, 41) : '代码'}
+            language={typeof language === 'string' ? language.slice(9, 41) : t('代码')}
             notify={notify}
             copyText={copyText}
           >
@@ -180,7 +182,7 @@ export const Markdown = memo(function Markdown({
       },
       table: ({ children }) => (
         // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to focus and horizontally scroll a wide table.
-        <section className="markdown-table" aria-label="回复表格" tabIndex={0}>
+        <section className="markdown-table" aria-label={t('回复表格')} tabIndex={0}>
           <table>{children}</table>
         </section>
       ),
@@ -198,8 +200,8 @@ export const Markdown = memo(function Markdown({
         remarkPlugins={plugins}
         remarkRehypeOptions={{
           clobberPrefix: `${scope}-`,
-          footnoteLabel: '注释',
-          footnoteBackLabel: '返回引用',
+          footnoteLabel: t('注释'),
+          footnoteBackLabel: t('返回引用'),
         }}
         urlTransform={(url, key) =>
           (key === 'href' && (known.has(url) || url.startsWith(`#${scope}-`))) || publicUrl(url)
