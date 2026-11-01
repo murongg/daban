@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { Browser } from './Browser';
+import { IconButton } from './Button';
 import { Connection } from './Connection';
 import { LiveDesktop } from './LiveDesktop';
 import { t, useLocale } from './locale';
@@ -126,33 +127,38 @@ export function Computer({
           {managed && target && (
             <Connection bot={target} name={bot.name} notify={notify} onRecovery={onRecovery} />
           )}
-          {expand && (
-            <button type="button" className="secondary" onClick={() => expand(view)}>
-              <Maximize2 />
-              {t('common.expand')}
-            </button>
-          )}
         </div>
       </div>
-      {runtime.snapshot.protocolVersion >= 16 && (
-        <nav className="computer-views" aria-label={t('computer.computerView')}>
-          <button
-            type="button"
-            aria-pressed={view === 'desktop'}
-            onClick={() => setView('desktop')}
-          >
-            <Monitor size={15} />
-            {t('computer.linuxDesktop')}
-          </button>
-          <button
-            type="button"
-            aria-pressed={view === 'browser'}
-            onClick={() => setView('browser')}
-          >
-            <Globe size={15} />
-            {t('common.browser')}
-          </button>
-        </nav>
+      {(runtime.snapshot.protocolVersion >= 16 || expand) && (
+        <fieldset className="computer-toolbar" aria-label={t('computer.computerView')}>
+          {runtime.snapshot.protocolVersion >= 16 ? (
+            <nav className="computer-views" aria-label={t('computer.computerView')}>
+              <button
+                type="button"
+                aria-pressed={view === 'desktop'}
+                onClick={() => setView('desktop')}
+              >
+                <Monitor size={15} />
+                {t('computer.linuxDesktop')}
+              </button>
+              <button
+                type="button"
+                aria-pressed={view === 'browser'}
+                onClick={() => setView('browser')}
+              >
+                <Globe size={15} />
+                {t('common.browser')}
+              </button>
+            </nav>
+          ) : (
+            <span className="computer-surface-name">{t('computer.linuxDesktop')}</span>
+          )}
+          {expand && (
+            <IconButton label={t('common.expand')} onClick={() => expand(view)}>
+              <Maximize2 />
+            </IconButton>
+          )}
+        </fieldset>
       )}
       {view === 'browser' && runtime.snapshot.protocolVersion >= 16 ? (
         <Browser key={target} bot={target} name={bot.name} notify={notify} expanded={expanded} />

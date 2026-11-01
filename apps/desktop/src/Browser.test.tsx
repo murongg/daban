@@ -4,7 +4,7 @@ import {
   type RuntimeBridge,
   type RuntimeCommand,
 } from '@daban/protocol';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { Browser } from './Browser';
@@ -237,8 +237,12 @@ it('expands the browser surface that is currently selected', async () => {
     </RuntimeProvider>,
   );
   await user.click(await screen.findByRole('button', { name: '浏览器' }));
-  await user.click(screen.getByRole('button', { name: '展开' }));
+  const views = screen.getByRole('group', { name: '电脑视图' });
+  await user.click(within(views).getByRole('button', { name: '展开' }));
   expect(expand).toHaveBeenCalledWith('browser');
+  await user.click(within(views).getByRole('button', { name: 'Linux 桌面' }));
+  await user.click(within(views).getByRole('button', { name: '展开' }));
+  expect(expand).toHaveBeenLastCalledWith('desktop');
 });
 
 it('identifies an inactive requesting tab and keeps a human reply bound to that tab', async () => {

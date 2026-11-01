@@ -3263,10 +3263,28 @@ textarea.skill-source {
   }
 }
 
+.computer-toolbar {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 17px 14px;
+}
+.computer-toolbar > .icon-button {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.computer-surface-name {
+  color: var(--muted);
+  font-size: 12px;
+}
 .computer-views {
   display: flex;
+  min-width: 0;
   gap: 6px;
-  padding: 0 17px 14px;
 }
 .computer-views button {
   display: inline-flex;

@@ -214,6 +214,9 @@ export function Workspace({
                   {bot.name}
                   {t('common.sScreen')}
                 </span>
+                <IconButton label={t('common.expand')} onClick={() => expand('desktop')}>
+                  <Maximize2 />
+                </IconButton>
               </div>
               <Desktop key={bot.id} name={bot.name} human={human} />
               <div className="computer-copy">
@@ -238,10 +241,6 @@ export function Workspace({
                   >
                     {human ? <Check /> : <Monitor />}
                     {human ? t('common.handBackBot') : t('common.takeOverComputer')}
-                  </button>
-                  <button type="button" className="secondary" onClick={() => expand('desktop')}>
-                    <Maximize2 />
-                    {t('common.expand')}
                   </button>
                   <span className="spacer" />
                   <IconButton
