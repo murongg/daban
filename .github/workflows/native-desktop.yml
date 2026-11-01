@@ -68,3 +68,4 @@ jobs:
           name: Daban-windows-x64
           path: ${{ runner.temp }}/Daban-win-x64
           retention-days: 7
+          include-hidden-files: true
