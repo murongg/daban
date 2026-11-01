@@ -31,11 +31,7 @@ jobs:
         timeout-minutes: 3
         run: node --experimental-sqlite --test dist-agent/native-loop.test.js
       - name: Verify Electron encrypted transport
-        shell: pwsh
-        run: |
-          $env:ELECTRON_RUN_AS_NODE = '1'
-          & node_modules/electron/dist/electron.exe --test packages/engine/dist/private-channel.test.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: node -e "const r=require('node:child_process').spawnSync(require('electron'),['--test','packages/engine/dist/private-channel.test.js'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:'inherit'});if(r.error)throw r.error;process.exit(r.status??1)"
       - name: Verify Windows native module ABI
         run: node -e "const n=require('@computer-use/libnut-win32'); for(const k of ['moveMouse','keyTap','typeString','getActiveWindow']) if(typeof n[k]!=='function') throw Error(k)"
       - name: Build portable Windows client
