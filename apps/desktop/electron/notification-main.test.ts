@@ -65,6 +65,8 @@ vi.mock('electron', () => ({
       return mock.windows.filter((window) => !window.destroyed);
     }
   },
+  globalShortcut: { register: vi.fn(() => true), unregister: vi.fn() },
+  powerMonitor: { on: vi.fn() },
   Menu: { buildFromTemplate: vi.fn((value) => value), setApplicationMenu: vi.fn() },
   Notification: { handleActivation: vi.fn() },
   dialog: { showErrorBox: vi.fn() },
@@ -78,6 +80,14 @@ vi.mock('electron', () => ({
     },
   },
 }));
+vi.mock('./native', () => ({
+  desktopDriver: vi.fn(() => ({
+    supported: false,
+    platform: 'unsupported',
+    permissions: () => ({ screen: false, accessibility: false }),
+  })),
+}));
+vi.mock('./local-server', () => ({ localServer: vi.fn(async () => async () => {}) }));
 vi.mock('./service', () => ({
   runtimeService: (...args: unknown[]) => {
     mock.serviceArgs.push(args);

@@ -39,7 +39,12 @@ export async function runMcpStdio({
     /[\r\n\0]/.test(capability)
   )
     throw new Error('MCP_STDIO_CONFIG_INVALID');
-  const config = { socketPath, capability, url: `http://127.0.0.1:8766/mcp/${bot}` };
+  const config = {
+    socketPath,
+    capability,
+    certificateFile: env.DABAN_AGENT_CERTIFICATE,
+    url: `http://127.0.0.1:8766/mcp/${bot}`,
+  };
   const send = (value: unknown) =>
     new Promise<unknown>((done, reject) => {
       output.write(`${JSON.stringify(value)}\n`, (error) =>

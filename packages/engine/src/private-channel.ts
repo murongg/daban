@@ -1,45 +1,101 @@
+import { randomUUID } from 'node:crypto';
+import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { createServer as httpServer, type RequestListener } from 'node:http';
 import { createServer as httpsServer, type RequestOptions } from 'node:https';
-import type { ConnectionOptions } from 'node:tls';
+import path from 'node:path';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
-const cipher = 'PSK-AES256-GCM-SHA384';
-export function privateServer(
+export async function privateServer(
   listener: RequestListener,
-  resolve: (identity: string) => string | undefined,
+  certificateFile?: string,
   platform: NodeJS.Platform = process.platform,
 ) {
-  if (platform !== 'win32') return httpServer(listener);
-  return httpsServer(
-    {
-      minVersion: 'TLSv1.2',
-      maxVersion: 'TLSv1.2',
-      ciphers: cipher,
-      pskCallback(_socket, identity) {
-        const key = resolve(identity);
-        return key && /^[a-f0-9]{64}$/.test(key) ? Buffer.from(key, 'hex') : null;
+  if (platform !== 'win32') return { server: httpServer(listener), publish: async () => {} };
+  if (!certificateFile || !path.isAbsolute(certificateFile))
+    throw new Error('PRIVATE_CHANNEL_CONFIG');
+  const { generate } = await import('selfsigned');
+  const pems = await generate([{ name: 'commonName', value: 'localhost' }], {
+    algorithm: 'sha256',
+    keyType: 'ec',
+    curve: 'P-256',
+    extensions: [
+      {
+        name: 'subjectAltName',
+        altNames: [
+          { type: 2, value: 'localhost' },
+          { type: 7, ip: '127.0.0.1' },
+        ],
       },
-    },
+    ],
+  });
+  const server = httpsServer(
+    { minVersion: 'TLSv1.2', key: pems.private, cert: pems.cert },
     listener,
   );
-}
-export function privateClientOptions(
-  key: string,
-  identity: string,
-  platform: NodeJS.Platform = process.platform,
-): RequestOptions & Pick<ConnectionOptions, 'pskCallback'> {
-  if (platform !== 'win32') return { agent: false };
-  if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('PRIVATE_CHANNEL_KEY_INVALID');
   return {
-    agent: false,
-    minVersion: 'TLSv1.2',
-    maxVersion: 'TLSv1.2',
-    ciphers: cipher,
-    // TLS-PSK authenticates with the private key instead of an X.509 certificate. No non-PSK suite is enabled.
-    rejectUnauthorized: false,
-    pskCallback: () => ({ identity, psk: Buffer.from(key, 'hex') }),
+    server,
+    async publish() {
+      // Publish the public certificate only after binding; a duplicate process must not replace a live server's pin.
+      if (!server.listening) throw new Error('PRIVATE_CHANNEL_NOT_LISTENING');
+      const directory = path.dirname(certificateFile);
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const info = await lstat(directory);
+      if (
+        !info.isDirectory() ||
+        info.isSymbolicLink() ||
+        !(await privateMetadata(directory, info, 0o700))
+      )
+        throw new Error('PRIVATE_CHANNEL_UNSAFE');
+      const temporary = path.join(directory, `.certificate-${randomUUID()}`);
+      const file = await open(temporary, 'wx', 0o600);
+      try {
+        await file.writeFile(pems.cert);
+      } finally {
+        await file.close();
+      }
+      try {
+        await rename(temporary, certificateFile);
+      } finally {
+        await unlink(temporary).catch(() => {});
+      }
+    },
   };
 }
-
+export async function privateClientOptions(
+  certificateFile?: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<RequestOptions> {
+  if (platform !== 'win32') return { agent: false };
+  if (!certificateFile || !path.isAbsolute(certificateFile))
+    throw new Error('PRIVATE_CHANNEL_CONFIG');
+  const parent = path.dirname(certificateFile);
+  if (!(await privateMetadata(parent, await lstat(parent), 0o700))) await secureDirectory(parent);
+  const file = await open(certificateFile, 'r');
+  try {
+    const info = await file.stat(),
+      named = await lstat(certificateFile);
+    if (
+      !info.isFile() ||
+      info.size > 16384 ||
+      named.isSymbolicLink() ||
+      named.ino !== info.ino ||
+      named.dev !== info.dev ||
+      !(await privateMetadata(certificateFile, info, 0o600))
+    )
+      throw new Error('PRIVATE_CHANNEL_UNSAFE');
+    const ca = await file.readFile('utf8');
+    // An isolated trust store pins this service's ephemeral certificate. Authenticate before sending tokens or task content.
+    return {
+      agent: false,
+      minVersion: 'TLSv1.2',
+      ca,
+      servername: 'localhost',
+      rejectUnauthorized: true,
+    };
+  } finally {
+    await file.close();
+  }
+}
 export function windowsPrivatePipe(value: string) {
   const prefix = '\\\\.\\pipe\\';
   return (

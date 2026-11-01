@@ -1,49 +1,58 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { request } from 'node:https';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { privateClientOptions, privateServer } from './private-channel.js';
+import { secureDirectory } from './private-files.js';
 
-// Synthetic PSKs: no user keys, files or desktop are involved.
-test('Windows private channels authenticate the server before transmitting a control payload', async () => {
-  const key = 'a'.repeat(64);
+test('Windows private channels authenticate the pinned server before transmitting a control payload', async () => {
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-private-channel-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   let payloads = 0;
-  const server = privateServer(
-    (_req, res) => {
-      payloads++;
-      res.end('MOCK OK');
-    },
-    (identity) => (identity === 'control' ? key : undefined),
-    'win32',
-  );
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const port = (server.address() as { port: number }).port;
-  const call = (secret: string) =>
-    new Promise<string>((resolve, reject) => {
-      const req = request(
-        {
-          host: '127.0.0.1',
-          port,
-          method: 'POST',
-          ...privateClientOptions(secret, 'control', 'win32'),
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk: Buffer) => chunks.push(chunk));
-          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-        },
-      );
-      req.on('error', reject);
-      req.end('SYNTHETIC PRIVATE PAYLOAD');
-    });
+  const listener: import('node:http').RequestListener = (_req, res) => {
+    payloads++;
+    res.end('MOCK OK');
+  };
+  const trusted = await privateServer(listener, path.join(root, 'model/trusted.pem'), 'win32');
+  const impostor = await privateServer(listener, path.join(root, 'impostor.pem'), 'win32');
+  const channels = [trusted, impostor];
   try {
-    await assert.rejects(call('b'.repeat(64)));
+    for (const channel of channels) {
+      channel.server.listen(0, '127.0.0.1');
+      await once(channel.server, 'listening');
+      await channel.publish();
+    }
+    const options = await privateClientOptions(path.join(root, 'model/trusted.pem'), 'win32');
+    const call = (server: typeof trusted.server) =>
+      new Promise<string>((resolve, reject) => {
+        const req = request(
+          {
+            host: '127.0.0.1',
+            port: (server.address() as { port: number }).port,
+            method: 'POST',
+            ...options,
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on('data', (chunk: Buffer) => chunks.push(chunk));
+            res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+          },
+        );
+        req.on('error', reject);
+        req.end('SYNTHETIC PRIVATE PAYLOAD');
+      });
+    await assert.rejects(call(impostor.server));
     assert.equal(payloads, 0);
-    assert.equal(await call(key), 'MOCK OK');
+    assert.equal(await call(trusted.server), 'MOCK OK');
     assert.equal(payloads, 1);
   } finally {
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
+    for (const { server } of channels) {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+    await rm(temporary, { recursive: true, force: true });
   }
 });

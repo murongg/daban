@@ -8,11 +8,12 @@ export interface BridgeConfig {
   url: string;
   capability?: string;
   socketPath?: string;
+  certificateFile?: string;
 }
 export type BridgeFetch = (url: string, options: RequestInit) => Promise<Response>;
 const responseLimit = 16 * 1024 * 1024;
 
-function unixRequest(config: BridgeConfig, body: string, signal: AbortSignal) {
+async function unixRequest(config: BridgeConfig, body: string, signal: AbortSignal) {
   const url = new URL(config.url);
   if (
     !config.socketPath ||
@@ -24,12 +25,13 @@ function unixRequest(config: BridgeConfig, body: string, signal: AbortSignal) {
     url.hash
   )
     throw new Error('BRIDGE_UNAVAILABLE');
+  const tls = await privateClientOptions(config.certificateFile);
   return new Promise<Response>((resolve, reject) => {
     // An explicit socket is the authority boundary; an unavailable endpoint must never fall back to TCP.
     const send = process.platform === 'win32' ? httpsRequest : httpRequest;
     const request = send(
       {
-        ...privateClientOptions(config.capability || '', `mcp:${url.pathname.split('/').at(-1)}`),
+        ...tls,
         socketPath: config.socketPath,
         // LLM proxy settings can configure the global agent; private callbacks must bypass it.
         agent: false,

@@ -16,13 +16,13 @@ export class NativeDaemon {
       agent: true,
       tokenProvider: () => readAgentToken(this.config.dataRoot),
       fetcher: unixFetch(this.config.socketPath, {
-        key: () => readAgentToken(this.config.dataRoot),
+        certificateFile: path.join(this.config.dataRoot, 'model/control-certificate.pem'),
       }),
     });
   }
   private async inspect() {
     const fetcher = unixFetch(this.config.socketPath, {
-      key: () => readAgentToken(this.config.dataRoot),
+      certificateFile: path.join(this.config.dataRoot, 'model/control-certificate.pem'),
       maxBytes: 65536,
     });
     const response = await fetcher('http://127.0.0.1:8766/agent/identity', {

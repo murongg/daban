@@ -35,6 +35,7 @@ export function localComputerPaths(dataRoot: string) {
         ? `\\\\.\\pipe\\daban-local-${hash}`
         : `/tmp/daban-local-${process.getuid?.() ?? 0}-${hash}/s`,
     token: path.join(dataRoot, 'local-computer-token'),
+    certificate: path.join(dataRoot, 'local-certificate.pem'),
   };
 }
 const actionProperties = {
@@ -138,11 +139,12 @@ export class LocalComputerClient implements LocalComputerPort {
     const token = await readFile(locations.token, 'utf8');
     if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('LOCAL_CLIENT_UNAVAILABLE');
     const body = JSON.stringify({ method, ...args });
+    const tls = await privateClientOptions(locations.certificate);
     return new Promise((resolve, reject) => {
       const send = process.platform === 'win32' ? httpsRequest : httpRequest;
       const req = send(
         {
-          ...privateClientOptions(token, 'local'),
+          ...tls,
           socketPath: locations.socket,
           path: '/',
           method: 'POST',

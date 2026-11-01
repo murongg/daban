@@ -7,11 +7,12 @@
     "node": ">=22.15.0"
   },
   "dependencies": {
+    "@daban/protocol": "0.1.0",
     "@modelcontextprotocol/client": "2.2.0",
     "officeparser": "8.2.0",
     "playwright": "1.62.1",
-    "yaml": "2.9.1",
-    "@daban/protocol": "0.1.0"
+    "selfsigned": "5.5.0",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@modelcontextprotocol/node": "2.0.0",

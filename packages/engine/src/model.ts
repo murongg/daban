@@ -99,7 +99,7 @@ export function sdkPatch(
   limit = 60,
   selectedModel: ModelId = model,
   skills: SkillSnapshot = { available: true, key: '', skills: [] },
-  bridge?: { socketPath: string; stdioEntry: string },
+  bridge?: { socketPath: string; stdioEntry: string; certificateFile?: string },
   route?: ResolvedModel,
 ) {
   const search = route ? !!route.searchApiKey : true;
@@ -150,7 +150,9 @@ export function sdkPatch(
                 config: {
                   url: `${origin}/mcp/${bot}`,
                   capability,
-                  ...(bridge ? { socketPath: bridge.socketPath } : {}),
+                  ...(bridge
+                    ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
+                    : {}),
                 },
               },
               {
@@ -159,7 +161,9 @@ export function sdkPatch(
                 config: {
                   url: `${origin}/mcp/${bot}`,
                   capability,
-                  ...(bridge ? { socketPath: bridge.socketPath } : {}),
+                  ...(bridge
+                    ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
+                    : {}),
                 },
               },
               {
@@ -262,6 +266,9 @@ export function sdkPatch(
                   args: [bridge.stdioEntry],
                   env: {
                     DABAN_AGENT_SOCKET: bridge.socketPath,
+                    ...(bridge.certificateFile
+                      ? { DABAN_AGENT_CERTIFICATE: bridge.certificateFile }
+                      : {}),
                     DABAN_AGENT_BOT: bot,
                     DABAN_AGENT_CAPABILITY: capability,
                     ...(process.env.ELECTRON_RUN_AS_NODE
@@ -483,7 +490,7 @@ export class ModelRuns {
   private readonly workspace: AgentWorkspace;
   private readonly sdkFile: string;
   private readonly execution?: WorkspaceExecutor;
-  private readonly bridge?: { socketPath: string; stdioEntry: string };
+  private readonly bridge?: { socketPath: string; stdioEntry: string; certificateFile?: string };
   private readonly botAdmission: (bot: string) => boolean;
   private readonly sessions = new Map<
     string,
@@ -517,7 +524,15 @@ export class ModelRuns {
     this.Harness = Harness;
     this.sdkFile = sdkFile;
     this.execution = execution;
-    this.bridge = bridgeSocket ? { socketPath: bridgeSocket, stdioEntry } : undefined;
+    this.bridge = bridgeSocket
+      ? {
+          socketPath: bridgeSocket,
+          stdioEntry,
+          ...(process.platform === 'win32'
+            ? { certificateFile: path.join(dir, 'control-certificate.pem') }
+            : {}),
+        }
+      : undefined;
     this.botAdmission = admitBot;
     this.admission = admit;
     this.workspace =

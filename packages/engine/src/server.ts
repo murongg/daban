@@ -472,7 +472,7 @@ export async function startPrototype({
   };
   const json = (res: ServerResponse, data: unknown, status = 200) =>
     reply(res, status, 'application/json; charset=utf-8', JSON.stringify(data));
-  const server = privateServer(
+  const channel = await privateServer(
     async (req, res) => {
       let releaseMutation: (() => unknown) | undefined;
       try {
@@ -1612,14 +1612,10 @@ export async function startPrototype({
         releaseMutation?.();
       }
     },
-    (identity) =>
-      identity === 'control'
-        ? token
-        : identity.startsWith('mcp:')
-          ? models?.jobs.get(identity.slice(4))?.token
-          : undefined,
+    host ? path.join(modelDir, 'control-certificate.pem') : undefined,
     host ? process.platform : 'darwin',
   );
+  const server = channel.server;
   await new Promise<unknown>((resolve, reject) => {
     server.once('error', reject);
     if (host) server.listen(host.socketPath, () => resolve(undefined));
@@ -1627,8 +1623,10 @@ export async function startPrototype({
   });
   const address = server.address();
   if (!address || (!host && typeof address === 'string')) throw new Error('Invalid server address');
-  if (host && process.platform !== 'win32') await chmod(host.socketPath, 0o600);
-  else origin = `http://127.0.0.1:${(address as import('node:net').AddressInfo).port}`;
+  if (host) {
+    if (process.platform !== 'win32') await chmod(host.socketPath, 0o600);
+    await channel.publish();
+  } else origin = `http://127.0.0.1:${(address as import('node:net').AddressInfo).port}`;
   let closing: Promise<unknown> | undefined;
   const close = () => {
     if (!closing) closing = shutdown();

@@ -57,7 +57,7 @@ export async function readAgentToken(dataRoot: string) {
 
 export function unixFetch(
   socketPath: string,
-  options: { maxBytes?: number; key?: () => Promise<string> } = {},
+  options: { maxBytes?: number; key?: () => Promise<string>; certificateFile?: string } = {},
 ) {
   const limit = options.maxBytes ?? uploadLimit;
   if (
@@ -107,17 +107,14 @@ export function unixFetch(
     headers.set('host', new URL(origin).host);
     if (body?.headers.has('content-type') && !headers.has('content-type'))
       headers.set('content-type', body.headers.get('content-type')!);
-    const key =
-      process.platform === 'win32'
-        ? headers.get('x-prototype-token') || (await options.key?.())
-        : '';
+    const tls = await privateClientOptions(options.certificateFile);
     const request = process.platform === 'win32' ? httpsRequest : httpRequest;
     let requestError = 'AGENT_REQUEST_UNAVAILABLE';
     try {
       return await new Promise<Response>((done, reject) => {
         const connection = request(
           {
-            ...privateClientOptions(key || '', 'control'),
+            ...tls,
             socketPath,
             // Model proxy configuration must never reroute this private control connection.
             agent: false,

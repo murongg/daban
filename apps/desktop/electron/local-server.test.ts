@@ -42,11 +42,12 @@ it('keeps host RPC private, forbids RPC consent, and binds returned images to th
     if (process.platform !== 'win32') expect((await stat(paths.socket)).mode & 0o777).toBe(0o600);
     if (process.platform !== 'win32') expect((await stat(paths.token)).mode & 0o777).toBe(0o600);
     const token = await readFile(paths.token, 'utf8');
+    const tls = await privateClientOptions(paths.certificate);
     const response = await new Promise<string>((resolve, reject) => {
       const send = process.platform === 'win32' ? httpsRequest : httpRequest;
       const call = send(
         {
-          ...privateClientOptions(token, 'local'),
+          ...tls,
           socketPath: paths.socket,
           path: '/',
           method: 'POST',

@@ -114,7 +114,7 @@ export function runtimeService(
   function privateClient() {
     if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
     const fetcher = unixFetch(agentConfig.socketPath, {
-      key: () => readAgentToken(agentConfig.dataRoot),
+      certificateFile: join(agentConfig.dataRoot, 'model/control-certificate.pem'),
     });
     return new RuntimeClient({
       origin: 'http://127.0.0.1:8766',

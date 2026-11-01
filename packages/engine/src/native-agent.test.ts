@@ -26,11 +26,12 @@ test('native-only agent starts without a Linux executor or VM and reports its re
   });
   try {
     const token = (await readFile(path.join(root, 'model/control-token'), 'utf8')).trim();
+    const tls = await privateClientOptions(path.join(root, 'model/control-certificate.pem'));
     const raw = await new Promise<Record<string, unknown>>((resolve, reject) => {
       const send = process.platform === 'win32' ? httpsRequest : httpRequest;
       const call = send(
         {
-          ...privateClientOptions(token, 'control'),
+          ...tls,
           socketPath,
           path: '/api/state',
           headers: { host: '127.0.0.1:8766', 'x-prototype-token': token },

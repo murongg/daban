@@ -24,9 +24,15 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run build
       - name: Test desktop bindings and authority
-        run: npx vitest run apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/src/LocalComputer.test.tsx --maxWorkers=2
+        run: npx vitest run apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/src/LocalComputer.test.tsx --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
         run: node --experimental-sqlite --test packages/engine/dist/private-channel.test.js packages/engine/dist/native-agent.test.js dist-agent/native-loop.test.js
+      - name: Verify Electron encrypted transport
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & node_modules/electron/dist/electron.exe --test packages/engine/dist/private-channel.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify Windows native module ABI
         run: node -e "const n=require('@computer-use/libnut-win32'); for(const k of ['moveMouse','keyTap','typeString','getActiveWindow']) if(typeof n[k]!=='function') throw Error(k)"
       - name: Build portable Windows client

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { LocalComputerClient, localComputerPaths, startNativeAgent } from '@daban/engine/agent';
-import { privateServer } from '@daban/engine/local-computer';
+import { privateServer, secureDirectory } from '@daban/engine/local-computer';
 import { resolveSdk } from './sdk.js';
 
 test('real DSH dispatches vision tools to the selected native bridge without a VM or a real provider', {
@@ -15,56 +15,55 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
 }, async () => {
   const temporary = await mkdtemp(path.join(tmpdir(), 'mock-native-loop-'));
   const root = path.join(temporary, 'private');
-  await mkdir(root, { mode: 0o700 });
+  await secureDirectory(root);
   const locations = localComputerPaths(root),
     key = 'a'.repeat(64);
   if (process.platform !== 'win32') await mkdir(path.dirname(locations.socket), { mode: 0o700 });
   await writeFile(locations.token, key, { mode: 0o600 });
   const nativeCalls: string[] = [];
   let observation = 'mock-observation-0';
-  const local = privateServer(
-    async (req, res) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      const input = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
-      let value: unknown = {};
-      if (input.method === 'status')
-        value = {
-          platform: process.platform === 'win32' ? 'win32' : 'darwin',
-          available: true,
-          permissions: { screen: true, accessibility: true },
-          shortcut: true,
-          session: {
-            id: 'mock-native-session',
-            bot: 'mock-bot',
-            revision: 1,
-            owner: 'agent',
-            model: 'provider:mock-provider:mock-vision',
-            modelRevision: 1,
-          },
-        };
-      if (input.method === 'screenshot' || input.method === 'act') {
-        assert.equal(input.bot, 'mock-bot');
-        assert.equal(input.session, 'mock-native-session');
-        if (input.method === 'act') assert.equal(input.observation, observation);
-        nativeCalls.push(String(input.method));
-        observation = `mock-observation-${nativeCalls.length}`;
-        value = {
-          session: 'mock-native-session',
-          observation,
-          bot: input.bot,
-          runId: input.runId,
-          width: 800,
-          height: 600,
-          image: 'data:image/jpeg;base64,AA==',
-        };
-      }
-      res.end(JSON.stringify({ ok: true, value }));
-    },
-    (identity) => (identity === 'local' ? key : undefined),
-  );
+  const channel = await privateServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const input = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+    let value: unknown = {};
+    if (input.method === 'status')
+      value = {
+        platform: process.platform === 'win32' ? 'win32' : 'darwin',
+        available: true,
+        permissions: { screen: true, accessibility: true },
+        shortcut: true,
+        session: {
+          id: 'mock-native-session',
+          bot: 'mock-bot',
+          revision: 1,
+          owner: 'agent',
+          model: 'provider:mock-provider:mock-vision',
+          modelRevision: 1,
+        },
+      };
+    if (input.method === 'screenshot' || input.method === 'act') {
+      assert.equal(input.bot, 'mock-bot');
+      assert.equal(input.session, 'mock-native-session');
+      if (input.method === 'act') assert.equal(input.observation, observation);
+      nativeCalls.push(String(input.method));
+      observation = `mock-observation-${nativeCalls.length}`;
+      value = {
+        session: 'mock-native-session',
+        observation,
+        bot: input.bot,
+        runId: input.runId,
+        width: 800,
+        height: 600,
+        image: 'data:image/jpeg;base64,AA==',
+      };
+    }
+    res.end(JSON.stringify({ ok: true, value }));
+  }, locations.certificate);
+  const local = channel.server;
   local.listen(locations.socket);
   await once(local, 'listening');
+  await channel.publish();
   if (process.platform !== 'win32') await chmod(locations.socket, 0o600);
   let modelCalls = 0;
   const model = createServer(async (req, res) => {
