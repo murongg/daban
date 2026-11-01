@@ -2030,6 +2030,9 @@ textarea.skill-source {
 .user-request {
   min-width: 0;
 }
+.request-list:has(> .user-request) {
+  margin-bottom: 20px;
+}
 .request-value {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

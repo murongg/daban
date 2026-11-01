@@ -232,6 +232,21 @@ function fixture(command: RuntimeCommand): unknown {
     snapshot.interactions = snapshot.interactions?.map((item) =>
       item.id === updated.id ? updated : item,
     );
+    if (command.reply.kind === 'decision' && command.reply.allow) {
+      snapshot.agents = {
+        ...snapshot.agents,
+        [command.bot]: {
+          ...snapshot.agents[command.bot],
+          phase: 'running',
+          response: {
+            revision: 1,
+            text: '合成回复：正在核对示例任务的运行状态。',
+            state: 'streaming',
+          },
+        },
+      };
+    }
+    for (const listener of listeners) listener({ ...snapshot });
     return updated;
   }
   if (command.type === 'bot.register')
