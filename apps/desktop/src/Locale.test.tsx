@@ -68,14 +68,11 @@ it('retains a private unsaved key and model form while the interface language ch
   });
   render(<App />);
   await act(async () => {});
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
-  await userEvent.click(screen.getByRole('tab', { name: '模型与供应商' }));
-  await userEvent.click(screen.getByRole('button', { name: '添加供应商' }));
+  await screen.findByRole('heading', { name: '连接你的第一个模型' });
   const key = screen.getByLabelText('API Key');
   await userEvent.type(key, 'SYNTHETIC-UNSAVED-CREDENTIAL');
-  await userEvent.click(screen.getByRole('tab', { name: '通用' }));
   await selectOption(userEvent, selectControl('界面语言'), 'en');
-  await userEvent.click(screen.getByRole('tab', { name: 'Models & providers' }));
+  expect(screen.getByRole('heading', { name: 'Connect your first model' })).toBeVisible();
   expect(screen.getByLabelText('API Key')).toBe(key);
   expect(key).toHaveValue('SYNTHETIC-UNSAVED-CREDENTIAL');
   expect(

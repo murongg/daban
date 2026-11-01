@@ -8,6 +8,7 @@
 | ----------------------------- | ------------------------ | ------------------------------------------------------- |
 | `/preview/settings.html`      | 完整设置弹窗             | `theme=dark`                                            |
 | `/preview/setup.html`         | 首次安装与搭子状态       | `phase=starting`、`progress=37`、`theme=dark`           |
+| `/preview/onboarding.html`    | 首次模型配置与完成引导   | `configured=1`、`theme=dark`、`lang=en`                 |
 | `/preview/providers.html`     | 供应商与多模型表单       | `empty=1`、`theme=dark`                                 |
 | `/preview/controls.html`      | 下拉框、日期、时间等控件 | `theme=dark`                                            |
 | `/preview/sidebar.html`       | 侧栏与整理菜单           | `controls=1`、`keep=1`                                  |

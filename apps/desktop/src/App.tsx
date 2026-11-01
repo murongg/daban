@@ -64,13 +64,13 @@ import { Inbox } from './Inbox';
 import { syncLocale, t, useLocale } from './locale';
 import { NewChat } from './NewChat';
 import { useNotices } from './notices';
+import { Onboarding } from './Onboarding';
 import { Profile } from './Profile';
 import type { BotPreset } from './presets';
 import { profileInput, useProfiles } from './profiles';
 import { Recovery, RecoveryNotice } from './Recovery';
 import { RuntimeProvider, runtimeError, useRuntime } from './Runtime';
 import { Settings } from './Settings';
-import { Setup } from './Setup';
 import { Sidebar } from './Sidebar';
 import {
   type Action,
@@ -127,15 +127,12 @@ export function App() {
   return (
     <I18nProvider locale={locale}>
       <RuntimeProvider>
-        <Entry />
+        <Onboarding>
+          <Workbench />
+        </Onboarding>
       </RuntimeProvider>
     </I18nProvider>
   );
-}
-function Entry() {
-  useLocale();
-  const runtime = useRuntime();
-  return runtime.enabled && runtime.snapshot.setup?.required ? <Setup /> : <Workbench />;
 }
 function Workbench() {
   useLocale();

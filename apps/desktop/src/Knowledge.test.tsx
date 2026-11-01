@@ -118,7 +118,7 @@ function connect(protocol = 9) {
 it('keeps each Bot document draft and reviews a model change before saving a stale editor', async () => {
   const backend = connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   await userEvent.click(await screen.findByRole('button', { name: '打开资料 合成规范.md' }));
   const editor = await screen.findByRole('textbox', { name: '资料正文' });
   await userEvent.clear(editor);
@@ -146,7 +146,7 @@ it('keeps each Bot document draft and reviews a model change before saving a sta
 it('opens the document panel directly from the conversation header after closing the workspace', async () => {
   connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '关闭工作区面板' }));
+  await userEvent.click(await screen.findByRole('button', { name: '关闭工作区面板' }));
   await userEvent.click(screen.getByRole('button', { name: '资料面板' }));
   expect(await screen.findByRole('heading', { name: '长期资料' })).toBeVisible();
 });
@@ -163,7 +163,7 @@ it('brings an opened document editor into view without scrolling on every keystr
   try {
     connect();
     render(<App />);
-    await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+    await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
     await userEvent.click(await screen.findByRole('button', { name: '打开资料 合成规范.md' }));
     await screen.findByRole('textbox', { name: '资料正文' });
     expect(seen).toContain('editor');
@@ -179,7 +179,7 @@ it('brings an opened document editor into view without scrolling on every keystr
 it('imports a text snapshot and can restore a saved document as a new version', async () => {
   const backend = connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   const file = new File(['合成导入正文'], '导入资料.md', { type: 'text/markdown' });
   Object.defineProperty(file, 'text', { value: async () => '合成导入正文' });
   Object.defineProperty(file, 'arrayBuffer', {
@@ -205,7 +205,7 @@ it('imports a text snapshot and can restore a saved document as a new version', 
 it('rejects invalid UTF-8 imports instead of silently saving replacement characters', async () => {
   const backend = connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   const file = new File([new Uint8Array([0xff, 0x80])], 'bad.txt', { type: 'text/plain' });
   Object.defineProperty(file, 'text', { value: async () => '\ufffd\ufffd' });
   Object.defineProperty(file, 'arrayBuffer', {
@@ -221,7 +221,7 @@ it('rejects invalid UTF-8 imports instead of silently saving replacement charact
 it('imports a binary original through the runtime and shows extracted text with provenance', async () => {
   const backend = connect(10);
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   const bytes = new TextEncoder().encode('%PDF-1.7\nmock');
   const file = new File([bytes], '合成原件.pdf', { type: 'application/pdf' });
   Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer });
@@ -239,7 +239,7 @@ it('imports a binary original through the runtime and shows extracted text with 
 it('keeps existing text support but rejects binary imports on an older runtime', async () => {
   const backend = connect(9);
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   const file = new File(['%PDF-1.7'], 'old.pdf', { type: 'application/pdf' });
   await userEvent.upload(screen.getByLabelText('选择资料文件'), file);
   expect(await screen.findByText(/需要更新本地运行环境/)).toBeVisible();
@@ -251,7 +251,7 @@ it('keeps existing text support but rejects binary imports on an older runtime',
 it('keeps an in-flight binary import with its originating Bot when the user changes screens', async () => {
   const backend = connect(10);
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   let release!: (buffer: ArrayBuffer) => unknown;
   const bytes = new TextEncoder().encode('%PDF-1.7\nmock');
   const pending = new Promise<ArrayBuffer>((resolve) => {
@@ -282,7 +282,7 @@ it('shows a failed extraction without replacing the open document', async () => 
       : invoke(command),
   );
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   await userEvent.click(await screen.findByRole('button', { name: '打开资料 合成规范.md' }));
   const bytes = new TextEncoder().encode('%PDF-broken');
   const file = new File([bytes], 'broken.pdf', { type: 'application/pdf' });
@@ -295,7 +295,7 @@ it('shows a failed extraction without replacing the open document', async () => 
 it('never replaces a dirty document by opening another file and retains it across a client remount', async () => {
   const backend = connect();
   const mounted = render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   await userEvent.click(await screen.findByRole('button', { name: '打开资料 合成规范.md' }));
   await userEvent.type(await screen.findByRole('textbox', { name: '资料正文' }), ' 未保存');
   const count = backend.invoke.mock.calls.filter(
@@ -308,6 +308,6 @@ it('never replaces a dirty document by opening another file and retains it acros
   ).toHaveLength(count);
   mounted.unmount();
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '资料' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
   expect(screen.getByRole('textbox', { name: '资料正文' })).toHaveValue('合成旧正文 未保存');
 });

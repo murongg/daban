@@ -13,15 +13,31 @@ import { Providers } from './Providers';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
 
-export function Models() {
+export function Models({
+  mode = 'settings',
+  onConfigured,
+}: {
+  mode?: 'settings' | 'onboarding';
+  onConfigured?: () => unknown;
+}) {
   useLocale();
   const runtime = useRuntime();
   const providers = useRef(false);
   // A transient disconnect must not unmount secret drafts or an exact pending configuration intent.
   if (runtime.snapshot.model.connections !== undefined) providers.current = true;
-  return providers.current ? <Providers /> : <LegacyModels />;
+  return providers.current ? (
+    <Providers mode={mode} onConfigured={onConfigured} />
+  ) : (
+    <LegacyModels mode={mode} onConfigured={onConfigured} />
+  );
 }
-function LegacyModels() {
+function LegacyModels({
+  mode,
+  onConfigured,
+}: {
+  mode: 'settings' | 'onboarding';
+  onConfigured?: () => unknown;
+}) {
   useLocale();
   const runtime = useRuntime();
   const model = runtime.snapshot.model;
@@ -30,7 +46,17 @@ function LegacyModels() {
     runtime.snapshot.phase === 'ready' &&
     runtime.snapshot.protocolVersion >= 13 &&
     model.revision !== undefined;
-  const [draft, setDraft] = useState<{ model: DeepSeekModel; apiKey: string; revision: number }>();
+  const [draft, setDraft] = useState<
+    { model: DeepSeekModel; apiKey: string; revision: number } | undefined
+  >(() =>
+    mode === 'onboarding'
+      ? {
+          model: isDeepSeekModel(model.model) ? model.model : 'deepseek-flash',
+          apiKey: '',
+          revision: model.revision ?? 0,
+        }
+      : undefined,
+  );
   const [pending, setPending] = useState<ModelUpdate>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -88,6 +114,7 @@ function LegacyModels() {
         setPending(undefined);
         setChecked(undefined);
         setNotice(t('models.modelSettingsSavedChangesApplyNextTask'));
+        onConfigured?.();
       }
     } catch (error) {
       if (mounted.current) {
@@ -102,61 +129,63 @@ function LegacyModels() {
   }
   return (
     <>
-      <div className="setting-row">
-        <div>
-          <div className="setting-label">{t('models.officialDeepseekApi')}</div>
-          <p className="setting-description">
-            {runtime.enabled
-              ? t('models.workspaceDefaultSummary', {
-                  0: model.configured
-                    ? runtime.snapshot.agent?.location === 'host'
-                      ? t('models.keysStoredHostAgentServiceNotSent')
-                      : t('models.keySavedLocalLinuxAppNeverShows')
-                    : t('models.configureApiKeyStartingTasks'),
-                  1: name,
-                })
-              : t('models.webPreviewsDoNotSaveKeysConfigure')}
-          </p>
-          {runtime.enabled && runtime.snapshot.protocolVersion < 13 && (
-            <p className="field-help">{t('models.updateLocalRuntimeConfigureModelsApp')}</p>
-          )}
+      {mode === 'settings' && (
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">{t('models.officialDeepseekApi')}</div>
+            <p className="setting-description">
+              {runtime.enabled
+                ? t('models.workspaceDefaultSummary', {
+                    0: model.configured
+                      ? runtime.snapshot.agent?.location === 'host'
+                        ? t('models.keysStoredHostAgentServiceNotSent')
+                        : t('models.keySavedLocalLinuxAppNeverShows')
+                      : t('models.configureApiKeyStartingTasks'),
+                    1: name,
+                  })
+                : t('models.webPreviewsDoNotSaveKeysConfigure')}
+            </p>
+            {runtime.enabled && runtime.snapshot.protocolVersion < 13 && (
+              <p className="field-help">{t('models.updateLocalRuntimeConfigureModelsApp')}</p>
+            )}
+          </div>
+          <div className="model-actions">
+            <span className="badge">
+              {runtime.snapshot.phase !== 'ready'
+                ? t('models.checkConnecting')
+                : model.configured
+                  ? t('models.configured')
+                  : t('common.notConfigured')}
+            </span>
+            <button
+              className="secondary"
+              type="button"
+              disabled={!available || busy || !!draft || !model.configured}
+              onClick={check}
+            >
+              {busy && !draft ? t('common.checking') : t('common.checkConnection')}
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              disabled={!available || busy || !!draft}
+              onClick={() => {
+                setDraft({
+                  model: isDeepSeekModel(model.model) ? model.model : 'deepseek-flash',
+                  apiKey: '',
+                  revision: model.revision!,
+                });
+                setPending(undefined);
+                setError('');
+                setCode('');
+                setNotice('');
+              }}
+            >
+              {model.configured ? t('models.editModelSettings') : t('models.configureDeepseek')}
+            </button>
+          </div>
         </div>
-        <div className="model-actions">
-          <span className="badge">
-            {runtime.snapshot.phase !== 'ready'
-              ? t('models.checkConnecting')
-              : model.configured
-                ? t('models.configured')
-                : t('common.notConfigured')}
-          </span>
-          <button
-            className="secondary"
-            type="button"
-            disabled={!available || busy || !!draft || !model.configured}
-            onClick={check}
-          >
-            {busy && !draft ? t('common.checking') : t('common.checkConnection')}
-          </button>
-          <button
-            className="secondary"
-            type="button"
-            disabled={!available || busy || !!draft}
-            onClick={() => {
-              setDraft({
-                model: isDeepSeekModel(model.model) ? model.model : 'deepseek-flash',
-                apiKey: '',
-                revision: model.revision!,
-              });
-              setPending(undefined);
-              setError('');
-              setCode('');
-              setNotice('');
-            }}
-          >
-            {model.configured ? t('models.editModelSettings') : t('models.configureDeepseek')}
-          </button>
-        </div>
-      </div>
+      )}
       {draft && (
         <form
           className="inline-form"
@@ -192,10 +221,16 @@ function LegacyModels() {
               />
             </label>
             <p className="field-help">
-              {model.configured
-                ? t('models.leaveBlankRetainCurrentKey')
-                : t('models.getKeyDeepseekPlatform')}
-              {t('models.keysNotWrittenAppStorageExportsUnsaved')}
+              {mode === 'onboarding' ? (
+                t('onboarding.keyHint')
+              ) : (
+                <>
+                  {model.configured
+                    ? t('models.leaveBlankRetainCurrentKey')
+                    : t('models.getKeyDeepseekPlatform')}
+                  {t('models.keysNotWrittenAppStorageExportsUnsaved')}
+                </>
+              )}
             </p>
           </fieldset>
           <p className="inline-note">
@@ -231,19 +266,21 @@ function LegacyModels() {
             </div>
           )}
           <div className="inline-form-actions">
-            <button
-              className="text-button"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setDraft(undefined);
-                setPending(undefined);
-                setError('');
-                setCode('');
-              }}
-            >
-              {t('models.cancelEditing')}
-            </button>
+            {mode === 'settings' && (
+              <button
+                className="text-button"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setDraft(undefined);
+                  setPending(undefined);
+                  setError('');
+                  setCode('');
+                }}
+              >
+                {t('models.cancelEditing')}
+              </button>
+            )}
             <button className="primary" type="submit" disabled={!available || busy}>
               {busy
                 ? t('models.verifyingSaving')

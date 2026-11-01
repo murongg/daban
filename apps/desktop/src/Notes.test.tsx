@@ -386,7 +386,7 @@ it('allows archived/recovery reads and retains editors while blocking all writes
 it('gates old runtimes and exposes the panel only for an individual Bot', async () => {
   const live = connect([], 36);
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '便笺面板' }));
+  await userEvent.click(await screen.findByRole('button', { name: '便笺面板' }));
   expect(await screen.findByText('需要更新运行环境')).toBeVisible();
   expect(live.calls.some((call) => call.type.startsWith('notes.'))).toBe(false);
   await userEvent.click(screen.getByRole('button', { name: '周报协作' }));

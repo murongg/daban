@@ -334,7 +334,7 @@ it('keeps the existing group draft unsent, routes an explicit receiver and never
 it('excludes archived members from an explicit all-available send while keeping historical identity', async () => {
   const f = connect(true);
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: group.name }));
+  await userEvent.click(await screen.findByRole('button', { name: group.name }));
   await findSelectControl('发送给');
   await selectOption(userEvent, selectControl('发送给'), '*');
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '合成只发给可用成员');

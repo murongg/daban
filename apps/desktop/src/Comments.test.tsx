@@ -259,7 +259,7 @@ const fixture = () =>
     </StrictMode>,
   );
 async function open(title = '合成任务甲') {
-  await userEvent.click(screen.getByRole('button', { name: /^任务(?:\s|$)/ }));
+  await userEvent.click(await screen.findByRole('button', { name: /^任务(?:\s|$)/ }));
   await userEvent.click(await screen.findByRole('button', { name: `查看 ${title}` }));
   return screen.findByRole('textbox', { name: '评论正文' });
 }
@@ -322,7 +322,7 @@ it('reopens an uncertain accepted comment through receipts only and keeps newer 
   current.description = 'MOCK NEWER HUMAN DETAIL';
   live.receipt.mockImplementation(async (request) => live.acknowledgement(request));
   fixture();
-  await userEvent.click(screen.getByRole('button', { name: '任务', exact: true }));
+  await userEvent.click(await screen.findByRole('button', { name: '任务', exact: true }));
   await waitFor(() => expect(live.receipt).toHaveBeenCalled());
   await waitFor(() => expect(commentCard(cache(), 'mock-alpha').pending).toBeUndefined());
   expect(live.writeComment).toHaveBeenCalledTimes(1);

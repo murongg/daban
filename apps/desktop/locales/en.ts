@@ -1,4 +1,28 @@
 export const english = {
+  'onboarding.connectionSettings': 'Connection settings (optional)',
+  'onboarding.modelSelectionHint':
+    'Enter your key, load the model list and choose a model, or enter its ID manually. Tests and verification may incur a small API charge; your chats are not included.',
+  'onboarding.offlineWorkspace': 'View workspace offline',
+  'onboarding.keyHint':
+    'Get an API key from your provider’s console. After verification and saving, it will be ready the next time you open Daban.',
+  'onboarding.reconnectHint':
+    'Reconnect to continue checking your environment and model configuration.',
+  'onboarding.connectingWorkspace': 'Connecting to your local workspace',
+  'onboarding.connectionFailed': 'Could not connect to your workspace',
+  'onboarding.checkingConfiguration': 'Checking your environment and model configuration.',
+  'onboarding.modelTitle': 'Connect your first model',
+  'onboarding.modelDescription':
+    'Choose a provider, enter your API key, then load or enter a model to use.',
+  'onboarding.readyTitle': 'You’re ready to start',
+  'onboarding.readyDescription': 'Open your workspace and choose or create a Bot to start a task.',
+  'onboarding.steps': 'Getting started',
+  'onboarding.environmentStep': 'Prepare workspace',
+  'onboarding.modelStep': 'Connect a model',
+  'onboarding.startStep': 'Start using Daban',
+  'onboarding.modelSaved': 'Model configuration saved',
+  'onboarding.changeModelsLater': 'Add or switch models later in Settings → Models & providers.',
+  'onboarding.connectionInterrupted':
+    'The local service disconnected. Your input is retained; continue after reconnecting.',
   'errors.runtimeConnectionUnavailable':
     'Could not connect to the local execution environment. Try connecting again.',
   'schedules.cron': 'Cron',
@@ -2442,8 +2466,8 @@ export const english = {
     'Starting Linux. It will connect automatically when ready.',
   'setup.startLocalEnvironment': 'Start local environment',
   'setup.steps': 'Setup steps',
-  'setup.tasksRunLocallyClosingAppDoesNot':
-    'Tasks run locally. Closing the app does not delete the environment. Configure the model separately after setup.',
+  'onboarding.environmentFootnote':
+    'Tasks run locally. Closing the app does not delete the environment. You’ll connect a model after setup.',
   'setup.title': 'Give your Bot a local workspace',
   'setup.unpackingSystemFilesMayTakeLittleWhile':
     'Unpacking the system files. This may take a little while.',
@@ -2452,8 +2476,8 @@ export const english = {
   'setup.waiting': 'Waiting',
   'setup.workspaceNeedsAttention': 'Your workspace needs attention',
   'setup.workspaceReady': 'Your workspace is ready',
-  'setup.workspaceWillOpenAutomaticallyWhenReadyKeep':
-    'Your workspace will open automatically when ready. Keep your computer awake, or pause at any time.',
+  'onboarding.environmentInProgress':
+    'When the environment is ready, you’ll be guided to configure a model. Keep your computer awake, or pause at any time.',
   'sidebar.addBot': 'Add Bot',
   'sidebar.addGroup': 'Add group',
   'sidebar.allBotsArchived': 'All Bots are archived',

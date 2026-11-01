@@ -77,7 +77,7 @@ it('reads newly uncovered conversation results only after settings closes', asyn
   const fake = connect();
   vi.spyOn(document, 'hasFocus').mockReturnValue(true);
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
   await act(() =>
     fake.emit({
       ...fake.snapshot(),
@@ -145,6 +145,7 @@ it('keeps manual unread across reconstruction and unavailable feeds, and treats 
   await act(() => fake.emit({ ...fake.snapshot(), phase: 'offline', notices: undefined }));
   unmount();
   render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '离线查看工作区' }));
   expect(await screen.findByRole('status', { name: '写作搭档有未读消息' })).toBeVisible();
   await act(() =>
     fake.emit({

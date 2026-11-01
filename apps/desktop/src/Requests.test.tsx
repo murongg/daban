@@ -281,7 +281,7 @@ it('retains each original question and detail beside its own settled answer', as
     },
   ]);
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: /收件箱/ }));
+  await userEvent.click(await screen.findByRole('button', { name: /收件箱/ }));
   await userEvent.click(screen.getByRole('tab', { name: '已处理' }));
   const format = await screen.findByText('合成输出格式？');
   expect(within(format.parentElement!).getByText('仅用于合成展示。')).toBeVisible();
@@ -297,7 +297,7 @@ it.each(['cancelled', 'interrupted'] as const)(
   async (status) => {
     connect([{ ...question, status }]);
     render(<App />);
-    await userEvent.click(screen.getByRole('button', { name: /收件箱/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /收件箱/ }));
     await userEvent.click(screen.getByRole('tab', { name: '已处理' }));
     expect(await screen.findByText('采用哪种合成格式？')).toBeVisible();
     expect(

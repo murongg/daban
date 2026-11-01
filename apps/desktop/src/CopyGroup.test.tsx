@@ -138,7 +138,7 @@ function connect(protocol = 35, pending = false) {
   };
 }
 async function openCopy() {
-  await userEvent.click(screen.getByRole('button', { name: '整理 周报协作' }));
+  await userEvent.click(await screen.findByRole('button', { name: '整理 周报协作' }));
   await waitFor(() => expect(screen.getByRole('menuitem', { name: '复制群聊' })).toBeEnabled());
   await userEvent.click(screen.getByRole('menuitem', { name: '复制群聊' }));
   return screen.getByRole('dialog', { name: '复制群聊' });

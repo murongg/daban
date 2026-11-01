@@ -11,7 +11,8 @@ import {
   modelCatalog,
   modelReference,
 } from '@daban/protocol';
-import { useEffect, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { getLocale, t, useLocale } from './locale';
 import { ModelCatalog, ModelInspector } from './ModelTools';
 import { definitiveModelErrors } from './model-errors';
@@ -40,7 +41,13 @@ interface Draft {
   defaultFirst: boolean;
 }
 
-export function Providers() {
+export function Providers({
+  mode = 'settings',
+  onConfigured,
+}: {
+  mode?: 'settings' | 'onboarding';
+  onConfigured?: () => unknown;
+}) {
   useLocale();
   const runtime = useRuntime();
   const model = runtime.snapshot.model;
@@ -51,7 +58,37 @@ export function Providers() {
     runtime.snapshot.phase === 'ready' &&
     model.connections !== undefined &&
     model.revision !== undefined;
-  const [draft, setDraft] = useState<Draft>();
+  function createDraft(connection?: ModelConnection): Draft {
+    const first =
+      mode === 'onboarding' && !connection
+        ? presets.find((preset) => preset.id === 'deepseek')
+        : undefined;
+    const next: ModelConnection = connection
+      ? structuredClone(connection)
+      : {
+          id: crypto.randomUUID(),
+          name: first ? t(first.name) : '',
+          baseURL: first?.baseURL ?? '',
+          ...(first ? { api: first.api } : {}),
+          models: [newModel()],
+        };
+    return {
+      connection: next,
+      apiKey: '',
+      revision: model.revision ?? 0,
+      selected: model.configured ? model.model : '',
+      preset:
+        presets.find(
+          (preset) =>
+            preset.baseURL && preset.baseURL === next.baseURL && preset.api === modelApi(next),
+        )?.id || 'custom',
+      keys: next.models.map(() => crypto.randomUUID()),
+      defaultFirst: !model.configured,
+    };
+  }
+  const [draft, setDraft] = useState<Draft | undefined>(() =>
+    mode === 'onboarding' ? createDraft() : undefined,
+  );
   const [selected, setSelected] = useState<string>();
   const [defaultRevision, setDefaultRevision] = useState<number>();
   const [pending, setPending] = useState<ModelUpdate>();
@@ -60,6 +97,9 @@ export function Providers() {
   const [code, setCode] = useState('');
   const [notice, setNotice] = useState('');
   const [checked, setChecked] = useState<ModelCheck>();
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const connectionRegion = useId();
+  const connectionVisible = mode === 'settings' || draft?.preset === 'custom' || connectionOpen;
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -145,23 +185,7 @@ export function Providers() {
     });
   }
   function edit(connection?: ModelConnection) {
-    setDraft({
-      connection: connection
-        ? structuredClone(connection)
-        : { id: crypto.randomUUID(), name: '', baseURL: '', models: [newModel()] },
-      apiKey: '',
-      revision: model.revision!,
-      selected: model.configured ? model.model : '',
-      preset:
-        presets.find(
-          (preset) =>
-            preset.baseURL &&
-            preset.baseURL === connection?.baseURL &&
-            preset.api === modelApi(connection || {}),
-        )?.id || 'custom',
-      keys: (connection?.models || [null]).map(() => crypto.randomUUID()),
-      defaultFirst: !model.configured,
-    });
+    setDraft(createDraft(connection));
     setPending(undefined);
     setError('');
     setCode('');
@@ -232,6 +256,8 @@ export function Providers() {
         setPending(undefined);
         setChecked(undefined);
         setNotice(t('models.modelSettingsSavedChangesApplyNextTask'));
+        // Status may publish before the save reply; onboarding completes only after this exact intent is acknowledged.
+        onConfigured?.();
       }
     } catch (failure) {
       if (mounted.current) {
@@ -276,51 +302,54 @@ export function Providers() {
   }
   return (
     <div className="provider-settings">
-      <div className="setting-row">
-        <div>
-          <div className="setting-label">{t('models.providersModels')}</div>
-          <p className="setting-description">
-            {t('models.addCommonProviderCustomApiChooseModels')}
-          </p>
-        </div>
-        <button
-          className="secondary"
-          type="button"
-          disabled={!available || busy || !!draft || !!pending}
-          onClick={() => edit()}
-        >
-          {t('models.addProvider')}
-        </button>
-      </div>
-      {connections.map((connection) => (
-        <div className="setting-row provider-row" key={connection.id}>
-          <div className="provider-identity">
-            <ProviderIcon platform={providerIdentity(connection)} size="large" />
-            <div>
-              <div className="setting-label">{connection.name}</div>
-              <p className="setting-description provider-address">{connection.baseURL}</p>
-              <p className="setting-description">
-                {connection.models.map((entry) => entry.name).join(' · ')}
-              </p>
-            </div>
+      {mode === 'settings' && (
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">{t('models.providersModels')}</div>
+            <p className="setting-description">
+              {t('models.addCommonProviderCustomApiChooseModels')}
+            </p>
           </div>
           <button
-            className="text-button"
+            className="secondary"
             type="button"
-            aria-label={t('common.editNamedItem', { 0: connection.name })}
             disabled={!available || busy || !!draft || !!pending}
-            onClick={() => edit(connection)}
+            onClick={() => edit()}
           >
-            {t('common.edit')}
+            {t('models.addProvider')}
           </button>
         </div>
-      ))}
+      )}
+      {mode === 'settings' &&
+        connections.map((connection) => (
+          <div className="setting-row provider-row" key={connection.id}>
+            <div className="provider-identity">
+              <ProviderIcon platform={providerIdentity(connection)} size="large" />
+              <div>
+                <div className="setting-label">{connection.name}</div>
+                <p className="setting-description provider-address">{connection.baseURL}</p>
+                <p className="setting-description">
+                  {connection.models.map((entry) => entry.name).join(' · ')}
+                </p>
+              </div>
+            </div>
+            <button
+              className="text-button"
+              type="button"
+              aria-label={t('common.editNamedItem', { 0: connection.name })}
+              disabled={!available || busy || !!draft || !!pending}
+              onClick={() => edit(connection)}
+            >
+              {t('common.edit')}
+            </button>
+          </div>
+        ))}
       {model.connections === undefined && (
         <p className="inline-note">
           {t('models.modelCatalogUnavailableUnsavedInputPendingOperations')}
         </p>
       )}
-      {model.connections !== undefined && !connections.length && (
+      {mode === 'settings' && model.connections !== undefined && !connections.length && (
         <p className="inline-note">{t('models.addProviderChoosingWorkspacePerBotModels')}</p>
       )}
       {!draft && catalog.length > 0 && (
@@ -413,88 +442,112 @@ export function Providers() {
                   }))}
                   onValueChange={(value) => {
                     const preset = presets.find((entry) => entry.id === value);
-                    if (preset)
-                      setDraft({
-                        ...draft,
-                        preset: value,
-                        connection: {
-                          ...draft.connection,
-                          ...(preset.id === 'custom'
-                            ? {}
-                            : { name: t(preset.name), baseURL: preset.baseURL, api: preset.api }),
-                        },
-                      });
+                    if (!preset || preset.id === draft.preset) return;
+                    if (mode === 'onboarding') setConnectionOpen(false);
+                    setDraft({
+                      ...draft,
+                      preset: value,
+                      // A first-use supplier change starts a fresh credential scope, never reusing another vendor's draft.
+                      ...(mode === 'onboarding' ? { apiKey: '', keys: [crypto.randomUUID()] } : {}),
+                      connection: {
+                        ...draft.connection,
+                        ...(preset.id === 'custom'
+                          ? mode === 'onboarding'
+                            ? { name: '', baseURL: '', api: preset.api }
+                            : {}
+                          : { name: t(preset.name), baseURL: preset.baseURL, api: preset.api }),
+                        ...(mode === 'onboarding' ? { models: [newModel()] } : {}),
+                      },
+                    });
                   }}
                 />
               </div>
             )}
-            <div className="field-label">
-              {t('models.apiProtocol')}
-              <Select
-                label={t('models.apiProtocol')}
-                value={modelApi(draft.connection)}
-                disabled={
-                  !available || busy || !!pending || draft.connection.id === 'deepseek-official'
-                }
-                options={apiOptions}
-                onValueChange={(value) => {
-                  if (!isModelApi(value)) return;
-                  const { api: _api, ...connection } = draft.connection;
-                  // Leaving an unchanged legacy connection absent preserves its original save fingerprint.
-                  setDraft({
-                    ...draft,
-                    preset: 'custom',
-                    connection:
-                      original?.api === undefined && value === 'openai-completions'
-                        ? connection
-                        : { ...connection, api: value },
-                  });
-                }}
-              />
-            </div>
-            <div className="provider-pair">
-              <label className="field-label">
-                {t('models.providerName')}
-                <input
-                  className="field"
-                  required
-                  maxLength={80}
-                  value={draft.connection.name}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      connection: { ...draft.connection, name: event.target.value },
-                    })
-                  }
-                />
-              </label>
-              <label className="field-label">
-                {t('models.apiUrl')}
-                <input
-                  className="field"
-                  required
-                  type="url"
-                  readOnly={draft.connection.id === 'deepseek-official'}
-                  spellCheck={false}
-                  value={draft.connection.baseURL}
-                  placeholder="https://api.example.com/v1"
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      connection: { ...draft.connection, baseURL: event.target.value },
-                    })
-                  }
-                />
-              </label>
-            </div>
-            {draft.connection.id === 'deepseek-official' && (
-              <p className="field-help">{t('models.officialDeepseekConnectionUsesFixedUrlAdd')}</p>
+            {mode === 'onboarding' && draft.preset !== 'custom' && (
+              <button
+                className="text-button provider-connection-toggle"
+                type="button"
+                aria-expanded={connectionOpen}
+                aria-controls={connectionRegion}
+                onClick={() => setConnectionOpen((open) => !open)}
+              >
+                {t('onboarding.connectionSettings')}
+                <ChevronDown size={15} />
+              </button>
             )}
-            {modelApi(draft.connection) === 'anthropic-messages' && (
-              <p className="field-help">{t('models.claudeSNativeApiEnterServiceRoot')}</p>
-            )}
-            {modelApi(draft.connection) === 'google-generative-ai' && (
-              <p className="field-help">{t('models.geminiSNativeApiUsesV1betaUrl')}</p>
+            {connectionVisible && (
+              <div className="provider-connection" id={connectionRegion}>
+                <div className="field-label">
+                  {t('models.apiProtocol')}
+                  <Select
+                    label={t('models.apiProtocol')}
+                    value={modelApi(draft.connection)}
+                    disabled={
+                      !available || busy || !!pending || draft.connection.id === 'deepseek-official'
+                    }
+                    options={apiOptions}
+                    onValueChange={(value) => {
+                      if (!isModelApi(value)) return;
+                      const { api: _api, ...connection } = draft.connection;
+                      // Leaving an unchanged legacy connection absent preserves its original save fingerprint.
+                      setDraft({
+                        ...draft,
+                        preset: 'custom',
+                        connection:
+                          original?.api === undefined && value === 'openai-completions'
+                            ? connection
+                            : { ...connection, api: value },
+                      });
+                    }}
+                  />
+                </div>
+                <div className="provider-pair">
+                  <label className="field-label">
+                    {t('models.providerName')}
+                    <input
+                      className="field"
+                      required
+                      maxLength={80}
+                      value={draft.connection.name}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          connection: { ...draft.connection, name: event.target.value },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field-label">
+                    {t('models.apiUrl')}
+                    <input
+                      className="field"
+                      required
+                      type="url"
+                      readOnly={draft.connection.id === 'deepseek-official'}
+                      spellCheck={false}
+                      value={draft.connection.baseURL}
+                      placeholder="https://api.example.com/v1"
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          connection: { ...draft.connection, baseURL: event.target.value },
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                {draft.connection.id === 'deepseek-official' && (
+                  <p className="field-help">
+                    {t('models.officialDeepseekConnectionUsesFixedUrlAdd')}
+                  </p>
+                )}
+                {modelApi(draft.connection) === 'anthropic-messages' && (
+                  <p className="field-help">{t('models.claudeSNativeApiEnterServiceRoot')}</p>
+                )}
+                {modelApi(draft.connection) === 'google-generative-ai' && (
+                  <p className="field-help">{t('models.geminiSNativeApiUsesV1betaUrl')}</p>
+                )}
+              </div>
             )}
             <label className="field-label">
               API Key
@@ -510,12 +563,24 @@ export function Providers() {
               />
             </label>
             <p className="field-help">
-              {retainKey
-                ? t('models.leaveBlankRetainProviderSCurrentKey')
-                : t('models.newProviderApiUrlProtocolRequiresOwn')}{' '}
-              {t('models.keysNotWrittenAppStorageUnsavedInput')}
+              {mode === 'onboarding' ? (
+                t('onboarding.keyHint')
+              ) : (
+                <>
+                  {retainKey
+                    ? t('models.leaveBlankRetainProviderSCurrentKey')
+                    : t('models.newProviderApiUrlProtocolRequiresOwn')}{' '}
+                  {t('models.keysNotWrittenAppStorageUnsavedInput')}
+                </>
+              )}
             </p>
-            <p className="inline-note">{t('models.usesSelectedApiProtocolEnterModelId')}</p>
+            <p className="inline-note">
+              {t(
+                mode === 'onboarding'
+                  ? 'onboarding.modelSelectionHint'
+                  : 'models.usesSelectedApiProtocolEnterModelId',
+              )}
+            </p>
             {query && (
               <ModelCatalog
                 query={query}
@@ -527,7 +592,9 @@ export function Providers() {
             {model.inspection !== true && (
               <p className="field-help">{t('models.updateLocalAgentLoadModelsTestCalls')}</p>
             )}
-            <p className="field-help">{t('models.testingSendsFixedShortPromptMayIncur')}</p>
+            {mode === 'settings' && (
+              <p className="field-help">{t('models.testingSendsFixedShortPromptMayIncur')}</p>
+            )}
             <div className="provider-models">
               {draft.connection.models.map((entry, index) => (
                 <fieldset className="provider-model" key={draft.keys[index]}>
@@ -679,19 +746,21 @@ export function Providers() {
             </div>
           )}
           <div className="inline-form-actions">
-            <button
-              className="text-button"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setDraft(undefined);
-                setPending(undefined);
-                setCode('');
-                setError('');
-              }}
-            >
-              {t('models.cancelEditing')}
-            </button>
+            {mode === 'settings' && (
+              <button
+                className="text-button"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setDraft(undefined);
+                  setPending(undefined);
+                  setCode('');
+                  setError('');
+                }}
+              >
+                {t('models.cancelEditing')}
+              </button>
+            )}
             <button className="primary" type="submit" disabled={!available || busy}>
               {busy
                 ? t('models.verifyingSaving')

@@ -102,7 +102,7 @@ it('opens settings over the current workspace and restores the underlying draft 
 it('keeps an unsaved model key while switching categories but clears it after leaving settings', async () => {
   connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
   const dialog = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(dialog).getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(within(dialog).getByRole('button', { name: '编辑 DeepSeek' }));
@@ -125,7 +125,7 @@ it('keeps an unsaved model key while switching categories but clears it after le
 it('retains the exact pending model write across category changes and retries only on request', async () => {
   const invoke = connect(true);
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
   const dialog = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(dialog).getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(within(dialog).getByRole('button', { name: '编辑 DeepSeek' }));
@@ -144,7 +144,7 @@ it('retains the exact pending model write across category changes and retries on
 it('returns from a child recovery dialog without discarding another category editor', async () => {
   const invoke = connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
   const settings = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(settings).getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(within(settings).getByRole('button', { name: '编辑 DeepSeek' }));

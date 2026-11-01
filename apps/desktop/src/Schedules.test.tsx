@@ -97,7 +97,7 @@ it('locks a schedule for Bot edits while retaining human management and exact ba
   });
   const invoke = connect(undefined, [item]);
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
   await userEvent.click(screen.getByRole('button', { name: '锁定定时任务 合成锁定日程' }));
   expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
     type: 'schedule.update',
@@ -120,7 +120,7 @@ it('saves a real per-Bot schedule and preserves another Bot form while acknowled
     return new Promise<Schedule>((done) => (resolve = done));
   });
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
   expect(screen.queryByText('已启用 · 演示')).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成研究日程');
@@ -147,7 +147,7 @@ it('saves a real per-Bot schedule and preserves another Bot form while acknowled
 it('keeps the form usable while a timezone is incomplete', async () => {
   connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await screen.findByText('接下来');
   const zone = screen.getByRole('textbox', { name: '时区' });
@@ -169,7 +169,7 @@ it('lets users correct a definitely rejected schedule without losing the draft o
     return undefined;
   });
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成校验日程');
   await userEvent.type(screen.getByRole('textbox', { name: '需要 Bot 做什么' }), '只处理合成输入');
@@ -218,7 +218,7 @@ it('reads the current backend revision on edit conflict and preserves the local 
     return undefined;
   });
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
   await userEvent.click(screen.getByRole('button', { name: '编辑定时任务 合成旧任务' }));
   await userEvent.clear(screen.getByRole('textbox', { name: '任务名称' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成本地草稿');
@@ -243,7 +243,7 @@ it('keeps an ambiguous create payload and ID intact for an exact retry', async (
     return record(input);
   });
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '定时' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成重试日程');
   await userEvent.type(screen.getByRole('textbox', { name: '需要 Bot 做什么' }), '只处理合成输入');
@@ -267,7 +267,7 @@ it('keeps schedule rule values and instructions stable while editing in English'
   });
   await setLocale('en');
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: 'Schedules' }));
+  await userEvent.click(await screen.findByRole('tab', { name: 'Schedules' }));
   await userEvent.click(screen.getByRole('button', { name: 'New scheduled task' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Task name' }), 'SYNTHETIC-WEEKDAY');
   await userEvent.type(
@@ -304,7 +304,7 @@ it('retains an existing weekly rule when opening its editor in English', async (
   const invoke = connect(undefined, [original]);
   await setLocale('en');
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: 'Schedules' }));
+  await userEvent.click(await screen.findByRole('tab', { name: 'Schedules' }));
   await userEvent.click(
     screen.getByRole('button', { name: 'Edit scheduled task SYNTHETIC WEEKLY' }),
   );

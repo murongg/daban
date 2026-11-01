@@ -84,7 +84,7 @@ function connect(
   return invoke;
 }
 async function open() {
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
   await userEvent.click(screen.getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(await screen.findByRole('button', { name: '修改模型设置' }));
 }
@@ -164,7 +164,7 @@ it('reviews a newer revision without replacing the typed key or silently rebasin
 it('checks only the saved connection and gates new controls on older runtimes', async () => {
   const invoke = connect();
   const view = render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
   await userEvent.click(screen.getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(await screen.findByRole('button', { name: '检查连接' }));
   expect(await screen.findByText(/连接检查通过/)).toBeVisible();
@@ -175,7 +175,7 @@ it('checks only the saved connection and gates new controls on older runtimes', 
   view.unmount();
   connect(12);
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
   await userEvent.click(screen.getByRole('tab', { name: '模型与供应商' }));
   expect(await screen.findByRole('button', { name: '修改模型设置' })).toBeDisabled();
 });

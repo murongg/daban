@@ -129,7 +129,7 @@ it.each([
       return invoke(command);
     });
     render(<App />);
-    await userEvent.click(screen.getByRole('tab', { name: '文件' }));
+    await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
     await userEvent.click(await screen.findByRole('button', { name: `添加 ${name} 到消息` }));
     expect(await screen.findByRole('button', { name: `预览附件 ${name}` })).toBeVisible();
     expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual({
@@ -162,7 +162,7 @@ it('previews a shared raster from its bounded binary download without a text rea
       : fallback(command),
   );
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '文件' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
   await userEvent.click(await screen.findByRole('button', { name: /mock.png.*KB/ }));
   expect(await screen.findByRole('img', { name: 'mock.png' })).toHaveAttribute(
     'src',
@@ -175,7 +175,7 @@ it('attaches a shared file to the initiating Bot after switching and submits the
   let resolve!: (value: RuntimeFile) => unknown;
   const backend = connect(() => new Promise<RuntimeFile>((done) => (resolve = done)));
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '文件' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
   await userEvent.click(await screen.findByRole('button', { name: '添加 report.csv 到消息' }));
   expect(screen.getByRole('button', { name: '添加 report.csv 到消息' })).toBeDisabled();
   const nav = screen.getByRole('navigation', { name: 'Bot 列表' });
@@ -205,7 +205,7 @@ it('shows failed or oversized reads without creating an attachment', async () =>
     return { ...file, content: '甲'.repeat(70000) };
   });
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '文件' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
   await userEvent.click(await screen.findByRole('button', { name: '添加 report.csv 到消息' }));
   expect(await screen.findByText(/本地运行环境尚未连接/)).toBeVisible();
   fail = false;
@@ -217,7 +217,7 @@ it('shows failed or oversized reads without creating an attachment', async () =>
 it('refreshes shared outputs when a Bot without a computer finishes a task', async () => {
   const backend = connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '文件' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
   await screen.findByText(file.path);
   backend.complete();
   expect(await screen.findByText('chief/mock-note.md')).toBeVisible();

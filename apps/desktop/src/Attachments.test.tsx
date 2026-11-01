@@ -156,7 +156,7 @@ it('keeps image drafts as references, previews original pixels and refuses a tex
   const file = new File([bytes], 'mock-pixel.png', { type: 'image/png' });
   Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer });
   const mounted = render(<App />);
-  await userEvent.upload(screen.getByLabelText('选择附件'), file);
+  await userEvent.upload(await screen.findByLabelText('选择附件'), file);
   const preview = await screen.findByRole('button', { name: '预览附件 mock-pixel.png' });
   expect(localStorage.getItem(storageKey)).not.toContain(data);
   await userEvent.click(preview);
@@ -174,7 +174,7 @@ it('keeps image drafts as references, previews original pixels and refuses a tex
   expect(await screen.findByText(/当前模型不支持图片/)).toBeVisible();
   mounted.unmount();
   render(<App />);
-  expect(screen.getByRole('button', { name: '预览附件 mock-pixel.png' })).toBeVisible();
+  expect(await screen.findByRole('button', { name: '预览附件 mock-pixel.png' })).toBeVisible();
   expect(localStorage.getItem(storageKey)).not.toContain(data);
 });
 
@@ -199,7 +199,7 @@ it('reconciles an uncertain image send with the same request after the next-task
   const file = new File([bytes], 'mock.png', { type: 'image/png' });
   Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer });
   const mounted = render(<App />);
-  await userEvent.upload(screen.getByLabelText('选择附件'), file);
+  await userEvent.upload(await screen.findByLabelText('选择附件'), file);
   await screen.findByRole('button', { name: '预览附件 mock.png' });
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '合成图片发送结果未知');
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
@@ -265,7 +265,7 @@ it('gates GIF bytes before upload on old runtimes and previews the preserved ori
         : base(command),
   );
   let mounted = render(<App />);
-  await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '保留合成草稿');
+  await userEvent.type(await screen.findByRole('textbox', { name: '发送消息' }), '保留合成草稿');
   fireEvent.paste(screen.getByRole('textbox', { name: '发送消息' }), {
     clipboardData: { files: [file], items: [], getData: () => '' },
   });
@@ -318,7 +318,7 @@ it('gates GIF bytes before upload on old runtimes and previews the preserved ori
 it('pastes actual clipboard items and plain text at the selection without sending or persisting encoded bytes', async () => {
   const backend = connect(30);
   render(<App />);
-  const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: '发送消息' });
+  const input = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: '发送消息' });
   await userEvent.type(input, '前后');
   input.setSelectionRange(1, 1);
   const event = createEvent.paste(input, {
@@ -519,7 +519,7 @@ it('keeps the text limit and four-file budget across paste/drop, and recovers af
 it('prepares a document, restores the confirmed draft and sends a reference without storing encoded bytes', async () => {
   const backend = connect();
   const mounted = render(<App />);
-  await userEvent.upload(screen.getByLabelText('选择附件'), syntheticFile());
+  await userEvent.upload(await screen.findByLabelText('选择附件'), syntheticFile());
   expect(await screen.findByRole('button', { name: '预览附件 mock.pdf' })).toBeVisible();
   expect(localStorage.getItem(storageKey)).not.toContain('MOCK-47');
   expect(localStorage.getItem(storageKey)).not.toContain(btoa('%PDF-1.7\nmock'));
@@ -542,7 +542,7 @@ it('prepares a document, restores the confirmed draft and sends a reference with
 it('manages recoverable trash and requires an explicit reviewed confirmation before permanent purge', async () => {
   const backend = connect(12);
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '文件' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
   await userEvent.click(await screen.findByRole('button', { name: '管理聊天附件' }));
   const dialog = screen.getByRole('dialog', { name: '聊天附件' });
   await userEvent.click(await within(dialog).findByRole('button', { name: '移到回收站 mock.pdf' }));
@@ -579,7 +579,7 @@ it('keeps a busy attachment intact and discards a stale purge review instead of 
         : base(command),
   );
   render(<App />);
-  await userEvent.click(screen.getByRole('tab', { name: '文件' }));
+  await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
   await userEvent.click(await screen.findByRole('button', { name: '管理聊天附件' }));
   const dialog = screen.getByRole('dialog', { name: '聊天附件' });
   await userEvent.click(await within(dialog).findByRole('button', { name: '移到回收站 mock.pdf' }));
@@ -611,7 +611,7 @@ it('keeps a delayed upload with its originating Bot and prevents sending while i
       }),
   );
   render(<App />);
-  await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '合成草稿');
+  await userEvent.type(await screen.findByRole('textbox', { name: '发送消息' }), '合成草稿');
   await userEvent.upload(screen.getByLabelText('选择附件'), syntheticFile());
   expect(await screen.findByText('正在准备附件…')).toBeVisible();
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
@@ -640,7 +640,7 @@ it('keeps a delayed upload with its originating Bot and prevents sending while i
 it('rejects document uploads on older runtimes before reading or submitting bytes', async () => {
   const backend = connect(10);
   render(<App />);
-  await userEvent.upload(screen.getByLabelText('选择附件'), syntheticFile());
+  await userEvent.upload(await screen.findByLabelText('选择附件'), syntheticFile());
   expect(await screen.findByText(/需要更新本地运行环境.*聊天/)).toBeVisible();
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'attachment.upload')).toBe(
     false,
@@ -651,7 +651,7 @@ it('previews extracted text and requests the scoped original instead of download
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
   const backend = connect();
   render(<App />);
-  await userEvent.upload(screen.getByLabelText('选择附件'), syntheticFile());
+  await userEvent.upload(await screen.findByLabelText('选择附件'), syntheticFile());
   await userEvent.click(await screen.findByRole('button', { name: '预览附件 mock.pdf' }));
   const dialog = screen.getByRole('dialog', { name: 'mock.pdf' });
   expect(within(dialog).getByText('MOCK-47')).toBeVisible();

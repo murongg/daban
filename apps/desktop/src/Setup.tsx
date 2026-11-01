@@ -71,6 +71,21 @@ const errors: Record<string, MessageKey> = {
   SETUP_PORT: 'setup.localConnectionUrlTemporarilyUnavailableExistingLinux',
   SETUP_RECOVERY: 'setup.existingRecoveryRecordWasFoundSetupPaused',
 };
+export function SetupHeader() {
+  useLocale();
+  return (
+    <header className="setup-header">
+      <span>Daban</span>
+      <div className="setup-tools">
+        <Language />
+        <span className="setup-local">
+          <HardDrive size={15} />
+          {t('setup.runningLocally')}
+        </span>
+      </div>
+    </header>
+  );
+}
 export function Setup() {
   useLocale();
   const runtime = useRuntime();
@@ -110,16 +125,7 @@ export function Setup() {
       : '');
   return (
     <main className="setup-page">
-      <header className="setup-header">
-        <span>Daban</span>
-        <div className="setup-tools">
-          <Language />
-          <span className="setup-local">
-            <HardDrive size={15} />
-            {t('setup.runningLocally')}
-          </span>
-        </div>
-      </header>
+      <SetupHeader />
       <section className="setup-content" aria-labelledby="setup-title">
         <div className="setup-intro">
           <div className="setup-companion" data-active={working} aria-hidden="true">
@@ -134,7 +140,7 @@ export function Setup() {
           </h1>
           <p className="setup-description">
             {working
-              ? t('setup.workspaceWillOpenAutomaticallyWhenReadyKeep')
+              ? t('onboarding.environmentInProgress')
               : t('setup.letBotsWorkSeparateLinuxEnvironmentEach')}
           </p>
         </div>
@@ -280,7 +286,7 @@ export function Setup() {
               )
             )}
           </div>
-          <p className="setup-footnote">{t('setup.tasksRunLocallyClosingAppDoesNot')}</p>
+          <p className="setup-footnote">{t('onboarding.environmentFootnote')}</p>
         </div>
       </section>
     </main>

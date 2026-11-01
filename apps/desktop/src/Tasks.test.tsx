@@ -167,7 +167,8 @@ function connect(records: WorkItem[] = [], protocol = 36) {
   });
   return { entries, list, read, write, receipt, snapshot, calls, publish, ack };
 }
-const tasks = () => userEvent.click(screen.getByRole('button', { name: /^任务(?:\s|$)/ }));
+const tasks = async () =>
+  userEvent.click(await screen.findByRole('button', { name: /^任务(?:\s|$)/ }));
 
 it('browses shared tasks in list and board without starting work or changing a conversation draft', async () => {
   const live = connect([

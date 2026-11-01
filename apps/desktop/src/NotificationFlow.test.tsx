@@ -180,7 +180,7 @@ it('defers notification navigation while an editor dialog owns unsaved input', a
 it('defers notification navigation and acknowledgement while a section editor owns its draft', async () => {
   const backend = connect();
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '新建分组' }));
+  await userEvent.click(await screen.findByRole('button', { name: '新建分组' }));
   const dialog = screen.getByRole('dialog', { name: '新建分组' });
   const name = within(dialog).getByRole('textbox', { name: '分组名称' });
   await userEvent.type(name, 'MOCK-UNSAVED-SECTION');

@@ -1,6 +1,26 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'onboarding.connectionSettings': '连接设置（可选）',
+  'onboarding.modelSelectionHint':
+    '填写 Key 后加载模型列表并选择模型，也可以手动填写模型 ID。测试与验证可能产生少量 API 费用，不会发送聊天内容。',
+  'onboarding.offlineWorkspace': '离线查看工作区',
+  'onboarding.keyHint': '从所选供应商的控制台获取 API Key，验证并保存后，下次打开即可直接使用。',
+  'onboarding.reconnectHint': '重新连接后，会继续检查运行环境和模型配置。',
+  'onboarding.connectingWorkspace': '正在连接本机工作区',
+  'onboarding.connectionFailed': '暂时无法连接工作区',
+  'onboarding.checkingConfiguration': '正在检查运行环境和模型配置。',
+  'onboarding.modelTitle': '连接你的第一个模型',
+  'onboarding.modelDescription': '选择供应商，填写 API Key，再加载或填写要使用的模型。',
+  'onboarding.readyTitle': '可以开始了',
+  'onboarding.readyDescription': '回到工作区，选择或创建一位 Bot，开始对话和处理任务。',
+  'onboarding.steps': '开始使用步骤',
+  'onboarding.environmentStep': '准备工作区',
+  'onboarding.modelStep': '连接模型',
+  'onboarding.startStep': '开始使用',
+  'onboarding.modelSaved': '模型配置已保存',
+  'onboarding.changeModelsLater': '之后可以在「设置 → 模型与供应商」中添加或切换模型。',
+  'onboarding.connectionInterrupted': '本机服务暂时断开，输入已保留，恢复连接后可继续配置。',
   'errors.runtimeConnectionUnavailable': '无法连接本地执行环境，请重试连接。',
   'schedules.cron': 'Cron',
   'app.about': '关于 {0}',
@@ -2236,8 +2256,8 @@ export const chinese = {
   'setup.startingLinuxWillConnectAutomaticallyWhenReady': '正在启动 Linux，完成后会自动连接。',
   'setup.startLocalEnvironment': '启动本地环境',
   'setup.steps': '安装步骤',
-  'setup.tasksRunLocallyClosingAppDoesNot':
-    '任务在本机运行。关闭客户端不会删除环境，模型连接在环境就绪后单独配置。',
+  'onboarding.environmentFootnote':
+    '任务在本机运行。关闭客户端不会删除环境，安装完成后会继续引导你连接模型。',
   'setup.title': '给 Bot 一个本地工作空间',
   'setup.unpackingSystemFilesMayTakeLittleWhile': '正在解包系统文件，可能需要一些时间。',
   'setup.usesGibMemoryGibVirtualDiskDefault':
@@ -2245,8 +2265,8 @@ export const chinese = {
   'setup.waiting': '待执行',
   'setup.workspaceNeedsAttention': '工作空间还没准备好',
   'setup.workspaceReady': '工作空间准备好了',
-  'setup.workspaceWillOpenAutomaticallyWhenReadyKeep':
-    '环境就绪后会自动进入工作区。请保持电脑唤醒，也可以随时暂停。',
+  'onboarding.environmentInProgress':
+    '环境就绪后会继续引导你配置模型。请保持电脑唤醒，也可以随时暂停。',
   'sidebar.addBot': '添加 Bot',
   'sidebar.addGroup': '添加群聊',
   'sidebar.allBotsArchived': '所有 Bot 都已归档',

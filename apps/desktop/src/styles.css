@@ -3799,6 +3799,130 @@ textarea.skill-source {
 .setup-footnote {
   max-width: 54ch;
 }
+.model-setup-content {
+  width: min(1020px, calc(100% - 96px));
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: start;
+  gap: 72px;
+  margin-top: 48px;
+}
+.model-setup .setup-intro {
+  position: sticky;
+  top: 32px;
+}
+/* The heading announces page entry; it is not a keyboard control. */
+.model-setup .setup-intro h1:focus {
+  outline: none;
+}
+.model-setup-form {
+  min-width: 0;
+}
+.model-setup-form .inline-form {
+  margin: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.onboarding-path {
+  list-style: none;
+  margin: 32px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  font-size: 13px;
+}
+.onboarding-path li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+}
+.onboarding-path li[data-state="current"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+.onboarding-path li > span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  font-size: 11px;
+}
+.onboarding-path li[data-state="done"] > span {
+  border-color: transparent;
+}
+.onboarding-path li[data-state="current"] > span {
+  background: var(--strong);
+  color: var(--on-strong);
+  border-color: var(--strong);
+}
+.onboarding-status {
+  width: min(500px, calc(100% - 64px));
+  margin: 96px auto;
+  text-align: center;
+}
+.onboarding-status > svg {
+  margin-bottom: 20px;
+}
+.onboarding-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+.onboarding-status h1 {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.onboarding-status p,
+.model-setup-success p,
+.model-setup-reconnect p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.onboarding-status button,
+.model-setup-success button {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 20px;
+  min-height: 44px;
+  padding: 0 22px;
+}
+.model-setup-success {
+  padding: 40px 0;
+}
+.model-setup-success > svg {
+  color: var(--success);
+}
+.model-setup-success h2 {
+  margin: 20px 0 12px;
+  font-size: 20px;
+  font-weight: 600;
+}
+.model-setup-success p {
+  max-width: 45ch;
+}
+.model-setup-reconnect {
+  margin-bottom: 24px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--soft);
+}
+@media (max-width: 760px) {
+  .model-setup-content {
+    width: calc(100% - 48px);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+    margin-top: 24px;
+  }
+  .model-setup .setup-intro {
+    position: static;
+  }
+}
 @media (max-height: 740px) {
   .setup-content {
     margin-top: 24px;
@@ -4602,6 +4726,22 @@ textarea.skill-source {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+.provider-connection {
+  display: grid;
+  gap: 14px;
+}
+.provider-connection-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.provider-connection-toggle[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
 }
 .provider-models {
   margin: 22px 0 16px;

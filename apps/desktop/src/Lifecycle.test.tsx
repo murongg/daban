@@ -149,7 +149,7 @@ function connect({
   return invoke;
 }
 async function archiveDialog() {
-  await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 Bot 资料' }));
   await userEvent.click(await screen.findByRole('button', { name: '归档 Bot' }));
   return screen.findByRole('dialog', { name: '归档 Bot' });
 }

@@ -106,7 +106,7 @@ function connect(protocol = 34, pending = false) {
   };
 }
 async function openCopy() {
-  await userEvent.click(screen.getByRole('button', { name: '整理 研究员' }));
+  await userEvent.click(await screen.findByRole('button', { name: '整理 研究员' }));
   await waitFor(() => expect(screen.getByRole('menuitem', { name: '复制 Bot' })).toBeEnabled());
   await userEvent.click(screen.getByRole('menuitem', { name: '复制 Bot' }));
   return screen.getByRole('dialog', { name: '复制 Bot' });
@@ -193,7 +193,7 @@ it('reconstructs a sealed request by reading receipts only and retries the same 
 it('does not offer a copy mutation on an old runtime', async () => {
   const fake = connect(33);
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '整理 研究员' }));
+  await userEvent.click(await screen.findByRole('button', { name: '整理 研究员' }));
   expect(screen.getByRole('menuitem', { name: '复制 Bot' })).toBeDisabled();
   expect(fake.copy).not.toHaveBeenCalled();
   expect(fake.read).not.toHaveBeenCalled();

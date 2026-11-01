@@ -343,7 +343,7 @@ it('lets an unbound Bot chat without allocating a desktop', async () => {
     configurable: true,
   });
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '小管家' }));
+  await userEvent.click(await screen.findByRole('button', { name: '小管家' }));
   invoke.mockClear();
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '合成普通问候');
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
@@ -642,7 +642,7 @@ it('does not silently use a new backend version when the profile editor opened b
   const backend = profileRuntime();
   backend.snapshot.profiles = [];
   render(<App />);
-  await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 Bot 资料' }));
   const dialog = screen.getByRole('dialog');
   const name = within(dialog).getByRole('textbox', { name: '名称' });
   await userEvent.clear(name);
