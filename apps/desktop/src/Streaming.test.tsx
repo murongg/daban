@@ -166,13 +166,25 @@ it('replaces a streamed prefix with one final bubble and preserves another Bot r
   expect(screen.getAllByText('合成最终回答甲')).toHaveLength(1);
   expect(screen.queryByText('合成前缀甲继续')).not.toBeInTheDocument();
 });
-it('follows a growing reply at the bottom and preserves the reader position after scrolling away', async () => {
-  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
-  const scrolled = vi.fn();
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-    configurable: true,
-    value: scrolled,
-  });
+it('follows streaming and late layout growth without mistaking layout scrolls for reading history', async () => {
+  const observers = new Map<Element, () => unknown>();
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      private elements: Element[] = [];
+      constructor(private callback: () => unknown) {}
+      observe(element: Element) {
+        this.elements.push(element);
+        observers.set(element, this.callback);
+      }
+      unobserve(element: Element) {
+        observers.delete(element);
+      }
+      disconnect() {
+        for (const element of this.elements) observers.delete(element);
+      }
+    },
+  );
   try {
     const runtime = connect();
     const local = initialState();
@@ -191,25 +203,54 @@ it('follows a growing reply at the bottom and preserves the reader position afte
     );
     await screen.findByText('合成前缀甲');
     const log = screen.getByRole('log', { name: '对话记录' });
+    let height = 1000;
+    let viewport = 400;
+    let top = 600;
     Object.defineProperties(log, {
-      scrollHeight: { configurable: true, value: 1000 },
-      clientHeight: { configurable: true, value: 400 },
-      scrollTop: { configurable: true, writable: true, value: 600 },
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, get: () => viewport },
+      scrollTop: {
+        configurable: true,
+        get: () => top,
+        set: (value: number) => {
+          top = Math.max(0, Math.min(value, height - viewport));
+        },
+      },
     });
     fireEvent.scroll(log);
-    scrolled.mockClear();
-    runtime.emit('a', { response: { revision: 2, text: '合成前缀甲继续', state: 'streaming' } });
-    expect(scrolled).toHaveBeenCalled();
-    log.scrollTop = 0;
+    // New layout can emit a scroll event before the reply's effect runs.
+    height = 1800;
     fireEvent.scroll(log);
-    scrolled.mockClear();
+    runtime.emit('a', { response: { revision: 2, text: '合成前缀甲继续', state: 'streaming' } });
+    expect(log.scrollTop).toBe(1400);
+    fireEvent.scroll(log);
+    const resize = () =>
+      act(() => {
+        observers.get(log)?.();
+        if (log.firstElementChild) observers.get(log.firstElementChild)?.();
+      });
+    // Markdown, images and execution disclosures can grow without a new response revision.
+    height = 2200;
+    resize();
+    expect(log.scrollTop).toBe(1800);
+    viewport = 300;
+    resize();
+    expect(log.scrollTop).toBe(1900);
+    log.scrollTop = 200;
+    fireEvent.scroll(log);
+    height = 2600;
+    resize();
     runtime.emit('a', {
       response: { revision: 3, text: '合成前缀甲继续更多', state: 'streaming' },
     });
-    expect(scrolled).not.toHaveBeenCalled();
+    expect(log.scrollTop).toBe(200);
+    log.scrollTop = 2300;
+    fireEvent.scroll(log);
+    height = 3000;
+    resize();
+    expect(log.scrollTop).toBe(2700);
   } finally {
-    if (original) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
-    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    vi.unstubAllGlobals();
   }
 });
 it('places a continued response after its settled question card', async () => {

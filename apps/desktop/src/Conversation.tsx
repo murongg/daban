@@ -12,10 +12,11 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import { type Dispatch, useCallback, useEffect, useRef } from 'react';
+import { type Dispatch, useCallback, useRef } from 'react';
 import { Avatar } from './Avatar';
 import { IconButton } from './Button';
 import { Execution } from './Execution';
+import { useFollow } from './follow';
 import { useInputs } from './inputs';
 import { getLocale, t, useLocale } from './locale';
 import { Markdown } from './Markdown';
@@ -151,11 +152,6 @@ export function Conversation({
         : `${modelName} · ${bot.model ? t('chat.botSettings') : t('common.followWorkspace')}`;
     }
   }
-  const end = useRef<HTMLDivElement>(null);
-  const following = useRef(true);
-  const selection = useRef(bot.id);
-  const previousRequest = useRef('');
-  const requestStart = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const { upload, attach, paste, transfer, dragging } = useInputs(
     state,
@@ -178,22 +174,12 @@ export function Conversation({
     .filter((item) => item.bot === target && !item.conversationId && item.status === 'pending')
     .map((item) => item.id)
     .join(',');
-  const planSize = task?.plan?.length || 0;
-  const streamRevision = task?.response?.revision || 0;
+  const scroll = useFollow(`${bot.id}:${revision}`, pendingIds);
   const currentIds = new Set(
     task?.runId ? [`runtime-result:${task.runId}`, `runtime-partial:${task.runId}`] : [],
   );
   const current = entries.filter((entry) => currentIds.has(entry.id));
   const earlier = entries.filter((entry) => !currentIds.has(entry.id));
-  // biome-ignore lint/correctness/useExhaustiveDependencies: New requests must be visible; polling and draft edits must not steal the reader's scroll position.
-  useEffect(() => {
-    if (selection.current !== bot.id || (previousRequest.current && !pendingIds))
-      following.current = true;
-    selection.current = bot.id;
-    previousRequest.current = pendingIds;
-    if (pendingIds) requestStart.current?.scrollIntoView?.({ block: 'start' });
-    else if (following.current) end.current?.scrollIntoView?.({ block: 'end' });
-  }, [bot.id, entries.length, pendingIds, planSize, streamRevision]);
   function send() {
     if (readOnly || recovering) return;
     if (state.attachmentUploads[bot.id]) {
@@ -201,7 +187,7 @@ export function Conversation({
       return;
     }
     if (busyInGroup || computerChanging || (!draft.trim() && !attachments.length)) return;
-    following.current = true;
+    scroll.resume();
     if (onSend) {
       onSend();
       return;
@@ -354,63 +340,62 @@ export function Conversation({
         role="log"
         aria-label={t('chat.conversationRecords')}
         aria-live="polite"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-        }}
+        ref={scroll.viewport}
+        onScroll={scroll.onScroll}
       >
-        {entries.length ? (
-          <>
-            <div className="message-date">
-              {live ? t('chat.localTasksConversations') : t('chat.todayExampleConversation')}
+        <div className="transcript-content" ref={scroll.content}>
+          {entries.length ? (
+            <>
+              <div className="message-date">
+                {live ? t('chat.localTasksConversations') : t('chat.todayExampleConversation')}
+              </div>
+              {earlier.map(renderMessage)}
+            </>
+          ) : (
+            <div className="empty-chat">
+              <Avatar bot={bot} size="large" />
+              <h2>
+                {t('common.and')}
+                {bot.name}
+                {t('chat.startCollaboration')}
+              </h2>
+              <p>{bot.role || t('chat.giveBotGoalStartFirstMessage')}</p>
+              <div className="suggestions">
+                {[
+                  t('chat.organizeReferenceMaterials'),
+                  t('chat.exploreIdeaTogether'),
+                  t('chat.planTodaySWork'),
+                ].map((text) => (
+                  <button
+                    type="button"
+                    key={text}
+                    onClick={() => {
+                      dispatch({ type: 'draft', bot: bot.id, text });
+                      input.current?.focus();
+                    }}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
             </div>
-            {earlier.map(renderMessage)}
-          </>
-        ) : (
-          <div className="empty-chat">
-            <Avatar bot={bot} size="large" />
-            <h2>
-              {t('common.and')}
-              {bot.name}
-              {t('chat.startCollaboration')}
-            </h2>
-            <p>{bot.role || t('chat.giveBotGoalStartFirstMessage')}</p>
-            <div className="suggestions">
-              {[
-                t('chat.organizeReferenceMaterials'),
-                t('chat.exploreIdeaTogether'),
-                t('chat.planTodaySWork'),
-              ].map((text) => (
-                <button
-                  type="button"
-                  key={text}
-                  onClick={() => {
-                    dispatch({ type: 'draft', bot: bot.id, text });
-                    input.current?.focus();
-                  }}
-                >
-                  {text}
-                </button>
-              ))}
+          )}
+          {/* Keep one mounted disclosure while the reply moves around human requests. */}
+          {task?.runId && (
+            <Execution
+              scope={{ bot: target, runId: task.runId, chatRevision: revision }}
+              phase={task.phase}
+            />
+          )}
+          {pendingIds && current.map(renderMessage)}
+          {live && task?.plan && <Plan items={task.plan} />}
+          {live && (
+            <div ref={scroll.attention}>
+              <Requests state={state} dispatch={dispatch} notify={notify} bot={bot.id} />
             </div>
-          </div>
-        )}
-        {/* Keep one mounted disclosure while the reply moves around human requests. */}
-        {task?.runId && (
-          <Execution
-            scope={{ bot: target, runId: task.runId, chatRevision: revision }}
-            phase={task.phase}
-          />
-        )}
-        {pendingIds && current.map(renderMessage)}
-        {live && task?.plan && <Plan items={task.plan} />}
-        {live && (
-          <div ref={requestStart}>
-            <Requests state={state} dispatch={dispatch} notify={notify} bot={bot.id} />
-          </div>
-        )}
-        {!pendingIds && current.map(renderMessage)}
-        <div ref={end} />
+          )}
+          {!pendingIds && current.map(renderMessage)}
+        </div>
       </div>
       <div className="composer-wrap">
         {!!state.chatRequests[bot.id] && (

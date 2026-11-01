@@ -1,4 +1,10 @@
-import { agentId, type ChatAck, type RuntimeBridge, type RuntimeCommand } from '@daban/protocol';
+import {
+  agentId,
+  type ChatAck,
+  type RuntimeBridge,
+  type RuntimeCommand,
+  type RuntimeTask,
+} from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import { App } from '../../src/App';
 import { clientCache } from '../../src/cache';
@@ -74,6 +80,7 @@ if (mode === 'busy')
   };
 const listeners = new Set<Parameters<RuntimeBridge['subscribe']>[0]>();
 let ack: ChatAck | undefined;
+let streamTimer: ReturnType<typeof setInterval> | undefined;
 function publish() {
   snapshot = { ...snapshot };
   for (const listener of listeners) listener(snapshot);
@@ -133,6 +140,58 @@ function fixture(command: RuntimeCommand): unknown {
       ...(command.before ? {} : { nextBefore: 'mock-old-run' }),
     };
   if (command.type === 'files.list') return [];
+  if (command.type === 'task.start' && mode === 'streaming') {
+    if (streamTimer) clearInterval(streamTimer);
+    const task: RuntimeTask = {
+      runId: crypto.randomUUID(),
+      requestId: command.task.requestId,
+      prompt: command.task.prompt,
+      chatRevision: command.task.chatRevision,
+      running: true,
+      phase: 'running',
+      result: '',
+      error: '',
+      files: [],
+      toolCount: 0,
+      executedCount: 0,
+      trace: [],
+      history: [],
+      response: { revision: 1, text: '合成流式回复开始。', state: 'streaming' },
+    };
+    snapshot.agents = { ...snapshot.agents, [command.bot]: task };
+    publish();
+    let step = 0;
+    streamTimer = setInterval(() => {
+      step += 1;
+      const current = snapshot.agents[command.bot];
+      const text = `${current.response?.text || ''}\n\n合成段落 ${step}：用于验证回复增长时跟随到底部，以及向上阅读历史时保留位置。${'这是独立的合成验证内容。'.repeat(12)}`;
+      const done = step === 24;
+      snapshot.agents = {
+        ...snapshot.agents,
+        [command.bot]: {
+          ...current,
+          running: !done,
+          phase: done ? 'completed' : 'running',
+          result: done ? `${text}\n\n合成流式回复完成。` : '',
+          response: done ? undefined : { revision: step + 1, text, state: 'streaming' },
+        },
+      };
+      if (done && streamTimer) clearInterval(streamTimer);
+      publish();
+    }, 150);
+    return {
+      runId: task.runId,
+      requestId: task.requestId,
+      prompt: task.prompt,
+      chatRevision: task.chatRevision,
+      running: task.running,
+      phase: task.phase,
+      result: '',
+      error: '',
+      files: [],
+      response: task.response,
+    };
+  }
   if (command.type === 'task.start') throw new Error('SYNTHETIC_PREVIEW_NO_MODEL');
   return {};
 }
@@ -159,4 +218,7 @@ const root = document.getElementById('root');
 if (!root) throw new Error('SYNTHETIC_ROOT_MISSING');
 const view = createRoot(root);
 view.render(<App />);
-import.meta.hot?.dispose(() => view.unmount());
+import.meta.hot?.dispose(() => {
+  if (streamTimer) clearInterval(streamTimer);
+  view.unmount();
+});

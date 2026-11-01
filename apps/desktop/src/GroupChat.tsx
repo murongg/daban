@@ -17,6 +17,7 @@ import { Avatar } from './Avatar';
 import { IconButton } from './Button';
 import { Execution } from './Execution';
 import { attachment, stagedAttachment, taskFile } from './files';
+import { useFollow } from './follow';
 import { useInputs } from './inputs';
 import { t, useLocale } from './locale';
 import { Markdown } from './Markdown';
@@ -47,8 +48,7 @@ export function GroupChat({
   const [loading, setLoading] = useState(false);
   const sendingRef = useRef(false);
   const mounted = useRef(true);
-  const following = useRef(true);
-  const end = useRef<HTMLDivElement>(null);
+  const scroll = useFollow(bot.id);
   const catalog = runtime.snapshot.groups;
   const registered = catalog?.items.find((group) => group.id === bot.id);
   const ready =
@@ -136,15 +136,6 @@ export function GroupChat({
       ? [{ delivery, task }]
       : [];
   });
-  const pendingIds = (runtime.snapshot.interactions || [])
-    .filter((item) => item.conversationId === bot.id && item.status === 'pending')
-    .map((item) => item.id)
-    .join(',');
-  const streamRevision = tasks.map(({ task }) => task.response?.revision || 0).join(',');
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Polls and draft edits must not steal the reader's scroll position.
-  useEffect(() => {
-    if (following.current) end.current?.scrollIntoView?.({ block: 'end' });
-  }, [page?.revision, streamRevision, pendingIds]);
   async function send() {
     if (
       sendingRef.current ||
@@ -189,7 +180,7 @@ export function GroupChat({
       const value = await runtime.command<GroupPage>({ type: 'group.send', input });
       accept(value);
       dispatch({ type: 'group-sent', group: bot.id, input });
-      following.current = true;
+      scroll.resume();
       if (mounted.current) setError('');
     } catch (error) {
       // A lost acknowledgement retains the exact request ID and inputs across relaunch.
@@ -346,134 +337,135 @@ export function GroupChat({
         role="log"
         aria-label={t('chat.conversationRecords')}
         aria-live="polite"
-        onScroll={(event) => {
-          const el = event.currentTarget;
-          following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        }}
+        ref={scroll.viewport}
+        onScroll={scroll.onScroll}
       >
-        {!!state.messages[bot.id].length && (
-          <details className="activity">
-            <summary>{t('groupchat.legacyLocalRecordsNotSubmittedGroupService')}</summary>
-            {state.messages[bot.id].map((item) => (
-              <p className="inline-note" key={item.id}>
-                {item.text}
-              </p>
-            ))}
-          </details>
-        )}
-        {page?.nextBefore && (
-          <button type="button" className="text-button" disabled={loading} onClick={older}>
-            {loading ? t('common.loading') : t('groupchat.loadEarlierMessages')}
-          </button>
-        )}
-        {!page?.messages.length && (
-          <div className="empty-chat">
-            <Avatar bot={bot} size="large" />
-            <h2>{t('groupchat.startCollaborating')}</h2>
-            <p>{t('groupchat.chooseRecipientsSendFirstMessageMembersWork')}</p>
-          </div>
-        )}
-        {sources.map((sourceId) => {
-          const messages = page!.messages.filter((message) => message.sourceId === sourceId);
-          const deliveries = page!.deliveries.filter((delivery) => delivery.sourceId === sourceId);
-          const rendered = new Set<string>();
-          return (
-            <div key={sourceId}>
-              {messages.map((item) => {
-                const firstRun = item.runId && !rendered.has(item.runId) ? item.runId : undefined;
-                if (firstRun) rendered.add(firstRun);
-                return (
-                  <div key={item.id}>
-                    {firstRun && (
-                      <Requests
-                        state={state}
-                        dispatch={dispatch}
-                        notify={notify}
-                        runs={[firstRun]}
-                      />
-                    )}
-                    {message(item)}
-                  </div>
-                );
-              })}
-              <Requests
-                state={state}
-                dispatch={dispatch}
-                notify={notify}
-                runs={deliveries.flatMap((delivery) =>
-                  delivery.runId && !rendered.has(delivery.runId) ? [delivery.runId] : [],
-                )}
-              />
-              {tasks
-                .filter(({ delivery }) => delivery.sourceId === sourceId)
-                .map(({ delivery, task }) => (
-                  <div key={delivery.id}>
-                    <p className="message-author">
-                      {members.find((member) => member.id === delivery.bot)?.bot?.name ||
-                        delivery.bot}{' '}
-                      ·{' '}
-                      {task.phase === 'waiting'
-                        ? t('common.waitingReply')
-                        : task.phase === 'paused'
-                          ? t('common.waitingComputerHandback')
-                          : t('groupchat.processing')}
-                    </p>
-                    {task.plan && <Plan items={task.plan} />}
-                    {task.runId && (
-                      <Execution
-                        scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}
-                        phase={task.phase}
-                      />
-                    )}
-                    {task.response?.text && (
-                      <article className="message bot" aria-live="off">
-                        <div className="bubble">
-                          <Markdown
-                            text={task.response.text}
-                            streaming={task.phase !== 'completed'}
-                            openLink={openLink}
-                            copyText={copyText}
-                            notify={notify}
-                          />
-                        </div>
-                      </article>
-                    )}
-                  </div>
-                ))}
-              {deliveries.some((delivery) =>
-                ['pending', 'claimed', 'running'].includes(delivery.state),
-              ) && (
-                <div className="live-task">
-                  <span>
-                    {t('groupchat.collaboration')}{' '}
-                    {deliveries.filter((delivery) => delivery.state === 'completed').length}/
-                    {deliveries.length}
-                    {t('common.completed')}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        accept(
-                          await runtime.command<GroupPage>({
-                            type: 'group.cancel',
-                            group: bot.id,
-                            sourceId,
-                          }),
-                        );
-                      } catch (error) {
-                        notify(runtimeError(error));
-                      }
-                    }}
-                  >
-                    {t('groupchat.stopCollaboration')}
-                  </button>
-                </div>
-              )}
+        <div className="transcript-content" ref={scroll.content}>
+          {!!state.messages[bot.id].length && (
+            <details className="activity">
+              <summary>{t('groupchat.legacyLocalRecordsNotSubmittedGroupService')}</summary>
+              {state.messages[bot.id].map((item) => (
+                <p className="inline-note" key={item.id}>
+                  {item.text}
+                </p>
+              ))}
+            </details>
+          )}
+          {page?.nextBefore && (
+            <button type="button" className="text-button" disabled={loading} onClick={older}>
+              {loading ? t('common.loading') : t('groupchat.loadEarlierMessages')}
+            </button>
+          )}
+          {!page?.messages.length && (
+            <div className="empty-chat">
+              <Avatar bot={bot} size="large" />
+              <h2>{t('groupchat.startCollaborating')}</h2>
+              <p>{t('groupchat.chooseRecipientsSendFirstMessageMembersWork')}</p>
             </div>
-          );
-        })}
-        <div ref={end} />
+          )}
+          {sources.map((sourceId) => {
+            const messages = page!.messages.filter((message) => message.sourceId === sourceId);
+            const deliveries = page!.deliveries.filter(
+              (delivery) => delivery.sourceId === sourceId,
+            );
+            const rendered = new Set<string>();
+            return (
+              <div key={sourceId}>
+                {messages.map((item) => {
+                  const firstRun = item.runId && !rendered.has(item.runId) ? item.runId : undefined;
+                  if (firstRun) rendered.add(firstRun);
+                  return (
+                    <div key={item.id}>
+                      {firstRun && (
+                        <Requests
+                          state={state}
+                          dispatch={dispatch}
+                          notify={notify}
+                          runs={[firstRun]}
+                        />
+                      )}
+                      {message(item)}
+                    </div>
+                  );
+                })}
+                <Requests
+                  state={state}
+                  dispatch={dispatch}
+                  notify={notify}
+                  runs={deliveries.flatMap((delivery) =>
+                    delivery.runId && !rendered.has(delivery.runId) ? [delivery.runId] : [],
+                  )}
+                />
+                {tasks
+                  .filter(({ delivery }) => delivery.sourceId === sourceId)
+                  .map(({ delivery, task }) => (
+                    <div key={delivery.id}>
+                      <p className="message-author">
+                        {members.find((member) => member.id === delivery.bot)?.bot?.name ||
+                          delivery.bot}{' '}
+                        ·{' '}
+                        {task.phase === 'waiting'
+                          ? t('common.waitingReply')
+                          : task.phase === 'paused'
+                            ? t('common.waitingComputerHandback')
+                            : t('groupchat.processing')}
+                      </p>
+                      {task.plan && <Plan items={task.plan} />}
+                      {task.runId && (
+                        <Execution
+                          scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}
+                          phase={task.phase}
+                        />
+                      )}
+                      {task.response?.text && (
+                        <article className="message bot" aria-live="off">
+                          <div className="bubble">
+                            <Markdown
+                              text={task.response.text}
+                              streaming={task.phase !== 'completed'}
+                              openLink={openLink}
+                              copyText={copyText}
+                              notify={notify}
+                            />
+                          </div>
+                        </article>
+                      )}
+                    </div>
+                  ))}
+                {deliveries.some((delivery) =>
+                  ['pending', 'claimed', 'running'].includes(delivery.state),
+                ) && (
+                  <div className="live-task">
+                    <span>
+                      {t('groupchat.collaboration')}{' '}
+                      {deliveries.filter((delivery) => delivery.state === 'completed').length}/
+                      {deliveries.length}
+                      {t('common.completed')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          accept(
+                            await runtime.command<GroupPage>({
+                              type: 'group.cancel',
+                              group: bot.id,
+                              sourceId,
+                            }),
+                          );
+                        } catch (error) {
+                          notify(runtimeError(error));
+                        }
+                      }}
+                    >
+                      {t('groupchat.stopCollaboration')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
       <div className="composer-wrap">
         {readOnly && (
