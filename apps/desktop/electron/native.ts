@@ -173,6 +173,13 @@ export function desktopDriver(
       await yieldInput();
       check();
       const api = native();
+      // Focus can change while Unicode input yields; never send the remaining chunks to an unseen window.
+      const checkContext = () => {
+        check();
+        if (String(api.getActiveWindow()) !== frame.context)
+          throw new Error('LOCAL_SCREEN_CHANGED');
+      };
+      checkContext();
       if (input.type === 'key') {
         const parts = input.key.toLowerCase().split('+'),
           last = parts.pop()!;
@@ -194,7 +201,7 @@ export function desktopDriver(
         const characters = Array.from(input.text);
         // Yield between bounded Unicode chunks so pause/stop can fence the remaining input.
         for (let offset = 0; offset < characters.length; offset += 64) {
-          check();
+          checkContext();
           api.typeString(characters.slice(offset, offset + 64).join(''));
           await yieldInput();
         }
@@ -211,7 +218,7 @@ export function desktopDriver(
           );
         } else if (input.type === 'click') {
           api.moveMouse(location.x, location.y);
-          check();
+          checkContext();
           api.mouseClick(button);
         } else if (input.phase === 'down') {
           api.moveMouse(location.x, location.y);

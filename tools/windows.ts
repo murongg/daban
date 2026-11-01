@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { packageNative } from './native.ts';
+import { packageNotices } from './notices.ts';
 import { packageHost, sealHostPackage } from './roles.ts';
 
 assert.equal(process.platform, 'win32', 'WINDOWS_BUILD_REQUIRED');
@@ -43,4 +44,4 @@ await packageNative(frontend, path.join(root, 'apps/desktop/package.json'));
 const agent = path.join(target, 'resources/agent');
 await packageHost(agent, path.resolve(nodeDirectory));
 await sealHostPackage(agent);
-await cp(path.join(root, 'LICENSE'), path.join(target, 'DABAN-LICENSE'));
+await packageNotices(path.join(target, 'resources'), path.join(root, 'apps/desktop/package.json'));

@@ -94,3 +94,21 @@ it('checks the foreground window on the primary display in DIP coordinates on sc
   api.getWindowRect = () => ({ x: 1800, y: 100, width: 600, height: 100 });
   await expect(driver.capture()).rejects.toThrow('LOCAL_OTHER_DISPLAY');
 });
+
+it('stops a long text input when the foreground window changes between Unicode chunks', async () => {
+  const api = automation();
+  let active = 1;
+  api.getActiveWindow = () => active;
+  api.typeString.mockImplementation(() => {
+    active = 2;
+  });
+  const driver = desktopDriver(
+    () => undefined,
+    'darwin',
+    () => api,
+  );
+  await expect(
+    driver.input({ type: 'text', text: 'S'.repeat(200) }, frame, () => {}),
+  ).rejects.toThrow('LOCAL_SCREEN_CHANGED');
+  expect(api.typeString).toHaveBeenCalledTimes(1);
+});

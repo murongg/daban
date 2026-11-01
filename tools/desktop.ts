@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { environmentVersions, verifyAsset } from './environment.ts';
 import { writeIcon } from './icon.ts';
 import { packageNative } from './native.ts';
+import { packageNotices } from './notices.ts';
 import { buildExecutor, packageHost, sealHostPackage } from './roles.ts';
 
 // Build-time macOS app assembly. Never reuse a user directory or package a Lima home.
@@ -148,32 +149,7 @@ await writeIcon(
   path.join(resources, 'daban.icns'),
 );
 const plist = path.join(target, 'Contents/Info.plist');
-const frontendNotices = path.join(resources, 'frontend-notices');
-await mkdir(frontendNotices);
-for (const [name, names] of [
-  ['dompurify', ['LICENSE', 'LICENSE-MPL']],
-  ['katex', ['LICENSE']],
-  ['mermaid', ['LICENSE']],
-] as const) {
-  const directory = path.dirname(path.dirname(requireDesktop.resolve(name)));
-  assert.equal(JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8')).name, name);
-  for (const file of names)
-    await copyFile(
-      path.join(directory, file),
-      path.join(frontendNotices, `${name}-${file}`),
-      constants.COPYFILE_EXCL,
-    );
-}
-await copyFile(
-  path.join(root, 'apps/desktop/licenses/remark-math-LICENSE'),
-  path.join(frontendNotices, 'remark-math-LICENSE'),
-  constants.COPYFILE_EXCL,
-);
-await cp(
-  path.join(root, 'apps/desktop/licenses/controls'),
-  path.join(frontendNotices, 'controls'),
-  { recursive: true, force: false, errorOnExist: true },
-);
+await packageNotices(resources, path.join(root, 'apps/desktop/package.json'));
 for (const [key, value] of Object.entries({
   CFBundleIdentifier: 'dev.daban.app',
   CFBundleExecutable: 'daban',
