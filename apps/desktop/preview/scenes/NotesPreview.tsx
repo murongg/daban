@@ -1,6 +1,5 @@
 import {
   agentId,
-  disconnected,
   type NoteItem,
   type NoteWrite,
   noteKey,
@@ -9,12 +8,14 @@ import {
   type RuntimeReply,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { noteDraft, noteInitial, noteInput } from '../src/notes-state';
-import { storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { noteDraft, noteInitial, noteInput } from '../../src/notes-state';
+import { storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Synthetic production-component specimen; no model, VM, credentials or external services are connected.
 const params = new URLSearchParams(location.search);
@@ -79,9 +80,8 @@ if (mode === 'pending') {
   notes.pending = { draft, request: noteInput(draft, 'mock-pending-op', 'mock-pending-note')! };
 }
 seed.notes = { research: notes };
-localStorage.setItem(storageKey, JSON.stringify({ version: 1, state: seed }));
-const snapshot = disconnected('ready');
-snapshot.protocolVersion = mode === 'old' ? 36 : 37;
+clientCache().setItem(storageKey, JSON.stringify({ version: 1, state: seed }));
+const snapshot = previewSnapshot(['old', 'legacy'].includes(mode) ? 36 : undefined);
 snapshot.notes =
   mode === 'unavailable' ? { available: false, error: 'NOTES_CORRUPT' } : { available: true };
 snapshot.profiles = seed.bots

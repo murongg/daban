@@ -12,6 +12,7 @@ import {
   workQueryKey,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { clientCache } from './cache';
 import { commentCard } from './comments-state';
 import { t } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
@@ -306,7 +307,7 @@ export function useWork(
     if (!updated.work?.pending || keyOf(updated.work.pending.request) !== keyOf(input.request))
       return;
     try {
-      localStorage.setItem(storageKey, serialize(updated));
+      clientCache().setItem(storageKey, serialize(updated));
     } catch {
       (resuming ? setOperationError : setError)(
         t('本机无法保存操作记录。请释放存储空间或导出工作区后重试；你的草稿仍保留。'),

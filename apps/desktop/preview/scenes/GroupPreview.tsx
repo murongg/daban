@@ -1,17 +1,18 @@
 import {
   agentId,
-  disconnected,
   type Group,
   type GroupActionAck,
   type RuntimeBridge,
   type RuntimeCommand,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Synthetic UI fixture only; no VM, credentials, provider or real workspace is used.
 const query = new URLSearchParams(location.search);
@@ -40,11 +41,11 @@ if (mode === 'pending')
     action: 'archive',
     revision: 1,
   };
-localStorage.setItem(storageKey, serialize(seed));
-const snapshot = disconnected('ready');
-snapshot.protocolVersion = 28;
+clientCache().setItem(storageKey, serialize(seed));
+const snapshot = previewSnapshot(mode === 'legacy' ? 28 : undefined);
 snapshot.groups = { available: true, revision: 1, items: [group] };
 snapshot.model = {
+  ...snapshot.model,
   available: true,
   configured: true,
   provider: 'deepseek-official',

@@ -10,6 +10,7 @@ import {
   recoveryBlocked,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
+import { clientCache } from './cache';
 import { t } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import { type Action, reduce, type State } from './state';
@@ -175,7 +176,7 @@ export function useCopy(
       action = hold(request);
     try {
       // Persist before the effect, and never create a placeholder that legacy registration could occupy.
-      localStorage.setItem(storageKey, serialize(reduce(state, action)));
+      clientCache().setItem(storageKey, serialize(reduce(state, action)));
     } catch {
       setError(t('本机无法保存复制请求。请先释放存储空间或导出工作区，再重试。'));
       return;

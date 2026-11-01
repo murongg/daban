@@ -1,17 +1,18 @@
 import {
   agentId,
-  disconnected,
   type MemoryPage,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeSnapshot,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Synthetic production-component preview only. No model or original user workspace is connected.
 const query = new URLSearchParams(location.search),
@@ -27,9 +28,8 @@ seed.memories.research = current;
 seed.memoryDrafts.research =
   mode === 'dirty' ? '合成未保存草稿：保留这段内容，不要用历史版本覆盖。' : current;
 seed.memoryVersions.research = seed.profileRevisions.a = mode === 'empty' ? 1 : 8;
-localStorage.setItem(storageKey, serialize(seed));
-let snapshot = disconnected('ready');
-snapshot.protocolVersion = mode === 'legacy' ? 31 : 32;
+clientCache().setItem(storageKey, serialize(seed));
+let snapshot = previewSnapshot(mode === 'legacy' ? 31 : undefined);
 snapshot.profiles = seed.bots
   .filter((bot) => !bot.members)
   .map((bot) => ({

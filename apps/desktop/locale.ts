@@ -2,6 +2,7 @@ import type { RuntimeReply } from '@daban/protocol';
 import { english } from './locales/en';
 
 export type Locale = 'zh-CN' | 'en';
+export const localeStorageKey = 'daban.language.v1';
 export type Parameters = Record<string, string | number>;
 export type LocaleCommand = { type: 'get' } | { type: 'set'; locale: Locale };
 export interface LocaleBridge {

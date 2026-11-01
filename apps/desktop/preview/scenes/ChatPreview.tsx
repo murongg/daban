@@ -1,16 +1,12 @@
-import {
-  agentId,
-  type ChatAck,
-  disconnected,
-  type RuntimeBridge,
-  type RuntimeCommand,
-} from '@daban/protocol';
+import { agentId, type ChatAck, type RuntimeBridge, type RuntimeCommand } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Synthetic production-React fixture, with no VM, provider, credentials or user data.
 const query = new URLSearchParams(location.search),
@@ -30,9 +26,8 @@ state.messages.research = [
 ];
 if (mode === 'pending')
   state.chatRequests.research = { bot: 'a', id: 'mock-pending-chat', revision: 0 };
-localStorage.setItem(storageKey, serialize(state));
-let snapshot = disconnected('ready');
-snapshot.protocolVersion = 29;
+clientCache().setItem(storageKey, serialize(state));
+let snapshot = previewSnapshot(mode === 'legacy' ? 29 : undefined);
 snapshot.chats = {
   available: true,
   revision: mode === 'pending' || mode === 'history' ? 1 : 0,
@@ -42,6 +37,7 @@ snapshot.chats = {
       : [],
 };
 snapshot.model = {
+  ...snapshot.model,
   configured: true,
   available: true,
   provider: 'deepseek-official',

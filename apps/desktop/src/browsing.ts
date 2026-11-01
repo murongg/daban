@@ -5,6 +5,7 @@ import {
   type RuntimeBot,
   validAgentId,
 } from '@daban/protocol';
+import { clientCache } from './cache';
 
 type WithoutMeta<T> = T extends unknown ? Omit<T, 'id' | 'epoch'> : never;
 export type BrowserAnswer = WithoutMeta<BrowserAnswerRequest>;
@@ -17,7 +18,7 @@ export interface BrowserPending {
 const key = 'daban-browser-pending-v1';
 function read(): Partial<Record<RuntimeBot, BrowserPending>> {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = clientCache().getItem(key);
     if (!raw) return {};
     if (raw.length > 600000) throw new Error();
     const value = JSON.parse(raw);
@@ -48,7 +49,7 @@ function read(): Partial<Record<RuntimeBot, BrowserPending>> {
 }
 function write(value: Partial<Record<RuntimeBot, BrowserPending>>) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    clientCache().setItem(key, JSON.stringify(value));
   } catch {
     throw new Error('BROWSER_REQUEST_STORAGE_UNAVAILABLE');
   }

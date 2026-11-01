@@ -1,4 +1,4 @@
-import { agentId, disconnected, type RuntimeBridge, type RuntimeCommand } from '@daban/protocol';
+import { agentId, type RuntimeBridge, type RuntimeCommand } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import type {
   NoticeActivation,
@@ -6,13 +6,15 @@ import type {
   NoticeCommand,
   NoticeMessage,
   NoticeStatus,
-} from '../notifications';
-import { isNoticeStatus } from '../notifications';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+} from '../../notifications';
+import { isNoticeStatus } from '../../notifications';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Synthetic production-React fixture: no native permission, OS notification, VM or provider call.
 const query = new URLSearchParams(location.search),
@@ -22,9 +24,8 @@ seed.panel = null;
 seed.theme = query.get('theme') === 'dark' ? 'dark' : 'light';
 seed.view = mode === 'defer' ? 'chat' : 'settings';
 seed.drafts.research = '合成未发送草稿：提醒不会替我发送内容。';
-localStorage.setItem(storageKey, serialize(seed));
-const snapshot = disconnected('ready');
-snapshot.protocolVersion = 30;
+clientCache().setItem(storageKey, serialize(seed));
+const snapshot = previewSnapshot(mode === 'legacy' ? 30 : undefined);
 snapshot.chats = { available: true, revision: 0, items: [] };
 snapshot.notices = { available: true, items: [] };
 snapshot.computers = { available: true, revision: 0, limit: 2, items: [] };

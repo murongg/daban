@@ -1,23 +1,26 @@
-import { disconnected, type RuntimeBridge, type RuntimeCommand } from '@daban/protocol';
+import type { RuntimeBridge, RuntimeCommand } from '@daban/protocol';
 import { Info } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { IconButton } from '../src/Button';
-import { DateField } from '../src/DateField';
-import { FilePicker } from '../src/FilePicker';
-import { ImportBot } from '../src/ImportBot';
-import { NumberField } from '../src/NumberField';
-import { RuntimeProvider } from '../src/Runtime';
-import { Select } from '../src/Select';
-import { initialState } from '../src/state';
-import { TimeField } from '../src/TimeField';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { IconButton } from '../../src/Button';
+import { DateField } from '../../src/DateField';
+import { FilePicker } from '../../src/FilePicker';
+import { ImportBot } from '../../src/ImportBot';
+import { NumberField } from '../../src/NumberField';
+import { RuntimeProvider } from '../../src/Runtime';
+import { Select } from '../../src/Select';
+import { initialState } from '../../src/state';
+import { TimeField } from '../../src/TimeField';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Standalone synthetic UI only: no workspace persistence, VM, model, credential or import effect.
-const snapshot = disconnected('ready');
-snapshot.protocolVersion = 38;
+const snapshot = previewSnapshot(
+  new URLSearchParams(location.search).get('mode') === 'legacy' ? 38 : undefined,
+);
 snapshot.model = {
+  ...snapshot.model,
   available: true,
   configured: false,
   provider: 'deepseek-official',

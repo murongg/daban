@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Markdown } from '../src/Markdown';
-import { Select } from '../src/Select';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { Markdown } from '../../src/Markdown';
+import { Select } from '../../src/Select';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 const normal =
   '## 合成回复\n\n先看结论：$E=mc^2$，合成报价仍为 $5 and $10。\n\n$$\n\\frac{47}{2} + \\sum_{n=1}^{3}n = 29.5\n$$\n\n```mermaid\nflowchart LR\n  A[合成输入] --> B[核对资料] --> C[整理结果]\n```';

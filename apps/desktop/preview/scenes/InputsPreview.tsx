@@ -2,16 +2,17 @@ import {
   type AttachmentReceipt,
   agentId,
   type DocumentUpload,
-  disconnected,
   type RuntimeBridge,
   type RuntimeCommand,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Synthetic production-React input fixture. Programmatic events are not OS clipboard/Finder proof.
 const query = new URLSearchParams(location.search);
@@ -22,9 +23,8 @@ seed.panel = null;
 seed.selected = mode === 'group' ? 'crew' : 'research';
 seed.drafts[seed.selected] = mode === 'paste' ? '前后' : '合成草稿：附件准备后，由我确认发送。';
 for (const bot of seed.bots) seed.messages[bot.id] = [];
-localStorage.setItem(storageKey, serialize(seed));
-const snapshot = disconnected('ready');
-snapshot.protocolVersion = mode === 'legacy' ? 30 : 31;
+clientCache().setItem(storageKey, serialize(seed));
+const snapshot = previewSnapshot(mode === 'legacy' ? 30 : undefined);
 snapshot.model.configured = true;
 snapshot.model.model = 'deepseek-flash';
 snapshot.chats = { available: true, revision: 0, items: [] };

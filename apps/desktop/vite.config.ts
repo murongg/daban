@@ -9,6 +9,20 @@ export default defineConfig({
   plugins: [
     react(),
     {
+      name: 'preview-discussion-redirect',
+      apply: 'serve',
+      configureServer(server) {
+        server.middlewares.use((request, response, next) => {
+          const url = new URL(request.url || '/', 'http://preview.invalid');
+          if (url.pathname !== '/preview/comments.html') return next();
+          if (!url.searchParams.has('mode')) url.searchParams.set('mode', 'discussion');
+          response.statusCode = 302;
+          response.setHeader('Location', `/preview/tasks.html${url.search}`);
+          response.end();
+        });
+      },
+    },
+    {
       name: 'desktop-content-policy',
       apply: 'build',
       transformIndexHtml(html) {

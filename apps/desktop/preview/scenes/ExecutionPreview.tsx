@@ -1,6 +1,5 @@
 import {
   agentId,
-  disconnected,
   type GroupPage,
   type RuntimeBridge,
   type RuntimeCommand,
@@ -9,11 +8,13 @@ import {
   type TranscriptScope,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Synthetic production-component preview. No model, VM, credential or original workspace is connected.
 const query = new URLSearchParams(location.search),
@@ -45,10 +46,10 @@ seed.messages.research = [
   },
   { id: `runtime-result:${scope.runId}`, role: 'bot', text: reply },
 ];
-localStorage.setItem(storageKey, serialize(seed));
-const snapshot = disconnected('ready');
-snapshot.protocolVersion = mode === 'legacy' ? 32 : 33;
+clientCache().setItem(storageKey, serialize(seed));
+const snapshot = previewSnapshot(mode === 'legacy' ? 32 : undefined);
 snapshot.model = {
+  ...snapshot.model,
   configured: false,
   available: true,
   provider: 'deepseek-official',

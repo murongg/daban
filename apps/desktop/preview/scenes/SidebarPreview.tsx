@@ -1,6 +1,5 @@
 import {
   agentId,
-  disconnected,
   type GroupPage,
   type RuntimeBridge,
   type RuntimeCommand,
@@ -9,14 +8,16 @@ import {
 } from '@daban/protocol';
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { reduce } from '../src/state';
-import { serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { reduce } from '../../src/state';
+import { serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
-// A private preview origin with synthetic data only. No VM, model, credential or external tool is connected.
+// An isolated session-storage specimen with synthetic data only. No VM, model, credential or external tool is connected.
 const query = new URLSearchParams(location.search);
 let seed = initialState();
 seed.panel = null;
@@ -41,10 +42,9 @@ seed = reduce(seed, { type: 'bot-section', bot: 'crew', section: 'mock-project' 
 seed = reduce(seed, { type: 'bot-pin', bot: 'research', pinned: true });
 seed = reduce(seed, { type: 'bot-read', bot: 'writer', unread: true });
 seed = reduce(seed, { type: 'bot-read', bot: 'crew', unread: true });
-if (query.get('keep') !== '1' || !localStorage.getItem(storageKey))
-  localStorage.setItem(storageKey, serialize(seed));
-let snapshot = disconnected('ready');
-snapshot.protocolVersion = 33;
+if (query.get('keep') !== '1' || !clientCache().getItem(storageKey))
+  clientCache().setItem(storageKey, serialize(seed));
+let snapshot = previewSnapshot(query.get('mode') === 'legacy' ? 33 : undefined);
 snapshot.model = {
   ...snapshot.model,
   available: true,

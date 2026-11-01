@@ -1,4 +1,5 @@
 import { type ComputerRequest, isComputerRequest, validAgentId } from '@daban/protocol';
+import { clientCache } from './cache';
 
 export type ComputerPending = Pick<
   ComputerRequest,
@@ -8,7 +9,7 @@ const key = 'daban-computer-pending-v1';
 const event = 'daban:computer-pending';
 function read(): Record<string, ComputerPending> {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = clientCache().getItem(key);
     if (!raw) return {};
     if (raw.length > 600000) throw new Error();
     const value: unknown = JSON.parse(raw);
@@ -37,7 +38,7 @@ function read(): Record<string, ComputerPending> {
 }
 function write(value: Record<string, ComputerPending>) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    clientCache().setItem(key, JSON.stringify(value));
     window.dispatchEvent(new Event(event));
   } catch {
     throw new Error('COMPUTER_REQUEST_STORAGE_UNAVAILABLE');

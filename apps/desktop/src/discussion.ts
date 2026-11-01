@@ -10,6 +10,7 @@ import {
   workCommentQueryKey,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
+import { clientCache } from './cache';
 import { type CommentPending, commentCard, commentKey } from './comments-state';
 import { t } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
@@ -188,7 +189,7 @@ export function useComments(
     if (!saved || commentKey(saved.request) !== commentKey(input.request)) return;
     try {
       // Persist the exact intent before dispatch: an uncertain reply must recover this request rather than create another.
-      localStorage.setItem(storageKey, serialize(updated));
+      clientCache().setItem(storageKey, serialize(updated));
     } catch {
       setError(t('本机无法保存操作记录，评论尚未发送。请释放存储空间后重试；正文仍保留。'));
       return;

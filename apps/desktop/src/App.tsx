@@ -48,6 +48,7 @@ import { Conversation } from './Conversation';
 import { CopyBot } from './CopyBot';
 import { CopyGroup } from './CopyGroup';
 import { Create } from './Create';
+import { clientCache } from './cache';
 import { Desktop } from './Desktop';
 import { Dialog } from './Dialog';
 import { ExportBot } from './ExportBot';
@@ -109,7 +110,7 @@ type Modal =
   | null;
 function load() {
   try {
-    const state = restore(localStorage.getItem(storageKey));
+    const state = restore(clientCache().getItem(storageKey));
     return window.innerWidth < 1080 ? { ...state, panel: null } : state;
   } catch {
     return initialState();
@@ -470,7 +471,7 @@ function Workbench() {
   }, [state.theme]);
   useEffect(() => {
     try {
-      localStorage.setItem(storageKey, serialize(state));
+      clientCache().setItem(storageKey, serialize(state));
       storageFailed.current = false;
     } catch {
       if (!storageFailed.current) {

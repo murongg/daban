@@ -2,7 +2,6 @@ import {
   agentId,
   type BotCopyAck,
   type BotCopyRequest,
-  disconnected,
   type GroupCopyAck,
   type GroupCopyRequest,
   type RuntimeBridge,
@@ -11,12 +10,14 @@ import {
   type RuntimeSnapshot,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { reduce } from '../src/state';
-import { restore, serialize, storageKey } from '../src/storage';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { reduce } from '../../src/state';
+import { restore, serialize, storageKey } from '../../src/storage';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // This private fixture uses production components with synthetic data and no VM/model connection.
 const query = new URLSearchParams(location.search);
@@ -60,11 +61,12 @@ if (mode === 'pending') {
   if (groupMode) seed.groupCopy = sealedGroup;
   else seed.botCopy = sealed;
 }
-if (query.get('keep') !== '1' || !localStorage.getItem(storageKey))
-  localStorage.setItem(storageKey, serialize(seed));
-const state = restore(localStorage.getItem(storageKey));
-let snapshot = disconnected('ready');
-snapshot.protocolVersion = groupMode ? (mode === 'old' ? 34 : 35) : mode === 'old' ? 33 : 34;
+if (query.get('keep') !== '1' || !clientCache().getItem(storageKey))
+  clientCache().setItem(storageKey, serialize(seed));
+const state = restore(clientCache().getItem(storageKey));
+let snapshot = previewSnapshot(
+  ['old', 'legacy'].includes(mode) ? (groupMode ? 34 : 33) : undefined,
+);
 snapshot.profiles = state.bots
   .filter((bot) => !bot.members)
   .map((bot) => ({

@@ -1,6 +1,6 @@
 import {
   agentId,
-  disconnected,
+  isWorkCompleted,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeReply,
@@ -13,12 +13,14 @@ import {
   workKey,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App';
-import { demoState as initialState } from '../src/fixtures';
-import { storageKey } from '../src/storage';
-import { workDraft, workInitial, workInput } from '../src/work-state';
-import '../src/tokens.css';
-import '../src/styles.css';
+import { App } from '../../src/App';
+import { clientCache } from '../../src/cache';
+import { demoState as initialState } from '../../src/fixtures';
+import { storageKey } from '../../src/storage';
+import { workDraft, workInitial, workInput } from '../../src/work-state';
+import { previewSnapshot } from '../runtime';
+import '../../src/tokens.css';
+import '../../src/styles.css';
 
 // Private production-component fixture: every record is synthetic; no host, VM, model or external service is connected.
 const query = new URLSearchParams(location.search),
@@ -144,10 +146,9 @@ if (mode === 'pending') {
   seed.work.draft = draft;
   seed.work.pending = { draft, request: workInput(draft, 'mock-pending-op', 'mock-pending-card')! };
 }
-if (query.get('keep') !== '1' || !localStorage.getItem(storageKey))
-  localStorage.setItem(storageKey, JSON.stringify({ version: 1, state: seed }));
-const snapshot = disconnected('ready');
-snapshot.protocolVersion = discussing ? 38 : mode === 'old' ? 35 : 36;
+if (query.get('keep') !== '1' || !clientCache().getItem(storageKey))
+  clientCache().setItem(storageKey, JSON.stringify({ version: 1, state: seed }));
+const snapshot = previewSnapshot(['old', 'legacy'].includes(mode) ? 35 : undefined);
 snapshot.work =
   mode === 'unavailable'
     ? { available: false, error: 'WORK_CORRUPT' }
@@ -222,8 +223,13 @@ const bridge: RuntimeBridge = {
           .filter(
             (item) =>
               item.deleted === (command.query.filter === 'trash') &&
-              (command.query.filter !== 'open' || item.status !== 'done') &&
-              (command.query.filter !== 'done' || item.status === 'done') &&
+              (command.query.filter !== 'open' || !isWorkCompleted(item.status)) &&
+              (command.query.filter !== 'done' || isWorkCompleted(item.status)) &&
+              (command.query.status === undefined || item.status === command.query.status) &&
+              (command.query.priority === undefined ||
+                (item.priority ?? 'normal') === command.query.priority) &&
+              (!Object.hasOwn(command.query, 'assignee') ||
+                (item.assignee ?? null) === command.query.assignee) &&
               (!command.query.text ||
                 `${item.title} ${item.description} ${item.progress}`.includes(
                   command.query.text,
@@ -319,7 +325,7 @@ const bridge: RuntimeBridge = {
             updatedAt: at,
             createdBy: { kind: 'human' },
             updatedBy: { kind: 'human' },
-            ...(request.value.status === 'done' ? { completedAt: at } : {}),
+            ...(isWorkCompleted(request.value.status) ? { completedAt: at } : {}),
           });
         else {
           if (!current) throw Error('WORK_NOT_FOUND');
@@ -328,11 +334,13 @@ const bridge: RuntimeBridge = {
             ...current,
             ...(request.action === 'update'
               ? request.value
-              : { deleted: request.action === 'trash' }),
+              : request.action === 'reopen'
+                ? { status: 'todo' as const }
+                : { deleted: request.action === 'trash' }),
             revision: current.revision + 1,
             updatedBy: { kind: 'human' as const },
           };
-          if (next.status === 'done') next.completedAt ||= at;
+          if (isWorkCompleted(next.status)) next.completedAt ||= at;
           else delete next.completedAt;
           items.set(request.item, next);
         }

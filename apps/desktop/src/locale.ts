@@ -1,12 +1,14 @@
 import { useSyncExternalStore } from 'react';
-import { isLocale, type Locale, type Parameters, translate } from '../locale';
+import { isLocale, type Locale, localeStorageKey, type Parameters, translate } from '../locale';
+import { clientCache } from './cache';
 
-export const localeStorageKey = 'daban.language.v1';
+export { localeStorageKey };
+
 let generation = 0;
 const listeners = new Set<() => unknown>();
 export function getLocale(): Locale {
   try {
-    const value = localStorage.getItem(localeStorageKey);
+    const value = clientCache().getItem(localeStorageKey);
     return isLocale(value) ? value : 'zh-CN';
   } catch {
     return 'zh-CN';
@@ -46,7 +48,7 @@ export async function setLocale(locale: Locale) {
     if (result.value !== locale) throw new Error('INVALID_LOCALE_REPLY');
   }
   if (ticket !== generation) return;
-  localStorage.setItem(localeStorageKey, locale);
+  clientCache().setItem(localeStorageKey, locale);
   publish();
 }
 export function syncLocale() {
@@ -60,7 +62,7 @@ export function syncLocale() {
     .then((result) => {
       if (!live || ticket !== generation) return;
       if (!result.ok || !isLocale(result.value)) throw new Error('INVALID_LOCALE_REPLY');
-      localStorage.setItem(localeStorageKey, result.value);
+      clientCache().setItem(localeStorageKey, result.value);
       publish();
     })
     .catch(() => console.error('Could not restore interface language'));
