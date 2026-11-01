@@ -1,5 +1,5 @@
 import { agentId, type Interaction, matchesReply, type UserReply } from '@daban/protocol';
-import { Check, ChevronDown, Inbox, X } from 'lucide-react';
+import { Braces, Check, ChevronDown, Inbox, X } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { Command } from './Command';
@@ -7,6 +7,7 @@ import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import { Software, SoftwareStatus } from './Software';
 import type { Action, State } from './state';
+import { Tooltip } from './Tooltip';
 
 function draftAnswer(drafts: State['replyDrafts'][string], id: string) {
   // Model-provided question IDs must never read inherited object properties as saved answers.
@@ -34,10 +35,12 @@ function Approval({ request }: { request: Extract<Interaction, { kind: 'approval
           </p>
           <p className="request-value">{request.origin}</p>
           <details className="request-details" open={request.status !== 'pending'}>
-            <summary>
-              <ChevronDown />
-              <span>{t('requests.viewArguments')}</span>
-            </summary>
+            <Tooltip label={t('requests.viewArguments')}>
+              <summary className="request-toggle" aria-label={t('requests.viewArguments')}>
+                <Braces aria-hidden="true" />
+                <ChevronDown className="request-chevron" aria-hidden="true" />
+              </summary>
+            </Tooltip>
             <section
               className="request-arguments"
               aria-label={t('requests.toolCallParameters')}
@@ -93,6 +96,15 @@ function Request({
   };
   const frozen = saving || !!submitted;
   const settled = current.kind === 'approval' && current.status !== 'pending';
+  const subject =
+    current.kind === 'approval'
+      ? current.tool === 'vm_command' || current.tool === 'software_install'
+        ? current.purpose
+        : current.tool === 'mcp_call'
+          ? `${current.name} · ${current.operation}`
+          : current.url
+      : '';
+
   const savedAnswers = current.reply?.kind === 'answer' ? current.reply.answers : [];
   async function submit(reply: UserReply) {
     if (saving) return;
@@ -167,17 +179,12 @@ function Request({
       {current.kind === 'approval' &&
         (settled ? (
           <details className="request-details request-record">
-            <summary>
-              <ChevronDown />
-              <span className="request-subject">
-                {current.tool === 'vm_command' || current.tool === 'software_install'
-                  ? current.purpose
-                  : current.tool === 'mcp_call'
-                    ? `${current.name} · ${current.operation}`
-                    : current.url}
-              </span>
-              <span className="request-more">{t('requests.viewOperationDetails')}</span>
-            </summary>
+            <Tooltip label={t('requests.viewOperationDetails')}>
+              <summary aria-label={`${subject} · ${t('requests.viewOperationDetails')}`}>
+                <ChevronDown className="request-chevron" aria-hidden="true" />
+                <span className="request-subject">{subject}</span>
+              </summary>
+            </Tooltip>
             <Approval request={current} />
           </details>
         ) : (

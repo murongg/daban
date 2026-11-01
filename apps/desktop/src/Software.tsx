@@ -1,7 +1,8 @@
 import type { Interaction } from '@daban/protocol';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Globe, Package } from 'lucide-react';
 import { t, useLocale } from './locale';
 import { useRuntime } from './Runtime';
+import { Tooltip } from './Tooltip';
 
 type InstallRequest = Extract<Interaction, { tool: 'software_install' }>;
 const statuses = {
@@ -18,12 +19,21 @@ export function Software({ request }: { request: InstallRequest }) {
       <p className="request-purpose">{request.purpose}</p>
       <p className="request-value">{request.plan.requested.join(' · ')}</p>
       <p className="approval-description">{t('software.sharedScope')}</p>
-      <p className="field-help">{t('software.officialDebianRepositories')}</p>
+      <p className="field-help request-source">
+        <Tooltip label={t('software.officialDebianRepositories')}>
+          <span role="img" aria-label={t('software.officialDebianRepositories')}>
+            <Globe aria-hidden="true" />
+          </span>
+        </Tooltip>
+        Debian
+      </p>
       <details className="request-details" open={request.status !== 'pending'}>
-        <summary>
-          <ChevronDown />
-          <span>{t('software.viewPlan')}</span>
-        </summary>
+        <Tooltip label={t('software.viewPlan')}>
+          <summary className="request-toggle" aria-label={t('software.viewPlan')}>
+            <Package aria-hidden="true" />
+            <ChevronDown className="request-chevron" aria-hidden="true" />
+          </summary>
+        </Tooltip>
         <section
           className="request-arguments"
           aria-label={t('software.softwareInstallationList')}

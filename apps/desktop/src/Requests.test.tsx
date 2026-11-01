@@ -42,7 +42,7 @@ it('shows the exact external connection, tool and argument preview before a scop
   expect(screen.getByText('合成连接 · synthetic_echo')).toBeVisible();
   expect(screen.getByText('https://mcp.example.test')).toBeVisible();
   expect(screen.getByText(/SYNTHETIC-PREVIEW/)).not.toBeVisible();
-  await userEvent.click(screen.getByText('查看调用参数'));
+  await userEvent.click(screen.getByLabelText('查看调用参数'));
   expect(screen.getByText(/SYNTHETIC-PREVIEW/)).toBeVisible();
   expect(screen.getByLabelText('本次工具调用参数')).toHaveAttribute('tabindex', '0');
   await userEvent.click(screen.getByRole('button', { name: '仅允许这一次' }));
@@ -353,11 +353,11 @@ it('previews exact shared software and dependencies, then confirms once without 
   render(<App />);
   expect(await screen.findByRole('heading', { name: '安装软件' })).toBeVisible();
   expect(screen.getByText('mock-calculator · 1.0-1')).not.toBeVisible();
-  await userEvent.click(screen.getByText('查看安装清单'));
+  await userEvent.click(screen.getByLabelText('查看安装清单'));
   expect(screen.getByText('mock-calculator · 1.0-1')).toBeVisible();
   expect(screen.getByText('mock-library · 2.0-1')).toBeVisible();
   expect(screen.getByText('安装到共享 Linux，所有 Bot 都能使用。')).toBeVisible();
-  expect(screen.getByText('Debian 官方软件源')).toBeVisible();
+  expect(screen.getByRole('img', { name: 'Debian 官方软件源' })).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '确认安装' }));
   expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
     type: 'interaction.reply',
@@ -403,9 +403,14 @@ it('shows an exact Linux-only command before permission and does not describe ap
   expect(screen.getByText('sudo npm install -g mock-cli@1.0.0')).not.toBeVisible();
   expect(screen.getByText('合成命令验收')).toBeVisible();
   expect(screen.getByText('Linux 虚拟机 · 可使用 sudo · 仅限本次')).toBeVisible();
-  await userEvent.click(screen.getByText('查看命令与目录'));
+  const details = screen.getByLabelText('查看命令与目录');
+  await userEvent.hover(details);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent('查看命令与目录');
+  await userEvent.click(details);
   expect(screen.getByText('sudo npm install -g mock-cli@1.0.0')).toBeVisible();
-  expect(screen.getByText('/mock/vm/workspace')).toBeVisible();
+  expect(
+    within(screen.getByRole('region', { name: '执行目录' })).getByText('/mock/vm/workspace'),
+  ).toBeVisible();
   expect(screen.getByText(/不会在宿主机执行/)).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '确认执行' }));
   expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
@@ -417,11 +422,11 @@ it('shows an exact Linux-only command before permission and does not describe ap
   });
   expect(screen.queryByText('命令执行成功')).not.toBeInTheDocument();
   expect(screen.getByText('已确认本次虚拟机命令')).toBeVisible();
-  const history = screen.getByText('查看操作详情').closest('details')!;
+  const history = screen.getByLabelText('合成命令验收 · 查看操作详情').closest('details')!;
   expect(within(history.querySelector('summary')!).getByText('合成命令验收')).toBeVisible();
   expect(screen.getByText('sudo npm install -g mock-cli@1.0.0')).not.toBeVisible();
   expect(screen.queryByRole('heading', { name: '在 Linux 中运行命令' })).not.toBeInTheDocument();
-  await userEvent.click(screen.getByText('查看操作详情'));
+  await userEvent.click(screen.getByLabelText('合成命令验收 · 查看操作详情'));
   expect(screen.getByText('sudo npm install -g mock-cli@1.0.0')).toBeVisible();
   expect(screen.queryByRole('button', { name: '确认执行' })).not.toBeInTheDocument();
 });

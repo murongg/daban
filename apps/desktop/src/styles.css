@@ -2051,13 +2051,52 @@ textarea.skill-source {
   color: var(--ink);
 }
 .request-details > summary svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.request-details > summary .request-chevron {
+  width: 12px;
+  height: 12px;
+  transform: rotate(-90deg);
+}
+.request-details[open] > summary .request-chevron {
+  transform: rotate(0deg);
+}
+.request-details > .request-toggle {
+  min-width: 44px;
+  min-height: 32px;
+  justify-content: center;
+  padding: 4px 6px;
+  border-radius: 7px;
+}
+.request-details > .request-toggle:hover {
+  background: var(--soft);
+}
+.request-path,
+.request-source {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.request-path {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.request-path code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.request-path svg,
+.request-source svg {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
-  transform: rotate(-90deg);
+  color: var(--muted);
 }
-.request-details[open] > summary svg {
-  transform: rotate(0deg);
+.request-source > span {
+  display: inline-flex;
 }
 .request-record > summary {
   width: 100%;
@@ -2069,10 +2108,6 @@ textarea.skill-source {
   white-space: nowrap;
   color: var(--ink);
   font-size: 13px;
-}
-.request-more {
-  flex-shrink: 0;
-  font-size: 11px;
 }
 .approval.is-settled {
   padding-block: 14px;
