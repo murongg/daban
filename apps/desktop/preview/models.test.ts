@@ -3,6 +3,37 @@ import { expect, it } from 'vitest';
 import { modelConnections, modelPreview } from './models';
 import { previewSnapshot } from './runtime';
 
+it('simulates inspection without persisting keys or a new configuration revision', async () => {
+  const { snapshot, bridge } = modelPreview();
+  const before = structuredClone(snapshot);
+  const base = {
+    revision: 0,
+    connection: { id: 'mock-provider', baseURL: 'https://model.example.test/v1' },
+    apiKey: 'SYNTHETIC-INSPECT-KEY',
+  };
+  expect(snapshot.model.inspection).toBe(true);
+  expect(
+    (await bridge.invoke({ type: 'model.inspect', input: { ...base, kind: 'list' } })).ok,
+  ).toBe(true);
+  expect(
+    (
+      await bridge.invoke({
+        type: 'model.inspect',
+        input: { ...base, kind: 'test', model: 'mock-alpha' },
+      })
+    ).ok,
+  ).toBe(true);
+  expect(
+    (
+      await bridge.invoke({
+        type: 'model.inspect',
+        input: { ...base, kind: 'limits', model: 'mock-alpha' },
+      })
+    ).ok,
+  ).toBe(true);
+  expect(snapshot).toEqual(before);
+});
+
 it('uses current protocol metadata by default and keeps explicit legacy payloads', () => {
   const current = previewSnapshot();
   expect(current.protocolVersion).toBe(managedProtocol);

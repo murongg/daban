@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   isModelConnection,
   isModelId,
+  isModelInspectionRequest,
   isModelKey,
   isModelUpdate,
   type ModelApi,
@@ -17,6 +18,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
+import { ModelDiscovery, responseJSON } from './discovery.js';
 import { inferenceRequest, inferenceText } from './inference.js';
 
 interface PrivateConnection extends ModelConnection {
@@ -100,47 +102,16 @@ const readConfig = async (file: string): Promise<unknown> => {
     await handle.close();
   }
 };
-const responseJSON = async (response: Response, limit: number): Promise<unknown> => {
-  if (!response.ok) {
-    await response.body?.cancel();
-    const code =
-      response.status === 401 || response.status === 403
-        ? 'MODEL_API_UNAUTHORIZED'
-        : response.status === 402
-          ? 'MODEL_API_BALANCE'
-          : response.status === 429
-            ? 'MODEL_API_RATE_LIMIT'
-            : 'MODEL_API_UNAVAILABLE';
-    throw new Fault(code, 502);
-  }
-  if (!response.body) throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      size += next.value.byteLength;
-      if (size > limit) throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
-      chunks.push(next.value);
-    }
-  } finally {
-    await reader.cancel();
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
-  }
-};
 
 export class ModelSettings {
   private writing: Promise<unknown> = Promise.resolve();
+  private readonly discovery: ModelDiscovery;
   constructor(
     readonly file: string,
     private readonly fetcher: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.discovery = new ModelDiscovery(fetcher);
+  }
   async privateConfig(): Promise<PrivateConfig | null> {
     try {
       const value = await readConfig(this.file);
@@ -388,6 +359,35 @@ export class ModelSettings {
       if (error instanceof Fault) throw error;
       throw new Fault('MODEL_API_UNAVAILABLE', 502);
     }
+  }
+  async inspect(value: unknown) {
+    if (!isModelInspectionRequest(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+    const current = await this.privateConfig();
+    if ((current?.revision ?? 0) !== value.revision)
+      throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
+    const existing = current
+      ? allConnections(current).find((connection) => connection.id === value.connection.id)
+      : undefined;
+    // A saved secret is authorized for this exact destination and protocol, never just a matching provider label.
+    const same =
+      existing &&
+      existing.baseURL === value.connection.baseURL &&
+      modelApi(existing) === modelApi(value.connection);
+    const key = value.apiKey || (same ? existing.apiKey : undefined);
+    if (!key) throw new Fault('MODEL_CREDENTIAL_REQUIRED', 400);
+    const result = await this.discovery.run(value, key);
+    const exposed =
+      result.kind === 'test'
+        ? [result.model]
+        : (result.kind === 'list' ? result.models : [result.model]).flatMap((model) => [
+            model.id,
+            model.name,
+          ]);
+    if (exposed.some((text) => text.includes(key)))
+      throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
+    if (((await this.privateConfig())?.revision ?? 0) !== value.revision)
+      throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
+    return result;
   }
   async check(revision: number): Promise<ModelCheck> {
     if (!Number.isSafeInteger(revision) || revision < 0)

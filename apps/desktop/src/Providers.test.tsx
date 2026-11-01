@@ -26,6 +26,163 @@ const connection = {
     { id: 'model-beta', name: '示例 Beta', vision: false, contextWindow: 64000, maxTokens: 4096 },
   ],
 };
+it('loads a searchable provider list and adds a selected model with matched context without saving', async () => {
+  const backend = connect();
+  backend.snapshot.model.inspection = true;
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'model.inspect'
+      ? {
+          ok: true,
+          value:
+            command.input.kind === 'list'
+              ? { kind: 'list', revision: 3, models: [{ id: 'mock-gamma', name: 'Mock Gamma' }] }
+              : {
+                  kind: 'limits',
+                  revision: 3,
+                  model: {
+                    id: 'mock-gamma',
+                    name: 'Mock Gamma',
+                    contextWindow: 96000,
+                    maxTokens: 8192,
+                    source: 'provider',
+                  },
+                },
+        }
+      : invoke(command),
+  );
+  render(
+    <RuntimeProvider>
+      <Models />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '加载模型列表' }));
+  await userEvent.click(await screen.findByRole('button', { name: '添加 mock-gamma' }));
+  expect(screen.getByLabelText('模型 3 ID')).toHaveValue('mock-gamma');
+  await userEvent.click(screen.getAllByText('上下文与输出上限')[2]);
+  expect(screen.getByRole('textbox', { name: '模型 3 上下文窗口' })).toHaveValue('96000');
+  expect(backend.writes).toHaveLength(0);
+  expect(backend.invoke).toHaveBeenCalledWith({
+    type: 'model.inspect',
+    input: {
+      kind: 'list',
+      revision: 3,
+      connection: { id: connection.id, baseURL: connection.baseURL },
+    },
+  });
+});
+it('tests an individual draft model and reports latency without saving or exposing the key', async () => {
+  const backend = connect();
+  backend.snapshot.model.inspection = true;
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'model.inspect'
+      ? {
+          ok: true,
+          value: {
+            kind: 'test',
+            revision: 3,
+            model: 'model-beta',
+            checkedAt: '2026-01-01T00:00:00.000Z',
+            latencyMs: 123,
+          },
+        }
+      : invoke(command),
+  );
+  render(
+    <RuntimeProvider>
+      <Models />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '测试模型 2' }));
+  expect(await screen.findByText('调用成功 · 123 ms')).toBeVisible();
+  expect(backend.writes).toHaveLength(0);
+});
+it('discards an in-flight test error after the user changes the model ID', async () => {
+  const backend = connect();
+  backend.snapshot.model.inspection = true;
+  let finish: ((reply: RuntimeReply) => unknown) | undefined;
+  const reply = new Promise<RuntimeReply>((resolve) => {
+    finish = resolve;
+  });
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation((command) =>
+    command.type === 'model.inspect' ? reply : invoke(command),
+  );
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '测试模型 2' }));
+  await userEvent.clear(screen.getByLabelText('模型 2 ID'));
+  await userEvent.type(screen.getByLabelText('模型 2 ID'), 'mock-new');
+  await act(async () => {
+    finish!({ ok: false, error: 'MODEL_API_UNAUTHORIZED' });
+    await reply;
+  });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+it('preserves a manual context edit made while automatic matching is in flight', async () => {
+  const backend = connect();
+  backend.snapshot.model.inspection = true;
+  let finish: ((reply: RuntimeReply) => unknown) | undefined;
+  const reply = new Promise<RuntimeReply>((resolve) => {
+    finish = resolve;
+  });
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation((command) =>
+    command.type === 'model.inspect' ? reply : invoke(command),
+  );
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '匹配模型 2 上下文' }));
+  await userEvent.click(screen.getAllByText('上下文与输出上限')[1]);
+  const context = screen.getByRole('textbox', { name: '模型 2 上下文窗口' });
+  await userEvent.clear(context);
+  await userEvent.type(context, '32000');
+  await act(async () => {
+    finish!({
+      ok: true,
+      value: {
+        kind: 'limits',
+        revision: 3,
+        model: { id: 'model-beta', name: 'Mock Beta', contextWindow: 96000, source: 'provider' },
+      },
+    });
+    await reply;
+  });
+  expect(context).toHaveValue('32000');
+});
+it('does not let late matching modify a frozen configuration whose save result is uncertain', async () => {
+  const backend = connect(true);
+  backend.snapshot.model.inspection = true;
+  let finish: ((reply: RuntimeReply) => unknown) | undefined;
+  const reply = new Promise<RuntimeReply>((resolve) => {
+    finish = resolve;
+  });
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation((command) =>
+    command.type === 'model.inspect' ? reply : invoke(command),
+  );
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getAllByText('上下文与输出上限')[1]);
+  await userEvent.click(screen.getByRole('button', { name: '匹配模型 2 上下文' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await screen.findByText('保存结果未确认。重试会核对同一次操作，不会改用其他密钥或模型。');
+  await act(async () => {
+    finish!({
+      ok: true,
+      value: {
+        kind: 'limits',
+        revision: 3,
+        model: { id: 'model-beta', name: 'Mock Beta', contextWindow: 96000, source: 'provider' },
+      },
+    });
+    await reply;
+  });
+  expect(screen.getByRole('textbox', { name: '模型 2 上下文窗口' })).toHaveValue('64000');
+});
 function connect(
   failFirst: boolean | string = false,
   saved: ModelConnection = connection,
@@ -76,6 +233,7 @@ function connect(
     },
   });
   return {
+    snapshot,
     invoke,
     writes,
     disconnect() {

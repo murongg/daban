@@ -1329,6 +1329,7 @@ export interface RuntimeSnapshot {
     model: string;
     revision?: number;
     connections?: ModelConnection[];
+    inspection?: boolean;
   };
   bots: Partial<
     Record<RuntimeBot, { instance?: string; owner: RuntimeOwner; epoch: number; task: RuntimeTask }>
@@ -2184,6 +2185,100 @@ export interface ModelStatus {
   revision: number;
   requestId?: string;
   connections?: ModelConnection[];
+}
+export type ModelEndpoint = Pick<ModelConnection, 'id' | 'baseURL' | 'api'>;
+export interface DiscoveredModel {
+  id: string;
+  name: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  source?: 'provider' | 'models.dev';
+}
+export type ModelInspectionRequest = {
+  connection: ModelEndpoint;
+  apiKey?: string;
+  revision: number;
+} & ({ kind: 'list'; model?: never } | { kind: 'limits' | 'test'; model: string });
+export type ModelInspection = { revision: number } & (
+  | { kind: 'list'; models: DiscoveredModel[] }
+  | { kind: 'limits'; model: DiscoveredModel }
+  | { kind: 'test'; model: string; latencyMs: number; checkedAt: string }
+);
+export function isModelInspectionRequest(value: unknown): value is ModelInspectionRequest {
+  if (
+    !profileObject(value) ||
+    !browserKeys(value, ['kind', 'connection', 'apiKey', 'revision', 'model']) ||
+    !modelRevision(value.revision) ||
+    (value.apiKey !== undefined && !isModelKey(value.apiKey)) ||
+    !profileObject(value.connection) ||
+    !browserKeys(value.connection, ['id', 'baseURL', 'api'])
+  )
+    return false;
+  const connection = value.connection;
+  if (
+    !validAgentId(connection.id) ||
+    !isModelBaseURL(connection.baseURL) ||
+    (connection.api !== undefined && !isModelApi(connection.api)) ||
+    (connection.id === 'deepseek-official' &&
+      (connection.baseURL !== 'https://api.deepseek.com/v1' ||
+        (connection.api !== undefined && connection.api !== 'openai-completions')))
+  )
+    return false;
+  if (value.kind === 'list') return value.model === undefined;
+  return (
+    ['limits', 'test'].includes(String(value.kind)) &&
+    upstreamModelId(value.model) &&
+    (connection.api !== 'google-generative-ai' ||
+      /^(?:models\/)?[a-zA-Z0-9][a-zA-Z0-9._-]{0,159}$/.test(value.model))
+  );
+}
+export function isDiscoveredModel(value: unknown): value is DiscoveredModel {
+  return (
+    profileObject(value) &&
+    browserKeys(value, ['id', 'name', 'contextWindow', 'maxTokens', 'source']) &&
+    upstreamModelId(value.id) &&
+    typeof value.name === 'string' &&
+    value.name.trim().length > 0 &&
+    value.name.length <= 120 &&
+    modelText(value.name) &&
+    (value.contextWindow === undefined ||
+      (Number.isSafeInteger(value.contextWindow) &&
+        Number(value.contextWindow) >= 4096 &&
+        Number(value.contextWindow) <= 4000000)) &&
+    (value.maxTokens === undefined ||
+      (Number.isSafeInteger(value.maxTokens) &&
+        Number(value.maxTokens) >= 128 &&
+        Number(value.maxTokens) <= 262144 &&
+        (value.contextWindow === undefined ||
+          Number(value.maxTokens) <= Number(value.contextWindow)))) &&
+    (value.source === undefined ||
+      (['provider', 'models.dev'].includes(String(value.source)) &&
+        (value.contextWindow !== undefined || value.maxTokens !== undefined)))
+  );
+}
+export function isModelInspection(value: unknown): value is ModelInspection {
+  if (!profileObject(value) || !modelRevision(value.revision)) return false;
+  if (value.kind === 'list')
+    return (
+      browserKeys(value, ['kind', 'revision', 'models']) &&
+      Array.isArray(value.models) &&
+      value.models.length <= 5000 &&
+      value.models.every(isDiscoveredModel) &&
+      new Set(value.models.map((model) => model.id)).size === value.models.length
+    );
+  if (value.kind === 'limits')
+    return browserKeys(value, ['kind', 'revision', 'model']) && isDiscoveredModel(value.model);
+  return (
+    value.kind === 'test' &&
+    browserKeys(value, ['kind', 'revision', 'model', 'latencyMs', 'checkedAt']) &&
+    upstreamModelId(value.model) &&
+    Number.isSafeInteger(value.latencyMs) &&
+    Number(value.latencyMs) >= 0 &&
+    Number(value.latencyMs) <= 120000 &&
+    typeof value.checkedAt === 'string' &&
+    value.checkedAt.length === 24 &&
+    Number.isFinite(Date.parse(value.checkedAt))
+  );
 }
 export interface ModelUpdate {
   model: ModelId;
@@ -3586,6 +3681,7 @@ export type RuntimeCommand =
   | { type: 'group.receipt'; group: string; id: string }
   | { type: 'model.configure'; input: ModelUpdate }
   | { type: 'model.check'; revision: number }
+  | { type: 'model.inspect'; input: ModelInspectionRequest }
   | { type: 'clipboard.write'; text: string }
   | { type: 'link.open'; url: string }
   | { type: 'knowledge.list'; bot: string; includeDeleted?: boolean; query?: string }

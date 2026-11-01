@@ -52,6 +52,7 @@ import {
   isModelCheck,
   isModelConnection,
   isModelId,
+  isModelInspection,
   isModelStatus,
   isNoteAvailability,
   isNoteCommand,
@@ -358,6 +359,7 @@ export class RuntimeClient {
         sharedLogin?: boolean;
         model?: {
           connections?: unknown;
+          inspection?: unknown;
           revision?: number;
           available?: boolean;
           provider?: string;
@@ -565,6 +567,7 @@ export class RuntimeClient {
               model: settings.model,
               provider: settings.provider,
               revision: settings.revision,
+              ...(raw.model?.inspection === true ? { inspection: true } : {}),
               ...(Array.isArray(raw.model?.connections) && raw.model.revision === settings.revision
                 ? { connections: raw.model.connections }
                 : {}),
@@ -1253,6 +1256,21 @@ export class RuntimeClient {
           throw new Error('INVALID_RUNTIME_STATE');
       }
       return result;
+    }
+    if (command.type === 'model.inspect') {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.model.inspection !== true) throw new Error('RUNTIME_TOO_OLD');
+      const value = await this.api('/api/model/inspect', command.input);
+      if (
+        !isModelInspection(value) ||
+        value.kind !== command.input.kind ||
+        value.revision !== command.input.revision ||
+        (value.kind === 'test' && value.model !== command.input.model) ||
+        (value.kind === 'limits' && value.model.id !== command.input.model)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
     }
     if (command.type === 'model.configure' || command.type === 'model.check') {
       const state = await this.status();

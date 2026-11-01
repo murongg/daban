@@ -63,6 +63,7 @@ export function modelPreview(empty = false) {
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = managedProtocol;
   snapshot.model = {
+    inspection: true,
     configured: !empty,
     available: true,
     provider: 'deepseek-official',
@@ -74,7 +75,43 @@ export function modelPreview(empty = false) {
   const bridge: RuntimeBridge = {
     async invoke<T>(command: RuntimeCommand): Promise<RuntimeReply<T>> {
       let value: unknown = snapshot;
-      if (command.type === 'model.configure') {
+      if (command.type === 'model.inspect') {
+        const input = command.input;
+        if (input.revision !== snapshot.model.revision)
+          return { ok: false, error: 'MODEL_SETTINGS_CONFLICT' };
+        const models = [
+          {
+            id: 'mock-chat-standard',
+            name: '示例对话模型',
+            contextWindow: 64000,
+            maxTokens: 4096,
+            source: 'provider' as const,
+          },
+          { id: 'mock-chat-long', name: '示例长上下文模型' },
+        ];
+        value =
+          input.kind === 'list'
+            ? { kind: 'list', revision: input.revision, models }
+            : input.kind === 'test'
+              ? {
+                  kind: 'test',
+                  revision: input.revision,
+                  model: input.model,
+                  latencyMs: 186,
+                  checkedAt: '2026-01-01T00:00:00.000Z',
+                }
+              : {
+                  kind: 'limits',
+                  revision: input.revision,
+                  model: {
+                    id: input.model,
+                    name: input.model,
+                    contextWindow: 256000,
+                    maxTokens: 8192,
+                    source: 'models.dev',
+                  },
+                };
+      } else if (command.type === 'model.configure') {
         const input = command.input;
         if (!isModelUpdate(input)) return { ok: false, error: 'INVALID_MODEL_SETTINGS' };
         if (input.revision !== snapshot.model.revision)

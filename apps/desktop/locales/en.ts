@@ -1,4 +1,46 @@
 export const english: Record<string, string> = {
+  '请先填写有效的 API 地址、密钥和模型 ID。': 'Enter a valid API URL, key, and model ID first.',
+  '正在加载模型…': 'Loading models…',
+  加载模型列表: 'Load model list',
+  '从当前供应商获取模型，选择后添加到表单；不会自动保存配置。':
+    'Fetch models from this provider and choose which to add. Your configuration is not saved automatically.',
+  可用模型: 'Available models',
+  搜索模型: 'Search models',
+  '按名称或模型 ID 搜索': 'Search by name or model ID',
+  '找到 {0} 个模型': '{0} models found',
+  '，显示前 80 项，请搜索缩小范围。': '. Showing the first 80. Search to narrow the list.',
+  '已添加 {0}': 'Added {0}',
+  '添加 {0}': 'Add {0}',
+  '没有匹配的模型，试试其他关键词。': 'No matching models. Try another search.',
+  '供应商没有返回可添加的模型，你仍可手动填写模型 ID。':
+    'The provider returned no models to add. You can still enter a model ID manually.',
+  '已匹配上下文 {0} tokens': 'Matched context: {0} tokens',
+  '上下文长度未知，请核对默认值或手动填写。':
+    'Context length is unknown. Check the default or enter it manually.',
+  '（参考 models.dev，可按供应商限制修改）':
+    ' (from models.dev; adjust for your provider’s limits)',
+  '测试模型 {0}': 'Test model {0}',
+  测试模型: 'Test model',
+  '匹配模型 {0} 上下文': 'Match context for model {0}',
+  '正在匹配…': 'Matching…',
+  自动匹配上下文: 'Match context automatically',
+  '调用成功 · {0} ms': 'Call succeeded · {0} ms',
+  '未找到可靠的上下文长度，已有设置保持不变，请手动填写。':
+    'No reliable context length found. Existing settings are unchanged; enter it manually.',
+  '参考上下文 {0} tokens · {1}': 'Reference context: {0} tokens · {1}',
+  供应商接口: 'Provider API',
+  '。这是公开目录参考值，请以当前供应商限制为准。':
+    '. This is a public catalog reference. Your provider’s limits take precedence.',
+  '更新本机 Agent 后可加载模型、测试调用和匹配上下文。':
+    'Update the local Agent to load models, test calls, and match context limits.',
+  '测试模型会发送固定短提示，可能产生少量 API 费用；不包含聊天内容，也不会保存配置。':
+    'Testing sends a fixed short prompt and may incur a small API charge. It includes no chat content and does not save settings.',
+  '供应商未提供模型列表接口，请手动填写模型 ID。':
+    'This provider does not expose a model list. Enter the model ID manually.',
+  '模型列表过大或分页异常，请缩小供应商范围或手动填写模型 ID。':
+    'The model list is too large or pagination failed. Narrow the provider scope or enter model IDs manually.',
+  '模型服务响应超时，请稍后重试；已有设置未改变。':
+    'The model service timed out. Try again later; existing settings are unchanged.',
   搭子正在布置工作空间: 'Your companion is getting things ready',
   正在暂停安装: 'Pausing setup',
   准备好了再继续: 'Continue when you’re ready',

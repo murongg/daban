@@ -5,6 +5,72 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
 
+it('accepts only bounded model inspection commands and verifies matching public replies', async () => {
+  const input = {
+    kind: 'test',
+    revision: 0,
+    connection: { id: 'mock-provider', baseURL: 'https://models.example.test/v1' },
+    apiKey: 'synthetic-key',
+    model: 'mock-alpha',
+  };
+  expect(parseCommand({ type: 'model.inspect', input })).toEqual({ type: 'model.inspect', input });
+  for (const invalid of [
+    { ...input, kind: 'shell' },
+    { ...input, model: '../bad' },
+    { ...input, extra: true },
+  ])
+    expect(() => parseCommand({ type: 'model.inspect', input: invalid })).toThrow(
+      'INVALID_COMMAND',
+    );
+  const settings = {
+    provider: 'deepseek-official',
+    model: 'deepseek-flash',
+    configured: true,
+    revision: 0,
+  };
+  const valid = {
+    kind: 'test',
+    model: 'mock-alpha',
+    revision: 0,
+    latencyMs: 12,
+    checkedAt: '2026-01-01T00:00:00.000Z',
+  };
+  let reply: unknown = valid;
+  let supported = true;
+  const posts: string[] = [];
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (url, init) => {
+      if (url.endsWith('/api/model/settings')) return Response.json(settings);
+      if (url.endsWith('/api/model/inspect')) {
+        posts.push(String(init?.body));
+        return Response.json(reply);
+      }
+      return Response.json({
+        ...raw,
+        clientProtocol: 13,
+        model: { ...raw.model, ...settings, inspection: supported },
+      });
+    },
+  });
+  const command = parseCommand({ type: 'model.inspect', input });
+  expect(await client.invoke(command)).toEqual(valid);
+  for (const invalid of [
+    { ...valid, apiKey: 'synthetic-must-not-return' },
+    { ...valid, model: 'mock-other' },
+    { ...valid, revision: 1 },
+    { ...valid, latencyMs: -1 },
+  ]) {
+    reply = invalid;
+    await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  }
+  const count = posts.length;
+  supported = false;
+  await expect(client.invoke(command)).rejects.toThrow('RUNTIME_TOO_OLD');
+  expect(posts).toHaveLength(count);
+});
+
 it('projects the key-free model catalog from the same revision and preserves custom task model references', async () => {
   const connection = {
     id: 'mock-provider',

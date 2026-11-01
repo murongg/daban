@@ -1,4 +1,5 @@
 import {
+  type DiscoveredModel,
   isModelApi,
   isModelConnection,
   isModelKey,
@@ -12,6 +13,7 @@ import {
 } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
 import { getLocale, t, useLocale } from './locale';
+import { ModelCatalog, ModelInspector } from './ModelTools';
 import { definitiveModelErrors } from './model-errors';
 import { modelChoices, modelName } from './model-options';
 import { NumberField } from './NumberField';
@@ -72,6 +74,76 @@ export function Providers() {
     original.baseURL === draft.connection.baseURL &&
     modelApi(original) === modelApi(draft.connection);
   const current = selected ?? model.model;
+  const query = draft
+    ? {
+        connection: {
+          id: draft.connection.id,
+          baseURL: draft.connection.baseURL.trim(),
+          ...(draft.connection.api ? { api: draft.connection.api } : {}),
+        },
+        revision: draft.revision,
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      }
+    : undefined;
+  const inspectDisabled =
+    !available || busy || !!pending || model.inspection !== true || (!retainKey && !draft?.apiKey);
+  function addModel(info: DiscoveredModel) {
+    setDraft((current) => {
+      if (!current || current.connection.models.some((entry) => entry.id === info.id))
+        return current;
+      const empty = current.connection.models.findIndex((entry) => !entry.id.trim());
+      if (empty < 0 && current.connection.models.length >= 50) return current;
+      const entry: ModelDefinition = {
+        ...newModel(),
+        id: info.id,
+        name: info.name,
+        contextWindow: info.contextWindow ?? 128000,
+        maxTokens: Math.min(8192, info.maxTokens ?? 8192, info.contextWindow ?? 128000),
+      };
+      return {
+        ...current,
+        keys: empty < 0 ? [...current.keys, crypto.randomUUID()] : current.keys,
+        connection: {
+          ...current.connection,
+          models:
+            empty < 0
+              ? [...current.connection.models, entry]
+              : current.connection.models.map((model, index) => (index === empty ? entry : model)),
+        },
+      };
+    });
+  }
+  function matchModel(key: string, info: DiscoveredModel) {
+    setDraft((current) => {
+      const index = current?.keys.indexOf(key) ?? -1;
+      if (
+        !current ||
+        index < 0 ||
+        current.connection.models[index].id !== info.id ||
+        info.contextWindow === undefined
+      )
+        return current;
+      return {
+        ...current,
+        connection: {
+          ...current.connection,
+          models: current.connection.models.map((entry, position) =>
+            position === index
+              ? {
+                  ...entry,
+                  contextWindow: info.contextWindow!,
+                  maxTokens: Math.min(
+                    entry.maxTokens,
+                    info.maxTokens ?? entry.maxTokens,
+                    info.contextWindow!,
+                  ),
+                }
+              : entry,
+          ),
+        },
+      };
+    });
+  }
   function edit(connection?: ModelConnection) {
     setDraft({
       connection: connection
@@ -456,6 +528,24 @@ export function Providers() {
                 '使用所选接口协议。请按供应商文档填写模型 ID 和能力。保存时会验证连接；必要时发送固定的测试请求，产生少量 API 费用，不包含你的聊天内容。',
               )}
             </p>
+            {query && (
+              <ModelCatalog
+                query={query}
+                disabled={inspectDisabled}
+                selected={draft.connection.models.map((entry) => entry.id)}
+                onAdd={addModel}
+              />
+            )}
+            {model.inspection !== true && (
+              <p className="field-help">
+                {t('更新本机 Agent 后可加载模型、测试调用和匹配上下文。')}
+              </p>
+            )}
+            <p className="field-help">
+              {t(
+                '测试模型会发送固定短提示，可能产生少量 API 费用；不包含聊天内容，也不会保存配置。',
+              )}
+            </p>
             <div className="provider-models">
               {draft.connection.models.map((entry, index) => (
                 <fieldset className="provider-model" key={draft.keys[index]}>
@@ -484,6 +574,15 @@ export function Providers() {
                       />
                     </label>
                   </div>
+                  {query && (
+                    <ModelInspector
+                      query={query}
+                      model={entry}
+                      index={index}
+                      disabled={inspectDisabled}
+                      onMatch={(info) => matchModel(draft.keys[index], info)}
+                    />
+                  )}
                   <label className="provider-vision">
                     <input
                       type="checkbox"

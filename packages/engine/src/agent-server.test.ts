@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -70,6 +70,64 @@ async function mockSdk(root: string) {
   await writeFile(file, 'export class DeepSeekHarness {}', { mode: 0o600 });
   return file;
 }
+test('model discovery runs through authenticated host IPC without forwarding a key to the guest or saving settings', async () => {
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'mock-host-model-inspect-')));
+  const methods: string[] = [];
+  const headers: unknown[] = [];
+  const vendor = createServer((req, res) => {
+    headers.push(req.headers.authorization);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ data: [{ id: 'mock-alpha', context_length: 64000 }] }));
+  });
+  await new Promise<unknown>((resolve) => vendor.listen(0, '127.0.0.1', () => resolve(undefined)));
+  const address = vendor.address();
+  assert.ok(address && typeof address === 'object');
+  const app = await startAgent({
+    dataRoot: root,
+    socketPath: path.join(root, 'agent.sock'),
+    scope: 'a'.repeat(64),
+    sdkFile: await mockSdk(root),
+    execution: {
+      ready: Promise.resolve(snapshot),
+      snapshot,
+      refresh: async () => snapshot,
+      async call(method: string) {
+        methods.push(method);
+        if (method === 'workspace.base') return '/mock-guest/workspace';
+        if (method === 'computer.snapshot') return snapshot;
+        throw Error('Unexpected synthetic method');
+      },
+    },
+  });
+  try {
+    const input = {
+      kind: 'list',
+      revision: 0,
+      connection: { id: 'mock-provider', baseURL: `http://127.0.0.1:${address.port}/v1` },
+      apiKey: 'synthetic-provider-key',
+    };
+    assert.equal(
+      (await call(app.socketPath, '/api/model/inspect', 'wrong-token', input)).status,
+      403,
+    );
+    const result = await call(app.socketPath, '/api/model/inspect', app.token, input);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.value, {
+      kind: 'list',
+      revision: 0,
+      models: [{ id: 'mock-alpha', name: 'mock-alpha', contextWindow: 64000, source: 'provider' }],
+    });
+    assert.deepEqual(headers, ['Bearer synthetic-provider-key']);
+    assert.equal(methods.includes('computer.request'), false);
+    await assert.rejects(access(path.join(root, 'model/credentials.json')));
+  } finally {
+    await app.close();
+    await new Promise<unknown>((resolve, reject) =>
+      vendor.close((error) => (error ? reject(error) : resolve(undefined))),
+    );
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test('host agent listens only on private Unix IPC and composes authoritative state with guest computer data', async () => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'mock-host-agent-'))),
     socket = path.join(root, 'agent.sock'),

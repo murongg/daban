@@ -1209,6 +1209,8 @@ export async function startPrototype({
         }
         if (url.pathname === '/api/model/configure' && req.method === 'POST')
           return json(res, await settings.configure(await body(req)));
+        if (url.pathname === '/api/model/inspect' && req.method === 'POST')
+          return json(res, await settings.inspect(await body(req)));
         if (url.pathname === '/api/model/check' && req.method === 'POST') {
           const data = await body(req);
           if (
@@ -1311,7 +1313,8 @@ export async function startPrototype({
             profiles: models ? await models.profiles.list() : [],
             interactions: models ? await models.interactions.list() : [],
             schedules: schedules ? await schedules.status() : { available: false, items: [] },
-            model: { ...models?.status(), ...(await settings.status(true)) },
+            // Capability metadata stays outside saved-model status so older clients can still validate that status.
+            model: { ...models?.status(), ...(await settings.status(true)), inspection: true },
           });
         const browserRoute = url.pathname.match(
           /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/browser-(state|view|command|answer|receipt|bound-input|input)$/,
