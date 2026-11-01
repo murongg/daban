@@ -1,10 +1,10 @@
-# daban client
+# Daban client
 
 Mode: Operate. Existing visual world: the user's Grok Bot reference and the shipped local prototype. This project ports that established surface to React; it does not create a new identity or reopen layout choices. Code-led implementation uses the supplied reference, with no generated comp or external raster assets.
 
 ## Direction contract
 
-FIRST VIEWPORT: an edge-to-edge desktop workspace with a 272px pale sidebar, compact colored Bot identities, a 70px conversation header, calm neutral message bubbles, and a bottom composer. The optional right workspace occupies about 40% of the remaining width and exposes computer/files/knowledge/skills/memory/routines. No marketing hero or dashboard card grid. Chinese system typography, monochrome controls and tiny semantic status accents. Lowercase daban wordmark replaces the prototype name.
+FIRST VIEWPORT: an edge-to-edge desktop workspace with a 272px pale sidebar, compact colored Bot identities, a 70px conversation header, calm neutral message bubbles, and a bottom composer. The optional right workspace occupies about 40% of the remaining width and exposes computer/files/knowledge/skills/memory/routines. No marketing hero or dashboard card grid. Chinese system typography, monochrome controls and tiny semantic status accents. Daban is the visible product name; technical repository, package, command and data-path identifiers retain lowercase daban.
 
 Signature interaction: switch between Bots without losing their draft or changing another Bot's takeover. The selected Bot's conversation and workspace follow together. Closing the viewer never hands control back. Human takeover is a visibly separate state with an explicit handback button.
 

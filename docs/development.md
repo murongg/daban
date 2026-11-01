@@ -98,7 +98,7 @@ npm run build         # 构建全部工作区
 npm run bundle:desktop -- /absolute/path/to/environment-pack /absolute/path/to/new-output /absolute/path/to/node-24.22.1
 ```
 
-输出目录必须尚不存在。成功后在该目录生成 `daban.app`，包含 Electron、界面、宿主机后台及独立 Linux 执行环境，无需用户另外安装 Docker、Node.js 或 DSH。
+输出目录必须尚不存在。成功后在该目录生成 `Daban.app`，包含 Electron、界面、宿主机后台及独立 Linux 执行环境，无需用户另外安装 Docker、Node.js 或 DSH。
 
 当前构建器固定使用已封存的 38 版无凭据基础镜像，并叠加当前执行端；环境包须匹配构建器校验，不能任意替换。环境准备与校验代码见 [environment.ts](../tools/environment.ts)、[guest.ts](../tools/guest.ts) 和 [desktop.ts](../tools/desktop.ts)。本地打包尚不代表完成公开发行签名、公证或自动更新。
 

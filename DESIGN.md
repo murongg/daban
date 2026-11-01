@@ -1,5 +1,5 @@
 ---
-name: "daban"
+name: "Daban"
 description: "Quiet Grok Bot style conversation workspace for a Chinese desktop client."
 colors:
   canvas: "#ffffff"
@@ -179,15 +179,15 @@ components:
     textColor: "{colors.ink}"
 ---
 
-# Design System: daban
+# Design System: Daban
 
 ## Overview
 
 **Creative North Star: "Grok Bot conversation workspace"**
 
-daban preserves the Grok Bot reference: a quiet, edge-to-edge conversation workspace with a pale sidebar, restrained monochrome controls, and compact colored Bot identities. Chinese system typography and messaging-app density keep attention on the conversation and the adjacent computer.
+Daban preserves the Grok Bot reference: a quiet, edge-to-edge conversation workspace with a pale sidebar, restrained monochrome controls, and compact colored Bot identities. Chinese system typography and messaging-app density keep attention on the conversation and the adjacent computer.
 
-The light and dark themes share the same geometry. Surface tones, thin dividers, and text hierarchy organize the UI. Connected Electron Bots show their actual Linux desktops beside the conversation; the browser-only preview keeps its synthetic desktop. Transparent robot Bot avatars, the companion app mascot and the lowercase daban wordmark are the identity anchors.
+The light and dark themes share the same geometry. Surface tones, thin dividers, and text hierarchy organize the UI. Connected Electron Bots show their actual Linux desktops beside the conversation; the browser-only preview keeps its synthetic desktop. Transparent robot Bot avatars, the companion app mascot and the Daban wordmark are the identity anchors.
 
 **Key Characteristics:**
 
@@ -235,7 +235,7 @@ Use the single system sans stack in the frontmatter, including PingFang SC and M
 - **Body:** the default UI reading size and line height.
 - **Message:** the same readable size with the more generous conversation line height.
 - **Label and Meta:** action labels, row descriptions, helper text, and timestamps. The incumbent supporting scale runs down to tiny demo/keyboard labels; do not copy the miniature desktop's type into primary app content.
-- **Wordmark:** lowercase daban, compact tracking, medium-bold weight.
+- **Wordmark:** Daban, compact tracking, medium-bold weight.
 
 **The Conversation Reading Rule.** Preserve the message reading size and generous line height when adding content; density comes from the surrounding chrome.
 
@@ -245,7 +245,7 @@ The app fills the window with a fixed sidebar, a flexible conversation, and an o
 
 At (1280px) and below, the sidebar becomes (246px), while the workspace becomes (43%) with a minimum of (330px). At (1080px) and below, the workspace overlays the right side under the header at (430px), capped by the available width; initial loads below (1080px) start with it closed. At (700px) and below, the sidebar becomes an optional drawer, the header becomes (62px), and the workspace covers the conversation width. This narrow layout is a web preview adaptation, not a mobile application.
 
-The native Electron window starts at (1380 × 860px) with a minimum of (920 × 640px). On macOS, reserve the native traffic lights: the sidebar brand receives (97px) left padding and keeps the companion mascot visible at (24px) beside the lowercase daban wordmark; only the preview suffix is hidden. The native sidebar-brand and chat-header regions drag the window; buttons remain clickable. Do not duplicate native window buttons in the renderer.
+The native Electron window starts at (1380 × 860px) with a minimum of (920 × 640px). On macOS, reserve the native traffic lights: the sidebar brand receives (97px) left padding and keeps the companion mascot visible at (24px) beside the Daban wordmark; only the preview suffix is hidden. The native sidebar-brand and chat-header regions drag the window; buttons remain clickable. Do not duplicate native window buttons in the renderer.
 
 Use the small recurring spacing values in the frontmatter for local groups. Larger page content uses a centered maximum of (850px), and dialogs use (430px) or (740px) width with viewport padding. Do not apply landing-page section spacing to this product.
 
@@ -283,7 +283,7 @@ Capture the initiating Bot/group for asynchronous attachment work. Reserve an up
 
 ### Navigation
 
-The app identity is a letter-free waving otter beside the lowercase daban wordmark. Reuse the shipped PNG artwork: its muted charcoal-brown/ivory pixels belong to the logo, without adding workspace color tokens. `Brand()` displays `favicon.png` at (28px), reduced to (24px) in the macOS header. The image is decorative beside the readable name (`alt=""`, `aria-hidden="true"`); preserve the separate create-Bot control. The native icon family derives from the same `app-icon.png` master. Asset generation and bounded verification provenance are recorded in `outputs/brand/brief.md`.
+The app identity is a letter-free waving otter beside the Daban wordmark. Reuse the shipped PNG artwork: its muted charcoal-brown/ivory pixels belong to the logo, without adding workspace color tokens. `Brand()` displays `favicon.png` at (28px), reduced to (24px) in the macOS header. The image is decorative beside the readable name (`alt=""`, `aria-hidden="true"`); preserve the separate create-Bot control. The native icon family derives from the same `app-icon.png` master. Asset generation and bounded verification provenance are recorded in `outputs/brand/brief.md`.
 
 Personal Bot avatars load `avatars/{color}.png` from the existing persisted color key and fit within the incumbent avatar sizes using `object-fit: contain`. Reuse the same six assets across light and dark themes. The three-head group composition and human-owner dot retain their existing geometry and meaning. The avatar artwork is decorative beside the Bot name; expressions do not replace readable connection or task labels. `outputs/brand/avatars.json` records each source image and exact embedded prompt.
 
@@ -559,7 +559,7 @@ Creation, file preview, and expanded computer views share the same softly rounde
 
 ### Do:
 
-- **Do** preserve the lowercase daban identity and Grok Bot reference.
+- **Do** preserve the Daban identity and Grok Bot reference.
 - **Do** use the existing semantic color variables in both themes.
 - **Do** keep Chinese text readable, with relaxed message line height and wrapping for long content.
 - **Do** preserve visible keyboard focus, accessible control names, and modal focus containment.

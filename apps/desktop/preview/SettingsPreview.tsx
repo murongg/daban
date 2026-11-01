@@ -146,7 +146,7 @@ function Preview() {
       <main className="settings-preview-canvas">
         <header>
           <Brand />
-          <strong>daban</strong>
+          <strong>Daban</strong>
         </header>
         <h1>设置弹窗预览</h1>
         <p>独立合成预览，不连接真实账户、工作区或模型 API。</p>

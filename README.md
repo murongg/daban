@@ -1,12 +1,12 @@
 <p>
-  <img src="apps/desktop/public/app-icon.png" width="80" alt="daban 图标" />
+  <img src="apps/desktop/public/app-icon.png" width="80" alt="Daban 图标" />
 </p>
 
-# daban
+# Daban
 
 **你的 AI 搭子，也有自己的电脑。**
 
-daban 是基于 DeepSeek Harness 的桌面 AI 工作区。你可以和 Bot 聊天、查资料、处理文件，也可以让它使用独立的 Linux 桌面，操作浏览器、终端和其他应用。需要时，随时接管它的屏幕。
+Daban 是基于 DeepSeek Harness 的桌面 AI 工作区。你可以和 Bot 聊天、查资料、处理文件，也可以让它使用独立的 Linux 桌面，操作浏览器、终端和其他应用。需要时，随时接管它的屏幕。
 
 目前处于早期预览阶段，完整客户端主要在 Apple 芯片 Mac 上开发和验证。
 
@@ -26,7 +26,7 @@ daban 是基于 DeepSeek Harness 的桌面 AI 工作区。你可以和 Bot 聊�
 
 使用已打包的客户端时：
 
-1. 打开 daban，按引导创建本地运行环境。
+1. 打开 Daban，按引导创建本地运行环境。
 2. 在「设置 → 模型与电脑」添加供应商、API Key 和要使用的模型。
 3. 从 Bot 广场添加一个搭档，或创建自己的 Bot，开始对话。
 4. 需要操作应用时，为 Bot 连接电脑；需要人工操作时，点击接管。

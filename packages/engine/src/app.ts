@@ -282,11 +282,11 @@ function render() {
   screenRoot.hidden = agentOnly;
   for (const selector of ['.guide', '.toolbar', '.events']) q(selector).hidden = agentOnly;
   if (agentOnly) {
-    document.title = 'daban 执行环境';
+    document.title = 'Daban 执行环境';
     q('h1').textContent = '普通 Agent 已就绪';
     q('.title p').textContent = '电脑暂不可用，普通任务服务仍在运行。';
     q('.scope').textContent =
-      '通过 daban 客户端继续对话和处理工作区文件。电脑操作暂不可用；关闭此页不会停止任务。';
+      '通过 Daban 客户端继续对话和处理工作区文件。电脑操作暂不可用；关闭此页不会停止任务。';
     message('桌面启动失败。已有文件和对话服务保留，请在电脑恢复后继续图形任务。');
     return;
   }

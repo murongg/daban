@@ -26,7 +26,7 @@ export function Desktop({
     >
       <div className="desktop-topbar">
         <Monitor />
-        <span>daban</span>
+        <span>Daban</span>
         <span className="spacer" />
         <span>示例桌面</span>
         <Wifi />

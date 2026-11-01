@@ -64,7 +64,7 @@ export function Setup() {
   return (
     <main className="setup-page">
       <header className="setup-header">
-        <span>daban</span>
+        <span>Daban</span>
         <span className="setup-local">
           <HardDrive size={15} />
           本机运行

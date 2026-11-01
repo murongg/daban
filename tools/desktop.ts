@@ -59,7 +59,7 @@ assert.equal(path.basename(source), 'Electron.app');
 assert.ok((await stat(path.join(root, 'dist-electron/main.cjs'))).isFile());
 assert.ok((await stat(path.join(root, 'dist/index.html'))).isFile());
 await mkdir(output, { mode: 0o700 });
-const target = path.join(output, 'daban.app');
+const target = path.join(output, 'Daban.app');
 await cp(source, target, {
   recursive: true,
   verbatimSymlinks: true,
@@ -175,8 +175,8 @@ await cp(
 for (const [key, value] of Object.entries({
   CFBundleIdentifier: 'dev.daban.app',
   CFBundleExecutable: 'daban',
-  CFBundleName: 'daban',
-  CFBundleDisplayName: 'daban',
+  CFBundleName: 'Daban',
+  CFBundleDisplayName: 'Daban',
   CFBundleIconFile: 'daban.icns',
   CFBundleShortVersionString: info.version,
   CFBundleVersion: info.version,
@@ -190,7 +190,7 @@ execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', target]);
 execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', target]);
 await writeFile(
   path.join(output, 'BUILD.md'),
-  '# daban local macOS ARM64 build\n\nOpen daban.app. The environment and Electron are included; no separate Docker, Node or DSH installation is needed. Configure the official model connection after local setup.\n\nThis development build is ad-hoc signed for local validation. It is not Developer ID signed or notarized for public distribution.\n',
+  '# Daban local macOS ARM64 build\n\nOpen Daban.app. The environment and Electron are included; no separate Docker, Node or DSH installation is needed. Configure the official model connection after local setup.\n\nThis development build is ad-hoc signed for local validation. It is not Developer ID signed or notarized for public distribution.\n',
 );
 console.log(
   JSON.stringify({

@@ -330,7 +330,7 @@ export function runtimeError(error: unknown) {
     INTERACTION_CONFLICT: '这个请求已有另一份回复，请刷新后查看。',
     INTERACTION_NOT_FOUND: '未找到对应任务的请求，请刷新后查看。',
     INVALID_BOT_PROFILE: '资料参数无效，请检查名称、职责和偏好。',
-    INVALID_BOT_BUNDLE: '无法识别这个 Bot 导出包，请使用完整的 daban UTF-8 JSON 文件。',
+    INVALID_BOT_BUNDLE: '无法识别这个 Bot 导出包，请使用完整的 Daban UTF-8 JSON 文件。',
     BOT_BUNDLE_LIMIT: '导出包超过 100 MiB，请减少所选资料或原件。',
     INVALID_BOT_IMPORT_ACK: '回执与这次导入不匹配，已有内容保留，请重新核对。',
     BOT_IMPORT_ID_REUSED: '这次操作已绑定另一份内容，请选择原文件，或先取消这次导入。',

@@ -217,7 +217,7 @@ export function Sidebar({
       <aside className={`sidebar ${open ? 'open' : ''}`} aria-label="侧栏">
         <header className="sidebar-brand">
           <Brand />
-          <span className="wordmark">daban</span>
+          <span className="wordmark">Daban</span>
           <span className="brand-beta">preview</span>
           <span className="spacer" />
           <IconButton label="新建 Bot" onClick={() => onCreate()}>

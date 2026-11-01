@@ -22,7 +22,7 @@ import '../src/styles.css';
 const query = new URLSearchParams(location.search);
 const mode = query.get('mode') ?? 'normal';
 const groupMode = query.get('kind') === 'group';
-if (groupMode) document.title = 'daban · 合成群聊复制验收';
+if (groupMode) document.title = 'Daban · 合成群聊复制验收';
 let seed = initialState();
 if (groupMode && mode === 'many') {
   for (const [id, name] of [

@@ -75,7 +75,7 @@ app
       height: 860,
       minWidth: 920,
       minHeight: 640,
-      title: 'daban · 浏览器合成验收',
+      title: 'Daban · 浏览器合成验收',
       webPreferences: {
         preload: join(root, 'dist-electron', 'preload.cjs'),
         contextIsolation: true,

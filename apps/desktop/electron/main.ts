@@ -5,7 +5,7 @@ import { noticeIpc } from './notification-ipc';
 import { Notifications } from './notifications';
 import { runtimeService } from './service';
 
-app.setName('daban');
+app.setName('Daban');
 app.setPath('userData', join(app.getPath('appData'), 'daban-preview'));
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
@@ -26,7 +26,7 @@ app.on('ready', (_event, launchInfo) => {
 
 function createWindow() {
   const window = new BrowserWindow({
-    title: 'daban',
+    title: 'Daban',
     icon: join(__dirname, '..', 'dist', 'app-icon.png'),
     width: 1380,
     height: 860,
@@ -70,7 +70,7 @@ function createWindow() {
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.loadFile(join(__dirname, '..', 'dist', 'index.html')).catch((error) => {
     dialog.showErrorBox(
-      'daban 启动失败',
+      'Daban 启动失败',
       app.isPackaged
         ? '客户端文件无法载入，请重新获取完整安装包。已保存的任务和文件不会被清除。'
         : `无法载入客户端界面。请先运行 npm run build。\n${error.message}`,
@@ -151,8 +151,8 @@ if (primary) {
       await service.connect();
     })
     .catch(() => {
-      console.error('daban initialization failed');
-      dialog.showErrorBox('daban 启动失败', '请重新打开客户端；已保存的任务和文件不会被清除。');
+      console.error('Daban initialization failed');
+      dialog.showErrorBox('Daban 启动失败', '请重新打开客户端；已保存的任务和文件不会被清除。');
     });
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

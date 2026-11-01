@@ -287,9 +287,9 @@ it('suppresses only muted private results and requests, retains group notices, a
     await owner.observe(snapshot, scope);
     expect(mock.native).toHaveLength(3);
     expect(mock.native.map((item) => item.options.title)).toEqual([
-      'daban · 任务需要检查',
-      'daban · 协作已完成',
-      'daban · 需要你的回答',
+      'Daban · 任务需要检查',
+      'Daban · 协作已完成',
+      'Daban · 需要你的回答',
     ]);
     await owner.invoke({
       type: 'bot.configure',

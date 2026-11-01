@@ -252,7 +252,7 @@ export function ImportBot({
   return (
     <Dialog title="导入 Bot" onClose={close}>
       <p className="dialog-description">
-        从 daban 导出包创建独立的新 Bot。连接设置、聊天和登录不迁移；所含技能说明不会自动启用。
+        从 Daban 导出包创建独立的新 Bot。连接设置、聊天和登录不迁移；所含技能说明不会自动启用。
       </p>
       {!available && (
         <p className="form-error" role="alert">

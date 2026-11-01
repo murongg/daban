@@ -232,10 +232,10 @@ export function Settings({
       description: '版本信息与后续计划。',
       content: (
         <div className="settings-section">
-          <h2>关于 daban</h2>
+          <h2>关于 Daban</h2>
           <div className="setting-row">
             <div>
-              <div className="setting-label">daban</div>
+              <div className="setting-label">Daban</div>
               <p className="setting-description">你的 AI 工作伙伴。</p>
             </div>
             <span className="muted">
