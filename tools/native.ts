@@ -1,7 +1,9 @@
+import { spawnSync } from 'node:child_process';
 import { constants } from 'node:fs';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export async function packageNative(
   directory: string,
@@ -62,4 +64,32 @@ export async function packageNative(
       '',
     ].join('\n'),
   );
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const requireDesktop = createRequire(new URL('../apps/desktop/package.json', import.meta.url));
+  const mode = process.argv[2];
+  if (mode === 'transport') {
+    const executable: unknown = requireDesktop('electron');
+    if (typeof executable !== 'string') throw new Error('ELECTRON_EXECUTABLE_UNAVAILABLE');
+    const result = spawnSync(
+      executable,
+      ['--test', 'packages/engine/dist/private-channel.test.js'],
+      {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        stdio: 'inherit',
+        timeout: 45000,
+      },
+    );
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
+  } else if (mode === 'abi') {
+    const name =
+      process.platform === 'win32' ? '@computer-use/libnut-win32' : '@computer-use/libnut-darwin';
+    const value: unknown = requireDesktop(name);
+    for (const method of ['moveMouse', 'keyTap', 'typeString', 'getActiveWindow'])
+      if (!value || typeof value !== 'object' || typeof Reflect.get(value, method) !== 'function')
+        throw new Error('NATIVE_DRIVER_ABI_UNAVAILABLE');
+    console.log('Native module exports verified; no desktop input performed.');
+  } else throw new Error('Usage: tools/native.ts <transport|abi>');
 }
