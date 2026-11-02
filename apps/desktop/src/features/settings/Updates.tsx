@@ -61,10 +61,11 @@ export function UpdatesPanel({
     setError('');
     try {
       await command({ type });
-      if (type === 'install') setConfirm(false);
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
       setError(t(errors[code as UpdateError] ?? 'updates.installFailed'));
+    } finally {
+      if (type === 'install') setConfirm(false);
     }
   };
   return (

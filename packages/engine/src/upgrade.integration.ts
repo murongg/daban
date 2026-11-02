@@ -16,7 +16,7 @@ test('authenticated idle-only handoff fences all later admissions without cancel
   const scope = createHash('sha256').update(root).digest('hex');
   const socketPath =
     process.platform === 'win32'
-      ? `\\\\.\\pipe\\daban-update-${scope.slice(0, 24)}`
+      ? `\\\\.\\pipe\\daban-agent-${scope.slice(0, 24)}`
       : path.join(root, 'a.sock');
   let requested = 0;
   const options = {

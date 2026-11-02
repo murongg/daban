@@ -21,7 +21,7 @@ test('the real host CLI exits cleanly after an authenticated idle update handoff
     .digest('hex');
   const socketPath =
     process.platform === 'win32'
-      ? `\\\\.\\pipe\\daban-update-cli-${scope.slice(0, 24)}`
+      ? `\\\\.\\pipe\\daban-agent-${scope.slice(0, 24)}`
       : path.join(root, 'a.sock');
   const child = spawn(
     process.execPath,

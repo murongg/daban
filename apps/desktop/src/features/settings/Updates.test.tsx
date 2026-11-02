@@ -93,3 +93,17 @@ it('cannot check or install updates in a plain browser preview', () => {
   expect(screen.queryByRole('button', { name: '检查更新' })).not.toBeInTheDocument();
   expect(screen.getByText(/网页预览/)).toBeVisible();
 });
+
+it('returns to the update card and exposes a busy-host rejection after confirmation', async () => {
+  const live = fixture({ phase: 'downloaded', version: '1.0.0', nextVersion: '1.1.0' });
+  render(
+    <UpdateProvider>
+      <UpdatesPanel />
+    </UpdateProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '重启并安装' }));
+  live.invoke.mockRejectedValueOnce(Error('AGENT_UPDATE_BUSY'));
+  await userEvent.click(screen.getByRole('button', { name: '已保存，重启安装' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(screen.getByRole('alert')).toHaveTextContent('后台仍有任务');
+});
