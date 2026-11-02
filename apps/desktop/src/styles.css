@@ -245,7 +245,7 @@ textarea.field {
   flex-direction: column;
   z-index: 30;
 }
-.sidebar-brand {
+.sidebar-header {
   min-height: 70px;
   display: flex;
   align-items: center;
@@ -257,17 +257,6 @@ textarea.field {
   height: 28px;
   object-fit: contain;
   flex-shrink: 0;
-}
-.wordmark {
-  font-size: 23px;
-  letter-spacing: -0.8px;
-  line-height: 1;
-  font-weight: 650;
-}
-.brand-beta {
-  color: var(--muted);
-  font-size: 10px;
-  margin-top: 8px;
 }
 .search-wrap {
   position: relative;
@@ -603,16 +592,17 @@ textarea.field {
   place-items: center;
   width: 34px;
   height: 34px;
-  background: var(--soft);
-  border-radius: 10px;
-}
-.local-icon svg {
-  width: 17px;
-  height: 17px;
-  stroke-width: 1.6;
+  flex-shrink: 0;
 }
 .workspace-name {
   font-size: 12px;
+}
+.workspace-info {
+  min-width: 0;
+}
+.workspace-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .demo-label {
   white-space: nowrap;
@@ -625,6 +615,7 @@ textarea.field {
 }
 .status-dot {
   display: inline-block;
+  flex-shrink: 0;
   width: 5px;
   height: 5px;
   background: var(--muted);
@@ -2741,7 +2732,7 @@ textarea.skill-source {
   .sidebar {
     width: 246px;
   }
-  .sidebar-brand {
+  .sidebar-header {
     padding-left: 20px;
   }
   .workspace {
@@ -2922,24 +2913,11 @@ textarea.skill-source {
   }
 }
 
-/* Reserve macOS traffic lights in Electron without placing duplicate window controls in the renderer. */
-.app[data-desktop="darwin"] .sidebar-brand {
-  padding-left: 97px;
-  padding-right: 16px;
-  gap: 6px;
-}
-.app[data-desktop="darwin"] .sidebar-brand .brand-mark {
-  width: 24px;
-  height: 24px;
-}
-.app[data-desktop="darwin"] .sidebar-brand .brand-beta {
-  display: none;
-}
-.app[data-desktop] .sidebar-brand,
+.app[data-desktop] .sidebar-header,
 .app[data-desktop] .chat-header {
   -webkit-app-region: drag;
 }
-.app[data-desktop] .sidebar-brand button,
+.app[data-desktop] .sidebar-header button,
 .app[data-desktop] .chat-header button {
   -webkit-app-region: no-drag;
 }

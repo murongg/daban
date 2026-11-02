@@ -48,7 +48,8 @@ let snapshot = previewSnapshot(query.get('mode') === 'legacy' ? 33 : undefined);
 snapshot.model = {
   ...snapshot.model,
   available: true,
-  configured: false,
+  // Bypass first-run setup in this scene; the synthetic bridge never calls a model.
+  configured: true,
   provider: 'deepseek-official',
   model: 'deepseek-flash',
   revision: 0,

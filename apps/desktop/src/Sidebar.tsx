@@ -7,7 +7,6 @@ import {
   Copy,
   FolderPlus,
   Inbox,
-  Laptop,
   ListTodo,
   Mail,
   MailOpen,
@@ -222,10 +221,7 @@ export function Sidebar({
     <>
       {open && <div className="sidebar-scrim" onClick={close} aria-hidden="true" />}
       <aside className={`sidebar ${open ? 'open' : ''}`} aria-label={t('sidebar.sidebar')}>
-        <header className="sidebar-brand">
-          <Brand />
-          <span className="wordmark">Daban</span>
-          <span className="brand-beta">preview</span>
+        <header className="sidebar-header">
           <span className="spacer" />
           <IconButton label={t('common.newBot')} onClick={() => onCreate()}>
             <Plus />
@@ -446,21 +442,23 @@ export function Sidebar({
           )}
           <div className="local-workspace">
             <span className="local-icon">
-              <Laptop />
+              <Brand />
             </span>
-            <div>
+            <div className="workspace-info">
               <div className="workspace-name">{t('sidebar.localWorkspace')}</div>
               <div className="demo-label">
                 <span className="status-dot" />
-                {runtime.enabled
-                  ? runtime.snapshot.phase === 'ready'
-                    ? runtime.snapshot.agent?.execution === 'local-workspace'
-                      ? t('localComputer.workspace')
-                      : t('sidebar.linuxConnectedRunningLocally')
-                    : runtime.snapshot.phase === 'connecting'
-                      ? t('sidebar.startingLinux')
-                      : t('sidebar.runtimeDisconnected')
-                  : t('sidebar.uiDemoSavedLocally')}
+                <span className="workspace-status">
+                  {runtime.enabled
+                    ? runtime.snapshot.phase === 'ready'
+                      ? runtime.snapshot.agent?.execution === 'local-workspace'
+                        ? t('localComputer.workspace')
+                        : t('sidebar.linuxConnectedRunningLocally')
+                      : runtime.snapshot.phase === 'connecting'
+                        ? t('sidebar.startingLinux')
+                        : t('sidebar.runtimeDisconnected')
+                    : t('sidebar.uiDemoSavedLocally')}
+                </span>
               </div>
             </div>
             <span className="spacer" />
