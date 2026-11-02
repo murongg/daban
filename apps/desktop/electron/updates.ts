@@ -103,7 +103,9 @@ export class Updates {
   }
   private failed(error: unknown) {
     const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-    if (code === 'ERR_UPDATER_LATEST_VERSION_NOT_FOUND') {
+    if (
+      ['ERR_UPDATER_LATEST_VERSION_NOT_FOUND', 'ERR_UPDATER_NO_PUBLISHED_VERSIONS'].includes(code)
+    ) {
       this.set({ phase: 'unpublished', error: undefined });
       return;
     }

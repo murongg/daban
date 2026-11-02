@@ -124,3 +124,12 @@ it('keeps download failures retryable even when the driver also emits its error 
   await owner.invoke({ type: 'download' });
   expect(owner.status()).toMatchObject({ phase: 'available', error: 'UPDATE_DOWNLOAD_FAILED' });
 });
+
+it('distinguishes an empty release feed from a failed check', async () => {
+  const { owner, events } = fixture();
+  events.emit(
+    'error',
+    Object.assign(Error('synthetic empty feed'), { code: 'ERR_UPDATER_NO_PUBLISHED_VERSIONS' }),
+  );
+  expect(owner.status().phase).toBe('unpublished');
+});

@@ -317,6 +317,7 @@ try {
       maxRetries: 5,
       retryDelay: 200,
     });
+    await rm(path.join(homedir(), 'Library/Caches', id), { recursive: true, force: true });
   }
   await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
