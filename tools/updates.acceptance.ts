@@ -305,7 +305,8 @@ try {
     } catch {}
   }
   if (cache && path.basename(cache) === path.basename(temporary))
-    await rm(cache, { recursive: true, force: true });
+    // NSIS may still be returning after the relaunched app writes its success receipt.
+    await rm(cache, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   if (process.platform === 'darwin') {
     await run('/bin/launchctl', ['bootout', `gui/${process.getuid?.()}/${id}.ShipIt`]).catch(
       () => undefined,
@@ -319,5 +320,5 @@ try {
     });
     await rm(path.join(homedir(), 'Library/Caches', id), { recursive: true, force: true });
   }
-  await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  await rm(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 }
