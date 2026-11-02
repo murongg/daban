@@ -67,6 +67,7 @@ import {
   isRecoveryReview,
   isRecoveryStatus,
   isReplyStream,
+  isRunInsert,
   isRunTurn,
   isRuntimeDownload,
   isRuntimeNoticeStatus,
@@ -193,6 +194,9 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     outputDirectory: task.outputDirectory,
     trace: task.trace || [],
     ...(Array.isArray(task.turns) && task.turns.every(isRunTurn) ? { turns: task.turns } : {}),
+    ...(Array.isArray(task.inserts) && task.inserts.every(isRunInsert)
+      ? { inserts: task.inserts }
+      : {}),
     history: (task.history || []).map((item) => ({
       chatRevision: item.chatRevision,
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),

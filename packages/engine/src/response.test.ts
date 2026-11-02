@@ -101,9 +101,15 @@ test('response snapshots commit before publication, reject stale/foreign data an
     await f.start('mock-b');
     await f.update('mock-a', 1, '合成回答甲');
     assert.equal(f.models.status().bots['mock-a'].response?.text, '合成回答甲');
+    // Every accepted stream is attributed to the turn that produced it, not inferred by the renderer.
+    assert.equal(f.models.status().bots['mock-a'].response?.turnId, 'mock-request-mock-a');
     assert.equal(
       f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.text,
       '合成回答甲',
+    );
+    assert.equal(
+      f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.turnId,
+      'mock-request-mock-a',
     );
     await f.update('mock-a', 3, '合成最新回答');
     await f.update('mock-a', 2, '过期内容');

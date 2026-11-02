@@ -740,8 +740,23 @@ export class ModelRuns {
       const job: ModelJob = {
         chatRevision: latest.chatRevision,
         conversationId: latest.conversationId,
-        inserts: [],
+        // Saved turns and accepted inserts are what "continue" resumes; replaying only the original prompt would redo finished work.
+        inserts: latest.kind === 'chat' ? (latest.inserts ?? []) : [],
         insertWrites: new Map(),
+        turns:
+          latest.kind === 'chat'
+            ? latest.turns?.length
+              ? latest.turns
+              : latest.prompt
+                ? [
+                    {
+                      id: latest.requestId || latest.runId,
+                      prompt: latest.prompt,
+                      result: latest.result || '',
+                    },
+                  ]
+                : undefined
+            : undefined,
         model:
           latest.sessionModel === undefined
             ? model
@@ -972,6 +987,7 @@ export class ModelRuns {
       verified: job.verification.passed,
       history: this.history(job.bot),
       ...(job.turns?.length ? { turns: job.turns } : {}),
+      ...(job.inserts.length ? { inserts: job.inserts } : {}),
     };
   }
   status() {
@@ -1946,7 +1962,12 @@ export class ModelRuns {
       const { sessionId, ...response } = rpc.params || {};
       if (!job.task || sessionId !== job.sessionId || !isReplyStream(response))
         throw new Fault('INVALID_RESPONSE', 400);
-      await this.persist(job, { ...response, text: job.redactResponse!(response.text) });
+      const turnId = job.turns?.at(-1)?.id;
+      await this.persist(job, {
+        ...response,
+        ...(turnId ? { turnId } : {}),
+        text: job.redactResponse!(response.text),
+      });
       result = {
         accepted: job.response?.revision === response.revision,
         revision: job.response?.revision || 0,

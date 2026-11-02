@@ -1301,6 +1301,8 @@ export interface RuntimeTask {
   trace: TaskTrace[];
   history: RuntimeTaskSummary[];
   turns?: RunTurn[];
+  // Accepted inserts that have no turn yet; an unstarted one can be queued again without replaying work.
+  inserts?: RunInsert[];
 }
 export interface RuntimeTaskSummary {
   chatRevision?: number;
@@ -2622,15 +2624,18 @@ export interface ReplyStream {
   revision: number;
   text: string;
   state: 'streaming' | 'settled';
+  // The turn that produced this prefix; older turns' text must not render as the current turn's reply.
+  turnId?: string;
 }
 export function isReplyStream(value: unknown): value is ReplyStream {
   return (
     profileObject(value) &&
-    exactKeys(value, ['revision', 'text', 'state']) &&
+    exactKeys(value, ['revision', 'text', 'state', 'turnId']) &&
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) > 0 &&
     boundedText(value.text, replyLimit, true) &&
-    ['streaming', 'settled'].includes(String(value.state))
+    ['streaming', 'settled'].includes(String(value.state)) &&
+    (value.turnId === undefined || validAgentId(value.turnId))
   );
 }
 export interface UserQuestion {

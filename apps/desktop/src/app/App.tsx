@@ -53,6 +53,7 @@ import type { BotPreset } from '../features/bots/presets';
 import { ChatHistory } from '../features/chat/ChatHistory';
 import { Conversation } from '../features/chat/Conversation';
 import { NewChat } from '../features/chat/NewChat';
+import { pendingInserts } from '../features/chat/response';
 import { Computer, type ComputerSurface } from '../features/computer/Computer';
 import { Desktop } from '../features/computer/Desktop';
 import { Recovery, RecoveryNotice } from '../features/computer/Recovery';
@@ -489,15 +490,26 @@ function Workbench() {
     if (!task?.runId || task.conversationId || !task.prompt || task.running) return;
     // An inserted turn that failed keeps no reply; continuing must resume that turn, not replay finished work.
     const unfinished = [...(task.turns || [])].reverse().find((turn) => !turn.result);
-    await runTask(botId, {
+    // Inserts accepted after it never started; they stay visible in the chat and rejoin the queue for delivery.
+    const waiting = pendingInserts(task).filter((insert) => !insert.started);
+    const prompt = unfinished?.prompt ?? waiting.shift()?.text ?? task.prompt;
+    if (!prompt) return;
+    const result = await runTask(botId, {
       requestId: crypto.randomUUID(),
-      prompt: unfinished?.prompt || task.prompt,
+      prompt,
       retryOf: task.runId,
       ...(runtime.snapshot.protocolVersion >= 29
         ? { chatRevision: task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats) }
         : {}),
       ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
     });
+    // Only an accepted continuation may hand the unstarted inserts to the queue; otherwise they stay visible here.
+    if (result.outcome === 'started' && waiting.length)
+      dispatch({
+        type: 'queue-restore',
+        bot: botId,
+        tasks: waiting.map((insert) => ({ id: insert.id, prompt: insert.text, files: [] })),
+      });
   }
   function queueTask(botId: string) {
     const entry = state.bots.find((bot) => bot.id === botId);

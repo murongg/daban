@@ -300,6 +300,11 @@ export function recoveryContext(records: TaskRecord[], owner: RecoveryOwner, max
     const items: (typeof envelope.recent)[number][] = [];
     if (turns) {
       // Each inserted follow-up turn is its own request and answer, so keep all of them in the recovery context.
+      const response = isReplyStream(row.response) ? row.response : undefined;
+      // An explicit turn id keeps a late previous-turn prefix from being reported as the newest turn's work.
+      const partialTurn = response?.turnId
+        ? turns.findIndex((turn) => turn.id === response.turnId)
+        : -1;
       for (const [index, turn] of turns.entries()) {
         const latest = index === turns.length - 1;
         const item: (typeof envelope.recent)[number] = {
@@ -309,8 +314,11 @@ export function recoveryContext(records: TaskRecord[], owner: RecoveryOwner, max
           request: excerpt(row, 'prompt', turn.prompt, limit, index),
         };
         if (turn.result) item.answer = excerpt(row, 'result', turn.result, limit, index);
-        if (latest && row.phase !== 'completed' && isReplyStream(row.response))
-          item.partial = excerpt(row, 'partial', row.response.text, limit, index);
+        if (
+          response?.text &&
+          (partialTurn >= 0 ? index === partialTurn : latest && row.phase !== 'completed')
+        )
+          item.partial = excerpt(row, 'partial', response.text, limit, index);
         if (latest && typeof row.error === 'string' && row.error)
           item.error = excerpt(row, 'error', row.error, limit, index);
         items.push(item);

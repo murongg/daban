@@ -2,6 +2,7 @@ import type {
   BrowserState,
   ModelId,
   ReplyStream,
+  RunInsert,
   RunTurn,
   RuntimeFile,
   RuntimeTaskSummary,
@@ -40,6 +41,7 @@ export interface RawModelTask {
   verified: boolean;
   trace?: { name: string; surface: string; phase: string; code?: string; at: string }[];
   turns?: RunTurn[];
+  inserts?: RunInsert[];
 }
 export interface LegacySnapshot {
   localComputer?: import('@daban/protocol').LocalComputerStatus;

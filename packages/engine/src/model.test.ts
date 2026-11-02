@@ -654,6 +654,62 @@ test('an accepted insert keeps its text after a restart and is not reported as p
   }
 });
 
+test('a restored task keeps its turns and unstarted inserts so continuing resumes the failed insert', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-continue-'));
+  const bot = 'mock-continue';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  const failed = { id: 'mock-continue-failed', text: 'Synthetic failed insert.' };
+  const waiting = { id: 'mock-continue-waiting', text: 'Synthetic waiting insert.' };
+  const before = await insertFixture(root, {
+    bot,
+    prompts,
+    ...gates,
+    failOn: (prompt) => prompt === failed.text,
+  });
+  let runId = '';
+  try {
+    await before.start(bot, {
+      requestId: 'mock-continue-first',
+      prompt: 'Synthetic original request.',
+    });
+    await gates.started;
+    runId = before.jobs.get(bot)!.id;
+    // Both inserts are accepted before the original turn returns, so the second is still unstarted when the first fails.
+    for (const insert of [failed, waiting])
+      assert.deepEqual(await before.insert(bot, { ...insert, runId, chatRevision: 0 }), {
+        ok: true,
+        id: insert.id,
+      });
+    gates.release();
+    await before.jobs.get(bot)!.done;
+    assert.equal(before.jobs.get(bot)!.phase, 'failed');
+  } finally {
+    await before.close();
+  }
+  const restarted = await insertFixture(root, { bot, prompts: [], ...insertGates() });
+  try {
+    const job = restarted.jobs.get(bot)!;
+    assert.deepEqual(
+      job.turns?.map((turn) => [turn.id, turn.prompt, turn.result]),
+      [
+        ['mock-continue-first', 'Synthetic original request.', 'Synthetic first reply.'],
+        [failed.id, failed.text, ''],
+      ],
+    );
+    assert.deepEqual(job.inserts, [
+      { ...failed, done: false, started: true },
+      { ...waiting, done: false },
+    ]);
+    const exposed = restarted.status().bots[bot];
+    assert.deepEqual(exposed.turns, job.turns);
+    assert.deepEqual(exposed.inserts, job.inserts);
+  } finally {
+    await restarted.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('an insert that began before the model failed is never reported as unattempted', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-begun-'));
   const bot = 'mock-begun';

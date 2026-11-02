@@ -344,6 +344,7 @@ export type Action =
   | { type: 'control'; bot: string; owner: Owner }
   | { type: 'draft'; bot: string; text: string }
   | { type: 'queue-add'; bot: string; task: QueuedTask }
+  | { type: 'queue-restore'; bot: string; tasks: QueuedTask[] }
   | { type: 'queue-edit'; bot: string; id: string }
   | { type: 'queue-remove'; bot: string; id: string }
   | { type: 'queue-promote'; bot: string; id: string }
@@ -1018,6 +1019,25 @@ export function reduce(state: State, action: Action): State {
         },
         drafts: { ...state.drafts, [action.bot]: '' },
         attachments: { ...state.attachments, [action.bot]: [] },
+      };
+    }
+    case 'queue-restore': {
+      // Recovered inserts rejoin the queue untouched: the composer's draft and attachments belong to the user's next message.
+      const queue = messageQueue(state, action.bot);
+      const known = new Set(queue.map((item) => item.id));
+      const restored = action.tasks
+        .filter((task) => task.id && task.prompt.trim() && !known.has(task.id))
+        .slice(0, Math.max(0, messageQueueLimit - queue.length));
+      if (!restored.length) return state;
+      return {
+        ...state,
+        queued: {
+          ...state.queued,
+          [action.bot]: [
+            ...queue,
+            ...restored.map((task) => ({ ...task, prompt: task.prompt.trim() })),
+          ],
+        },
       };
     }
     case 'queue-verify': {

@@ -243,6 +243,10 @@ it('continues the unfinished inserted turn instead of replaying completed work',
         { id: 'mock-turn-request', prompt: '合成原始请求', result: '合成原始回复' },
         { id: 'mock-turn-inserted', prompt: '合成失败的插话', result: '' },
       ],
+      inserts: [
+        { id: 'mock-turn-inserted', text: '合成失败的插话', done: false, started: true },
+        { id: 'mock-turn-waiting', text: '合成待执行插话', done: false },
+      ],
     },
   };
   const invoke = vi.fn(async (command: RuntimeCommand) => ({
@@ -271,6 +275,9 @@ it('continues the unfinished inserted turn instead of replaying completed work',
     bot: 'a',
     task: { prompt: '合成失败的插话', retryOf: 'mock-turn-run' },
   });
+  // The accepted insert that never started rejoins the queue instead of being stranded in the old record.
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  expect(within(queue).getByText('合成待执行插话')).toBeInTheDocument();
 });
 it('keeps the draft editable after an explicit task validation rejection', async () => {
   const snapshot = disconnected('ready');
