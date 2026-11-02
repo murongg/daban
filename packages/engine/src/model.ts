@@ -8,6 +8,7 @@ import type {
   BotProfile,
   ModelId,
   ReplyStream,
+  RunInsert,
   RunTurn,
   RuntimeFile,
   RuntimeTaskSummary,
@@ -28,6 +29,7 @@ import {
   isTaskPlan,
   modelHasVision,
   replyLimit,
+  turnLimit,
   validAgentId,
 } from '@daban/protocol';
 import { AgentTools } from './agent-tools.js';
@@ -71,6 +73,7 @@ import {
   type ConversationScope,
   type DocumentInput,
   type RunReceipt,
+  recordLimit,
   TaskJournal,
   type TaskRecord,
   taskActivity,
@@ -457,8 +460,8 @@ interface ModelJob extends ToolRun {
   done?: Promise<unknown>;
   stopReason?: string;
   task?: TaskRequest;
-  insertions?: { id: string; text: string }[];
-  inserted?: Set<string>;
+  inserts: RunInsert[];
+  insertWrites: Set<Promise<InsertReceipt>>;
   insertable?: boolean;
   turns?: RunTurn[];
   requestId: string;
@@ -473,6 +476,10 @@ interface ModelJob extends ToolRun {
     text?: string;
     expected?: Record<string, number | undefined>;
   };
+}
+interface InsertReceipt {
+  ok: boolean;
+  id: string;
 }
 interface Rpc {
   id?: string | number;
@@ -717,6 +724,8 @@ export class ModelRuns {
       const job: ModelJob = {
         chatRevision: latest.chatRevision,
         conversationId: latest.conversationId,
+        inserts: [],
+        insertWrites: new Set(),
         model:
           latest.sessionModel === undefined
             ? model
@@ -891,7 +900,7 @@ export class ModelRuns {
       const size = Buffer.byteLength(JSON.stringify(item));
       // Whole records stay intact; reduce page size instead of silently clipping an old answer.
       if (items.length && (items.length >= 20 || bytes + size > 1024 * 1024)) break;
-      if (size > 1024 * 1024) throw new Fault('CHAT_HISTORY_TOO_LARGE');
+      if (size > recordLimit) throw new Fault('CHAT_HISTORY_TOO_LARGE');
       items.push(item);
       bytes += size;
     }
@@ -987,17 +996,19 @@ export class ModelRuns {
       !job.conversationId &&
       (job.chatRevision ?? 0) === input.chatRevision
     ) {
-      job.inserted ??= new Set<string>();
-      if (job.inserted.has(input.id)) return { ok: true, id: input.id };
+      const accepted = job.inserts.find((item) => item.id === input.id);
+      if (accepted?.done) return { ok: true, id: input.id };
       if (!job.running || job.abort.signal.aborted || !job.insertable)
         throw new Fault('MODEL_NOT_RUNNING', 409);
-      job.insertions ??= [];
-      if (job.insertions.length >= 20) throw new Fault('MODEL_INSERT_FULL', 429);
-      job.inserted.add(input.id);
-      job.insertions.push({ id: input.id, text: input.text });
-      // The durable receipt makes a retried request idempotent after the response is lost.
-      await this.persist(job);
-      return { ok: true, id: input.id };
+      // A retried request must share the outcome of the first write, never answer from an unpersisted intent.
+      if (accepted) return this.durableInsert(job, accepted);
+      const turns = job.turns || [];
+      const waiting = job.inserts.filter(
+        (item) => !item.done && !turns.some((turn) => turn.id === item.id),
+      ).length;
+      // The original request is a turn too, so acceptance, storage and history share one bound.
+      if (turns.length + waiting >= turnLimit) throw new Fault('MODEL_INSERT_FULL', 429);
+      return this.durableInsert(job, { id: input.id, text: input.text, done: false });
     }
     const saved = await this.journal.read(bot, input.runId);
     if (
@@ -1007,8 +1018,21 @@ export class ModelRuns {
       (saved.chatRevision ?? 0) !== input.chatRevision
     )
       throw new Fault('TASK_INSERT_STALE', 409);
-    if ((saved.inserts || []).includes(input.id)) return { ok: true, id: input.id };
+    // Only a turn that actually ran is a receipt; an insert a restart never processed must be sent again.
+    const receipt = (saved.inserts || []).find((item) => item.id === input.id);
+    if (receipt?.done) return { ok: true, id: input.id };
     throw new Fault('MODEL_NOT_RUNNING', 409);
+  }
+  private durableInsert(job: ModelJob, insert: RunInsert) {
+    if (!job.inserts.includes(insert)) job.inserts.push(insert);
+    const receipt = this.persist(job).then(() => ({ ok: true, id: insert.id }));
+    job.insertWrites.add(receipt);
+    receipt.catch(() => {
+      job.insertWrites.delete(receipt);
+      // A failed write leaves no acceptance behind, so the same request can be retried or requeued.
+      if (!insert.done) job.inserts.splice(job.inserts.indexOf(insert), 1);
+    });
+    return receipt;
   }
   reviewModel(bot: string, runId: string) {
     const job = this.jobs.get(bot);
@@ -1096,7 +1120,7 @@ export class ModelRuns {
         createdAt: job.createdAt,
         inputs: job.inputs,
         files: job.files,
-        ...(job.inserted?.size ? { inserts: [...job.inserted] } : {}),
+        ...(job.inserts.length ? { inserts: job.inserts } : {}),
         ...(job.turns?.length ? { turns: job.turns } : {}),
       };
       const safe = JSON.parse(
@@ -1229,8 +1253,8 @@ export class ModelRuns {
       intentId: intentId || id,
       requestId: task?.requestId || id,
       task,
-      insertions: [],
-      inserted: new Set(),
+      inserts: [],
+      insertWrites: new Set(),
       insertable: true,
       fingerprint,
       token: randomBytes(32).toString('hex'),
@@ -1567,14 +1591,33 @@ export class ModelRuns {
                   ['completed', 'failed', 'stopped', 'interrupted'].includes(item.phase),
               )
               .slice(-3)
-              .map((item) => ({
-                request: item.prompt.slice(0, 800),
-                status: item.phase,
-                answer: item.phase === 'completed' ? item.result.slice(0, 1500) : undefined,
-                unfinished:
-                  item.phase !== 'completed' ? item.response?.text.slice(0, 1500) : undefined,
-                files: (item.files || []).slice(0, 4).map((file) => file.path),
-              }));
+              // A saved task can hold inserted follow-up turns; each one is its own request and answer.
+              .flatMap((item) => {
+                const turns = item.turns?.length
+                  ? item.turns
+                  : [
+                      {
+                        id: item.requestId || item.runId,
+                        prompt: item.prompt,
+                        result: item.result,
+                      },
+                    ];
+                return turns.map((turn, index) => {
+                  const last = index === turns.length - 1;
+                  return {
+                    request: turn.prompt.slice(0, 800),
+                    status: last ? item.phase : 'completed',
+                    answer: turn.result ? turn.result.slice(0, 1500) : undefined,
+                    unfinished:
+                      last && !turn.result && item.phase !== 'completed'
+                        ? item.response?.text.slice(0, 1500)
+                        : undefined,
+                    files:
+                      index === 0 ? (item.files || []).slice(0, 4).map((file) => file.path) : [],
+                  };
+                });
+              })
+              .slice(-6);
         // Old desktop-only system prompts are incompatible; preserve bounded conversation data without replaying their instructions.
         job.prompt =
           taskPrompt(
@@ -1624,14 +1667,16 @@ export class ModelRuns {
         if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
         if (job.turns?.[0]) job.turns[0].result = complete(result.finalResponse);
         // Messages inserted while the task runs become follow-up turns in the same native session.
-        while (job.insertions?.length) {
-          const insertion = job.insertions.shift()!;
-          const turn: RunTurn = { id: insertion.id, prompt: insertion.text, result: '' };
+        let pending = job.inserts.find((item) => !item.done);
+        while (pending) {
+          const turn: RunTurn = { id: pending.id, prompt: pending.text, result: '' };
           job.turns?.push(turn);
-          result = await session.run(insertion.text, observe);
+          result = await session.run(pending.text, observe);
           if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
           turn.result = complete(result.finalResponse);
+          pending.done = true;
           await this.persist(job);
+          pending = job.inserts.find((item) => !item.done);
         }
         job.insertable = false;
         job.sessionId = result.sessionId;

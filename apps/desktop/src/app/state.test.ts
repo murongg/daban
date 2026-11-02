@@ -970,6 +970,53 @@ it('returns an edited queued message to the composer with its attachments', () =
   expect(state.drafts[bot.id]).toBe('SYNTHETIC EXISTING DRAFT\nSYNTHETIC EDIT MESSAGE');
   expect(state.attachments[bot.id]).toEqual([file.id]);
 });
+it('keeps a queued message and the draft when merging its attachments would exceed the limit', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const queuedFile = attachment('synthetic-overflow.txt', 'SYNTHETIC QUEUED FILE');
+  state = reduce(state, { type: 'attach', bot: bot.id, file: queuedFile });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC QUEUED' });
+  const queued = {
+    id: 'synthetic-overflow-message',
+    prompt: 'SYNTHETIC QUEUED',
+    files: [queuedFile.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  for (let index = 0; index < 4; index++)
+    state = reduce(state, {
+      type: 'attach',
+      bot: bot.id,
+      file: attachment(`synthetic-draft-${index}.txt`, `SYNTHETIC DRAFT ${index}`),
+    });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC DRAFT' });
+  const before = state;
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id })).toBe(before);
+  expect(messageQueue(state, bot.id)).toEqual([queued]);
+  expect(state.drafts[bot.id]).toBe('SYNTHETIC DRAFT');
+  expect(state.attachments[bot.id]).toHaveLength(4);
+});
+it('renames a queued attachment that collides with the draft when editing', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const queuedFile = attachment('report.csv', 'SYNTHETIC QUEUED CSV');
+  state = reduce(state, { type: 'attach', bot: bot.id, file: queuedFile });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC QUEUED' });
+  const queued = {
+    id: 'synthetic-rename-message',
+    prompt: 'SYNTHETIC QUEUED',
+    files: [queuedFile.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  const draftFile = attachment('report.csv', 'SYNTHETIC DRAFT CSV');
+  state = reduce(state, { type: 'attach', bot: bot.id, file: draftFile });
+  state = reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+  expect(state.attachments[bot.id]).toEqual([draftFile.id, queuedFile.id]);
+  const names = state.attachments[bot.id].map(
+    (id) => state.files.find((file) => file.id === id)!.name,
+  );
+  expect(names).toEqual(['report.csv', 'report-2.csv']);
+});
 it('keeps a queued message and the draft when an edit would exceed the length limit', () => {
   let state = initialState();
   const bot = state.bots.find((entry) => entry.id === 'research')!;
@@ -1008,6 +1055,26 @@ it('holds a queued insert until its delivery is verified', () => {
   expect(messageQueue(state, bot.id)[0].verify).toBeUndefined();
   state = reduce(state, { type: 'queue-remove', bot: bot.id, id: item.id });
   expect(messageQueue(state, bot.id)).toEqual([]);
+});
+it('locks a queued message while its automatic send is in flight', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const first = { id: 'synthetic-sending-one', prompt: 'SYNTHETIC SENDING', files: [] };
+  const second = { id: 'synthetic-sending-two', prompt: 'SYNTHETIC WAITING', files: [] };
+  for (const task of [first, second])
+    state = reduce(state, { type: 'queue-add', bot: bot.id, task });
+  state = reduce(state, { type: 'queue-sending', bot: bot.id, id: first.id, sending: true });
+  expect(messageQueue(state, bot.id)[0]).toEqual({ ...first, sending: true });
+  const locked = state;
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: first.id })).toBe(locked);
+  expect(reduce(state, { type: 'queue-remove', bot: bot.id, id: first.id })).toBe(locked);
+  expect(reduce(state, { type: 'queue-insert', bot: bot.id, id: first.id, revision: 0 })).toBe(
+    locked,
+  );
+  state = reduce(state, { type: 'queue-sending', bot: bot.id, id: first.id, sending: false });
+  expect(messageQueue(state, bot.id)).toEqual([first, second]);
+  state = reduce(state, { type: 'queue-remove', bot: bot.id, id: first.id });
+  expect(messageQueue(state, bot.id)).toEqual([second]);
 });
 it('moves a queued message to the front so it is sent next', () => {
   let state = initialState();

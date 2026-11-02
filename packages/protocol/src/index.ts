@@ -1230,11 +1230,28 @@ export function isTranscriptContent(value: unknown): value is TranscriptContent 
     ? value.nextOffset === undefined
     : value.text.length > 0 && value.nextOffset === end;
 }
+// One task is at most this many human turns, counting the original request plus every accepted insert.
+export const turnLimit = 20;
 export interface RunTurn {
   id: string;
   prompt: string;
   result: string;
   error?: string;
+}
+export interface RunInsert {
+  id: string;
+  text: string;
+  done: boolean;
+}
+export function isRunInsert(value: unknown): value is RunInsert {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) => ['id', 'text', 'done'].includes(key)) &&
+    validAgentId(value.id) &&
+    typeof value.text === 'string' &&
+    value.text.length <= 12000 &&
+    typeof value.done === 'boolean'
+  );
 }
 export function isRunTurn(value: unknown): value is RunTurn {
   return (
@@ -1899,7 +1916,9 @@ export function isChatPage(value: unknown): value is ChatPage {
             item.files.every(isRuntimeFileMetadata))) &&
         (item.response === undefined || isReplyStream(item.response)) &&
         (item.turns === undefined ||
-          (Array.isArray(item.turns) && item.turns.length <= 20 && item.turns.every(isRunTurn))),
+          (Array.isArray(item.turns) &&
+            item.turns.length <= turnLimit &&
+            item.turns.every(isRunTurn))),
     )
   );
 }

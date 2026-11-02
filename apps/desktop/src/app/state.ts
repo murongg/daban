@@ -191,6 +191,7 @@ export interface QueuedTask {
   prompt: string;
   files: string[];
   error?: boolean;
+  sending?: boolean;
   verify?: QueuedInsertTarget;
 }
 export interface State {
@@ -236,6 +237,50 @@ export interface State {
 export function messageQueue(state: Pick<State, 'queued'>, bot: string): QueuedTask[] {
   // IDs such as constructor are valid; inherited object properties are never queue state.
   return Object.hasOwn(state.queued, bot) ? state.queued[bot] : [];
+}
+function uniqueFileName(name: string, names: Set<string | undefined>) {
+  const extension = name.lastIndexOf('.');
+  const stem = extension > 0 ? name.slice(0, extension) : name;
+  const suffix = extension > 0 ? name.slice(extension) : '';
+  let candidate = name;
+  // Only rename the input copy: distinct sources must not overwrite each other in the next task.
+  for (let count = 2; names.has(candidate); count++) {
+    const ending = `-${count}${suffix}`;
+    const prefix = Array.from(stem);
+    // Task filenames are limited in UTF-8 bytes; suffixing must preserve whole Unicode characters.
+    while (
+      (prefix.join('') + ending).length > 160 ||
+      new TextEncoder().encode(prefix.join('') + ending).length > 255
+    )
+      prefix.pop();
+    candidate = `${prefix.join('')}${ending}`;
+  }
+  return candidate;
+}
+export function mergeAttachments(
+  attachments: string[],
+  files: WorkspaceFile[],
+  incoming: string[],
+): { attachments: string[]; files: WorkspaceFile[] } | undefined {
+  if (attachments.length + incoming.length > 4) return undefined;
+  const known = new Map(files.map((file) => [file.id, file]));
+  const names = new Set(
+    attachments.map((id) => known.get(id)?.name).filter((name) => name !== undefined),
+  );
+  const merged = new Map<string, WorkspaceFile>();
+  for (const id of incoming) {
+    const file = known.get(id);
+    if (!file || attachments.includes(id) || merged.has(id)) return undefined;
+    const name = uniqueFileName(file.name, names);
+    names.add(name);
+    merged.set(id, name === file.name ? file : { ...file, name });
+  }
+  // Renamed copies replace their entries so the merged IDs send unique task filenames.
+  const renamed = [...merged.values()].filter((file) => file.name !== known.get(file.id)?.name);
+  return {
+    attachments: [...attachments, ...incoming],
+    files: renamed.length ? files.map((file) => merged.get(file.id) ?? file) : files,
+  };
 }
 export function lifecycleRequest(
   state: State,
@@ -303,6 +348,7 @@ export type Action =
   | { type: 'queue-insert'; bot: string; id: string; revision: number }
   | { type: 'queue-verify'; bot: string; id: string; runId: string; chatRevision: number }
   | { type: 'queue-unverify'; bot: string; id: string }
+  | { type: 'queue-sending'; bot: string; id: string; sending: boolean }
   | { type: 'queue-fail'; bot: string; id: string }
   | { type: 'queue-retry'; bot: string; id: string }
   | { type: 'send'; bot: string; id: string; time: string }
@@ -972,28 +1018,29 @@ export function reduce(state: State, action: Action): State {
     case 'queue-edit': {
       const queue = messageQueue(state, action.bot);
       const item = queue.find((entry) => entry.id === action.id);
-      if (!item || item.verify) return state;
+      if (!item || item.verify || item.sending) return state;
       const draft = state.drafts[action.bot] ?? '';
       const prompt = draft && item.prompt ? `${draft}\n${item.prompt}` : item.prompt || draft;
       // Over-limit edits keep both the queued message and the draft instead of truncating text.
       if (prompt.length > 12000) return state;
+      const merged = mergeAttachments(state.attachments[action.bot] ?? [], state.files, item.files);
+      // A merge that would exceed the attachment cap or lose a file also keeps the queued message intact.
+      if (!merged) return state;
       return {
         ...state,
+        files: merged.files,
         queued: {
           ...state.queued,
           [action.bot]: queue.filter((entry) => entry.id !== action.id),
         },
         drafts: { ...state.drafts, [action.bot]: prompt },
-        attachments: {
-          ...state.attachments,
-          [action.bot]: [...(state.attachments[action.bot] ?? []), ...item.files],
-        },
+        attachments: { ...state.attachments, [action.bot]: merged.attachments },
       };
     }
     case 'queue-promote': {
       const queue = messageQueue(state, action.bot);
       const index = queue.findIndex((item) => item.id === action.id);
-      if (index < 1 || queue[index].verify) return state;
+      if (index < 1 || queue[index].verify || queue[index].sending) return state;
       const items = [...queue];
       items.unshift(items.splice(index, 1)[0]);
       return { ...state, queued: { ...state.queued, [action.bot]: items } };
@@ -1001,7 +1048,7 @@ export function reduce(state: State, action: Action): State {
     case 'queue-insert': {
       const queue = messageQueue(state, action.bot);
       const item = queue.find((entry) => entry.id === action.id);
-      if (!item || item.files.length) return state;
+      if (!item || item.files.length || item.sending) return state;
       return {
         ...state,
         queued: {
@@ -1024,7 +1071,7 @@ export function reduce(state: State, action: Action): State {
     }
     case 'queue-remove': {
       const queue = messageQueue(state, action.bot);
-      return queue.some((item) => item.id === action.id && !item.verify)
+      return queue.some((item) => item.id === action.id && !item.verify && !item.sending)
         ? {
             ...state,
             queued: {
@@ -1033,6 +1080,16 @@ export function reduce(state: State, action: Action): State {
             },
           }
         : state;
+    }
+    case 'queue-sending': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 0 || !!queue[index].sending === action.sending) return state;
+      const items = [...queue];
+      items[index] = action.sending
+        ? { ...items[index], sending: true }
+        : { ...items[index], sending: undefined };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
     }
     case 'queue-fail': {
       const queue = messageQueue(state, action.bot);
@@ -1045,7 +1102,8 @@ export function reduce(state: State, action: Action): State {
     case 'queue-retry': {
       const queue = messageQueue(state, action.bot);
       const index = queue.findIndex((item) => item.id === action.id);
-      if (index < 0 || !queue[index].error || queue[index].verify) return state;
+      if (index < 0 || !queue[index].error || queue[index].verify || queue[index].sending)
+        return state;
       const items = [...queue];
       items[index] = {
         id: queue[index].id,
@@ -1223,22 +1281,7 @@ export function reduce(state: State, action: Action): State {
       const names = new Set(
         state.attachments[action.bot].map((id) => state.files.find((file) => file.id === id)?.name),
       );
-      const extension = action.file.name.lastIndexOf('.');
-      const stem = extension > 0 ? action.file.name.slice(0, extension) : action.file.name;
-      const suffix = extension > 0 ? action.file.name.slice(extension) : '';
-      let name = action.file.name;
-      // Only rename the input copy: distinct sources must not overwrite each other in the next task.
-      for (let count = 2; names.has(name); count++) {
-        const ending = `-${count}${suffix}`;
-        const prefix = Array.from(stem);
-        // Task filenames are limited in UTF-8 bytes; suffixing must preserve whole Unicode characters.
-        while (
-          (prefix.join('') + ending).length > 160 ||
-          new TextEncoder().encode(prefix.join('') + ending).length > 255
-        )
-          prefix.pop();
-        name = `${prefix.join('')}${ending}`;
-      }
+      const name = uniqueFileName(action.file.name, names);
       return {
         ...state,
         files: [...state.files, { ...action.file, name }],

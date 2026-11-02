@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { turnLimit } from '@daban/protocol';
+import { Fault } from './control.js';
 import { editorShowsFile, ModelRuns, sdkPatch, verifyOutput, verifyTask } from './model.js';
 import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
@@ -264,6 +266,291 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
       }),
       { code: 'MODEL_NOT_RUNNING' },
     );
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+interface InsertState {
+  bot: string;
+  prompts: string[];
+  entered: () => unknown;
+  held: Promise<unknown>;
+  release?: () => unknown;
+  gate?: () => unknown;
+  gateReached?: Promise<unknown>;
+  gateOn?: (prompt: string) => boolean;
+}
+function insertHarness(state: InsertState) {
+  return class Harness {
+    async start() {}
+    async close() {}
+    session(id = `mock-${state.bot}-session`) {
+      return {
+        id,
+        run: async (input: unknown) => {
+          const blocks =
+            typeof input === 'string'
+              ? []
+              : (input as { type: 'text'; text: string }[]).filter(
+                  (block) => block.type === 'text',
+                );
+          const prompt =
+            typeof input === 'string' ? input : blocks.map((block) => block.text).join('\n');
+          state.prompts.push(prompt);
+          if (state.prompts.length === 1) {
+            state.entered();
+            await state.held;
+            return { sessionId: id, finalResponse: 'Synthetic first reply.' };
+          }
+          if (state.gateOn?.(prompt)) {
+            state.gate?.();
+            await state.gateReached;
+          }
+          return { sessionId: id, finalResponse: `Synthetic reply to ${prompt.slice(0, 40)}` };
+        },
+      };
+    }
+    async resumeSession(id: string) {
+      return this.session(id);
+    }
+  };
+}
+function insertGates() {
+  let entered!: () => unknown;
+  const started = new Promise<unknown>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  let release!: () => unknown;
+  const held = new Promise<unknown>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  let gate!: () => unknown;
+  const gateReached = new Promise<unknown>((resolve) => {
+    gate = () => resolve(undefined);
+  });
+  return { started, entered, held, release, gate, gateReached };
+}
+async function insertFixture(root: string, state: InsertState) {
+  const bot = state.bot;
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+    Response.json({ data: [{ id: 'mock-chat' }] }),
+  );
+  const models = new ModelRuns({
+    settings,
+    Harness: insertHarness(state),
+    workspace: path.join(root, 'workspace'),
+    dir: path.join(root, 'model'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  await settings.configure({
+    revision: 0,
+    requestId: `mock-${bot}-config`,
+    model: `provider:${bot}:mock-chat`,
+    apiKey: `synthetic-${bot}-key`,
+    connection: {
+      id: bot,
+      name: bot,
+      baseURL: `https://${bot}.example.test/v1`,
+      models: [
+        {
+          id: 'mock-chat',
+          name: 'Synthetic chat',
+          vision: false,
+          contextWindow: 64000,
+          maxTokens: 4096,
+        },
+      ],
+    },
+  });
+  await models.profiles.register({
+    id: bot,
+    name: bot,
+    color: 'mint',
+    instructions: '',
+    memory: '',
+    model: `provider:${bot}:mock-chat`,
+  });
+  // Store reads stay empty until the restored journal has loaded.
+  await models.ready;
+  return models;
+}
+
+test('a retried insert shares the first durable write instead of reporting an unpersisted acceptance', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-write-'));
+  const bot = 'mock-write';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  const models = await insertFixture(root, { bot, prompts, ...gates });
+  try {
+    await models.start(bot, {
+      requestId: 'mock-write-first',
+      prompt: 'Synthetic original request.',
+    });
+    await gates.started;
+    const target = { runId: models.jobs.get(bot)!.id, chatRevision: 0 };
+    const message = { id: 'mock-write-one', text: 'Synthetic inserted message.', ...target };
+    const realPut = models.journal.put.bind(models.journal);
+    models.journal.put = async (value) => {
+      if ((value.inserts || []).some((item) => item.id === message.id))
+        throw new Fault('SYNTHETIC_WRITE_FAILED', 500);
+      return realPut(value);
+    };
+    const first = models.insert(bot, message);
+    const retry = models.insert(bot, message);
+    await assert.rejects(first, { code: 'SYNTHETIC_WRITE_FAILED' });
+    await assert.rejects(retry, { code: 'SYNTHETIC_WRITE_FAILED' });
+    assert.deepEqual(models.jobs.get(bot)!.inserts, []);
+    models.journal.put = realPut;
+    assert.deepEqual(await models.insert(bot, message), { ok: true, id: message.id });
+    gates.release();
+    await models.jobs.get(bot)!.done;
+    assert.equal(prompts.length, 2);
+    assert.equal(models.jobs.get(bot)!.phase, 'completed');
+    assert.deepEqual((await models.journal.read(bot, target.runId))?.inserts, [
+      { id: message.id, text: message.text, done: true },
+    ]);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an accepted insert keeps its text after a restart and is not reported as processed', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-restart-'));
+  const bot = 'mock-restart';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  const before = await insertFixture(root, { bot, prompts, ...gates });
+  const pending = {
+    id: 'mock-restart-pending',
+    text: 'Synthetic inserted message.',
+  };
+  let runId = '';
+  try {
+    await before.start(bot, {
+      requestId: 'mock-restart-first',
+      prompt: 'Synthetic original request.',
+    });
+    await gates.started;
+    runId = before.jobs.get(bot)!.id;
+    assert.deepEqual(await before.insert(bot, { ...pending, runId, chatRevision: 0 }), {
+      ok: true,
+      id: pending.id,
+    });
+  } finally {
+    // Abort before the held turn returns, so the accepted insert is never processed.
+    const stopping = before.stop(bot);
+    gates.release();
+    await stopping;
+  }
+  assert.deepEqual((await before.journal.read(bot, runId))?.inserts, [{ ...pending, done: false }]);
+  await before.close();
+  const restarted = await insertFixture(root, { bot, prompts, ...gates });
+  try {
+    // The saved text is what a requeue can rely on; an unprocessed insert is never an acceptance.
+    assert.deepEqual((await restarted.journal.read(bot, runId))?.inserts, [
+      { ...pending, done: false },
+    ]);
+    await assert.rejects(restarted.insert(bot, { ...pending, runId, chatRevision: 0 }), {
+      code: 'MODEL_NOT_RUNNING',
+    });
+  } finally {
+    await restarted.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('insert acceptance counts every turn so stored history stays within the turn bound', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-bound-'));
+  const bot = 'mock-bound';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  const models = await insertFixture(root, {
+    bot,
+    prompts,
+    ...gates,
+    gateOn: (prompt) => prompt === 'Synthetic insert 2.',
+  });
+  try {
+    await models.start(bot, {
+      requestId: 'mock-bound-first',
+      prompt: 'Synthetic original request.',
+    });
+    await gates.started;
+    const target = { runId: models.jobs.get(bot)!.id, chatRevision: 0 };
+    const id = (index: number) => `mock-bound-${String(index).padStart(2, '0')}`;
+    const send = (index: number) =>
+      models.insert(bot, { id: id(index), text: `Synthetic insert ${index}.`, ...target });
+    for (let index = 1; index < turnLimit; index++)
+      assert.deepEqual(await send(index), { ok: true, id: id(index) });
+    await assert.rejects(send(turnLimit), { code: 'MODEL_INSERT_FULL' });
+    gates.release();
+    await gates.gateReached;
+    // Two turns are already stored while the second insert runs, so the bound still counts them.
+    assert.equal(models.jobs.get(bot)!.turns?.length, 3);
+    await assert.rejects(send(turnLimit), { code: 'MODEL_INSERT_FULL' });
+    gates.gate();
+    await models.jobs.get(bot)!.done;
+    assert.equal(models.jobs.get(bot)!.turns?.length, turnLimit);
+    const page = await models.chatHistory(bot, 0);
+    assert.equal(page.items.length, 1);
+    assert.equal(page.items[0].turns?.length, turnLimit);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a rebuilt context keeps every saved turn instead of only the original request', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-context-'));
+  const bot = 'mock-context';
+  const prompts: string[] = [];
+  const journal = new TaskJournal(path.join(root, 'model', 'task-journal'));
+  await journal.load();
+  await journal.put({
+    bot,
+    runId: 'mock-context-saved',
+    requestId: 'mock-context-saved-request',
+    chatRevision: 0,
+    kind: 'chat',
+    prompt: 'Synthetic original request.',
+    phase: 'completed',
+    running: false,
+    result: 'Synthetic final reply.',
+    error: '',
+    trace: [],
+    turns: [
+      {
+        id: 'mock-context-saved-request',
+        prompt: 'Synthetic original request.',
+        result: 'Synthetic first reply.',
+      },
+      {
+        id: 'mock-context-insert',
+        prompt: 'Synthetic inserted requirement.',
+        result: 'Synthetic inserted reply.',
+      },
+    ],
+  });
+  const models = await insertFixture(root, {
+    bot,
+    prompts,
+    ...insertGates(),
+    entered: () => {},
+    held: Promise.resolve(),
+  });
+  try {
+    await models.start(bot, {
+      requestId: 'mock-context-next',
+      prompt: 'Synthetic next request.',
+    });
+    await models.jobs.get(bot)!.done;
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /Synthetic inserted requirement\./);
+    assert.match(prompts[0], /Synthetic inserted reply\./);
+    assert.match(prompts[0], /Synthetic first reply\./);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });

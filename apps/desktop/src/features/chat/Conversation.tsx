@@ -524,6 +524,7 @@ export function Conversation({
                     className="queued-message"
                     key={item.id}
                     data-failed={item.error || undefined}
+                    data-sending={item.sending || undefined}
                     data-verifying={item.verify ? true : undefined}
                   >
                     <CornerDownRight className="queued-message-glyph" aria-hidden="true" />
@@ -540,6 +541,10 @@ export function Conversation({
                         <span className="queued-message-error" role="status">
                           {t('chat.verifyingQueuedMessageInsert')}
                         </span>
+                      ) : item.sending ? (
+                        <span className="queued-message-status" role="status">
+                          {t('chat.sendingQueuedMessage')}
+                        </span>
                       ) : (
                         item.error && (
                           <span className="queued-message-error" role="status">
@@ -549,17 +554,21 @@ export function Conversation({
                       )}
                     </div>
                     <div className="queued-message-actions">
-                      {onQueueInsert && task?.running && !item.files.length && !item.verify && (
-                        <IconButton
-                          className="queued-steer"
-                          label={t('chat.insertQueuedMessage', { 0: text })}
-                          onClick={() => onQueueInsert(item.id)}
-                        >
-                          <CornerDownRight />
-                          <span>{t('chat.steer')}</span>
-                        </IconButton>
-                      )}
-                      {index > 0 && onQueuePromote && !item.verify && (
+                      {onQueueInsert &&
+                        task?.running &&
+                        !item.files.length &&
+                        !item.verify &&
+                        !item.sending && (
+                          <IconButton
+                            className="queued-steer"
+                            label={t('chat.insertQueuedMessage', { 0: text })}
+                            onClick={() => onQueueInsert(item.id)}
+                          >
+                            <CornerDownRight />
+                            <span>{t('chat.steer')}</span>
+                          </IconButton>
+                        )}
+                      {index > 0 && onQueuePromote && !item.verify && !item.sending && (
                         <IconButton
                           label={t('chat.promoteQueuedMessage', { 0: text })}
                           onClick={() => onQueuePromote(item.id)}
@@ -567,7 +576,7 @@ export function Conversation({
                           <ArrowUpToLine />
                         </IconButton>
                       )}
-                      {item.error && !item.verify && onQueueRetry && (
+                      {item.error && !item.verify && !item.sending && onQueueRetry && (
                         <IconButton
                           label={t('common.retrySend')}
                           onClick={() => onQueueRetry(item.id)}
@@ -575,7 +584,7 @@ export function Conversation({
                           <RotateCcw />
                         </IconButton>
                       )}
-                      {onQueueEdit && !item.verify && (
+                      {onQueueEdit && !item.verify && !item.sending && (
                         <IconButton
                           label={t('chat.editQueuedMessage', { 0: text })}
                           onClick={() => {
@@ -586,7 +595,7 @@ export function Conversation({
                           <Pencil />
                         </IconButton>
                       )}
-                      {onQueueRemove && !item.verify && (
+                      {onQueueRemove && !item.verify && !item.sending && (
                         <IconButton
                           label={t('chat.removeQueuedMessage', { 0: text })}
                           onClick={() => onQueueRemove(item.id)}

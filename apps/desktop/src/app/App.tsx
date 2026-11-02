@@ -79,6 +79,7 @@ import {
   chatRevision,
   initialState,
   lifecycleRequest,
+  mergeAttachments,
   messageQueue,
   messageQueueLimit,
   type Panel,
@@ -579,6 +580,15 @@ function Workbench() {
       if (state.runtimeRequests[entry.id] || state.attachmentUploads[entry.id]) continue;
       if (entry.archived || state.chatRequests[entry.id] || lifecycleRequest(state, entry.id))
         continue;
+      const attached = item.files
+        .map((id) => state.files.find((file) => file.id === id))
+        .filter((file): file is WorkspaceFile => !!file);
+      // A skipped send would release the sending lock and be retried forever, so fail it once instead.
+      if (imagesUnsupported(entry.id, attached)) {
+        notify(t('app.currentModelDoesNotSupportImagesChoose'));
+        dispatch({ type: 'queue-fail', bot: entry.id, id: item.id });
+        continue;
+      }
       const current = agentTask(runtime.snapshot, entry.id);
       const awaiting = awaitingRun.current.get(entry.id);
       if (awaiting) {
@@ -591,8 +601,11 @@ function Workbench() {
         awaitingRun.current.delete(entry.id);
       } else if (current?.running) continue;
       draining.current.add(entry.id);
+      dispatch({ type: 'queue-sending', bot: entry.id, id: item.id, sending: true });
       runTask(entry.id, undefined, item)
         .then((result) => {
+          // Releasing the lock first lets the terminal action still remove or fail this item.
+          dispatch({ type: 'queue-sending', bot: entry.id, id: item.id, sending: false });
           if (result.outcome === 'failed') {
             dispatch({ type: 'queue-fail', bot: entry.id, id: item.id });
             return;
@@ -603,7 +616,10 @@ function Workbench() {
             awaitingRun.current.set(entry.id, { runId: result.runId, at: Date.now() });
         })
         .catch((error) => notify(runtimeError(error)))
-        .finally(() => draining.current.delete(entry.id));
+        .finally(() => {
+          dispatch({ type: 'queue-sending', bot: entry.id, id: item.id, sending: false });
+          draining.current.delete(entry.id);
+        });
     }
   }, [runtime, state, dispatch, notify]);
   const previewFile = useCallback(
@@ -912,7 +928,7 @@ function Workbench() {
                     runtime.enabled
                       ? (id) => {
                           const item = messageQueue(state, bot.id).find((entry) => entry.id === id);
-                          if (!item || item.verify) return;
+                          if (!item || item.verify || item.sending) return;
                           const draft = state.drafts[bot.id] ?? '';
                           const prompt =
                             draft && item.prompt
@@ -920,6 +936,15 @@ function Workbench() {
                               : item.prompt || draft;
                           if (prompt.length > 12000) {
                             notify(t('chat.queuedMessageEditTooLong'));
+                            return;
+                          }
+                          const merged = mergeAttachments(
+                            state.attachments[bot.id] ?? [],
+                            state.files,
+                            item.files,
+                          );
+                          if (!merged) {
+                            notify(t('chat.queuedMessageEditAttachmentsFull'));
                             return;
                           }
                           dispatch({ type: 'queue-edit', bot: bot.id, id });

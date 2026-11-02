@@ -773,11 +773,14 @@ function liveQueueRuntime() {
   const starts: Extract<RuntimeCommand, { type: 'task.start' }>[] = [];
   let failing = false;
   let insertsFailing = false;
+  let startGate: Promise<undefined> | undefined;
+  let releaseStart: (() => unknown) | undefined;
   const invoke = vi.fn(async (command: RuntimeCommand) => {
     if (command.type === 'status') return { ok: true as const, value: snapshot };
     if (command.type === 'task.start') {
       starts.push(command);
       if (failing) return { ok: false as const, error: 'INVALID_TASK' };
+      if (startGate) await startGate;
       return {
         ok: true as const,
         value: {
@@ -830,6 +833,17 @@ function liveQueueRuntime() {
     },
     succeedInserts() {
       insertsFailing = false;
+    },
+    holdStarts() {
+      startGate = new Promise<undefined>((resolve) => {
+        releaseStart = () => resolve(undefined);
+      });
+    },
+    releaseStarts() {
+      startGate = undefined;
+      const release = releaseStart;
+      releaseStart = undefined;
+      release?.();
     },
   };
 }
@@ -922,6 +936,39 @@ it('queues messages while a Bot is working and sends them in order after the tas
   );
 });
 
+it('marks a queued message as sending and hides its actions until the send is acknowledged', async () => {
+  const runtime = liveQueueRuntime();
+  runtime.holdStarts();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, 'SYNTHETIC SENDING QUEUE');
+  await userEvent.keyboard('{Enter}');
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-current-run',
+        'mock-queue-current-request',
+        'SYNTHETIC CURRENT TASK',
+        'completed',
+        false,
+        'SYNTHETIC CURRENT DONE',
+      ),
+    ),
+  );
+  await waitFor(() => expect(runtime.starts).toHaveLength(1));
+  expect(await within(queue).findByText('正在发送…')).toBeVisible();
+  expect(
+    within(queue).queryByRole('button', { name: '编辑排队消息 SYNTHETIC SENDING QUEUE' }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(queue).queryByRole('button', { name: '移除排队消息 SYNTHETIC SENDING QUEUE' }),
+  ).not.toBeInTheDocument();
+  await act(async () => runtime.releaseStarts());
+  await waitFor(() =>
+    expect(within(queue).queryByText('SYNTHETIC SENDING QUEUE')).not.toBeInTheDocument(),
+  );
+});
 it('returns a queued message to the composer for editing', async () => {
   const runtime = liveQueueRuntime();
   render(<App />);

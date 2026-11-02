@@ -239,9 +239,12 @@ export const english = {
   'chat.previewAttachment': 'Preview attachment {0}',
   'chat.promoteQueuedMessage': 'Send queued message {0} next',
   'chat.queuedAttachments': '+{0} attachments',
+  'chat.queuedMessageEditAttachmentsFull':
+    'That edit would exceed the 4-attachment limit. Nothing changed.',
   'chat.queuedMessageEditTooLong':
     'That edit would exceed the message length limit. Nothing changed.',
   'chat.queuedMessageFailed': 'Could not send. Retry or remove it.',
+  'chat.sendingQueuedMessage': 'Sending…',
   'chat.readingPage': 'Reading page',
   'chat.readingTaskCatalog': 'Reading task catalog',
   'chat.readingWebpage': 'Reading webpage',
