@@ -1242,15 +1242,18 @@ export interface RunInsert {
   id: string;
   text: string;
   done: boolean;
+  // True once the turn began executing; an accepted insert that never started may be retried safely.
+  started?: boolean;
 }
 export function isRunInsert(value: unknown): value is RunInsert {
   return (
     profileObject(value) &&
-    Object.keys(value).every((key) => ['id', 'text', 'done'].includes(key)) &&
+    Object.keys(value).every((key) => ['id', 'text', 'done', 'started'].includes(key)) &&
     validAgentId(value.id) &&
     typeof value.text === 'string' &&
     value.text.length <= 12000 &&
-    typeof value.done === 'boolean'
+    typeof value.done === 'boolean' &&
+    (value.started === undefined || typeof value.started === 'boolean')
   );
 }
 export function isRunTurn(value: unknown): value is RunTurn {

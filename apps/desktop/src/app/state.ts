@@ -232,6 +232,7 @@ export interface State {
   attachments: Record<string, string[]>;
   attachmentUploads: Record<string, boolean>;
   runtimeRequests: Record<string, TaskRequest | undefined>;
+  runtimeRefs: Record<string, string[] | undefined>;
   profileRevisions: Record<string, number>;
 }
 export function messageQueue(state: Pick<State, 'queued'>, bot: string): QueuedTask[] {
@@ -328,7 +329,7 @@ export type Action =
   | { type: 'reply-draft'; id: string; question: string; selected?: string[]; custom?: string }
   | { type: 'profiles'; profiles: BotProfile[] }
   | { type: 'profile-local'; bot: string; name: string; instructions: string }
-  | { type: 'runtime-pending'; bot: string; task: TaskRequest }
+  | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
   | { type: 'chats'; items: ChatState[] }
   | { type: 'chat-pending'; bot: string; request: ChatRequest }
   | { type: 'chat-clear'; bot: string; id: string }
@@ -389,6 +390,7 @@ export function initialState(): State {
     knowledgeDrafts: {},
     replyDrafts: {},
     runtimeRequests: {},
+    runtimeRefs: {},
     profileRevisions: {},
     memoryVersions: {},
     selected: '',
@@ -789,9 +791,17 @@ export function reduce(state: State, action: Action): State {
         ),
       };
     case 'runtime-pending':
-      return { ...state, runtimeRequests: { ...state.runtimeRequests, [action.bot]: action.task } };
+      return {
+        ...state,
+        runtimeRequests: { ...state.runtimeRequests, [action.bot]: action.task },
+        runtimeRefs: { ...state.runtimeRefs, [action.bot]: action.refs },
+      };
     case 'runtime-clear':
-      return { ...state, runtimeRequests: { ...state.runtimeRequests, [action.bot]: undefined } };
+      return {
+        ...state,
+        runtimeRequests: { ...state.runtimeRequests, [action.bot]: undefined },
+        runtimeRefs: { ...state.runtimeRefs, [action.bot]: undefined },
+      };
     case 'attachment-uploading':
       return {
         ...state,
@@ -818,18 +828,18 @@ export function reduce(state: State, action: Action): State {
       if (task.prompt) {
         const previous = entries.find((message) => message.id === task.requestId);
         const pending = state.runtimeRequests[action.bot];
-        const attached =
+        // A queued send captured its files before the composer was cleared; use those references, not the composer.
+        const sources =
           pending?.requestId === task.requestId && !pending.retryOf
-            ? state.attachments[action.bot].filter((id) => {
-                const file = state.files.find((item) => item.id === id);
-                return (
-                  file &&
-                  pending.files?.some(
-                    (sent) => JSON.stringify(taskFile(file)) === JSON.stringify(sent),
-                  )
-                );
-              })
+            ? (state.runtimeRefs[action.bot] ?? state.attachments[action.bot])
             : [];
+        const attached = sources.filter((id) => {
+          const file = state.files.find((item) => item.id === id);
+          return (
+            file &&
+            pending?.files?.some((sent) => JSON.stringify(taskFile(file)) === JSON.stringify(sent))
+          );
+        });
         const references = previous?.files || attached;
         add({
           id: task.requestId,

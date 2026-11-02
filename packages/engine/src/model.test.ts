@@ -281,6 +281,7 @@ interface InsertState {
   gate?: () => unknown;
   gateReached?: Promise<unknown>;
   gateOn?: (prompt: string) => boolean;
+  failOn?: (prompt: string) => boolean;
 }
 function insertHarness(state: InsertState) {
   return class Harness {
@@ -308,6 +309,7 @@ function insertHarness(state: InsertState) {
             state.gate?.();
             await state.gateReached;
           }
+          if (state.failOn?.(prompt)) throw new Error('SYNTHETIC_MODEL_DISCONNECTED');
           return { sessionId: id, finalResponse: `Synthetic reply to ${prompt.slice(0, 40)}` };
         },
       };
@@ -409,8 +411,95 @@ test('a retried insert shares the first durable write instead of reporting an un
     assert.equal(prompts.length, 2);
     assert.equal(models.jobs.get(bot)!.phase, 'completed');
     assert.deepEqual((await models.journal.read(bot, target.runId))?.inserts, [
-      { id: message.id, text: message.text, done: true },
+      { id: message.id, text: message.text, done: true, started: true },
     ]);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('concurrent retries share one write so a transient failure cannot be half-applied', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-shared-'));
+  const bot = 'mock-shared';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  const models = await insertFixture(root, { bot, prompts, ...gates });
+  try {
+    await models.start(bot, {
+      requestId: 'mock-shared-first',
+      prompt: 'Synthetic original request.',
+    });
+    await gates.started;
+    const target = { runId: models.jobs.get(bot)!.id, chatRevision: 0 };
+    const message = { id: 'mock-shared-one', text: 'Synthetic inserted message.', ...target };
+    const realPut = models.journal.put.bind(models.journal);
+    let failed = false;
+    models.journal.put = async (value) => {
+      if ((value.inserts || []).some((item) => item.id === message.id) && !failed) {
+        failed = true;
+        throw new Fault('SYNTHETIC_WRITE_FAILED', 500);
+      }
+      return realPut(value);
+    };
+    const first = models.insert(bot, message);
+    const retry = models.insert(bot, message);
+    // Both requests observe the same failed write; neither can answer from an intent the journal rejected.
+    await assert.rejects(first, { code: 'SYNTHETIC_WRITE_FAILED' });
+    await assert.rejects(retry, { code: 'SYNTHETIC_WRITE_FAILED' });
+    assert.deepEqual(models.jobs.get(bot)!.inserts, []);
+    models.journal.put = realPut;
+    assert.deepEqual(await models.insert(bot, message), { ok: true, id: message.id });
+    gates.release();
+    await models.jobs.get(bot)!.done;
+    assert.equal(prompts.length, 2);
+    assert.deepEqual((await models.journal.read(bot, target.runId))?.inserts, [
+      { id: message.id, text: message.text, done: true, started: true },
+    ]);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a failed write removes only its own insert instead of a neighbouring queued message', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-rollback-'));
+  const bot = 'mock-rollback';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  const models = await insertFixture(root, { bot, prompts, ...gates });
+  try {
+    await models.start(bot, {
+      requestId: 'mock-rollback-first',
+      prompt: 'Synthetic original request.',
+    });
+    await gates.started;
+    const target = { runId: models.jobs.get(bot)!.id, chatRevision: 0 };
+    const kept = { id: 'mock-rollback-kept', text: 'Synthetic kept message.', ...target };
+    assert.deepEqual(await models.insert(bot, kept), { ok: true, id: kept.id });
+    const failing = { id: 'mock-rollback-failing', text: 'Synthetic failing message.', ...target };
+    const realPut = models.journal.put.bind(models.journal);
+    models.journal.put = async (value) => {
+      if ((value.inserts || []).some((item) => item.id === failing.id))
+        throw new Fault('SYNTHETIC_WRITE_FAILED', 500);
+      return realPut(value);
+    };
+    const first = models.insert(bot, failing);
+    const retry = models.insert(bot, failing);
+    await assert.rejects(first, { code: 'SYNTHETIC_WRITE_FAILED' });
+    await assert.rejects(retry, { code: 'SYNTHETIC_WRITE_FAILED' });
+    // A missing index must never make rollback pop the last accepted message.
+    assert.deepEqual(
+      models.jobs.get(bot)!.inserts.map((item) => item.id),
+      [kept.id],
+    );
+    models.journal.put = realPut;
+    gates.release();
+    await models.jobs.get(bot)!.done;
+    assert.deepEqual(
+      models.jobs.get(bot)!.turns?.map((turn) => turn.prompt),
+      ['Synthetic original request.', kept.text],
+    );
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -455,6 +544,56 @@ test('an accepted insert keeps its text after a restart and is not reported as p
     ]);
     await assert.rejects(restarted.insert(bot, { ...pending, runId, chatRevision: 0 }), {
       code: 'MODEL_NOT_RUNNING',
+    });
+  } finally {
+    await restarted.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an insert that began before the model failed is never reported as unattempted', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-begun-'));
+  const bot = 'mock-begun';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  const message = { id: 'mock-begun-one', text: 'Synthetic insert that begins.' };
+  const before = await insertFixture(root, {
+    bot,
+    prompts,
+    ...gates,
+    gateOn: (prompt) => prompt === message.text,
+    failOn: (prompt) => prompt === message.text,
+  });
+  let runId = '';
+  try {
+    await before.start(bot, {
+      requestId: 'mock-begun-first',
+      prompt: 'Synthetic original request.',
+    });
+    await gates.started;
+    runId = before.jobs.get(bot)!.id;
+    assert.deepEqual(await before.insert(bot, { ...message, runId, chatRevision: 0 }), {
+      ok: true,
+      id: message.id,
+    });
+    gates.release();
+    await gates.gateReached;
+    await before.jobs.get(bot)!.done;
+    assert.equal(before.jobs.get(bot)!.phase, 'failed');
+    // The start marker is durable: a reconnect may have produced files or tool effects already.
+    assert.deepEqual((await before.journal.read(bot, runId))?.inserts, [
+      { ...message, done: false, started: true },
+    ]);
+    await assert.rejects(before.insert(bot, { ...message, runId, chatRevision: 0 }), {
+      code: 'MODEL_INSERT_UNCERTAIN',
+    });
+  } finally {
+    await before.close();
+  }
+  const restarted = await insertFixture(root, { bot, prompts: [], ...insertGates() });
+  try {
+    await assert.rejects(restarted.insert(bot, { ...message, runId, chatRevision: 0 }), {
+      code: 'MODEL_INSERT_UNCERTAIN',
     });
   } finally {
     await restarted.close();

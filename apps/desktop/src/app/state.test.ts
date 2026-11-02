@@ -716,6 +716,53 @@ describe('real runtime task bookkeeping', () => {
     expect(state.runtimeRequests.research).toBeUndefined();
     expect(state.files.some((f) => f.runtimePath === task.files[0].path)).toBe(true);
   });
+  it('keeps a queued send attachment references on its message after the composer was cleared', () => {
+    let state = reduce(initialState(), {
+      type: 'attach',
+      bot: 'research',
+      file: {
+        id: 'queued-file',
+        name: 'queued.csv',
+        kind: 'CSV',
+        size: '1 KB',
+        modified: 'synthetic',
+        content: 'mock,1',
+      },
+    });
+    state = reduce(state, {
+      type: 'queue-add',
+      bot: 'research',
+      task: { id: 'queued-task', prompt: '合成排队消息', files: ['queued-file'] },
+    });
+    expect(state.attachments.research).toEqual([]);
+    const file = state.files.find((entry) => entry.id === 'queued-file')!;
+    const task = {
+      requestId: 'queued-request',
+      prompt: '合成排队消息',
+      files: [taskFile(file)],
+    };
+    state = reduce(state, {
+      type: 'runtime-pending',
+      bot: 'research',
+      task,
+      refs: ['queued-file'],
+    });
+    state = reduce(state, {
+      type: 'runtime-task',
+      bot: 'research',
+      task: {
+        requestId: 'queued-request',
+        runId: 'queued-run',
+        prompt: '合成排队消息',
+        phase: 'running',
+        result: '',
+        error: '',
+      },
+    });
+    expect(state.messages.research.find((m) => m.id === 'queued-request')?.files).toEqual([
+      'queued-file',
+    ]);
+  });
 });
 
 it('retry acknowledgement preserves a newly prepared draft and its different attachments', () => {

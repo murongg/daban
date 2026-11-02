@@ -237,6 +237,12 @@ export function restore(raw: string | null): State {
       )
         return initialState();
     }
+    // Attachment references captured for a pending send survive a reload; damaged entries are dropped alone.
+    s.runtimeRefs = Object.fromEntries(
+      Object.entries(record(s.runtimeRefs) ? s.runtimeRefs : {}).filter(
+        ([, value]) => value === undefined || strings(value),
+      ),
+    );
     const { messages, drafts, controls, memories, attachments, memoryDrafts, routineDrafts } =
       s as Record<string, Record<string, unknown>>;
     for (const id of ids) {

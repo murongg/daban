@@ -461,7 +461,7 @@ interface ModelJob extends ToolRun {
   stopReason?: string;
   task?: TaskRequest;
   inserts: RunInsert[];
-  insertWrites: Set<Promise<InsertReceipt>>;
+  insertWrites: Map<string, Promise<InsertReceipt>>;
   insertable?: boolean;
   turns?: RunTurn[];
   requestId: string;
@@ -725,7 +725,7 @@ export class ModelRuns {
         chatRevision: latest.chatRevision,
         conversationId: latest.conversationId,
         inserts: [],
-        insertWrites: new Set(),
+        insertWrites: new Map(),
         model:
           latest.sessionModel === undefined
             ? model
@@ -998,8 +998,11 @@ export class ModelRuns {
     ) {
       const accepted = job.inserts.find((item) => item.id === input.id);
       if (accepted?.done) return { ok: true, id: input.id };
-      if (!job.running || job.abort.signal.aborted || !job.insertable)
+      // A turn that already began may have run tools or changed files; it must never be replayed as unattempted work.
+      if (!job.running || job.abort.signal.aborted || !job.insertable) {
+        if (accepted?.started) throw new Fault('MODEL_INSERT_UNCERTAIN', 409);
         throw new Fault('MODEL_NOT_RUNNING', 409);
+      }
       // A retried request must share the outcome of the first write, never answer from an unpersisted intent.
       if (accepted) return this.durableInsert(job, accepted);
       const turns = job.turns || [];
@@ -1018,21 +1021,31 @@ export class ModelRuns {
       (saved.chatRevision ?? 0) !== input.chatRevision
     )
       throw new Fault('TASK_INSERT_STALE', 409);
-    // Only a turn that actually ran is a receipt; an insert a restart never processed must be sent again.
+    // Only a finished turn is a receipt; a begun but unconfirmed turn may already have produced effects.
     const receipt = (saved.inserts || []).find((item) => item.id === input.id);
     if (receipt?.done) return { ok: true, id: input.id };
+    if (receipt?.started) throw new Fault('MODEL_INSERT_UNCERTAIN', 409);
     throw new Fault('MODEL_NOT_RUNNING', 409);
   }
   private durableInsert(job: ModelJob, insert: RunInsert) {
+    // Every retry of one insert shares a single write, so a late failure cannot roll back a later success.
+    const existing = job.insertWrites.get(insert.id);
+    if (existing) return existing;
     if (!job.inserts.includes(insert)) job.inserts.push(insert);
     const receipt = this.persist(job).then(() => ({ ok: true, id: insert.id }));
-    job.insertWrites.add(receipt);
+    job.insertWrites.set(insert.id, receipt);
     receipt.catch(() => {
-      job.insertWrites.delete(receipt);
-      // A failed write leaves no acceptance behind, so the same request can be retried or requeued.
-      if (!insert.done) job.inserts.splice(job.inserts.indexOf(insert), 1);
+      if (job.insertWrites.get(insert.id) === receipt) job.insertWrites.delete(insert.id);
+      this.rollbackInsert(job, insert);
     });
     return receipt;
+  }
+  private rollbackInsert(job: ModelJob, insert: RunInsert) {
+    // A failed write only retracts this exact unattempted intent; indexOf(-1) must never remove a neighbour.
+    if (insert.done || insert.started) return;
+    const index = job.inserts.indexOf(insert);
+    if (index < 0) return;
+    job.inserts.splice(index, 1);
   }
   reviewModel(bot: string, runId: string) {
     const job = this.jobs.get(bot);
@@ -1254,7 +1267,7 @@ export class ModelRuns {
       requestId: task?.requestId || id,
       task,
       inserts: [],
-      insertWrites: new Set(),
+      insertWrites: new Map(),
       insertable: true,
       fingerprint,
       token: randomBytes(32).toString('hex'),
@@ -1671,6 +1684,9 @@ export class ModelRuns {
         while (pending) {
           const turn: RunTurn = { id: pending.id, prompt: pending.text, result: '' };
           job.turns?.push(turn);
+          // Persist the start marker before the model call: after this point the turn must not be replayed as new work.
+          pending.started = true;
+          await this.persist(job);
           result = await session.run(pending.text, observe);
           if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
           turn.result = complete(result.finalResponse);

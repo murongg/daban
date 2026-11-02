@@ -16,7 +16,13 @@ interface Search {
     runId: string;
     incomplete: boolean;
     kind: string;
-    preview: { field: string; offset: number; content: string; truncated: boolean };
+    preview: {
+      field: string;
+      turn?: number;
+      offset: number;
+      content: string;
+      truncated: boolean;
+    };
     fileCount: number;
   }[];
   nextBefore?: string;
@@ -24,6 +30,8 @@ interface Search {
 interface Read {
   untrusted: boolean;
   incomplete: boolean;
+  turn?: number;
+  turns?: number;
   content: string;
   offset: number;
   total: number;
@@ -451,6 +459,67 @@ test('a legacy insert list is dropped alone so the saved task stays readable', a
     assert.equal(loaded?.result, record(1).result);
     assert.equal(loaded?.inserts, undefined);
     assert.equal(loaded?.turns?.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('history search and reads cover every turn of a multi-turn record', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-history-turns-'));
+  try {
+    const journal = new TaskJournal(root);
+    await journal.load();
+    await journal.put({
+      ...record(7),
+      prompt: '合成原始请求',
+      result: '合成最终回答',
+      turns: [
+        { id: 'mock-request-7', prompt: '合成原始请求', result: '合成原始回答' },
+        { id: 'mock-insert-7', prompt: '合成插话内容', result: '合成最终回答' },
+      ],
+    });
+    const history = new HistoryTools(journal);
+    const run = { bot: 'a', id: 'current', abort: new AbortController() };
+    const inserted = (await history.invoke(run, 'bot_history_search', {
+      query: '插话内容',
+    })) as Search;
+    assert.equal(inserted.matches.length, 1);
+    assert.equal(inserted.matches[0].preview.field, 'prompt');
+    assert.equal(inserted.matches[0].preview.turn, 1);
+    // The original reply is stored on its own turn, not only as the final answer.
+    const original = (await history.invoke(run, 'bot_history_search', {
+      query: '原始回答',
+    })) as Search;
+    assert.equal(original.matches.length, 1);
+    assert.equal(original.matches[0].preview.field, 'result');
+    assert.equal(original.matches[0].preview.turn, 0);
+    const last = (await history.invoke(run, 'bot_history_read', {
+      runId: record(7).runId,
+    })) as Read;
+    assert.equal(last.content, '合成最终回答');
+    assert.equal(last.turns, 2);
+    const first = (await history.invoke(run, 'bot_history_read', {
+      runId: record(7).runId,
+      field: 'result',
+      turn: 0,
+    })) as Read;
+    assert.equal(first.content, '合成原始回答');
+    assert.equal(first.turn, 0);
+    const prompt = (await history.invoke(run, 'bot_history_read', {
+      runId: record(7).runId,
+      field: 'prompt',
+      turn: 1,
+    })) as Read;
+    assert.equal(prompt.content, '合成插话内容');
+    await assert.rejects(
+      history.invoke(run, 'bot_history_read', { runId: record(7).runId, turn: 2 }),
+      { code: 'INVALID_HISTORY_QUERY' },
+    );
+    await journal.put(record(8));
+    await assert.rejects(
+      history.invoke(run, 'bot_history_read', { runId: record(8).runId, turn: 0 }),
+      { code: 'INVALID_HISTORY_QUERY' },
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

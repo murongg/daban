@@ -773,6 +773,7 @@ function liveQueueRuntime() {
   const starts: Extract<RuntimeCommand, { type: 'task.start' }>[] = [];
   let failing = false;
   let insertsFailing = false;
+  let insertError: string | undefined;
   let startGate: Promise<undefined> | undefined;
   let releaseStart: (() => unknown) | undefined;
   const invoke = vi.fn(async (command: RuntimeCommand) => {
@@ -797,6 +798,7 @@ function liveQueueRuntime() {
       };
     }
     if (command.type === 'task.insert') {
+      if (insertError) throw new Error(insertError);
       if (insertsFailing) throw new Error('RUNTIME_OFFLINE');
       return { ok: true as const, value: { ok: true, id: command.id } };
     }
@@ -833,6 +835,9 @@ function liveQueueRuntime() {
     },
     succeedInserts() {
       insertsFailing = false;
+    },
+    uncertainInserts() {
+      insertError = 'MODEL_INSERT_UNCERTAIN';
     },
     holdStarts() {
       startGate = new Promise<undefined>((resolve) => {
@@ -1094,6 +1099,37 @@ it('pauses an unconfirmed steer until the same request is verified', async () =>
   );
   expect(await screen.findByText('SYNTHETIC UNCERTAIN STEER')).toBeVisible();
   expect(runtime.starts).toHaveLength(0);
+});
+it('keeps a begun insert from being resent automatically after an uncertain outcome', async () => {
+  const runtime = liveQueueRuntime();
+  runtime.uncertainInserts();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, 'SYNTHETIC BEGUN INSERT');
+  await userEvent.keyboard('{Enter}');
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  await userEvent.click(
+    within(queue).getByRole('button', {
+      name: '将排队消息 SYNTHETIC BEGUN INSERT 插入当前任务',
+    }),
+  );
+  // The message is kept as a failed item so only an explicit retry can run it again.
+  expect(await within(queue).findByText('发送失败，可重试或移除。')).toBeVisible();
+  expect(within(queue).getByText('SYNTHETIC BEGUN INSERT')).toBeVisible();
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-current-run',
+        'mock-queue-current-request',
+        'SYNTHETIC CURRENT TASK',
+        'completed',
+        false,
+        'SYNTHETIC CURRENT DONE',
+      ),
+    ),
+  );
+  await waitFor(() => expect(runtime.starts).toHaveLength(0));
+  expect(within(queue).getByText('SYNTHETIC BEGUN INSERT')).toBeVisible();
 });
 it('sends the next queued message when a started task ends before it is seen running', async () => {
   const runtime = liveQueueRuntime();

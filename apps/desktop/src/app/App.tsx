@@ -124,12 +124,17 @@ function definiteInsertError(error: unknown) {
     [
       'TASK_INSERT_STALE',
       'MODEL_NOT_RUNNING',
+      'MODEL_INSERT_UNCERTAIN',
       'MODEL_INSERT_FULL',
       'INVALID_TASK_INSERT',
       'UNKNOWN_BOT',
       'RUNTIME_TOO_OLD',
     ].includes(error.message)
   );
+}
+// A begun turn may already have run tools or changed files, so it must never be replayed automatically.
+function uncertainInsertError(error: unknown) {
+  return error instanceof Error && error.message === 'MODEL_INSERT_UNCERTAIN';
 }
 function load() {
   try {
@@ -395,7 +400,15 @@ function Workbench() {
       return skipped;
     }
     submitting.current.add(botId);
-    dispatch({ type: 'runtime-pending', bot: botId, task });
+    // Keep the exact source attachments of this send: a queued item's composer slot was cleared when it was queued.
+    const refs = continued
+      ? undefined
+      : state.runtimeRequests[botId]
+        ? state.runtimeRefs[botId]
+        : queued
+          ? [...queued.files]
+          : [...state.attachments[botId]];
+    dispatch({ type: 'runtime-pending', bot: botId, task, refs });
     try {
       if (runtime.snapshot.protocolVersion >= 3) {
         const entry = state.bots.find((bot) => bot.id === botId);
@@ -494,6 +507,16 @@ function Workbench() {
       task: { id: crypto.randomUUID(), prompt, files: files.map((file) => file.id) },
     });
   }
+  function rejectInsert(botId: string, id: string, error: unknown) {
+    notify(runtimeError(error));
+    if (uncertainInsertError(error)) {
+      // Clear verify first so the kept item is a failed message: only an explicit retry may run it again.
+      dispatch({ type: 'queue-unverify', bot: botId, id });
+      dispatch({ type: 'queue-fail', bot: botId, id });
+      return;
+    }
+    if (definiteInsertError(error)) dispatch({ type: 'queue-unverify', bot: botId, id });
+  }
   async function insertQueued(botId: string, id: string) {
     const item = messageQueue(state, botId).find((entry) => entry.id === id);
     if (!item || item.files.length || item.verify) return;
@@ -516,8 +539,7 @@ function Workbench() {
       if (receipt?.ok !== true || receipt.id !== item.id) throw new Error('INVALID_TASK_ACK');
       dispatch({ type: 'queue-insert', bot: botId, id: item.id, revision: target.chatRevision });
     } catch (error) {
-      notify(runtimeError(error));
-      if (definiteInsertError(error)) dispatch({ type: 'queue-unverify', bot: botId, id: item.id });
+      rejectInsert(botId, item.id, error);
     }
   }
   const verifyPending = Object.values(state.queued).some((items) =>
@@ -556,8 +578,7 @@ function Workbench() {
         .catch((error) => {
           // Unknown outcomes stay paused; only a definite rejection can resume normal queue delivery.
           if (!definiteInsertError(error)) return;
-          dispatch({ type: 'queue-unverify', bot: entry.id, id: item.id });
-          notify(runtimeError(error));
+          rejectInsert(entry.id, item.id, error);
         })
         .finally(() => {
           verifyingInserts.current.delete(item.id);

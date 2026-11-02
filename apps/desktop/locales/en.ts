@@ -1048,6 +1048,8 @@ export const english = {
     'Too many messages are already inserted into this task. This one stays queued.',
   'errors.taskInsertStaleMessageKeptQueue':
     'That task is no longer the one that was running. The message stays queued for the next send.',
+  'errors.taskInsertUncertainMessageNotReplayed':
+    'This inserted message had already started when the task ended, so its outcome is unknown. It is kept here; retry only if it should run again.',
   'errors.invalidTaskContentCheckTitleStatusText':
     'Invalid task content. Check the title, status and text length before saving.',
   'errors.invalidTaskFilterChooseAnotherFilterSearch':

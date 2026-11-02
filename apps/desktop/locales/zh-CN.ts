@@ -952,6 +952,8 @@ export const chinese = {
   'errors.taskInsertFullMessageKeptQueue': '当前任务的插话已满，消息仍保留在队列中。',
   'errors.taskInsertStaleMessageKeptQueue':
     '目标任务已变化，消息仍保留在队列中，将作为下一条发送。',
+  'errors.taskInsertUncertainMessageNotReplayed':
+    '该插话在任务结束前已开始执行，结果无法确认，因此不会自动重发。消息仍保留在这里，仅在确实需要重新执行时再重试。',
   'errors.invalidTaskContentCheckTitleStatusText':
     '任务内容无效，请核对标题、状态和文字长度后再保存。',
   'errors.invalidTaskFilterChooseAnotherFilterSearch': '任务筛选无效，请重新选择筛选或关键词。',
