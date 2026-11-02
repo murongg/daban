@@ -16,6 +16,7 @@ export interface SelectOption {
   label: string;
   disabled?: boolean;
   icon?: ReactNode;
+  detail?: ReactNode;
 }
 export function Select({
   label,
@@ -58,6 +59,7 @@ export function Select({
             <span className="select-label">
               {selected?.icon}
               <span className="select-text">{selectedText || t('select.selectOption')}</span>
+              {selected?.detail && <span className="select-detail">{selected.detail}</span>}
             </span>
           )}
         </SelectValue>
@@ -82,6 +84,7 @@ export function Select({
               <span className="select-label">
                 {option.icon}
                 <span className="select-text">{option.label}</span>
+                {option.detail && <span className="select-detail">{option.detail}</span>}
               </span>
               <Check aria-hidden="true" />
             </ListBoxItem>

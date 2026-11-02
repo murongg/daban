@@ -2,7 +2,7 @@ import { agentId, type BotProfileInput, type GroupInput, isModelId } from '@daba
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Avatar, colors } from './Avatar';
 import { type MessageKey, t, useLocale } from './locale';
-import { modelChoices, modelIcon, modelName } from './model-options';
+import { modelChoices, modelIcon, modelInputs, modelName } from './model-options';
 import type { BotPreset } from './presets';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
@@ -245,6 +245,10 @@ export function Create({
                     {
                       value: '',
                       icon: modelIcon(
+                        runtime.snapshot.model.model,
+                        runtime.snapshot.model.connections,
+                      ),
+                      detail: modelInputs(
                         runtime.snapshot.model.model,
                         runtime.snapshot.model.connections,
                       ),

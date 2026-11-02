@@ -14,6 +14,8 @@ import {
 import { ChevronDown } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { getLocale, t, useLocale } from './locale';
+import { ModelIcon } from './ModelIcon';
+import { ModelInputs } from './ModelInputs';
 import { ModelCatalog, ModelInspector } from './ModelTools';
 import { definitiveModelErrors } from './model-errors';
 import { modelChoices, modelName } from './model-options';
@@ -345,9 +347,15 @@ export function Providers({
               <div>
                 <div className="setting-label">{connection.name}</div>
                 <p className="setting-description provider-address">{connection.baseURL}</p>
-                <p className="setting-description">
-                  {connection.models.map((entry) => entry.name).join(' · ')}
-                </p>
+                <ul className="provider-model-summary">
+                  {connection.models.map((entry) => (
+                    <li key={entry.id}>
+                      <ModelIcon id={entry.id} fallback={providerIdentity(connection)} />
+                      <span className="model-name">{entry.name}</span>
+                      <ModelInputs input={entry.capabilities?.input} vision={entry.vision} />
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
             <button
@@ -632,7 +640,10 @@ export function Providers({
             <div className="provider-models">
               {draft.connection.models.map((entry, index) => (
                 <fieldset className="provider-model" key={draft.keys[index]}>
-                  <legend>{t('models.numberedModel', { 0: index + 1 })}</legend>
+                  <legend>
+                    <ModelIcon id={entry.id} fallback={providerIdentity(draft.connection)} />
+                    {t('models.numberedModel', { 0: index + 1 })}
+                  </legend>
                   <div className="provider-pair">
                     <label className="field-label">
                       {t('models.modelId')}
@@ -667,15 +678,13 @@ export function Providers({
                       onMatch={(info, unchanged) => matchModel(draft.keys[index], info, unchanged)}
                     />
                   )}
-                  <label className="provider-vision">
-                    <input
-                      type="checkbox"
-                      aria-label={t('models.modelSupportsImages', { 0: index + 1 })}
-                      checked={entry.vision}
-                      onChange={(event) => updateModel(index, { vision: event.target.checked })}
-                    />
-                    {t('models.supportsImagesDesktopObservation')}
-                  </label>
+                  <ModelInputs
+                    input={entry.capabilities?.input}
+                    vision={entry.vision}
+                    label={t('models.modelSupportsImages', { 0: index + 1 })}
+                    disabled={!available || busy || !!pending}
+                    onVisionChange={(vision) => updateModel(index, { vision })}
+                  />
                   <details className="provider-limits">
                     <summary>{t('models.contextOutputLimits')}</summary>
                     <div className="provider-pair">
