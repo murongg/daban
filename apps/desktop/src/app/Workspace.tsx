@@ -22,6 +22,7 @@ import { IconButton } from '../components/controls/Button';
 import { Select } from '../components/controls/Select';
 import { TimeField } from '../components/controls/TimeField';
 import { Avatar } from '../features/bots/Avatar';
+import { Capabilities } from '../features/capabilities/Capabilities';
 import { Computer, type ComputerSurface } from '../features/computer/Computer';
 import { Desktop } from '../features/computer/Desktop';
 import { download } from '../features/files/files';
@@ -30,7 +31,6 @@ import { Knowledge } from '../features/knowledge/Knowledge';
 import { MemoryHistory } from '../features/memory/MemoryHistory';
 import { Notes } from '../features/notes/Notes';
 import { Schedules } from '../features/schedules/Schedules';
-import { Skills } from '../features/skills/Skills';
 import { t, useLocale } from '../i18n/locale';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
@@ -47,7 +47,7 @@ const allTabs = [
   ['computer', Monitor, 'workspace.computer'],
   ['files', Folder, 'common.files'],
   ['knowledge', FileText, 'workspace.documents'],
-  ['skills', BookOpen, 'common.skills'],
+  ['skills', BookOpen, 'capabilities.title'],
   ['memory', Brain, 'workspace.memory'],
   ['notes', StickyNote, 'common.notes'],
   ['routines', Clock3, 'workspace.schedules'],
@@ -317,7 +317,7 @@ export function Workspace({
           <Knowledge state={state} bot={bot} dispatch={dispatch} notify={notify} />
         )}
         {panel === 'skills' && (
-          <Skills state={state} bot={bot} dispatch={dispatch} notify={notify} />
+          <Capabilities state={state} bot={bot} dispatch={dispatch} notify={notify} />
         )}
         {panel === 'memory' && (
           <div className="panel-section">

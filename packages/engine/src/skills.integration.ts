@@ -77,7 +77,7 @@ test('the package API retains all files and binds resource reads and archive exp
   }
 });
 
-test('the authenticated skills API shares instruction documents but isolates enablement by registered logical Bot', async () => {
+test('the authenticated skills API installs per Bot and explicitly copies independent versions', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-skills-api-'));
   const app = await startPrototype({
     profileDir: path.join(root, 'profile'),
@@ -124,9 +124,9 @@ test('the authenticated skills API shares instruction documents but isolates ena
     assert.equal(skill.content, content);
     assert.equal((await request('import', { bot: 'mock-api-a', content })).value.id, skill.id);
     assert.equal(
-      (await request('list', { bot: 'mock-api-b' })).value.catalog.items.find(
+      (await request('list', { bot: 'mock-api-b' })).value.catalog.items.some(
         (item: { id: string }) => item.id === skill.id,
-      ).enabled,
+      ),
       false,
     );
     const binding = { id: skill.id, revision: skill.revision, bindingRevision: 0, enabled: true };
@@ -174,9 +174,18 @@ test('the authenticated skills API shares instruction documents but isolates ena
           bot: 'mock-api-b',
           binding: { ...binding, revision: updated.revision },
         })
-      ).value.entry.enabled,
-      true,
+      ).status,
+      404,
     );
+    const copied = (
+      await request('copy', {
+        bot: 'mock-api-a',
+        id: skill.id,
+        revision: updated.revision,
+        targetBot: 'mock-api-b',
+      })
+    ).value;
+    assert.notEqual(copied.id, skill.id);
     const recycled = (
       await request('recycle', { bot: 'mock-api-a', id: skill.id, revision: updated.revision })
     ).value;
@@ -185,7 +194,7 @@ test('the authenticated skills API shares instruction documents but isolates ena
       (await app.models.skills.capture('mock-api-b')).skills.filter(
         (item) => item.name !== 'find-skills',
       ).length,
-      0,
+      1,
     );
     const restored = (
       await request('restore', { bot: 'mock-api-a', id: skill.id, revision: recycled.revision })
@@ -199,12 +208,13 @@ test('the authenticated skills API shares instruction documents but isolates ena
     );
     assert.equal(
       (await request('list', { bot: 'mock-api-b' })).value.catalog.items.find(
-        (item: { id: string }) => item.id === skill.id,
+        (item: { id: string }) => item.id === copied.id,
       ).enabled,
-      false,
+      true,
     );
+    assert.equal((await request('read', { bot: 'mock-api-b', id: skill.id })).status, 404);
     assert.equal(
-      (await request('read', { bot: 'mock-api-b', id: skill.id })).value.content,
+      (await request('read', { bot: 'mock-api-b', id: copied.id })).value.content,
       updated.content,
     );
     assert.equal(app.runtime.status().items.length, 0);

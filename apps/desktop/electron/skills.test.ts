@@ -119,6 +119,7 @@ it('versions skill IPC, rejects extra authority fields and validates exact respo
   ).toThrow('INVALID_COMMAND');
   const posted: unknown[] = [];
   const bound = { ...entry, enabled: true, bindingRevision: 1 };
+  let ownership = false;
   let protocol = 19,
     returned: unknown = bound;
   const client = new RuntimeClient({
@@ -139,11 +140,15 @@ it('versions skill IPC, rejects extra authority fields and validates exact respo
       }
       return Response.json({
         clientProtocol: protocol,
+        botCapabilities: ownership ? true : undefined,
         mode: 'agent',
         sharedLogin: false,
         bots: {},
         computers: { available: true, revision: 0, limit: 2, items: [] },
         skills: { available: true, revision: 1 },
+        mcp: { available: true, revision: 0 },
+        recovery: { available: true, revision: 1 },
+        chats: { available: true, revision: 0, items: [] },
         model: { available: true, bots: {} },
       });
     },
@@ -179,7 +184,12 @@ it('versions skill IPC, rejects extra authority fields and validates exact respo
   const document = { ...summary, content, size: new TextEncoder().encode(content).length };
   const input = { type: 'skill.import', bot: command.bot, content };
   returned = document;
-  expect(await client.invoke(parseCommand(input))).toEqual(document);
+  const beforeImport = posted.length;
+  await expect(client.invoke(parseCommand(input))).rejects.toThrow('RUNTIME_TOO_OLD');
+  expect(posted).toHaveLength(beforeImport);
+  ownership = true;
+  returned = { ...document, ownerBot: command.bot };
+  expect(await client.invoke(parseCommand(input))).toEqual({ ...document, ownerBot: command.bot });
   returned = { ...document, content: `${content}-FOREIGN`, size: document.size + 8 };
   await expect(client.invoke(parseCommand(input))).rejects.toThrow('INVALID_RUNTIME_STATE');
   returned = { ...document, deleted: true };
@@ -190,4 +200,28 @@ it('versions skill IPC, rejects extra authority fields and validates exact respo
       parseCommand({ type: 'skill.update', bot: command.bot, id: entry.id, revision: 3, content }),
     ),
   ).rejects.toThrow('INVALID_RUNTIME_STATE');
+});
+
+it('does not send package installation to a backend that cannot promise Bot ownership', async () => {
+  const fetcher = vi.fn(async () => {
+    throw Error('SYNTHETIC_UNEXPECTED_REQUEST');
+  });
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  vi.spyOn(client, 'status').mockResolvedValue({ ...disconnected('ready'), protocolVersion: 40 });
+  const content =
+    '---\nname: mock-private-install\ndescription: Synthetic private installation\n---\nSynthetic instructions.\n';
+  await expect(
+    client.invoke(
+      parseCommand({
+        type: 'skill.package.import',
+        bot: 'mock-alpha',
+        package: { files: [{ path: 'SKILL.md', data: Buffer.from(content).toString('base64') }] },
+      }),
+    ),
+  ).rejects.toThrow('RUNTIME_TOO_OLD');
+  expect(fetcher).not.toHaveBeenCalled();
 });
