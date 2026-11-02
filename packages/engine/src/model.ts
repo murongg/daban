@@ -106,7 +106,8 @@ export function sdkPatch(
   return [
     {
       id: 'compaction-basic',
-      config: { thresholdRatio: 0.032, retainTokens: 4096, headroomTokens: 8192, maxTokens: 2048 },
+      // Match DSH's 80% threshold: early summaries replace history and break reusable prompt prefixes.
+      config: { thresholdRatio: 0.8, retainTokens: 4096, headroomTokens: 8192, maxTokens: 2048 },
     },
     // Keep raw DSH filesystem/shell tools off: the scoped MCP tools must not inherit provider credentials.
     ...[
