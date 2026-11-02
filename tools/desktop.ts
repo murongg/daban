@@ -133,6 +133,7 @@ else {
       executor,
       'main.js',
       'package.json',
+      'LICENSE',
       'node_modules',
     ],
     { env: { ...process.env, COPYFILE_DISABLE: '1' } },

@@ -1,0 +1,237 @@
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { constants } from 'node:fs';
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+import { gunzipSync, gzipSync } from 'node:zlib';
+import { type SignOptions, sign } from '@electron/osx-sign';
+import { environmentAssets, hashAsset, verifyAsset } from './environment.ts';
+import { sealHostPackage } from './roles.ts';
+
+const execute = promisify(execFile);
+const run = async (program: string, args: string[]) =>
+  (await execute(program, args, { timeout: 35 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 })).stdout;
+const appEntitlements = fileURLToPath(new URL('./entitlements/app.plist', import.meta.url));
+const limaEntitlements = fileURLToPath(new URL('./entitlements/lima.plist', import.meta.url));
+interface Signing {
+  identity: string;
+  keychain?: string;
+}
+type Run = typeof run;
+
+export function isMachO(bytes: Buffer) {
+  return [
+    'feedface',
+    'cefaedfe',
+    'feedfacf',
+    'cffaedfe',
+    'cafebabe',
+    'bebafeca',
+    'cafebabf',
+    'bfbafeca',
+  ].includes(bytes.subarray(0, 4).toString('hex'));
+}
+function signingArguments(options: Signing, entitlements?: string) {
+  assert.match(
+    options.identity,
+    /^Developer ID Application: .+ \([A-Z0-9]{10}\)$/,
+    'DEVELOPER_ID_REQUIRED',
+  );
+  return [
+    '--force',
+    '--sign',
+    options.identity,
+    '--timestamp',
+    '--options',
+    'runtime',
+    ...(options.keychain ? ['--keychain', options.keychain] : []),
+    ...(entitlements ? ['--entitlements', entitlements] : []),
+  ];
+}
+export async function sealSignedLima(resources: string) {
+  const digest = await hashAsset(path.join(resources, 'environment/lima.tar.gz'), 'sha256');
+  const result = { bytes: digest.bytes, sha256: digest.digest };
+  const file = path.join(resources, 'environment/manifest.json');
+  const manifest = JSON.parse(await readFile(file, 'utf8'));
+  manifest.lima = { file: 'lima.tar.gz', ...result };
+  await writeFile(file, JSON.stringify(manifest, null, 2) + '\n');
+  // Pin signed bytes in host code as well: never trust an arbitrary digest from environment metadata.
+  await writeFile(
+    path.join(resources, 'agent/assets.js'),
+    `export const limaDigest = '${result.sha256}';\n`,
+  );
+  return result;
+}
+async function signLima(resources: string, options: Signing) {
+  const archive = path.join(resources, 'environment/lima.tar.gz');
+  await verifyAsset(archive, 'sha256', environmentAssets.lima.digest);
+  const stage = await mkdtemp(path.join(tmpdir(), 'daban-sign-lima-'));
+  try {
+    // Extraction is allowed only after verifying the pinned upstream archive, never a supplied user archive.
+    await run('/usr/bin/tar', ['-xzf', archive, '-C', stage]);
+    let signed = 0;
+    for (const entry of await readdir(stage, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const file = path.join(entry.parentPath, entry.name);
+      if (entry.name === 'lima-guestagent.Darwin-aarch64.gz') {
+        const binary = file.slice(0, -3);
+        await writeFile(binary, gunzipSync(await readFile(file)), { mode: 0o755 });
+        await run('/usr/bin/codesign', [...signingArguments(options, limaEntitlements), binary]);
+        await writeFile(file, gzipSync(await readFile(binary)));
+        await rm(binary);
+        signed += 1;
+      } else {
+        const handle = await open(file, 'r');
+        const bytes = Buffer.alloc(4);
+        try {
+          await handle.read(bytes, 0, 4, 0);
+        } finally {
+          await handle.close();
+        }
+        if (!isMachO(bytes)) continue;
+        await run('/usr/bin/codesign', [...signingArguments(options, limaEntitlements), file]);
+        await run('/usr/bin/codesign', ['--verify', '--strict', file]);
+        signed += 1;
+      }
+    }
+    assert.ok(signed > 0, 'LIMA_CODE_MISSING');
+    const temporary = archive + '.signed';
+    await execute('/usr/bin/tar', ['--format=ustar', '-czf', temporary, '-C', stage, '.'], {
+      env: { ...process.env, COPYFILE_DISABLE: '1' },
+    });
+    await rename(temporary, archive);
+    await sealSignedLima(resources);
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
+}
+export async function signApplication(
+  app: string,
+  options: Signing,
+  dependencies: {
+    sign: (options: SignOptions) => Promise<unknown>;
+    seal: (directory: string) => Promise<unknown>;
+    run: Run;
+  } = { sign, seal: sealHostPackage, run },
+) {
+  const args = signingArguments(options, appEntitlements);
+  await dependencies.sign({
+    app,
+    ...options,
+    platform: 'darwin',
+    type: 'distribution',
+    preAutoEntitlements: false,
+    preEmbedProvisioningProfile: false,
+    optionsForFile: () => ({ entitlements: appEntitlements, hardenedRuntime: true }),
+  });
+  // Nested signatures change Node/native bytes. Rebuild our host manifest before sealing the outer bundle.
+  await dependencies.seal(path.join(app, 'Contents/Resources/agent'));
+  await dependencies.run('/usr/bin/codesign', [...args, app]);
+  await dependencies.run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
+}
+async function notarize(file: string, options: Signing) {
+  const profile = process.env.MACOS_NOTARY_PROFILE;
+  assert.ok(profile, 'MACOS_NOTARY_PROFILE_REQUIRED');
+  const result = JSON.parse(
+    await run('/usr/bin/xcrun', [
+      'notarytool',
+      'submit',
+      file,
+      '--keychain-profile',
+      profile,
+      ...(options.keychain ? ['--keychain', options.keychain] : []),
+      '--wait',
+      '--timeout',
+      '30m',
+      '--output-format',
+      'json',
+    ]),
+  );
+  assert.equal(result.status, 'Accepted', `NOTARIZATION_REJECTED:${String(result.id)}`);
+}
+async function main() {
+  assert.equal(process.platform, 'darwin');
+  const [input, output] = process.argv.slice(2);
+  assert.ok(input && output, 'Usage: tools/sign.ts <Daban.app> <new-artifacts-directory>');
+  const app = await import('node:fs/promises').then((fs) => fs.realpath(input));
+  assert.equal(path.basename(app), 'Daban.app');
+  const options = {
+    identity: process.env.MACOS_SIGNING_IDENTITY ?? '',
+    keychain: process.env.MACOS_KEYCHAIN,
+  };
+  signingArguments(options);
+  assert.ok(process.env.MACOS_NOTARY_PROFILE, 'MACOS_NOTARY_PROFILE_REQUIRED');
+  await mkdir(output);
+  await signLima(path.join(app, 'Contents/Resources'), options);
+  await signApplication(app, options);
+  const upload = path.join(output, 'notarization.zip');
+  await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, upload]);
+  await notarize(upload, options);
+  await rm(upload);
+  await run('/usr/bin/xcrun', ['stapler', 'staple', app]);
+  await run('/usr/bin/xcrun', ['stapler', 'validate', app]);
+  await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
+  const version = JSON.parse(
+    await readFile(path.join(app, 'Contents/Resources/app/package.json'), 'utf8'),
+  ).version;
+  assert.match(version, /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/);
+  const staging = await mkdtemp(path.join(tmpdir(), 'daban-dmg-'));
+  try {
+    await cp(app, path.join(staging, 'Daban.app'), {
+      recursive: true,
+      verbatimSymlinks: true,
+      mode: constants.COPYFILE_FICLONE,
+    });
+    await symlink('/Applications', path.join(staging, 'Applications'));
+    const dmg = path.resolve(output, `Daban-${version}-macos-arm64.dmg`);
+    await run('/usr/bin/hdiutil', [
+      'create',
+      '-volname',
+      'Daban',
+      '-srcfolder',
+      staging,
+      '-ov',
+      '-format',
+      'UDZO',
+      dmg,
+    ]);
+    await run('/usr/bin/codesign', [...signingArguments(options), dmg]);
+    await notarize(dmg, options);
+    await run('/usr/bin/xcrun', ['stapler', 'staple', dmg]);
+    await run('/usr/bin/xcrun', ['stapler', 'validate', dmg]);
+    await run('/usr/sbin/spctl', [
+      '--assess',
+      '--type',
+      'open',
+      '--context',
+      'context:primary-signature',
+      dmg,
+    ]);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
+  await run('/usr/bin/ditto', [
+    '-c',
+    '-k',
+    '--keepParent',
+    app,
+    path.resolve(output, `Daban-${version}-macos-arm64.zip`),
+  ]);
+  console.log('Developer ID signing, notarization, stapling and Gatekeeper assessment passed.');
+}
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
+  await main();
