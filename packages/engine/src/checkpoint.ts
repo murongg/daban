@@ -318,9 +318,9 @@ export function recoveryContext(records: TaskRecord[], owner: RecoveryOwner, max
           response?.text &&
           (partialTurn >= 0 ? index === partialTurn : latest && row.phase !== 'completed')
         )
-          item.partial = excerpt(row, 'partial', response.text, limit, index);
+          item.partial = excerpt(row, 'partial', response.text, limit);
         if (latest && typeof row.error === 'string' && row.error)
-          item.error = excerpt(row, 'error', row.error, limit, index);
+          item.error = excerpt(row, 'error', row.error, limit);
         items.push(item);
       }
     } else {

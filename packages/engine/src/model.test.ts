@@ -482,6 +482,71 @@ async function insertFixture(root: string, state: InsertState) {
   return models;
 }
 
+test('a continuation durably owns all unstarted inserts independently of client acknowledgements', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-continue-handoff-'));
+  const bot = 'mock-handoff';
+  const prompts: string[] = [];
+  const gates = insertGates();
+  let fail = true;
+  const models = await insertFixture(root, {
+    bot,
+    prompts,
+    ...gates,
+    failOn: (prompt) => fail && prompt === 'SYNTHETIC FAILED INSERT',
+  });
+  try {
+    await models.start(bot, { requestId: 'mock-handoff-original', prompt: 'SYNTHETIC ORIGINAL' });
+    await gates.started;
+    const original = models.jobs.get(bot)!;
+    for (const [id, text] of [
+      ['mock-handoff-failed', 'SYNTHETIC FAILED INSERT'],
+      ['mock-handoff-waiting', 'SYNTHETIC WAITING INSERT'],
+    ]) {
+      await models.insert(bot, { id, text, runId: original.id, chatRevision: 0 });
+    }
+    gates.release();
+    await original.done;
+    assert.equal(original.phase, 'failed');
+    fail = false;
+    const retry = {
+      requestId: 'mock-handoff-retry',
+      prompt: 'SYNTHETIC FAILED INSERT',
+      retryOf: original.id,
+      retryTurn: 'mock-handoff-failed',
+      chatRevision: 0,
+    };
+    // Drop the first acknowledgement and reconcile only after the entire continuation completes.
+    await models.start(bot, retry);
+    await models.jobs.get(bot)!.done;
+    const count = prompts.length;
+    const receipt = await models.start(bot, retry);
+    assert.equal(receipt.phase, 'completed');
+    assert.equal(prompts.length, count);
+    assert.deepEqual(
+      models.jobs.get(bot)!.turns?.map((turn) => turn.prompt),
+      [retry.prompt, 'SYNTHETIC WAITING INSERT'],
+    );
+    assert.equal(models.jobs.get(bot)!.inserts[0].done, true);
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(models.jobs.get(bot)!.privateDir, 'turn.json'), 'utf8')),
+      {
+        id: 'mock-handoff-waiting',
+      },
+    );
+    await assert.rejects(
+      models.start(bot, { ...retry, requestId: 'mock-foreign-turn', retryTurn: 'mock-not-owned' }),
+      { code: 'INVALID_RETRY' },
+    );
+    await assert.rejects(
+      models.start(bot, { ...retry, requestId: 'mock-altered-turn', prompt: 'SYNTHETIC ALTERED' }),
+      { code: 'INVALID_RETRY' },
+    );
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('a retried insert shares the first durable write instead of reporting an unpersisted acceptance', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-write-'));
   const bot = 'mock-write';

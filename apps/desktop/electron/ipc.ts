@@ -438,7 +438,15 @@ export function parseCommand(value: unknown): RuntimeCommand {
     const t = v.task;
     if (
       !object(t) ||
-      !keys(t, ['requestId', 'prompt', 'retryOf', 'memory', 'files', 'chatRevision']) ||
+      !keys(t, [
+        'requestId',
+        'prompt',
+        'retryOf',
+        'retryTurn',
+        'memory',
+        'files',
+        'chatRevision',
+      ]) ||
       !string(t.requestId, 100) ||
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
@@ -453,6 +461,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
       (!string(t.retryOf, 100) || !/^[a-zA-Z0-9_-]+$/.test(t.retryOf as string))
     )
       return fail();
+    if (t.retryTurn !== undefined && (!t.retryOf || !validAgentId(t.retryTurn))) return fail();
     if (
       t.files !== undefined &&
       (!Array.isArray(t.files) || t.files.length > 4 || !t.files.every(isTaskFile))

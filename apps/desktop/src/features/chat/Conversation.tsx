@@ -206,10 +206,15 @@ export function Conversation({
     task?.runId ? [`runtime-result:${task.runId}`, `runtime-partial:${task.runId}`] : [],
   );
   const replyIndex = entries.findIndex((entry) => currentIds.has(entry.id));
+  const turnId = task?.turns?.at(-1)?.id ?? task?.requestId;
+  const userId = turnId === task?.requestId ? turnId : `inserted:${turnId}`;
+  const userIndex = entries.findIndex((entry) => entry.id === userId);
+  // Approval can precede the first text chunk; anchor it to its user turn instead of the end of the transcript.
+  const split = replyIndex >= 0 ? replyIndex : userIndex >= 0 ? userIndex + 1 : entries.length;
   // Only the activity around the current reply moves; transcript entries keep their order.
-  const earlier = replyIndex < 0 ? entries : entries.slice(0, replyIndex);
+  const earlier = entries.slice(0, split);
   const current = replyIndex < 0 ? [] : [entries[replyIndex]];
-  const later = replyIndex < 0 ? [] : entries.slice(replyIndex + 1);
+  const later = entries.slice(split + (replyIndex >= 0 ? 1 : 0));
   function send() {
     if (readOnly || recovering) return;
     if (state.attachmentUploads[bot.id]) {

@@ -221,7 +221,7 @@ it('continues an interrupted live task with its original input reference and a n
 });
 it('continues the unfinished inserted turn instead of replaying completed work', async () => {
   const snapshot = disconnected('ready');
-  snapshot.protocolVersion = 1;
+  snapshot.protocolVersion = 43;
   snapshot.model.configured = true;
   snapshot.bots.a = {
     owner: 'agent',
@@ -254,9 +254,21 @@ it('continues the unfinished inserted turn instead of replaying completed work',
     value:
       command.type === 'status'
         ? snapshot
-        : command.type === 'frame'
-          ? 'data:image/jpeg;base64,c3ludGhldGlj'
-          : {},
+        : command.type === 'task.start'
+          ? {
+              runId: 'mock-turn-retry',
+              requestId: command.task.requestId,
+              prompt: command.task.prompt,
+              phase: 'completed',
+              running: false,
+              result: 'SYNTHETIC DONE',
+              error: '',
+              files: [],
+              chatRevision: command.task.chatRevision,
+            }
+          : command.type === 'frame'
+            ? 'data:image/jpeg;base64,c3ludGhldGlj'
+            : {},
   }));
   Object.defineProperty(window, 'daban', {
     value: {
@@ -273,11 +285,10 @@ it('continues the unfinished inserted turn instead of replaying completed work',
   expect(command).toMatchObject({
     type: 'task.start',
     bot: 'a',
-    task: { prompt: '合成失败的插话', retryOf: 'mock-turn-run' },
+    task: { prompt: '合成失败的插话', retryOf: 'mock-turn-run', retryTurn: 'mock-turn-inserted' },
   });
-  // The accepted insert that never started rejoins the queue instead of being stranded in the old record.
-  const queue = await screen.findByRole('region', { name: '排队消息' });
-  expect(within(queue).getByText('合成待执行插话')).toBeInTheDocument();
+  // Accepted inserts stay with the backend continuation, even if its receipt is already terminal.
+  expect(await screen.findByText('合成待执行插话')).toBeInTheDocument();
 });
 it('keeps the draft editable after an explicit task validation rejection', async () => {
   const snapshot = disconnected('ready');

@@ -1138,26 +1138,6 @@ it('moves a queued message to the front so it is sent next', () => {
   );
   expect(reduce(state, { type: 'queue-promote', bot: bot.id, id: second.id })).toBe(state);
 });
-it('restores accepted inserts to the queue without clearing the composer', () => {
-  let state = initialState();
-  const bot = state.bots.find((entry) => entry.id === 'research')!;
-  const existing = { id: 'synthetic-restore-existing', prompt: 'SYNTHETIC EXISTING', files: [] };
-  state = reduce(state, { type: 'queue-add', bot: bot.id, task: existing });
-  const draft = 'SYNTHETIC NEXT DRAFT';
-  state = reduce(state, { type: 'draft', bot: bot.id, text: draft });
-  const restored = { id: 'synthetic-restore-one', prompt: ' SYNTHETIC RESTORED ONE ', files: [] };
-  state = reduce(state, {
-    type: 'queue-restore',
-    bot: bot.id,
-    tasks: [restored, existing],
-  });
-  expect(messageQueue(state, bot.id)).toEqual([
-    existing,
-    { id: restored.id, prompt: 'SYNTHETIC RESTORED ONE', files: [] },
-  ]);
-  expect(state.drafts[bot.id]).toBe(draft);
-  expect(reduce(state, { type: 'queue-restore', bot: bot.id, tasks: [restored] })).toBe(state);
-});
 it('turns an inserted queued message into a visible user message', () => {
   let state = initialState();
   const bot = state.bots.find((entry) => entry.id === 'research')!;

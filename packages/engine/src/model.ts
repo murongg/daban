@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -115,6 +115,7 @@ export function sdkPatch(
   route?: ResolvedModel,
   sdkFile = defaultSdkFile,
   cacheKey?: string,
+  turnFile?: string,
 ) {
   const search = route ? !!route.searchApiKey : true;
   const budget = contextBudget(route?.contextWindow ?? 1000000, route?.maxTokens ?? 8192);
@@ -201,6 +202,7 @@ export function sdkPatch(
                 config: {
                   url: `${origin}/mcp/${bot}`,
                   capability,
+                  ...(turnFile ? { turnFile } : {}),
                   ...(bridge
                     ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
                     : {}),
@@ -1122,12 +1124,14 @@ export class ModelRuns {
   }
   private persist(job: ModelJob, response?: ReplyStream) {
     const pending = (job.writing || Promise.resolve()).then(async () => {
+      // A turn may end while this write waits behind tool/plan persistence; check its owner inside the queue.
       if (
         response &&
         (!job.running ||
           job.abort.signal.aborted ||
           !['starting', 'running'].includes(job.phase) ||
-          response.revision <= (job.response?.revision || 0))
+          response.revision <= (job.response?.revision || 0) ||
+          response.turnId !== job.turns?.at(-1)?.id)
       )
         return;
       const record: TaskRecord = {
@@ -1209,6 +1213,7 @@ export class ModelRuns {
           files: task.files || [],
           ...(scope ? { conversationId: scope.id, context: scope.context } : {}),
           ...(task.retryOf ? { retryOf: task.retryOf } : {}),
+          ...(task.retryTurn ? { retryTurn: task.retryTurn } : {}),
           ...(task.chatRevision === undefined ? {} : { chatRevision: task.chatRevision }),
         }
       : undefined;
@@ -1227,6 +1232,7 @@ export class ModelRuns {
     }
     let cachedInputs: TaskRequest['files'];
     let intentId: string | undefined;
+    let continuedInserts: RunInsert[] = [];
     if (task?.retryOf) {
       const prior = await this.journal.read(bot, task.retryOf);
       if (!prior?.outputDirectory) throw new Fault('RETRY_NOT_FOUND', 404);
@@ -1236,6 +1242,26 @@ export class ModelRuns {
       )
         throw new Fault('INVALID_RETRY', 400);
       // Retries get a new writable directory, but retain identity for durable side effects such as schedules.
+      if (task.retryTurn) {
+        const turns = prior.turns ?? [];
+        const target =
+          turns.find((turn) => turn.id === task.retryTurn) ??
+          prior.inserts?.find((insert) => insert.id === task.retryTurn);
+        const prompt = target && ('prompt' in target ? target.prompt : target.text);
+        if (!target || prompt !== task.prompt) throw new Fault('INVALID_RETRY', 400);
+        const began = new Set(turns.map((turn) => turn.id));
+        // Carry accepted work in the same durable start record, before returning any acknowledgement.
+        continuedInserts = (prior.inserts ?? [])
+          .filter(
+            (insert) =>
+              !insert.done &&
+              !insert.started &&
+              !began.has(insert.id) &&
+              insert.id !== task.retryTurn,
+          )
+          .map((insert) => ({ ...insert }));
+        if (continuedInserts.length + 1 > turnLimit) throw new Fault('INVALID_RETRY', 400);
+      }
       intentId = prior.intentId || prior.runId;
       const root = await this.workspace.base(),
         directory = await this.workspace.scope(prior.outputDirectory).base();
@@ -1299,7 +1325,7 @@ export class ModelRuns {
       intentId: intentId || id,
       requestId: task?.requestId || id,
       task,
-      inserts: [],
+      inserts: continuedInserts,
       insertWrites: new Map(),
       insertable: true,
       fingerprint,
@@ -1435,6 +1461,7 @@ export class ModelRuns {
               conversationId: job.conversationId,
               chatRevision: job.chatRevision,
             }),
+            path.join(job.privateDir, 'turn.json'),
           ),
         ),
         {
@@ -1716,7 +1743,16 @@ export class ModelRuns {
           );
           if (context) job.prompt = context + '\n\n' + job.prompt;
         }
-        let result = await session.run(
+        const runTurn = async (id: string, input: Parameters<HarnessSession['run']>[0]) => {
+          const file = path.join(job.privateDir, 'turn.json');
+          // The trusted publisher captures this before generating frames; atomic replacement prevents torn reads.
+          await writeFile(`${file}.next`, JSON.stringify({ id }), { mode: 0o600 });
+          await rename(`${file}.next`, file);
+          job.abort.signal.throwIfAborted();
+          return session.run(input, observe);
+        };
+        let result = await runTurn(
+          job.turns![0].id,
           job.imageInputs?.length
             ? [
                 {
@@ -1728,7 +1764,6 @@ export class ModelRuns {
                 ...job.imageInputs,
               ]
             : job.prompt,
-          observe,
         );
         if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
         if (job.turns?.[0]) job.turns[0].result = complete(result.finalResponse);
@@ -1740,7 +1775,7 @@ export class ModelRuns {
           // Persist the start marker before the model call: after this point the turn must not be replayed as new work.
           pending.started = true;
           await this.persist(job);
-          result = await session.run(pending.text, observe);
+          result = await runTurn(pending.id, pending.text);
           if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
           turn.result = complete(result.finalResponse);
           pending.done = true;
@@ -1962,14 +1997,17 @@ export class ModelRuns {
       const { sessionId, ...response } = rpc.params || {};
       if (!job.task || sessionId !== job.sessionId || !isReplyStream(response))
         throw new Fault('INVALID_RESPONSE', 400);
-      const turnId = job.turns?.at(-1)?.id;
+      // An untagged legacy prefix is unambiguous only before this run has any inserted turns.
+      const turnId = response.turnId ?? (job.turns?.length === 1 ? job.turns[0].id : undefined);
+      if (!turnId || !job.turns?.some((turn) => turn.id === turnId))
+        throw new Fault('INVALID_RESPONSE', 400);
       await this.persist(job, {
         ...response,
         ...(turnId ? { turnId } : {}),
         text: job.redactResponse!(response.text),
       });
       result = {
-        accepted: job.response?.revision === response.revision,
+        accepted: job.response?.turnId === turnId && job.response.revision === response.revision,
         revision: job.response?.revision || 0,
       };
     } else if (rpc.method === 'interaction.open') {

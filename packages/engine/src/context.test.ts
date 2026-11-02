@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { CheckpointTracker, recoveryContext } from './checkpoint.js';
 import { contextBudget, contextPrefix, recoveryBudget } from './context.js';
+import { HistoryTools } from './history.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
 
 const row = (id: string, extra: Partial<TaskRecord> = {}): TaskRecord => ({
@@ -27,6 +28,53 @@ const owner = {
   persona: 'mock-persona',
   redact: (value: string) => value.replaceAll('synthetic-secret', '[redacted]'),
 };
+
+test('partial and error references in a multi-turn checkpoint can be read through history', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-checkpoint-reader-'));
+  const journal = new TaskJournal(root);
+  try {
+    await journal.load();
+    const saved = row('01', {
+      chatRevision: 1,
+      phase: 'failed',
+      result: '',
+      error: 'SYNTHETIC FAILURE '.repeat(1000),
+      turns: [
+        { id: 'mock-first', prompt: 'SYNTHETIC FIRST', result: 'SYNTHETIC ANSWER' },
+        { id: 'mock-last', prompt: 'SYNTHETIC LAST', result: '' },
+      ],
+      response: {
+        revision: 4,
+        turnId: 'mock-last',
+        state: 'streaming',
+        text: 'SYNTHETIC PARTIAL '.repeat(1000),
+      },
+    });
+    await journal.put(saved);
+    const text = recoveryContext([saved], owner, 12000);
+    const context = JSON.parse(text.slice(text.indexOf('\n') + 1)) as {
+      recent: {
+        partial?: { read: Record<string, unknown> };
+        error?: { read: Record<string, unknown> };
+      }[];
+    };
+    const history = new HistoryTools(journal);
+    for (const field of ['partial', 'error'] as const) {
+      const excerpt = context.recent.find((item) => item[field])?.[field];
+      assert.ok(excerpt);
+      const result = await history.invoke(
+        { bot: owner.bot, id: owner.runId, abort: new AbortController() },
+        'bot_history_read',
+        excerpt.read,
+      );
+      assert.ok(
+        JSON.stringify(result).includes(`SYNTHETIC ${field === 'partial' ? 'PARTIAL' : 'FAILURE'}`),
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('recovery reserves room for the current request and handles Unicode without splitting code points', () => {
   assert.throws(() => contextBudget(16384, 16384), { code: 'MODEL_CONTEXT_BUDGET_INVALID' });

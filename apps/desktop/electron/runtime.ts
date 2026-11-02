@@ -1765,6 +1765,8 @@ export class RuntimeClient {
       case 'task.start': {
         const current = await this.status();
         if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+        if (command.task.retryTurn !== undefined && current.protocolVersion < 43)
+          throw new Error('RUNTIME_TOO_OLD');
         if (
           current.protocolVersion < 11 &&
           command.task.files?.some((file) => file.attachmentId !== undefined)

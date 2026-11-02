@@ -33,7 +33,16 @@ export function validateTask(input: unknown): TaskRequest {
     typeof value !== 'object' ||
     Array.isArray(value) ||
     Object.keys(value).some(
-      (k) => !['requestId', 'prompt', 'retryOf', 'memory', 'files', 'chatRevision'].includes(k),
+      (k) =>
+        ![
+          'requestId',
+          'prompt',
+          'retryOf',
+          'retryTurn',
+          'memory',
+          'files',
+          'chatRevision',
+        ].includes(k),
     )
   )
     fail();
@@ -52,6 +61,7 @@ export function validateTask(input: unknown): TaskRequest {
   )
     fail();
   if (value.retryOf && value.files?.length) fail();
+  if (value.retryTurn !== undefined && (!value.retryOf || !validAgentId(value.retryTurn))) fail();
   if (
     value.chatRevision !== undefined &&
     (!Number.isSafeInteger(value.chatRevision) || value.chatRevision < 0)

@@ -5,6 +5,51 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
 
+it('validates a continuation turn as a bounded reference to an existing retry', () => {
+  const task = {
+    requestId: 'mock-request',
+    prompt: 'SYNTHETIC REQUEST',
+    retryOf: 'mock-run',
+    retryTurn: 'mock-turn',
+  };
+  expect(parseCommand({ type: 'task.start', bot: 'a', task })).toEqual({
+    type: 'task.start',
+    bot: 'a',
+    task,
+  });
+  for (const invalid of [
+    { ...task, retryOf: undefined },
+    { ...task, retryTurn: '../foreign' },
+  ]) {
+    expect(() => parseCommand({ type: 'task.start', bot: 'a', task: invalid })).toThrow(
+      'INVALID_COMMAND',
+    );
+  }
+});
+
+it('refuses a durable turn continuation before sending it to an older runtime', async () => {
+  const fetcher = vi.fn(async () => Response.json({}));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  vi.spyOn(client, 'status').mockResolvedValue({ ...disconnected('ready'), protocolVersion: 42 });
+  await expect(
+    client.invoke({
+      type: 'task.start',
+      bot: 'a',
+      task: {
+        requestId: 'mock-request',
+        prompt: 'SYNTHETIC REQUEST',
+        retryOf: 'mock-run',
+        retryTurn: 'mock-turn',
+      },
+    }),
+  ).rejects.toThrow('RUNTIME_TOO_OLD');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
 it('accepts only bounded model inspection commands and verifies matching public replies', async () => {
   const input = {
     kind: 'test',

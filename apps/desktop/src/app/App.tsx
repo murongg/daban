@@ -490,26 +490,26 @@ function Workbench() {
     if (!task?.runId || task.conversationId || !task.prompt || task.running) return;
     // An inserted turn that failed keeps no reply; continuing must resume that turn, not replay finished work.
     const unfinished = [...(task.turns || [])].reverse().find((turn) => !turn.result);
-    // Inserts accepted after it never started; they stay visible in the chat and rejoin the queue for delivery.
+    // The backend owns accepted inserts; capture the resumed turn so receipt loss and a full UI queue cannot drop them.
     const waiting = pendingInserts(task).filter((insert) => !insert.started);
-    const prompt = unfinished?.prompt ?? waiting.shift()?.text ?? task.prompt;
+    const target =
+      unfinished ?? (waiting[0] ? { id: waiting[0].id, prompt: waiting[0].text } : undefined);
+    if (waiting.length && runtime.snapshot.protocolVersion < 43) {
+      notify(runtimeError(new Error('RUNTIME_TOO_OLD')));
+      return;
+    }
+    const prompt = target?.prompt ?? task.prompt;
     if (!prompt) return;
-    const result = await runTask(botId, {
+    await runTask(botId, {
       requestId: crypto.randomUUID(),
       prompt,
       retryOf: task.runId,
+      ...(target && runtime.snapshot.protocolVersion >= 43 ? { retryTurn: target.id } : {}),
       ...(runtime.snapshot.protocolVersion >= 29
         ? { chatRevision: task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats) }
         : {}),
       ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
     });
-    // Only an accepted continuation may hand the unstarted inserts to the queue; otherwise they stay visible here.
-    if (result.outcome === 'started' && waiting.length)
-      dispatch({
-        type: 'queue-restore',
-        bot: botId,
-        tasks: waiting.map((insert) => ({ id: insert.id, prompt: insert.text, files: [] })),
-      });
   }
   function queueTask(botId: string) {
     const entry = state.bots.find((bot) => bot.id === botId);

@@ -31,7 +31,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 42;
+export const managedProtocol = 43;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -2878,6 +2878,7 @@ export interface TaskRequest {
   requestId: string;
   prompt: string;
   retryOf?: string;
+  retryTurn?: string;
   memory?: string;
   files?: TaskFile[];
 }

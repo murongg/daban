@@ -456,3 +456,61 @@ it('places approval at the reply position without moving later inserts', async (
     ),
   ).toEqual(['合成问题甲', 'execution', '合成回复甲', 'approval', '合成插话乙', '合成插话丙']);
 });
+
+it('keeps approval at the active question before any reply text exists', async () => {
+  const runtime = connect([
+    {
+      id: 'mock-approval-before-text',
+      sessionId: 'mock-session-a',
+      bot: 'a',
+      runId: 'mock-stream-a',
+      kind: 'approval',
+      tool: 'web_fetch',
+      url: 'https://example.test/synthetic-report',
+      status: 'pending',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+  ]);
+  runtime.emit('a', {
+    phase: 'waiting',
+    response: undefined,
+    turns: [{ id: 'mock-request-a', prompt: 'SYNTHETIC QUESTION A', result: '' }],
+    inserts: [
+      { id: 'mock-future-b', text: 'SYNTHETIC FUTURE B', done: false },
+      { id: 'mock-future-c', text: 'SYNTHETIC FUTURE C', done: false },
+    ],
+  });
+  const local = initialState();
+  local.messages.research = [{ id: 'mock-request-a', role: 'user', text: 'SYNTHETIC QUESTION A' }];
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={local}
+        bot={local.bots.find((bot) => bot.id === 'research')!}
+        dispatch={vi.fn()}
+        notify={vi.fn()}
+        preview={vi.fn()}
+        onModel={vi.fn()}
+      />
+    </RuntimeProvider>,
+  );
+  await screen.findByText('SYNTHETIC FUTURE C');
+  const log = screen.getByRole('log', { name: '对话记录' });
+  const order = [
+    ...log.querySelectorAll('article.message, article.approval, details.execution'),
+  ].map((node) =>
+    node.matches('details.execution')
+      ? 'execution'
+      : node.matches('article.approval')
+        ? 'approval'
+        : node.textContent,
+  );
+  expect(order).toEqual([
+    'SYNTHETIC QUESTION A',
+    'execution',
+    'approval',
+    'SYNTHETIC FUTURE B',
+    'SYNTHETIC FUTURE C',
+  ]);
+});
