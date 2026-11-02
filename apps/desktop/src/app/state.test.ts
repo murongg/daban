@@ -970,6 +970,45 @@ it('returns an edited queued message to the composer with its attachments', () =
   expect(state.drafts[bot.id]).toBe('SYNTHETIC EXISTING DRAFT\nSYNTHETIC EDIT MESSAGE');
   expect(state.attachments[bot.id]).toEqual([file.id]);
 });
+it('keeps a queued message and the draft when an edit would exceed the length limit', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const queued = {
+    id: 'synthetic-long-edit',
+    prompt: 'S'.repeat(7000),
+    files: [],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'D'.repeat(6000) });
+  const before = state;
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id })).toBe(before);
+  expect(messageQueue(state, bot.id)).toEqual([queued]);
+  expect(state.drafts[bot.id]).toBe('D'.repeat(6000));
+});
+it('holds a queued insert until its delivery is verified', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const item = { id: 'synthetic-verify-one', prompt: 'SYNTHETIC VERIFY', files: [] };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: item });
+  state = reduce(state, {
+    type: 'queue-verify',
+    bot: bot.id,
+    id: item.id,
+    runId: 'synthetic-verify-run',
+    chatRevision: 3,
+  });
+  expect(messageQueue(state, bot.id)[0].verify).toEqual({
+    runId: 'synthetic-verify-run',
+    chatRevision: 3,
+  });
+  const before = state;
+  expect(reduce(state, { type: 'queue-remove', bot: bot.id, id: item.id })).toBe(before);
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: item.id })).toBe(before);
+  state = reduce(state, { type: 'queue-unverify', bot: bot.id, id: item.id });
+  expect(messageQueue(state, bot.id)[0].verify).toBeUndefined();
+  state = reduce(state, { type: 'queue-remove', bot: bot.id, id: item.id });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+});
 it('moves a queued message to the front so it is sent next', () => {
   let state = initialState();
   const bot = state.bots.find((entry) => entry.id === 'research')!;
@@ -1000,6 +1039,51 @@ it('turns an inserted queued message into a visible user message', () => {
   });
   expect(reduce(state, { type: 'queue-insert', bot: bot.id, id: item.id, revision: 7 })).toBe(
     state,
+  );
+});
+it('keeps each inserted turn and reply beside the original answer', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  state = reduce(state, {
+    type: 'runtime-task',
+    bot: bot.id,
+    task: {
+      chatRevision: 0,
+      runId: 'mock-turn-run',
+      requestId: 'mock-turn-primary',
+      prompt: 'SYNTHETIC PRIMARY',
+      phase: 'completed',
+      result: 'SYNTHETIC INSERTED REPLY',
+      error: '',
+      files: [],
+      turns: [
+        { id: 'mock-turn-primary', prompt: 'SYNTHETIC PRIMARY', result: 'SYNTHETIC PRIMARY REPLY' },
+        {
+          id: 'mock-turn-inserted',
+          prompt: 'SYNTHETIC INSERTED',
+          result: 'SYNTHETIC INSERTED REPLY',
+        },
+      ],
+    },
+  });
+  const messages = state.messages[bot.id];
+  const order = [
+    'mock-turn-primary',
+    'runtime-turn:mock-turn-run:mock-turn-primary',
+    'inserted:mock-turn-inserted',
+    'runtime-result:mock-turn-run',
+  ];
+  const positions = order.map((id) => messages.findIndex((message) => message.id === id));
+  expect(
+    positions.every(
+      (position, index) => position >= 0 && (!index || position > positions[index - 1]),
+    ),
+  ).toBe(true);
+  expect(
+    messages.find((message) => message.id === 'runtime-turn:mock-turn-run:mock-turn-primary')?.text,
+  ).toBe('SYNTHETIC PRIMARY REPLY');
+  expect(messages.find((message) => message.id === 'runtime-result:mock-turn-run')?.text).toBe(
+    'SYNTHETIC INSERTED REPLY',
   );
 });
 it('isolates prototype-shaped Bot IDs in the message queue', () => {

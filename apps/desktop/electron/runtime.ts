@@ -67,6 +67,7 @@ import {
   isRecoveryReview,
   isRecoveryStatus,
   isReplyStream,
+  isRunTurn,
   isRuntimeDownload,
   isRuntimeNoticeStatus,
   isSchedule,
@@ -191,6 +192,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     sessionId: task.sessionId,
     outputDirectory: task.outputDirectory,
     trace: task.trace || [],
+    ...(Array.isArray(task.turns) && task.turns.every(isRunTurn) ? { turns: task.turns } : {}),
     history: (task.history || []).map((item) => ({
       chatRevision: item.chatRevision,
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
@@ -201,6 +203,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       result: item.result,
       error: item.error,
       files: item.files,
+      ...(Array.isArray(item.turns) && item.turns.every(isRunTurn) ? { turns: item.turns } : {}),
       response: isReplyStream(item.response) ? item.response : undefined,
     })),
   };
@@ -1751,10 +1754,12 @@ export class RuntimeClient {
       case 'task.insert': {
         const current = await this.status();
         if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
-        if (current.protocolVersion < 41) throw new Error('RUNTIME_TOO_OLD');
+        if (current.protocolVersion < 42) throw new Error('RUNTIME_TOO_OLD');
         const value: unknown = await this.api(`${route}/insert`, {
           id: command.id,
           text: command.text,
+          runId: command.runId,
+          chatRevision: command.chatRevision,
         });
         if (
           !value ||

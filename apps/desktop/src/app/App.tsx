@@ -112,6 +112,24 @@ type Modal =
   | { type: 'computer'; bot: string; surface?: ComputerSurface }
   | null;
 type TaskOutcome = 'started' | 'completed' | 'failed' | 'uncertain' | 'skipped';
+interface TaskRunResult {
+  outcome: TaskOutcome;
+  runId?: string;
+}
+// These replies prove the insert was not applied; transport failures and malformed acks stay uncertain.
+function definiteInsertError(error: unknown) {
+  return (
+    error instanceof Error &&
+    [
+      'TASK_INSERT_STALE',
+      'MODEL_NOT_RUNNING',
+      'MODEL_INSERT_FULL',
+      'INVALID_TASK_INSERT',
+      'UNKNOWN_BOT',
+      'RUNTIME_TOO_OLD',
+    ].includes(error.message)
+  );
+}
 function load() {
   try {
     const state = restore(clientCache().getItem(storageKey));
@@ -143,7 +161,8 @@ function Workbench() {
   const runtime = useRuntime();
   const submitting = useRef(new Set<string>());
   const draining = useRef(new Set<string>());
-  const awaitingRun = useRef(new Set<string>());
+  const awaitingRun = useRef(new Map<string, { runId: string; at: number }>());
+  const verifyingInserts = useRef(new Set<string>());
   const legacySettings = useRef(false);
   const [state, update] = useReducer(reduce, undefined, () => {
     const restored = load();
@@ -165,6 +184,7 @@ function Workbench() {
   const [modal, setModal] = useState<Modal>(null);
   useAttention(state, dispatch, !!modal || settingsOpen);
   const [toast, setToast] = useState('');
+  const [verifyTick, setVerifyTick] = useState(0);
   const [inboxFocus, setInboxFocus] = useState<string>();
   const search = useRef<HTMLInputElement>(null);
   const storageFailed = useRef(false);
@@ -326,10 +346,11 @@ function Workbench() {
     botId: string,
     continued?: TaskRequest,
     queued?: QueuedTask,
-  ): Promise<TaskOutcome> {
+  ): Promise<TaskRunResult> {
+    const skipped: TaskRunResult = { outcome: 'skipped' };
     if (recoveryBlocked(runtime.snapshot)) {
       notify(t('app.runtimeRecoveryNeedsVerificationNewTasksPaused'));
-      return 'skipped';
+      return skipped;
     }
     if (
       state.bots.find((entry) => entry.id === botId)?.archived ||
@@ -337,19 +358,19 @@ function Workbench() {
       lifecycleRequest(state, botId)
     ) {
       notify(t('app.restoreBotVerifyOperationResultSendingNew'));
-      return 'skipped';
+      return skipped;
     }
     if (state.attachmentUploads[botId]) {
       notify(t('common.waitUntilAttachmentsReadySending'));
-      return 'skipped';
+      return skipped;
     }
     const target = agentId(botId);
     if (state.bots.find((entry) => entry.id === botId)?.members) {
       notify(t('app.chooseRecipientsGroupWindowSending'));
-      return 'skipped';
+      return skipped;
     }
-    if (submitting.current.has(botId)) return 'skipped';
-    if (queued && state.runtimeRequests[botId]) return 'skipped';
+    if (submitting.current.has(botId)) return skipped;
+    if (queued && state.runtimeRequests[botId]) return skipped;
     const text = queued ? queued.prompt.trim() : state.drafts[botId].trim();
     const attached = (
       queued
@@ -366,11 +387,11 @@ function Workbench() {
         ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
         files: attached.map(taskFile),
       };
-    if (!task.prompt.trim()) return 'skipped';
+    if (!task.prompt.trim()) return skipped;
     // An uncertain send keeps its captured request; next-task model edits cannot change receipt reconciliation.
     if (!continued && !state.runtimeRequests[botId] && imagesUnsupported(botId, attached)) {
       notify(t('app.currentModelDoesNotSupportImagesChoose'));
-      return 'skipped';
+      return skipped;
     }
     submitting.current.add(botId);
     dispatch({ type: 'runtime-pending', bot: botId, task });
@@ -395,8 +416,11 @@ function Workbench() {
           throw new Error('INVALID_TASK_ACK');
         dispatch({ type: 'runtime-task', bot: botId, task: receipt });
         finished = ['completed', 'failed', 'stopped', 'interrupted'].includes(receipt.phase);
+        return finished
+          ? { outcome: 'completed', runId: receipt.runId }
+          : { outcome: 'started', runId: receipt.runId };
       }
-      return finished ? 'completed' : 'started';
+      return { outcome: 'started' };
     } catch (error) {
       // Only a definite rejection is editable; an ambiguous network result retains the ID to prevent replay.
       if (
@@ -422,11 +446,12 @@ function Workbench() {
           'RUNTIME_TOO_OLD',
         ].includes(error.message)
       ) {
+        notify(runtimeError(error));
         dispatch({ type: 'runtime-clear', bot: botId });
-        return 'failed';
+        return { outcome: 'failed' };
       }
       notify(runtimeError(error));
-      return 'uncertain';
+      return { outcome: 'uncertain' };
     } finally {
       submitting.current.delete(botId);
     }
@@ -470,25 +495,74 @@ function Workbench() {
   }
   async function insertQueued(botId: string, id: string) {
     const item = messageQueue(state, botId).find((entry) => entry.id === id);
-    if (!item || item.files.length) return;
+    if (!item || item.files.length || item.verify) return;
+    const task = agentTask(runtime.snapshot, botId);
+    if (!task?.running || !task.runId || task.conversationId) {
+      notify(t('errors.taskEndedMessageKeptQueue'));
+      return;
+    }
+    const target = { runId: task.runId, chatRevision: task.chatRevision ?? 0 };
+    // Mark uncertainty before sending; an ambiguous reply keeps the item paused until its receipt is checked.
+    dispatch({ type: 'queue-verify', bot: botId, id, ...target });
     try {
       const receipt = await runtime.command<{ ok?: unknown; id?: unknown }>({
         type: 'task.insert',
         bot: agentId(botId),
         id: item.id,
         text: item.prompt,
+        ...target,
       });
       if (receipt?.ok !== true || receipt.id !== item.id) throw new Error('INVALID_TASK_ACK');
-      dispatch({
-        type: 'queue-insert',
-        bot: botId,
-        id: item.id,
-        revision: chatRevision(state, botId, runtime.snapshot.chats),
-      });
+      dispatch({ type: 'queue-insert', bot: botId, id: item.id, revision: target.chatRevision });
     } catch (error) {
       notify(runtimeError(error));
+      if (definiteInsertError(error)) dispatch({ type: 'queue-unverify', bot: botId, id: item.id });
     }
   }
+  const verifyPending = Object.values(state.queued).some((items) =>
+    items.some((item) => !!item.verify),
+  );
+  useEffect(() => {
+    if (!verifyPending) return;
+    const timer = window.setInterval(() => setVerifyTick((value) => value + 1), 2500);
+    return () => window.clearInterval(timer);
+  }, [verifyPending]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reconciliation reads this render's state and runtime, and the tick retries while the agent is unreachable.
+  useEffect(() => {
+    if (!runtime.enabled || runtime.snapshot.phase !== 'ready' || !verifyPending) return;
+    for (const entry of state.bots) {
+      const item = messageQueue(state, entry.id).find((queued) => !!queued.verify);
+      const target = item?.verify;
+      if (!item || !target || verifyingInserts.current.has(item.id)) continue;
+      verifyingInserts.current.add(item.id);
+      runtime
+        .command<{ ok?: unknown; id?: unknown }>({
+          type: 'task.insert',
+          bot: agentId(entry.id),
+          id: item.id,
+          text: item.prompt,
+          ...target,
+        })
+        .then((receipt) => {
+          if (receipt?.ok !== true || receipt.id !== item.id) throw new Error('INVALID_TASK_ACK');
+          dispatch({
+            type: 'queue-insert',
+            bot: entry.id,
+            id: item.id,
+            revision: target.chatRevision,
+          });
+        })
+        .catch((error) => {
+          // Unknown outcomes stay paused; only a definite rejection can resume normal queue delivery.
+          if (!definiteInsertError(error)) return;
+          dispatch({ type: 'queue-unverify', bot: entry.id, id: item.id });
+          notify(runtimeError(error));
+        })
+        .finally(() => {
+          verifyingInserts.current.delete(item.id);
+        });
+    }
+  }, [runtime, state, dispatch, notify, verifyPending, verifyTick]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runTask reads this render's state and runtime, and the effect already re-runs on both.
   useEffect(() => {
     if (!runtime.enabled || runtime.snapshot.phase !== 'ready') return;
@@ -500,27 +574,33 @@ function Workbench() {
         awaitingRun.current.delete(entry.id);
         continue;
       }
-      if (item.error) continue;
+      // An unconfirmed insert pauses delivery until its receipt is reconciled.
+      if (item.error || item.verify) continue;
       if (state.runtimeRequests[entry.id] || state.attachmentUploads[entry.id]) continue;
       if (entry.archived || state.chatRequests[entry.id] || lifecycleRequest(state, entry.id))
         continue;
       const current = agentTask(runtime.snapshot, entry.id);
-      if (current?.running) {
+      const awaiting = awaitingRun.current.get(entry.id);
+      if (awaiting) {
+        // The run we started may finish before it is ever observed running; its terminal state also releases the queue.
+        const settled =
+          current?.runId === awaiting.runId
+            ? !current.running
+            : !current?.running && Date.now() - awaiting.at > 5000;
+        if (!settled) continue;
         awaitingRun.current.delete(entry.id);
-        continue;
-      }
-      // Wait until the run we just started has become visible; otherwise the next item could race it.
-      if (awaitingRun.current.has(entry.id)) continue;
+      } else if (current?.running) continue;
       draining.current.add(entry.id);
       runTask(entry.id, undefined, item)
-        .then((outcome) => {
-          if (outcome === 'failed') {
+        .then((result) => {
+          if (result.outcome === 'failed') {
             dispatch({ type: 'queue-fail', bot: entry.id, id: item.id });
             return;
           }
-          if (outcome === 'skipped') return;
+          if (result.outcome === 'skipped') return;
           dispatch({ type: 'queue-remove', bot: entry.id, id: item.id });
-          if (outcome === 'started') awaitingRun.current.add(entry.id);
+          if (result.outcome === 'started' && result.runId)
+            awaitingRun.current.set(entry.id, { runId: result.runId, at: Date.now() });
         })
         .catch((error) => notify(runtimeError(error)))
         .finally(() => draining.current.delete(entry.id));
@@ -830,7 +910,20 @@ function Workbench() {
                   onQueue={runtime.enabled ? () => queueTask(bot.id) : undefined}
                   onQueueEdit={
                     runtime.enabled
-                      ? (id) => dispatch({ type: 'queue-edit', bot: bot.id, id })
+                      ? (id) => {
+                          const item = messageQueue(state, bot.id).find((entry) => entry.id === id);
+                          if (!item || item.verify) return;
+                          const draft = state.drafts[bot.id] ?? '';
+                          const prompt =
+                            draft && item.prompt
+                              ? `${draft}\n${item.prompt}`
+                              : item.prompt || draft;
+                          if (prompt.length > 12000) {
+                            notify(t('chat.queuedMessageEditTooLong'));
+                            return;
+                          }
+                          dispatch({ type: 'queue-edit', bot: bot.id, id });
+                        }
                       : undefined
                   }
                   onQueueRemove={
@@ -844,7 +937,7 @@ function Workbench() {
                       : undefined
                   }
                   onQueueInsert={
-                    runtime.enabled && runtime.snapshot.protocolVersion >= 41
+                    runtime.enabled && runtime.snapshot.protocolVersion >= 42
                       ? (id) => insertQueued(bot.id, id)
                       : undefined
                   }

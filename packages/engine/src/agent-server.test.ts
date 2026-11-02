@@ -124,14 +124,18 @@ test('model discovery runs through authenticated host IPC without forwarding a k
     const inserted = await call(app.socketPath, '/api/bots/a/insert', app.token, {
       id: 'mock-insert',
       text: 'Synthetic inserted message.',
+      runId: 'mock-missing-run',
+      chatRevision: 0,
     });
     assert.equal(inserted.status, 409);
-    assert.deepEqual(inserted.value, { error: 'MODEL_NOT_RUNNING' });
+    assert.deepEqual(inserted.value, { error: 'TASK_INSERT_STALE' });
     assert.equal(
       (
         await call(app.socketPath, '/api/bots/a/insert', app.token, {
           id: 'invalid id',
           text: 'Synthetic inserted message.',
+          runId: 'mock-missing-run',
+          chatRevision: 0,
         })
       ).status,
       400,

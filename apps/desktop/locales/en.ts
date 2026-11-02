@@ -239,6 +239,8 @@ export const english = {
   'chat.previewAttachment': 'Preview attachment {0}',
   'chat.promoteQueuedMessage': 'Send queued message {0} next',
   'chat.queuedAttachments': '+{0} attachments',
+  'chat.queuedMessageEditTooLong':
+    'That edit would exceed the message length limit. Nothing changed.',
   'chat.queuedMessageFailed': 'Could not send. Retry or remove it.',
   'chat.readingPage': 'Reading page',
   'chat.readingTaskCatalog': 'Reading task catalog',
@@ -253,6 +255,7 @@ export const english = {
   'chat.stopTask': 'Stop task',
   'chat.task': 'This task: {0}{1}',
   'chat.taskInterruptedSavedFilesRetained': 'Task interrupted; saved files are retained',
+  'chat.verifyingQueuedMessageInsert': 'Checking whether the steer was delivered…',
   'chat.thinking': 'Thinking',
   'chat.times': 'times',
   'chat.todayExampleConversation': 'Today 10:24 · Example conversation',
@@ -1040,6 +1043,8 @@ export const english = {
     'The task ended before the message was inserted. It stays queued.',
   'errors.taskInsertFullMessageKeptQueue':
     'Too many messages are already inserted into this task. This one stays queued.',
+  'errors.taskInsertStaleMessageKeptQueue':
+    'That task is no longer the one that was running. The message stays queued for the next send.',
   'errors.invalidTaskContentCheckTitleStatusText':
     'Invalid task content. Check the title, status and text length before saving.',
   'errors.invalidTaskFilterChooseAnotherFilterSearch':

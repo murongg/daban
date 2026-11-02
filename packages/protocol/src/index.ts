@@ -31,7 +31,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 41;
+export const managedProtocol = 42;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1230,6 +1230,25 @@ export function isTranscriptContent(value: unknown): value is TranscriptContent 
     ? value.nextOffset === undefined
     : value.text.length > 0 && value.nextOffset === end;
 }
+export interface RunTurn {
+  id: string;
+  prompt: string;
+  result: string;
+  error?: string;
+}
+export function isRunTurn(value: unknown): value is RunTurn {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) => ['id', 'prompt', 'result', 'error'].includes(key)) &&
+    validAgentId(value.id) &&
+    typeof value.prompt === 'string' &&
+    value.prompt.length <= 12000 &&
+    typeof value.result === 'string' &&
+    value.result.length <= replyLimit &&
+    (value.error === undefined ||
+      (typeof value.error === 'string' && value.error.length <= replyLimit))
+  );
+}
 export interface RuntimeTask {
   chatRevision?: number;
   conversationId?: string;
@@ -1250,6 +1269,7 @@ export interface RuntimeTask {
   outputDirectory?: string;
   trace: TaskTrace[];
   history: RuntimeTaskSummary[];
+  turns?: RunTurn[];
 }
 export interface RuntimeTaskSummary {
   chatRevision?: number;
@@ -1262,6 +1282,7 @@ export interface RuntimeTaskSummary {
   result: string;
   error: string;
   files?: RuntimeFile[];
+  turns?: RunTurn[];
 }
 export type RuntimeNotice =
   | {
@@ -1858,6 +1879,7 @@ export function isChatPage(value: unknown): value is ChatPage {
             'error',
             'files',
             'response',
+            'turns',
           ].includes(key),
         ) &&
         item.chatRevision === value.revision &&
@@ -1875,7 +1897,9 @@ export function isChatPage(value: unknown): value is ChatPage {
           (Array.isArray(item.files) &&
             item.files.length <= 200 &&
             item.files.every(isRuntimeFileMetadata))) &&
-        (item.response === undefined || isReplyStream(item.response)),
+        (item.response === undefined || isReplyStream(item.response)) &&
+        (item.turns === undefined ||
+          (Array.isArray(item.turns) && item.turns.length <= 20 && item.turns.every(isRunTurn))),
     )
   );
 }
@@ -2821,12 +2845,17 @@ export interface TaskRequest {
 export interface TaskInsert {
   id: string;
   text: string;
+  runId: string;
+  chatRevision: number;
 }
 export function isTaskInsert(value: unknown): value is TaskInsert {
   return (
     profileObject(value) &&
-    exactKeys(value, ['id', 'text']) &&
+    exactKeys(value, ['id', 'text', 'runId', 'chatRevision']) &&
     validAgentId(value.id) &&
+    validAgentId(value.runId) &&
+    Number.isSafeInteger(value.chatRevision) &&
+    Number(value.chatRevision) >= 0 &&
     typeof value.text === 'string' &&
     !!value.text.trim() &&
     value.text.length <= 12000 &&
@@ -3796,7 +3825,14 @@ export type RuntimeCommand =
   | { type: 'bot.update'; bot: string; revision: number; patch: BotProfilePatch }
   | { type: 'memory.history'; bot: string; query: MemoryQuery }
   | { type: 'task.start'; bot: string; task: TaskRequest }
-  | { type: 'task.insert'; bot: string; id: string; text: string }
+  | {
+      type: 'task.insert';
+      bot: string;
+      id: string;
+      text: string;
+      runId: string;
+      chatRevision: number;
+    }
   | { type: 'task.stop'; bot: string }
   | { type: 'control'; bot: RuntimeBot; epoch: number; owner: 'human' | 'agent'; instance?: string }
   | {

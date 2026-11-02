@@ -413,6 +413,7 @@ export function runtimeError(error: unknown) {
     MODEL_ALREADY_RUNNING: t('errors.botWorkingTaskWaitStopCurrentTask'),
     MODEL_NOT_RUNNING: t('errors.taskEndedMessageKeptQueue'),
     MODEL_INSERT_FULL: t('errors.taskInsertFullMessageKeptQueue'),
+    TASK_INSERT_STALE: t('errors.taskInsertStaleMessageKeptQueue'),
     INVALID_TASK_INSERT: t('errors.invalidTaskInsertMessageKeptQueue'),
     MODEL_NOT_CONFIGURED: t('errors.addProviderConfigureModelFirst'),
     MODEL_COMPUTER_UNSUPPORTED: t('errors.currentModelCannotObserveDesktopsChooseImage'),

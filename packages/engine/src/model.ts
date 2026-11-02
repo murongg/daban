@@ -8,6 +8,7 @@ import type {
   BotProfile,
   ModelId,
   ReplyStream,
+  RunTurn,
   RuntimeFile,
   RuntimeTaskSummary,
   TaskPlan,
@@ -456,9 +457,10 @@ interface ModelJob extends ToolRun {
   done?: Promise<unknown>;
   stopReason?: string;
   task?: TaskRequest;
-  insertions?: string[];
+  insertions?: { id: string; text: string }[];
   inserted?: Set<string>;
   insertable?: boolean;
+  turns?: RunTurn[];
   requestId: string;
   fingerprint: string;
   createdAt: string;
@@ -798,6 +800,7 @@ export class ModelRuns {
       result: t.result,
       error: t.error,
       files: t.files,
+      ...(t.turns?.length ? { turns: t.turns } : {}),
       ...(['failed', 'stopped', 'interrupted'].includes(t.phase) && isReplyStream(t.response)
         ? { response: t.response }
         : {}),
@@ -882,6 +885,7 @@ export class ModelRuns {
         result: row.result,
         error: row.error,
         files: row.files,
+        ...(row.turns?.length ? { turns: row.turns } : {}),
         response: row.phase === 'completed' ? undefined : row.response,
       };
       const size = Buffer.byteLength(JSON.stringify(item));
@@ -942,6 +946,7 @@ export class ModelRuns {
       error: job.error,
       verified: job.verification.passed,
       history: this.history(job.bot),
+      ...(job.turns?.length ? { turns: job.turns } : {}),
     };
   }
   status() {
@@ -975,15 +980,35 @@ export class ModelRuns {
     if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
     if (!isTaskInsert(input)) throw new Fault('INVALID_TASK_INSERT', 400);
     const job = this.jobs.get(bot);
-    if (!job?.running || job.abort.signal.aborted || !job.task || !job.insertable)
-      throw new Fault('MODEL_NOT_RUNNING', 409);
-    job.inserted ??= new Set<string>();
-    job.insertions ??= [];
-    if (job.inserted.has(input.id)) return { ok: true, id: input.id };
-    if (job.insertions.length >= 20) throw new Fault('MODEL_INSERT_FULL', 429);
-    job.inserted.add(input.id);
-    job.insertions.push(input.text);
-    return { ok: true, id: input.id };
+    // An insert must target the exact running task; group runs and stale revisions are never interchangeable.
+    if (
+      job?.task &&
+      job.id === input.runId &&
+      !job.conversationId &&
+      (job.chatRevision ?? 0) === input.chatRevision
+    ) {
+      job.inserted ??= new Set<string>();
+      if (job.inserted.has(input.id)) return { ok: true, id: input.id };
+      if (!job.running || job.abort.signal.aborted || !job.insertable)
+        throw new Fault('MODEL_NOT_RUNNING', 409);
+      job.insertions ??= [];
+      if (job.insertions.length >= 20) throw new Fault('MODEL_INSERT_FULL', 429);
+      job.inserted.add(input.id);
+      job.insertions.push({ id: input.id, text: input.text });
+      // The durable receipt makes a retried request idempotent after the response is lost.
+      await this.persist(job);
+      return { ok: true, id: input.id };
+    }
+    const saved = await this.journal.read(bot, input.runId);
+    if (
+      !saved ||
+      saved.kind === 'acceptance' ||
+      saved.conversationId !== undefined ||
+      (saved.chatRevision ?? 0) !== input.chatRevision
+    )
+      throw new Fault('TASK_INSERT_STALE', 409);
+    if ((saved.inserts || []).includes(input.id)) return { ok: true, id: input.id };
+    throw new Fault('MODEL_NOT_RUNNING', 409);
   }
   reviewModel(bot: string, runId: string) {
     const job = this.jobs.get(bot);
@@ -1071,6 +1096,8 @@ export class ModelRuns {
         createdAt: job.createdAt,
         inputs: job.inputs,
         files: job.files,
+        ...(job.inserted?.size ? { inserts: [...job.inserted] } : {}),
+        ...(job.turns?.length ? { turns: job.turns } : {}),
       };
       const safe = JSON.parse(
         JSON.stringify(record, (_key, value: unknown) =>
@@ -1223,6 +1250,8 @@ export class ModelRuns {
       files: [],
       verification: { passed: false, openedInEditor: false },
     };
+    // Every human turn keeps its own request and eventual reply; inserted turns append below.
+    if (task) job.turns = [{ id: task.requestId, prompt: task.prompt, result: '' }];
     // Admission and publication must stay in one synchronous turn, so attachment cannot change a task's authority mid-start.
     if (this.tools.computer?.runtime.admit?.(bot) === false) throw new Fault('COMPUTER_CHANGING');
     if (!this.admission() || !this.botAdmission(bot)) throw new Fault('COMPUTER_CHANGING');
@@ -1593,10 +1622,16 @@ export class ModelRuns {
           observe,
         );
         if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+        if (job.turns?.[0]) job.turns[0].result = complete(result.finalResponse);
         // Messages inserted while the task runs become follow-up turns in the same native session.
         while (job.insertions?.length) {
-          result = await session.run(job.insertions.shift()!, observe);
+          const insertion = job.insertions.shift()!;
+          const turn: RunTurn = { id: insertion.id, prompt: insertion.text, result: '' };
+          job.turns?.push(turn);
+          result = await session.run(insertion.text, observe);
           if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+          turn.result = complete(result.finalResponse);
+          await this.persist(job);
         }
         job.insertable = false;
         job.sessionId = result.sessionId;

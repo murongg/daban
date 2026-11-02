@@ -182,11 +182,16 @@ export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
 export const messageQueueLimit = 20;
+export interface QueuedInsertTarget {
+  runId: string;
+  chatRevision: number;
+}
 export interface QueuedTask {
   id: string;
   prompt: string;
   files: string[];
   error?: boolean;
+  verify?: QueuedInsertTarget;
 }
 export interface State {
   sampleRevision?: 1 | 2;
@@ -296,6 +301,8 @@ export type Action =
   | { type: 'queue-remove'; bot: string; id: string }
   | { type: 'queue-promote'; bot: string; id: string }
   | { type: 'queue-insert'; bot: string; id: string; revision: number }
+  | { type: 'queue-verify'; bot: string; id: string; runId: string; chatRevision: number }
+  | { type: 'queue-unverify'; bot: string; id: string }
   | { type: 'queue-fail'; bot: string; id: string }
   | { type: 'queue-retry'; bot: string; id: string }
   | { type: 'send'; bot: string; id: string; time: string }
@@ -807,27 +814,52 @@ export function reduce(state: State, action: Action): State {
         artifacts.push(item.id);
       }
       if (['completed', 'failed', 'stopped', 'interrupted'].includes(task.phase)) {
-        if (task.phase !== 'completed' && task.response?.text)
+        const turns = task.turns?.length
+          ? task.turns
+          : [{ id: task.requestId, prompt: task.prompt, result: task.result, error: task.error }];
+        const fallback =
+          task.phase === 'stopped'
+            ? t('state.taskStoppedSavedFilesRetained')
+            : t('state.taskFinishedCheckOutputFiles');
+        const turnUserId = (id: string) =>
+          id === task.requestId ? task.requestId : `inserted:${id}`;
+        turns.forEach((turn, index) => {
+          const last = index === turns.length - 1;
+          const next = turns[index + 1];
+          const before = next ? turnUserId(next.id) : undefined;
+          const userId = turnUserId(turn.id);
+          const saved = entries.find((message) => message.id === userId);
           add(
             {
-              id: `runtime-partial:${task.runId}`,
-              role: 'bot',
-              text: task.response.text,
-              incomplete: true,
+              id: userId,
+              role: 'user',
+              text: turn.prompt,
+              ...(saved?.files?.length ? { files: saved.files } : {}),
             },
-            `runtime-result:${task.runId}`,
+            before,
           );
-        const text =
-          task.result ||
-          task.error ||
-          (task.phase === 'stopped'
-            ? t('state.taskStoppedSavedFilesRetained')
-            : t('state.taskFinishedCheckOutputFiles'));
-        add({
-          id: `runtime-result:${task.runId}`,
-          role: 'bot',
-          text,
-          ...(artifacts.length ? { files: artifacts } : {}),
+          if (last && task.phase !== 'completed' && task.response?.text)
+            add(
+              {
+                id: `runtime-partial:${task.runId}`,
+                role: 'bot',
+                text: task.response.text,
+                incomplete: true,
+              },
+              `runtime-result:${task.runId}`,
+            );
+          const text = last
+            ? task.result || turn.result || task.error || turn.error || fallback
+            : turn.result || turn.error || t('chathistory.noSavedResponses');
+          add(
+            {
+              id: last ? `runtime-result:${task.runId}` : `runtime-turn:${task.runId}:${turn.id}`,
+              role: 'bot',
+              text,
+              ...(last && artifacts.length ? { files: artifacts } : {}),
+            },
+            before,
+          );
         });
       }
       const pending = state.runtimeRequests[action.bot];
@@ -918,19 +950,40 @@ export function reduce(state: State, action: Action): State {
         attachments: { ...state.attachments, [action.bot]: [] },
       };
     }
+    case 'queue-verify': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((entry) => entry.id === action.id);
+      if (index < 0) return state;
+      const items = [...queue];
+      items[index] = {
+        ...items[index],
+        verify: { runId: action.runId, chatRevision: action.chatRevision },
+      };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-unverify': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((entry) => entry.id === action.id);
+      if (index < 0 || !queue[index].verify) return state;
+      const items = [...queue];
+      items[index] = { ...items[index], verify: undefined };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
     case 'queue-edit': {
       const queue = messageQueue(state, action.bot);
       const item = queue.find((entry) => entry.id === action.id);
-      if (!item) return state;
+      if (!item || item.verify) return state;
       const draft = state.drafts[action.bot] ?? '';
       const prompt = draft && item.prompt ? `${draft}\n${item.prompt}` : item.prompt || draft;
+      // Over-limit edits keep both the queued message and the draft instead of truncating text.
+      if (prompt.length > 12000) return state;
       return {
         ...state,
         queued: {
           ...state.queued,
           [action.bot]: queue.filter((entry) => entry.id !== action.id),
         },
-        drafts: { ...state.drafts, [action.bot]: prompt.slice(0, 12000) },
+        drafts: { ...state.drafts, [action.bot]: prompt },
         attachments: {
           ...state.attachments,
           [action.bot]: [...(state.attachments[action.bot] ?? []), ...item.files],
@@ -940,7 +993,7 @@ export function reduce(state: State, action: Action): State {
     case 'queue-promote': {
       const queue = messageQueue(state, action.bot);
       const index = queue.findIndex((item) => item.id === action.id);
-      if (index < 1) return state;
+      if (index < 1 || queue[index].verify) return state;
       const items = [...queue];
       items.unshift(items.splice(index, 1)[0]);
       return { ...state, queued: { ...state.queued, [action.bot]: items } };
@@ -971,7 +1024,7 @@ export function reduce(state: State, action: Action): State {
     }
     case 'queue-remove': {
       const queue = messageQueue(state, action.bot);
-      return queue.some((item) => item.id === action.id)
+      return queue.some((item) => item.id === action.id && !item.verify)
         ? {
             ...state,
             queued: {
@@ -992,7 +1045,7 @@ export function reduce(state: State, action: Action): State {
     case 'queue-retry': {
       const queue = messageQueue(state, action.bot);
       const index = queue.findIndex((item) => item.id === action.id);
-      if (index < 0 || !queue[index].error) return state;
+      if (index < 0 || !queue[index].error || queue[index].verify) return state;
       const items = [...queue];
       items[index] = {
         id: queue[index].id,

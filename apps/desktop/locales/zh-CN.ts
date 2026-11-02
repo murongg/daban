@@ -220,6 +220,7 @@ export const chinese = {
   'chat.previewAttachment': '预览附件 {0}',
   'chat.promoteQueuedMessage': '插队发送 {0}',
   'chat.queuedAttachments': '+{0} 个附件',
+  'chat.queuedMessageEditTooLong': '合并后的内容超过长度限制，已保留原排队消息和输入内容。',
   'chat.queuedMessageFailed': '发送失败，可重试或移除。',
   'chat.readingPage': '正在读取页面',
   'chat.readingTaskCatalog': '正在查看任务目录',
@@ -234,6 +235,7 @@ export const chinese = {
   'chat.stopTask': '停止任务',
   'chat.task': '本轮：{0}{1}',
   'chat.taskInterruptedSavedFilesRetained': '任务已中断，已保存文件仍保留',
+  'chat.verifyingQueuedMessageInsert': '正在核实插话是否已送达…',
   'chat.thinking': '正在思考',
   'chat.times': '次',
   'chat.todayExampleConversation': '今天 10:24 · 示例对话',
@@ -946,6 +948,8 @@ export const chinese = {
   'errors.invalidTaskInsertMessageKeptQueue': '插话参数无效，消息仍保留在队列中。',
   'errors.taskEndedMessageKeptQueue': '任务已结束，消息仍保留在队列中，将作为下一条发送。',
   'errors.taskInsertFullMessageKeptQueue': '当前任务的插话已满，消息仍保留在队列中。',
+  'errors.taskInsertStaleMessageKeptQueue':
+    '目标任务已变化，消息仍保留在队列中，将作为下一条发送。',
   'errors.invalidTaskContentCheckTitleStatusText':
     '任务内容无效，请核对标题、状态和文字长度后再保存。',
   'errors.invalidTaskFilterChooseAnotherFilterSearch': '任务筛选无效，请重新选择筛选或关键词。',

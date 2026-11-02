@@ -524,6 +524,7 @@ export function Conversation({
                     className="queued-message"
                     key={item.id}
                     data-failed={item.error || undefined}
+                    data-verifying={item.verify ? true : undefined}
                   >
                     <CornerDownRight className="queued-message-glyph" aria-hidden="true" />
                     <div className="queued-message-copy">
@@ -535,14 +536,20 @@ export function Conversation({
                           </span>
                         )}
                       </div>
-                      {item.error && (
+                      {item.verify ? (
                         <span className="queued-message-error" role="status">
-                          {t('chat.queuedMessageFailed')}
+                          {t('chat.verifyingQueuedMessageInsert')}
                         </span>
+                      ) : (
+                        item.error && (
+                          <span className="queued-message-error" role="status">
+                            {t('chat.queuedMessageFailed')}
+                          </span>
+                        )
                       )}
                     </div>
                     <div className="queued-message-actions">
-                      {onQueueInsert && task?.running && !item.files.length && (
+                      {onQueueInsert && task?.running && !item.files.length && !item.verify && (
                         <IconButton
                           className="queued-steer"
                           label={t('chat.insertQueuedMessage', { 0: text })}
@@ -552,7 +559,7 @@ export function Conversation({
                           <span>{t('chat.steer')}</span>
                         </IconButton>
                       )}
-                      {index > 0 && onQueuePromote && (
+                      {index > 0 && onQueuePromote && !item.verify && (
                         <IconButton
                           label={t('chat.promoteQueuedMessage', { 0: text })}
                           onClick={() => onQueuePromote(item.id)}
@@ -560,7 +567,7 @@ export function Conversation({
                           <ArrowUpToLine />
                         </IconButton>
                       )}
-                      {item.error && onQueueRetry && (
+                      {item.error && !item.verify && onQueueRetry && (
                         <IconButton
                           label={t('common.retrySend')}
                           onClick={() => onQueueRetry(item.id)}
@@ -568,7 +575,7 @@ export function Conversation({
                           <RotateCcw />
                         </IconButton>
                       )}
-                      {onQueueEdit && (
+                      {onQueueEdit && !item.verify && (
                         <IconButton
                           label={t('chat.editQueuedMessage', { 0: text })}
                           onClick={() => {
@@ -579,7 +586,7 @@ export function Conversation({
                           <Pencil />
                         </IconButton>
                       )}
-                      {onQueueRemove && (
+                      {onQueueRemove && !item.verify && (
                         <IconButton
                           label={t('chat.removeQueuedMessage', { 0: text })}
                           onClick={() => onQueueRemove(item.id)}

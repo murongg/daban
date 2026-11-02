@@ -4,6 +4,7 @@ import type {
   BotProfile,
   ModelId,
   ReplyStream,
+  RunTurn,
   RuntimeFile,
   RuntimeNotice,
   TaskPlan,
@@ -233,6 +234,8 @@ export interface TaskRecord {
   createdAt?: string;
   inputs?: string[];
   files?: RuntimeFile[];
+  inserts?: string[];
+  turns?: RunTurn[];
 }
 export function taskActivity(record: Pick<TaskRecord, 'trace' | 'executedCount'>) {
   const trace: TaskTrace[] = [];
@@ -372,6 +375,8 @@ export class TaskJournal {
       'documentInputs',
       'plan',
       'response',
+      'inserts',
+      'turns',
     ];
     const task = Object.fromEntries(
       fields

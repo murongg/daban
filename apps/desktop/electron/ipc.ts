@@ -190,7 +190,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'files.read': ['type', 'path'],
     'files.download': ['type', 'path'],
     'task.start': ['type', 'bot', 'task'],
-    'task.insert': ['type', 'bot', 'id', 'text'],
+    'task.insert': ['type', 'bot', 'id', 'text', 'runId', 'chatRevision'],
     'task.stop': ['type', 'bot'],
     control: ['type', 'bot', 'epoch', 'owner', 'instance'],
     frame: ['type', 'bot', 'surface', 'instance', 'epoch'],
@@ -397,7 +397,12 @@ export function parseCommand(value: unknown): RuntimeCommand {
     return fail();
   if (
     v.type === 'task.insert' &&
-    (!validAgentId(v.id) || !string(v.text, 12000) || !(v.text as string).trim())
+    (!validAgentId(v.id) ||
+      !validAgentId(v.runId) ||
+      !Number.isSafeInteger(v.chatRevision) ||
+      Number(v.chatRevision) < 0 ||
+      !string(v.text, 12000) ||
+      !(v.text as string).trim())
   )
     return fail();
   if (v.type === 'computer.action' && !isComputerRequest(v.request)) return fail();

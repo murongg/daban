@@ -201,10 +201,22 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
       prompt: 'Synthetic original request.',
     });
     await started;
+    const runId = models.jobs.get('mock-insert')!.id;
+    const target = { runId, chatRevision: 0 };
+    await assert.rejects(
+      models.insert('mock-insert', {
+        id: 'mock-insert-stale',
+        text: 'Synthetic stale message.',
+        runId: 'mock-insert-other-run',
+        chatRevision: 0,
+      }),
+      { code: 'TASK_INSERT_STALE' },
+    );
     assert.deepEqual(
       await models.insert('mock-insert', {
         id: 'mock-insert-one',
         text: 'Synthetic inserted message.',
+        ...target,
       }),
       { ok: true, id: 'mock-insert-one' },
     );
@@ -212,6 +224,7 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
       await models.insert('mock-insert', {
         id: 'mock-insert-one',
         text: 'Synthetic ignored duplicate.',
+        ...target,
       }),
       { ok: true, id: 'mock-insert-one' },
     );
@@ -222,8 +235,33 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
     assert.equal(prompts[1], 'Synthetic inserted message.');
     assert.equal(models.jobs.get('mock-insert')!.result, 'Synthetic inserted reply.');
     assert.equal(models.jobs.get('mock-insert')!.phase, 'completed');
+    assert.deepEqual(models.jobs.get('mock-insert')!.turns, [
+      {
+        id: 'mock-insert-first',
+        prompt: 'Synthetic original request.',
+        result: 'Synthetic first reply.',
+      },
+      {
+        id: 'mock-insert-one',
+        prompt: 'Synthetic inserted message.',
+        result: 'Synthetic inserted reply.',
+      },
+    ]);
+    // Losing the acknowledgement must not execute the same turn again after the task ends.
+    assert.deepEqual(
+      await models.insert('mock-insert', {
+        id: 'mock-insert-one',
+        text: 'Synthetic ignored duplicate.',
+        ...target,
+      }),
+      { ok: true, id: 'mock-insert-one' },
+    );
     await assert.rejects(
-      models.insert('mock-insert', { id: 'mock-insert-late', text: 'Synthetic late message.' }),
+      models.insert('mock-insert', {
+        id: 'mock-insert-late',
+        text: 'Synthetic late message.',
+        ...target,
+      }),
       { code: 'MODEL_NOT_RUNNING' },
     );
   } finally {

@@ -199,58 +199,84 @@ export function ChatHistory({
               content: '',
               runtimePath: file.path,
             }));
+            const turns = item.turns?.length
+              ? item.turns
+              : [
+                  {
+                    id: item.requestId,
+                    prompt: item.prompt,
+                    result: item.result,
+                    error: item.error,
+                  },
+                ];
             return (
               <div key={item.runId}>
-                <article className="message user">
-                  <div className="bubble">{item.prompt}</div>
-                </article>
-                {item.phase !== 'completed' && (
-                  <p className="inline-note">
-                    {item.phase === 'failed'
-                      ? t('common.incomplete')
-                      : item.phase === 'stopped'
-                        ? t('common.stopped')
-                        : t('common.interrupted')}
-                    {item.error ? ` · ${item.error}` : ''}
-                  </p>
-                )}
-                <article className="message bot">
-                  <Execution
-                    scope={{ bot: agentId(bot.id), runId: item.runId, chatRevision: page.revision }}
-                    phase={item.phase}
-                  />
-                  <div className="bubble">
-                    <Markdown
-                      text={
-                        item.result ||
-                        item.response?.text ||
-                        item.error ||
-                        t('chathistory.noSavedResponses')
-                      }
-                      streaming={item.phase !== 'completed'}
-                      files={files}
-                      fileIds={files.map((file) => file.id)}
-                      preview={preview}
-                      openLink={openLink}
-                      copyText={copyText}
-                      notify={notify}
-                    />
-                  </div>
-                </article>
-                {!!files.length && (
-                  <div className="model-actions">
-                    {files.map((file) => (
-                      <button
-                        className="secondary"
-                        type="button"
-                        key={file.id}
-                        onClick={() => preview(file)}
-                      >
-                        {file.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {turns.map((turn, index) => {
+                  const last = index === turns.length - 1;
+                  const text = last
+                    ? item.result ||
+                      turn.result ||
+                      item.response?.text ||
+                      item.error ||
+                      turn.error ||
+                      t('chathistory.noSavedResponses')
+                    : turn.result || turn.error || t('chathistory.noSavedResponses');
+                  return (
+                    <div key={turn.id}>
+                      <article className="message user">
+                        <div className="bubble">{turn.prompt}</div>
+                      </article>
+                      {last && item.phase !== 'completed' && (
+                        <p className="inline-note">
+                          {item.phase === 'failed'
+                            ? t('common.incomplete')
+                            : item.phase === 'stopped'
+                              ? t('common.stopped')
+                              : t('common.interrupted')}
+                          {item.error ? ` · ${item.error}` : ''}
+                        </p>
+                      )}
+                      <article className="message bot">
+                        {last && (
+                          <Execution
+                            scope={{
+                              bot: agentId(bot.id),
+                              runId: item.runId,
+                              chatRevision: page.revision,
+                            }}
+                            phase={item.phase}
+                          />
+                        )}
+                        <div className="bubble">
+                          <Markdown
+                            text={text}
+                            streaming={last && item.phase !== 'completed'}
+                            files={last ? files : []}
+                            fileIds={last ? files.map((file) => file.id) : []}
+                            preview={preview}
+                            openLink={openLink}
+                            copyText={copyText}
+                            notify={notify}
+                          />
+                        </div>
+                      </article>
+                      {last && !!files.length && (
+                        <div className="model-actions">
+                          {files.map((file) => (
+                            <button
+                              className="secondary"
+                              type="button"
+                              key={file.id}
+                              onClick={() => preview(file)}
+                            >
+                              {file.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
