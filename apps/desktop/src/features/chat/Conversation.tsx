@@ -1,19 +1,24 @@
 import { agentId, agentTask, isModelId, type RuntimeTask, recoveryBlocked } from '@daban/protocol';
 import {
   ArrowUp,
+  ArrowUpToLine,
   Check,
   ChevronDown,
+  CornerDownRight,
   ExternalLink,
   FileText,
   Info,
   Mic,
   Monitor,
   Paperclip,
+  Pencil,
   Plus,
+  RotateCcw,
   Square,
+  Trash2,
   X,
 } from 'lucide-react';
-import { type Dispatch, useCallback, useRef } from 'react';
+import { type Dispatch, useCallback, useEffect, useRef } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import { demoIds } from '../../app/samples';
 import {
@@ -21,6 +26,7 @@ import {
   type Bot,
   chatRevision,
   lifecycleRequest,
+  messageQueue,
   type State,
   type WorkspaceFile,
 } from '../../app/state';
@@ -77,6 +83,12 @@ export function Conversation({
   preview,
   onModel,
   onSend,
+  onQueue,
+  onQueueEdit,
+  onQueueRemove,
+  onQueuePromote,
+  onQueueInsert,
+  onQueueRetry,
   onContinue,
   pending = false,
   onLifecycle,
@@ -89,6 +101,12 @@ export function Conversation({
   preview: (file: WorkspaceFile) => unknown;
   onModel: () => unknown;
   onSend?: () => unknown;
+  onQueue?: () => unknown;
+  onQueueEdit?: (id: string) => unknown;
+  onQueueRemove?: (id: string) => unknown;
+  onQueuePromote?: (id: string) => unknown;
+  onQueueInsert?: (id: string) => unknown;
+  onQueueRetry?: (id: string) => unknown;
   onContinue?: () => unknown;
   pending?: boolean;
   onLifecycle?: () => unknown;
@@ -155,6 +173,12 @@ export function Conversation({
     }
   }
   const input = useRef<HTMLTextAreaElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (pending || !refocus.current) return;
+    refocus.current = false;
+    input.current?.focus();
+  }, [pending]);
   const { upload, attach, paste, transfer, dragging } = useInputs(
     state,
     bot,
@@ -172,6 +196,7 @@ export function Conversation({
   const attachments = state.attachments[bot.id]
     .map((id) => state.files.find((f) => f.id === id))
     .filter((f): f is WorkspaceFile => !!f);
+  const queued = live ? messageQueue(state, bot.id) : [];
   const pendingIds = (runtime.snapshot.interactions || [])
     .filter((item) => item.bot === target && !item.conversationId && item.status === 'pending')
     .map((item) => item.id)
@@ -180,8 +205,16 @@ export function Conversation({
   const currentIds = new Set(
     task?.runId ? [`runtime-result:${task.runId}`, `runtime-partial:${task.runId}`] : [],
   );
-  const current = entries.filter((entry) => currentIds.has(entry.id));
-  const earlier = entries.filter((entry) => !currentIds.has(entry.id));
+  const replyIndex = entries.findIndex((entry) => currentIds.has(entry.id));
+  const turnId = task?.turns?.at(-1)?.id ?? task?.requestId;
+  const userId = turnId === task?.requestId ? turnId : `inserted:${turnId}`;
+  const userIndex = entries.findIndex((entry) => entry.id === userId);
+  // Approval can precede the first text chunk; anchor it to its user turn instead of the end of the transcript.
+  const split = replyIndex >= 0 ? replyIndex : userIndex >= 0 ? userIndex + 1 : entries.length;
+  // Only the activity around the current reply moves; transcript entries keep their order.
+  const earlier = entries.slice(0, split);
+  const current = replyIndex < 0 ? [] : [entries[replyIndex]];
+  const later = entries.slice(split + (replyIndex >= 0 ? 1 : 0));
   function send() {
     if (readOnly || recovering) return;
     if (state.attachmentUploads[bot.id]) {
@@ -189,9 +222,16 @@ export function Conversation({
       return;
     }
     if (busyInGroup || computerChanging || (!draft.trim() && !attachments.length)) return;
+    if (task?.running && onQueue) {
+      onQueue();
+      input.current?.focus();
+      return;
+    }
     scroll.resume();
     if (onSend) {
+      refocus.current = true;
       onSend();
+      input.current?.focus();
       return;
     }
     dispatch({
@@ -292,7 +332,7 @@ export function Conversation({
             <Markdown
               text={message.text}
               streaming={!!message.streaming || !!message.incomplete}
-              fileIds={message.files}
+              fileIds={message.files || message.references}
               files={state.files}
               preview={preview}
               openLink={openLink}
@@ -399,6 +439,7 @@ export function Conversation({
             </div>
           )}
           {!pendingIds && current.map(renderMessage)}
+          {later.map(renderMessage)}
         </div>
       </div>
       <div className="composer-wrap">
@@ -482,6 +523,102 @@ export function Conversation({
             </button>
           </div>
         )}
+        {live && queued.length > 0 && (
+          <section className="message-queue" aria-label={t('chat.messageQueue')} aria-live="polite">
+            <ul>
+              {queued.map((item, index) => {
+                const text = item.prompt || t('common.reviewFilesCompleteTaskIDescribed');
+                return (
+                  <li
+                    className="queued-message"
+                    key={item.id}
+                    data-failed={item.error || undefined}
+                    data-sending={item.sending || undefined}
+                    data-verifying={item.verify ? true : undefined}
+                  >
+                    <CornerDownRight className="queued-message-glyph" aria-hidden="true" />
+                    <div className="queued-message-copy">
+                      <div className="queued-message-line">
+                        <p title={text}>{text}</p>
+                        {item.files.length > 0 && (
+                          <span className="queued-message-count">
+                            {t('chat.queuedAttachments', { 0: item.files.length })}
+                          </span>
+                        )}
+                      </div>
+                      {item.verify ? (
+                        <span className="queued-message-error" role="status">
+                          {t('chat.verifyingQueuedMessageInsert')}
+                        </span>
+                      ) : item.sending ? (
+                        <span className="queued-message-status" role="status">
+                          {t('chat.sendingQueuedMessage')}
+                        </span>
+                      ) : (
+                        item.error && (
+                          <span className="queued-message-error" role="status">
+                            {t('chat.queuedMessageFailed')}
+                          </span>
+                        )
+                      )}
+                    </div>
+                    <div className="queued-message-actions">
+                      {onQueueInsert &&
+                        task?.running &&
+                        !item.files.length &&
+                        !item.verify &&
+                        !item.sending && (
+                          <IconButton
+                            className="queued-steer"
+                            label={t('chat.insertQueuedMessage', { 0: text })}
+                            onClick={() => onQueueInsert(item.id)}
+                          >
+                            <CornerDownRight />
+                            <span>{t('chat.steer')}</span>
+                          </IconButton>
+                        )}
+                      {index > 0 && onQueuePromote && !item.verify && !item.sending && (
+                        <IconButton
+                          label={t('chat.promoteQueuedMessage', { 0: text })}
+                          onClick={() => onQueuePromote(item.id)}
+                        >
+                          <ArrowUpToLine />
+                        </IconButton>
+                      )}
+                      {item.error && !item.verify && !item.sending && onQueueRetry && (
+                        <IconButton
+                          label={t('common.retrySend')}
+                          onClick={() => onQueueRetry(item.id)}
+                        >
+                          <RotateCcw />
+                        </IconButton>
+                      )}
+                      {onQueueEdit && !item.verify && !item.sending && (
+                        <IconButton
+                          label={t('chat.editQueuedMessage', { 0: text })}
+                          onClick={() => {
+                            onQueueEdit(item.id);
+                            input.current?.focus();
+                          }}
+                        >
+                          <Pencil />
+                        </IconButton>
+                      )}
+                      {onQueueRemove && !item.verify && !item.sending && (
+                        <IconButton
+                          label={t('chat.removeQueuedMessage', { 0: text })}
+                          onClick={() => onQueueRemove(item.id)}
+                        >
+                          <Trash2 />
+                        </IconButton>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
         <form
           {...transfer}
           className="composer"
@@ -533,7 +670,7 @@ export function Conversation({
             value={draft}
             maxLength={12000}
             rows={2}
-            disabled={pending || task?.running}
+            disabled={pending}
             readOnly={readOnly}
             onPaste={paste}
             onChange={(e) => {
@@ -609,7 +746,6 @@ export function Conversation({
                 recovering ||
                 pending ||
                 state.attachmentUploads[bot.id] ||
-                task?.running ||
                 computerChanging ||
                 !!busyInGroup ||
                 (!draft.trim() && !attachments.length) ||
@@ -624,7 +760,11 @@ export function Conversation({
           </div>
         </form>
         <div className="composer-hints">
-          <span>{t('common.enterSendShiftEnterNewLinePaste')}</span>
+          <span>
+            {task?.running
+              ? t('chat.enterQueuesMessage')
+              : t('common.enterSendShiftEnterNewLinePaste')}
+          </span>
           <span>{modelCaption}</span>
         </div>
       </div>

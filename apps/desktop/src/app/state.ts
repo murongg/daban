@@ -132,6 +132,7 @@ export interface Message {
   role: 'user' | 'bot' | 'activity' | 'notice';
   text: string;
   files?: string[];
+  references?: string[];
   handoff?: boolean;
   author?: string;
 }
@@ -181,6 +182,19 @@ export interface RoutineDraft {
 export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
+export const messageQueueLimit = 20;
+export interface QueuedInsertTarget {
+  runId: string;
+  chatRevision: number;
+}
+export interface QueuedTask {
+  id: string;
+  prompt: string;
+  files: string[];
+  error?: boolean;
+  sending?: boolean;
+  verify?: QueuedInsertTarget;
+}
 export interface State {
   sampleRevision?: 1 | 2;
   comments?: CommentsState;
@@ -207,6 +221,7 @@ export interface State {
   bots: Bot[];
   messages: Record<string, Message[]>;
   drafts: Record<string, string>;
+  queued: Record<string, QueuedTask[]>;
   controls: Record<string, Owner>;
   memories: Record<string, string>;
   memoryDrafts: Record<string, string>;
@@ -218,7 +233,56 @@ export interface State {
   attachments: Record<string, string[]>;
   attachmentUploads: Record<string, boolean>;
   runtimeRequests: Record<string, TaskRequest | undefined>;
+  runtimeRefs: Record<string, string[] | undefined>;
   profileRevisions: Record<string, number>;
+}
+export function messageQueue(state: Pick<State, 'queued'>, bot: string): QueuedTask[] {
+  // IDs such as constructor are valid; inherited object properties are never queue state.
+  return Object.hasOwn(state.queued, bot) ? state.queued[bot] : [];
+}
+function uniqueFileName(name: string, names: Set<string | undefined>) {
+  const extension = name.lastIndexOf('.');
+  const stem = extension > 0 ? name.slice(0, extension) : name;
+  const suffix = extension > 0 ? name.slice(extension) : '';
+  let candidate = name;
+  // Only rename the input copy: distinct sources must not overwrite each other in the next task.
+  for (let count = 2; names.has(candidate); count++) {
+    const ending = `-${count}${suffix}`;
+    const prefix = Array.from(stem);
+    // Task filenames are limited in UTF-8 bytes; suffixing must preserve whole Unicode characters.
+    while (
+      (prefix.join('') + ending).length > 160 ||
+      new TextEncoder().encode(prefix.join('') + ending).length > 255
+    )
+      prefix.pop();
+    candidate = `${prefix.join('')}${ending}`;
+  }
+  return candidate;
+}
+export function mergeAttachments(
+  attachments: string[],
+  files: WorkspaceFile[],
+  incoming: string[],
+): { attachments: string[]; files: WorkspaceFile[] } | undefined {
+  if (attachments.length + incoming.length > 4) return undefined;
+  const known = new Map(files.map((file) => [file.id, file]));
+  const names = new Set(
+    attachments.map((id) => known.get(id)?.name).filter((name) => name !== undefined),
+  );
+  const merged = new Map<string, WorkspaceFile>();
+  for (const id of incoming) {
+    const file = known.get(id);
+    if (!file || attachments.includes(id) || merged.has(id)) return undefined;
+    const name = uniqueFileName(file.name, names);
+    names.add(name);
+    merged.set(id, name === file.name ? file : { ...file, name });
+  }
+  // Renamed copies replace their entries so the merged IDs send unique task filenames.
+  const renamed = [...merged.values()].filter((file) => file.name !== known.get(file.id)?.name);
+  return {
+    attachments: [...attachments, ...incoming],
+    files: renamed.length ? files.map((file) => merged.get(file.id) ?? file) : files,
+  };
 }
 export function lifecycleRequest(
   state: State,
@@ -266,7 +330,7 @@ export type Action =
   | { type: 'reply-draft'; id: string; question: string; selected?: string[]; custom?: string }
   | { type: 'profiles'; profiles: BotProfile[] }
   | { type: 'profile-local'; bot: string; name: string; instructions: string }
-  | { type: 'runtime-pending'; bot: string; task: TaskRequest }
+  | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
   | { type: 'chats'; items: ChatState[] }
   | { type: 'chat-pending'; bot: string; request: ChatRequest }
   | { type: 'chat-clear'; bot: string; id: string }
@@ -279,6 +343,16 @@ export type Action =
   | { type: 'theme'; theme: Theme }
   | { type: 'control'; bot: string; owner: Owner }
   | { type: 'draft'; bot: string; text: string }
+  | { type: 'queue-add'; bot: string; task: QueuedTask }
+  | { type: 'queue-edit'; bot: string; id: string }
+  | { type: 'queue-remove'; bot: string; id: string }
+  | { type: 'queue-promote'; bot: string; id: string }
+  | { type: 'queue-insert'; bot: string; id: string; revision: number }
+  | { type: 'queue-verify'; bot: string; id: string; runId: string; chatRevision: number }
+  | { type: 'queue-unverify'; bot: string; id: string }
+  | { type: 'queue-sending'; bot: string; id: string; sending: boolean }
+  | { type: 'queue-fail'; bot: string; id: string }
+  | { type: 'queue-retry'; bot: string; id: string }
   | { type: 'send'; bot: string; id: string; time: string }
   | { type: 'memory-draft'; bot: string; text: string }
   | { type: 'routine-draft'; bot: string; draft: Partial<RoutineDraft> }
@@ -317,6 +391,7 @@ export function initialState(): State {
     knowledgeDrafts: {},
     replyDrafts: {},
     runtimeRequests: {},
+    runtimeRefs: {},
     profileRevisions: {},
     memoryVersions: {},
     selected: '',
@@ -326,6 +401,7 @@ export function initialState(): State {
     bots: [],
     messages: {},
     drafts: {},
+    queued: {},
     controls: {},
     memories: {},
     memoryDrafts: {},
@@ -716,9 +792,17 @@ export function reduce(state: State, action: Action): State {
         ),
       };
     case 'runtime-pending':
-      return { ...state, runtimeRequests: { ...state.runtimeRequests, [action.bot]: action.task } };
+      return {
+        ...state,
+        runtimeRequests: { ...state.runtimeRequests, [action.bot]: action.task },
+        runtimeRefs: { ...state.runtimeRefs, [action.bot]: action.refs },
+      };
     case 'runtime-clear':
-      return { ...state, runtimeRequests: { ...state.runtimeRequests, [action.bot]: undefined } };
+      return {
+        ...state,
+        runtimeRequests: { ...state.runtimeRequests, [action.bot]: undefined },
+        runtimeRefs: { ...state.runtimeRefs, [action.bot]: undefined },
+      };
     case 'attachment-uploading':
       return {
         ...state,
@@ -745,18 +829,18 @@ export function reduce(state: State, action: Action): State {
       if (task.prompt) {
         const previous = entries.find((message) => message.id === task.requestId);
         const pending = state.runtimeRequests[action.bot];
-        const attached =
+        // A queued send captured its files before the composer was cleared; use those references, not the composer.
+        const sources =
           pending?.requestId === task.requestId && !pending.retryOf
-            ? state.attachments[action.bot].filter((id) => {
-                const file = state.files.find((item) => item.id === id);
-                return (
-                  file &&
-                  pending.files?.some(
-                    (sent) => JSON.stringify(taskFile(file)) === JSON.stringify(sent),
-                  )
-                );
-              })
+            ? (state.runtimeRefs[action.bot] ?? state.attachments[action.bot])
             : [];
+        const attached = sources.filter((id) => {
+          const file = state.files.find((item) => item.id === id);
+          return (
+            file &&
+            pending?.files?.some((sent) => JSON.stringify(taskFile(file)) === JSON.stringify(sent))
+          );
+        });
         const references = previous?.files || attached;
         add({
           id: task.requestId,
@@ -786,7 +870,48 @@ export function reduce(state: State, action: Action): State {
         }
         artifacts.push(item.id);
       }
-      if (['completed', 'failed', 'stopped', 'interrupted'].includes(task.phase)) {
+      const finished = ['completed', 'failed', 'stopped', 'interrupted'].includes(task.phase);
+      const turns = task.turns?.length
+        ? task.turns
+        : finished
+          ? [{ id: task.requestId, prompt: task.prompt, result: task.result, error: task.error }]
+          : [];
+      const fallback =
+        task.phase === 'stopped'
+          ? t('state.taskStoppedSavedFilesRetained')
+          : t('state.taskFinishedCheckOutputFiles');
+      const turnUserId = (id: string) =>
+        id === task.requestId ? task.requestId : `inserted:${id}`;
+      turns.forEach((turn, index) => {
+        const last = index === turns.length - 1;
+        const next = turns[index + 1];
+        const before = next ? turnUserId(next.id) : undefined;
+        const userId = turnUserId(turn.id);
+        const saved = entries.find((message) => message.id === userId);
+        add(
+          {
+            id: userId,
+            role: 'user',
+            text: turn.prompt,
+            ...(saved?.files?.length ? { files: saved.files } : {}),
+          },
+          before,
+        );
+        // Finished turns keep their own reply on screen while a later turn streams.
+        if (!last) {
+          add(
+            {
+              id: `runtime-turn:${task.runId}:${turn.id}`,
+              role: 'bot',
+              text: turn.result || turn.error || t('chathistory.noSavedResponses'),
+              ...(artifacts.length ? { references: artifacts } : {}),
+            },
+            before,
+          );
+          return;
+        }
+        // The latest turn streams through runtime-result until the task settles.
+        if (!finished) return;
         if (task.phase !== 'completed' && task.response?.text)
           add(
             {
@@ -797,19 +922,16 @@ export function reduce(state: State, action: Action): State {
             },
             `runtime-result:${task.runId}`,
           );
-        const text =
-          task.result ||
-          task.error ||
-          (task.phase === 'stopped'
-            ? t('state.taskStoppedSavedFilesRetained')
-            : t('state.taskFinishedCheckOutputFiles'));
-        add({
-          id: `runtime-result:${task.runId}`,
-          role: 'bot',
-          text,
-          ...(artifacts.length ? { files: artifacts } : {}),
-        });
-      }
+        add(
+          {
+            id: `runtime-result:${task.runId}`,
+            role: 'bot',
+            text: task.result || turn.result || task.error || turn.error || fallback,
+            ...(artifacts.length ? { files: artifacts } : {}),
+          },
+          before,
+        );
+      });
       const pending = state.runtimeRequests[action.bot];
       const acknowledged = pending?.requestId === task.requestId;
       // An old accepted receipt settles uncertainty; it cannot erase work drafted in a later conversation.
@@ -882,6 +1004,138 @@ export function reduce(state: State, action: Action): State {
       return { ...state, controls: { ...state.controls, [action.bot]: action.owner } };
     case 'draft':
       return { ...state, drafts: { ...state.drafts, [action.bot]: action.text.slice(0, 12000) } };
+    case 'queue-add': {
+      const queue = messageQueue(state, action.bot);
+      const task = action.task;
+      if (queue.length >= messageQueueLimit || !task.id || task.prompt.length > 12000) return state;
+      if (!task.prompt.trim() && !task.files.length) return state;
+      if (task.files.some((id) => !state.files.some((file) => file.id === id))) return state;
+      return {
+        ...state,
+        queued: {
+          ...state.queued,
+          [action.bot]: [...queue, { ...task, prompt: task.prompt.trim() }],
+        },
+        drafts: { ...state.drafts, [action.bot]: '' },
+        attachments: { ...state.attachments, [action.bot]: [] },
+      };
+    }
+    case 'queue-verify': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((entry) => entry.id === action.id);
+      if (index < 0) return state;
+      const items = [...queue];
+      items[index] = {
+        ...items[index],
+        verify: { runId: action.runId, chatRevision: action.chatRevision },
+      };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-unverify': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((entry) => entry.id === action.id);
+      if (index < 0 || !queue[index].verify) return state;
+      const items = [...queue];
+      items[index] = { ...items[index], verify: undefined };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-edit': {
+      const queue = messageQueue(state, action.bot);
+      const item = queue.find((entry) => entry.id === action.id);
+      if (!item || item.verify || item.sending) return state;
+      const draft = state.drafts[action.bot] ?? '';
+      const prompt = draft && item.prompt ? `${draft}\n${item.prompt}` : item.prompt || draft;
+      // Over-limit edits keep both the queued message and the draft instead of truncating text.
+      if (prompt.length > 12000) return state;
+      const merged = mergeAttachments(state.attachments[action.bot] ?? [], state.files, item.files);
+      // A merge that would exceed the attachment cap or lose a file also keeps the queued message intact.
+      if (!merged) return state;
+      return {
+        ...state,
+        files: merged.files,
+        queued: {
+          ...state.queued,
+          [action.bot]: queue.filter((entry) => entry.id !== action.id),
+        },
+        drafts: { ...state.drafts, [action.bot]: prompt },
+        attachments: { ...state.attachments, [action.bot]: merged.attachments },
+      };
+    }
+    case 'queue-promote': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 1 || queue[index].verify || queue[index].sending) return state;
+      const items = [...queue];
+      items.unshift(items.splice(index, 1)[0]);
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-insert': {
+      const queue = messageQueue(state, action.bot);
+      const item = queue.find((entry) => entry.id === action.id);
+      if (!item || item.files.length || item.sending) return state;
+      return {
+        ...state,
+        queued: {
+          ...state.queued,
+          [action.bot]: queue.filter((entry) => entry.id !== action.id),
+        },
+        messages: {
+          ...state.messages,
+          [action.bot]: [
+            ...(state.messages[action.bot] || []),
+            {
+              id: `inserted:${item.id}`,
+              role: 'user',
+              text: item.prompt,
+              chatRevision: action.revision,
+            },
+          ],
+        },
+      };
+    }
+    case 'queue-remove': {
+      const queue = messageQueue(state, action.bot);
+      return queue.some((item) => item.id === action.id && !item.verify && !item.sending)
+        ? {
+            ...state,
+            queued: {
+              ...state.queued,
+              [action.bot]: queue.filter((item) => item.id !== action.id),
+            },
+          }
+        : state;
+    }
+    case 'queue-sending': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 0 || !!queue[index].sending === action.sending) return state;
+      const items = [...queue];
+      items[index] = action.sending
+        ? { ...items[index], sending: true }
+        : { ...items[index], sending: undefined };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-fail': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 0 || queue[index].error) return state;
+      const items = [...queue];
+      items[index] = { ...items[index], error: true };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-retry': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 0 || !queue[index].error || queue[index].verify || queue[index].sending)
+        return state;
+      const items = [...queue];
+      items[index] = {
+        id: queue[index].id,
+        prompt: queue[index].prompt,
+        files: queue[index].files,
+      };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
     case 'memory-draft':
       return {
         ...state,
@@ -1051,22 +1305,7 @@ export function reduce(state: State, action: Action): State {
       const names = new Set(
         state.attachments[action.bot].map((id) => state.files.find((file) => file.id === id)?.name),
       );
-      const extension = action.file.name.lastIndexOf('.');
-      const stem = extension > 0 ? action.file.name.slice(0, extension) : action.file.name;
-      const suffix = extension > 0 ? action.file.name.slice(extension) : '';
-      let name = action.file.name;
-      // Only rename the input copy: distinct sources must not overwrite each other in the next task.
-      for (let count = 2; names.has(name); count++) {
-        const ending = `-${count}${suffix}`;
-        const prefix = Array.from(stem);
-        // Task filenames are limited in UTF-8 bytes; suffixing must preserve whole Unicode characters.
-        while (
-          (prefix.join('') + ending).length > 160 ||
-          new TextEncoder().encode(prefix.join('') + ending).length > 255
-        )
-          prefix.pop();
-        name = `${prefix.join('')}${ending}`;
-      }
+      const name = uniqueFileName(action.file.name, names);
       return {
         ...state,
         files: [...state.files, { ...action.file, name }],

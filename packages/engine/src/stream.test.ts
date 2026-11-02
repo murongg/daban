@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { apply, StreamCollector, StreamPublisher } from './stream.js';
 
@@ -150,4 +153,53 @@ test('the native adapter publishes only its exact live root and keeps revisions 
     ['合成回答0', '合成回答1'],
   );
   assert.ok(sent[1].revision > sent[0].revision);
+});
+
+test('the adapter captures the producing turn before publication and retains it across a delayed send', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-stream-turn-'));
+  const turnFile = path.join(dir, 'turn.json');
+  const sent: { turnId?: string; text: string }[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+    sent.push(JSON.parse(String(init?.body)).params);
+    return Response.json({ result: { accepted: true } });
+  });
+  const root = { session: { id: 'mock-session' } };
+  let handler: (value: unknown) => unknown = () => undefined;
+  let dispose: () => Promise<unknown> = async () => undefined;
+  const config = { url: 'http://127.0.0.1:12345/mcp/mock-bot', capability: 'mock-cap', turnFile };
+  apply(
+    {
+      agents: { roots: () => [root] },
+      on: (_event, callback) => {
+        handler = callback;
+      },
+      effect: (factory) => {
+        dispose = factory();
+      },
+    },
+    config,
+  );
+  const emit = (frame: unknown) => handler({ agent: root, frame });
+  try {
+    await writeFile(turnFile, JSON.stringify({ id: 'mock-first-turn' }));
+    emit(start());
+    emit(chunk(2, 0, { type: 'block-start', index: 0, blockType: 'text' }));
+    emit(chunk(3, 1, { type: 'text-delta', index: 0, text: 'SYNTHETIC FIRST' }));
+    emit(end(4, 2));
+    await writeFile(turnFile, JSON.stringify({ id: 'mock-second-turn' }));
+    t.mock.timers.tick(100);
+    await new Promise(setImmediate);
+    assert.equal(sent[0].turnId, 'mock-first-turn');
+    emit(start(5, 'mock-next-attempt'));
+    emit(chunk(6, 0, { type: 'block-start', index: 0, blockType: 'text' }, 'mock-next-attempt'));
+    emit(
+      chunk(7, 1, { type: 'text-delta', index: 0, text: 'SYNTHETIC SECOND' }, 'mock-next-attempt'),
+    );
+    await dispose();
+    assert.equal(sent[1].turnId, 'mock-second-turn');
+  } finally {
+    await dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

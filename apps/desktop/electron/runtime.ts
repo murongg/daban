@@ -67,6 +67,8 @@ import {
   isRecoveryReview,
   isRecoveryStatus,
   isReplyStream,
+  isRunInsert,
+  isRunTurn,
   isRuntimeDownload,
   isRuntimeNoticeStatus,
   isSchedule,
@@ -191,6 +193,10 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     sessionId: task.sessionId,
     outputDirectory: task.outputDirectory,
     trace: task.trace || [],
+    ...(Array.isArray(task.turns) && task.turns.every(isRunTurn) ? { turns: task.turns } : {}),
+    ...(Array.isArray(task.inserts) && task.inserts.every(isRunInsert)
+      ? { inserts: task.inserts }
+      : {}),
     history: (task.history || []).map((item) => ({
       chatRevision: item.chatRevision,
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
@@ -201,6 +207,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       result: item.result,
       error: item.error,
       files: item.files,
+      ...(Array.isArray(item.turns) && item.turns.every(isRunTurn) ? { turns: item.turns } : {}),
       response: isReplyStream(item.response) ? item.response : undefined,
     })),
   };
@@ -1758,6 +1765,8 @@ export class RuntimeClient {
       case 'task.start': {
         const current = await this.status();
         if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+        if (command.task.retryTurn !== undefined && current.protocolVersion < 43)
+          throw new Error('RUNTIME_TOO_OLD');
         if (
           current.protocolVersion < 11 &&
           command.task.files?.some((file) => file.attachmentId !== undefined)
@@ -1800,6 +1809,26 @@ export class RuntimeClient {
       }
       case 'task.stop':
         return this.api(`${route}/model`, { running: false });
+      case 'task.insert': {
+        const current = await this.status();
+        if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+        if (current.protocolVersion < 42) throw new Error('RUNTIME_TOO_OLD');
+        const value: unknown = await this.api(`${route}/insert`, {
+          id: command.id,
+          text: command.text,
+          runId: command.runId,
+          chatRevision: command.chatRevision,
+        });
+        if (
+          !value ||
+          typeof value !== 'object' ||
+          Array.isArray(value) ||
+          (value as Record<string, unknown>).ok !== true ||
+          (value as Record<string, unknown>).id !== command.id
+        )
+          throw new Error('INVALID_TASK_ACK');
+        return value;
+      }
       case 'control':
         return this.api(`${route}/control`, {
           epoch: command.epoch,

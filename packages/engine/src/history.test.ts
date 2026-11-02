@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
 import { HistoryTools } from './history.js';
-import { TaskJournal, type TaskRecord } from './tasks.js';
+import { recordLimit, TaskJournal, type TaskRecord } from './tasks.js';
 import { projectTranscript, Transcripts } from './transcripts.js';
 import { WorkspaceFiles } from './workspace.js';
 
@@ -17,7 +17,13 @@ interface Search {
     runId: string;
     incomplete: boolean;
     kind: string;
-    preview: { field: string; offset: number; content: string; truncated: boolean };
+    preview: {
+      field: string;
+      turn?: number;
+      offset: number;
+      content: string;
+      truncated: boolean;
+    };
     fileCount: number;
   }[];
   nextBefore?: string;
@@ -25,6 +31,8 @@ interface Search {
 interface Read {
   untrusted: boolean;
   incomplete: boolean;
+  turn?: number;
+  turns?: number;
   content: string;
   offset: number;
   total: number;
@@ -534,6 +542,137 @@ test('history pages preserve Unicode and redact before chunking, with complete J
     assert.match(
       JSON.stringify(await tools.invoke(aborted, 'bot_history_search')),
       /MODEL_CANCELLED/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('multi-turn records with long replies survive a journal reload', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-journal-turns-'));
+  try {
+    const reply = '合'.repeat(65000);
+    assert.equal(reply.length, 65000);
+    const turns = Array.from({ length: 6 }, (_, index) => ({
+      id: `mock-long-turn-${index}`,
+      prompt: `合成插话 ${index}`,
+      result: reply,
+    }));
+    const journal = new TaskJournal(root);
+    await journal.load();
+    const saved: TaskRecord = { ...record(1), turns, result: reply };
+    await journal.put(saved);
+    // Written records stay readable: the load cap must match the write cap.
+    assert.ok(
+      Buffer.byteLength(JSON.stringify({ version: 1, task: saved })) > 1024 * 1024,
+      'synthetic record must exceed the old one-megabyte limit',
+    );
+    const recovered = new TaskJournal(root);
+    await recovered.load();
+    const loaded = await recovered.read('a', record(1).runId);
+    assert.equal(loaded?.turns?.length, 6);
+    assert.equal(loaded?.turns?.[5].result, reply);
+    assert.equal(loaded?.result, reply);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a record above the journal write cap is refused instead of saved unreadable', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-journal-limit-'));
+  try {
+    const journal = new TaskJournal(root);
+    await journal.load();
+    await assert.rejects(journal.put({ ...record(1), result: 'x'.repeat(recordLimit) }), {
+      code: 'TASK_RECORD_TOO_LARGE',
+    });
+    const recovered = new TaskJournal(root);
+    await recovered.load();
+    assert.equal(recovered.records.size, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a legacy insert list is dropped alone so the saved task stays readable', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-journal-legacy-'));
+  try {
+    await mkdir(root, { recursive: true });
+    const legacy = {
+      ...record(1),
+      inserts: ['mock-legacy-insert'],
+      turns: [{ id: 'mock-legacy-turn', prompt: '合成插话', result: '合成回答' }],
+    };
+    await writeFile(
+      path.join(root, `${record(1).runId}.json`),
+      JSON.stringify({ version: 1, task: legacy }),
+    );
+    const journal = new TaskJournal(root);
+    await journal.load();
+    const loaded = await journal.read('a', record(1).runId);
+    assert.equal(loaded?.result, record(1).result);
+    assert.equal(loaded?.inserts, undefined);
+    assert.equal(loaded?.turns?.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('history search and reads cover every turn of a multi-turn record', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-history-turns-'));
+  try {
+    const journal = new TaskJournal(root);
+    await journal.load();
+    await journal.put({
+      ...record(7),
+      prompt: '合成原始请求',
+      result: '合成最终回答',
+      turns: [
+        { id: 'mock-request-7', prompt: '合成原始请求', result: '合成原始回答' },
+        { id: 'mock-insert-7', prompt: '合成插话内容', result: '合成最终回答' },
+      ],
+    });
+    const history = new HistoryTools(journal);
+    const run = { bot: 'a', id: 'current', abort: new AbortController() };
+    const inserted = (await history.invoke(run, 'bot_history_search', {
+      query: '插话内容',
+    })) as Search;
+    assert.equal(inserted.matches.length, 1);
+    assert.equal(inserted.matches[0].preview.field, 'prompt');
+    assert.equal(inserted.matches[0].preview.turn, 1);
+    // The original reply is stored on its own turn, not only as the final answer.
+    const original = (await history.invoke(run, 'bot_history_search', {
+      query: '原始回答',
+    })) as Search;
+    assert.equal(original.matches.length, 1);
+    assert.equal(original.matches[0].preview.field, 'result');
+    assert.equal(original.matches[0].preview.turn, 0);
+    const last = (await history.invoke(run, 'bot_history_read', {
+      runId: record(7).runId,
+    })) as Read;
+    assert.equal(last.content, '合成最终回答');
+    assert.equal(last.turns, 2);
+    const first = (await history.invoke(run, 'bot_history_read', {
+      runId: record(7).runId,
+      field: 'result',
+      turn: 0,
+    })) as Read;
+    assert.equal(first.content, '合成原始回答');
+    assert.equal(first.turn, 0);
+    const prompt = (await history.invoke(run, 'bot_history_read', {
+      runId: record(7).runId,
+      field: 'prompt',
+      turn: 1,
+    })) as Read;
+    assert.equal(prompt.content, '合成插话内容');
+    await assert.rejects(
+      history.invoke(run, 'bot_history_read', { runId: record(7).runId, turn: 2 }),
+      { code: 'INVALID_HISTORY_QUERY' },
+    );
+    await journal.put(record(8));
+    await assert.rejects(
+      history.invoke(run, 'bot_history_read', { runId: record(8).runId, turn: 0 }),
+      { code: 'INVALID_HISTORY_QUERY' },
     );
   } finally {
     await rm(root, { recursive: true, force: true });

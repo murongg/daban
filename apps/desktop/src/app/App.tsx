@@ -53,6 +53,7 @@ import type { BotPreset } from '../features/bots/presets';
 import { ChatHistory } from '../features/chat/ChatHistory';
 import { Conversation } from '../features/chat/Conversation';
 import { NewChat } from '../features/chat/NewChat';
+import { pendingInserts } from '../features/chat/response';
 import { Computer, type ComputerSurface } from '../features/computer/Computer';
 import { Desktop } from '../features/computer/Desktop';
 import { Recovery, RecoveryNotice } from '../features/computer/Recovery';
@@ -81,7 +82,11 @@ import {
   chatRevision,
   initialState,
   lifecycleRequest,
+  mergeAttachments,
+  messageQueue,
+  messageQueueLimit,
   type Panel,
+  type QueuedTask,
   reduce,
   type WorkspaceFile,
 } from './state';
@@ -110,6 +115,30 @@ type Modal =
   | { type: 'file'; file: WorkspaceFile }
   | { type: 'computer'; bot: string; surface?: ComputerSurface }
   | null;
+type TaskOutcome = 'started' | 'completed' | 'failed' | 'uncertain' | 'skipped';
+interface TaskRunResult {
+  outcome: TaskOutcome;
+  runId?: string;
+}
+// These replies prove the insert was not applied; transport failures and malformed acks stay uncertain.
+function definiteInsertError(error: unknown) {
+  return (
+    error instanceof Error &&
+    [
+      'TASK_INSERT_STALE',
+      'MODEL_NOT_RUNNING',
+      'MODEL_INSERT_UNCERTAIN',
+      'MODEL_INSERT_FULL',
+      'INVALID_TASK_INSERT',
+      'UNKNOWN_BOT',
+      'RUNTIME_TOO_OLD',
+    ].includes(error.message)
+  );
+}
+// A begun turn may already have run tools or changed files, so it must never be replayed automatically.
+function uncertainInsertError(error: unknown) {
+  return error instanceof Error && error.message === 'MODEL_INSERT_UNCERTAIN';
+}
 function load() {
   try {
     const state = restore(clientCache().getItem(storageKey));
@@ -143,6 +172,9 @@ function Workbench() {
   useLocale();
   const runtime = useRuntime();
   const submitting = useRef(new Set<string>());
+  const draining = useRef(new Set<string>());
+  const awaitingRun = useRef(new Map<string, { runId: string; at: number }>());
+  const verifyingInserts = useRef(new Set<string>());
   const legacySettings = useRef(false);
   const [state, update] = useReducer(reduce, undefined, () => {
     const restored = load();
@@ -171,6 +203,7 @@ function Workbench() {
   const [modal, setModal] = useState<Modal>(null);
   useAttention(state, dispatch, !!modal || settingsOpen);
   const [toast, setToast] = useState('');
+  const [verifyTick, setVerifyTick] = useState(0);
   const [inboxFocus, setInboxFocus] = useState<string>();
   const search = useRef<HTMLInputElement>(null);
   const storageFailed = useRef(false);
@@ -290,6 +323,7 @@ function Workbench() {
           result: task.result,
           error: task.error,
           files: task.files,
+          ...(task.turns?.length ? { turns: task.turns } : {}),
           response: ['failed', 'stopped', 'interrupted'].includes(task.phase)
             ? task.response
             : undefined,
@@ -307,6 +341,7 @@ function Workbench() {
           record.result,
           record.error,
           (record.files || []).map((file) => [file.path, file.name, file.size, file.modified]),
+          (record.turns || []).map((turn) => [turn.id, turn.prompt, turn.result, turn.error]),
           response && [response.revision, response.state, response.text],
         ]);
         // Streaming changes are rendered directly; unchanged history must not replay through the reducer on every frame.
@@ -320,10 +355,23 @@ function Workbench() {
       }
     }
   }, [runtime.enabled, runtime.snapshot, state.bots, state.runtimeRequests, dispatch]);
-  async function runTask(botId: string, continued?: TaskRequest) {
+  function imagesUnsupported(botId: string, files: WorkspaceFile[]) {
+    if (!files.some((file) => imageMime(file.upload?.name || file.name))) return false;
+    const model =
+      state.bots.find((entry) => entry.id === botId)?.model || runtime.snapshot.model.model;
+    return (
+      !isModelId(model) || !modelHasVision(model, modelCatalog(runtime.snapshot.model.connections))
+    );
+  }
+  async function runTask(
+    botId: string,
+    continued?: TaskRequest,
+    queued?: QueuedTask,
+  ): Promise<TaskRunResult> {
+    const skipped: TaskRunResult = { outcome: 'skipped' };
     if (recoveryBlocked(runtime.snapshot)) {
       notify(t('app.runtimeRecoveryNeedsVerificationNewTasksPaused'));
-      return;
+      return skipped;
     }
     if (
       state.bots.find((entry) => entry.id === botId)?.archived ||
@@ -331,22 +379,25 @@ function Workbench() {
       lifecycleRequest(state, botId)
     ) {
       notify(t('app.restoreBotVerifyOperationResultSendingNew'));
-      return;
+      return skipped;
     }
     if (state.attachmentUploads[botId]) {
       notify(t('common.waitUntilAttachmentsReadySending'));
-      return;
+      return skipped;
     }
     const target = agentId(botId);
     if (state.bots.find((entry) => entry.id === botId)?.members) {
       notify(t('app.chooseRecipientsGroupWindowSending'));
-      return;
+      return skipped;
     }
-    if (submitting.current.has(botId)) return;
-    const text = state.drafts[botId].trim();
-    const attached = state.attachments[botId]
-      .map((id) => state.files.find((f) => f.id === id))
-      .filter((f): f is WorkspaceFile => !!f);
+    if (submitting.current.has(botId)) return skipped;
+    if (queued && state.runtimeRequests[botId]) return skipped;
+    const text = queued ? queued.prompt.trim() : state.drafts[botId].trim();
+    const attached = (
+      queued
+        ? queued.files.map((id) => state.files.find((file) => file.id === id))
+        : state.attachments[botId].map((id) => state.files.find((f) => f.id === id))
+    ).filter((f): f is WorkspaceFile => !!f);
     const task: TaskRequest = state.runtimeRequests[botId] ||
       continued || {
         ...(runtime.snapshot.protocolVersion >= 29
@@ -357,25 +408,22 @@ function Workbench() {
         ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
         files: attached.map(taskFile),
       };
-    if (!task.prompt.trim()) return;
+    if (!task.prompt.trim()) return skipped;
     // An uncertain send keeps its captured request; next-task model edits cannot change receipt reconciliation.
-    if (
-      !continued &&
-      !state.runtimeRequests[botId] &&
-      attached.some((file) => imageMime(file.upload?.name || file.name))
-    ) {
-      const model =
-        state.bots.find((entry) => entry.id === botId)?.model || runtime.snapshot.model.model;
-      if (
-        !isModelId(model) ||
-        !modelHasVision(model, modelCatalog(runtime.snapshot.model.connections))
-      ) {
-        notify(t('app.currentModelDoesNotSupportImagesChoose'));
-        return;
-      }
+    if (!continued && !state.runtimeRequests[botId] && imagesUnsupported(botId, attached)) {
+      notify(t('app.currentModelDoesNotSupportImagesChoose'));
+      return skipped;
     }
     submitting.current.add(botId);
-    dispatch({ type: 'runtime-pending', bot: botId, task });
+    // Keep the exact source attachments of this send: a queued item's composer slot was cleared when it was queued.
+    const refs = continued
+      ? undefined
+      : state.runtimeRequests[botId]
+        ? state.runtimeRefs[botId]
+        : queued
+          ? [...queued.files]
+          : [...state.attachments[botId]];
+    dispatch({ type: 'runtime-pending', bot: botId, task, refs });
     try {
       if (runtime.snapshot.protocolVersion >= 3) {
         const entry = state.bots.find((bot) => bot.id === botId);
@@ -386,6 +434,7 @@ function Workbench() {
           });
       }
       const receipt = await runtime.command({ type: 'task.start', bot: target, task });
+      let finished = false;
       if (runtime.snapshot.protocolVersion >= 29) {
         if (
           !isTaskReceipt(receipt) ||
@@ -395,7 +444,12 @@ function Workbench() {
         )
           throw new Error('INVALID_TASK_ACK');
         dispatch({ type: 'runtime-task', bot: botId, task: receipt });
+        finished = ['completed', 'failed', 'stopped', 'interrupted'].includes(receipt.phase);
+        return finished
+          ? { outcome: 'completed', runId: receipt.runId }
+          : { outcome: 'started', runId: receipt.runId };
       }
+      return { outcome: 'started' };
     } catch (error) {
       // Only a definite rejection is editable; an ambiguous network result retains the ID to prevent replay.
       if (
@@ -420,9 +474,13 @@ function Workbench() {
           'MODEL_IMAGE_UNSUPPORTED',
           'RUNTIME_TOO_OLD',
         ].includes(error.message)
-      )
+      ) {
+        notify(runtimeError(error));
         dispatch({ type: 'runtime-clear', bot: botId });
+        return { outcome: 'failed' };
+      }
       notify(runtimeError(error));
+      return { outcome: 'uncertain' };
     } finally {
       submitting.current.delete(botId);
     }
@@ -430,16 +488,189 @@ function Workbench() {
   async function continueTask(botId: string) {
     const task = agentTask(runtime.snapshot, botId);
     if (!task?.runId || task.conversationId || !task.prompt || task.running) return;
+    // An inserted turn that failed keeps no reply; continuing must resume that turn, not replay finished work.
+    const unfinished = [...(task.turns || [])].reverse().find((turn) => !turn.result);
+    // The backend owns accepted inserts; capture the resumed turn so receipt loss and a full UI queue cannot drop them.
+    const waiting = pendingInserts(task).filter((insert) => !insert.started);
+    const target =
+      unfinished ?? (waiting[0] ? { id: waiting[0].id, prompt: waiting[0].text } : undefined);
+    if (waiting.length && runtime.snapshot.protocolVersion < 43) {
+      notify(runtimeError(new Error('RUNTIME_TOO_OLD')));
+      return;
+    }
+    const prompt = target?.prompt ?? task.prompt;
+    if (!prompt) return;
     await runTask(botId, {
       requestId: crypto.randomUUID(),
-      prompt: task.prompt,
+      prompt,
       retryOf: task.runId,
+      ...(target && runtime.snapshot.protocolVersion >= 43 ? { retryTurn: target.id } : {}),
       ...(runtime.snapshot.protocolVersion >= 29
         ? { chatRevision: task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats) }
         : {}),
       ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
     });
   }
+  function queueTask(botId: string) {
+    const entry = state.bots.find((bot) => bot.id === botId);
+    if (!entry || entry.archived) return;
+    if (state.runtimeRequests[botId] || state.attachmentUploads[botId]) return;
+    if (state.chatRequests[botId] || lifecycleRequest(state, botId)) return;
+    const prompt = state.drafts[botId].trim();
+    const files = state.attachments[botId]
+      .map((id) => state.files.find((file) => file.id === id))
+      .filter((file): file is WorkspaceFile => !!file);
+    if (!prompt && !files.length) return;
+    if (messageQueue(state, botId).length >= messageQueueLimit) {
+      notify(t('chat.messageQueueFull', { 0: messageQueueLimit }));
+      return;
+    }
+    if (imagesUnsupported(botId, files)) {
+      notify(t('app.currentModelDoesNotSupportImagesChoose'));
+      return;
+    }
+    dispatch({
+      type: 'queue-add',
+      bot: botId,
+      task: { id: crypto.randomUUID(), prompt, files: files.map((file) => file.id) },
+    });
+  }
+  function rejectInsert(botId: string, id: string, error: unknown) {
+    notify(runtimeError(error));
+    if (uncertainInsertError(error)) {
+      // Clear verify first so the kept item is a failed message: only an explicit retry may run it again.
+      dispatch({ type: 'queue-unverify', bot: botId, id });
+      dispatch({ type: 'queue-fail', bot: botId, id });
+      return;
+    }
+    if (definiteInsertError(error)) dispatch({ type: 'queue-unverify', bot: botId, id });
+  }
+  async function insertQueued(botId: string, id: string) {
+    const item = messageQueue(state, botId).find((entry) => entry.id === id);
+    if (!item || item.files.length || item.verify) return;
+    const task = agentTask(runtime.snapshot, botId);
+    if (!task?.running || !task.runId || task.conversationId) {
+      notify(t('errors.taskEndedMessageKeptQueue'));
+      return;
+    }
+    const target = { runId: task.runId, chatRevision: task.chatRevision ?? 0 };
+    // Mark uncertainty before sending; an ambiguous reply keeps the item paused until its receipt is checked.
+    dispatch({ type: 'queue-verify', bot: botId, id, ...target });
+    try {
+      const receipt = await runtime.command<{ ok?: unknown; id?: unknown }>({
+        type: 'task.insert',
+        bot: agentId(botId),
+        id: item.id,
+        text: item.prompt,
+        ...target,
+      });
+      if (receipt?.ok !== true || receipt.id !== item.id) throw new Error('INVALID_TASK_ACK');
+      dispatch({ type: 'queue-insert', bot: botId, id: item.id, revision: target.chatRevision });
+    } catch (error) {
+      rejectInsert(botId, item.id, error);
+    }
+  }
+  const verifyPending = Object.values(state.queued).some((items) =>
+    items.some((item) => !!item.verify),
+  );
+  useEffect(() => {
+    if (!verifyPending) return;
+    const timer = window.setInterval(() => setVerifyTick((value) => value + 1), 2500);
+    return () => window.clearInterval(timer);
+  }, [verifyPending]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reconciliation reads this render's state and runtime, and the tick retries while the agent is unreachable.
+  useEffect(() => {
+    if (!runtime.enabled || runtime.snapshot.phase !== 'ready' || !verifyPending) return;
+    for (const entry of state.bots) {
+      const item = messageQueue(state, entry.id).find((queued) => !!queued.verify);
+      const target = item?.verify;
+      if (!item || !target || verifyingInserts.current.has(item.id)) continue;
+      verifyingInserts.current.add(item.id);
+      runtime
+        .command<{ ok?: unknown; id?: unknown }>({
+          type: 'task.insert',
+          bot: agentId(entry.id),
+          id: item.id,
+          text: item.prompt,
+          ...target,
+        })
+        .then((receipt) => {
+          if (receipt?.ok !== true || receipt.id !== item.id) throw new Error('INVALID_TASK_ACK');
+          dispatch({
+            type: 'queue-insert',
+            bot: entry.id,
+            id: item.id,
+            revision: target.chatRevision,
+          });
+        })
+        .catch((error) => {
+          // Unknown outcomes stay paused; only a definite rejection can resume normal queue delivery.
+          if (!definiteInsertError(error)) return;
+          rejectInsert(entry.id, item.id, error);
+        })
+        .finally(() => {
+          verifyingInserts.current.delete(item.id);
+        });
+    }
+  }, [runtime, state, dispatch, notify, verifyPending, verifyTick]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runTask reads this render's state and runtime, and the effect already re-runs on both.
+  useEffect(() => {
+    if (!runtime.enabled || runtime.snapshot.phase !== 'ready') return;
+    if (recoveryBlocked(runtime.snapshot)) return;
+    for (const entry of state.bots) {
+      if (entry.members || draining.current.has(entry.id)) continue;
+      const item = messageQueue(state, entry.id)[0];
+      if (!item) {
+        awaitingRun.current.delete(entry.id);
+        continue;
+      }
+      // An unconfirmed insert pauses delivery until its receipt is reconciled.
+      if (item.error || item.verify) continue;
+      if (state.runtimeRequests[entry.id] || state.attachmentUploads[entry.id]) continue;
+      if (entry.archived || state.chatRequests[entry.id] || lifecycleRequest(state, entry.id))
+        continue;
+      const attached = item.files
+        .map((id) => state.files.find((file) => file.id === id))
+        .filter((file): file is WorkspaceFile => !!file);
+      // A skipped send would release the sending lock and be retried forever, so fail it once instead.
+      if (imagesUnsupported(entry.id, attached)) {
+        notify(t('app.currentModelDoesNotSupportImagesChoose'));
+        dispatch({ type: 'queue-fail', bot: entry.id, id: item.id });
+        continue;
+      }
+      const current = agentTask(runtime.snapshot, entry.id);
+      const awaiting = awaitingRun.current.get(entry.id);
+      if (awaiting) {
+        // The run we started may finish before it is ever observed running; its terminal state also releases the queue.
+        const settled =
+          current?.runId === awaiting.runId
+            ? !current.running
+            : !current?.running && Date.now() - awaiting.at > 5000;
+        if (!settled) continue;
+        awaitingRun.current.delete(entry.id);
+      } else if (current?.running) continue;
+      draining.current.add(entry.id);
+      dispatch({ type: 'queue-sending', bot: entry.id, id: item.id, sending: true });
+      runTask(entry.id, undefined, item)
+        .then((result) => {
+          // Releasing the lock first lets the terminal action still remove or fail this item.
+          dispatch({ type: 'queue-sending', bot: entry.id, id: item.id, sending: false });
+          if (result.outcome === 'failed') {
+            dispatch({ type: 'queue-fail', bot: entry.id, id: item.id });
+            return;
+          }
+          if (result.outcome === 'skipped') return;
+          dispatch({ type: 'queue-remove', bot: entry.id, id: item.id });
+          if (result.outcome === 'started' && result.runId)
+            awaitingRun.current.set(entry.id, { runId: result.runId, at: Date.now() });
+        })
+        .catch((error) => notify(runtimeError(error)))
+        .finally(() => {
+          dispatch({ type: 'queue-sending', bot: entry.id, id: item.id, sending: false });
+          draining.current.delete(entry.id);
+        });
+    }
+  }, [runtime, state, dispatch, notify]);
   const previewFile = useCallback(
     async (file: WorkspaceFile) => {
       if (imageMime(file.upload?.name || file.name)) {
@@ -741,6 +972,54 @@ function Workbench() {
                   notify={notify}
                   preview={previewFile}
                   onSend={runtime.enabled ? () => runTask(bot.id) : undefined}
+                  onQueue={runtime.enabled ? () => queueTask(bot.id) : undefined}
+                  onQueueEdit={
+                    runtime.enabled
+                      ? (id) => {
+                          const item = messageQueue(state, bot.id).find((entry) => entry.id === id);
+                          if (!item || item.verify || item.sending) return;
+                          const draft = state.drafts[bot.id] ?? '';
+                          const prompt =
+                            draft && item.prompt
+                              ? `${draft}\n${item.prompt}`
+                              : item.prompt || draft;
+                          if (prompt.length > 12000) {
+                            notify(t('chat.queuedMessageEditTooLong'));
+                            return;
+                          }
+                          const merged = mergeAttachments(
+                            state.attachments[bot.id] ?? [],
+                            state.files,
+                            item.files,
+                          );
+                          if (!merged) {
+                            notify(t('chat.queuedMessageEditAttachmentsFull'));
+                            return;
+                          }
+                          dispatch({ type: 'queue-edit', bot: bot.id, id });
+                        }
+                      : undefined
+                  }
+                  onQueueRemove={
+                    runtime.enabled
+                      ? (id) => dispatch({ type: 'queue-remove', bot: bot.id, id })
+                      : undefined
+                  }
+                  onQueuePromote={
+                    runtime.enabled
+                      ? (id) => dispatch({ type: 'queue-promote', bot: bot.id, id })
+                      : undefined
+                  }
+                  onQueueInsert={
+                    runtime.enabled && runtime.snapshot.protocolVersion >= 42
+                      ? (id) => insertQueued(bot.id, id)
+                      : undefined
+                  }
+                  onQueueRetry={
+                    runtime.enabled
+                      ? (id) => dispatch({ type: 'queue-retry', bot: bot.id, id })
+                      : undefined
+                  }
                   onContinue={() => continueTask(bot.id)}
                   onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
                   onNewChat={() => setModal({ type: 'chat', bot: bot.id })}

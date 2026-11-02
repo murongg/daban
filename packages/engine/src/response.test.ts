@@ -101,9 +101,15 @@ test('response snapshots commit before publication, reject stale/foreign data an
     await f.start('mock-b');
     await f.update('mock-a', 1, '合成回答甲');
     assert.equal(f.models.status().bots['mock-a'].response?.text, '合成回答甲');
+    // Every accepted stream is attributed to the turn that produced it, not inferred by the renderer.
+    assert.equal(f.models.status().bots['mock-a'].response?.turnId, 'mock-request-mock-a');
     assert.equal(
       f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.text,
       '合成回答甲',
+    );
+    assert.equal(
+      f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.turnId,
+      'mock-request-mock-a',
     );
     await f.update('mock-a', 3, '合成最新回答');
     await f.update('mock-a', 2, '过期内容');
@@ -125,6 +131,46 @@ test('response snapshots commit before publication, reject stale/foreign data an
       { code: 'UNAUTHORIZED' },
     );
     assert.equal(f.models.status().bots['mock-b'].response, undefined);
+  } finally {
+    await f.close();
+  }
+});
+
+test('an old turn snapshot cannot be relabelled or replace the current turn while queued for persistence', async () => {
+  const f = await fixture();
+  try {
+    const job = await f.start('mock-a');
+    assert.deepEqual(JSON.parse(await readFile(path.join(job.privateDir, 'turn.json'), 'utf8')), {
+      id: job.requestId,
+    });
+    job.turns![0].result = 'SYNTHETIC ORIGINAL ANSWER';
+    job.turns!.push({ id: 'mock-second-turn', prompt: 'SYNTHETIC SECOND REQUEST', result: '' });
+    const update = (revision: number, turnId: string, text: string) =>
+      f.models.rpc('mock-a', `Bearer ${job.token}`, {
+        id: revision,
+        method: 'response.update',
+        params: { sessionId: job.sessionId, revision, turnId, text, state: 'settled' },
+      });
+    const stale = await update(1, job.requestId, 'SYNTHETIC OLD ANSWER');
+    assert.ok(stale);
+    assert.equal((stale.result as { accepted: boolean }).accepted, false);
+    assert.equal(job.response, undefined);
+    await update(2, 'mock-second-turn', 'SYNTHETIC SECOND PREFIX');
+    await update(3, job.requestId, 'SYNTHETIC DELAYED OLD ANSWER');
+    const response = f.models.status().bots['mock-a'].response;
+    assert.equal(response?.text, 'SYNTHETIC SECOND PREFIX');
+    assert.equal(response?.turnId, 'mock-second-turn');
+    let release!: () => unknown;
+    job.writing = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const queued = update(4, 'mock-second-turn', 'SYNTHETIC QUEUED SECOND PREFIX');
+    job.turns!.push({ id: 'mock-third-turn', prompt: 'SYNTHETIC THIRD REQUEST', result: '' });
+    release();
+    const dropped = await queued;
+    assert.ok(dropped);
+    assert.equal((dropped.result as { accepted: boolean }).accepted, false);
+    assert.equal(f.models.status().bots['mock-a'].response?.text, 'SYNTHETIC SECOND PREFIX');
   } finally {
     await f.close();
   }

@@ -1,11 +1,12 @@
 import { type Group, type GroupSend, isTaskFile } from '@daban/protocol';
 import { describe, expect, it } from 'vitest';
-import { stagedAttachment, taskFile } from '../features/files/files';
+import { attachment, stagedAttachment, taskFile } from '../features/files/files';
 import { demoState as initialState } from '../test/fixtures';
 import {
   initialState as emptyState,
   knowledgeDraft,
   lifecycleRequest,
+  messageQueue,
   reduce,
   skillDraft,
 } from './state';
@@ -715,6 +716,53 @@ describe('real runtime task bookkeeping', () => {
     expect(state.runtimeRequests.research).toBeUndefined();
     expect(state.files.some((f) => f.runtimePath === task.files[0].path)).toBe(true);
   });
+  it('keeps a queued send attachment references on its message after the composer was cleared', () => {
+    let state = reduce(initialState(), {
+      type: 'attach',
+      bot: 'research',
+      file: {
+        id: 'queued-file',
+        name: 'queued.csv',
+        kind: 'CSV',
+        size: '1 KB',
+        modified: 'synthetic',
+        content: 'mock,1',
+      },
+    });
+    state = reduce(state, {
+      type: 'queue-add',
+      bot: 'research',
+      task: { id: 'queued-task', prompt: '合成排队消息', files: ['queued-file'] },
+    });
+    expect(state.attachments.research).toEqual([]);
+    const file = state.files.find((entry) => entry.id === 'queued-file')!;
+    const task = {
+      requestId: 'queued-request',
+      prompt: '合成排队消息',
+      files: [taskFile(file)],
+    };
+    state = reduce(state, {
+      type: 'runtime-pending',
+      bot: 'research',
+      task,
+      refs: ['queued-file'],
+    });
+    state = reduce(state, {
+      type: 'runtime-task',
+      bot: 'research',
+      task: {
+        requestId: 'queued-request',
+        runId: 'queued-run',
+        prompt: '合成排队消息',
+        phase: 'running',
+        result: '',
+        error: '',
+      },
+    });
+    expect(state.messages.research.find((m) => m.id === 'queued-request')?.files).toEqual([
+      'queued-file',
+    ]);
+  });
 });
 
 it('retry acknowledgement preserves a newly prepared draft and its different attachments', () => {
@@ -925,4 +973,328 @@ it('preserves interrupted response text after another task and storage reload, b
     restored.messages.research.find((item) => item.id === 'runtime-partial:mock-stream-run'),
   ).toMatchObject({ text: '合成未完成文字', incomplete: true });
   expect(restored.messages.writer.some((item) => item.text === task.response.text)).toBe(false);
+});
+
+it('queues composer input with attachments and keeps the queue out of reloaded state', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const file = attachment('synthetic-queue.txt', 'SYNTHETIC QUEUE ATTACHMENT');
+  state = reduce(state, { type: 'attach', bot: bot.id, file });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC QUEUED MESSAGE' });
+  const queued = {
+    id: 'synthetic-queue-message',
+    prompt: 'SYNTHETIC QUEUED MESSAGE',
+    files: [file.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  expect(state.queued[bot.id]).toEqual([queued]);
+  expect(state.drafts[bot.id]).toBe('');
+  expect(state.attachments[bot.id]).toEqual([]);
+  state = reduce(state, { type: 'queue-fail', bot: bot.id, id: queued.id });
+  expect(state.queued[bot.id][0].error).toBe(true);
+  state = reduce(state, { type: 'queue-retry', bot: bot.id, id: queued.id });
+  expect(state.queued[bot.id][0]).toEqual(queued);
+  expect(restore(serialize(state)).queued).toEqual({});
+  expect(state.queued[bot.id]).toEqual([queued]);
+  state = reduce(state, { type: 'queue-remove', bot: bot.id, id: queued.id });
+  expect(state.queued[bot.id]).toEqual([]);
+});
+it('returns an edited queued message to the composer with its attachments', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const file = attachment('synthetic-edit.txt', 'SYNTHETIC EDIT ATTACHMENT');
+  state = reduce(state, { type: 'attach', bot: bot.id, file });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC EDIT MESSAGE' });
+  const queued = {
+    id: 'synthetic-edit-message',
+    prompt: 'SYNTHETIC EDIT MESSAGE',
+    files: [file.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC EXISTING DRAFT' });
+  state = reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+  expect(state.drafts[bot.id]).toBe('SYNTHETIC EXISTING DRAFT\nSYNTHETIC EDIT MESSAGE');
+  expect(state.attachments[bot.id]).toEqual([file.id]);
+});
+it('keeps a queued message and the draft when merging its attachments would exceed the limit', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const queuedFile = attachment('synthetic-overflow.txt', 'SYNTHETIC QUEUED FILE');
+  state = reduce(state, { type: 'attach', bot: bot.id, file: queuedFile });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC QUEUED' });
+  const queued = {
+    id: 'synthetic-overflow-message',
+    prompt: 'SYNTHETIC QUEUED',
+    files: [queuedFile.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  for (let index = 0; index < 4; index++)
+    state = reduce(state, {
+      type: 'attach',
+      bot: bot.id,
+      file: attachment(`synthetic-draft-${index}.txt`, `SYNTHETIC DRAFT ${index}`),
+    });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC DRAFT' });
+  const before = state;
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id })).toBe(before);
+  expect(messageQueue(state, bot.id)).toEqual([queued]);
+  expect(state.drafts[bot.id]).toBe('SYNTHETIC DRAFT');
+  expect(state.attachments[bot.id]).toHaveLength(4);
+});
+it('renames a queued attachment that collides with the draft when editing', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const queuedFile = attachment('report.csv', 'SYNTHETIC QUEUED CSV');
+  state = reduce(state, { type: 'attach', bot: bot.id, file: queuedFile });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC QUEUED' });
+  const queued = {
+    id: 'synthetic-rename-message',
+    prompt: 'SYNTHETIC QUEUED',
+    files: [queuedFile.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  const draftFile = attachment('report.csv', 'SYNTHETIC DRAFT CSV');
+  state = reduce(state, { type: 'attach', bot: bot.id, file: draftFile });
+  state = reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+  expect(state.attachments[bot.id]).toEqual([draftFile.id, queuedFile.id]);
+  const names = state.attachments[bot.id].map(
+    (id) => state.files.find((file) => file.id === id)!.name,
+  );
+  expect(names).toEqual(['report.csv', 'report-2.csv']);
+});
+it('keeps a queued message and the draft when an edit would exceed the length limit', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const queued = {
+    id: 'synthetic-long-edit',
+    prompt: 'S'.repeat(7000),
+    files: [],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'D'.repeat(6000) });
+  const before = state;
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id })).toBe(before);
+  expect(messageQueue(state, bot.id)).toEqual([queued]);
+  expect(state.drafts[bot.id]).toBe('D'.repeat(6000));
+});
+it('holds a queued insert until its delivery is verified', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const item = { id: 'synthetic-verify-one', prompt: 'SYNTHETIC VERIFY', files: [] };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: item });
+  state = reduce(state, {
+    type: 'queue-verify',
+    bot: bot.id,
+    id: item.id,
+    runId: 'synthetic-verify-run',
+    chatRevision: 3,
+  });
+  expect(messageQueue(state, bot.id)[0].verify).toEqual({
+    runId: 'synthetic-verify-run',
+    chatRevision: 3,
+  });
+  const before = state;
+  expect(reduce(state, { type: 'queue-remove', bot: bot.id, id: item.id })).toBe(before);
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: item.id })).toBe(before);
+  state = reduce(state, { type: 'queue-unverify', bot: bot.id, id: item.id });
+  expect(messageQueue(state, bot.id)[0].verify).toBeUndefined();
+  state = reduce(state, { type: 'queue-remove', bot: bot.id, id: item.id });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+});
+it('locks a queued message while its automatic send is in flight', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const first = { id: 'synthetic-sending-one', prompt: 'SYNTHETIC SENDING', files: [] };
+  const second = { id: 'synthetic-sending-two', prompt: 'SYNTHETIC WAITING', files: [] };
+  for (const task of [first, second])
+    state = reduce(state, { type: 'queue-add', bot: bot.id, task });
+  state = reduce(state, { type: 'queue-sending', bot: bot.id, id: first.id, sending: true });
+  expect(messageQueue(state, bot.id)[0]).toEqual({ ...first, sending: true });
+  const locked = state;
+  expect(reduce(state, { type: 'queue-edit', bot: bot.id, id: first.id })).toBe(locked);
+  expect(reduce(state, { type: 'queue-remove', bot: bot.id, id: first.id })).toBe(locked);
+  expect(reduce(state, { type: 'queue-insert', bot: bot.id, id: first.id, revision: 0 })).toBe(
+    locked,
+  );
+  state = reduce(state, { type: 'queue-sending', bot: bot.id, id: first.id, sending: false });
+  expect(messageQueue(state, bot.id)).toEqual([first, second]);
+  state = reduce(state, { type: 'queue-remove', bot: bot.id, id: first.id });
+  expect(messageQueue(state, bot.id)).toEqual([second]);
+});
+it('moves a queued message to the front so it is sent next', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const first = { id: 'synthetic-promote-one', prompt: 'SYNTHETIC FIRST', files: [] };
+  const second = { id: 'synthetic-promote-two', prompt: 'SYNTHETIC SECOND', files: [] };
+  const third = { id: 'synthetic-promote-three', prompt: 'SYNTHETIC THIRD', files: [] };
+  for (const task of [first, second, third])
+    state = reduce(state, { type: 'queue-add', bot: bot.id, task });
+  state = reduce(state, { type: 'queue-promote', bot: bot.id, id: second.id });
+  expect(messageQueue(state, bot.id)).toEqual([second, first, third]);
+  expect(reduce(state, { type: 'queue-promote', bot: bot.id, id: 'synthetic-missing' })).toBe(
+    state,
+  );
+  expect(reduce(state, { type: 'queue-promote', bot: bot.id, id: second.id })).toBe(state);
+});
+it('turns an inserted queued message into a visible user message', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const item = { id: 'synthetic-insert-one', prompt: 'SYNTHETIC INSERTED', files: [] };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: item });
+  state = reduce(state, { type: 'queue-insert', bot: bot.id, id: item.id, revision: 7 });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+  expect(state.messages[bot.id].at(-1)).toEqual({
+    id: `inserted:${item.id}`,
+    role: 'user',
+    text: item.prompt,
+    chatRevision: 7,
+  });
+  expect(reduce(state, { type: 'queue-insert', bot: bot.id, id: item.id, revision: 7 })).toBe(
+    state,
+  );
+});
+it('keeps each inserted turn and reply beside the original answer', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  state = reduce(state, {
+    type: 'runtime-task',
+    bot: bot.id,
+    task: {
+      chatRevision: 0,
+      runId: 'mock-turn-run',
+      requestId: 'mock-turn-primary',
+      prompt: 'SYNTHETIC PRIMARY',
+      phase: 'completed',
+      result: 'SYNTHETIC INSERTED REPLY',
+      error: '',
+      files: [],
+      turns: [
+        { id: 'mock-turn-primary', prompt: 'SYNTHETIC PRIMARY', result: 'SYNTHETIC PRIMARY REPLY' },
+        {
+          id: 'mock-turn-inserted',
+          prompt: 'SYNTHETIC INSERTED',
+          result: 'SYNTHETIC INSERTED REPLY',
+        },
+      ],
+    },
+  });
+  const messages = state.messages[bot.id];
+  const order = [
+    'mock-turn-primary',
+    'runtime-turn:mock-turn-run:mock-turn-primary',
+    'inserted:mock-turn-inserted',
+    'runtime-result:mock-turn-run',
+  ];
+  const positions = order.map((id) => messages.findIndex((message) => message.id === id));
+  expect(
+    positions.every(
+      (position, index) => position >= 0 && (!index || position > positions[index - 1]),
+    ),
+  ).toBe(true);
+  expect(
+    messages.find((message) => message.id === 'runtime-turn:mock-turn-run:mock-turn-primary')?.text,
+  ).toBe('SYNTHETIC PRIMARY REPLY');
+  expect(messages.find((message) => message.id === 'runtime-result:mock-turn-run')?.text).toBe(
+    'SYNTHETIC INSERTED REPLY',
+  );
+});
+it('shows completed turns while a later inserted turn is still streaming', () => {
+  const state = reduce(initialState(), {
+    type: 'runtime-task',
+    bot: 'research',
+    task: {
+      chatRevision: 0,
+      runId: 'mock-live-turn-run',
+      requestId: 'mock-live-turn-primary',
+      prompt: '合成第一问',
+      phase: 'running',
+      result: '',
+      error: '',
+      files: [],
+      response: { revision: 4, text: '合成第二问前缀', state: 'streaming' },
+      turns: [
+        { id: 'mock-live-turn-primary', prompt: '合成第一问', result: '合成第一答' },
+        { id: 'mock-live-turn-inserted', prompt: '合成第二问', result: '' },
+      ],
+    },
+  });
+  const messages = state.messages.research;
+  const order = [
+    'mock-live-turn-primary',
+    'runtime-turn:mock-live-turn-run:mock-live-turn-primary',
+    'inserted:mock-live-turn-inserted',
+  ];
+  const positions = order.map((id) => messages.findIndex((message) => message.id === id));
+  expect(
+    positions.every(
+      (position, index) => position >= 0 && (!index || position > positions[index - 1]),
+    ),
+  ).toBe(true);
+  expect(
+    messages.find(
+      (message) => message.id === 'runtime-turn:mock-live-turn-run:mock-live-turn-primary',
+    )?.text,
+  ).toBe('合成第一答');
+  expect(messages.find((message) => message.id === 'inserted:mock-live-turn-inserted')?.text).toBe(
+    '合成第二问',
+  );
+  // The running turn keeps its streaming slot so the live prefix is bound to the latest request.
+  expect(messages.some((message) => message.id === 'runtime-result:mock-live-turn-run')).toBe(
+    false,
+  );
+});
+it('gives every turn reply the task artifacts needed to preview its links', () => {
+  const state = reduce(initialState(), {
+    type: 'runtime-task',
+    bot: 'research',
+    task: {
+      chatRevision: 0,
+      runId: 'mock-artifact-run',
+      requestId: 'mock-artifact-primary',
+      prompt: '合成第一问',
+      phase: 'completed',
+      result: '合成第二答',
+      error: '',
+      files: [
+        {
+          path: 'model-runs/mock-artifact-run/a/report.md',
+          name: 'report.md',
+          size: 20,
+          modified: '2026-01-01',
+        },
+      ],
+      turns: [
+        { id: 'mock-artifact-primary', prompt: '合成第一问', result: '合成第一答' },
+        { id: 'mock-artifact-inserted', prompt: '合成第二问', result: '合成第二答' },
+      ],
+    },
+  });
+  const messages = state.messages.research;
+  const artifact = 'runtime:model-runs/mock-artifact-run/a/report.md';
+  expect(
+    messages.find(
+      (message) => message.id === 'runtime-turn:mock-artifact-run:mock-artifact-primary',
+    )?.references,
+  ).toEqual([artifact]);
+  expect(
+    messages.find((message) => message.id === 'runtime-result:mock-artifact-run')?.files,
+  ).toEqual([artifact]);
+});
+it('isolates prototype-shaped Bot IDs in the message queue', () => {
+  let state = initialState();
+  state = reduce(state, {
+    type: 'create',
+    id: 'constructor',
+    name: 'SYNTHETIC QUEUE BOT',
+    role: '',
+    color: 'mint',
+  });
+  const queued = { id: 'synthetic-prototype-message', prompt: 'SYNTHETIC MESSAGE', files: [] };
+  state = reduce(state, { type: 'queue-add', bot: 'constructor', task: queued });
+  expect(messageQueue(state, 'constructor')).toEqual([queued]);
+  expect(messageQueue(state, 'toString')).toEqual([]);
+  state = reduce(state, { type: 'queue-remove', bot: 'constructor', id: queued.id });
+  expect(messageQueue(state, 'constructor')).toEqual([]);
 });

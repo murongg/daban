@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { CheckpointTracker, recoveryContext } from './checkpoint.js';
 import { contextBudget, contextPrefix, recoveryBudget } from './context.js';
+import { HistoryTools } from './history.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
 
 const row = (id: string, extra: Partial<TaskRecord> = {}): TaskRecord => ({
@@ -27,6 +28,53 @@ const owner = {
   persona: 'mock-persona',
   redact: (value: string) => value.replaceAll('synthetic-secret', '[redacted]'),
 };
+
+test('partial and error references in a multi-turn checkpoint can be read through history', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-checkpoint-reader-'));
+  const journal = new TaskJournal(root);
+  try {
+    await journal.load();
+    const saved = row('01', {
+      chatRevision: 1,
+      phase: 'failed',
+      result: '',
+      error: 'SYNTHETIC FAILURE '.repeat(1000),
+      turns: [
+        { id: 'mock-first', prompt: 'SYNTHETIC FIRST', result: 'SYNTHETIC ANSWER' },
+        { id: 'mock-last', prompt: 'SYNTHETIC LAST', result: '' },
+      ],
+      response: {
+        revision: 4,
+        turnId: 'mock-last',
+        state: 'streaming',
+        text: 'SYNTHETIC PARTIAL '.repeat(1000),
+      },
+    });
+    await journal.put(saved);
+    const text = recoveryContext([saved], owner, 12000);
+    const context = JSON.parse(text.slice(text.indexOf('\n') + 1)) as {
+      recent: {
+        partial?: { read: Record<string, unknown> };
+        error?: { read: Record<string, unknown> };
+      }[];
+    };
+    const history = new HistoryTools(journal);
+    for (const field of ['partial', 'error'] as const) {
+      const excerpt = context.recent.find((item) => item[field])?.[field];
+      assert.ok(excerpt);
+      const result = await history.invoke(
+        { bot: owner.bot, id: owner.runId, abort: new AbortController() },
+        'bot_history_read',
+        excerpt.read,
+      );
+      assert.ok(
+        JSON.stringify(result).includes(`SYNTHETIC ${field === 'partial' ? 'PARTIAL' : 'FAILURE'}`),
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('recovery reserves room for the current request and handles Unicode without splitting code points', () => {
   assert.throws(() => contextBudget(16384, 16384), { code: 'MODEL_CONTEXT_BUDGET_INVALID' });
@@ -75,6 +123,43 @@ test('a bounded recovery checkpoint marks omissions and keeps exact read-back re
   };
   assert.ok(data.omittedCount > 0);
   assert.ok(data.recent.length > 0);
+});
+
+test('recovery keeps every inserted turn of a finished run in chronological order', () => {
+  const text = recoveryContext(
+    [
+      row('01', {
+        chatRevision: 1,
+        prompt: 'SYNTHETIC ORIGINAL',
+        result: 'SYNTHETIC FINAL',
+        turns: [
+          { id: 'mock-turn-a', prompt: 'SYNTHETIC ORIGINAL', result: 'SYNTHETIC ANSWER A' },
+          { id: 'mock-turn-b', prompt: 'SYNTHETIC INSERT', result: 'SYNTHETIC ANSWER B' },
+        ],
+      }),
+    ],
+    owner,
+    16000,
+  );
+  const data = JSON.parse(text.slice(text.indexOf('\n') + 1)) as {
+    omittedCount: number;
+    recent: {
+      request: { text: string; read: { turn?: number } };
+      answer?: { text: string };
+    }[];
+  };
+  assert.equal(data.omittedCount, 0);
+  assert.deepEqual(
+    data.recent.map((item) => [item.request.text, item.answer?.text]),
+    [
+      ['SYNTHETIC ORIGINAL', 'SYNTHETIC ANSWER A'],
+      ['SYNTHETIC INSERT', 'SYNTHETIC ANSWER B'],
+    ],
+  );
+  assert.deepEqual(
+    data.recent.map((item) => item.request.read.turn),
+    [0, 1],
+  );
 });
 
 test('old persona summaries do not reintroduce removed preferences into a rebuilt context', () => {

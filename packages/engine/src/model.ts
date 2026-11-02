@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -8,6 +8,8 @@ import type {
   BotProfile,
   ModelId,
   ReplyStream,
+  RunInsert,
+  RunTurn,
   RuntimeFile,
   RuntimeTaskSummary,
   TaskPlan,
@@ -23,9 +25,11 @@ import {
   isModelId,
   isReplyStream,
   isTaskFileName,
+  isTaskInsert,
   isTaskPlan,
   modelHasVision,
   replyLimit,
+  turnLimit,
   validAgentId,
 } from '@daban/protocol';
 import { AgentTools } from './agent-tools.js';
@@ -71,6 +75,7 @@ import {
   type ConversationScope,
   type DocumentInput,
   type RunReceipt,
+  recordLimit,
   TaskJournal,
   type TaskRecord,
   taskActivity,
@@ -110,6 +115,7 @@ export function sdkPatch(
   route?: ResolvedModel,
   sdkFile = defaultSdkFile,
   cacheKey?: string,
+  turnFile?: string,
 ) {
   const search = route ? !!route.searchApiKey : true;
   const budget = contextBudget(route?.contextWindow ?? 1000000, route?.maxTokens ?? 8192);
@@ -196,6 +202,7 @@ export function sdkPatch(
                 config: {
                   url: `${origin}/mcp/${bot}`,
                   capability,
+                  ...(turnFile ? { turnFile } : {}),
                   ...(bridge
                     ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
                     : {}),
@@ -469,6 +476,10 @@ interface ModelJob extends ToolRun {
   done?: Promise<unknown>;
   stopReason?: string;
   task?: TaskRequest;
+  inserts: RunInsert[];
+  insertWrites: Map<string, Promise<InsertReceipt>>;
+  insertable?: boolean;
+  turns?: RunTurn[];
   requestId: string;
   fingerprint: string;
   createdAt: string;
@@ -481,6 +492,10 @@ interface ModelJob extends ToolRun {
     text?: string;
     expected?: Record<string, number | undefined>;
   };
+}
+interface InsertReceipt {
+  ok: boolean;
+  id: string;
 }
 interface Rpc {
   id?: string | number;
@@ -727,6 +742,23 @@ export class ModelRuns {
       const job: ModelJob = {
         chatRevision: latest.chatRevision,
         conversationId: latest.conversationId,
+        // Saved turns and accepted inserts are what "continue" resumes; replaying only the original prompt would redo finished work.
+        inserts: latest.kind === 'chat' ? (latest.inserts ?? []) : [],
+        insertWrites: new Map(),
+        turns:
+          latest.kind === 'chat'
+            ? latest.turns?.length
+              ? latest.turns
+              : latest.prompt
+                ? [
+                    {
+                      id: latest.requestId || latest.runId,
+                      prompt: latest.prompt,
+                      result: latest.result || '',
+                    },
+                  ]
+                : undefined
+            : undefined,
         model:
           latest.sessionModel === undefined
             ? model
@@ -810,6 +842,7 @@ export class ModelRuns {
       result: t.result,
       error: t.error,
       files: t.files,
+      ...(t.turns?.length ? { turns: t.turns } : {}),
       ...(['failed', 'stopped', 'interrupted'].includes(t.phase) && isReplyStream(t.response)
         ? { response: t.response }
         : {}),
@@ -894,12 +927,13 @@ export class ModelRuns {
         result: row.result,
         error: row.error,
         files: row.files,
+        ...(row.turns?.length ? { turns: row.turns } : {}),
         response: row.phase === 'completed' ? undefined : row.response,
       };
       const size = Buffer.byteLength(JSON.stringify(item));
       // Whole records stay intact; reduce page size instead of silently clipping an old answer.
       if (items.length && (items.length >= 20 || bytes + size > 1024 * 1024)) break;
-      if (size > 1024 * 1024) throw new Fault('CHAT_HISTORY_TOO_LARGE');
+      if (size > recordLimit) throw new Fault('CHAT_HISTORY_TOO_LARGE');
       items.push(item);
       bytes += size;
     }
@@ -954,6 +988,8 @@ export class ModelRuns {
       error: job.error,
       verified: job.verification.passed,
       history: this.history(job.bot),
+      ...(job.turns?.length ? { turns: job.turns } : {}),
+      ...(job.inserts.length ? { inserts: job.inserts } : {}),
     };
   }
   status() {
@@ -981,6 +1017,69 @@ export class ModelRuns {
   }
   running(bot: string) {
     return this.jobs.get(bot)?.running === true;
+  }
+  async insert(bot: string, input: unknown) {
+    await this.ready;
+    if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
+    if (!isTaskInsert(input)) throw new Fault('INVALID_TASK_INSERT', 400);
+    const job = this.jobs.get(bot);
+    // An insert must target the exact running task; group runs and stale revisions are never interchangeable.
+    if (
+      job?.task &&
+      job.id === input.runId &&
+      !job.conversationId &&
+      (job.chatRevision ?? 0) === input.chatRevision
+    ) {
+      const accepted = job.inserts.find((item) => item.id === input.id);
+      if (accepted?.done) return { ok: true, id: input.id };
+      // A turn that already began may have run tools or changed files; it must never be replayed as unattempted work.
+      if (!job.running || job.abort.signal.aborted || !job.insertable) {
+        if (accepted?.started) throw new Fault('MODEL_INSERT_UNCERTAIN', 409);
+        throw new Fault('MODEL_NOT_RUNNING', 409);
+      }
+      // A retried request must share the outcome of the first write, never answer from an unpersisted intent.
+      if (accepted) return this.durableInsert(job, accepted);
+      const turns = job.turns || [];
+      const waiting = job.inserts.filter(
+        (item) => !item.done && !turns.some((turn) => turn.id === item.id),
+      ).length;
+      // The original request is a turn too, so acceptance, storage and history share one bound.
+      if (turns.length + waiting >= turnLimit) throw new Fault('MODEL_INSERT_FULL', 429);
+      return this.durableInsert(job, { id: input.id, text: input.text, done: false });
+    }
+    const saved = await this.journal.read(bot, input.runId);
+    if (
+      !saved ||
+      saved.kind === 'acceptance' ||
+      saved.conversationId !== undefined ||
+      (saved.chatRevision ?? 0) !== input.chatRevision
+    )
+      throw new Fault('TASK_INSERT_STALE', 409);
+    // Only a finished turn is a receipt; a begun but unconfirmed turn may already have produced effects.
+    const receipt = (saved.inserts || []).find((item) => item.id === input.id);
+    if (receipt?.done) return { ok: true, id: input.id };
+    if (receipt?.started) throw new Fault('MODEL_INSERT_UNCERTAIN', 409);
+    throw new Fault('MODEL_NOT_RUNNING', 409);
+  }
+  private durableInsert(job: ModelJob, insert: RunInsert) {
+    // Every retry of one insert shares a single write, so a late failure cannot roll back a later success.
+    const existing = job.insertWrites.get(insert.id);
+    if (existing) return existing;
+    if (!job.inserts.includes(insert)) job.inserts.push(insert);
+    const receipt = this.persist(job).then(() => ({ ok: true, id: insert.id }));
+    job.insertWrites.set(insert.id, receipt);
+    receipt.catch(() => {
+      if (job.insertWrites.get(insert.id) === receipt) job.insertWrites.delete(insert.id);
+      this.rollbackInsert(job, insert);
+    });
+    return receipt;
+  }
+  private rollbackInsert(job: ModelJob, insert: RunInsert) {
+    // A failed write only retracts this exact unattempted intent; indexOf(-1) must never remove a neighbour.
+    if (insert.done || insert.started) return;
+    const index = job.inserts.indexOf(insert);
+    if (index < 0) return;
+    job.inserts.splice(index, 1);
   }
   reviewModel(bot: string, runId: string) {
     const job = this.jobs.get(bot);
@@ -1025,12 +1124,14 @@ export class ModelRuns {
   }
   private persist(job: ModelJob, response?: ReplyStream) {
     const pending = (job.writing || Promise.resolve()).then(async () => {
+      // A turn may end while this write waits behind tool/plan persistence; check its owner inside the queue.
       if (
         response &&
         (!job.running ||
           job.abort.signal.aborted ||
           !['starting', 'running'].includes(job.phase) ||
-          response.revision <= (job.response?.revision || 0))
+          response.revision <= (job.response?.revision || 0) ||
+          response.turnId !== job.turns?.at(-1)?.id)
       )
         return;
       const record: TaskRecord = {
@@ -1069,6 +1170,8 @@ export class ModelRuns {
         createdAt: job.createdAt,
         inputs: job.inputs,
         files: job.files,
+        ...(job.inserts.length ? { inserts: job.inserts } : {}),
+        ...(job.turns?.length ? { turns: job.turns } : {}),
       };
       const safe = JSON.parse(
         JSON.stringify(record, (_key, value: unknown) =>
@@ -1110,6 +1213,7 @@ export class ModelRuns {
           files: task.files || [],
           ...(scope ? { conversationId: scope.id, context: scope.context } : {}),
           ...(task.retryOf ? { retryOf: task.retryOf } : {}),
+          ...(task.retryTurn ? { retryTurn: task.retryTurn } : {}),
           ...(task.chatRevision === undefined ? {} : { chatRevision: task.chatRevision }),
         }
       : undefined;
@@ -1128,6 +1232,7 @@ export class ModelRuns {
     }
     let cachedInputs: TaskRequest['files'];
     let intentId: string | undefined;
+    let continuedInserts: RunInsert[] = [];
     if (task?.retryOf) {
       const prior = await this.journal.read(bot, task.retryOf);
       if (!prior?.outputDirectory) throw new Fault('RETRY_NOT_FOUND', 404);
@@ -1137,6 +1242,26 @@ export class ModelRuns {
       )
         throw new Fault('INVALID_RETRY', 400);
       // Retries get a new writable directory, but retain identity for durable side effects such as schedules.
+      if (task.retryTurn) {
+        const turns = prior.turns ?? [];
+        const target =
+          turns.find((turn) => turn.id === task.retryTurn) ??
+          prior.inserts?.find((insert) => insert.id === task.retryTurn);
+        const prompt = target && ('prompt' in target ? target.prompt : target.text);
+        if (!target || prompt !== task.prompt) throw new Fault('INVALID_RETRY', 400);
+        const began = new Set(turns.map((turn) => turn.id));
+        // Carry accepted work in the same durable start record, before returning any acknowledgement.
+        continuedInserts = (prior.inserts ?? [])
+          .filter(
+            (insert) =>
+              !insert.done &&
+              !insert.started &&
+              !began.has(insert.id) &&
+              insert.id !== task.retryTurn,
+          )
+          .map((insert) => ({ ...insert }));
+        if (continuedInserts.length + 1 > turnLimit) throw new Fault('INVALID_RETRY', 400);
+      }
       intentId = prior.intentId || prior.runId;
       const root = await this.workspace.base(),
         directory = await this.workspace.scope(prior.outputDirectory).base();
@@ -1200,6 +1325,9 @@ export class ModelRuns {
       intentId: intentId || id,
       requestId: task?.requestId || id,
       task,
+      inserts: continuedInserts,
+      insertWrites: new Map(),
+      insertable: true,
       fingerprint,
       token: randomBytes(32).toString('hex'),
       running: true,
@@ -1218,6 +1346,8 @@ export class ModelRuns {
       files: [],
       verification: { passed: false, openedInEditor: false },
     };
+    // Every human turn keeps its own request and eventual reply; inserted turns append below.
+    if (task) job.turns = [{ id: task.requestId, prompt: task.prompt, result: '' }];
     // Admission and publication must stay in one synchronous turn, so attachment cannot change a task's authority mid-start.
     if (this.tools.computer?.runtime.admit?.(bot) === false) throw new Fault('COMPUTER_CHANGING');
     if (!this.admission() || !this.botAdmission(bot)) throw new Fault('COMPUTER_CHANGING');
@@ -1331,6 +1461,7 @@ export class ModelRuns {
               conversationId: job.conversationId,
               chatRevision: job.chatRevision,
             }),
+            path.join(job.privateDir, 'turn.json'),
           ),
         ),
         {
@@ -1612,7 +1743,16 @@ export class ModelRuns {
           );
           if (context) job.prompt = context + '\n\n' + job.prompt;
         }
-        const result = await session.run(
+        const runTurn = async (id: string, input: Parameters<HarnessSession['run']>[0]) => {
+          const file = path.join(job.privateDir, 'turn.json');
+          // The trusted publisher captures this before generating frames; atomic replacement prevents torn reads.
+          await writeFile(`${file}.next`, JSON.stringify({ id }), { mode: 0o600 });
+          await rename(`${file}.next`, file);
+          job.abort.signal.throwIfAborted();
+          return session.run(input, observe);
+        };
+        let result = await runTurn(
+          job.turns![0].id,
           job.imageInputs?.length
             ? [
                 {
@@ -1624,9 +1764,25 @@ export class ModelRuns {
                 ...job.imageInputs,
               ]
             : job.prompt,
-          observe,
         );
         if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+        if (job.turns?.[0]) job.turns[0].result = complete(result.finalResponse);
+        // Messages inserted while the task runs become follow-up turns in the same native session.
+        let pending = job.inserts.find((item) => !item.done);
+        while (pending) {
+          const turn: RunTurn = { id: pending.id, prompt: pending.text, result: '' };
+          job.turns?.push(turn);
+          // Persist the start marker before the model call: after this point the turn must not be replayed as new work.
+          pending.started = true;
+          await this.persist(job);
+          result = await runTurn(pending.id, pending.text);
+          if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+          turn.result = complete(result.finalResponse);
+          pending.done = true;
+          await this.persist(job);
+          pending = job.inserts.find((item) => !item.done);
+        }
+        job.insertable = false;
         job.sessionId = result.sessionId;
         job.result = complete(result.finalResponse);
         job.phase = job.result ? 'completed' : 'failed';
@@ -1692,6 +1848,7 @@ export class ModelRuns {
             : '任务已停止；已保存的文件仍保留。'
         : clean(errorMessage(error));
     } finally {
+      job.insertable = false;
       clearInterval(timeout);
       await this.interactions.endRun(job.bot, job.id).catch(() => {
         job.phase = 'failed';
@@ -1840,9 +1997,17 @@ export class ModelRuns {
       const { sessionId, ...response } = rpc.params || {};
       if (!job.task || sessionId !== job.sessionId || !isReplyStream(response))
         throw new Fault('INVALID_RESPONSE', 400);
-      await this.persist(job, { ...response, text: job.redactResponse!(response.text) });
+      // An untagged legacy prefix is unambiguous only before this run has any inserted turns.
+      const turnId = response.turnId ?? (job.turns?.length === 1 ? job.turns[0].id : undefined);
+      if (!turnId || !job.turns?.some((turn) => turn.id === turnId))
+        throw new Fault('INVALID_RESPONSE', 400);
+      await this.persist(job, {
+        ...response,
+        ...(turnId ? { turnId } : {}),
+        text: job.redactResponse!(response.text),
+      });
       result = {
-        accepted: job.response?.revision === response.revision,
+        accepted: job.response?.turnId === turnId && job.response.revision === response.revision,
         revision: job.response?.revision || 0,
       };
     } else if (rpc.method === 'interaction.open') {

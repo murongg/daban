@@ -4,13 +4,22 @@ import type {
   BotProfile,
   ModelId,
   ReplyStream,
+  RunInsert,
+  RunTurn,
   RuntimeFile,
   RuntimeNotice,
   TaskPlan,
   TaskRequest,
   TaskTrace,
 } from '@daban/protocol';
-import { isReplyStream, isTaskFile, validAgentId } from '@daban/protocol';
+import {
+  isReplyStream,
+  isRunInsert,
+  isRunTurn,
+  isTaskFile,
+  turnLimit,
+  validAgentId,
+} from '@daban/protocol';
 import { isConversationCheckpoint } from './checkpoint.js';
 import { Fault } from './control.js';
 
@@ -24,7 +33,16 @@ export function validateTask(input: unknown): TaskRequest {
     typeof value !== 'object' ||
     Array.isArray(value) ||
     Object.keys(value).some(
-      (k) => !['requestId', 'prompt', 'retryOf', 'memory', 'files', 'chatRevision'].includes(k),
+      (k) =>
+        ![
+          'requestId',
+          'prompt',
+          'retryOf',
+          'retryTurn',
+          'memory',
+          'files',
+          'chatRevision',
+        ].includes(k),
     )
   )
     fail();
@@ -43,6 +61,7 @@ export function validateTask(input: unknown): TaskRequest {
   )
     fail();
   if (value.retryOf && value.files?.length) fail();
+  if (value.retryTurn !== undefined && (!value.retryOf || !validAgentId(value.retryTurn))) fail();
   if (
     value.chatRevision !== undefined &&
     (!Number.isSafeInteger(value.chatRevision) || value.chatRevision < 0)
@@ -235,7 +254,11 @@ export interface TaskRecord {
   createdAt?: string;
   inputs?: string[];
   files?: RuntimeFile[];
+  inserts?: RunInsert[];
+  turns?: RunTurn[];
 }
+// The write cap and the load cap are the same number, so a record this journal accepts is never skipped on restart.
+export const recordLimit = 8 * 1024 * 1024;
 export function taskActivity(record: Pick<TaskRecord, 'trace' | 'executedCount'>) {
   const trace: TaskTrace[] = [];
   for (const item of Array.isArray(record.trace) ? record.trace : []) {
@@ -307,7 +330,7 @@ export class TaskJournal {
       try {
         const file = path.join(this.dir, name),
           info = await lstat(file);
-        if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) continue;
+        if (!info.isFile() || info.isSymbolicLink() || info.size > recordLimit) continue;
         const { version, task } = JSON.parse(await readFile(file, 'utf8'));
         if (
           version !== 1 ||
@@ -328,6 +351,25 @@ export class TaskJournal {
         }
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
         if (task.intentId !== undefined && !validAgentId(task.intentId)) delete task.intentId;
+        // A field this build cannot validate is dropped alone; the rest of the saved task stays queryable.
+        if (
+          task.inserts !== undefined &&
+          !(
+            Array.isArray(task.inserts) &&
+            task.inserts.length <= turnLimit &&
+            task.inserts.every(isRunInsert)
+          )
+        )
+          delete task.inserts;
+        if (
+          task.turns !== undefined &&
+          !(
+            Array.isArray(task.turns) &&
+            task.turns.length <= turnLimit &&
+            task.turns.every(isRunTurn)
+          )
+        )
+          delete task.turns;
         if (task.checkpoint !== undefined && !isConversationCheckpoint(task.checkpoint))
           delete task.checkpoint;
         this.records.set(task.runId, task);
@@ -378,6 +420,8 @@ export class TaskJournal {
       'documentInputs',
       'plan',
       'response',
+      'inserts',
+      'turns',
       'checkpoint',
     ];
     const task = Object.fromEntries(
@@ -386,6 +430,8 @@ export class TaskJournal {
         .map((k) => [k, structuredClone((value as unknown as Record<string, unknown>)[k])]),
     ) as unknown as TaskRecord;
     const data = JSON.stringify({ version: 1, task });
+    // Refuse the write instead of storing a record the next load would have to skip.
+    if (Buffer.byteLength(data) > recordLimit) throw new Fault('TASK_RECORD_TOO_LARGE', 413);
     const write = async () => {
       await mkdir(this.dir, { recursive: true, mode: 0o700 });
       const file = path.join(this.dir, `${task.runId}.json`);

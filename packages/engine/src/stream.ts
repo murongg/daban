@@ -1,4 +1,5 @@
-import { type ReplyStream, replyLimit } from '@daban/protocol';
+import { readFileSync } from 'node:fs';
+import { type ReplyStream, replyLimit, validAgentId } from '@daban/protocol';
 import { type BridgeConfig, callBridge } from './bridge.js';
 
 type TextSnapshot = Omit<ReplyStream, 'revision'>;
@@ -136,12 +137,13 @@ interface Context {
   on: (event: string, listener: (payload: unknown) => unknown) => unknown;
   effect: (factory: () => () => Promise<unknown>) => unknown;
 }
-export function apply(ctx: Context, config: BridgeConfig) {
+export function apply(ctx: Context, config: BridgeConfig & { turnFile?: string }) {
   const publisher = new StreamPublisher((snapshot) =>
     callBridge(config, 'response.update', snapshot, new AbortController().signal),
   );
   let owner: unknown,
-    collector = new StreamCollector();
+    collector = new StreamCollector(),
+    turnId: string | undefined;
   ctx.on('agent/assistant-stream', (value) => {
     if (
       !record(value) ||
@@ -157,8 +159,19 @@ export function apply(ctx: Context, config: BridgeConfig) {
       owner = value.agent;
       collector = new StreamCollector();
     }
+    if (record(value.frame) && value.frame.type === 'start' && config.turnFile) {
+      // Capture once at production, before coalescing/network retries can outlive this turn.
+      turnId = undefined;
+      try {
+        const current: unknown = JSON.parse(readFileSync(config.turnFile, 'utf8'));
+        if (record(current) && validAgentId(current.id)) turnId = current.id;
+      } catch {
+        // Without proven ownership no visible text may be attributed to another turn.
+      }
+    }
     const snapshot = collector.push(value.frame);
-    if (snapshot) publisher.push(value.agent.session.id, snapshot);
+    if (snapshot && (!config.turnFile || turnId))
+      publisher.push(value.agent.session.id, { ...snapshot, ...(turnId ? { turnId } : {}) });
   });
   ctx.effect(() => () => publisher.close());
 }

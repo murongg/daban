@@ -40,6 +40,7 @@ import {
   isSkillPackage,
   isSkillPath,
   isTaskFileName,
+  isTaskInsert,
   isTranscriptContentQuery,
   isTranscriptQuery,
   isUserReply,
@@ -1518,13 +1519,14 @@ export async function startPrototype({
             return json(res, { ok: true });
           }
           const match = url.pathname.match(
-            /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(control|worker|model|profile|reply|input|frame|app|browser-frame|browser-input|lifecycle|lifecycle-receipt|copy|copy-receipt)$/,
+            /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(control|worker|model|insert|profile|reply|input|frame|app|browser-frame|browser-input|lifecycle|lifecycle-receipt|copy|copy-receipt)$/,
           );
           if (!match) throw new Fault('NOT_FOUND', 404);
           const [, id, action] = match;
           if (
             [
               'model',
+              'insert',
               'profile',
               'reply',
               'lifecycle',
@@ -1581,6 +1583,10 @@ export async function startPrototype({
               if (data.running) return json(res, await models.start(id, data.task));
               await models.stop(id);
               return json(res, { ok: true });
+            }
+            if (action === 'insert' && models) {
+              if (!isTaskInsert(data)) throw new Fault('INVALID_TASK_INSERT', 400);
+              return json(res, await models.insert(id, data));
             }
             throw new Fault('INVALID_REQUEST', 400);
           }

@@ -294,6 +294,9 @@ export const english = {
   'chat.conversationRecords': 'Conversation history',
   'chat.downloadingFile': 'Downloading file',
   'chat.draftReadyReview': 'Draft ready for your review',
+  'chat.editQueuedMessage': 'Edit queued message {0}',
+  'chat.enterQueuesMessage': 'Enter queues after the current task · Shift+Enter for a new line',
+  'chat.insertQueuedMessage': 'Insert queued message {0} into the running task',
   'chat.exploreIdeaTogether': 'Explore this idea together',
   'chat.findingHistory': 'Finding history',
   'chat.giveBotGoalStartFirstMessage': 'Give this Bot a goal and start with your first message.',
@@ -303,6 +306,8 @@ export const english = {
   'chat.localTasksConversations': 'Local tasks and conversations',
   'chat.managingSchedules': 'Managing schedules',
   'chat.managingTabs': 'Managing tabs',
+  'chat.messageQueue': 'Queued messages',
+  'chat.messageQueueFull': 'Up to {0} messages can be queued',
   'chat.messageRecipient': 'Message {0}…',
   'chat.modelNextTask': 'Model for next task',
   'chat.modelTask': 'Model for this task',
@@ -315,17 +320,28 @@ export const english = {
   'chat.preparingModel': 'Preparing model',
   'chat.preparingResponse': 'Preparing response',
   'chat.previewAttachment': 'Preview attachment {0}',
+  'chat.promoteQueuedMessage': 'Send queued message {0} next',
+  'chat.queuedAttachments': '+{0} attachments',
+  'chat.queuedMessageEditAttachmentsFull':
+    'That edit would exceed the 4-attachment limit. Nothing changed.',
+  'chat.queuedMessageEditTooLong':
+    'That edit would exceed the message length limit. Nothing changed.',
+  'chat.queuedMessageFailed': 'Could not send. Retry or remove it.',
+  'chat.sendingQueuedMessage': 'Sending…',
   'chat.readingPage': 'Reading page',
   'chat.readingTaskCatalog': 'Reading task catalog',
   'chat.readingWebpage': 'Reading webpage',
+  'chat.removeQueuedMessage': 'Remove queued message {0}',
   'chat.replying': 'Replying',
   'chat.responding': 'Responding',
   'chat.responseIncomplete': 'Response incomplete',
   'chat.searching': 'Searching',
   'chat.startCollaboration': 'Start collaboration',
+  'chat.steer': 'Steer',
   'chat.stopTask': 'Stop task',
   'chat.task': 'This task: {0}{1}',
   'chat.taskInterruptedSavedFilesRetained': 'Task interrupted; saved files are retained',
+  'chat.verifyingQueuedMessageInsert': 'Checking whether the steer was delivered…',
   'chat.thinking': 'Thinking',
   'chat.times': 'times',
   'chat.todayExampleConversation': 'Today 10:24 · Example conversation',
@@ -1108,6 +1124,15 @@ export const english = {
     'Invalid skill instructions. Check the SKILL.md name, description, body and size.',
   'errors.invalidTaskAttachmentParametersEditResend':
     'Invalid task or attachment parameters. Edit and resend.',
+  'errors.invalidTaskInsertMessageKeptQueue': 'The inserted message was invalid. It stays queued.',
+  'errors.taskEndedMessageKeptQueue':
+    'The task ended before the message was inserted. It stays queued.',
+  'errors.taskInsertFullMessageKeptQueue':
+    'Too many messages are already inserted into this task. This one stays queued.',
+  'errors.taskInsertStaleMessageKeptQueue':
+    'That task is no longer the one that was running. The message stays queued for the next send.',
+  'errors.taskInsertUncertainMessageNotReplayed':
+    'This inserted message had already started when the task ended, so its outcome is unknown. It is kept here; retry only if it should run again.',
   'errors.invalidTaskContentCheckTitleStatusText':
     'Invalid task content. Check the title, status and text length before saving.',
   'errors.invalidTaskFilterChooseAnotherFilterSearch':

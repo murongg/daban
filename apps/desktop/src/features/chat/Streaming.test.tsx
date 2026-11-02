@@ -37,10 +37,11 @@ const base: RuntimeTask = {
   history: [],
   response: { revision: 1, text: '合成前缀甲', state: 'streaming' },
 };
-function connect() {
+function connect(interactions: RuntimeSnapshot['interactions'] = []) {
   let state = disconnected('ready');
   state.protocolVersion = 4;
   state.model.configured = true;
+  state.interactions = interactions;
   state.agents = {
     a: { ...base },
     b: {
@@ -361,4 +362,155 @@ it.each([
   render(<App />);
   expect(await screen.findByText(label)).toBeVisible();
   expect(screen.queryByText('正在操作电脑')).not.toBeInTheDocument();
+});
+
+it('keeps the reply before inserts that have not started', async () => {
+  const runtime = connect();
+  runtime.emit('a', {
+    running: false,
+    phase: 'completed',
+    result: '合成回复甲',
+    response: undefined,
+    inserts: [
+      { id: 'mock-insert-b', text: '合成插话乙', done: false, started: true },
+      { id: 'mock-insert-c', text: '合成插话丙', done: false },
+    ],
+  });
+  const local = initialState();
+  local.messages.research = [
+    { id: 'mock-request-a', role: 'user', text: '合成问题甲' },
+    { id: 'runtime-result:mock-stream-a', role: 'bot', text: '合成回复甲' },
+  ];
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={local}
+        bot={local.bots.find((bot) => bot.id === 'research')!}
+        dispatch={vi.fn()}
+        notify={vi.fn()}
+        preview={vi.fn()}
+        onModel={vi.fn()}
+      />
+    </RuntimeProvider>,
+  );
+  await screen.findByText('合成回复甲');
+  const log = screen.getByRole('log', { name: '对话记录' });
+  expect(
+    [...log.querySelectorAll('article.message, details.execution')].map((node) =>
+      node.matches('details.execution') ? 'execution' : node.textContent,
+    ),
+  ).toEqual(['合成问题甲', 'execution', '合成回复甲', '合成插话乙', '合成插话丙']);
+});
+
+it('places approval at the reply position without moving later inserts', async () => {
+  const runtime = connect([
+    {
+      id: 'mock-approval-a',
+      sessionId: 'mock-session-a',
+      bot: 'a',
+      runId: 'mock-stream-a',
+      kind: 'approval',
+      tool: 'web_fetch',
+      url: 'https://example.com/report',
+      status: 'pending',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+  ]);
+  runtime.emit('a', {
+    running: false,
+    phase: 'completed',
+    result: '合成回复甲',
+    response: undefined,
+    inserts: [
+      { id: 'mock-insert-b', text: '合成插话乙', done: false, started: true },
+      { id: 'mock-insert-c', text: '合成插话丙', done: false },
+    ],
+  });
+  const local = initialState();
+  local.messages.research = [
+    { id: 'mock-request-a', role: 'user', text: '合成问题甲' },
+    { id: 'runtime-result:mock-stream-a', role: 'bot', text: '合成回复甲' },
+  ];
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={local}
+        bot={local.bots.find((bot) => bot.id === 'research')!}
+        dispatch={vi.fn()}
+        notify={vi.fn()}
+        preview={vi.fn()}
+        onModel={vi.fn()}
+      />
+    </RuntimeProvider>,
+  );
+  await screen.findByText('合成回复甲');
+  const log = screen.getByRole('log', { name: '对话记录' });
+  expect(
+    [...log.querySelectorAll('article.message, article.approval, details.execution')].map((node) =>
+      node.matches('details.execution')
+        ? 'execution'
+        : node.matches('article.approval')
+          ? 'approval'
+          : node.textContent,
+    ),
+  ).toEqual(['合成问题甲', 'execution', '合成回复甲', 'approval', '合成插话乙', '合成插话丙']);
+});
+
+it('keeps approval at the active question before any reply text exists', async () => {
+  const runtime = connect([
+    {
+      id: 'mock-approval-before-text',
+      sessionId: 'mock-session-a',
+      bot: 'a',
+      runId: 'mock-stream-a',
+      kind: 'approval',
+      tool: 'web_fetch',
+      url: 'https://example.test/synthetic-report',
+      status: 'pending',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+  ]);
+  runtime.emit('a', {
+    phase: 'waiting',
+    response: undefined,
+    turns: [{ id: 'mock-request-a', prompt: 'SYNTHETIC QUESTION A', result: '' }],
+    inserts: [
+      { id: 'mock-future-b', text: 'SYNTHETIC FUTURE B', done: false },
+      { id: 'mock-future-c', text: 'SYNTHETIC FUTURE C', done: false },
+    ],
+  });
+  const local = initialState();
+  local.messages.research = [{ id: 'mock-request-a', role: 'user', text: 'SYNTHETIC QUESTION A' }];
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={local}
+        bot={local.bots.find((bot) => bot.id === 'research')!}
+        dispatch={vi.fn()}
+        notify={vi.fn()}
+        preview={vi.fn()}
+        onModel={vi.fn()}
+      />
+    </RuntimeProvider>,
+  );
+  await screen.findByText('SYNTHETIC FUTURE C');
+  const log = screen.getByRole('log', { name: '对话记录' });
+  const order = [
+    ...log.querySelectorAll('article.message, article.approval, details.execution'),
+  ].map((node) =>
+    node.matches('details.execution')
+      ? 'execution'
+      : node.matches('article.approval')
+        ? 'approval'
+        : node.textContent,
+  );
+  expect(order).toEqual([
+    'SYNTHETIC QUESTION A',
+    'execution',
+    'approval',
+    'SYNTHETIC FUTURE B',
+    'SYNTHETIC FUTURE C',
+  ]);
 });

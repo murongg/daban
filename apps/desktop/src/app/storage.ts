@@ -34,6 +34,8 @@ export function serialize(state: State) {
       chatStates: {},
       groupRevisions: {},
       attachmentUploads: {},
+      // Queued messages belong to the live session; a reload must not send them unattended.
+      queued: {},
     },
   });
 }
@@ -150,6 +152,8 @@ export function restore(raw: string | null): State {
       ),
     );
     s.attachmentUploads = {};
+    // Queued messages belong to the live session; a reload must not send them unattended.
+    s.queued = {};
     if (s.knowledgeDrafts === undefined) s.knowledgeDrafts = {};
     if (!record(s.knowledgeDrafts)) s.knowledgeDrafts = {};
     // An unsaved draft may exceed the server byte quota; retain editable text so repair does not erase the workspace.
@@ -233,6 +237,12 @@ export function restore(raw: string | null): State {
       )
         return initialState();
     }
+    // Attachment references captured for a pending send survive a reload; damaged entries are dropped alone.
+    s.runtimeRefs = Object.fromEntries(
+      Object.entries(record(s.runtimeRefs) ? s.runtimeRefs : {}).filter(
+        ([, value]) => value === undefined || strings(value),
+      ),
+    );
     const { messages, drafts, controls, memories, attachments, memoryDrafts, routineDrafts } =
       s as Record<string, Record<string, unknown>>;
     for (const id of ids) {
@@ -278,6 +288,7 @@ export function restore(raw: string | null): State {
             record(m) &&
             choice(m.role, ['user', 'bot', 'activity', 'notice']) &&
             (m.files === undefined || strings(m.files)) &&
+            (m.references === undefined || strings(m.references)) &&
             (m.author === undefined || typeof m.author === 'string'),
         )
       )

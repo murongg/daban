@@ -3090,6 +3090,104 @@ textarea.skill-source {
   width: 11px;
   height: 11px;
 }
+.message-queue {
+  margin: 0 3px 8px;
+}
+.message-queue ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.queued-message {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 6px 8px 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--canvas);
+}
+.queued-message-glyph {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  stroke-width: 1.8;
+}
+.queued-message-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.queued-message-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.queued-message-line p {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queued-message-count {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+.queued-message-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+.queued-message-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+.queued-message[data-failed="true"] .queued-message-line p {
+  color: var(--muted);
+}
+.queued-message[data-sending="true"] .queued-message-line p {
+  color: var(--muted);
+}
+.queued-message-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.queued-message .icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
+  color: var(--muted);
+}
+.queued-message .icon-button:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+.queued-message .icon-button svg {
+  width: 15px;
+  height: 15px;
+}
+.queued-message .icon-button.queued-steer {
+  width: auto;
+  gap: 5px;
+  padding: 0 8px 0 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
 .runtime-file-path {
   font-size: 9px;
   color: var(--muted);

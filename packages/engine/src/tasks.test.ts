@@ -22,6 +22,22 @@ test('full guest instructions describe VM sudo and host approval without exposin
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
 
+test('a continuation turn requires a bounded retry reference', () => {
+  const input = {
+    requestId: 'mock-retry-request',
+    prompt: 'SYNTHETIC REQUEST',
+    retryOf: 'mock-run',
+    retryTurn: 'mock-turn',
+  };
+  assert.deepEqual(validateTask(input), input);
+  for (const invalid of [
+    { ...input, retryOf: undefined },
+    { ...input, retryTurn: '../foreign' },
+  ]) {
+    assert.throws(() => validateTask(invalid), { code: 'INVALID_TASK' });
+  }
+});
+
 test('workspace downloads preserve binary bytes, reject escapes and refuse invalid UTF-8 text previews', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-download-'));
   try {

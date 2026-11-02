@@ -191,6 +191,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'files.read': ['type', 'path'],
     'files.download': ['type', 'path'],
     'task.start': ['type', 'bot', 'task'],
+    'task.insert': ['type', 'bot', 'id', 'text', 'runId', 'chatRevision'],
     'task.stop': ['type', 'bot'],
     control: ['type', 'bot', 'epoch', 'owner', 'instance'],
     frame: ['type', 'bot', 'surface', 'instance', 'epoch'],
@@ -396,7 +397,18 @@ export function parseCommand(value: unknown): RuntimeCommand {
     return fail();
   if (['control', 'frame', 'input', 'app'].includes(v.type as string) && !validAgentId(v.bot))
     return fail();
-  if (['task.start', 'task.stop'].includes(v.type as string) && !validAgentId(v.bot)) return fail();
+  if (['task.start', 'task.insert', 'task.stop'].includes(v.type as string) && !validAgentId(v.bot))
+    return fail();
+  if (
+    v.type === 'task.insert' &&
+    (!validAgentId(v.id) ||
+      !validAgentId(v.runId) ||
+      !Number.isSafeInteger(v.chatRevision) ||
+      Number(v.chatRevision) < 0 ||
+      !string(v.text, 12000) ||
+      !(v.text as string).trim())
+  )
+    return fail();
   if (v.type === 'computer.action' && !isComputerRequest(v.request)) return fail();
   if (v.type === 'computer.receipt' && (!validAgentId(v.id) || !validAgentId(v.bot))) return fail();
   if (
@@ -426,7 +438,15 @@ export function parseCommand(value: unknown): RuntimeCommand {
     const t = v.task;
     if (
       !object(t) ||
-      !keys(t, ['requestId', 'prompt', 'retryOf', 'memory', 'files', 'chatRevision']) ||
+      !keys(t, [
+        'requestId',
+        'prompt',
+        'retryOf',
+        'retryTurn',
+        'memory',
+        'files',
+        'chatRevision',
+      ]) ||
       !string(t.requestId, 100) ||
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
@@ -441,6 +461,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
       (!string(t.retryOf, 100) || !/^[a-zA-Z0-9_-]+$/.test(t.retryOf as string))
     )
       return fail();
+    if (t.retryTurn !== undefined && (!t.retryOf || !validAgentId(t.retryTurn))) return fail();
     if (
       t.files !== undefined &&
       (!Array.isArray(t.files) || t.files.length > 4 || !t.files.every(isTaskFile))
