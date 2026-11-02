@@ -143,3 +143,20 @@ test('submits only the outer disk image and validates tickets for both download 
     assert.ok(events.some((event) => event.startsWith('--assess') && event.endsWith(file)));
   }
 });
+
+test('reports bounded signing command output without dumping unrelated process metadata', async () => {
+  const { signingDiagnostics } = await import('./sign.ts');
+  const failure = Object.assign(new Error('Synthetic signing command failed'), {
+    stdout: 'Synthetic ticket validation detail',
+    stderr: 'Synthetic command error',
+    env: { SYNTHETIC_PRIVATE_VALUE: 'must-not-be-dumped' },
+  });
+  assert.deepEqual(signingDiagnostics(failure), [
+    'stdout:\nSynthetic ticket validation detail',
+    'stderr:\nSynthetic command error',
+  ]);
+  assert.deepEqual(signingDiagnostics(new Error('Synthetic ordinary error')), []);
+  assert.deepEqual(signingDiagnostics(null), []);
+  const output = signingDiagnostics({ stdout: 'x'.repeat(20000), stderr: undefined });
+  assert.equal(output[0].length, 'stdout:\n'.length + 16000);
+});

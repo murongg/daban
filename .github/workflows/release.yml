@@ -118,6 +118,14 @@ jobs:
           tar -xzf node.tar.gz
       - name: Assemble the complete client and verify pinned base assets
         run: npm run bundle:desktop -- "$RUNNER_TEMP/environment" "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/node-v24.22.1-darwin-arm64"
+      - name: Load signing tooling from the workflow revision
+        env:
+          WORKFLOW_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Keep product sources pinned to the tag while using the reviewed release tooling.
+          git fetch --no-tags --depth=1 origin "$WORKFLOW_COMMIT"
+          git show "$WORKFLOW_COMMIT:tools/sign.ts" > tools/sign.ts
       - name: Import Developer ID and notarization credentials into an ephemeral keychain
         id: signing
         env:
@@ -163,6 +171,15 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/daban-signing.keychain-db" || true
           rm -f "$RUNNER_TEMP/daban-certificate.p12" "$RUNNER_TEMP/daban-signing-probe"
+      - name: Retain the failed disk image for validation diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Daban-macos-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release/Daban-*.dmg
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 1
       - uses: actions/upload-artifact@v4
         with:
           name: Daban-macos-arm64

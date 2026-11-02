@@ -34,6 +34,17 @@ interface Signing {
 }
 type Run = typeof run;
 
+export function signingDiagnostics(error: unknown) {
+  if (!error || typeof error !== 'object') return [];
+  const child = error as { stdout?: unknown; stderr?: unknown };
+  return (['stdout', 'stderr'] as const).flatMap((stream) => {
+    const output = child[stream];
+    return typeof output === 'string' && output.trim()
+      ? [`${stream}:\n${output.trim().slice(-16000)}`]
+      : [];
+  });
+}
+
 export function isMachO(bytes: Buffer) {
   return [
     'feedface',
@@ -258,4 +269,8 @@ async function main() {
   console.log('Developer ID signing, notarization, stapling and Gatekeeper assessment passed.');
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
-  await main();
+  await main().catch((error: unknown) => {
+    // Apple tools report validation details on stdout, which execFile's error message omits.
+    for (const detail of signingDiagnostics(error)) console.error(detail);
+    throw error;
+  });
