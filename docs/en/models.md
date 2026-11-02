@@ -32,7 +32,8 @@ Presets include OpenAI, Claude, Gemini, Grok, DeepSeek, Qwen, Kimi, Zhipu, MiniM
 ## Capabilities and context limits
 
 - Bot tasks require tool calling. Expand model capabilities to inspect catalog declarations for input/output types, reasoning, tool calling, structured output, and temperature.
-- **Supports images and desktop observation** controls image input and screen observation. You can override automatic image and context settings. Unknown or conflicting fields are not guessed from the model name.
+- Icons beside model names show text, image, audio, video and PDF input capabilities; hover for details. In the editor, click the image icon to toggle image input and desktop observation. Manual overrides remain available, and unknown or conflicting capabilities are not guessed from the model name.
+- Model family marks are recognized from model IDs, while supplier marks still reflect the configured API endpoint. A GPT model routed through a custom supplier can show the OpenAI family mark; the connection still belongs to that supplier.
 - Catalog declarations for audio, video, and native PDF input are informational. [Attachment](attachments.md) text extraction is separate from native PDF transmission.
 - The context window is the input/output capacity; the output limit is the per-response budget. Catalog maxima do not guarantee your account or gateway provides that capacity.
 - A short text test does not validate vision, tool calling, or every long-context case.

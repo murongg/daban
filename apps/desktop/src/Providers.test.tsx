@@ -61,7 +61,10 @@ it('loads a searchable provider list and adds a selected model with matched cont
   await userEvent.click(screen.getByRole('button', { name: '加载模型列表' }));
   await userEvent.click(await screen.findByRole('button', { name: '添加 mock-gamma' }));
   expect(screen.getByLabelText('模型 3 ID')).toHaveValue('mock-gamma');
-  expect(screen.getByRole('checkbox', { name: '模型 3 支持图片' })).toBeChecked();
+  expect(screen.getByRole('button', { name: '模型 3 支持图片' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   await userEvent.click(screen.getAllByText('上下文与输出上限')[2]);
   expect(screen.getByRole('textbox', { name: '模型 3 上下文窗口' })).toHaveValue('96000');
   expect(backend.writes).toHaveLength(0);
@@ -95,7 +98,7 @@ it.each([
     await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
     await userEvent.clear(screen.getByLabelText('模型 2 ID'));
     await userEvent.type(screen.getByLabelText('模型 2 ID'), 'mock-new');
-    const vision = screen.getByRole('checkbox', { name: '模型 2 支持图片' });
+    const vision = screen.getByRole('button', { name: '模型 2 支持图片' });
     if (before) for (let i = 0; i < clicks; i++) await userEvent.click(vision);
     await vi.waitFor(
       () =>
@@ -127,7 +130,7 @@ it.each([
       });
       await reply;
     });
-    expect(vision).toHaveProperty('checked', checked);
+    expect(vision).toHaveAttribute('aria-pressed', String(checked));
     expect(backend.writes).toHaveLength(0);
   },
 );
@@ -168,7 +171,11 @@ it('retries automatic matching after a draft key change and saves the matched ca
     await pending;
   });
   await vi.waitFor(
-    () => expect(screen.getByRole('checkbox', { name: '模型 2 支持图片' })).toBeChecked(),
+    () =>
+      expect(screen.getByRole('button', { name: '模型 2 支持图片' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      ),
     { timeout: 2500 },
   );
   expect(inspections).toBe(2);

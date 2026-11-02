@@ -1,21 +1,31 @@
-import { type ModelConnection, modelCatalog } from '@daban/protocol';
+import { type ModelConnection, modelCatalog, modelReference } from '@daban/protocol';
 import { createElement } from 'react';
 import { t } from './locale';
-import { ProviderIcon } from './ProviderIcon';
+import { ModelIcon } from './ModelIcon';
+import { ModelInputs } from './ModelInputs';
 import { providerIdentity } from './platforms';
+import type { SelectOption } from './Select';
 
-function icon(provider: string | undefined, connections?: ModelConnection[]) {
-  return createElement(ProviderIcon, {
-    platform: provider
-      ? connections
-        ? providerIdentity(connections.find((connection) => connection.id === provider))
-        : 'deepseek'
-      : 'custom',
+function definition(id: string | undefined, connections?: ModelConnection[]) {
+  for (const connection of connections ?? []) {
+    const model = connection.models.find((model) => modelReference(connection.id, model.id) === id);
+    if (model) return { connection, model };
+  }
+}
+export function modelIcon(id: string | undefined, connections?: ModelConnection[]) {
+  const entry = definition(id, connections);
+  return createElement(ModelIcon, {
+    id: entry?.model.id ?? id,
+    fallback: entry ? providerIdentity(entry.connection) : 'custom',
   });
 }
-
-export function modelIcon(id: string | undefined, connections?: ModelConnection[]) {
-  return icon(modelCatalog(connections).find((entry) => entry.id === id)?.provider, connections);
+export function modelInputs(id: string | undefined, connections?: ModelConnection[]) {
+  const option = modelCatalog(connections).find((entry) => entry.id === id);
+  if (!option) return undefined;
+  return createElement(ModelInputs, {
+    input: definition(id, connections)?.model.capabilities?.input,
+    vision: option.vision,
+  });
 }
 
 export function modelName(id: string | undefined, connections?: ModelConnection[]) {
@@ -27,21 +37,38 @@ export function modelName(id: string | undefined, connections?: ModelConnection[
 }
 
 export function modelChoices(connections?: ModelConnection[], selected?: string) {
-  const options = modelCatalog(connections).map((entry) => ({
-    value: entry.id,
-    label: connections
-      ? `${connections.find((connection) => connection.id === entry.provider)?.name || entry.provider} · ${entry.name}`
-      : entry.name,
-    disabled: false,
-    icon: icon(entry.provider, connections),
-  }));
+  const options: SelectOption[] =
+    connections === undefined
+      ? modelCatalog().map((entry) => ({
+          value: entry.id,
+          label: entry.name,
+          disabled: false,
+          icon: createElement(ModelIcon, { id: entry.id }),
+          detail: createElement(ModelInputs, { vision: entry.vision }),
+        }))
+      : connections.flatMap((connection) =>
+          connection.models.map((model) => ({
+            value: modelReference(connection.id, model.id),
+            label: `${connection.name} · ${model.name}`,
+            disabled: false,
+            icon: createElement(ModelIcon, {
+              id: model.id,
+              fallback: providerIdentity(connection),
+            }),
+            detail: createElement(ModelInputs, {
+              input: model.capabilities?.input,
+              vision: model.vision,
+            }),
+          })),
+        );
   // Keep a saved route visible when its connection is unavailable; never replace it with another supplier.
   if (selected && !options.some((option) => option.value === selected))
     options.push({
       value: selected,
       label: t('modeloptions.notConfigured', { 0: selected }),
       disabled: true,
-      icon: icon(undefined, connections),
+      icon: modelIcon(undefined, connections),
+      detail: undefined,
     });
   return options;
 }

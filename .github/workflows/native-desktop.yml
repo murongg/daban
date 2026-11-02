@@ -2,7 +2,7 @@ name: Native desktop
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'feature/local-computer', 'feature/standard-skills']
+    branches: [main, 'feature/local-computer', 'feature/standard-skills', 'feature/model-icons']
     paths:
       - 'apps/**'
       - 'packages/**'
@@ -27,6 +27,8 @@ jobs:
         run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/src/LocalComputer.test.tsx --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
         run: node --experimental-sqlite --test packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js
+      - name: Verify model icons and configuration
+        run: npx vitest run apps/desktop/src/ModelInputs.test.tsx apps/desktop/src/Providers.test.tsx apps/desktop/src/BotModels.test.tsx apps/desktop/src/Models.test.tsx --maxWorkers=2
       - name: Verify skill package UI and bindings
         run: npx vitest run apps/desktop/electron/skills.test.ts apps/desktop/electron/portable.test.ts apps/desktop/src/SkillInstall.test.tsx apps/desktop/src/SkillMetadata.test.tsx --maxWorkers=2
       - name: Verify standard skill packages

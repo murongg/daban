@@ -1,7 +1,7 @@
 import { type BotProfile, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { t, useLocale } from './locale';
-import { modelChoices, modelIcon, modelName } from './model-options';
+import { modelChoices, modelIcon, modelInputs, modelName } from './model-options';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
 import { Select } from './Select';
@@ -125,6 +125,10 @@ export function Profile({
               {
                 value: '',
                 icon: modelIcon(runtime.snapshot.model.model, runtime.snapshot.model.connections),
+                detail: modelInputs(
+                  runtime.snapshot.model.model,
+                  runtime.snapshot.model.connections,
+                ),
                 label: t('common.followNamedWorkspace', {
                   0: modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections),
                 }),

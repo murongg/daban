@@ -10,6 +10,8 @@ import {
 import { Check, Download, LoaderCircle, Plus, Search, WandSparkles } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { t, useLocale } from './locale';
+import { ModelIcon } from './ModelIcon';
+import { ModelInputs } from './ModelInputs';
 import { runtimeError, useRuntime } from './Runtime';
 
 type Query = Pick<ModelInspectionRequest, 'connection' | 'revision' | 'apiKey'>;
@@ -168,8 +170,14 @@ export function ModelCatalog({
                   onClick={() => add(model)}
                 >
                   <span>
-                    <strong>{model.name}</strong>
-                    <small>{model.id}</small>
+                    <span className="model-catalog-description">
+                      <ModelIcon id={model.id} />
+                      <span className="model-catalog-copy">
+                        <strong>{model.name}</strong>
+                        <small>{model.id}</small>
+                      </span>
+                    </span>
+                    <ModelInputs input={model.capabilities?.input} />
                   </span>
                   {exists ? <Check size={16} /> : <Plus size={16} />}
                 </button>
