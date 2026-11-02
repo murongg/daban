@@ -576,7 +576,7 @@ test('DSH profile disables unscoped native tools and registers a scoped tool ser
   const patch = sdkPatch('http://127.0.0.1:12345', 'a', 'synthetic-capability');
   const compaction = patch.find((row) => 'id' in row && row.id === 'compaction-basic');
   assert.ok(compaction && 'config' in compaction);
-  assert.equal((compaction.config as { retainTokens: number }).retainTokens, 4096);
+  assert.equal((compaction.config as { thresholdRatio: number }).thresholdRatio, 0.8);
   const disabled = patch.filter((row) => 'disabled' in row);
   for (const id of ['persistent-bash', 'persistent-pwsh', 'tool-fs', 'tool-working-directory'])
     assert.equal(disabled.find((row) => row.id === id)!.disabled, true);
