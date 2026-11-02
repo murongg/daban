@@ -18,6 +18,8 @@ CI 不使用 Apple 或模型凭据；发行工作流只由版本标签或手动�
 | `APPLE_TEAM_ID` | 对应开发者团队 ID |
 | `APPLE_APP_SPECIFIC_PASSWORD` | Apple 应用专用密码 |
 | `CHANGELOG_API_KEY` | 专供公开更新记录翻译使用的模型 API Key |
+| `CHANGELOG_API_URL` | 可选；OpenAI Chat Completions 兼容的 HTTPS API 根地址，默认 `https://api.deepseek.com/v1` |
+| `CHANGELOG_MODEL` | 可选；支持 JSON 输出的翻译模型，默认 `deepseek-flash` |
 
 不要把这些值放进代码、Issue、PR、构建产物或日志。不要上传完整的开发机 `.env`。macOS 凭据仅进入签名步骤的临时钥匙串，任务结束后删除；不向 PR 工作流开放。
 
@@ -25,8 +27,6 @@ CI 不使用 Apple 或模型凭据；发行工作流只由版本标签或手动�
 
 | Variable | 默认值 | 用途 |
 | --- | --- | --- |
-| `CHANGELOG_API_URL` | `https://api.deepseek.com/v1` | OpenAI Chat Completions 兼容的 HTTPS API 根地址 |
-| `CHANGELOG_MODEL` | `deepseek-flash` | 支持 JSON 输出的翻译模型 |
 | `MACOS_ENVIRONMENT_TAG` | `environment-v38` | 同仓库保存干净环境包的 Release 标签 |
 
 模型仅接收该版本的公开 PR 和提交记录，不接收源码、用户聊天或 Apple 凭据。中英文任一部分生成失败或被截断，Release 均不会发布；不会默默退回只有英文的日志。
@@ -85,7 +85,7 @@ macOS 过程会签名 Electron、内嵌 Node、原生模块与 Lima，重新固�
 
 PRs and main updates run Linux/macOS quality checks and Windows package acceptance. Version tags trigger `Release`; all six workspace versions must match the tag, and its commit must belong to main. Stable and prerelease tags are supported. The workflow publishes only after checks, bilingual changelog generation, and both desktop builds succeed.
 
-Configure the six secrets listed above. Apple secrets must contain a Developer ID Application certificate with its private key, its export password, and valid notarization credentials. They are imported into a temporary signing keychain, removed after the job, and never supplied to PR checks. `CHANGELOG_API_KEY` is separate; it is sent only to the HTTPS endpoint configured by `CHANGELOG_API_URL` (default DeepSeek), using `CHANGELOG_MODEL`. Only public PR and commit records are translated. Missing, failed, or truncated translations block publication.
+Configure the secrets listed above. Apple secrets must contain a Developer ID Application certificate with its private key, its export password, and valid notarization credentials. They are imported into a temporary signing keychain, removed after the job, and never supplied to PR checks. Set `CHANGELOG_API_KEY`, `CHANGELOG_API_URL`, and `CHANGELOG_MODEL` in Actions secrets. The URL and model are optional and default to `https://api.deepseek.com/v1` and `deepseek-flash`. The configured endpoint receives the API key, model name, and public PR/commit records for translation. Missing, failed, or truncated translations block publication.
 
 Upload the four verified, credential-free environment files above to the same repository's `environment-v38` release, or configure `MACOS_ENVIRONMENT_TAG`. The pinned base image and component checks must pass. Never distribute a used VM or modify expected hashes to accept an unverified image.
 

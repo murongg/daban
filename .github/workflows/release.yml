@@ -68,8 +68,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           CHANGELOG_API_KEY: ${{ secrets.CHANGELOG_API_KEY }}
-          CHANGELOG_API_URL: ${{ vars.CHANGELOG_API_URL }}
-          CHANGELOG_MODEL: ${{ vars.CHANGELOG_MODEL }}
+          CHANGELOG_API_URL: ${{ secrets.CHANGELOG_API_URL }}
+          CHANGELOG_MODEL: ${{ secrets.CHANGELOG_MODEL }}
         run: node --experimental-strip-types tools/changelog.ts
       - uses: actions/upload-artifact@v4
         with:

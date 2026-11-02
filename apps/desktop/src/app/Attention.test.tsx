@@ -24,7 +24,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function connect() {
+function connect(initialStatus?: Promise<unknown>) {
   const state = initialState();
   state.panel = null;
   localStorage.setItem(storageKey, serialize(state));
@@ -49,8 +49,10 @@ function connect() {
   let listener: (value: RuntimeSnapshot) => unknown = () => {};
   const bridge: RuntimeBridge = {
     async invoke<T>(command: RuntimeCommand): Promise<RuntimeReply<T>> {
-      if (command.type === 'status' || command.type === 'connect')
+      if (command.type === 'status' || command.type === 'connect') {
+        if (initialStatus) await initialStatus;
         return { ok: true, value: snapshot as T };
+      }
       return { ok: false, error: 'MOCK_UNEXPECTED_COMMAND' };
     },
     subscribe: (callback) => {
@@ -137,10 +139,19 @@ it('does not mark initial history unread, marks fresh private/group work and cle
 });
 
 it('keeps manual unread across reconstruction and unavailable feeds, and treats group questions as group attention', async () => {
-  const fake = connect();
+  let release!: () => unknown;
+  const initialStatus = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const fake = connect(initialStatus);
   const { unmount } = render(<App />);
   await waitFor(() => expect(fake.invoke).toHaveBeenCalled());
-  await userEvent.click(screen.getByRole('button', { name: '整理 写作搭档' }));
+  await screen.findByRole('heading', { name: '正在连接本机工作区' });
+  const organize = screen.findByRole('button', { name: '整理 写作搭档' });
+  await act(() => {
+    release();
+  });
+  await userEvent.click(await organize);
   await userEvent.click(screen.getByRole('menuitem', { name: '标为未读' }));
   await act(() => fake.emit({ ...fake.snapshot(), phase: 'offline', notices: undefined }));
   unmount();
