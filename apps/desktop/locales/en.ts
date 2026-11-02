@@ -249,6 +249,7 @@ export const english = {
   'chat.responseIncomplete': 'Response incomplete',
   'chat.searching': 'Searching',
   'chat.startCollaboration': 'Start collaboration',
+  'chat.steer': 'Steer',
   'chat.stopTask': 'Stop task',
   'chat.task': 'This task: {0}{1}',
   'chat.taskInterruptedSavedFilesRetained': 'Task interrupted; saved files are retained',

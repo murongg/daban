@@ -3174,6 +3174,13 @@ textarea.skill-source {
   width: 15px;
   height: 15px;
 }
+.queued-message .icon-button.queued-steer {
+  width: auto;
+  gap: 5px;
+  padding: 0 8px 0 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
 .runtime-file-path {
   font-size: 9px;
   color: var(--muted);

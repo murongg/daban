@@ -8,7 +8,6 @@ import {
   ExternalLink,
   FileText,
   Info,
-  MessageSquarePlus,
   Mic,
   Monitor,
   Paperclip,
@@ -545,10 +544,12 @@ export function Conversation({
                     <div className="queued-message-actions">
                       {onQueueInsert && task?.running && !item.files.length && (
                         <IconButton
+                          className="queued-steer"
                           label={t('chat.insertQueuedMessage', { 0: text })}
                           onClick={() => onQueueInsert(item.id)}
                         >
-                          <MessageSquarePlus />
+                          <CornerDownRight />
+                          <span>{t('chat.steer')}</span>
                         </IconButton>
                       )}
                       {index > 0 && onQueuePromote && (

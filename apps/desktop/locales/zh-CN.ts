@@ -230,6 +230,7 @@ export const chinese = {
   'chat.responseIncomplete': '回复未完成',
   'chat.searching': '正在搜索',
   'chat.startCollaboration': '开始协作',
+  'chat.steer': '引导',
   'chat.stopTask': '停止任务',
   'chat.task': '本轮：{0}{1}',
   'chat.taskInterruptedSavedFilesRetained': '任务已中断，已保存文件仍保留',
