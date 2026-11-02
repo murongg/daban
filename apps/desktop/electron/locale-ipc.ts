@@ -1,6 +1,6 @@
 import type { RuntimeReply } from '@daban/protocol';
 import { BrowserWindow, ipcMain } from 'electron';
-import { type Locale, parseLocaleCommand } from '../locale';
+import { type Locale, parseLocaleCommand } from '../shared/locale';
 import { trustedSender } from './ipc';
 import type { LocalePreferences } from './locale';
 

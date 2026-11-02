@@ -1,7 +1,7 @@
 import type { RuntimeBridge, RuntimeSnapshot } from '@daban/protocol';
 import { contextBridge, ipcRenderer } from 'electron';
-import type { LocaleBridge } from '../locale';
-import { isNoticeMessage, type NoticeBridge } from '../notifications';
+import type { LocaleBridge } from '../shared/locale';
+import { isNoticeMessage, type NoticeBridge } from '../shared/notifications';
 
 const runtime: RuntimeBridge = {
   invoke: (command) => ipcRenderer.invoke('daban:runtime', command),

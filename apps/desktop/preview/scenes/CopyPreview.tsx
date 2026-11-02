@@ -10,14 +10,14 @@ import {
   type RuntimeSnapshot,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../../src/App';
-import { clientCache } from '../../src/cache';
-import { demoState as initialState } from '../../src/fixtures';
-import { reduce } from '../../src/state';
-import { restore, serialize, storageKey } from '../../src/storage';
+import { App } from '../../src/app/App';
+import { clientCache } from '../../src/app/cache';
+import { reduce } from '../../src/app/state';
+import { restore, serialize, storageKey } from '../../src/app/storage';
+import { demoState as initialState } from '../../src/test/fixtures';
 import { previewSnapshot } from '../runtime';
-import '../../src/tokens.css';
-import '../../src/styles.css';
+import '../../src/styles/tokens.css';
+import '../../src/styles/styles.css';
 
 // This private fixture uses production components with synthetic data and no VM/model connection.
 const query = new URLSearchParams(location.search);

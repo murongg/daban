@@ -4,7 +4,7 @@ import { type FileHandle, mkdir, open, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { type RuntimeSnapshot, recoveryBlocked, validAgentId } from '@daban/protocol';
 import { Notification } from 'electron';
-import type { Locale } from '../locale';
+import type { Locale } from '../shared/locale';
 import {
   isNoticeActivation,
   isNoticeScope,
@@ -18,7 +18,7 @@ import {
   noticeCandidates,
   noticeCopy,
   noticeKey,
-} from '../notifications';
+} from '../shared/notifications';
 
 interface Store {
   version: 2;

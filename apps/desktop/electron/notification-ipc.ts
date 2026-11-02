@@ -1,6 +1,6 @@
 import type { RuntimeReply } from '@daban/protocol';
 import { BrowserWindow, ipcMain } from 'electron';
-import { type NoticeCommand, parseNoticeCommand } from '../notifications';
+import { type NoticeCommand, parseNoticeCommand } from '../shared/notifications';
 import { trustedSender } from './ipc';
 
 export function noticeIpc(

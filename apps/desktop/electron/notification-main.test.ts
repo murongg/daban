@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { NoticeActivation, NoticeMessage } from '../notifications';
+import type { NoticeActivation, NoticeMessage } from '../shared/notifications';
 
 const mock = vi.hoisted(() => ({
   ready: undefined as (() => unknown) | undefined,

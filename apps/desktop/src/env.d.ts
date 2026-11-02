@@ -1,6 +1,6 @@
 import type { RuntimeBridge } from '@daban/protocol';
-import type { LocaleBridge } from '../locale';
-import type { NoticeBridge } from '../notifications';
+import type { LocaleBridge } from '../shared/locale';
+import type { NoticeBridge } from '../shared/notifications';
 
 declare global {
   interface Window {

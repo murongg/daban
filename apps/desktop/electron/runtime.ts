@@ -107,8 +107,8 @@ import {
   workKey,
   workQueryKey,
 } from '@daban/protocol';
-import type { MessageKey } from '../locale';
-import { isTaskReceipt } from '../receipt';
+import type { MessageKey } from '../shared/locale';
+import { isTaskReceipt } from '../shared/receipt';
 
 // SSH forwards TCP unchanged. Use Node HTTP so the guest's canonical Host header is preserved.
 async function localRequest(url: string, init: RequestInit = {}): Promise<Response> {

@@ -9,7 +9,7 @@ import {
   powerMonitor,
   session,
 } from 'electron';
-import { type MessageKey, type Parameters, translate } from '../locale';
+import { type MessageKey, type Parameters, translate } from '../shared/locale';
 import { LocalComputer } from './local-computer';
 import { localServer } from './local-server';
 import { LocalePreferences } from './locale';

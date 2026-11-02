@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { disconnected } from '@daban/protocol';
 import { expect, it, vi } from 'vitest';
-import type { NoticeActivation } from '../notifications';
+import type { NoticeActivation } from '../shared/notifications';
 
 const mock = vi.hoisted(() => ({
   native: [] as {

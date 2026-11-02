@@ -1,5 +1,5 @@
-import { isLocale, localeStorageKey } from '../locale';
-import { type ClientCache, clientCache, setCache } from '../src/cache';
+import { isLocale, localeStorageKey } from '../shared/locale';
+import { type ClientCache, clientCache, setCache } from '../src/app/cache';
 
 export function previewStorage(storage: ClientCache, scene: string): ClientCache {
   const prefix = `daban.preview:${scene}:`;
