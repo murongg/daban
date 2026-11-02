@@ -119,6 +119,7 @@ export async function buildExecutor(target: string) {
     if (graph.includes(forbidden)) throw new Error(`EXECUTOR_HOST_MODULE:${forbidden}`);
   await mkdir(target, { recursive: true });
   await packageLibrary(target, graph);
+  await copyFile(path.join(root, 'LICENSE'), path.join(target, 'LICENSE'));
   await copyFile(path.join(root, 'dist-runtime/main.js'), path.join(target, 'main.js'));
   await writeFile(
     path.join(target, 'package.json'),
@@ -173,6 +174,7 @@ export async function packageHost(target: string, nodeDirectory: string) {
     'HOST_NODE_VERSION',
   );
   await mkdir(target, { recursive: true });
+  await copyFile(path.join(root, 'LICENSE'), path.join(target, 'LICENSE'));
   const vendor = path.join(target, 'vendor');
   await mkdir(vendor, { recursive: true });
   await cp(path.join(root, 'packages/engine'), path.join(vendor, 'engine'), {

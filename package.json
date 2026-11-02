@@ -54,5 +54,6 @@
     "apps/runtime",
     "packages/protocol",
     "packages/engine"
-  ]
+  ],
+  "license": "AGPL-3.0-only"
 }
