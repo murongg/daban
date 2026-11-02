@@ -37,6 +37,8 @@ import {
   isRecoveryRequest,
   isSkillBinding,
   isSkillContent,
+  isSkillPackage,
+  isSkillPath,
   isTaskFileName,
   isTranscriptContentQuery,
   isTranscriptQuery,
@@ -79,6 +81,7 @@ import { nativeSchedules } from './schedule-domain.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
+import { skillHash, writeSkillZip } from './skill-package.js';
 import { type SoftwareBackend, SoftwareClient } from './software.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
@@ -142,6 +145,8 @@ const recoveryReads = new Set([
   '/api/knowledge/versions',
   '/api/skills/list',
   '/api/skills/read',
+  '/api/skills/resource',
+  '/api/skills/export-package',
   '/api/bundles/export',
   '/api/bundles/cancel',
   '/api/schedules/get',
@@ -857,6 +862,10 @@ export async function startPrototype({
               list: ['bot', 'includeDeleted'],
               read: ['bot', 'id'],
               import: ['bot', 'content'],
+              'import-package': ['bot', 'package'],
+              'update-package': ['bot', 'id', 'revision', 'package'],
+              'export-package': ['bot', 'id', 'revision'],
+              resource: ['bot', 'id', 'revision', 'path'],
               update: ['bot', 'id', 'revision', 'content'],
               recycle: ['bot', 'id', 'revision'],
               restore: ['bot', 'id', 'revision'],
@@ -869,6 +878,42 @@ export async function startPrototype({
             )
               throw new Fault('INVALID_SKILL', 400);
             if (!(await models.profiles.get(data.bot))) throw new Fault('SKILL_BOT_NOT_FOUND', 404);
+            if (action === 'import-package' && isSkillPackage(data.package)) {
+              models.profiles.assertActive(data.bot);
+              return json(res, await models.skills.importPackage(data.package));
+            }
+            if (
+              validAgentId(data.id) &&
+              Number.isSafeInteger(data.revision) &&
+              Number(data.revision) > 0
+            ) {
+              if (action === 'update-package' && isSkillPackage(data.package)) {
+                models.profiles.assertActive(data.bot);
+                return json(
+                  res,
+                  await models.skills.updatePackage(data.id, Number(data.revision), data.package),
+                );
+              }
+              if (action === 'resource' && isSkillPath(data.path))
+                return json(
+                  res,
+                  await models.skills.readResource(data.id, Number(data.revision), data.path),
+                );
+              if (action === 'export-package') {
+                const bundle = await models.skills.exportPackage(data.id, Number(data.revision)),
+                  bytes = writeSkillZip(bundle);
+                return json(res, {
+                  id: data.id,
+                  revision: data.revision,
+                  archive: {
+                    name: `${bundle.root}.zip`,
+                    size: bytes.length,
+                    sha256: skillHash(bytes),
+                    data: bytes.toString('base64'),
+                  },
+                });
+              }
+            }
             if (
               action === 'list' &&
               (data.includeDeleted === undefined || typeof data.includeDeleted === 'boolean')

@@ -93,9 +93,12 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     assert.notEqual(held.sessionId, plain);
     const row = patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!;
     assert.ok(row);
-    const config = row.config as { invoked: string[]; skills: { content: string }[] };
+    const config = row.config as { invoked: string[]; skills: { name: string; content: string }[] };
     assert.deepEqual(config.invoked, ['mock-summary']);
-    assert.equal(config.skills[0].content, 'SYNTHETIC-ORIGINAL');
+    assert.equal(
+      config.skills.find((item) => item.name === 'mock-summary')?.content,
+      'SYNTHETIC-ORIGINAL',
+    );
     assert.ok(patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-skill'));
     assert.ok(patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-tool-skill'));
     assert.equal(
@@ -107,14 +110,21 @@ test('captured Bot skills use native plugins, change only the next task, and fen
       skill.revision,
       document('SYNTHETIC-UPDATED'),
     );
-    assert.equal(config.skills[0].content, 'SYNTHETIC-ORIGINAL');
+    assert.equal(
+      config.skills.find((item) => item.name === 'mock-summary')?.content,
+      'SYNTHETIC-ORIGINAL',
+    );
     hold = false;
     release();
     await held.done;
     await turn('mock-b', 'mock-other-no-skills', '合成其他 Bot 问候');
-    assert.equal(
-      patches.at(-1)!.rows.some((item) => item.id === 'daban-skills'),
-      false,
+    assert.deepEqual(
+      (
+        patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!.config as {
+          skills: { name: string }[];
+        }
+      ).skills.map((item) => item.name),
+      ['find-skills'],
     );
     const changed = await turn('mock-a', 'mock-skill-updated', '按启用技能处理合成记录');
     assert.notEqual(changed, held.sessionId);
@@ -132,9 +142,13 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     });
     const disabled = await turn('mock-a', 'mock-skill-disabled', '合成普通任务');
     assert.notEqual(disabled, changed);
-    assert.equal(
-      patches.at(-1)!.rows.some((item) => item.id === 'daban-skills'),
-      false,
+    assert.deepEqual(
+      (
+        patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!.config as {
+          skills: { name: string }[];
+        }
+      ).skills.map((item) => item.name),
+      ['find-skills'],
     );
     assert.equal(models.journal.history('mock-a').length, 5);
   } finally {

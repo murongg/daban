@@ -1,5 +1,12 @@
-import { isSkillBinding, isSkillCatalog, isSkillDocument, isSkillEntry } from '@daban/protocol';
-import { expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import {
+  disconnected,
+  isSkillBinding,
+  isSkillCatalog,
+  isSkillDocument,
+  isSkillEntry,
+} from '@daban/protocol';
+import { expect, it, vi } from 'vitest';
 import { parseCommand } from './ipc';
 import { RuntimeClient } from './runtime';
 
@@ -16,6 +23,67 @@ const entry = {
   enabled: false,
   bindingRevision: 0,
 };
+it('binds skill resource bytes to the selected revision, path and digest', async () => {
+  const bytes = Buffer.from('SYNTHETIC RESOURCE');
+  const valid = {
+    id: 'mock-skill',
+    revision: 2,
+    file: {
+      path: 'references/guide.txt',
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      executable: false,
+    },
+    data: bytes.toString('base64'),
+  };
+  let reply: unknown = valid;
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async () => Response.json(reply),
+  });
+  vi.spyOn(client, 'status').mockResolvedValue({ ...disconnected('ready'), protocolVersion: 40 });
+  const command = parseCommand({
+    type: 'skill.resource',
+    bot: 'mock-a',
+    id: valid.id,
+    revision: 2,
+    path: valid.file.path,
+  });
+  expect(await client.invoke(command)).toEqual(valid);
+  for (const invalid of [
+    { ...valid, revision: 3 },
+    { ...valid, file: { ...valid.file, path: 'other.txt' } },
+    { ...valid, data: Buffer.from('WRONG SAME LENGTH!').toString('base64') },
+  ]) {
+    reply = invalid;
+    await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  }
+});
+it('accepts standard package intents but never arbitrary host paths or package authority flags', () => {
+  const bundle = { files: [{ path: 'SKILL.md', data: btoa('SYNTHETIC') }] };
+  expect(parseCommand({ type: 'skill.package.import', bot: 'mock-a', package: bundle })).toEqual({
+    type: 'skill.package.import',
+    bot: 'mock-a',
+    package: bundle,
+  });
+  expect(parseCommand({ type: 'skill.pick', bot: 'mock-a', kind: 'directory' })).toEqual({
+    type: 'skill.pick',
+    bot: 'mock-a',
+    kind: 'directory',
+  });
+  expect(() =>
+    parseCommand({ type: 'skill.pick', bot: 'mock-a', kind: 'directory', path: '/private' }),
+  ).toThrow('INVALID_COMMAND');
+  expect(() =>
+    parseCommand({
+      type: 'skill.package.import',
+      bot: 'mock-a',
+      package: bundle,
+      permissions: 'all',
+    }),
+  ).toThrow('INVALID_COMMAND');
+});
 it('accepts only closed skill metadata, native invocation policy and revision-bound Bot changes', () => {
   expect(isSkillEntry(entry)).toBe(true);
   expect(isSkillEntry({ ...entry, name: '../escape' })).toBe(false);

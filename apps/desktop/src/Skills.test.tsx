@@ -33,8 +33,11 @@ afterEach(() => {
   Reflect.deleteProperty(window, 'daban');
   localStorage.clear();
 });
-function connect(extraBot?: string) {
-  let document = structuredClone(original),
+function connect(extraBot?: string, system = false) {
+  let document: SkillDocument = {
+      ...structuredClone(original),
+      ...(system ? { system: true as const } : {}),
+    },
     revision = 0;
   const bindings = new Map<string, { enabled: boolean; revision: number }>();
   const snapshot = disconnected('ready');
@@ -60,12 +63,12 @@ function connect(extraBot?: string) {
     snapshot.skills = { available: true, revision: ++revision };
     for (const listener of listeners) listener(structuredClone(snapshot));
   };
-  const entry = (bot: string) => {
+  const entry = (bot?: string) => {
     const { content: _content, ...value } = document;
     return {
       ...value,
-      enabled: !document.deleted && (bindings.get(bot)?.enabled ?? false),
-      bindingRevision: bindings.get(bot)?.revision ?? 0,
+      enabled: !document.deleted && (bindings.get(bot ?? '')?.enabled ?? false),
+      bindingRevision: bindings.get(bot ?? '')?.revision ?? 0,
     };
   };
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
@@ -353,4 +356,14 @@ it('shows a stale recycle failure inside the still-open confirmation without ref
     id: original.id,
     revision: 1,
   });
+});
+
+it('keeps a system skill readable and independently switchable while protecting its contents', async () => {
+  connect(undefined, true);
+  mount();
+  expect(await screen.findByText('系统内置')).toBeVisible();
+  expect(screen.getByRole('button', { name: '移入回收站 mock-workflow' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '查看 mock-workflow' }));
+  expect(await screen.findByRole('textbox', { name: '技能说明' })).toHaveAttribute('readonly');
+  expect(screen.getByRole('button', { name: '保存技能' })).toBeDisabled();
 });

@@ -2652,6 +2652,65 @@ export const english = {
   'skills.skillImportedEnableSeparatelyBotsNeed':
     'Skill imported. Enable it separately for the Bots that need it.',
   'skills.skillInstructions': 'Skill instructions',
+  'errors.skillPackageInvalid':
+    'Invalid skill package. Select a folder or ZIP containing SKILL.md.',
+  'errors.skillPackageTooLarge': 'A skill package supports up to 200 files and 5 MiB unpacked.',
+  'errors.skillStorageLimit': 'Skill resource storage is full. Remove unused skills and try again.',
+  'errors.skillFileMissing': 'Skill file not found. Refresh the library.',
+  'errors.skillSourceInvalid': 'Enter a public GitHub repository or skill directory URL.',
+  'errors.skillSourceUnavailable':
+    'Cannot reach the skill library. Check your connection and retry.',
+  'errors.skillSourceRateLimited': 'The skill library rate limit was reached. Try again later.',
+  'errors.skillSourceBlocked': 'The library does not permit this download. Check the source page.',
+  'errors.skillSourceAuth':
+    'This source requires authentication. Only public skills are supported.',
+  'errors.skillSourceNotFound': 'Skill package not found. Check the source URL.',
+  'errors.skillSourceChanged': 'The source or version changed. Preview it again before installing.',
+  'errors.skillSourceTooLarge':
+    'This repository or package is too large. Select a smaller skill directory.',
+  'errors.skillSourceResponse': 'The library returned an unsupported response. Try again later.',
+  'errors.skillRuntimeOld': 'Update the execution environment before preparing skill files.',
+  'skills.libraryVersion': 'Skill revision',
+  'skills.updatedLabel': 'Last updated',
+  'skills.authorLabel': 'Author',
+  'skills.licenseLabel': 'License',
+  'skills.requirementsLabel': 'Requirements',
+  'skills.systemBuiltin': 'Built in',
+  'skills.systemReadOnly':
+    'System skills are read-only and can be disabled separately for each Bot.',
+  'skills.viewSystemSkill': 'View',
+  'errors.systemSkillReadOnly':
+    'Built-in skills cannot be edited or deleted. Disable them for this Bot instead.',
+  'skills.installTitle': 'Install skill',
+  'skills.reviewPackage': 'Review skill package',
+  'skills.packageSupport':
+    'Import standard Agent Skills folders or ZIP files, including scripts, references, and assets. Single SKILL.md files remain supported.',
+  'skills.chooseDirectory': 'Choose skill folder',
+  'skills.choosePackageFile': 'Choose SKILL.md or ZIP',
+  'skills.packageLimits':
+    'Choose a folder containing SKILL.md directly. Up to 200 files and 5 MiB unpacked per skill. Importing runs no code and installs no dependencies.',
+  'skills.chooseAnother': 'Choose another source',
+  'skills.replacePackageHelp':
+    'This skill already exists. Confirming replaces its instructions and files for all Bots using it. Active tasks retain their original snapshot.',
+  'skills.replaceInstructionsHelp':
+    'Update the instructions while retaining existing files. Changes affect all Bots using this skill.',
+  'skills.packageFileCount': '{0} files',
+  'skills.packageFiles': 'Skill package files',
+  'skills.binaryPreview': 'Binary resources are retained in full for download or use in a task.',
+  'skills.previewClipped':
+    'Preview shows the first 32,000 characters. Installation retains the complete file.',
+  'skills.installHelp':
+    'Save to the shared skill library without running scripts. Enable new skills separately for each Bot; existing enablement is retained.',
+  'skills.updatePackage': 'Update existing skill',
+  'skills.installPackage': 'Install to library',
+  'skills.packageInstalled': 'Skill saved. Enable new skills for the intended Bots.',
+  'skills.resourceFiles': 'Supporting files',
+  'skills.exportPackage': 'Export complete ZIP',
+  'skills.replacePackage': 'Replace skill package',
+  'skills.downloadResource': 'Download file',
+  'skills.resourceChanged':
+    'The skill revision changed. Review current instructions and reopen its files.',
+  'skills.noSupportingFiles': 'This skill contains SKILL.md only, with no supporting files.',
   'skills.skills': 'Skills for {0}',
   'skills.skillSavedPerBotEnablementRetainedChanges':
     'Skill saved. Per-Bot enablement is retained; changes apply to the next task.',

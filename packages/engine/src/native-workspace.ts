@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { isTaskFileName, validAgentId } from '@daban/protocol';
+import { isSkillPackage, isTaskFileName, type SkillPackage, validAgentId } from '@daban/protocol';
 import { Fault } from './control.js';
 import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './workspace.js';
 
@@ -116,5 +117,67 @@ export class NativeWorkspace implements AgentWorkspace {
         }
       },
     };
+  }
+  async stageSkill(bundle: SkillPackage, signal?: AbortSignal) {
+    if (!isSkillPackage(bundle)) throw new Fault('INVALID_SKILL_PACKAGE', 400);
+    signal?.throwIfAborted();
+    const root = await this.base(),
+      destination = path.join(root, `.skills-${randomUUID()}`);
+    await mkdir(destination, { mode: 0o700 });
+    const identity = await lstat(destination);
+    const verify = async () => {
+      const now = await lstat(destination);
+      if (
+        !now.isDirectory() ||
+        now.isSymbolicLink() ||
+        now.ino !== identity.ino ||
+        now.dev !== identity.dev ||
+        (await realpath(destination)) !== destination ||
+        (await this.base()) !== root
+      )
+        throw new Fault('TASK_DIRECTORY_MOVED');
+    };
+    for (const file of bundle.files) {
+      signal?.throwIfAborted();
+      await verify();
+      const parts = file.path.split('/'),
+        leaf = parts.pop()!;
+      let directory = destination;
+      for (const part of parts) {
+        directory = path.join(directory, part);
+        try {
+          await mkdir(directory, { mode: 0o700 });
+        } catch (error) {
+          if ((error as { code?: string }).code !== 'EEXIST') throw error;
+        }
+        const info = await lstat(directory);
+        if (
+          !info.isDirectory() ||
+          info.isSymbolicLink() ||
+          !(await realpath(directory)).startsWith(destination + path.sep)
+        )
+          throw new Fault('TASK_DIRECTORY_MOVED');
+      }
+      const target = path.join(directory, leaf),
+        output = await open(target, 'wx', file.executable ? 0o700 : 0o600);
+      try {
+        const info = await output.stat(),
+          named = await lstat(target);
+        if (
+          !info.isFile() ||
+          info.nlink !== 1 ||
+          named.isSymbolicLink() ||
+          named.ino !== info.ino ||
+          named.dev !== info.dev
+        )
+          throw new Fault('INVALID_SKILL_PACKAGE');
+        await verify();
+        await output.writeFile(Buffer.from(file.data, 'base64'), { signal });
+      } finally {
+        await output.close();
+      }
+    }
+    await verify();
+    return destination;
   }
 }

@@ -64,7 +64,7 @@ describe('portable content protocol', () => {
   });
   it('rejects unknown versions, duplicate names/paths, sparse arrays, traversal and oversized content', () => {
     const data = bundle();
-    expect(isBotBundle({ ...data, version: 2 })).toBe(false);
+    expect(isBotBundle({ ...data, version: 3 })).toBe(false);
     expect(isBotBundle({ ...data, skills: [data.skills[0], data.skills[0]] })).toBe(false);
     expect(isBotBundle({ ...data, knowledge: [data.knowledge[0], data.knowledge[0]] })).toBe(false);
     expect(

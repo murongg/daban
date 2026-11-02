@@ -1,8 +1,15 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { type FileHandle, lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { documentLimit, isTaskFileName, type RuntimeDownload, validAgentId } from '@daban/protocol';
+import {
+  documentLimit,
+  isSkillPackage,
+  isTaskFileName,
+  type RuntimeDownload,
+  type SkillPackage,
+  validAgentId,
+} from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
 
 export interface WorkspaceFile {
@@ -29,6 +36,7 @@ export interface AgentWorkspace {
   read(relative: string, limit?: number): Promise<WorkspaceFile & { content: string }>;
   download(relative: string): Promise<RuntimeDownload>;
   scope(root: string, canonical?: string): AgentWorkspace;
+  stageSkill?(bundle: SkillPackage, signal?: AbortSignal): Promise<string>;
 }
 export class WorkspaceFiles implements AgentWorkspace {
   root: string;
@@ -109,6 +117,67 @@ export class WorkspaceFiles implements AgentWorkspace {
     };
     await walk(root, 0);
     return result.sort((a, b) => b.modified.localeCompare(a.modified)).slice(0, 200);
+  }
+  async stageSkill(bundle: SkillPackage, signal?: AbortSignal) {
+    if (!isSkillPackage(bundle)) throw new Fault('INVALID_SKILL_PACKAGE', 400);
+    signal?.throwIfAborted();
+    const root = await this.base(),
+      flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+    const parent = await open(root, flags),
+      name = `.skills-${randomUUID()}`;
+    try {
+      await mkdir(path.join(directoryPath(parent, root), name), { mode: 0o700 });
+      const destination = path.join(root, name),
+        base = await open(path.join(directoryPath(parent, root), name), flags);
+      try {
+        for (const file of bundle.files) {
+          signal?.throwIfAborted();
+          const parts = file.path.split('/'),
+            leaf = parts.pop()!;
+          let handle = base,
+            current = destination;
+          try {
+            for (const part of parts) {
+              const next = path.join(directoryPath(handle, current), part);
+              try {
+                await mkdir(next, { mode: 0o700 });
+              } catch (error) {
+                if (errorCode(error) !== 'EEXIST') throw error;
+              }
+              const child = await open(next, flags);
+              if (handle !== base) await handle.close();
+              handle = child;
+              current = await realpath(directoryPath(child, path.join(current, part)));
+              if (!current.startsWith(destination + path.sep))
+                throw new Fault('TASK_DIRECTORY_MOVED');
+            }
+            if (
+              (await realpath(destination)) !== destination ||
+              (await realpath(this.root)) !== root
+            )
+              throw new Fault('TASK_DIRECTORY_MOVED');
+            // New files only, rooted in opened directories; a package cannot replace a link or overwrite work files.
+            const output = await open(
+              path.join(directoryPath(handle, current), leaf),
+              constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+              file.executable ? 0o700 : 0o600,
+            );
+            try {
+              await output.writeFile(Buffer.from(file.data, 'base64'), { signal });
+            } finally {
+              await output.close();
+            }
+          } finally {
+            if (handle !== base) await handle.close();
+          }
+        }
+      } finally {
+        await base.close();
+      }
+      return destination;
+    } finally {
+      await parent.close();
+    }
   }
   async read(relative: string, limit = 1024 * 1024) {
     const { data, ...file } = await this.bytes(relative, limit);

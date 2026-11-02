@@ -7,15 +7,24 @@ import {
   isSkillBinding,
   isSkillCatalog,
   isSkillDocument,
-  isSkillName,
+  isSkillPath,
   type SkillBinding,
   type SkillCatalog,
   type SkillDocument,
   type SkillEntry,
   type SkillInvocation,
+  type SkillPackage,
+  type SkillPackageInfo,
+  type SkillResource,
+  type SkillResourceData,
   validAgentId,
 } from '@daban/protocol';
-import { parse } from 'yaml';
+import { parseSkill } from './skill-content.js';
+import { type SkillFileSet, SkillFiles } from './skill-files.js';
+import { skillHash } from './skill-package.js';
+
+export { parseSkill } from './skill-content.js';
+
 import { Fault } from './control.js';
 
 export interface SkillRecipe {
@@ -23,69 +32,22 @@ export interface SkillRecipe {
   description: string;
   content: string;
   invocation: SkillInvocation;
+  metadata?: Record<string, unknown>;
+  package?: SkillPackageInfo;
+  files?: SkillResource[];
 }
 export interface SkillSnapshot {
   available: boolean;
   key: string;
   skills: SkillRecipe[];
 }
+export interface SkillDefault {
+  id: string;
+  package: SkillPackage;
+}
 const invalid = (): never => {
   throw new Fault('INVALID_SKILL', 400);
 };
-export function parseSkill(content: unknown) {
-  if (
-    typeof content !== 'string' ||
-    content.length > 100000 ||
-    Buffer.byteLength(content) > 200000 ||
-    content.includes('\0')
-  )
-    return invalid();
-  const match = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
-  if (!match) return invalid();
-  let data: Record<string, unknown>;
-  try {
-    const value: unknown = parse(match[1], { uniqueKeys: true, maxAliasCount: 0 });
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid();
-    data = value as Record<string, unknown>;
-  } catch {
-    return invalid();
-  }
-  const name = typeof data.name === 'string' ? data.name.trim() : '';
-  const description = typeof data.description === 'string' ? data.description.trim() : '';
-  const body = content.slice(match[0].length).trim();
-  if (
-    !isSkillName(name) ||
-    !description ||
-    description.length > 2000 ||
-    !body ||
-    ['disableModelInvocation', 'modelInvocable', 'userInvocable'].some((key) =>
-      Object.hasOwn(data, key),
-    )
-  )
-    return invalid();
-  const flag = (key: string, fallback: boolean) => {
-    if (!Object.hasOwn(data, key)) return fallback;
-    const value = data[key];
-    if (typeof value === 'boolean') return value;
-    if (value === 1 || value === '1') return true;
-    if (value === 0 || value === '0') return false;
-    if (typeof value === 'string') {
-      if (['true', 'yes', 'on'].includes(value.toLowerCase())) return true;
-      if (['false', 'no', 'off'].includes(value.toLowerCase())) return false;
-    }
-    return invalid();
-  };
-  return {
-    name,
-    description,
-    content,
-    body,
-    invocation: {
-      modelInvocable: !flag('disable-model-invocation', false),
-      userInvocable: flag('user-invocable', true),
-    },
-  };
-}
 type Row = Record<string, unknown>;
 export class Skills {
   // shortcut: one runtime writes a data root; add a process lease before allowing multiple services.
@@ -93,7 +55,16 @@ export class Skills {
   private db?: DatabaseSync;
   private failed = false;
   private closed = false;
-  constructor(readonly file: string) {
+  private files?: SkillFiles;
+  private readonly snapshots = new WeakMap<
+    SkillSnapshot,
+    Map<string, { id: string; revision: number; content: string; resources: string | null }>
+  >();
+  private readonly pins = new Map<string, number>();
+  constructor(
+    readonly file: string,
+    private readonly defaults: readonly SkillDefault[] = [],
+  ) {
     this.ready = this.load().catch(() => {
       this.failed = true;
     });
@@ -114,6 +85,7 @@ export class Skills {
     await chmod(this.file, 0o600);
     const db = new DatabaseSync(this.file);
     this.db = db;
+    this.files = new SkillFiles(db);
     const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
@@ -122,8 +94,10 @@ export class Skills {
       .sort();
     if (
       (version === 0 && tables.length) ||
-      (version !== 0 && version !== 1) ||
-      (version === 1 && tables.join(',') !== 'skill_bindings,skill_meta,skills')
+      ![0, 1, 2].includes(version) ||
+      (version === 1 && tables.join(',') !== 'skill_bindings,skill_meta,skills') ||
+      (version === 2 &&
+        tables.join(',') !== 'skill_bindings,skill_files,skill_meta,skill_packages,skills')
     )
       throw new Fault('SKILLS_UNAVAILABLE', 503);
     db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
@@ -158,6 +132,26 @@ export class Skills {
       )
         throw new Fault('SKILLS_UNAVAILABLE', 503);
     }
+    // Validate existing consent and content before migrating; a corrupt store must never be "repaired" by migration.
+    if (version < 2) this.files.migrate();
+    for (const skill of this.defaults) {
+      if (!validAgentId(skill.id)) throw new Fault('INVALID_SKILL');
+      const prepared = this.files.prepare(skill.package),
+        parsed = parseSkill(prepared.content, true);
+      // Defaults never replace user-authored names or consume the last slot of a full existing library.
+      if (
+        db.prepare('SELECT id FROM skills WHERE id=? OR name=?').get(skill.id, parsed.name) ||
+        Number(db.prepare('SELECT COUNT(*) AS count FROM skills').get()!.count) >= 100
+      )
+        continue;
+      const now = new Date().toISOString();
+      this.transaction(() => {
+        this.files!.save(prepared.set);
+        db.prepare(
+          'INSERT INTO skills(id,name,revision,content,deleted,created,updated,resources) VALUES(?,?,1,?,0,?,?,?)',
+        ).run(skill.id, parsed.name, prepared.content, now, now, prepared.set.key);
+      });
+    }
   }
   private available() {
     if (this.failed || this.closed || !this.db) throw new Fault('SKILLS_UNAVAILABLE', 503);
@@ -176,6 +170,7 @@ export class Skills {
     db.exec('BEGIN IMMEDIATE');
     try {
       const result = action();
+      this.files!.collect(new Set(this.pins.keys()));
       if (this.revision() >= Number.MAX_SAFE_INTEGER - 1) throw new Fault('SKILL_LIMIT');
       db.prepare('UPDATE skill_meta SET revision=revision+1 WHERE id=1').run();
       db.exec('COMMIT');
@@ -200,7 +195,7 @@ export class Skills {
     return row;
   }
   private document(row: Row): SkillDocument {
-    const parsed = parseSkill(row.content);
+    const parsed = parseSkill(row.content, typeof row.resources === 'string');
     const result = {
       id: row.id,
       name: parsed.name,
@@ -212,6 +207,8 @@ export class Skills {
       updatedAt: row.updated,
       content: parsed.content,
       invocation: parsed.invocation,
+      ...(this.defaults.some((skill) => skill.id === row.id) ? { system: true as const } : {}),
+      ...this.files!.info(parsed.content, row.resources),
     };
     if (
       row.name !== result.name ||
@@ -222,13 +219,23 @@ export class Skills {
     return result;
   }
   private entry(bot: string, row: Row): SkillEntry {
-    const { content: _content, ...summary } = this.document(row);
+    const { content: _content, files: _files, ...summary } = this.document(row);
     const binding = this.available()
       .prepare('SELECT * FROM skill_bindings WHERE bot=? AND skill=?')
       .get(bot, summary.id);
+    // A newly shipped default must not displace an existing Bot's twenty explicitly enabled skills.
+    const defaultEnabled =
+      !!summary.system &&
+      Number(
+        this.available()
+          .prepare(
+            'SELECT COUNT(*) AS count FROM skill_bindings b JOIN skills s ON s.id=b.skill WHERE b.bot=? AND b.enabled=1 AND s.deleted=0',
+          )
+          .get(bot)!.count,
+      ) < 20;
     return {
       ...summary,
-      enabled: !summary.deleted && binding?.enabled === 1,
+      enabled: !summary.deleted && (binding ? binding.enabled === 1 : defaultEnabled),
       bindingRevision: Number(binding?.revision ?? 0),
     };
   }
@@ -249,30 +256,45 @@ export class Skills {
     await this.ready;
     return this.document(this.row(id));
   }
-  private importPlan(contents: string[]) {
+  private importPlan(contents: (string | SkillPackage)[]) {
     if (!Array.isArray(contents) || contents.length > 20) return invalid();
-    const parsed = Array.from(contents).map(parseSkill),
+    const parsed = Array.from(contents).map((input) => {
+        if (typeof input === 'string')
+          return { parsed: parseSkill(input), set: undefined as SkillFileSet | undefined };
+        const prepared = this.files!.prepare(input);
+        return { parsed: parseSkill(prepared.content, true), set: prepared.set };
+      }),
       db = this.available();
-    if (new Set(parsed.map((item) => item.name)).size !== parsed.length) return invalid();
-    const entries = parsed.map((item) => ({
+    if (new Set(parsed.map((item) => item.parsed.name)).size !== parsed.length) return invalid();
+    const entries = parsed.map(({ parsed: item, set }) => ({
       item,
+      set,
       prior: db.prepare('SELECT * FROM skills WHERE name=?').get(item.name),
     }));
     for (const entry of entries) {
       if (entry.prior?.deleted === 1) throw new Fault('SKILL_ARCHIVED');
-      if (entry.prior && entry.prior.content !== entry.item.content)
+      if (
+        entry.prior &&
+        (entry.prior.content !== entry.item.content ||
+          JSON.stringify(this.files!.manifest(entry.prior.resources)) !==
+            JSON.stringify(entry.set?.manifest ?? []))
+      )
         throw new Fault('SKILL_NAME_CONFLICT');
     }
     const count = Number(db.prepare('SELECT COUNT(*) AS count FROM skills').get()!.count);
     if (count + entries.filter((entry) => !entry.prior).length > 100)
       throw new Fault('SKILL_LIMIT');
+    this.files!.checkCapacity(
+      entries.flatMap((entry) => (entry.set ? [entry.set] : [])),
+      new Set(this.pins.keys()),
+    );
     return entries;
   }
-  async checkImport(contents: string[]) {
+  async checkImport(contents: (string | SkillPackage)[]) {
     await this.ready;
     this.importPlan(contents);
   }
-  async importBatch(contents: string[]) {
+  async importBatch(contents: (string | SkillPackage)[]) {
     await this.ready;
     const plan = this.importPlan(contents);
     if (plan.every((entry) => entry.prior)) return plan.map((entry) => this.document(entry.prior!));
@@ -281,9 +303,12 @@ export class Skills {
         if (entry.prior) return this.document(entry.prior);
         const id = randomUUID(),
           now = new Date().toISOString();
+        if (entry.set) this.files!.save(entry.set);
         this.available()
-          .prepare('INSERT INTO skills VALUES(?,?,1,?,0,?,?)')
-          .run(id, entry.item.name, entry.item.content, now, now);
+          .prepare(
+            'INSERT INTO skills(id,name,revision,content,deleted,created,updated,resources) VALUES(?,?,1,?,0,?,?,?)',
+          )
+          .run(id, entry.item.name, entry.item.content, now, now, entry.set?.key ?? null);
         return this.document(this.row(id));
       }),
     );
@@ -291,18 +316,33 @@ export class Skills {
   async import(content: string) {
     return (await this.importBatch([content]))[0];
   }
+  async importPackage(bundle: SkillPackage) {
+    return (await this.importBatch([bundle]))[0];
+  }
   private check(row: Row, revision: number) {
     if (!Number.isSafeInteger(revision) || revision < 1) throw new Fault('INVALID_SKILL', 400);
     if (row.revision !== revision) throw new Fault('SKILL_CONFLICT');
     if (revision >= Number.MAX_SAFE_INTEGER - 1) throw new Fault('SKILL_LIMIT');
   }
+  private mutable(id: string) {
+    if (this.defaults.some((skill) => skill.id === id))
+      throw new Fault('SKILL_SYSTEM_READ_ONLY', 409);
+  }
+  private activeRows(bot: string) {
+    return this.available()
+      .prepare('SELECT * FROM skills WHERE deleted=0 ORDER BY name')
+      .all()
+      .filter((row) => this.entry(bot, row).enabled);
+  }
   async update(id: string, revision: number, content: string) {
     await this.ready;
     const row = this.row(id);
+    this.mutable(id);
     this.check(row, revision);
     if (row.deleted === 1) throw new Fault('SKILL_ARCHIVED');
-    const parsed = parseSkill(content),
+    const parsed = parseSkill(content, typeof row.resources === 'string'),
       db = this.available();
+    this.files!.info(content, row.resources);
     if (db.prepare('SELECT id FROM skills WHERE name=? AND id<>?').get(parsed.name, id))
       throw new Fault('SKILL_NAME_CONFLICT');
     if (row.content !== content)
@@ -313,8 +353,113 @@ export class Skills {
       );
     return this.document(this.row(id));
   }
+  async updatePackage(id: string, revision: number, bundle: SkillPackage) {
+    await this.ready;
+    const row = this.row(id);
+    this.mutable(id);
+    this.check(row, revision);
+    if (row.deleted === 1) throw new Fault('SKILL_ARCHIVED');
+    const prepared = this.files!.prepare(bundle),
+      parsed = parseSkill(prepared.content, true);
+    if (
+      this.available().prepare('SELECT id FROM skills WHERE name=? AND id<>?').get(parsed.name, id)
+    )
+      throw new Fault('SKILL_NAME_CONFLICT');
+    if (
+      row.content !== prepared.content ||
+      JSON.stringify(this.files!.manifest(row.resources)) !== JSON.stringify(prepared.set.manifest)
+    )
+      this.transaction(() => {
+        this.files!.save(prepared.set);
+        this.available()
+          .prepare(
+            'UPDATE skills SET name=?,content=?,resources=?,revision=revision+1,updated=? WHERE id=?',
+          )
+          .run(parsed.name, prepared.content, prepared.set.key, new Date().toISOString(), id);
+      });
+    return this.document(this.row(id));
+  }
+  async readResource(id: string, revision: number, name: string): Promise<SkillResourceData> {
+    await this.ready;
+    const row = this.row(id);
+    this.check(row, revision);
+    return this.resource(
+      {
+        id,
+        revision,
+        content: String(row.content),
+        resources: typeof row.resources === 'string' ? row.resources : null,
+      },
+      name,
+    );
+  }
+  private resource(
+    source: { id: string; revision: number; content: string; resources: string | null },
+    name: string,
+  ): SkillResourceData {
+    if (!isSkillPath(name)) return invalid();
+    if (name === 'SKILL.md')
+      return {
+        id: source.id,
+        revision: source.revision,
+        file: {
+          path: name,
+          size: Buffer.byteLength(source.content),
+          sha256: skillHash(source.content),
+          executable: false,
+        },
+        data: Buffer.from(source.content).toString('base64'),
+      };
+    if (!source.resources) throw new Fault('SKILL_FILE_NOT_FOUND', 404);
+    return {
+      id: source.id,
+      revision: source.revision,
+      ...this.files!.read(source.resources, name),
+    };
+  }
+  async exportPackage(id: string, revision: number) {
+    await this.ready;
+    const row = this.row(id);
+    this.check(row, revision);
+    return this.files!.bundle(
+      String(row.content),
+      typeof row.resources === 'string' ? row.resources : null,
+    );
+  }
+  private captured(snapshot: SkillSnapshot, name: string) {
+    this.available();
+    const source = this.snapshots.get(snapshot)?.get(name);
+    if (!source) throw new Fault('SKILL_SNAPSHOT_EXPIRED', 410);
+    return source;
+  }
+  async readCaptured(snapshot: SkillSnapshot, name: string, file: string) {
+    await this.ready;
+    return this.resource(this.captured(snapshot, name), file);
+  }
+  async listCaptured(snapshot: SkillSnapshot, name: string) {
+    await this.ready;
+    const source = this.captured(snapshot, name);
+    return [this.resource(source, 'SKILL.md').file, ...this.files!.manifest(source.resources)];
+  }
+  async exportCaptured(snapshot: SkillSnapshot, name: string) {
+    await this.ready;
+    const source = this.captured(snapshot, name);
+    return this.files!.bundle(source.content, source.resources);
+  }
+  release(snapshot: SkillSnapshot) {
+    const sources = this.snapshots.get(snapshot);
+    if (!sources) return;
+    for (const source of sources.values())
+      if (source.resources) {
+        const count = this.pins.get(source.resources) ?? 0;
+        if (count <= 1) this.pins.delete(source.resources);
+        else this.pins.set(source.resources, count - 1);
+      }
+    this.snapshots.delete(snapshot);
+  }
   private async setDeleted(id: string, revision: number, deleted: boolean) {
     await this.ready;
+    this.mutable(id);
     const row = this.row(id);
     this.check(row, revision);
     if ((row.deleted === 1) !== deleted)
@@ -348,17 +493,13 @@ export class Skills {
     const current = this.entry(bot, row);
     if (current.bindingRevision !== input.bindingRevision)
       throw new Fault('SKILL_BINDING_CONFLICT');
-    if (current.enabled !== input.enabled) {
+    // Remember an explicit opt-out even when a full Bot currently leaves the default inactive.
+    if (
+      current.enabled !== input.enabled ||
+      (current.system && current.bindingRevision === 0 && !input.enabled)
+    ) {
       const db = this.available();
-      if (
-        input.enabled &&
-        Number(
-          db
-            .prepare('SELECT COUNT(*) AS count FROM skill_bindings WHERE bot=? AND enabled=1')
-            .get(bot)!.count,
-        ) >= 20
-      )
-        throw new Fault('SKILL_ACTIVE_LIMIT');
+      if (input.enabled && this.activeRows(bot).length >= 20) throw new Fault('SKILL_ACTIVE_LIMIT');
       this.transaction(() =>
         db
           .prepare(
@@ -373,14 +514,10 @@ export class Skills {
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('INVALID_SKILL', 400);
     try {
-      const rows = this.available()
-        .prepare(
-          'SELECT s.* FROM skills s JOIN skill_bindings b ON b.skill=s.id WHERE b.bot=? AND b.enabled=1 AND s.deleted=0 ORDER BY s.name',
-        )
-        .all(bot);
+      const rows = this.activeRows(bot);
       if (rows.length > 20) throw new Fault('SKILLS_UNAVAILABLE', 503);
       const documents = rows.map((row) => this.document(row));
-      return {
+      const snapshot: SkillSnapshot = {
         available: true,
         key: documents.length
           ? createHash('sha256')
@@ -388,15 +525,33 @@ export class Skills {
               .digest('hex')
           : '',
         skills: documents.map((item) => {
-          const parsed = parseSkill(item.content);
+          const parsed = parseSkill(item.content, !!item.package);
           return {
             name: item.name,
             description: item.description,
-            content: parsed.body,
+            content: parsed.body || parsed.description,
             invocation: { ...item.invocation },
+            ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
+            ...(item.package ? { package: item.package, files: item.files } : {}),
           };
         }),
       };
+      const sources = new Map(
+        rows.map((row) => [
+          String(row.name),
+          {
+            id: String(row.id),
+            revision: Number(row.revision),
+            content: String(row.content),
+            resources: typeof row.resources === 'string' ? row.resources : null,
+          },
+        ]),
+      );
+      this.snapshots.set(snapshot, sources);
+      for (const source of sources.values())
+        if (source.resources)
+          this.pins.set(source.resources, (this.pins.get(source.resources) ?? 0) + 1);
+      return snapshot;
     } catch {
       return { available: false, key: 'unavailable', skills: [] };
     }

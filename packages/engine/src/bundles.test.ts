@@ -4,7 +4,7 @@ import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { type BotBundle, botBundleText } from '@daban/protocol';
+import { type BotBundle, botBundleText, isBotBundle } from '@daban/protocol';
 import { BotBundles } from './bundles.js';
 import { Fault } from './control.js';
 import { Knowledge } from './knowledge.js';
@@ -367,6 +367,69 @@ test('original documents are an explicit export choice and cannot be included th
       (await f.transfers.export({ ...query, originals: true })).knowledge[0].original,
       original,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test('complete skill packages survive Bot export and import without changing legacy bundle receipts', async () => {
+  const f = await fixture();
+  try {
+    const profile = await f.profiles.register({
+      id: 'mock-package-bot',
+      name: 'Synthetic',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+    const pkg = {
+      root: 'mock-outline',
+      files: [
+        { path: 'SKILL.md', data: Buffer.from(recipe).toString('base64') },
+        { path: 'assets/template.bin', data: Buffer.from([0, 255, 1]).toString('base64') },
+        {
+          path: 'scripts/report.py',
+          data: Buffer.from('print("SYNTHETIC")\n').toString('base64'),
+          executable: true,
+        },
+      ],
+    };
+    const skill = await f.skills.importPackage(pkg);
+    await f.skills.bind(profile.id, {
+      id: skill.id,
+      revision: skill.revision,
+      bindingRevision: 0,
+      enabled: true,
+    });
+    const exported = await f.transfers.export({
+      bot: profile.id,
+      revision: profile.revision,
+      memory: false,
+      skills: [{ id: skill.id, revision: skill.revision }],
+      knowledge: [],
+    });
+    assert.equal(exported.version, 2);
+    assert.equal(isBotBundle(exported), true);
+    const text = botBundleText(exported);
+    assert.ok(text.includes('assets/template.bin'));
+    const h = header(exported, 'mock-complete-package');
+    await f.transfers.begin(h);
+    await f.transfers.submit(h.id, JSON.parse(text));
+    await f.transfers.settled;
+    assert.equal((await f.transfers.status(h.id)).state, 'complete');
+    const full = await f.skills.exportPackage(skill.id, skill.revision);
+    assert.deepEqual(
+      full.files.find((file) => file.path === 'assets/template.bin')?.data,
+      pkg.files[1].data,
+    );
+    const mismatched = JSON.parse(text);
+    mismatched.skills[0].content = recipe + 'CHANGED';
+    assert.equal(isBotBundle(mismatched), false);
+    const legacy = bundle();
+    assert.equal(JSON.parse(botBundleText(legacy)).version, 1);
+    const downgrade = JSON.parse(text);
+    downgrade.version = 1;
+    assert.equal(isBotBundle(downgrade), false);
   } finally {
     await f.close();
   }

@@ -118,7 +118,7 @@ export async function resolvePublic(
   const literal = isIP(host);
   const addresses = literal
     ? [{ address: host, family: literal }]
-    : await fallbackLookup(host, signal, resolve);
+    : await fallbackLookup(host, signal, resolve, fetch, publicAddress);
   signal.throwIfAborted();
   if (
     !addresses.length ||

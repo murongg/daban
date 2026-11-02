@@ -51,3 +51,26 @@ test('the native registry receives only captured recipes; other wrapped text can
     /INVALID_SKILL_SNAPSHOT/,
   );
 });
+test('standard package loading retains metadata and explains scoped resource tools without granting allowed-tools', () => {
+  const registered: (SkillRecipe & { resourceBase?: { description: string } })[] = [];
+  apply(
+    { skills: { register: (skill) => registered.push(skill) } },
+    {
+      skills: [
+        {
+          ...recipe,
+          metadata: { license: 'MIT', 'allowed-tools': 'Bash' },
+          package: { digest: 'a'.repeat(64), fileCount: 2, bytes: 100 },
+          files: [
+            { path: 'references/guide.md', size: 20, sha256: 'b'.repeat(64), executable: false },
+          ],
+        },
+      ],
+      invoked: ['mock-summary'],
+    },
+  );
+  assert.equal(registered[0].metadata?.license, 'MIT');
+  assert.match(registered[0].resourceBase!.description, /skill_read/);
+  assert.match(registered[0].resourceBase!.description, /skill_prepare/);
+  assert.equal('allowedTools' in registered[0], false);
+});

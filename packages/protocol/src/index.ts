@@ -1,4 +1,13 @@
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
+import {
+  isSkillPackage,
+  isSkillPackageInfo,
+  isSkillResource,
+  type SkillPackage,
+  type SkillPackageCommand,
+  type SkillPackageInfo,
+  type SkillResource,
+} from './skills.js';
 
 export * from './execution.js';
 export * from './local-computer.js';
@@ -19,8 +28,10 @@ import type { NoteAvailability, NoteCommand } from './notes.js';
 
 export { validAgentId } from './id.js';
 export * from './notes.js';
+export * from './skill-sources.js';
+export * from './skills.js';
 
-export const managedProtocol = 39;
+export const managedProtocol = 40;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -555,9 +566,12 @@ export interface SkillSummary {
   invocation: SkillInvocation;
   createdAt: string;
   updatedAt: string;
+  package?: SkillPackageInfo;
+  system?: true;
 }
 export interface SkillDocument extends SkillSummary {
   content: string;
+  files?: SkillResource[];
 }
 export interface SkillEntry extends SkillSummary {
   enabled: boolean;
@@ -638,10 +652,14 @@ function skillFields(value: Record<string, unknown>, extra: string[]) {
       'invocation',
       'createdAt',
       'updatedAt',
+      'package',
+      'system',
       ...extra,
     ]) &&
     validAgentId(value.id) &&
     isSkillName(value.name) &&
+    (value.package === undefined || isSkillPackageInfo(value.package)) &&
+    (value.system === undefined || value.system === true) &&
     typeof value.description === 'string' &&
     value.description.trim().length > 0 &&
     value.description.length <= 2000 &&
@@ -663,11 +681,20 @@ function skillFields(value: Record<string, unknown>, extra: string[]) {
 export function isSkillDocument(value: unknown): value is SkillDocument {
   return (
     profileObject(value) &&
-    skillFields(value, ['content']) &&
+    skillFields(value, ['content', 'files']) &&
     typeof value.content === 'string' &&
     value.content.length <= 100000 &&
     !value.content.includes('\0') &&
-    new TextEncoder().encode(value.content).length === value.size
+    new TextEncoder().encode(value.content).length === value.size &&
+    (value.files === undefined
+      ? value.package === undefined
+      : Array.isArray(value.files) &&
+        value.files.length <= 199 &&
+        Array.from(value.files).every(isSkillResource) &&
+        isSkillPackageInfo(value.package) &&
+        value.package.fileCount === value.files.length + 1 &&
+        value.package.bytes ===
+          Number(value.size) + value.files.reduce((sum, file) => sum + file.size, 0))
   );
 }
 export function isSkillEntry(value: unknown): value is SkillEntry {
@@ -1395,6 +1422,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'bot.import.cancel',
     'skill.list',
     'skill.read',
+    'skill.resource',
+    'skill.package.export',
     'knowledge.list',
     'knowledge.read',
     'knowledge.versions',
@@ -3690,6 +3719,7 @@ export type RuntimeCommand =
   | McpCommand
   | { type: 'skill.list'; bot: string; includeDeleted?: boolean }
   | { type: 'skill.read'; bot: string; id: string }
+  | SkillPackageCommand
   | { type: 'skill.import'; bot: string; content: string }
   | { type: 'skill.update'; bot: string; id: string; revision: number; content: string }
   | { type: 'skill.recycle' | 'skill.restore'; bot: string; id: string; revision: number }
@@ -3813,10 +3843,10 @@ export function disconnected(
 export const botBundleLimit = 100 * 1024 * 1024;
 export interface BotBundle {
   format: 'daban.bot';
-  version: 1;
+  version: 1 | 2;
   profile: Pick<BotProfileInput, 'name' | 'instructions' | 'color'>;
   preferences: string;
-  skills: { name: string; content: string }[];
+  skills: { name: string; content: string; package?: SkillPackage }[];
   knowledge: { path: string; content: string; original?: DocumentUpload }[];
 }
 export interface BotExportRequest {
@@ -3853,14 +3883,29 @@ export function botBundleText(value: BotBundle) {
   // Stable projection excludes identity, permissions and any property not owned by this format.
   return JSON.stringify({
     format: 'daban.bot',
-    version: 1,
+    version: value.version,
     profile: {
       name: value.profile.name,
       instructions: value.profile.instructions,
       color: value.profile.color,
     },
     preferences: value.preferences,
-    skills: value.skills.map((skill) => ({ name: skill.name, content: skill.content })),
+    skills: value.skills.map((skill) => ({
+      name: skill.name,
+      content: skill.content,
+      ...(value.version === 2 && skill.package
+        ? {
+            package: {
+              ...(skill.package.root ? { root: skill.package.root } : {}),
+              files: skill.package.files.map((file) => ({
+                path: file.path,
+                data: file.data,
+                ...(file.executable === undefined ? {} : { executable: file.executable }),
+              })),
+            },
+          }
+        : {}),
+    })),
     knowledge: value.knowledge.map((document) => ({
       path: document.path,
       content: document.content,
@@ -3875,7 +3920,7 @@ export function isBotBundle(value: unknown): value is BotBundle {
     !profileObject(value) ||
     !exactKeys(value, ['format', 'version', 'profile', 'preferences', 'skills', 'knowledge']) ||
     value.format !== 'daban.bot' ||
-    value.version !== 1 ||
+    (value.version !== 1 && value.version !== 2) ||
     !profileObject(value.profile) ||
     !exactKeys(value.profile, ['name', 'instructions', 'color']) ||
     !isBotProfileInput({ id: 'portable', ...value.profile, memory: value.preferences }) ||
@@ -3891,9 +3936,16 @@ export function isBotBundle(value: unknown): value is BotBundle {
     !Array.from(skills).every(
       (skill) =>
         profileObject(skill) &&
-        exactKeys(skill, ['name', 'content']) &&
+        exactKeys(
+          skill,
+          value.version === 2 ? ['name', 'content', 'package'] : ['name', 'content'],
+        ) &&
         isSkillName(skill.name) &&
-        isSkillContent(skill.content),
+        isSkillContent(skill.content) &&
+        (skill.package === undefined ||
+          (isSkillPackage(skill.package) &&
+            (skill.package.root === undefined || skill.package.root === skill.name) &&
+            skillMainMatches(skill.package, skill.content))),
     ) ||
     !Array.from(knowledge).every(
       (document) =>
@@ -3939,6 +3991,18 @@ export function isBotBundle(value: unknown): value is BotBundle {
   )
     return false;
   return new TextEncoder().encode(botBundleText(valid)).length <= botBundleLimit;
+}
+
+function skillMainMatches(bundle: SkillPackage, content: string) {
+  const file = bundle.files.find((file) => file.path === 'SKILL.md');
+  if (!file) return false;
+  try {
+    const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+    // BOM is part of the reviewed source and must survive a portable round trip.
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) === content;
+  } catch {
+    return false;
+  }
 }
 export function isBotExportRequest(value: unknown): value is BotExportRequest {
   const selections = (items: unknown, limit: number) =>
