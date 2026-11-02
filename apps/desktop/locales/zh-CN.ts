@@ -2393,6 +2393,7 @@ export const chinese = {
   'skills.canLoadAutomaticallyTasks': '可按任务自动加载',
   'skills.chatDraftTooLongAddSkillInstructions': '聊天草稿过长，未加入技能指令；原内容保留。',
   'skills.chooseSkillInstructionFile': '选择技能说明文件',
+  'skills.collapseDescription': '收起 {0} 的描述',
   'skills.currentlySupportsSingleSkillMdFileSkill':
     '当前支持单份 SKILL.md 说明；含脚本或附件的技能包尚不能导入。修改从下次任务生效。',
   'skills.currentServerRevisionShownBelowReviewDeciding':
@@ -2402,6 +2403,7 @@ export const chinese = {
   'skills.editSkillInstructions': '编辑技能说明',
   'skills.enable': '为{0}启用 {1}',
   'skills.enabled': '已启用',
+  'skills.expandDescription': '展开 {0} 的描述',
   'skills.exportCurrentSkillInstructions': '导出当前技能说明',
   'skills.importSkill': '导入技能',
   'skills.keepMyEditsUseCurrentRevision': '保留我的修改，采用当前版本号',
