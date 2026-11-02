@@ -66,6 +66,8 @@ import { Inbox } from '../features/inbox/Inbox';
 import { useNotices } from '../features/notifications/notices';
 import { Onboarding } from '../features/onboarding/Onboarding';
 import { Settings } from '../features/settings/Settings';
+import { UpdateNotice } from '../features/settings/Updates';
+import { UpdateProvider, useUpdateSave } from '../features/settings/update';
 import { Tasks } from '../features/tasks/Tasks';
 import { useWork } from '../features/tasks/work';
 import { syncLocale, t, useLocale } from '../i18n/locale';
@@ -126,11 +128,14 @@ export function App() {
   }, [locale]);
   return (
     <I18nProvider locale={locale}>
-      <RuntimeProvider>
-        <Onboarding>
-          <Workbench />
-        </Onboarding>
-      </RuntimeProvider>
+      <UpdateProvider>
+        <RuntimeProvider>
+          <UpdateNotice />
+          <Onboarding>
+            <Workbench />
+          </Onboarding>
+        </RuntimeProvider>
+      </UpdateProvider>
     </I18nProvider>
   );
 }
@@ -145,6 +150,13 @@ function Workbench() {
     // Cache migration must not mark the obscured conversation read through a navigation action.
     return legacySettings.current ? { ...restored, view: 'chat' as const } : restored;
   });
+  const updateState = useRef(state);
+  updateState.current = state;
+  useUpdateSave(
+    useCallback(() => {
+      clientCache().setItem(storageKey, serialize(updateState.current));
+    }, []),
+  );
   const [settingsOpen, setSettingsOpen] = useState(legacySettings.current);
   const dispatch = useCallback((action: Action) => {
     if (action.type === 'view' && action.view === 'settings') {

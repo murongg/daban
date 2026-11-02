@@ -1,4 +1,41 @@
 export const english = {
+  'updates.title': 'App updates',
+  'updates.version': 'Current version {0}',
+  'updates.ready': 'Check stable releases on GitHub',
+  'updates.check': 'Check for updates',
+  'updates.checking': 'Checking for updates…',
+  'updates.current': 'You’re up to date',
+  'updates.unpublished': 'No stable release is available yet',
+  'updates.available': 'Version {0} is available',
+  'updates.downloading': 'Downloading update…',
+  'updates.downloaded': 'Update downloaded, ready to install',
+  'updates.preparing': 'Saving and checking background tasks…',
+  'updates.installing': 'Restarting to install the update…',
+  'updates.unsupported': 'This build cannot install updates. Install a supported release.',
+  'updates.browserPreview': 'Web previews cannot check for or install updates.',
+  'updates.download': 'Download update',
+  'updates.cancelDownload': 'Cancel download',
+  'updates.downloadProgress': 'Update download progress',
+  'updates.restart': 'Restart and install',
+  'updates.releaseNotes': 'Release notes',
+  'updates.confirmTitle': 'Restart to install the update?',
+  'updates.confirmDescription':
+    'Save unsubmitted settings and work in desktop apps first. Chat drafts are saved automatically. Installation is blocked while Bot tasks are running.',
+  'updates.confirmRestart': 'Saved, restart and install',
+  'updates.later': 'Later',
+  'updates.checkFailed': 'Could not check for updates. Try again later.',
+  'updates.downloadFailed': 'The download failed. You can try again.',
+  'updates.saveFailed':
+    'Workspace storage could not be saved. Restart was cancelled; export or save your work first.',
+  'updates.notReady': 'Download and verify the update first.',
+  'updates.installFailed':
+    'The update could not be installed. You can keep using the current version.',
+  'updates.agentBusy': 'Background work is still active. Finish it before installing.',
+  'updates.agentUnavailable':
+    'Could not confirm a safe background shutdown. Reconnect and retry, or use the full installer.',
+  'updates.noticeDescription':
+    'Download and install when convenient. Tasks are not interrupted automatically.',
+  'updates.view': 'View update',
   'onboarding.connectionSettings': 'Connection settings (optional)',
   'onboarding.modelSelectionHint':
     'Enter your key, load the model list and choose a model, or enter its ID manually. Tests and verification may incur a small API charge; your chats are not included.',
@@ -2457,7 +2494,7 @@ export const english = {
   'settings.light': 'Light',
   'settings.localLinux': 'Local Linux',
   'settings.localLinuxDshConnectedMobileCrossDevice':
-    'Local Linux and DSH are connected. Mobile, cross-device sync and public distribution packages are planned.',
+    'Work with Bots locally and connect a Linux desktop or your computer when needed. Mobile and cross-device sync are planned.',
   'settings.localLinuxRuntime': 'Local Linux runtime',
   'settings.localStorage': 'Local storage',
   'settings.localWorkspaceData': 'Local workspace data',

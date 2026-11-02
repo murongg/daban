@@ -75,11 +75,13 @@ git push origin v0.1.0
 
 - macOS Apple 芯片：Developer ID 签名、公证并附加票据的 `.dmg`，以及包含已公证应用的 `.zip`。
 - Windows x64：已通过首次启动检查的便携 `.zip`，当前未做 Windows Authenticode 签名。
+- Windows x64 标准安装器 `.exe`，用于安装及后续应用内更新。
 - `CHANGELOG.zh-CN.md`、`CHANGELOG.en.md` 和 `SHA256SUMS.txt`；GitHub Release 正文同时展示两种语言和原始 PR/比较链接。
+- 在线更新清单 `latest.yml` / `latest-mac.yml`（预发布版本使用对应频道名）和 `.blockmap`。清单与对应安装包一起上传，不能先单独发布清单。
 
 macOS 过程会签名 Electron、内嵌 Node、原生模块与 Lima，重新固定签名后 Lima 的摘要，再生成宿主机完整性清单和应用外层签名。公证使用 Hardened Runtime；按 [Apple 的发行流程](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)，只提交最外层 DMG，即可取得容器与嵌套应用的票据，避免重复上传整个大包。应用和 DMG 均通过 `stapler validate` 与 Gatekeeper 检查后才上传；ZIP 在应用附票后生成。
 
-当前不构建 Intel Mac、Linux 客户端或应用内自动更新。普通 CI 不会自动启动 VM、调用真实模型或申请桌面控制权限。
+当前不构建 Intel Mac 或 Linux 客户端。应用内更新检查稳定版，下载和重启安装由用户确认。Mac 更新配置在签名前写入资源目录；Windows 安装器从独立副本构建，不会把更新配置写进便携目录。普通 CI 不会启动用户 VM、调用真实模型或申请桌面控制权限。
 
 ## English
 
@@ -89,4 +91,4 @@ Configure the secrets listed above. Apple secrets must contain a Developer ID Ap
 
 Upload the four verified, credential-free environment files above to the same repository's `environment-v38` release, or configure `MACOS_ENVIRONMENT_TAG`. The pinned base image and component checks must pass. Never distribute a used VM or modify expected hashes to accept an unverified image.
 
-Push a matching `vX.Y.Z` or `vX.Y.Z-beta.N` tag after merging its version update to main. An existing tag can also be selected via manual dispatch. Downloads include notarized Apple Silicon DMG/ZIP files, a Windows x64 portable ZIP, both language changelogs, and SHA-256 checksums. Release notes include both languages and the original change links. Existing releases are not overwritten. Windows signing, Intel Mac builds and in-app updates are not included in this workflow.
+Push a matching `vX.Y.Z` or `vX.Y.Z-beta.N` tag after merging its version update to main. An existing tag can also be selected via manual dispatch. Downloads include notarized Apple Silicon DMG/ZIP files, a Windows x64 portable ZIP, both language changelogs, and SHA-256 checksums. Release notes include both languages and the original change links. Existing releases are not overwritten. Windows signing and Intel Mac builds are not included. Installed clients support stable in-app updates; publish the NSIS installer, Mac ZIP, update manifests and blockmaps together. Portable Windows builds remain separate. Mac update configuration is embedded before signing, and ZIP packaging preserves the signed application.

@@ -30,6 +30,7 @@ import { Setup } from './setup';
 import { pickSkill } from './skill-picker';
 import { controlSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
+import { prepareAgentUpdate } from './upgrade';
 
 export interface AgentConfig {
   entry: string;
@@ -89,6 +90,7 @@ export function runtimeService(
   let connecting: Promise<RuntimeSnapshot> | undefined;
   let polling = false;
   let closed = false;
+  let updating = false;
   let connection = 0;
   let requested = 0,
     published = 0,
@@ -275,6 +277,7 @@ export function runtimeService(
     return state;
   }
   async function connect(): Promise<RuntimeSnapshot> {
+    if (updating) throw new Error('AGENT_UPDATING');
     if (connecting) return connecting;
     connecting = (async () => {
       connection++;
@@ -309,6 +312,10 @@ export function runtimeService(
     return connecting;
   }
   async function dispatch(command: RuntimeCommand): Promise<unknown> {
+    if (updating) {
+      if (command.type === 'status') return state;
+      throw new Error('AGENT_UPDATING');
+    }
     if (command.type === 'skill.pick') {
       if (closed || !client || state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 40) throw new Error('RUNTIME_TOO_OLD');
@@ -498,7 +505,7 @@ export function runtimeService(
     }
   });
   const timer = setInterval(async () => {
-    if (closed || polling) return;
+    if (closed || updating || polling) return;
     polling = true;
     try {
       await refreshReboot();
@@ -525,6 +532,31 @@ export function runtimeService(
   return {
     connect,
     releaseInputs,
+    async prepareUpdate() {
+      if (closed || !agentConfig) throw new Error('AGENT_UPDATE_UNAVAILABLE');
+      if (
+        updating ||
+        connecting ||
+        recovering ||
+        (setupState &&
+          ['verifying', 'extracting', 'creating', 'starting', 'connecting', 'cancelling'].includes(
+            setupState.phase,
+          ))
+      )
+        throw new Error('AGENT_UPDATE_BUSY');
+      updating = true;
+      try {
+        await prepareAgentUpdate({ ...agentConfig, scope: agentScope! });
+        client = undefined;
+      } catch (error) {
+        updating = false;
+        throw error;
+      }
+    },
+    async resumeAfterUpdate() {
+      updating = false;
+      if (!closed) await connect();
+    },
     async close() {
       if (closed) return;
       closed = true;
