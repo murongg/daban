@@ -29,7 +29,7 @@ jobs:
         run: node --experimental-sqlite --test packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js
       - name: Verify native DSH tool loop
         timeout-minutes: 3
-        run: node --experimental-sqlite --test dist-agent/native-loop.test.js
+        run: node --experimental-sqlite --test dist-agent/native-loop.test.js packages/engine/dist/web.test.js
       - name: Verify bundled native cryptography
         run: node --experimental-strip-types --test tools/native.test.ts tools/preload.test.ts
       - name: Verify Electron encrypted transport

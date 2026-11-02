@@ -1,10 +1,14 @@
 import type { LookupAddress } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { createRequire } from 'node:module';
-import { isIP } from 'node:net';
+import { BlockList, isIP } from 'node:net';
+import { pathToFileURL } from 'node:url';
 
 type Lookup = (host: string, options: { all: true; order: 'verbatim' }) => Promise<LookupAddress[]>;
 type Fetch = (url: string, options: RequestInit) => Promise<Response>;
+const proxyAddresses = new BlockList();
+proxyAddresses.addSubnet('198.18.0.0', 15, 'ipv4');
+proxyAddresses.addSubnet('2001:2::', 48, 'ipv6');
 export async function fallbackLookup(
   host: string,
   signal: AbortSignal,
@@ -26,10 +30,14 @@ export async function fallbackLookup(
   }
   if (
     !addresses.length ||
-    !addresses.every((entry) => entry.family === 4 && /^198\.(18|19)\./.test(entry.address))
+    !addresses.every((entry) =>
+      entry.family === 4
+        ? proxyAddresses.check(entry.address, 'ipv4')
+        : entry.family === 6 && proxyAddresses.check(entry.address, 'ipv6'),
+    )
   )
     return addresses;
-  // Only proxy fake IPs use this fixed TLS resolver. The caller must validate every returned address before native transport pins it.
+  // Dual-stack proxy benchmark addresses use this fixed TLS resolver; its answers still need public-IP validation and pinning.
   const query = new URLSearchParams({ name: host, type: 'A' });
   const response = await request(`https://223.5.5.5/resolve?${query}`, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
@@ -125,14 +133,19 @@ export function createFetcher(
     },
   };
 }
-export async function apply(ctx: Context, config: Limits) {
-  const root = 'file:///opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-web-fetch-http/lib/';
-  const { HttpFetchProvider, DEFAULT_USER_AGENT } = await import(`${root}index.js`);
-  const ipaddr = createRequire(`${root}index.js`)('ipaddr.js');
+export async function apply(ctx: Context, config: Limits & { sdkFile: string }) {
+  const { sdkFile, ...limits } = config;
+  // Resolve through the captured SDK's dependency tree, including nested installs and Windows paths.
+  const sdk = createRequire(sdkFile);
+  const runtime = createRequire(sdk.resolve('@deepseek-ai/dsh/package.json'));
+  const base = createRequire(runtime.resolve('@deepseek-ai/dsh-base/package.json'));
+  const entry = base.resolve('@deepseek-ai/dsh-web-fetch-http');
+  const { HttpFetchProvider, DEFAULT_USER_AGENT } = await import(pathToFileURL(entry).href);
+  const ipaddr = createRequire(entry)('ipaddr.js');
   ctx.web.registerFetchProvider(
     createFetcher(
       HttpFetchProvider,
-      { ...config, userAgent: DEFAULT_USER_AGENT },
+      { ...limits, userAgent: DEFAULT_USER_AGENT },
       (address) => ipaddr.parse(address).range() === 'unicast',
     ),
   );

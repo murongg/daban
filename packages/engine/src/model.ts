@@ -101,6 +101,7 @@ export function sdkPatch(
   skills: SkillSnapshot = { available: true, key: '', skills: [] },
   bridge?: { socketPath: string; stdioEntry: string; certificateFile?: string },
   route?: ResolvedModel,
+  sdkFile = defaultSdkFile,
 ) {
   const search = route ? !!route.searchApiKey : true;
   return [
@@ -204,6 +205,7 @@ export function sdkPatch(
                 id: 'web-fetch-http',
                 name: new URL('./web.js', import.meta.url).href,
                 config: {
+                  sdkFile,
                   maxResponseBytes: 1000000,
                   maxBodyChars: 40000,
                   timeoutMs: 30000,
@@ -1259,6 +1261,7 @@ export class ModelRuns {
             job.skills,
             this.bridge,
             config,
+            this.sdkFile,
           ),
         ),
         {
