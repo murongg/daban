@@ -294,6 +294,7 @@ export type Action =
   | { type: 'queue-add'; bot: string; task: QueuedTask }
   | { type: 'queue-edit'; bot: string; id: string }
   | { type: 'queue-remove'; bot: string; id: string }
+  | { type: 'queue-promote'; bot: string; id: string }
   | { type: 'queue-fail'; bot: string; id: string }
   | { type: 'queue-retry'; bot: string; id: string }
   | { type: 'send'; bot: string; id: string; time: string }
@@ -934,6 +935,14 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: [...(state.attachments[action.bot] ?? []), ...item.files],
         },
       };
+    }
+    case 'queue-promote': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 1) return state;
+      const items = [...queue];
+      items.unshift(items.splice(index, 1)[0]);
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
     }
     case 'queue-remove': {
       const queue = messageQueue(state, action.bot);

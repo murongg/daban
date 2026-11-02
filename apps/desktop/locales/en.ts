@@ -236,6 +236,7 @@ export const english = {
   'chat.preparingModel': 'Preparing model',
   'chat.preparingResponse': 'Preparing response',
   'chat.previewAttachment': 'Preview attachment {0}',
+  'chat.promoteQueuedMessage': 'Send queued message {0} next',
   'chat.queuedAttachments': '+{0} attachments',
   'chat.queuedMessageFailed': 'Could not send. Retry or remove it.',
   'chat.readingPage': 'Reading page',

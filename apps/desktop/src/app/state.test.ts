@@ -970,6 +970,21 @@ it('returns an edited queued message to the composer with its attachments', () =
   expect(state.drafts[bot.id]).toBe('SYNTHETIC EXISTING DRAFT\nSYNTHETIC EDIT MESSAGE');
   expect(state.attachments[bot.id]).toEqual([file.id]);
 });
+it('moves a queued message to the front so it is sent next', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const first = { id: 'synthetic-promote-one', prompt: 'SYNTHETIC FIRST', files: [] };
+  const second = { id: 'synthetic-promote-two', prompt: 'SYNTHETIC SECOND', files: [] };
+  const third = { id: 'synthetic-promote-three', prompt: 'SYNTHETIC THIRD', files: [] };
+  for (const task of [first, second, third])
+    state = reduce(state, { type: 'queue-add', bot: bot.id, task });
+  state = reduce(state, { type: 'queue-promote', bot: bot.id, id: second.id });
+  expect(messageQueue(state, bot.id)).toEqual([second, first, third]);
+  expect(reduce(state, { type: 'queue-promote', bot: bot.id, id: 'synthetic-missing' })).toBe(
+    state,
+  );
+  expect(reduce(state, { type: 'queue-promote', bot: bot.id, id: second.id })).toBe(state);
+});
 it('isolates prototype-shaped Bot IDs in the message queue', () => {
   let state = initialState();
   state = reduce(state, {

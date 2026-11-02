@@ -924,6 +924,67 @@ it('returns a queued message to the composer for editing', async () => {
   expect(screen.queryByRole('region', { name: '排队消息' })).not.toBeInTheDocument();
   expect(runtime.starts).toHaveLength(0);
 });
+it('lets the user move a queued message to the front so it is sent next', async () => {
+  const runtime = liveQueueRuntime();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, 'SYNTHETIC QUEUED ONE');
+  await userEvent.keyboard('{Enter}');
+  await userEvent.type(input, 'SYNTHETIC QUEUED TWO');
+  await userEvent.keyboard('{Enter}');
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  await userEvent.click(
+    within(queue).getByRole('button', { name: '插队发送 SYNTHETIC QUEUED TWO' }),
+  );
+  const rows = within(queue).getAllByRole('listitem');
+  expect(rows[0]).toHaveTextContent('SYNTHETIC QUEUED TWO');
+  expect(rows[1]).toHaveTextContent('SYNTHETIC QUEUED ONE');
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-current-run',
+        'mock-queue-current-request',
+        'SYNTHETIC CURRENT TASK',
+        'completed',
+        false,
+        'SYNTHETIC CURRENT DONE',
+      ),
+    ),
+  );
+  await waitFor(() => expect(runtime.starts).toHaveLength(1));
+  expect(runtime.starts[0].task.prompt).toBe('SYNTHETIC QUEUED TWO');
+});
+it('returns focus to the composer after queuing a message', async () => {
+  liveQueueRuntime();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, 'SYNTHETIC FOCUS QUEUE');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(await screen.findByRole('region', { name: '排队消息' })).toBeVisible();
+  expect(input).toHaveFocus();
+});
+it('returns focus to the composer after sending a message', async () => {
+  const runtime = liveQueueRuntime();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-current-run',
+        'mock-queue-current-request',
+        'SYNTHETIC CURRENT TASK',
+        'completed',
+        false,
+        'SYNTHETIC CURRENT DONE',
+      ),
+    ),
+  );
+  await waitFor(() => expect(input).toBeEnabled());
+  await userEvent.type(input, 'SYNTHETIC FOCUS SEND');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await waitFor(() => expect(runtime.starts).toHaveLength(1));
+  await waitFor(() => expect(input).toHaveFocus());
+});
 it('keeps a queued message that failed to send so it can be retried', async () => {
   const runtime = liveQueueRuntime();
   runtime.fail();

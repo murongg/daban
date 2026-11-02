@@ -1,6 +1,7 @@
 import { agentId, agentTask, isModelId, type RuntimeTask, recoveryBlocked } from '@daban/protocol';
 import {
   ArrowUp,
+  ArrowUpToLine,
   Check,
   ChevronDown,
   CornerDownRight,
@@ -17,7 +18,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { type Dispatch, useCallback, useRef } from 'react';
+import { type Dispatch, useCallback, useEffect, useRef } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import { demoIds } from '../../app/samples';
 import {
@@ -85,6 +86,7 @@ export function Conversation({
   onQueue,
   onQueueEdit,
   onQueueRemove,
+  onQueuePromote,
   onQueueRetry,
   onContinue,
   pending = false,
@@ -101,6 +103,7 @@ export function Conversation({
   onQueue?: () => unknown;
   onQueueEdit?: (id: string) => unknown;
   onQueueRemove?: (id: string) => unknown;
+  onQueuePromote?: (id: string) => unknown;
   onQueueRetry?: (id: string) => unknown;
   onContinue?: () => unknown;
   pending?: boolean;
@@ -168,6 +171,12 @@ export function Conversation({
     }
   }
   const input = useRef<HTMLTextAreaElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (pending || !refocus.current) return;
+    refocus.current = false;
+    input.current?.focus();
+  }, [pending]);
   const { upload, attach, paste, transfer, dragging } = useInputs(
     state,
     bot,
@@ -205,11 +214,14 @@ export function Conversation({
     if (busyInGroup || computerChanging || (!draft.trim() && !attachments.length)) return;
     if (task?.running && onQueue) {
       onQueue();
+      input.current?.focus();
       return;
     }
     scroll.resume();
     if (onSend) {
+      refocus.current = true;
       onSend();
+      input.current?.focus();
       return;
     }
     dispatch({
@@ -503,7 +515,7 @@ export function Conversation({
         {live && queued.length > 0 && (
           <section className="message-queue" aria-label={t('chat.messageQueue')} aria-live="polite">
             <ul>
-              {queued.map((item) => {
+              {queued.map((item, index) => {
                 const text = item.prompt || t('common.reviewFilesCompleteTaskIDescribed');
                 return (
                   <li
@@ -528,6 +540,14 @@ export function Conversation({
                       )}
                     </div>
                     <div className="queued-message-actions">
+                      {index > 0 && onQueuePromote && (
+                        <IconButton
+                          label={t('chat.promoteQueuedMessage', { 0: text })}
+                          onClick={() => onQueuePromote(item.id)}
+                        >
+                          <ArrowUpToLine />
+                        </IconButton>
+                      )}
                       {item.error && onQueueRetry && (
                         <IconButton
                           label={t('common.retrySend')}

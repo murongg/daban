@@ -817,6 +817,11 @@ function Workbench() {
                       ? (id) => dispatch({ type: 'queue-remove', bot: bot.id, id })
                       : undefined
                   }
+                  onQueuePromote={
+                    runtime.enabled
+                      ? (id) => dispatch({ type: 'queue-promote', bot: bot.id, id })
+                      : undefined
+                  }
                   onQueueRetry={
                     runtime.enabled
                       ? (id) => dispatch({ type: 'queue-retry', bot: bot.id, id })

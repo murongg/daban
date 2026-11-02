@@ -217,6 +217,7 @@ export const chinese = {
   'chat.preparingModel': '模型准备中',
   'chat.preparingResponse': '正在准备回复',
   'chat.previewAttachment': '预览附件 {0}',
+  'chat.promoteQueuedMessage': '插队发送 {0}',
   'chat.queuedAttachments': '+{0} 个附件',
   'chat.queuedMessageFailed': '发送失败，可重试或移除。',
   'chat.readingPage': '正在读取页面',
