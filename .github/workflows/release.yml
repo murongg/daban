@@ -1,0 +1,209 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag on main, for example v0.1.0'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+      - name: Validate tag, workspace versions and main ancestry
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: node --experimental-strip-types tools/release.ts
+
+  checks:
+    needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.prepare.outputs.commit }}
+
+  notes:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      # GitHub's generate-notes API requires write permission even though it does not save a release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+      - name: Generate Chinese and English changelogs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          CHANGELOG_API_KEY: ${{ secrets.CHANGELOG_API_KEY }}
+          CHANGELOG_API_URL: ${{ vars.CHANGELOG_API_URL }}
+          CHANGELOG_MODEL: ${{ vars.CHANGELOG_MODEL }}
+        run: node --experimental-strip-types tools/changelog.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: outputs/release-notes/*.md
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    needs: prepare
+    uses: ./.github/workflows/native-desktop.yml
+    with:
+      ref: ${{ needs.prepare.outputs.commit }}
+
+  macos:
+    needs: [prepare, notes]
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Download the sealed credential-free Linux base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENVIRONMENT_TAG: ${{ vars.MACOS_ENVIRONMENT_TAG || 'environment-v38' }}
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/environment"
+          gh release download "$ENVIRONMENT_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/environment" --pattern manifest.json --pattern system.raw.gz --pattern lima.tar.gz --pattern COMPONENTS.md
+      - name: Download official standalone Node for the host
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 3 --output node.tar.gz https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz
+          curl --fail --location --retry 3 --output SHASUMS256.txt https://nodejs.org/dist/v24.22.1/SHASUMS256.txt
+          expected=$(awk '$2 == "node-v24.22.1-darwin-arm64.tar.gz" {print $1}' SHASUMS256.txt)
+          test -n "$expected"
+          printf '%s  node.tar.gz\n' "$expected" | shasum -a 256 --check
+          tar -xzf node.tar.gz
+      - name: Assemble the complete client and verify pinned base assets
+        run: npm run bundle:desktop -- "$RUNNER_TEMP/environment" "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/node-v24.22.1-darwin-arm64"
+      - name: Import Developer ID and notarization credentials into an ephemeral keychain
+        id: signing
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${MACOS_CERTIFICATE:?Missing MACOS_CERTIFICATE}"
+          : "${MACOS_CERTIFICATE_PASSWORD:?Missing MACOS_CERTIFICATE_PASSWORD}"
+          : "${APPLE_ID:?Missing APPLE_ID}"
+          : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+          : "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}"
+          keychain="$RUNNER_TEMP/daban-signing.keychain-db"
+          keychain_password=$(openssl rand -hex 32)
+          echo "::add-mask::$keychain_password"
+          umask 077
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/daban-certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 7200 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/daban-certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -k "$keychain" -t cert -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          identity=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)".*/\1/p' | grep -F "($APPLE_TEAM_ID)")
+          test "$(printf '%s\n' "$identity" | wc -l | tr -d ' ')" = 1
+          printf 'identity=%s\n' "$identity" >> "$GITHUB_OUTPUT"
+          xcrun notarytool store-credentials daban-release --keychain "$keychain" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"
+      - name: Sign nested code, notarize, staple and verify Gatekeeper
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
+          MACOS_KEYCHAIN: ${{ runner.temp }}/daban-signing.keychain-db
+          MACOS_NOTARY_PROFILE: daban-release
+        run: node --experimental-strip-types tools/sign.ts "$RUNNER_TEMP/bundle/Daban.app" "$RUNNER_TEMP/release"
+      - name: Remove credentials
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/daban-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/daban-certificate.p12"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Daban-macos-arm64
+          path: |
+            ${{ runner.temp }}/release/Daban-*.dmg
+            ${{ runner.temp }}/release/Daban-*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: [prepare, checks, notes, windows, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Daban-macos-arm64
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: Daban-windows-x64
+          path: windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+      - name: Create Windows archive and checksums
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd windows
+          zip -q -r "../release/Daban-$VERSION-windows-x64.zip" .
+          cd ../release
+          cp ../notes/CHANGELOG.*.md .
+          sha256sum Daban-* CHANGELOG.*.md > SHA256SUMS.txt
+      - name: Publish release after all checks and notarization succeed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "Daban $RELEASE_TAG" --notes-file notes/notes.md "${args[@]}"

@@ -15,6 +15,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { limaDigest } from './assets.js';
 
 interface ToolOptions {
   dataRoot: string;
@@ -25,7 +26,6 @@ interface ToolDependencies {
   digest?: string;
   run?: (program: string, args: string[]) => Promise<{ code: number }>;
 }
-const expectedLima = '9e9eacce88f37e185c346bad73aa6136f738d8cdf8c3bb23cd42b071824bc66e';
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 async function json(file: string, privateFile: boolean): Promise<unknown> {
@@ -137,7 +137,7 @@ export async function ensureLima(options: ToolOptions, dependencies: ToolDepende
     return ownedExecutable(path.join(tools, 'bin/limactl'));
   }
   const manifest = await json(path.join(options.packDirectory, 'manifest.json'), false);
-  const expected = dependencies.digest ?? expectedLima;
+  const expected = dependencies.digest ?? limaDigest;
   if (
     !object(manifest) ||
     !object(manifest.lima) ||

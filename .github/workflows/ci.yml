@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npx vitest run --maxWorkers=2
+      - run: node --experimental-strip-types --test tools/*.test.ts tools/roles.integration.ts
+      - run: npm run test:agent
+      - name: Install Linux desktop runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
+      - name: Runtime and integration regressions
+        if: runner.os == 'Linux'
+        run: npm run test:runtime
+      - name: Native macOS module ABI
+        if: runner.os == 'macOS'
+        run: node --experimental-strip-types tools/native.ts abi

@@ -19,6 +19,7 @@ import { environmentVersions, verifyAsset } from './environment.ts';
 import { writeIcon } from './icon.ts';
 import { packageNative } from './native.ts';
 import { packageNotices } from './notices.ts';
+import { macVersion } from './release.ts';
 import { buildExecutor, packageHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
 
 // Build-time macOS app assembly. Never reuse a user directory or package a Lima home.
@@ -133,6 +134,7 @@ else {
       executor,
       'main.js',
       'package.json',
+      'LICENSE',
       'node_modules',
     ],
     { env: { ...process.env, COPYFILE_DISABLE: '1' } },
@@ -157,8 +159,8 @@ for (const [key, value] of Object.entries({
   CFBundleName: 'Daban',
   CFBundleDisplayName: 'Daban',
   CFBundleIconFile: 'daban.icns',
-  CFBundleShortVersionString: info.version,
-  CFBundleVersion: info.version,
+  CFBundleShortVersionString: macVersion(info.version),
+  CFBundleVersion: macVersion(info.version),
 }))
   execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
 // UNNotification requires a valid bundle signature; local ad-hoc signing does not confer Developer ID trust.

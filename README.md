@@ -7,6 +7,7 @@
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-7c3aed" alt="AGPL-3.0-only" /></a>
+    <a href="https://github.com/murongg/daban/actions/workflows/ci.yml"><img src="https://github.com/murongg/daban/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
     <a href="https://github.com/murongg/daban/actions/workflows/native-desktop.yml"><img src="https://github.com/murongg/daban/actions/workflows/native-desktop.yml/badge.svg?branch=main" alt="Native desktop CI" /></a>
     <a href="#当前进度"><img src="https://img.shields.io/badge/status-early%20preview-9a6700" alt="Early preview" /></a>
     <a href="#如何开始"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-555555" alt="macOS 和 Windows" /></a>

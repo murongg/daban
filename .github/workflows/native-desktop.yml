@@ -1,38 +1,29 @@
 name: Native desktop
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
   push:
     branches: [main]
-    paths:
-      - 'apps/**'
-      - 'packages/**'
-      - 'tools/**'
-      - 'package*.json'
-      - 'tsconfig*.json'
-      - 'vitest.config.ts'
-      - 'biome.json'
-      - 'LICENSE'
-      - '.github/workflows/native-desktop.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'apps/**'
-      - 'packages/**'
-      - 'tools/**'
-      - 'package*.json'
-      - 'tsconfig*.json'
-      - 'vitest.config.ts'
-      - 'biome.json'
-      - 'LICENSE'
-      - '.github/workflows/native-desktop.yml'
 permissions:
   contents: read
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24.22.1'
