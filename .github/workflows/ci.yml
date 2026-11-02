@@ -43,6 +43,11 @@ jobs:
       - run: npx vitest run --maxWorkers=2
       - run: node --experimental-strip-types --test tools/*.test.ts tools/roles.integration.ts
       - run: npm run test:agent
+      - name: Install Linux desktop runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
       - name: Runtime and integration regressions
         if: runner.os == 'Linux'
         run: npm run test:runtime
