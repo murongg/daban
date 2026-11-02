@@ -5,6 +5,12 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 export async function packageNotices(resources: string, owner: string) {
+  // Electron already owns Resources/LICENSE; keep its notice and ship Daban's license separately.
+  await copyFile(
+    new URL('../LICENSE', import.meta.url),
+    path.join(resources, 'DABAN-LICENSE'),
+    constants.COPYFILE_EXCL,
+  );
   const requireDesktop = createRequire(owner);
   const frontendNotices = path.join(resources, 'frontend-notices');
   await mkdir(frontendNotices);

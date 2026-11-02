@@ -6,6 +6,7 @@
   <p><strong>你的 AI 搭子，也有自己的电脑。</strong></p>
 
   <p>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-7c3aed" alt="AGPL-3.0-only" /></a>
     <a href="https://github.com/murongg/daban/actions/workflows/native-desktop.yml"><img src="https://github.com/murongg/daban/actions/workflows/native-desktop.yml/badge.svg?branch=main" alt="Native desktop CI" /></a>
     <a href="#当前进度"><img src="https://img.shields.io/badge/status-early%20preview-9a6700" alt="Early preview" /></a>
     <a href="#如何开始"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-555555" alt="macOS 和 Windows" /></a>
@@ -71,3 +72,7 @@ npm run dev:web
 当前优先完善桌面客户端。云端执行、手机端和跨设备上下文同步列入后续计划。
 
 遇到问题或有建议，欢迎提交 [Issue](https://github.com/murongg/daban/issues)。
+
+## 开源协议
+
+Copyright © 2026 Daban contributors. 除另有说明外，本项目代码采用 [GNU Affero General Public License v3.0 only（AGPL-3.0-only）](LICENSE)。第三方代码、依赖和品牌资源保留各自的许可证与声明。

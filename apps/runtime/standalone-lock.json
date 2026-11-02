@@ -10,7 +10,8 @@
       "dependencies": {
         "@daban/engine": "file:./vendor/engine",
         "@daban/protocol": "file:./vendor/protocol"
-      }
+      },
+      "license": "AGPL-3.0-only"
     },
     "node_modules/@borewit/text-codec": {
       "version": "0.2.3",
@@ -1109,11 +1110,13 @@
       },
       "engines": {
         "node": ">=22.15.0"
-      }
+      },
+      "license": "AGPL-3.0-only"
     },
     "vendor/protocol": {
       "name": "@daban/protocol",
-      "version": "0.1.0"
+      "version": "0.1.0",
+      "license": "AGPL-3.0-only"
     }
   }
 }

@@ -46,5 +46,6 @@
       "types": "./dist/skill-package.d.ts",
       "import": "./dist/skill-package.js"
     }
-  }
+  },
+  "license": "AGPL-3.0-only"
 }
