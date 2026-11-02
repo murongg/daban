@@ -76,6 +76,7 @@ import {
   type TranscriptEvent,
   Transcripts,
 } from './transcripts.js';
+import { webDownloadLimit } from './webpage.js';
 import { Work } from './work.js';
 import { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './workspace.js';
@@ -205,8 +206,8 @@ export function sdkPatch(
                 name: new URL('./web.js', import.meta.url).href,
                 config: {
                   sdkFile,
-                  maxResponseBytes: 1000000,
-                  maxBodyChars: 40000,
+                  maxResponseBytes: webDownloadLimit,
+                  maxBodyChars: webDownloadLimit,
                   timeoutMs: 30000,
                   maxRedirects: 5,
                 },
@@ -216,13 +217,16 @@ export function sdkPatch(
                 name: '@deepseek-ai/dsh-tool-web',
                 config: {
                   search,
-                  fetch: true,
+                  fetch: false,
                   searchMaxResults: 5,
                   searchMaxQueries: 4,
                   searchTimeoutMs: 30000,
-                  fetchTimeoutMs: 30000,
-                  fetchMaxOutputChars: 50000,
                 },
+              },
+              {
+                id: 'web-read',
+                name: new URL('./web-read.js', import.meta.url).href,
+                config: { sdkFile },
               },
             ] as const)
           : []),

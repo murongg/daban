@@ -615,13 +615,12 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
   assert.ok(web && 'config' in web);
   assert.deepEqual(web.config, {
     search: true,
-    fetch: true,
+    fetch: false,
     searchMaxResults: 5,
     searchMaxQueries: 4,
     searchTimeoutMs: 30000,
-    fetchTimeoutMs: 30000,
-    fetchMaxOutputChars: 50000,
   });
+  assert.ok(plugins.some((row) => row.id === 'web-read' && row.name.endsWith('/web-read.js')));
   const search = plugins.find((row) => row.id === 'web-deepseek-api');
   assert.ok(search && 'config' in search);
   assert.deepEqual(search.config, {
