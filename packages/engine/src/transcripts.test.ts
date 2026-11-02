@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import type { TranscriptScope } from '@daban/protocol';
 import { redact } from './redaction.js';
@@ -18,6 +19,66 @@ const call = (seq = 1, text = '{"path":"/workspace/synthetic.txt"}') =>
     name: 'computer__read_file',
     arguments: text,
   });
+
+test('visible JSON retains exact numeric spellings while escaped credentials are redacted', () => {
+  const raw =
+    '{"syntheticId":90000000000000000001,"amount":12.3400,"secret":"synthetic\\u002dprivate\\u002dkey"}';
+  const event = projectTranscript(
+    note(1, 'tool/result', {
+      message: { toolCallId: 'mock-numeric', content: [{ type: 'text', text: raw }] },
+    }),
+    'mock-session',
+    (value) => value.replaceAll('synthetic-private-key', '[redacted]'),
+  );
+  assert.equal(
+    event?.text,
+    '{"syntheticId":90000000000000000001,"amount":12.3400,"secret":"[redacted]"}',
+  );
+});
+
+test('a non-compaction tool-result correction stays visible in execution records', () => {
+  const value = note(4, 'tool/result', {
+    message: {
+      toolCallId: 'mock-corrected',
+      content: [{ type: 'text', text: 'SYNTHETIC CORRECTED OUTCOME' }],
+    },
+  });
+  Object.assign(value.params.event, {
+    surfaceOp: { op: 'replace', startSeq: 1, endSeq: 1 },
+    sourceEventSeqs: [1],
+  });
+  assert.equal(
+    projectTranscript(value, 'mock-session', (text) => text)?.text,
+    'SYNTHETIC CORRECTED OUTCOME',
+  );
+});
+
+test('tool result recovery requires its persisted transcript owner even if orphaned events remain', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-result-owner-'));
+  const file = path.join(root, 'transcripts.sqlite'),
+    log = new Transcripts(file);
+  try {
+    await log.ready;
+    log.begin(scope);
+    log.append(scope, {
+      source: 'mock-result',
+      kind: 'result',
+      callId: 'mock-result',
+      at: '2026-01-01T00:00:00Z',
+      text: 'SYNTHETIC OWNED RESULT',
+    });
+    const database = new DatabaseSync(file);
+    try {
+      database.prepare('DELETE FROM transcript_runs WHERE run=?').run(scope.runId);
+    } finally {
+      database.close();
+    }
+    assert.throws(() => log.result(scope, 1), { code: 'TRANSCRIPT_NOT_FOUND' });
+  } finally {
+    await log.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('VM command approvals retain their exact guest context in redacted transcripts', () => {
   const event = projectInteraction(
