@@ -130,6 +130,7 @@ export interface McpTool {
   digest: string;
 }
 export interface McpConnection {
+  ownerBot?: string;
   id: string;
   name: string;
   revision: number;
@@ -204,11 +205,16 @@ export interface McpHistory {
   items: McpReceipt[];
 }
 export type McpCommand =
-  | { type: 'mcp.list'; includeDeleted?: boolean }
-  | { type: 'mcp.save'; input: McpSave }
-  | { type: 'mcp.saved'; id: string; connection: string }
-  | { type: 'mcp.catalog'; id: string }
-  | { type: 'mcp.check' | 'mcp.archive' | 'mcp.restore'; id: string; revision: number }
+  | { type: 'mcp.list'; includeDeleted?: boolean; bot?: string }
+  | { type: 'mcp.save'; input: McpSave; bot?: string }
+  | { type: 'mcp.saved'; id: string; connection: string; bot?: string }
+  | { type: 'mcp.catalog'; id: string; bot?: string }
+  | {
+      type: 'mcp.check' | 'mcp.archive' | 'mcp.restore';
+      id: string;
+      revision: number;
+      bot?: string;
+    }
   | { type: 'mcp.bindings'; bot: string }
   | { type: 'mcp.bind'; bot: string; input: McpBindingInput }
   | { type: 'mcp.calls'; bot: string; connection?: string }
@@ -316,8 +322,10 @@ export function isMcpConnection(value: unknown): value is McpConnection {
       'error',
       'createdAt',
       'updatedAt',
+      'ownerBot',
     ]) &&
     validAgentId(value.id) &&
+    (value.ownerBot === undefined || validAgentId(value.ownerBot)) &&
     typeof value.name === 'string' &&
     !!value.name.trim() &&
     value.name.length <= 60 &&
@@ -504,28 +512,28 @@ export function isMcpHistory(value: unknown): value is McpHistory {
   );
 }
 export function isMcpCommand(value: unknown): value is McpCommand {
-  if (!profileObject(value)) return false;
+  if (!profileObject(value) || (value.bot !== undefined && !validAgentId(value.bot))) return false;
   switch (value.type) {
     case 'mcp.list':
       return (
-        browserKeys(value, ['type', 'includeDeleted']) &&
+        browserKeys(value, ['type', 'includeDeleted', 'bot']) &&
         (value.includeDeleted === undefined || typeof value.includeDeleted === 'boolean')
       );
     case 'mcp.save':
-      return browserKeys(value, ['type', 'input']) && isMcpSave(value.input);
+      return browserKeys(value, ['type', 'input', 'bot']) && isMcpSave(value.input);
     case 'mcp.saved':
       return (
-        browserKeys(value, ['type', 'id', 'connection']) &&
+        browserKeys(value, ['type', 'id', 'connection', 'bot']) &&
         validAgentId(value.id) &&
         validAgentId(value.connection)
       );
     case 'mcp.catalog':
-      return browserKeys(value, ['type', 'id']) && validAgentId(value.id);
+      return browserKeys(value, ['type', 'id', 'bot']) && validAgentId(value.id);
     case 'mcp.check':
     case 'mcp.archive':
     case 'mcp.restore':
       return (
-        browserKeys(value, ['type', 'id', 'revision']) &&
+        browserKeys(value, ['type', 'id', 'revision', 'bot']) &&
         validAgentId(value.id) &&
         mcpRevision(value.revision)
       );
@@ -557,6 +565,7 @@ export interface SkillInvocation {
   userInvocable: boolean;
 }
 export interface SkillSummary {
+  ownerBot?: string;
   id: string;
   name: string;
   description: string;
@@ -654,12 +663,14 @@ function skillFields(value: Record<string, unknown>, extra: string[]) {
       'updatedAt',
       'package',
       'system',
+      'ownerBot',
       ...extra,
     ]) &&
     validAgentId(value.id) &&
     isSkillName(value.name) &&
     (value.package === undefined || isSkillPackageInfo(value.package)) &&
     (value.system === undefined || value.system === true) &&
+    (value.ownerBot === undefined || validAgentId(value.ownerBot)) &&
     typeof value.description === 'string' &&
     value.description.trim().length > 0 &&
     value.description.length <= 2000 &&
@@ -1331,6 +1342,7 @@ export interface SetupStatus {
   error?: string;
 }
 export interface RuntimeSnapshot {
+  botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
     location: 'host';
@@ -3721,6 +3733,7 @@ export type RuntimeCommand =
   | { type: 'skill.read'; bot: string; id: string }
   | SkillPackageCommand
   | { type: 'skill.import'; bot: string; content: string }
+  | { type: 'skill.copy'; bot: string; id: string; revision: number; targetBot: string }
   | { type: 'skill.update'; bot: string; id: string; revision: number; content: string }
   | { type: 'skill.recycle' | 'skill.restore'; bot: string; id: string; revision: number }
   | { type: 'skill.bind'; bot: string; binding: SkillBinding }

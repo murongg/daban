@@ -1,6 +1,7 @@
+import { inspectSkillPackage } from './skill-package.js';
 import type { SkillDefault } from './skills.js';
 
-const content = `---
+const previousContent = `---
 name: find-skills
 description: Find and install reusable skills for a task（查找并安装适合当前任务的技能）
 metadata:
@@ -40,9 +41,23 @@ If no suitable standard package is available, offer to handle the task with
 existing tools or help the user create a SKILL.md package. Do not reinstall
 this built-in skill or pretend a missing package was installed.
 `;
+const previousPackage = {
+  root: 'find-skills',
+  files: [{ path: 'SKILL.md', data: Buffer.from(previousContent).toString('base64') }],
+};
+const content = previousContent
+  .replace(
+    'it for the current Bot. Respect refusal.',
+    'it only for the current Bot. Installations and versions belong to this Bot, not the whole workspace. Respect refusal.',
+  )
+  .replace(
+    '5. Newly installed skills apply to the next task.',
+    '5. After confirmation, read the newly installed SKILL.md with skill_read and continue the current task. Manual-only invocation policies still apply.',
+  );
 export const builtinSkills: readonly SkillDefault[] = [
   {
     id: 'builtin-find-skills',
+    previousDigests: [inspectSkillPackage(previousPackage).digest],
     package: {
       root: 'find-skills',
       files: [{ path: 'SKILL.md', data: Buffer.from(content).toString('base64') }],

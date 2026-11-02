@@ -343,6 +343,7 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         clientProtocol?: number;
+        botCapabilities?: unknown;
         localComputer?: unknown;
         chats?: unknown;
         notices?: unknown;
@@ -441,6 +442,8 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      // Protocol updates for other features do not imply Bot-owned installation support.
+      if (raw.botCapabilities === true) snapshot.botCapabilities = true;
       if (this.agent && raw.localComputer !== undefined)
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer
@@ -1034,18 +1037,39 @@ export class RuntimeClient {
       const current = await this.status();
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 21) throw new Error('RUNTIME_TOO_OLD');
+      if (
+        command.bot !== undefined &&
+        [
+          'mcp.list',
+          'mcp.save',
+          'mcp.saved',
+          'mcp.catalog',
+          'mcp.check',
+          'mcp.archive',
+          'mcp.restore',
+        ].includes(command.type) &&
+        current.botCapabilities !== true
+      )
+        throw new Error('RUNTIME_TOO_OLD');
       const value = await this.api(`/api/mcp/${command.type.slice(4)}`, command);
       let valid = false;
       switch (command.type) {
         case 'mcp.list':
           valid =
             isMcpList(value) &&
-            value.items.every((entry) => entry.deleted === !!command.includeDeleted);
+            value.items.every(
+              (entry) =>
+                entry.deleted === !!command.includeDeleted &&
+                (entry.ownerBot === undefined || entry.ownerBot === command.bot),
+            );
           break;
         case 'mcp.save':
           valid =
             isMcpSaved(value) &&
             value.receipt.id === command.input.requestId &&
+            (command.bot && command.input.revision === 0
+              ? value.current.ownerBot === command.bot
+              : value.current.ownerBot === undefined || value.current.ownerBot === command.bot) &&
             value.receipt.connection === command.input.id &&
             value.receipt.revision === command.input.revision + 1 &&
             (value.current.revision !== value.receipt.revision ||
@@ -1055,13 +1079,15 @@ export class RuntimeClient {
           valid =
             isMcpSaved(value) &&
             value.receipt.id === command.id &&
-            value.receipt.connection === command.connection;
+            value.receipt.connection === command.connection &&
+            (value.current.ownerBot === undefined || value.current.ownerBot === command.bot);
           break;
         case 'mcp.catalog':
         case 'mcp.check':
           valid =
             isMcpCatalog(value) &&
             value.current.id === command.id &&
+            (value.current.ownerBot === undefined || value.current.ownerBot === command.bot) &&
             (command.type !== 'mcp.check' || value.current.revision === command.revision);
           break;
         case 'mcp.bindings':
@@ -1115,6 +1141,11 @@ export class RuntimeClient {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 40) throw new Error('RUNTIME_TOO_OLD');
+      if (
+        ['skill.package.import', 'skill.package.update'].includes(command.type) &&
+        state.botCapabilities !== true
+      )
+        throw new Error('RUNTIME_TOO_OLD');
       const action =
         command.type === 'skill.package.import'
           ? 'import-package'
@@ -1153,6 +1184,8 @@ export class RuntimeClient {
         !isSkillDocument(value) ||
         value.deleted ||
         value.package?.digest !== preview.digest ||
+        (value.ownerBot !== undefined && value.ownerBot !== command.bot) ||
+        (command.type === 'skill.package.import' && value.ownerBot !== command.bot) ||
         ('id' in command &&
           (value.id !== command.id ||
             value.revision < command.revision ||
@@ -1168,15 +1201,32 @@ export class RuntimeClient {
       command.type === 'skill.update' ||
       command.type === 'skill.recycle' ||
       command.type === 'skill.restore' ||
-      command.type === 'skill.bind'
+      command.type === 'skill.bind' ||
+      command.type === 'skill.copy'
     ) {
       const current = await this.status();
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 20) throw new Error('RUNTIME_TOO_OLD');
+      if (
+        !['skill.list', 'skill.read', 'skill.bind'].includes(command.type) &&
+        current.botCapabilities !== true
+      )
+        throw new Error('RUNTIME_TOO_OLD');
       const { type, ...request } = command;
       const value = await this.api(`/api/skills/${type.slice('skill.'.length)}`, request);
+      if (command.type === 'skill.copy') {
+        if (!isSkillDocument(value) || (!value.system && value.ownerBot !== command.targetBot))
+          throw new Error('INVALID_RUNTIME_STATE');
+        return value;
+      }
       if (command.type === 'skill.list') {
-        if (!isSkillCatalogResult(value) || value.bot !== command.bot)
+        if (
+          !isSkillCatalogResult(value) ||
+          value.bot !== command.bot ||
+          !value.catalog.items.every(
+            (item) => item.ownerBot === undefined || item.ownerBot === command.bot,
+          )
+        )
           throw new Error('INVALID_RUNTIME_STATE');
         return value.catalog;
       }
@@ -1198,6 +1248,8 @@ export class RuntimeClient {
       if (
         !isSkillDocument(value) ||
         ('id' in command && value.id !== command.id) ||
+        (value.ownerBot !== undefined && value.ownerBot !== command.bot) ||
+        (command.type === 'skill.import' && value.ownerBot !== command.bot) ||
         ((command.type === 'skill.import' || command.type === 'skill.update') &&
           (value.content !== command.content || value.deleted)) ||
         ('revision' in command &&

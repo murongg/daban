@@ -2,13 +2,13 @@
 
 [User guide](README.md) · [简体中文](../zh-CN/skills.md)
 
-Open **Skills** in a Bot's workspace. A skill is a reusable method with optional scripts, references and templates. Enablement is per Bot, and instructions do not grant tool permissions.
+Open **Capabilities → Skills** in a Bot's workspace. A skill is a reusable method with optional scripts, references and templates. Enablement is per Bot, and instructions do not grant tool permissions.
 
 ## Built-in find-skills
 
 Daban includes its own adaptation of `find-skills`, enabled for Bots by default and independently switchable in the Skills panel. This read-only system skill needs no separate CLI installation.
 
-Ask, for example, “Find a skill for working with PDFs.” The Bot can search skills.sh, SkillsMP and ClawHub, or preview a public GitHub skill directory, then describe its purpose, source, version and files. After confirmation, Daban saves the exact previewed content and enables it for the current Bot from the next task. Other Bots remain unchanged.
+Ask, for example, “Find a skill for working with PDFs.” The Bot can search skills.sh, SkillsMP and ClawHub, or preview a public GitHub skill directory, then describe its purpose, source, version and files. After confirmation, Daban installs the exact previewed version for the current Bot and enables it. The same task can read the new skill and continue. Other Bots’ installations, versions and enabled states remain unchanged.
 
 Declining prevents repeated installation prompts for the same content within that task. Installing a skill runs no scripts, hooks or dependency installers, and does not provide platform-specific tools. Rate limits or network restrictions can interrupt discovery; retry later or import a local package.
 
@@ -16,9 +16,11 @@ Declining prevents repeated installation prompts for the same content within tha
 
 1. Import a skill folder, ZIP or single `SKILL.md`.
 2. Review the purpose, file list and contents, then confirm. Installation only saves files.
-3. Enable it separately for each intended Bot. Locally imported custom skills start disabled.
+3. Choose **Install and enable** to install only for the current Bot. Saving newly authored skill instructions saves content without automatically enabling them.
 
-Bots share installed skills but keep separate enablement. Edits and replacements apply to future tasks; running tasks retain their captured version. Built-in system skills cannot be edited, replaced or deleted.
+Installations, versions, edits and removal belong to each Bot. Identical supporting files are deduplicated internally. **Add to another Bot** creates an independent copy after you choose its recipient; later edits remain independent. Running tasks retain their captured versions, except that an explicitly confirmed new installation can be read within that task. Other later grants are not pulled into it. Built-in skills remain read-only.
+
+Existing shared records are retained and labelled. Create an independent copy before editing one for this Bot; other Bots keep the original content.
 
 ## Standard packages
 
@@ -61,4 +63,4 @@ Skills can load for relevant tasks or be invoked with `/<skill-name>`. `disable-
 
 Editing `SKILL.md` preserves supporting files. Use **Replace package** to update the entire directory and review the revision. Preview or download individual files, or export a complete ZIP. A Markdown-only export contains just the instructions; use ZIP or [Bot transfer](bot-transfer.md) for a complete skill.
 
-Trashing disables the skill for all Bots; restoring requires enabling it again. The library retains up to 100 skills including trash, with a 200 MiB resource storage limit.
+Trashing removes only this Bot’s installation; restoring requires enabling it again. The library retains up to 100 skills including trash, with a 200 MiB resource storage limit.

@@ -53,7 +53,7 @@ test('migrates legacy skill storage without changing saved content, bindings or 
       assert.equal((await store.status()).revision, 7);
       const reader = new DatabaseSync(file, { readOnly: true });
       try {
-        assert.equal(reader.prepare('PRAGMA user_version').get()!.user_version, 2);
+        assert.equal(reader.prepare('PRAGMA user_version').get()!.user_version, 3);
       } finally {
         reader.close();
       }

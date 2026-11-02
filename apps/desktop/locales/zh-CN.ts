@@ -1,6 +1,44 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'capabilities.copyMcp': '为其他 Bot 添加连接',
+  'capabilities.mcpCopyHint':
+    '为另一位 Bot 添加「{0}」。请重新填写服务地址和该 Bot 的凭据，不会复制原账号或工具授权。',
+  'capabilities.recipient': '目标 Bot',
+  'capabilities.noOtherBots': '请先创建另一位 Bot，资料同步后即可添加。',
+  'capabilities.addMcpNamed': '添加 {0} 到其他 Bot',
+  'capabilities.mcpAdded': '已为「{0}」添加独立连接，请在其能力中检查连接并选择工具。',
+  'capabilities.archiveMcp': '后仅停用当前 Bot 的这份连接，其他 Bot 的独立连接不受影响。',
+  'capabilities.editSharedMcp': '正在编辑已有共享连接，修改会影响原有使用者。',
+  'capabilities.updateRuntime': '请更新本地 Agent，以使用 Bot 独立的技能安装和外部连接。',
+
+  'capabilities.saved': '已保存当前 Bot 的技能；启用状态保留。',
+  'capabilities.removed': '已移除当前 Bot 的技能安装。',
+  'capabilities.restored': '已恢复到当前 Bot，需重新启用。',
+
+  'capabilities.removeOnlyThisBot': '只会移除当前 Bot 的这份安装，其他 Bot 的副本不受影响。',
+  'capabilities.newConnectionCredentials':
+    '请为这位 Bot 重新填写服务地址和凭据，不会复制原连接的账号授权。',
+
+  'capabilities.title': '能力',
+  'capabilities.privateHint': '技能和外部工具默认只添加给「{0}」。',
+  'capabilities.installForBot': '安装到：{0} · 配置与授权仅属于这位 Bot',
+  'capabilities.mcpForBot': '{0} 的外部工具',
+  'capabilities.chooseBot': '选择 Bot',
+  'capabilities.createBotFirst': '请先创建或同步一位 Bot。',
+  'capabilities.finishEditing': '请先保存或取消当前编辑。',
+  'capabilities.copySkill': '添加技能副本',
+  'capabilities.copyHint': '为所选 Bot 添加 {0} 的独立副本。以后的修改、升级和卸载互不影响。',
+  'capabilities.addAndEnable': '添加并启用',
+  'capabilities.copyToBot': '添加到其他 Bot',
+  'capabilities.makePrivateCopy': '创建独立副本',
+  'capabilities.legacyShared': '已有共享记录',
+  'capabilities.onlyThisBot': '仅当前 Bot',
+  'capabilities.sharedReadOnly': '这是已有的共享技能。先创建独立副本，再为这位 Bot 修改。',
+  'capabilities.installed': '已为当前 Bot 安装并启用。',
+  'capabilities.installAndEnable': '安装并启用',
+  'capabilities.copied': '已为所选 Bot 添加独立技能副本。',
+
   'onboarding.connectionSettings': '连接设置（可选）',
   'onboarding.modelSelectionHint':
     '填写 Key 后加载模型列表并选择模型，也可以手动填写模型 ID。测试与验证可能产生少量 API 费用，不会发送聊天内容。',

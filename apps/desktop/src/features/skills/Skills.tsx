@@ -21,6 +21,7 @@ import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { t, useLocale } from '../../i18n/locale';
 import { downloadBlob, readUtf8 } from '../files/files';
+import { SkillCopy } from './SkillCopy';
 import { SkillDescription } from './SkillDescription';
 import { SkillFiles } from './SkillFiles';
 import { SkillInstall } from './SkillInstall';
@@ -45,6 +46,7 @@ export function Skills({
   const runtime = useRuntime(),
     picker = useRef<HTMLInputElement>(null),
     editor = useRef<HTMLFormElement>(null);
+  const [copying, setCopying] = useState<SkillEntry>();
   const [catalogs, setCatalogs] = useState<Record<string, SkillCatalog>>({});
   const [statuses, setStatuses] = useState<Record<string, Status>>({});
   const [trash, setTrash] = useState(false),
@@ -64,6 +66,7 @@ export function Skills({
     runtime.enabled &&
     runtime.snapshot.phase === 'ready' &&
     runtime.snapshot.protocolVersion >= 20 &&
+    runtime.snapshot.botCapabilities === true &&
     runtime.snapshot.skills?.available &&
     registered &&
     !bot.members;
@@ -143,7 +146,7 @@ export function Skills({
     }
   }
   async function save() {
-    if (!draft || status.busy || !available) return;
+    if (!draft || status.busy || !available || (draft.id && readOnly)) return;
     if (!isSkillContent(draft.content)) {
       report(bot.id, new Error('INVALID_SKILL'));
       return;
@@ -165,7 +168,7 @@ export function Skills({
       );
       dispatch({ type: 'skill-load', bot: id, previous, document });
       setRefresh((value) => value + 1);
-      notify(t('skills.skillSavedPerBotEnablementRetainedChanges'));
+      notify(t('capabilities.saved'));
     } catch (cause) {
       report(id, cause);
       if (cause instanceof Error && cause.message === 'SKILL_CONFLICT' && previous.id) {
@@ -262,11 +265,7 @@ export function Skills({
       });
       if (previous?.id === entry.id) dispatch({ type: 'skill-load', bot: id, previous, document });
       setRecycling((current) => (current?.nonce === nonce ? undefined : current));
-      notify(
-        deleted
-          ? t('skills.movedTrashAllPerBotEnablementSettings')
-          : t('skills.restoredSkillLibraryEnableAgainIndividualBots'),
-      );
+      notify(deleted ? t('capabilities.removed') : t('capabilities.restored'));
     } catch (cause) {
       report(id, cause);
     } finally {
@@ -285,6 +284,7 @@ export function Skills({
     notify(t('skills.addedChatDraftToolCalledOnlySending'));
   }
   const selected = catalog?.items.find((entry) => entry.id === draft?.id);
+  const readOnly = !!draft?.id && (!selected || selected.system || !selected.ownerBot);
   return (
     <section className="panel-section skills" aria-label={t('skills.skills', { 0: bot.name })}>
       <div className="panel-heading">
@@ -342,8 +342,8 @@ export function Skills({
       />
       {!available && (
         <p role="status" className="panel-description">
-          {runtime.snapshot.protocolVersion < 20
-            ? t('skills.runtimeDoesNotSupportSkillManagementConnect')
+          {runtime.snapshot.protocolVersion < 20 || runtime.snapshot.botCapabilities !== true
+            ? t('capabilities.updateRuntime')
             : !registered
               ? t('common.syncingBotProfilesPleaseWait')
               : t('common.skillsTemporarilyUnavailableOrdinaryChatExistingWorkspace')}
@@ -384,14 +384,18 @@ export function Skills({
             {draft.id ? t('skills.revision', { 0: draft.revision }) : ''}
           </p>
           <p className="field-help">{t('skills.useShortLowercaseNameSuchWeeklyReport')}</p>
-          {selected?.system && <p className="field-help">{t('skills.systemReadOnly')}</p>}
+          {readOnly && (
+            <p className="field-help">
+              {t(selected?.system ? 'skills.systemReadOnly' : 'capabilities.sharedReadOnly')}
+            </p>
+          )}
           <label className="field-label">
             SKILL.md
             <textarea
               className="field skill-source"
               aria-label={t('skills.skillInstructions')}
               value={draft.content}
-              readOnly={draft.deleted || selected?.system}
+              readOnly={draft.deleted || readOnly}
               maxLength={200000}
               spellCheck={false}
               onChange={(event) =>
@@ -408,7 +412,7 @@ export function Skills({
               bot={target}
               id={draft.id}
               revision={draft.revision}
-              readOnly={draft.deleted || !!selected?.system || skillDirty(draft)}
+              readOnly={draft.deleted || readOnly || skillDirty(draft)}
               onReplace={() => openInstall(true)}
             />
           )}
@@ -443,7 +447,7 @@ export function Skills({
               type="submit"
               className="primary"
               disabled={
-                !available || status.busy || draft.deleted || selected?.system || !skillDirty(draft)
+                !available || status.busy || draft.deleted || readOnly || !skillDirty(draft)
               }
             >
               {status.busy ? t('common.saving') : t('skills.saveSkill')}
@@ -482,6 +486,11 @@ export function Skills({
             <div className="skill-title">
               <strong>{entry.name}</strong>
               {entry.system && <small className="muted">{t('skills.systemBuiltin')}</small>}
+              {!entry.system && (
+                <small className="muted">
+                  {t(entry.ownerBot ? 'capabilities.onlyThisBot' : 'capabilities.legacyShared')}
+                </small>
+              )}
               <span className="spacer" />
               {!entry.deleted && (
                 <label className="skill-toggle">
@@ -508,6 +517,16 @@ export function Skills({
               {!entry.invocation.userInvocable ? t('skills.manualInstructionsUnavailable') : ''}
             </p>
             <div className="skill-controls">
+              {!entry.system && !entry.deleted && (
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!available || status.busy}
+                  onClick={() => setCopying(entry)}
+                >
+                  {t(entry.ownerBot ? 'capabilities.copyToBot' : 'capabilities.makePrivateCopy')}
+                </button>
+              )}
               <button
                 type="button"
                 className="secondary"
@@ -547,7 +566,7 @@ export function Skills({
               ) : (
                 <IconButton
                   label={t('skills.moveTrash', { 0: entry.name })}
-                  disabled={!available || status.busy || entry.system}
+                  disabled={!available || status.busy || entry.system || !entry.ownerBot}
                   onClick={() => {
                     if (draft?.id === entry.id && skillDirty(draft)) {
                       feedback(bot.id, { error: t('skills.saveDiscardSkillSEditsFirst') });
@@ -587,12 +606,25 @@ export function Skills({
           }}
         />
       )}
+      {copying && (
+        <SkillCopy
+          bot={bot}
+          bots={state.bots}
+          entry={copying}
+          onClose={() => setCopying(undefined)}
+          onCopied={() => {
+            setCopying(undefined);
+            setRefresh((value) => value + 1);
+            notify(t('capabilities.copied'));
+          }}
+        />
+      )}
       {recycling && (
         <Dialog title={t('skills.moveSkillTrash')} onClose={closeRecycle}>
           <p className="dialog-description">
-            {t('skills.move')}
-            {recycling.entry.name}
-            {t('skills.movingTrashDisablesAllBotsExistingChats')}
+            <strong>{recycling.entry.name}</strong>
+            <br />
+            {t('capabilities.removeOnlyThisBot')}
           </p>
           {status.error && (
             <p role="alert" className="skill-error">

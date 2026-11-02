@@ -82,7 +82,13 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
     assert.equal((await denied).isError, true);
     assert.equal((await store.list(run.bot)).items.length, 0);
     assert.equal((await tools.invoke(run, 'skill_preview', { source })).isError, true);
-    const nextRun = { ...run, id: 'mock-next-run', abort: new AbortController() };
+    const initialSnapshot = await store.capture(run.bot);
+    const nextRun = {
+      ...run,
+      id: 'mock-next-run',
+      abort: new AbortController(),
+      skills: initialSnapshot,
+    };
     const next = JSON.parse(
       (await tools.invoke(nextRun, 'skill_preview', { source })).content[0].text,
     );
@@ -102,9 +108,29 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
     assert.equal(result.enabled, true);
     const installed = (await store.list(run.bot)).items[0];
     assert.equal(installed.enabled, true);
-    assert.equal((await store.list('mock-b')).items[0].enabled, false);
+    assert.equal((await store.list('mock-b')).items.length, 0);
+    assert.equal(result.applies, 'current-task');
+    assert.equal(result.ownerBot, run.bot);
     assert.equal(
-      (await store.readResource(installed.id, installed.revision, 'assets/template.bin')).data,
+      nextRun.skills,
+      initialSnapshot,
+      'The native DSH session fingerprint must retain its original skill context',
+    );
+    assert.equal(initialSnapshot.skills.length, 0);
+    const { SkillTools } = await import(new URL('./skill-tools.js', import.meta.url).href);
+    const resources = new SkillTools(
+      store,
+      async () => ({ directory: '/synthetic/prepared', execution: 'linux-workspace' }),
+      tools,
+    );
+    const instructions = JSON.parse(
+      (await resources.invoke(nextRun, 'skill_read', { skill: installed.name, path: 'SKILL.md' }))
+        .content[0].text,
+    );
+    assert.ok(instructions.content.includes('Use assets/template.bin'));
+    assert.equal(
+      (await store.readResource(installed.id, installed.revision, 'assets/template.bin', run.bot))
+        .data,
       Buffer.from([0, 255, 1]).toString('base64'),
     );
     assert.deepEqual(
@@ -117,6 +143,68 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
       code: 'SKILL_PREVIEW_EXPIRED',
     });
   } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('installing a manual-only skill does not claim automatic invocation authority', async () => {
+  const { SkillDiscovery } = await import(entry);
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-manual-install-'));
+  const store = new Skills(path.join(root, 'skills.sqlite'));
+  const cards = new Interactions(path.join(root, 'interactions'));
+  const content =
+    '---\nname: mock-manual-new\ndescription: Synthetic manual-only skill\ndisable-model-invocation: true\n---\nSynthetic instructions.\n';
+  const bundle = {
+    root: 'mock-manual-new',
+    files: [{ path: 'SKILL.md', data: Buffer.from(content).toString('base64') }],
+  };
+  const source = { platform: 'github', url: 'https://github.com/synthetic-org/mock-manual' };
+  const run: import('./agent-tools.js').AgentToolRun = {
+    bot: 'mock-alpha',
+    id: 'mock-run',
+    sessionId: 'mock-session',
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    workdir: root,
+    canonicalRoot: root,
+    skills: await store.capture('mock-alpha'),
+  };
+  const tools = new SkillDiscovery(store, cards, {
+    search: async () => {
+      throw Error('UNEXPECTED_SEARCH');
+    },
+    preview: async () => ({
+      kind: 'package',
+      selection: { kind: 'package', package: bundle, preview: inspectSkillPackage(bundle) },
+      origin: { label: 'Synthetic source', url: source.url, revision: 'a'.repeat(40) },
+    }),
+  });
+  try {
+    const preview = JSON.parse(
+      (await tools.invoke(run, 'skill_preview', { source })).content[0].text,
+    );
+    const pending = tools.invoke(run, 'skill_install', { previewId: preview.previewId });
+    let question: Awaited<ReturnType<Interactions['list']>>[number] | undefined;
+    for (let i = 0; i < 100; i++) {
+      question = (await cards.list()).find((item) => item.status === 'pending');
+      if (question) break;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    assert.ok(question);
+    await cards.reply(run.bot, run.id!, question.id, {
+      kind: 'answer',
+      answers: [{ id: 'install', selected: ['Install and enable'] }],
+    });
+    const result = JSON.parse((await pending).content[0].text);
+    assert.equal(result.installed, true);
+    assert.equal(result.applies, 'manual-invocation');
+  } finally {
+    run.abort.abort();
+    tools.release(run);
     await store.close();
     await rm(root, { recursive: true, force: true });
   }

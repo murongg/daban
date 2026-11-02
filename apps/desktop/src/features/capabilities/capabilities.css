@@ -1,0 +1,16 @@
+.capabilities-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.capabilities-heading p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.capabilities-heading > button {
+  flex-shrink: 0;
+}

@@ -36,12 +36,14 @@ afterEach(() => {
 function connect(extraBot?: string, system = false) {
   let document: SkillDocument = {
       ...structuredClone(original),
+      ...(!system ? { ownerBot: agentId(initialState().bots[0].id) } : {}),
       ...(system ? { system: true as const } : {}),
     },
     revision = 0;
   const bindings = new Map<string, { enabled: boolean; revision: number }>();
   const snapshot = disconnected('ready');
-  snapshot.protocolVersion = 20;
+  snapshot.botCapabilities = true;
+  snapshot.protocolVersion = 41;
   snapshot.skills = { available: true, revision: 0 };
   snapshot.model.configured = true;
   snapshot.profiles = initialState()
@@ -295,7 +297,7 @@ it('recycles with a captured version and restores without restoring old enableme
   );
   await userEvent.click(screen.getByRole('button', { name: '移入回收站 mock-workflow' }));
   const dialog = screen.getByRole('dialog');
-  expect(dialog).toHaveTextContent('所有 Bot');
+  expect(dialog).toHaveTextContent('mock-workflow');
   await userEvent.click(within(dialog).getByRole('button', { name: '移入回收站' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   await userEvent.click(screen.getByRole('button', { name: '查看回收站' }));

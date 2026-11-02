@@ -39,6 +39,7 @@ const selection = {
 };
 const document = {
   id: 'mock-new',
+  ownerBot: 'mock-bot',
   name: 'mock-install',
   description: 'Synthetic installation',
   revision: 1,
@@ -55,7 +56,8 @@ afterEach(() => Reflect.deleteProperty(window, 'daban'));
 function setup() {
   const snapshot: RuntimeSnapshot = {
     ...disconnected('ready'),
-    protocolVersion: 40,
+    botCapabilities: true,
+    protocolVersion: 41,
     profiles: [
       {
         id: 'mock-bot',
@@ -70,6 +72,13 @@ function setup() {
     ],
   };
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
+    if (command.type === 'skill.list')
+      return {
+        ok: true,
+        value: { revision: 1, items: [{ ...document, enabled: false, bindingRevision: 0 }] },
+      };
+    if (command.type === 'skill.bind')
+      return { ok: true, value: { ...document, enabled: true, bindingRevision: 1 } };
     if (command.type === 'skill.pick') return { ok: true, value: selection };
     if (command.type === 'skill.package.update')
       return { ok: true, value: { ...document, revision: command.revision + 1 } };
@@ -82,7 +91,7 @@ function setup() {
   });
   return invoke;
 }
-it('reviews a complete folder before importing and leaves activation explicit', async () => {
+it('reviews a complete folder before installing and enabling it for the current Bot', async () => {
   const invoke = setup(),
     installed = vi.fn();
   render(
@@ -95,14 +104,18 @@ it('reviews a complete folder before importing and leaves activation explicit', 
   expect(invoke.mock.calls.some(([command]) => command.type === 'skill.package.import')).toBe(
     false,
   );
-  await userEvent.click(screen.getByRole('button', { name: '安装到技能库' }));
+  await userEvent.click(screen.getByRole('button', { name: '安装并启用' }));
   expect(invoke).toHaveBeenCalledWith({
     type: 'skill.package.import',
     bot: 'mock-bot',
     package: bundle,
   });
   expect(installed).toHaveBeenCalledWith(document);
-  expect(invoke.mock.calls.some(([command]) => command.type === 'skill.bind')).toBe(false);
+  expect(invoke).toHaveBeenCalledWith({
+    type: 'skill.bind',
+    bot: 'mock-bot',
+    binding: { id: document.id, revision: 1, bindingRevision: 0, enabled: true },
+  });
 });
 it('updates a reviewed same-name package using its captured revision', async () => {
   const invoke = setup();
