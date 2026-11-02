@@ -1,5 +1,5 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron';
-import { type Locale, type MessageKey, translate } from '../locale';
+import { type Locale, type MessageKey, translate } from '../shared/locale';
 
 export function localizeMenu(locale: Locale) {
   const text = (copy: MessageKey) => translate(locale, copy);

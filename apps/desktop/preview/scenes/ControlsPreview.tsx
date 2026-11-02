@@ -2,18 +2,18 @@ import type { RuntimeBridge, RuntimeCommand } from '@daban/protocol';
 import { Info } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { IconButton } from '../../src/Button';
-import { DateField } from '../../src/DateField';
-import { FilePicker } from '../../src/FilePicker';
-import { ImportBot } from '../../src/ImportBot';
-import { NumberField } from '../../src/NumberField';
-import { RuntimeProvider } from '../../src/Runtime';
-import { Select } from '../../src/Select';
-import { initialState } from '../../src/state';
-import { TimeField } from '../../src/TimeField';
+import { RuntimeProvider } from '../../src/app/Runtime';
+import { initialState } from '../../src/app/state';
+import { IconButton } from '../../src/components/controls/Button';
+import { DateField } from '../../src/components/controls/DateField';
+import { NumberField } from '../../src/components/controls/NumberField';
+import { Select } from '../../src/components/controls/Select';
+import { TimeField } from '../../src/components/controls/TimeField';
+import { ImportBot } from '../../src/features/bots/ImportBot';
+import { FilePicker } from '../../src/features/files/FilePicker';
 import { previewSnapshot } from '../runtime';
-import '../../src/tokens.css';
-import '../../src/styles.css';
+import '../../src/styles/tokens.css';
+import '../../src/styles/styles.css';
 
 // Standalone synthetic UI only: no workspace persistence, VM, model, credential or import effect.
 const snapshot = previewSnapshot(

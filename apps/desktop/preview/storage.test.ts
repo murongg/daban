@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { clientCache, setCache } from '../src/cache';
+import { clientCache, setCache } from '../src/app/cache';
 import { previewStorage, startPreview } from './storage';
 
 afterEach(() => {

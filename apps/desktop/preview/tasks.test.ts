@@ -10,7 +10,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 vi.mock('react-dom/client', () => ({ createRoot: () => ({ render: () => {} }) }));
 afterEach(async () => {
-  (await import('../src/cache')).setCache();
+  (await import('../src/app/cache')).setCache();
   Reflect.deleteProperty(window, 'daban');
   sessionStorage.clear();
   history.replaceState({}, '', '/');

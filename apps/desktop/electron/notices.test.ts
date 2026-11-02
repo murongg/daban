@@ -7,7 +7,7 @@ import {
   noticeCopy,
   noticeKey,
   parseNoticeCommand,
-} from '../notifications';
+} from '../shared/notifications';
 
 it('validates scoped per-Bot choices without weakening legacy status or command boundaries', () => {
   const command = {

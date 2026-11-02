@@ -7,10 +7,10 @@ import {
   type RuntimeSnapshot,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { RuntimeProvider, useRuntime } from '../../src/Runtime';
-import { Setup } from '../../src/Setup';
-import '../../src/tokens.css';
-import '../../src/styles.css';
+import { RuntimeProvider, useRuntime } from '../../src/app/Runtime';
+import { Setup } from '../../src/features/onboarding/Setup';
+import '../../src/styles/tokens.css';
+import '../../src/styles/styles.css';
 
 // This scene never connects to an execution host; controls change only its synthetic snapshot.
 const query = new URLSearchParams(location.search);

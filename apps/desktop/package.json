@@ -9,7 +9,7 @@
     "preview": "vite preview --host 127.0.0.1 --port 5174 --strictPort",
     "build": "tsc -p tsconfig.json && vite build && vite build --config electron/vite.config.ts && vite build --config electron/vite.config.ts --mode preload",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run --root ../.. --config vite.config.ts apps/desktop",
+    "test": "vitest run --root ../.. --config vitest.config.ts apps/desktop",
     "start": "electron ."
   },
   "dependencies": {

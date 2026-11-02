@@ -1,13 +1,13 @@
 import { useEffect, useReducer, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Brand } from '../../src/Avatar';
-import { demoState } from '../../src/fixtures';
-import { RuntimeProvider } from '../../src/Runtime';
-import { Settings } from '../../src/Settings';
-import { reduce } from '../../src/state';
+import { RuntimeProvider } from '../../src/app/Runtime';
+import { reduce } from '../../src/app/state';
+import { Brand } from '../../src/features/bots/Avatar';
+import { Settings } from '../../src/features/settings/Settings';
+import { demoState } from '../../src/test/fixtures';
 import { modelPreview } from '../models';
-import '../../src/tokens.css';
-import '../../src/styles.css';
+import '../../src/styles/tokens.css';
+import '../../src/styles/styles.css';
 
 // Isolated synthetic component preview; storage is scoped by the common entry before this module loads.
 const { snapshot, bridge } = modelPreview();

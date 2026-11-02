@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { parseLocaleCommand } from '../locale';
+import { parseLocaleCommand } from '../shared/locale';
 import { LocalePreferences } from './locale';
 
 it('persists the last language and restores it from a synthetic local preference file', async () => {

@@ -44,7 +44,7 @@ npm run dev
 
 ## 项目结构
 
-项目使用 npm workspaces，依赖在根目录统一安装。
+项目使用 npm workspaces，依赖在根目录统一安装。完整目录说明见 [Repository structure](architecture.md)。
 
 ```text
 apps/desktop/       React 界面、Electron 主进程和预加载
@@ -86,7 +86,7 @@ npm run test:runtime  # 执行与领域服务测试
 npm run build         # 构建全部工作区
 ```
 
-界面文案通过 `apps/desktop/src/locale.ts` 的类型化翻译入口读取，英文语义 key 在 `apps/desktop/locales/en.ts` 与 `zh-CN.ts` 中成对维护；插值使用 `{0}`、`{1}` 等占位符，不使用中文原文作为 key。只翻译应用自身文案，保留用户内容、模型回复、稳定标识、枚举值和审批参数；历史样例迁移数据不可随文案修改。
+界面文案通过 `apps/desktop/src/i18n/locale.ts` 的类型化翻译入口读取，英文语义 key 在 `apps/desktop/locales/en.ts` 与 `zh-CN.ts` 中成对维护；插值使用 `{0}`、`{1}` 等占位符，不使用中文原文作为 key。只翻译应用自身文案，保留用户内容、模型回复、稳定标识、枚举值和审批参数；历史样例迁移数据不可随文案修改。
 
 格式化使用 `npm run format`。行为变更先写使用合成数据的失败测试，再运行相关检查；不要把真实用户内容或凭据放进测试。
 

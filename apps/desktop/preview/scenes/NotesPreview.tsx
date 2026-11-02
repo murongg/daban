@@ -8,14 +8,14 @@ import {
   type RuntimeReply,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../../src/App';
-import { clientCache } from '../../src/cache';
-import { demoState as initialState } from '../../src/fixtures';
-import { noteDraft, noteInitial, noteInput } from '../../src/notes-state';
-import { storageKey } from '../../src/storage';
+import { App } from '../../src/app/App';
+import { clientCache } from '../../src/app/cache';
+import { storageKey } from '../../src/app/storage';
+import { noteDraft, noteInitial, noteInput } from '../../src/features/notes/notes-state';
+import { demoState as initialState } from '../../src/test/fixtures';
 import { previewSnapshot } from '../runtime';
-import '../../src/tokens.css';
-import '../../src/styles.css';
+import '../../src/styles/tokens.css';
+import '../../src/styles/styles.css';
 
 // Synthetic production-component specimen; no model, VM, credentials or external services are connected.
 const params = new URLSearchParams(location.search);

@@ -1,0 +1,590 @@
+import { agentId, type Schedule, type ScheduleInput, type ScheduleRule } from '@daban/protocol';
+import { Clock3, Lock, LockOpen, Pencil, Play, Plus, Trash2 } from 'lucide-react';
+import { type Dispatch, useEffect, useState } from 'react';
+import { profileInput } from '../../app/profiles';
+import { runtimeError, useRuntime } from '../../app/Runtime';
+import {
+  type Action,
+  type Bot,
+  type RoutineDraft,
+  routineDraft,
+  type State,
+} from '../../app/state';
+import { IconButton } from '../../components/controls/Button';
+import { DateField } from '../../components/controls/DateField';
+import { NumberField } from '../../components/controls/NumberField';
+import { Select } from '../../components/controls/Select';
+import { TimeField } from '../../components/controls/TimeField';
+import { getLocale, t, useLocale } from '../../i18n/locale';
+
+function rule(form: RoutineDraft): ScheduleRule {
+  const timeZone = form.zone ?? 'Asia/Shanghai';
+  if (form.frequency === '间隔')
+    return { kind: 'every', everySeconds: Number(form.interval ?? '60') * 60 };
+  if (form.frequency === '单次')
+    return { kind: 'once', date: form.date || '', time: form.time, timeZone };
+  if (form.frequency === 'Cron') return { kind: 'cron', expression: form.cron || '', timeZone };
+  if (['工作日', '每周五', '每周'].includes(form.frequency))
+    return {
+      kind: 'weekly',
+      time: form.time,
+      timeZone,
+      weekdays:
+        form.frequency === '工作日'
+          ? [1, 2, 3, 4, 5]
+          : form.frequency === '每周五'
+            ? [5]
+            : form.weekdays || [1],
+    };
+  return { kind: 'daily', time: form.time, timeZone };
+}
+function timing(value: ScheduleRule) {
+  if (value.kind === 'every') return t('schedules.everyMinutes', { 0: value.everySeconds / 60 });
+  if (value.kind === 'cron') return `${value.expression} · ${value.timeZone}`;
+  const prefix =
+    value.kind === 'daily'
+      ? t('common.daily')
+      : value.kind === 'once'
+        ? value.date
+        : t('schedules.weekly', {
+            0: value.weekdays
+              .map(
+                (day) =>
+                  [
+                    t('schedules.sun'),
+                    t('schedules.mon'),
+                    t('schedules.tue'),
+                    t('schedules.wed'),
+                    t('schedules.thu'),
+                    t('schedules.fri'),
+                    t('schedules.sat'),
+                  ][day],
+              )
+              .join('、'),
+          });
+  return `${prefix} ${value.time} · ${value.timeZone}`;
+}
+const phases = {
+  pending: 'schedules.waitingBotAvailability',
+  claimed: 'schedules.starting',
+  running: 'common.running',
+  completed: 'common.completed',
+  failed: 'common.failed',
+  interrupted: 'common.interrupted',
+  cancelled: 'schedules.withdrawn',
+  coalesced: 'schedules.mergedIntoPendingTrigger',
+} as const;
+const definite = [
+  // IPC validation rejects this before dispatch; editing cannot duplicate a schedule effect.
+  'INVALID_COMMAND',
+  'INVALID_SCHEDULE',
+  'SCHEDULE_LIMIT',
+  'SCHEDULE_ID_REUSED',
+  'SCHEDULE_NOT_FOUND',
+  'RUNTIME_TOO_OLD',
+  'SCHEDULE_CORRUPT',
+];
+
+function scheduleError(error: unknown) {
+  return runtimeError(
+    error instanceof Error && error.message === 'INVALID_COMMAND'
+      ? new Error('INVALID_SCHEDULE')
+      : error,
+  );
+}
+
+function localTime(time: string, timeZone = 'Asia/Shanghai') {
+  try {
+    return new Date(time).toLocaleString(getLocale(), { timeZone });
+  } catch {
+    return time;
+  }
+}
+
+export function Schedules({
+  state,
+  bot,
+  dispatch,
+  notify,
+}: {
+  state: State;
+  bot: Bot;
+  dispatch: Dispatch<Action>;
+  notify: (message: string) => unknown;
+}) {
+  useLocale();
+  const runtime = useRuntime();
+  const form = state.routineDrafts[bot.id];
+  const catalog = runtime.snapshot.schedules;
+  const available = runtime.snapshot.protocolVersion >= 5 && catalog?.available && !bot.members;
+  const items = (catalog?.items || []).filter((item) => item.bot === agentId(bot.id));
+  const [statuses, setStatuses] = useState<
+    Record<string, { busy?: boolean; error?: string; conflict?: Schedule }>
+  >({});
+  const [preview, setPreview] = useState<{ times: string[]; error: string }>({
+    times: [],
+    error: '',
+  });
+  const [requests] = useState(() => new Map<string, string>());
+  const status = statuses[bot.id] || {};
+  const change = (draft: Partial<RoutineDraft>) =>
+    dispatch({ type: 'routine-draft', bot: bot.id, draft });
+  const selectedRule = rule(form);
+  const signature = JSON.stringify(selectedRule);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The serialized rule cancels stale previews across Bot and form changes.
+  useEffect(() => {
+    if (!available || !form.open) return;
+    let live = true;
+    setPreview({ times: [], error: '' });
+    runtime
+      .command<string[]>({ type: 'schedule.preview', rule: selectedRule })
+      .then((times) => {
+        if (live) setPreview({ times, error: '' });
+      })
+      .catch((error) => {
+        if (live) setPreview({ times: [], error: scheduleError(error) });
+      });
+    return () => {
+      live = false;
+    };
+  }, [available, form.open, signature, bot.id, runtime.command]);
+  const feedback = (target: string, value: (typeof statuses)[string]) =>
+    setStatuses((current) => ({ ...current, [target]: value }));
+  async function operate(item: Schedule, action: 'toggle' | 'remove' | 'run' | 'lock') {
+    const target = bot.id;
+    feedback(target, { busy: true });
+    try {
+      if (action === 'run') {
+        const requestId = requests.get(item.id) || crypto.randomUUID();
+        requests.set(item.id, requestId);
+        await runtime.command({ type: 'schedule.run', id: item.id, requestId });
+        requests.delete(item.id);
+        notify(t('schedules.submittedWillRunWhenBotAvailable', { 0: item.title }));
+      } else if (action === 'remove')
+        await runtime.command({ type: 'schedule.remove', id: item.id, revision: item.revision });
+      else
+        await runtime.command({
+          type: 'schedule.update',
+          id: item.id,
+          revision: item.revision,
+          patch: action === 'lock' ? { locked: !item.locked } : { enabled: !item.enabled },
+        });
+      feedback(target, {});
+    } catch (error) {
+      feedback(target, { error: runtimeError(error) });
+    }
+  }
+  function edit(item: Schedule) {
+    const value = item.rule;
+    change({
+      ...routineDraft(),
+      open: true,
+      editId: item.id,
+      revision: item.revision,
+      title: item.title,
+      instruction: item.prompt,
+      // Frequency is a persisted rule discriminator; translate its label, never its value.
+      frequency: {
+        every: '间隔',
+        daily: '每天',
+        weekly: '每周',
+        once: '单次',
+        cron: 'Cron',
+      }[value.kind],
+      time: 'time' in value ? value.time : '09:00',
+      zone: 'timeZone' in value ? value.timeZone : 'Asia/Shanghai',
+      date: value.kind === 'once' ? value.date : '',
+      interval: value.kind === 'every' ? String(value.everySeconds / 60) : '60',
+      cron: value.kind === 'cron' ? value.expression : '',
+      weekdays: value.kind === 'weekly' ? value.weekdays : [1],
+      pending: undefined,
+    });
+    feedback(bot.id, {});
+  }
+  return (
+    <div className="panel-section">
+      <div className="panel-heading">
+        <h2>{t('common.scheduledTasks')}</h2>
+        <IconButton
+          label={t('common.newScheduledTask')}
+          disabled={!available || !!status.busy}
+          onClick={() => change({ open: true })}
+        >
+          <Plus />
+        </IconButton>
+      </div>
+      <p className="panel-description">{t('schedules.giveInstructionsOnceBotWillStartSchedule')}</p>
+      {!available && (
+        <p className="form-error" role="alert">
+          {bot.members
+            ? t('schedules.groupSchedulesNotConnectedYetSelectIndividual')
+            : runtime.snapshot.protocolVersion < 5
+              ? t('schedules.updateLocalRuntimeUseScheduledTasks')
+              : runtimeError(new Error(catalog?.error || 'SCHEDULE_UNAVAILABLE'))}
+        </p>
+      )}
+      {status.error && !(form.open && status.error === preview.error) && (
+        <p className="form-error" role="alert">
+          {status.error}
+        </p>
+      )}
+      {items.map((item) => (
+        <div className="routine-row" key={item.id}>
+          <div className="routine-top">
+            <span className="routine-title">{item.title}</span>
+            <button
+              type="button"
+              className="toggle"
+              role="switch"
+              aria-label={`${item.enabled ? t('common.disable') : t('common.enable')} ${item.title}`}
+              aria-checked={item.enabled}
+              disabled={!available || !!status.busy}
+              onClick={() => operate(item, 'toggle')}
+            />
+          </div>
+          <p className="routine-description">
+            <Clock3 />
+            {timing(item.rule)}
+          </p>
+          <p className="panel-description">{item.prompt}</p>
+          <p className="inline-note">
+            {item.enabled && item.nextRunAt
+              ? t('schedules.nextRunTime', {
+                  0: localTime(
+                    item.nextRunAt,
+                    'timeZone' in item.rule ? item.rule.timeZone : 'Asia/Shanghai',
+                  ),
+                })
+              : item.rule.kind === 'once' && item.history.length
+                ? t('schedules.oneTimeTaskTriggered')
+                : t('common.paused')}
+          </p>
+          <div className="routine-bottom">
+            <span>
+              {item.history[0] ? t(phases[item.history[0].state]) : t('schedules.notTriggeredYet')}
+            </span>
+            <span className="spacer" />
+            <IconButton
+              label={t('schedules.scheduledTask', {
+                0: item.locked ? t('schedules.unlock') : t('schedules.lock'),
+                1: item.title,
+              })}
+              aria-pressed={!!item.locked}
+              disabled={!available || !!status.busy || runtime.snapshot.protocolVersion < 6}
+              onClick={() => operate(item, 'lock')}
+            >
+              {item.locked ? <Lock /> : <LockOpen />}
+            </IconButton>
+            <IconButton
+              label={t('schedules.runNow', { 0: item.title })}
+              disabled={!available || !!status.busy}
+              onClick={() => operate(item, 'run')}
+            >
+              <Play />
+            </IconButton>
+            <IconButton
+              label={t('schedules.editScheduledTask', { 0: item.title })}
+              disabled={!!status.busy || !!form.pending}
+              onClick={() => edit(item)}
+            >
+              <Pencil />
+            </IconButton>
+            <IconButton
+              label={t('common.deleteSchedule', { 0: item.title })}
+              disabled={!available || !!status.busy}
+              onClick={() => operate(item, 'remove')}
+            >
+              <Trash2 />
+            </IconButton>
+          </div>
+          {!!item.history.length && (
+            <details className="schedule-history">
+              <summary>{t('schedules.recentTriggers')}</summary>
+              <ul>
+                {item.history.map((firing) => (
+                  <li key={firing.id}>
+                    {localTime(
+                      firing.occurrenceAt,
+                      'timeZone' in item.rule ? item.rule.timeZone : 'Asia/Shanghai',
+                    )}{' '}
+                    · {t(phases[firing.state])}
+                    {firing.error && (
+                      <p className="form-error">{runtimeError(new Error(firing.error))}</p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      ))}
+      {!items.length && !form.open && available && (
+        <div className="empty-panel">
+          <Clock3 />
+          <h3>{t('common.letBotStartTime')}</h3>
+          <p>{t('common.exampleSummarizeProgressWeeklyDosDaily')}</p>
+          <button type="button" className="secondary" onClick={() => change({ open: true })}>
+            <Plus />
+            {t('common.createSchedule')}
+          </button>
+        </div>
+      )}
+      {form.open && (
+        <form
+          className="inline-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (status.busy || !available) return;
+            const target = bot.id;
+            const input: ScheduleInput = form.pending || {
+              id: form.editId || crypto.randomUUID(),
+              bot: agentId(target),
+              title: form.title.trim(),
+              prompt: form.instruction.trim(),
+              rule: selectedRule,
+            };
+            const submitted = form.editId ? form : { ...form, pending: input };
+            if (!form.editId) change({ pending: input });
+            feedback(target, { busy: true });
+            try {
+              await runtime.command({
+                type: 'bot.register',
+                profile: profileInput(bot, state.memories[target]),
+              });
+              if (form.editId)
+                await runtime.command({
+                  type: 'schedule.update',
+                  id: form.editId,
+                  revision: form.revision!,
+                  patch: { title: input.title, prompt: input.prompt, rule: input.rule },
+                });
+              else await runtime.command({ type: 'schedule.create', input });
+              dispatch({ type: 'routine-saved', bot: target, draft: submitted });
+              feedback(target, {});
+            } catch (error) {
+              if (!form.editId && error instanceof Error && definite.includes(error.message))
+                dispatch({ type: 'routine-draft', bot: target, draft: { pending: undefined } });
+              let conflict: Schedule | undefined;
+              if (form.editId && error instanceof Error && error.message === 'SCHEDULE_CONFLICT') {
+                try {
+                  conflict = await runtime.command<Schedule>({
+                    type: 'schedule.get',
+                    id: form.editId,
+                  });
+                } catch (refreshError) {
+                  feedback(target, { error: runtimeError(refreshError) });
+                  return;
+                }
+              }
+              feedback(target, { error: scheduleError(error), conflict });
+            }
+          }}
+        >
+          <fieldset
+            className="schedule-fields"
+            disabled={!!status.busy || !!form.pending || !available}
+          >
+            <label className="field-label">
+              {t('common.taskName')}
+              <input
+                className="field"
+                value={form.title}
+                onChange={(event) => change({ title: event.target.value })}
+                maxLength={120}
+                required
+              />
+            </label>
+            <label className="field-label">
+              {t('common.whatShouldBotDo')}
+              <textarea
+                className="field"
+                value={form.instruction}
+                onChange={(event) => change({ instruction: event.target.value })}
+                maxLength={8000}
+                rows={3}
+                required
+              />
+            </label>
+            <div className="field-label">
+              {t('common.repeat')}
+              <Select
+                label={t('common.repeat')}
+                value={form.frequency}
+                disabled={!!status.busy || !!form.pending || !available}
+                onValueChange={(value) => change({ frequency: value })}
+                // Saved frequency values remain stable; only their labels are message keys.
+                options={[
+                  { value: '每天', label: t('common.daily') },
+                  { value: '工作日', label: t('workspace.weekdays') },
+                  { value: '每周五', label: t('workspace.everyFriday') },
+                  { value: '每周', label: t('common.weekly') },
+                  { value: '间隔', label: t('common.interval') },
+                  { value: '单次', label: t('common.once') },
+                  { value: 'Cron', label: t('schedules.cron') },
+                ]}
+              />
+            </div>
+            {form.frequency === '间隔' ? (
+              <>
+                <div className="field-label">
+                  {t('schedules.intervalMinutes')}
+                  <NumberField
+                    label={t('schedules.intervalMinutes')}
+                    value={form.interval ?? '60'}
+                    onValueChange={(value) => change({ interval: value })}
+                    min={1}
+                    max={525600}
+                    required
+                    disabled={!!status.busy || !!form.pending || !available}
+                  />
+                </div>
+                {Number(form.interval || 60) < 15 && (
+                  <p className="inline-note">
+                    {t('schedules.eachTriggerMayCallModelIncurCharges')}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                {form.frequency === '单次' && (
+                  <div className="field-label">
+                    {t('schedules.date')}
+                    <DateField
+                      label={t('schedules.date')}
+                      value={form.date || ''}
+                      onValueChange={(value) => change({ date: value })}
+                      required
+                      disabled={!!status.busy || !!form.pending || !available}
+                    />
+                  </div>
+                )}
+                {form.frequency === 'Cron' ? (
+                  <label className="field-label">
+                    {t('schedules.cronExpression')}
+                    <input
+                      className="field"
+                      required
+                      value={form.cron || ''}
+                      placeholder="0 9 * * 1-5"
+                      onChange={(event) => change({ cron: event.target.value })}
+                    />
+                  </label>
+                ) : (
+                  <div className="field-label">
+                    {t('common.time')}
+                    <TimeField
+                      label={t('common.time')}
+                      value={form.time}
+                      onValueChange={(value) => change({ time: value })}
+                      required
+                      disabled={!!status.busy || !!form.pending || !available}
+                    />
+                  </div>
+                )}
+                {form.frequency === '每周' && (
+                  <fieldset
+                    className="schedule-days schedule-fields"
+                    aria-label={t('schedules.weeklyRunDays')}
+                  >
+                    {[1, 2, 3, 4, 5, 6, 0].map((day) => (
+                      <label key={day}>
+                        <input
+                          type="checkbox"
+                          checked={(form.weekdays || [1]).includes(day)}
+                          onChange={(event) =>
+                            change({
+                              weekdays: event.target.checked
+                                ? [...(form.weekdays || [1]), day].sort()
+                                : (form.weekdays || [1]).filter((value) => value !== day),
+                            })
+                          }
+                        />
+                        {t('schedules.week')}
+                        {
+                          [
+                            t('schedules.sun'),
+                            t('schedules.mon'),
+                            t('schedules.tue'),
+                            t('schedules.wed'),
+                            t('schedules.thu'),
+                            t('schedules.fri'),
+                            t('schedules.sat'),
+                          ][day]
+                        }
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+                <label className="field-label">
+                  {t('schedules.timeZone')}
+                  <input
+                    className="field"
+                    required
+                    value={form.zone ?? 'Asia/Shanghai'}
+                    onChange={(event) => change({ zone: event.target.value })}
+                  />
+                </label>
+              </>
+            )}
+          </fieldset>
+          {preview.error ? (
+            <p className="form-error">{preview.error}</p>
+          ) : (
+            !!preview.times.length && (
+              <div className="schedule-preview">
+                <p>{t('schedules.upcoming')}</p>
+                {preview.times.map((time) => (
+                  <div key={time}>
+                    {localTime(
+                      time,
+                      'timeZone' in selectedRule ? selectedRule.timeZone : 'Asia/Shanghai',
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+          {form.pending && !status.busy && (
+            <p className="inline-note">
+              {t('schedules.previousSaveUnconfirmedRetryingChecksSameContent')}
+            </p>
+          )}
+          {status.conflict && (
+            <div className="inline-note">
+              <p>
+                {t('schedules.currentServerRevision')}
+                {status.conflict.title} · {timing(status.conflict.rule)}
+              </p>
+              <p>{status.conflict.prompt}</p>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => {
+                  change({ revision: status.conflict!.revision });
+                  feedback(bot.id, {});
+                }}
+              >
+                {t('common.keepDraftRetryRevision')}
+              </button>
+            </div>
+          )}
+          <div className="inline-form-actions">
+            <button type="button" className="text-button" onClick={() => change({ open: false })}>
+              {t('common.close')}
+            </button>
+            <button type="submit" className="primary" disabled={!!status.busy || !available}>
+              {status.busy
+                ? t('common.saving')
+                : form.pending
+                  ? t('common.verifyRetrySave')
+                  : t('common.saveSchedule')}
+            </button>
+          </div>
+        </form>
+      )}
+      <p className="inline-note" style={{ marginTop: 25 }}>
+        {t('schedules.lockingMakesPlanReadOnlyBotCan')}
+      </p>
+    </div>
+  );
+}

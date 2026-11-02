@@ -6,13 +6,13 @@ import {
   type RuntimeSnapshot,
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
-import { App } from '../../src/App';
-import { clientCache } from '../../src/cache';
-import { demoState as initialState } from '../../src/fixtures';
-import { serialize, storageKey } from '../../src/storage';
+import { App } from '../../src/app/App';
+import { clientCache } from '../../src/app/cache';
+import { serialize, storageKey } from '../../src/app/storage';
+import { demoState as initialState } from '../../src/test/fixtures';
 import { previewSnapshot } from '../runtime';
-import '../../src/tokens.css';
-import '../../src/styles.css';
+import '../../src/styles/tokens.css';
+import '../../src/styles/styles.css';
 
 // Synthetic production-component preview only. No model or original user workspace is connected.
 const query = new URLSearchParams(location.search),

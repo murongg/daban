@@ -37,6 +37,7 @@ Biome preserves existing non-null assertions, CSS cascade ordering, and necessar
 ## Workspace Boundaries
 
 - Use npm workspaces: `apps/desktop` for the client, `apps/agent` for the host control service, `apps/runtime` for the Linux execution service, `packages/engine` for role-specific implementations, and `packages/protocol` for the public protocol. Repository tooling belongs in `tools`.
+- Desktop renderer code lives in `src/app`, `src/components`, and `src/features`; keep feature tests colocated. Put pure renderer/Electron modules in `apps/desktop/shared` and synthetic UI helpers in `apps/desktop/src/test`. See `docs/architecture.md` for the directory map.
 - Applications must declare their own dependencies. Import shared protocol definitions only through the public `@daban/protocol` entry point. Do not import between applications, use cross-workspace relative imports, or access package-internal source files.
 - Root commands build in this order: protocol package, implementation library, then applications. Preserve compatibility with existing build entry points and user data paths.
 - `apps/runtime/standalone-lock.json` supports standalone Linux deployment; `apps/agent/standalone-lock.json` supports host service deployment. When updating dependencies, synchronize the root lockfile and the corresponding standalone lockfiles. Do not depend on development-machine workspace links.

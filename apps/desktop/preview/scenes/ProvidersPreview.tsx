@@ -1,9 +1,9 @@
 import { createRoot } from 'react-dom/client';
-import { Models } from '../../src/Models';
-import { RuntimeProvider } from '../../src/Runtime';
+import { RuntimeProvider } from '../../src/app/Runtime';
+import { Models } from '../../src/features/models/Models';
 import { modelPreview } from '../models';
-import '../../src/tokens.css';
-import '../../src/styles.css';
+import '../../src/styles/tokens.css';
+import '../../src/styles/styles.css';
 
 // Synthetic UI only: no real account, API, VM or workspace storage is connected.
 const query = new URLSearchParams(location.search);
