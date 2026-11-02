@@ -235,6 +235,8 @@ export function runtimeError(error: unknown) {
     SKILL_SOURCE_INVALID_RESPONSE: t('errors.skillSourceResponse'),
     SKILL_PACKAGES_UNSUPPORTED: t('errors.skillRuntimeOld'),
     SKILL_SYSTEM_READ_ONLY: t('errors.systemSkillReadOnly'),
+    SKILL_SHARED_READ_ONLY: t('capabilities.sharedReadOnly'),
+    MCP_SHARED_READ_ONLY: t('capabilities.newConnectionCredentials'),
     INVALID_SKILL: t('errors.invalidSkillInstructionsCheckSkillMdName'),
     SKILLS_UNAVAILABLE: t('common.skillsTemporarilyUnavailableOrdinaryChatExistingWorkspace'),
     SKILL_CONFLICT: t('errors.skillWasChangedElsewhereReviewCurrentRevision'),

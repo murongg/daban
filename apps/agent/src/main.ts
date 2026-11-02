@@ -149,10 +149,12 @@ export async function startAgentProcess(
   options: AgentArguments,
   factory: MainDependencies = dependencies,
   signal?: AbortSignal,
+  onUpdate?: () => unknown,
 ) {
   if (options.mode === 'native') {
     const scope = agentScope(options.dataRoot, options.vmConfigFile);
     const native = await startNativeAgent({
+      onUpdate,
       dataRoot: options.dataRoot,
       socketPath: options.socketPath,
       scope,
@@ -310,6 +312,7 @@ export async function startAgentProcess(
       },
     };
     core = await factory.core({
+      onUpdate,
       dataRoot: options.dataRoot,
       socketPath: options.socketPath,
       scope,
@@ -363,7 +366,9 @@ export async function runAgentCli(
   runtime.signals.on('SIGINT', signal);
   let app: Awaited<ReturnType<typeof startAgentProcess>> | undefined;
   try {
-    app = await startAgentProcess(parseAgentArguments(args), factory, cancellation.signal);
+    app = await startAgentProcess(parseAgentArguments(args), factory, cancellation.signal, () =>
+      stopped(),
+    );
     if (!cancellation.signal.aborted) await pending;
     await app.close();
     return 0;

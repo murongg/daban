@@ -103,7 +103,7 @@ export function IntegrationTools({
     async (reset = false) => {
       const serial = ++reads.current;
       const [catalog, assignments] = await Promise.all([
-        runtime.command<McpCatalog>({ type: 'mcp.catalog', id: connection.id }),
+        runtime.command<McpCatalog>({ type: 'mcp.catalog', id: connection.id, bot }),
         runtime.command<McpAssignments>({ type: 'mcp.bindings', bot }),
       ]);
       const entry = assignments.items.find((item) => item.connection.id === connection.id);

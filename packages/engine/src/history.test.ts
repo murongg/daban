@@ -7,6 +7,7 @@ import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
 import { HistoryTools } from './history.js';
 import { recordLimit, TaskJournal, type TaskRecord } from './tasks.js';
+import { projectTranscript, Transcripts } from './transcripts.js';
 import { WorkspaceFiles } from './workspace.js';
 
 interface Search {
@@ -57,6 +58,159 @@ const record = (i: number): TaskRecord => ({
   error: '',
   trace: [],
   createdAt: new Date(Date.parse('2026-01-01T00:00:00Z') + i * 60000).toISOString(),
+});
+
+test('tool-output read-back is discoverable, Unicode-paged and redacted before slicing', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-tool-history-'));
+  const journal = new TaskJournal(path.join(root, 'journal'));
+  const transcripts = new Transcripts(path.join(root, 'transcripts.sqlite'));
+  try {
+    await journal.load();
+    await transcripts.ready;
+    const task = record(1);
+    await journal.put(task);
+    const scope = { bot: 'a', runId: task.runId, chatRevision: 0 };
+    transcripts.begin(scope);
+    const secret = 'synthetic-private-key';
+    const body =
+      '前缀😀'.repeat(297) +
+      secret +
+      ' needle[7].* ' +
+      '\u0001'.repeat(3000) +
+      ' SYNTHETIC EXACT END';
+    for (let i = 1; i <= 2; i++)
+      transcripts.append(scope, {
+        source: `mock-result-${i}`,
+        kind: 'result',
+        callId: `mock-call-${i}`,
+        at: '2026-01-01T00:00:00Z',
+        text: body,
+      });
+    transcripts.append(scope, {
+      source: 'mock-assistant',
+      kind: 'assistant',
+      at: '2026-01-01T00:00:00Z',
+      text: 'SYNTHETIC PRIVATE NON-RESULT',
+    });
+    transcripts.finish(scope);
+    const history = new HistoryTools(journal, transcripts),
+      run = {
+        bot: 'a',
+        id: 'mock-current',
+        abort: new AbortController(),
+        redact: (value: string) => value.replaceAll(secret, '[redacted]'),
+      };
+    const first = (await history.invoke(run, 'bot_tool_result_read', {
+      runId: task.runId,
+      limit: 1,
+    })) as { results: { seq: number }[]; nextAfter: number };
+    assert.deepEqual(
+      first.results.map((item) => item.seq),
+      [1],
+    );
+    assert.equal(first.nextAfter, 1);
+    const second = (await history.invoke(run, 'bot_tool_result_read', {
+      runId: task.runId,
+      after: first.nextAfter,
+    })) as { results: { seq: number }[] };
+    assert.deepEqual(
+      second.results.map((item) => item.seq),
+      [2],
+    );
+    let offset = 0,
+      joined = '';
+    for (let count = 0; count < 30; count++) {
+      const page = (await history.invoke(run, 'bot_tool_result_read', {
+        runId: task.runId,
+        seq: 1,
+        offset,
+        limit: 2000,
+      })) as { content: string; nextOffset?: number };
+      assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 6000);
+      joined += page.content;
+      if (page.nextOffset === undefined) break;
+      assert.ok(page.nextOffset > offset);
+      offset = page.nextOffset;
+    }
+    assert.equal(joined, body.replaceAll(secret, '[redacted]'));
+    const found = (await history.invoke(run, 'bot_tool_result_read', {
+      runId: task.runId,
+      seq: 1,
+      query: 'needle[7].*',
+      limit: 200,
+    })) as { found: boolean; content: string };
+    assert.equal(found.found, true);
+    assert.match(found.content, /needle\[7\]\.\*/);
+    await assert.rejects(
+      history.invoke({ ...run, conversationId: 'mock-group' }, 'bot_tool_result_read', {
+        runId: task.runId,
+      }),
+      { code: 'HISTORY_NOT_FOUND' },
+    );
+    await assert.rejects(
+      history.invoke(run, 'bot_tool_result_read', { runId: task.runId, seq: 3 }),
+      { code: 'HISTORY_NOT_FOUND' },
+    );
+    const projected = projectTranscript(
+      {
+        method: 'session.event',
+        params: {
+          sessionId: 'mock-session',
+          event: {
+            type: 'tool/result',
+            seq: 30,
+            time: 1800000000000,
+            surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 },
+            data: {
+              message: {
+                toolCallId: 'mock-call',
+                content: [{ type: 'text', text: 'SYNTHETIC PRUNED VIEW' }],
+              },
+            },
+          },
+        },
+      },
+      'mock-session',
+      (value) => value,
+      true,
+    );
+    assert.equal(projected, undefined);
+  } finally {
+    await transcripts.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('tool-output cursors can reach the end of an already supported multi-megabyte result', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-large-result-'));
+  const journal = new TaskJournal(path.join(root, 'journal'));
+  const transcripts = new Transcripts(path.join(root, 'transcripts.sqlite'));
+  try {
+    await journal.load();
+    await transcripts.ready;
+    const task = record(1);
+    await journal.put(task);
+    const scope = { bot: 'a', runId: task.runId, chatRevision: 0 };
+    transcripts.begin(scope);
+    transcripts.append(scope, {
+      source: 'mock-large',
+      kind: 'result',
+      callId: 'mock-large',
+      at: '2026-01-01T00:00:00Z',
+      text: 'X'.repeat(2100000) + 'SYNTHETIC EXACT LARGE END',
+    });
+    transcripts.finish(scope);
+    const history = new HistoryTools(journal, transcripts);
+    const page = (await history.invoke(
+      { bot: 'a', id: 'mock-current', abort: new AbortController() },
+      'bot_tool_result_read',
+      { runId: task.runId, seq: 1, offset: 2100000, limit: 100 },
+    )) as { content: string };
+    assert.equal(page.content, 'SYNTHETIC EXACT LARGE END');
+  } finally {
+    await transcripts.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('history search and exact reads stay inside the executing conversation, including after journal reload', async () => {

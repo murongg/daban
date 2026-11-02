@@ -68,8 +68,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           CHANGELOG_API_KEY: ${{ secrets.CHANGELOG_API_KEY }}
-          CHANGELOG_API_URL: ${{ vars.CHANGELOG_API_URL }}
-          CHANGELOG_MODEL: ${{ vars.CHANGELOG_MODEL }}
+          CHANGELOG_API_URL: ${{ secrets.CHANGELOG_API_URL }}
+          CHANGELOG_MODEL: ${{ secrets.CHANGELOG_MODEL }}
         run: node --experimental-strip-types tools/changelog.ts
       - uses: actions/upload-artifact@v4
         with:
@@ -164,6 +164,8 @@ jobs:
           path: |
             ${{ runner.temp }}/release/Daban-*.dmg
             ${{ runner.temp }}/release/Daban-*.zip
+            ${{ runner.temp }}/release/*.blockmap
+            ${{ runner.temp }}/release/*.yml
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -185,6 +187,10 @@ jobs:
           path: windows
       - uses: actions/download-artifact@v4
         with:
+          name: Daban-windows-installer
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
           name: release-notes
           path: notes
       - name: Create Windows archive and checksums
@@ -196,14 +202,18 @@ jobs:
           zip -q -r "../release/Daban-$VERSION-windows-x64.zip" .
           cd ../release
           cp ../notes/CHANGELOG.*.md .
-          sha256sum Daban-* CHANGELOG.*.md > SHA256SUMS.txt
+          sha256sum Daban-* CHANGELOG.*.md *.yml > SHA256SUMS.txt
       - name: Publish release after all checks and notarization succeed
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          EXPECTED_COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
           set -euo pipefail
+          # Signing can take a while; never attach old binaries to a tag moved during the build.
+          actual_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)
+          test "$actual_commit" = "$EXPECTED_COMMIT"
           args=()
           if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
           gh release create "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "Daban $RELEASE_TAG" --notes-file notes/notes.md "${args[@]}"

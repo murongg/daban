@@ -43,6 +43,8 @@ jobs:
       - run: npx vitest run --maxWorkers=2
       - run: node --experimental-strip-types --test tools/*.test.ts tools/roles.integration.ts
       - run: npm run test:agent
+      - name: Verify idle-only host update handoff
+        run: node --experimental-sqlite --test packages/engine/dist/upgrade.test.js packages/engine/dist/upgrade.integration.js
       - name: Install Linux desktop runtime dependencies
         if: runner.os == 'Linux'
         run: |
@@ -54,3 +56,7 @@ jobs:
       - name: Native macOS module ABI
         if: runner.os == 'macOS'
         run: node --experimental-strip-types tools/native.ts abi
+      - name: Verify isolated macOS online update and draft preservation
+        if: runner.os == 'macOS'
+        timeout-minutes: 8
+        run: node --experimental-strip-types tools/updates.acceptance.ts

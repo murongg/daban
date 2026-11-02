@@ -15,11 +15,19 @@ Saved conversations can outlast the amount of text a model can read in one reque
 
 The context budget depends on the selected model configuration. Long runs may organize or compact earlier context so work can continue. Compaction does not delete visible history and does not automatically create durable memory.
 
+Oversized tool text is trimmed first. If pressure remains, the agent creates a summary while retaining recent original messages. Retention, summary allowance and headroom adapt to model capacity and the configured output budget. Trimming makes no model call; summarization consumes additional usage.
+
+When a model connection, persona or skill change requires a fresh session, the Bot recovers the initial request, an applicable saved compaction checkpoint, task state and budgeted recent records. Omitted or shortened material includes exact read-back references. Starting a new conversation does not automatically restore the previous conversation's context.
+
+You can ask the Bot to find the exact passage containing a reference in an earlier tool output. It can list its saved current or historical tool results, then search and page their visible text within the same Bot and conversation. This does not expose system prompts, private SDK logs or reasoning. Unrecorded content and non-text artifacts require checking their original source again.
+
 Ask the Bot to reread current originals when exact figures, quotations, or earlier files matter. Start a new conversation for independent work. Put lasting requirements in [Memory](memory.md) and sources in [Knowledge](knowledge.md).
 
 ## Context and output budgets
 
 Review the context window and output limit in [Models](models.md). An excessive value can cause rejection; a small value can constrain work prematurely. Automatic matching is a reference, with the configured service determining actual limits.
+
+The current request, tool definitions and images also need room. Reduce the output limit or select a larger window when output consumes almost the entire context capacity. Budgets include estimation, and summaries can omit details; reread exact sources for numbers and quotations. Recovered records do not renew previous approvals or establish the current screen or file state.
 
 ## Calls and caching
 

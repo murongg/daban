@@ -1,4 +1,87 @@
 export const english = {
+  'updates.title': 'App updates',
+  'updates.version': 'Current version {0}',
+  'updates.ready': 'Check stable releases on GitHub',
+  'updates.check': 'Check for updates',
+  'updates.checking': 'Checking for updates…',
+  'updates.current': 'You’re up to date',
+  'updates.unpublished': 'No stable release is available yet',
+  'updates.available': 'Version {0} is available',
+  'updates.downloading': 'Downloading update…',
+  'updates.downloaded': 'Update downloaded, ready to install',
+  'updates.preparing': 'Saving and checking background tasks…',
+  'updates.installing': 'Restarting to install the update…',
+  'updates.unsupported': 'This build cannot install updates. Install a supported release.',
+  'updates.browserPreview': 'Web previews cannot check for or install updates.',
+  'updates.download': 'Download update',
+  'updates.cancelDownload': 'Cancel download',
+  'updates.downloadProgress': 'Update download progress',
+  'updates.restart': 'Restart and install',
+  'updates.releaseNotes': 'Release notes',
+  'updates.confirmTitle': 'Restart to install the update?',
+  'updates.confirmDescription':
+    'Save unsubmitted settings and work in desktop apps first. Chat drafts are saved automatically. Installation is blocked while Bot tasks are running.',
+  'updates.confirmRestart': 'Saved, restart and install',
+  'updates.later': 'Later',
+  'updates.checkFailed': 'Could not check for updates. Try again later.',
+  'updates.downloadFailed': 'The download failed. You can try again.',
+  'updates.saveFailed':
+    'Workspace storage could not be saved. Restart was cancelled; export or save your work first.',
+  'updates.notReady': 'Download and verify the update first.',
+  'updates.installFailed':
+    'The update could not be installed. You can keep using the current version.',
+  'updates.agentBusy': 'Background work is still active. Finish it before installing.',
+  'updates.agentUnavailable':
+    'Could not confirm a safe background shutdown. Reconnect and retry, or use the full installer.',
+  'updates.noticeDescription':
+    'Download and install when convenient. Tasks are not interrupted automatically.',
+  'updates.view': 'View update',
+  'capabilities.copyMcp': 'Add a connection for another Bot',
+  'capabilities.mcpCopyHint':
+    'Add {0} for another Bot. Enter its service URL and credentials again. The original account and tool grants are not copied.',
+  'capabilities.recipient': 'Target Bot',
+  'capabilities.noOtherBots': 'Create another Bot and sync its profile before adding a capability.',
+  'capabilities.addMcpNamed': 'Add {0} to another Bot',
+  'capabilities.mcpAdded':
+    'An independent connection was added for {0}. Check it and select tools in that Bot’s capabilities.',
+  'capabilities.archiveMcp':
+    ' disables only this Bot’s connection. Other Bots’ independent connections are unchanged.',
+  'capabilities.editSharedMcp':
+    'Editing an existing shared connection; changes affect its previous users.',
+  'capabilities.updateRuntime':
+    'Update the local agent to use Bot-owned skill installations and external connections.',
+
+  'capabilities.saved': 'This Bot’s skill was saved; its enabled state is unchanged.',
+  'capabilities.removed': 'This Bot’s skill installation was removed.',
+  'capabilities.restored': 'Restored for this Bot. Enable it again to use it.',
+
+  'capabilities.removeOnlyThisBot':
+    'Only this Bot’s installation is removed. Other Bots’ copies are unchanged.',
+  'capabilities.newConnectionCredentials':
+    'Enter this Bot’s service URL and credentials. Account authorization from the original connection is not copied.',
+
+  'capabilities.title': 'Capabilities',
+  'capabilities.privateHint': 'Skills and external tools are added only to {0} by default.',
+  'capabilities.installForBot':
+    'Install for: {0}. Configuration and authorization belong to this Bot.',
+  'capabilities.mcpForBot': 'External tools for {0}',
+  'capabilities.chooseBot': 'Choose Bot',
+  'capabilities.createBotFirst': 'Create or sync a Bot first.',
+  'capabilities.finishEditing': 'Save or cancel the current edit first.',
+  'capabilities.copySkill': 'Add a skill copy',
+  'capabilities.copyHint':
+    'Add an independent copy of {0} to the selected Bot. Later edits, updates and removal remain independent.',
+  'capabilities.addAndEnable': 'Add and enable',
+  'capabilities.copyToBot': 'Add to another Bot',
+  'capabilities.makePrivateCopy': 'Create an independent copy',
+  'capabilities.legacyShared': 'Existing shared item',
+  'capabilities.onlyThisBot': 'This Bot only',
+  'capabilities.sharedReadOnly':
+    'This is an existing shared skill. Create an independent copy before editing it for this Bot.',
+  'capabilities.installed': 'Installed and enabled for this Bot.',
+  'capabilities.installAndEnable': 'Install and enable',
+  'capabilities.copied': 'An independent skill copy was added to the selected Bot.',
+
   'onboarding.connectionSettings': 'Connection settings (optional)',
   'onboarding.modelSelectionHint':
     'Enter your key, load the model list and choose a model, or enter its ID manually. Tests and verification may incur a small API charge; your chats are not included.',
@@ -2482,7 +2565,7 @@ export const english = {
   'settings.light': 'Light',
   'settings.localLinux': 'Local Linux',
   'settings.localLinuxDshConnectedMobileCrossDevice':
-    'Local Linux and DSH are connected. Mobile, cross-device sync and public distribution packages are planned.',
+    'Work with Bots locally and connect a Linux desktop or your computer when needed. Mobile and cross-device sync are planned.',
   'settings.localLinuxRuntime': 'Local Linux runtime',
   'settings.localStorage': 'Local storage',
   'settings.localWorkspaceData': 'Local workspace data',

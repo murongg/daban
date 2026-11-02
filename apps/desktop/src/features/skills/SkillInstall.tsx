@@ -31,7 +31,9 @@ export function SkillInstall({
   const runtime = useRuntime();
   function review(value: SkillSelection) {
     const name = value.kind === 'package' ? value.preview.name : value.name;
-    const existing = entries.find((item) => item.name === name && !item.deleted);
+    const existing = entries.find(
+      (item) => item.name === name && !item.deleted && item.ownerBot === bot,
+    );
     return {
       value,
       target: target ?? (existing ? { id: existing.id, revision: existing.revision } : undefined),
@@ -108,7 +110,25 @@ export function SkillInstall({
       );
       if (!mounted.current || current.current !== identity) return;
       if (!isSkillDocument(result)) throw new Error('INVALID_RUNTIME_STATE');
-      onInstalled(result);
+      if (!update) {
+        const catalog = await runtime.command<import('@daban/protocol').SkillCatalog>({
+          type: 'skill.list',
+          bot,
+        });
+        const entry = catalog.items.find((item) => item.id === result.id);
+        if (!entry || entry.ownerBot !== bot) throw new Error('INVALID_RUNTIME_STATE');
+        await runtime.command({
+          type: 'skill.bind',
+          bot,
+          binding: {
+            id: entry.id,
+            revision: entry.revision,
+            bindingRevision: entry.bindingRevision,
+            enabled: true,
+          },
+        });
+      }
+      if (mounted.current && current.current === identity) onInstalled(result);
     } catch (cause) {
       if (mounted.current && current.current === identity) setError(runtimeError(cause));
     } finally {
@@ -117,7 +137,9 @@ export function SkillInstall({
   }
   const selected = selection?.value,
     name = selected?.kind === 'package' ? selected.preview.name : selected?.name;
-  const systemTarget = entries.some((entry) => entry.id === selection?.target?.id && entry.system);
+  const systemTarget = entries.some(
+    (entry) => entry.id === selection?.target?.id && (entry.system || !entry.ownerBot),
+  );
   const resources = selected?.kind === 'package' ? selected.preview.files : [];
   const data =
     selected?.kind === 'package'
@@ -146,6 +168,11 @@ export function SkillInstall({
         <>
           <div className="skill-install-options">
             <p className="dialog-description">{t('skills.packageSupport')}</p>
+            <p className="field-help">
+              {t('capabilities.installForBot', {
+                0: runtime.snapshot.profiles.find((profile) => profile.id === bot)?.name ?? bot,
+              })}
+            </p>
             <button
               type="button"
               className="secondary"
@@ -259,7 +286,7 @@ export function SkillInstall({
                 ? 'common.saving'
                 : selection.target
                   ? 'skills.updatePackage'
-                  : 'skills.installPackage',
+                  : 'capabilities.installAndEnable',
             )}
           </button>
         )}

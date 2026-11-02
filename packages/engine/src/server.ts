@@ -84,6 +84,7 @@ import { Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
 import { skillHash, writeSkillZip } from './skill-package.js';
 import { type SoftwareBackend, SoftwareClient } from './software.js';
+import { UpgradeGate } from './upgrade.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -224,6 +225,7 @@ export interface PrototypeOptions {
   desktop?: boolean | Partial<Pick<DesktopOptions, 'dir' | 'displayBase'>>;
 }
 export interface HostComposition {
+  onUpdate?: () => unknown;
   localComputer?: import('./local-computer.js').LocalComputerClient;
   nativeWorkspace?: string;
   offlineWorkspaceRoot?: string;
@@ -299,6 +301,7 @@ export async function startPrototype({
   let executionSnapshot: ExecutionSnapshot | undefined;
   let computerAvailable = !host?.offlineWorkspaceRoot;
   let replacingRecovery = false;
+  const upgrade = new UpgradeGate();
   let refreshingExecution: Promise<ExecutionSnapshot> | undefined;
   const changing = new Set<string>();
   function createHostRecovery(snapshot: ExecutionSnapshot) {
@@ -482,6 +485,7 @@ export async function startPrototype({
   const channel = await privateServer(
     async (req, res) => {
       let releaseMutation: (() => unknown) | undefined;
+      let releaseUpdate: (() => unknown) | undefined;
       try {
         if (req.headers.host !== new URL(origin).host) throw new Fault('INVALID_HOST', 403);
         if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== origin)
@@ -500,6 +504,34 @@ export async function startPrototype({
             dataRoot: host.identity?.dataRoot || host.dataRoot,
             socketPath: host.identity?.socketPath || host.socketPath,
           });
+        if (host && url.pathname === '/api/host/update') {
+          if (!authority.accepts(req.headers['x-prototype-token']))
+            throw new Fault('UNAUTHORIZED', 403);
+          if (req.method !== 'POST' || url.search) throw new Fault('INVALID_UPDATE_REQUEST', 400);
+          if (!ready || !host.onUpdate) throw new Fault('AGENT_UPDATE_UNAVAILABLE', 503);
+          const request = await body(req);
+          if (Object.keys(request).length !== 1 || request.scope !== host.scope)
+            throw new Fault('INVALID_UPDATE_REQUEST', 400);
+          upgrade.prepare(
+            () =>
+              replacingRecovery ||
+              !(recovery?.admit() ?? true) ||
+              changing.size > 0 ||
+              !!models?.bundles.busy ||
+              [...(models?.jobs.values() ?? [])].some((job) => job.running),
+          );
+          // Respond before the CLI drains its HTTP listener. The VM is not part of this handoff.
+          res.once('finish', () => {
+            Promise.resolve()
+              .then(() => host.onUpdate!())
+              .catch(() => {
+                upgrade.cancel();
+                console.error('Agent update handoff failed');
+              });
+          });
+          return json(res, { scope: host.scope, pid: process.pid });
+        }
+        if (host) releaseUpdate = upgrade.enter();
         const groupProtocol = req.headers['x-daban-client-protocol'];
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
@@ -871,6 +903,7 @@ export async function startPrototype({
               recycle: ['bot', 'id', 'revision'],
               restore: ['bot', 'id', 'revision'],
               bind: ['bot', 'binding'],
+              copy: ['bot', 'id', 'revision', 'targetBot'],
             };
             if (
               !fields[action] ||
@@ -881,27 +914,56 @@ export async function startPrototype({
             if (!(await models.profiles.get(data.bot))) throw new Fault('SKILL_BOT_NOT_FOUND', 404);
             if (action === 'import-package' && isSkillPackage(data.package)) {
               models.profiles.assertActive(data.bot);
-              return json(res, await models.skills.importPackage(data.package));
+              return json(res, await models.skills.importPackage(data.package, data.bot));
             }
             if (
               validAgentId(data.id) &&
               Number.isSafeInteger(data.revision) &&
               Number(data.revision) > 0
             ) {
+              if (action === 'copy' && validAgentId(data.targetBot)) {
+                models.profiles.assertActive(data.bot);
+                if (!(await models.profiles.get(data.targetBot)))
+                  throw new Fault('SKILL_BOT_NOT_FOUND', 404);
+                models.profiles.assertActive(data.targetBot);
+                return json(
+                  res,
+                  await models.skills.copy(
+                    data.bot,
+                    data.id,
+                    Number(data.revision),
+                    data.targetBot,
+                  ),
+                );
+              }
               if (action === 'update-package' && isSkillPackage(data.package)) {
                 models.profiles.assertActive(data.bot);
                 return json(
                   res,
-                  await models.skills.updatePackage(data.id, Number(data.revision), data.package),
+                  await models.skills.updatePackage(
+                    data.id,
+                    Number(data.revision),
+                    data.package,
+                    data.bot,
+                  ),
                 );
               }
               if (action === 'resource' && isSkillPath(data.path))
                 return json(
                   res,
-                  await models.skills.readResource(data.id, Number(data.revision), data.path),
+                  await models.skills.readResource(
+                    data.id,
+                    Number(data.revision),
+                    data.path,
+                    data.bot,
+                  ),
                 );
               if (action === 'export-package') {
-                const bundle = await models.skills.exportPackage(data.id, Number(data.revision)),
+                const bundle = await models.skills.exportPackage(
+                    data.id,
+                    Number(data.revision),
+                    data.bot,
+                  ),
                   bytes = writeSkillZip(bundle);
                 return json(res, {
                   id: data.id,
@@ -927,24 +989,35 @@ export async function startPrototype({
                 ),
               });
             if (action === 'import' && isSkillContent(data.content))
-              return json(res, await models.skills.import(data.content));
+              return json(res, await models.skills.import(data.content, data.bot));
             if (action === 'bind' && isSkillBinding(data.binding))
               return json(res, {
                 bot: data.bot,
                 entry: await models.skills.bind(data.bot, data.binding),
               });
             if (validAgentId(data.id)) {
-              if (action === 'read') return json(res, await models.skills.read(data.id));
+              if (action === 'read') return json(res, await models.skills.read(data.id, data.bot));
               if (Number.isSafeInteger(data.revision) && Number(data.revision) > 0) {
                 if (action === 'update' && isSkillContent(data.content))
                   return json(
                     res,
-                    await models.skills.update(data.id, Number(data.revision), data.content),
+                    await models.skills.update(
+                      data.id,
+                      Number(data.revision),
+                      data.content,
+                      data.bot,
+                    ),
                   );
                 if (action === 'recycle')
-                  return json(res, await models.skills.recycle(data.id, Number(data.revision)));
+                  return json(
+                    res,
+                    await models.skills.recycle(data.id, Number(data.revision), data.bot),
+                  );
                 if (action === 'restore')
-                  return json(res, await models.skills.restore(data.id, Number(data.revision)));
+                  return json(
+                    res,
+                    await models.skills.restore(data.id, Number(data.revision), data.bot),
+                  );
               }
             }
             throw new Fault('INVALID_SKILL', 400);
@@ -1341,6 +1414,7 @@ export async function startPrototype({
                       events: [],
                       bots: {},
                     }),
+              botCapabilities: true,
               clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
               ...(host
                 ? {
@@ -1667,6 +1741,7 @@ export async function startPrototype({
         else res.end();
       } finally {
         releaseMutation?.();
+        releaseUpdate?.();
       }
     },
     host ? path.join(modelDir, 'control-certificate.pem') : undefined,
@@ -1833,7 +1908,10 @@ export async function startPrototype({
         ...(host ? { documents } : {}),
         software,
         admit: () =>
-          !replacingRecovery && (!host || computerAvailable) && (recovery?.admit() ?? true),
+          upgrade.admit() &&
+          !replacingRecovery &&
+          (!host || computerAvailable) &&
+          (recovery?.admit() ?? true),
         ...(host
           ? {
               execution: host.nativeWorkspace ? undefined : host.execution!,

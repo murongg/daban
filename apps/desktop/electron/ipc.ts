@@ -96,6 +96,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'skill.list': ['type', 'bot', 'includeDeleted'],
     'skill.read': ['type', 'bot', 'id'],
     'skill.import': ['type', 'bot', 'content'],
+    'skill.copy': ['type', 'bot', 'id', 'revision', 'targetBot'],
     'skill.update': ['type', 'bot', 'id', 'revision', 'content'],
     'skill.recycle': ['type', 'bot', 'id', 'revision'],
     'skill.restore': ['type', 'bot', 'id', 'revision'],
@@ -207,17 +208,20 @@ export function parseCommand(value: unknown): RuntimeCommand {
     )
       return fail();
     if (
-      ['skill.read', 'skill.update', 'skill.recycle', 'skill.restore'].includes(String(v.type)) &&
+      ['skill.read', 'skill.update', 'skill.recycle', 'skill.restore', 'skill.copy'].includes(
+        String(v.type),
+      ) &&
       !validAgentId(v.id)
     )
       return fail();
     if (
-      ['skill.update', 'skill.recycle', 'skill.restore'].includes(String(v.type)) &&
+      ['skill.update', 'skill.recycle', 'skill.restore', 'skill.copy'].includes(String(v.type)) &&
       (!Number.isSafeInteger(v.revision) || Number(v.revision) < 1)
     )
       return fail();
     if (['skill.import', 'skill.update'].includes(String(v.type)) && !isSkillContent(v.content))
       return fail();
+    if (v.type === 'skill.copy' && !validAgentId(v.targetBot)) return fail();
     if (v.type === 'skill.bind' && !isSkillBinding(v.binding)) return fail();
   }
   if (String(v.type).startsWith('browser.')) {

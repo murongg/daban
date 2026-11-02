@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { environmentVersions, verifyAsset } from './environment.ts';
 import { writeIcon } from './icon.ts';
+import { writeUpdateConfig } from './installer.ts';
 import { packageNative } from './native.ts';
 import { packageNotices } from './notices.ts';
 import { macVersion } from './release.ts';
@@ -81,6 +82,7 @@ await rename(
   path.join(target, 'Contents/MacOS/daban'),
 );
 const resources = path.join(target, 'Contents/Resources');
+await writeUpdateConfig(resources);
 const app = path.join(resources, 'app');
 await mkdir(app);
 await cp(path.join(root, 'dist'), path.join(app, 'dist'), {

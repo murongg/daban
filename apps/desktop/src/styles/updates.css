@@ -1,0 +1,85 @@
+.update-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.update-status svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+.update-spin {
+  animation: update-spin 1s linear infinite;
+}
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.update-download {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.update-progress {
+  height: 5px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--line);
+}
+.update-progress span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  border-radius: inherit;
+  transition: width 0.2s linear;
+}
+.update-notes {
+  margin-top: 22px;
+  font-size: 14px;
+}
+.update-notes summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 8px 0;
+}
+.update-notes > div {
+  max-height: 300px;
+  overflow: auto;
+  margin-top: 10px;
+}
+.update-notice {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 16px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: var(--canvas);
+  box-shadow: 0 8px 32px #00000012;
+  font-size: 14px;
+}
+.update-notice p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-spin {
+    animation: none;
+  }
+  .update-progress span {
+    transition: none;
+  }
+}
