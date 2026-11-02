@@ -23,6 +23,12 @@ test('real DSH preserves a reusable conversation below the model compaction budg
   });
   let calls = 0;
   let summaries = 0;
+  const requests: {
+    key?: string;
+    session?: string;
+    tools: unknown;
+    messages: unknown[];
+  }[] = [];
   model = createServer(async (req, res) => {
     if (req.method === 'GET') {
       res.setHeader('content-type', 'application/json');
@@ -35,7 +41,15 @@ test('real DSH preserves a reusable conversation below the model compaction budg
       tools?: { function?: { name?: string } }[];
       max_tokens?: number;
       max_completion_tokens?: number;
+      prompt_cache_key?: string;
+      messages: unknown[];
     };
+    requests.push({
+      key: input.prompt_cache_key,
+      session: req.headers.session_id as string | undefined,
+      tools: input.tools,
+      messages: input.messages,
+    });
     calls += 1;
     if (calls > 8) {
       res.writeHead(400, { 'content-type': 'application/json' });
@@ -138,8 +152,19 @@ test('real DSH preserves a reusable conversation below the model compaction budg
   while (agent.models.jobs.get('mock-bot')?.running && Date.now() < until)
     await new Promise((resolve) => setTimeout(resolve, 50));
   const job = agent.models.jobs.get('mock-bot')!;
+  await job.done;
   assert.equal(summaries, 0, 'ample context must not cause extra summarization requests');
   assert.equal(job.phase, 'completed', job.error);
   assert.equal(calls, 2, 'one tool call and one answer must suffice');
   assert.match(job.result, /SYNTHETIC TASK COMPLETE/);
+  assert.match(requests[0].key ?? '', /^daban-[a-f0-9]{48}$/);
+  assert.equal(requests[0].session, requests[0].key);
+  assert.equal(requests[1].key, requests[0].key);
+  assert.equal(requests[1].session, requests[0].session);
+  assert.deepEqual(requests[1].tools, requests[0].tools);
+  assert.deepEqual(
+    requests[1].messages.slice(0, requests[0].messages.length),
+    requests[0].messages,
+    'a tool step must append to the previous prefix rather than rewrite it',
+  );
 });
