@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -37,7 +37,7 @@ import type { ToolRun } from './computer-tools.js';
 import { type ComputerFacade, computerToolList } from './computer-tools.js';
 import { errorCode, errorMessage, Fault } from './control.js';
 import type { Desktop } from './desktop.js';
-import { defaultSdkFile } from './dsh.js';
+import { DshLog, defaultSdkFile, readDshStartup } from './dsh.js';
 import { observeTools } from './events.js';
 import { builtinSkills } from './find-skills.js';
 import { HistoryTools } from './history.js';
@@ -523,6 +523,7 @@ export class ModelRuns {
     { id: string; persona: string; model: ModelId; skills: string; mcp: string; binding?: string }
   >();
   private readonly Harness?: HarnessConstructor;
+  private readonly dshLog: DshLog;
   private readonly admission: () => boolean;
   constructor({
     runtime,
@@ -547,6 +548,7 @@ export class ModelRuns {
     this.settings = settings;
     this.origin = origin;
     this.dir = dir;
+    this.dshLog = new DshLog(path.join(dir, 'dsh-startup.log'));
     this.Harness = Harness;
     this.sdkFile = sdkFile;
     this.execution = execution;
@@ -1412,7 +1414,22 @@ export class ModelRuns {
           job.error = 'MODEL_STOP_FAILED';
         });
     }, 1000);
+    const startupFile = path.join(job.privateDir, 'dsh-startup.json');
+    let initialized = false;
+    let startupStage = 'sdk-loading';
+    const diagnostic = (stage: string, details: Record<string, unknown> = {}) =>
+      this.dshLog.write(
+        {
+          stage,
+          runId: job.id,
+          bot: job.bot,
+          elapsedMs: Math.round(elapsed() - activeStart),
+          ...details,
+        },
+        job.redact!,
+      );
     try {
+      await diagnostic('sdk-loading');
       const Harness =
         this.Harness ||
         (
@@ -1420,6 +1437,7 @@ export class ModelRuns {
             DeepSeekHarness: HarnessConstructor;
           }
         ).DeepSeekHarness;
+      await diagnostic('sdk-loaded');
       if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
       let network: { proxy?: string } = {};
       try {
@@ -1464,9 +1482,18 @@ export class ModelRuns {
           NO_PROXY: '127.0.0.1,localhost',
           no_proxy: '127.0.0.1,localhost',
           NODE_USE_ENV_PROXY: '1',
+          // DSH 0.2.1 has no startup-output hook. Replace this same-process preload when the SDK exposes one.
+          NODE_OPTIONS: `--import=${new URL('./dsh-preload.js', import.meta.url).href}`,
+          DABAN_DSH_STARTUP_FILE: startupFile,
+          DABAN_DSH_STARTUP_PARENT: String(process.pid),
+          DABAN_DSH_STARTUP_REDACT: job.token,
         },
       });
+      startupStage = 'initialize';
+      await diagnostic('initialize-start');
       await job.harness.start();
+      initialized = true;
+      await diagnostic('initialize-ready', { snapshot: await readDshStartup(startupFile) });
       job.phase = 'running';
       const key = sessionKey(job.bot, job.conversationId, job.chatRevision);
       const saved = job.task ? this.sessions.get(key) : undefined;
@@ -1622,6 +1649,11 @@ export class ModelRuns {
         if (!job.verification.passed) job.error = 'TASK_FILE_VERIFICATION_FAILED';
       }
     } catch (error) {
+      if (!initialized)
+        await diagnostic(startupStage === 'initialize' ? 'initialize-failed' : 'sdk-failed', {
+          error: errorMessage(error),
+          snapshot: await readDshStartup(startupFile),
+        });
       job.phase = job.abort.signal.aborted ? 'stopped' : 'failed';
       job.error = job.abort.signal.aborted
         ? job.stopReason === 'timeout'
@@ -1643,7 +1675,17 @@ export class ModelRuns {
       } catch (error) {
         job.phase = 'failed';
         job.error = `DSH shutdown failed: ${clean(errorMessage(error))}`;
+        if (!initialized)
+          await diagnostic('shutdown-failed', {
+            error: errorMessage(error),
+            snapshot: await readDshStartup(startupFile),
+          });
       }
+      await Promise.all(
+        [startupFile, startupFile + '.tmp'].map((file) =>
+          rm(file, { force: true }).catch(() => undefined),
+        ),
+      );
       await this.tools.drain(job).catch(() => {
         job.phase = 'failed';
         job.error = 'EXECUTOR_DRAIN_UNAVAILABLE';
