@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -177,7 +177,25 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
   while (agent.models.jobs.get('mock-bot')?.running && Date.now() < until)
     await new Promise((resolve) => setTimeout(resolve, 50));
   const job = agent.models.jobs.get('mock-bot')!;
+  await job.done;
   assert.equal(job.phase, 'completed', job.error);
   assert.deepEqual(nativeCalls, ['screenshot', 'act']);
   assert.match(job.result, /SYNTHETIC NATIVE LOOP COMPLETE/);
+  const log = await readFile(path.join(agent.models.dir, 'dsh-startup.log'), 'utf8');
+  const records = log
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const ready = records.find(
+    (record) => record.runId === job.id && record.stage === 'initialize-ready',
+  );
+  assert.equal(ready?.snapshot?.stage, 'initialized');
+  assert.ok(ready.snapshot.entry.includes('@deepseek-ai/dsh/'));
+  assert.ok(Array.isArray(ready.snapshot.resources));
+  assert.equal(log.includes('synthetic-model-key'), false);
+  assert.equal(log.includes('SYNTHETIC NATIVE INPUT'), false);
+  await assert.rejects(
+    readFile(path.join(agent.models.dir, 'runs', job.id, 'mock-bot', 'dsh-startup.json')),
+    { code: 'ENOENT' },
+  );
 });

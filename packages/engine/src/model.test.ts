@@ -8,6 +8,109 @@ import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
 
+test('initialization failures preserve redacted startup diagnostics and reclaim the private checkpoint', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-model-startup-log-'));
+  const secret = 'synthetic-startup-api-key';
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+    Response.json({ data: [{ id: 'mock-model' }] }),
+  );
+  let snapshot = '';
+  let initializeFails = true;
+  let closeFails = false;
+  class Harness {
+    constructor(readonly options: { env: NodeJS.ProcessEnv }) {}
+    async start() {
+      snapshot = this.options.env.DABAN_DSH_STARTUP_FILE ?? '';
+      assert.ok(snapshot, 'SDK startup must receive a private diagnostic checkpoint');
+      assert.ok(this.options.env.NODE_OPTIONS?.includes('dsh-preload.js'));
+      await writeFile(
+        snapshot,
+        JSON.stringify({
+          stage: 'waiting-initialize',
+          stderr: `SYNTHETIC PARTIAL ${secret}`,
+          entry: 'mock-runtime/lib/index.js',
+        }),
+        { mode: 0o600 },
+      );
+      if (initializeFails) throw new Error(`initialize timed out: ${secret}`);
+    }
+    async close() {
+      if (closeFails) throw new Error('SYNTHETIC SHUTDOWN CHAT');
+    }
+    session(id = 'mock-session') {
+      return { id, run: async () => ({ sessionId: id, finalResponse: 'unused' }) };
+    }
+    async resumeSession(id: string) {
+      return this.session(id);
+    }
+  }
+  const models = new ModelRuns({
+    settings,
+    Harness,
+    dir: path.join(root, 'model'),
+    workspace: path.join(root, 'workspace'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  try {
+    await settings.configure({
+      revision: 0,
+      requestId: 'mock-log-config',
+      apiKey: secret,
+      model: 'provider:mock-provider:mock-model',
+      connection: {
+        id: 'mock-provider',
+        name: 'Synthetic',
+        baseURL: 'https://models.example.test/v1',
+        models: [
+          {
+            id: 'mock-model',
+            name: 'Synthetic',
+            vision: false,
+            contextWindow: 64000,
+            maxTokens: 4096,
+          },
+        ],
+      },
+    });
+    await models.start('mock-bot', {
+      requestId: 'mock-startup-request',
+      prompt: 'SYNTHETIC PRIVATE CHAT',
+    });
+    const job = models.jobs.get('mock-bot')!;
+    await job.done;
+    assert.equal(job.phase, 'failed');
+    const text = await readFile(path.join(root, 'model/dsh-startup.log'), 'utf8');
+    assert.equal(text.includes(secret), false);
+    assert.equal(text.includes('SYNTHETIC PRIVATE CHAT'), false);
+    const records = text
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.ok(records.some((record) => record.stage === 'sdk-loading'));
+    const failure = records.find((record) => record.stage === 'initialize-failed');
+    assert.ok(failure);
+    assert.equal(failure.runId, job.id);
+    assert.ok(failure.snapshot.stderr.includes('[credential redacted]'));
+    await assert.rejects(readFile(snapshot), { code: 'ENOENT' });
+    initializeFails = false;
+    closeFails = true;
+    await models.start('mock-bot', {
+      requestId: 'mock-after-startup',
+      prompt: 'SYNTHETIC PRIVATE CHAT',
+    });
+    await models.jobs.get('mock-bot')!.done;
+    assert.equal(
+      (await readFile(path.join(root, 'model/dsh-startup.log'), 'utf8')).includes(
+        'SYNTHETIC SHUTDOWN CHAT',
+      ),
+      false,
+    );
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('native model routes select their actual DSH wire protocol without changing domain connection identity', () => {
   for (const [api, key, expectedApi] of [
     ['anthropic-messages', 'mock-native', 'anthropic-messages'],
@@ -576,7 +679,7 @@ test('DSH profile disables unscoped native tools and registers a scoped tool ser
   const patch = sdkPatch('http://127.0.0.1:12345', 'a', 'synthetic-capability');
   const compaction = patch.find((row) => 'id' in row && row.id === 'compaction-basic');
   assert.ok(compaction && 'config' in compaction);
-  assert.equal((compaction.config as { retainTokens: number }).retainTokens, 4096);
+  assert.equal((compaction.config as { thresholdRatio: number }).thresholdRatio, 0.8);
   const disabled = patch.filter((row) => 'disabled' in row);
   for (const id of ['persistent-bash', 'persistent-pwsh', 'tool-fs', 'tool-working-directory'])
     assert.equal(disabled.find((row) => row.id === id)!.disabled, true);

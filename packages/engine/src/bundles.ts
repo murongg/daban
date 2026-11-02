@@ -481,6 +481,7 @@ export class BotBundles {
       if (value.skills.length)
         await this.options.skills.checkImport(
           value.skills.map((skill) => skill.package ?? skill.content),
+          record.target,
         );
       const total = value.knowledge.length + value.skills.length + 1;
       for (const [index, document] of value.knowledge.entries()) {
@@ -499,6 +500,7 @@ export class BotBundles {
       if (value.skills.length)
         await this.options.skills.checkImport(
           value.skills.map((skill) => skill.package ?? skill.content),
+          record.target,
         );
       await this.change(async () => {
         const current = this.record(id)!;
@@ -510,6 +512,7 @@ export class BotBundles {
       if (value.skills.length)
         await this.options.skills.importBatch(
           value.skills.map((skill) => skill.package ?? skill.content),
+          record.target,
         );
       if (value.knowledge.length)
         await this.options.knowledge.importBundle(
@@ -591,13 +594,19 @@ export class BotBundles {
             )
           )
             throw new Fault('SKILL_CONFLICT');
-          const document = await this.options.skills.read(selection.id);
+          const document = await this.options.skills.read(selection.id, input.bot);
           if (document.revision !== selection.revision) throw new Fault('SKILL_CONFLICT');
           skills.push({
             name: document.name,
             content: document.content,
             ...(document.package
-              ? { package: await this.options.skills.exportPackage(document.id, document.revision) }
+              ? {
+                  package: await this.options.skills.exportPackage(
+                    document.id,
+                    document.revision,
+                    input.bot,
+                  ),
+                }
               : {}),
           });
         }

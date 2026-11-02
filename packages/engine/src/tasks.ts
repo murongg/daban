@@ -11,6 +11,7 @@ import type {
   TaskTrace,
 } from '@daban/protocol';
 import { isReplyStream, isTaskFile, validAgentId } from '@daban/protocol';
+import { isConversationCheckpoint } from './checkpoint.js';
 import { Fault } from './control.js';
 
 export function validateTask(input: unknown): TaskRequest {
@@ -203,6 +204,7 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  checkpoint?: import('./checkpoint.js').ConversationCheckpoint;
   chatRevision?: number;
   conversationId?: string;
   documentInputs?: DocumentInput[];
@@ -326,6 +328,8 @@ export class TaskJournal {
         }
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
         if (task.intentId !== undefined && !validAgentId(task.intentId)) delete task.intentId;
+        if (task.checkpoint !== undefined && !isConversationCheckpoint(task.checkpoint))
+          delete task.checkpoint;
         this.records.set(task.runId, task);
       } catch {
         /* An incomplete journal must not prevent access to other saved tasks and files. */
@@ -333,6 +337,8 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.checkpoint !== undefined && !isConversationCheckpoint(value.checkpoint))
+      throw new Fault('INVALID_CONTEXT_CHECKPOINT', 400);
     if (
       !validAgentId(value.bot) ||
       !/^[a-zA-Z0-9_-]+$/.test(value.runId) ||
@@ -372,6 +378,7 @@ export class TaskJournal {
       'documentInputs',
       'plan',
       'response',
+      'checkpoint',
     ];
     const task = Object.fromEntries(
       fields

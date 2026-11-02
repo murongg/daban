@@ -168,3 +168,187 @@ test('real DSH preserves a reusable conversation below the model compaction budg
     'a tool step must append to the previous prefix rather than rewrite it',
   );
 });
+
+for (const needsSummary of [false, true])
+  test(`real DSH ${needsSummary ? 'summarizes' : 'prunes without summarizing'} and recovers exact saved tool output`, {
+    timeout: 90000,
+  }, async (t) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-context-loop-'));
+    let agent: Awaited<ReturnType<typeof startNativeAgent>> | undefined;
+    const requests: { max: number; messages: { role: string; content: unknown }[] }[] = [];
+    let normal = 0,
+      summaries = 0,
+      readSeq: number | undefined,
+      pruned = false,
+      recovered = false;
+    const label = 'EXACT_MIDDLE_73';
+    const memory = 'SYNTHETIC_MEMORY '.repeat(300) + label + ' SYNTHETIC_MEMORY '.repeat(300);
+    const server = createServer(async (req, res) => {
+      try {
+        if (req.method === 'GET') {
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ data: [{ id: 'mock-context-model' }] }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        const input = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+          tools: { function: { name: string } }[];
+          messages: { role: string; content: unknown }[];
+          max_tokens?: number;
+          max_completion_tokens?: number;
+        };
+        const max = input.max_tokens ?? input.max_completion_tokens ?? 0;
+        requests.push({ max, messages: input.messages });
+        const summary = max < 8192;
+        if (summary) summaries++;
+        else normal++;
+        if (requests.length > 12) throw Error('SYNTHETIC_REQUEST_LIMIT');
+        const toolName = (suffix: string) => {
+          const name = input.tools?.find((tool) => tool.function.name.endsWith(suffix))?.function
+            .name;
+          if (!name) throw Error('SYNTHETIC_TOOL_MISSING');
+          return name;
+        };
+        let call: { name: string; arguments: string } | undefined;
+        if (!summary && normal === 1) call = { name: toolName('bot_memory_read'), arguments: '{}' };
+        else if (!summary && normal === 2) {
+          const output = input.messages.filter((message) => message.role === 'tool').at(-1);
+          const text = String(output?.content ?? '');
+          pruned = text.length < memory.length && !text.includes(label);
+          call = { name: toolName('bot_tool_result_read'), arguments: '{}' };
+        } else if (!summary && normal === 3) {
+          const output = input.messages.filter((message) => message.role === 'tool').at(-1);
+          const page = JSON.parse(String(output?.content ?? '')) as { results: { seq: number }[] };
+          if (page.results.length !== 1) throw Error('SYNTHETIC_DUPLICATE_PROJECTION');
+          readSeq = page.results[0]?.seq;
+          if (!readSeq) throw Error('SYNTHETIC_RESULT_REFERENCE_MISSING');
+          call = {
+            name: toolName('bot_tool_result_read'),
+            arguments: JSON.stringify({ seq: readSeq, query: label, limit: 300 }),
+          };
+        } else if (!summary && normal === 4) {
+          const output = input.messages.filter((message) => message.role === 'tool').at(-1);
+          const page = JSON.parse(String(output?.content ?? '')) as { content: string };
+          recovered = page.content.includes(label);
+        }
+        const content = summary
+          ? 'SYNTHETIC PORTABLE CHECKPOINT: preserve mock reference 73 and finish the current task.'
+          : normal === 1
+            ? needsSummary
+              ? 'SYNTHETIC_PROGRESS_73 '.repeat(1800)
+              : 'SYNTHETIC PROGRESS'
+            : 'SYNTHETIC CONTEXT COMPLETE';
+        const message = {
+          role: 'assistant',
+          content,
+          ...(call
+            ? {
+                tool_calls: [
+                  { index: 0, id: `mock-context-call-${normal}`, type: 'function', function: call },
+                ],
+              }
+            : {}),
+        };
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        const frame = {
+          id: 'mock-context-completion',
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: 'mock-context-model',
+        };
+        const promptTokens = summary ? 4000 : normal === 1 && !needsSummary ? 49500 : 40000;
+        const completionTokens = normal === 1 && !summary && needsSummary ? 12000 : 40;
+        res.end(
+          `data: ${JSON.stringify({ ...frame, choices: [{ index: 0, delta: message, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ ...frame, choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens } })}\n\ndata: [DONE]\n\n`,
+        );
+      } catch {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'SYNTHETIC_PROVIDER_PROTOCOL_ERROR' } }));
+      }
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(async () => {
+      await agent?.close();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      await rm(root, { recursive: true, force: true });
+    });
+    const scope = createHash('sha256').update(root).digest('hex');
+    const options = {
+      dataRoot: root,
+      socketPath:
+        process.platform === 'win32'
+          ? String.raw`\\.\pipe\daban-context-${scope.slice(0, 24)}`
+          : path.join(root, 'a.sock'),
+      scope,
+      sdkFile: resolveSdk(),
+      nativeWorkspace: path.join(root, 'workspace'),
+    };
+    agent = await startNativeAgent(options);
+    const connection = {
+      id: 'mock-context',
+      name: 'Synthetic context model',
+      baseURL: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`,
+      models: [
+        {
+          id: 'mock-context-model',
+          name: 'Synthetic',
+          vision: false,
+          contextWindow: 64000,
+          maxTokens: 8192,
+        },
+      ],
+    };
+    await agent.models.settings.configure({
+      model: 'provider:mock-context:mock-context-model',
+      revision: 0,
+      requestId: 'mock-context-setup',
+      apiKey: 'synthetic-context-key',
+      connection,
+    });
+    await agent.models.profiles.register({
+      id: 'mock-bot',
+      name: 'Synthetic context Bot',
+      instructions: '',
+      memory,
+      color: 'mint',
+    });
+    await agent.models.start('mock-bot', {
+      requestId: 'mock-pressure',
+      prompt:
+        'Read the synthetic memory, recover the exact middle marker from the saved tool output, then finish.',
+    });
+    const first = agent.models.jobs.get('mock-bot')!;
+    await first.done;
+    assert.equal(first.phase, 'completed', first.error);
+    assert.ok(pruned, 'the normal continuation must see the pruned result');
+    assert.ok(recovered, 'the marker must remain readable from the original saved tool output');
+    assert.equal(summaries > 0, needsSummary);
+    assert.equal(normal, 4);
+    const saved = await agent.models.journal.read('mock-bot', first.id);
+    if (needsSummary) assert.match(saved?.checkpoint?.text ?? '', /SYNTHETIC PORTABLE CHECKPOINT/);
+    else assert.equal(saved?.checkpoint, undefined);
+    await agent.close();
+    agent = undefined;
+    agent = await startNativeAgent(options);
+    await agent.models.settings.configure({
+      model: 'provider:mock-context:mock-context-model',
+      revision: (await agent.models.settings.status()).revision!,
+      requestId: 'mock-context-new-key',
+      apiKey: 'synthetic-context-key-v2',
+      connection,
+    });
+    await agent.models.start('mock-bot', {
+      requestId: 'mock-after-restart',
+      prompt: 'Continue the synthetic task using its saved checkpoint.',
+    });
+    const last = agent.models.jobs.get('mock-bot')!;
+    await last.done;
+    assert.equal(last.phase, 'completed', last.error);
+    assert.match(
+      JSON.stringify(requests.at(-1)?.messages),
+      needsSummary ? /SYNTHETIC PORTABLE CHECKPOINT/ : /Read the synthetic memory/,
+    );
+  });

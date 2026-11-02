@@ -78,7 +78,7 @@ export class SkillTools {
   ): Promise<ToolResult> {
     run.abort.signal.throwIfAborted();
     if (this.discovery?.fields[name]) return this.discovery.invoke(run, name, args);
-    const snapshot = run.skills;
+    const snapshot = this.discovery?.snapshot(run) ?? run.skills;
     if (!snapshot?.available) throw new Fault('SKILLS_UNAVAILABLE', 503);
     const invoked = new Set(invokedSkills(run.task?.prompt ?? '', snapshot.skills));
     const offered = snapshot.skills.filter(
@@ -107,14 +107,16 @@ export class SkillTools {
         pending = new Map();
         this.prepared.set(run, pending);
       }
-      let directory = pending.get(selected.name);
+      // Cache prepared files by captured version, not merely by a skill name reused during this task.
+      const preparationKey = this.store.capturedKey(snapshot, selected.name);
+      let directory = pending.get(preparationKey);
       if (!directory) {
         directory = this.store
           .exportCaptured(snapshot, selected.name)
           .then((bundle) => this.stage(run, bundle));
-        pending.set(selected.name, directory);
+        pending.set(preparationKey, directory);
         directory.catch(() => {
-          if (pending!.get(selected.name) === directory) pending!.delete(selected.name);
+          if (pending!.get(preparationKey) === directory) pending!.delete(preparationKey);
         });
       }
       const prepared = await directory;

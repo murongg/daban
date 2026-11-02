@@ -24,12 +24,11 @@ export interface TranscriptEvent extends Omit<TranscriptItem, 'seq' | 'character
 
 function transcriptText(text: string, redact: (value: string) => string) {
   try {
-    // Serialized tool JSON may escape credential characters; redact decoded values before encoding them again.
+    JSON.parse(text);
+    // Decode string tokens for redaction, while retaining numeric lexemes that JSON.parse/stringify would round.
     return redact(
-      JSON.stringify(
-        JSON.parse(text),
-        (_key, value: unknown) => (typeof value === 'string' ? redact(value) : value),
-        2,
+      text.replace(/"(?:\\[\s\S]|[^"\\])*"/g, (token) =>
+        JSON.stringify(redact(JSON.parse(token) as string)),
       ),
     );
   } catch {
@@ -128,6 +127,7 @@ export function projectTranscript(
   note: unknown,
   session: string,
   redact: (value: string) => string,
+  prunedResult = false,
 ): TranscriptEvent | undefined {
   if (
     !record(note) ||
@@ -161,6 +161,8 @@ export function projectTranscript(
     };
   }
   if (event.type === 'tool/result') {
+    // A compactor's surface replacement is not another tool execution; retain its original result only.
+    if (prunedResult) return;
     if (!record(data.message) || !short(data.message.toolCallId))
       throw new Fault('INVALID_TRANSCRIPT_EVENT');
     return {
@@ -320,6 +322,44 @@ export class Transcripts {
       text,
       ...(offset + text.length < body.length ? { nextOffset: offset + text.length } : {}),
     };
+  }
+  results(scope: TranscriptScope, after = 0, limit = 5) {
+    const row = this.find(scope);
+    if (!integer(after) || !integer(limit) || limit < 1 || limit > 20)
+      throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
+    const entries = row
+      ? this.db
+          .prepare(
+            "SELECT seq,meta FROM transcript_events WHERE run=? AND seq>? AND json_extract(meta,'$.kind')='result' ORDER BY seq LIMIT ?",
+          )
+          .all(scope.runId, after, limit + 1)
+      : [];
+    const results = entries.slice(0, limit).map((entry) => {
+      const item = metadata(Number(entry.seq), String(entry.meta));
+      return {
+        seq: item.seq,
+        callId: item.callId || '',
+        isError: item.isError === true,
+        characters: item.characters,
+      };
+    });
+    return {
+      results,
+      state: row?.state ?? 'unavailable',
+      ...(entries.length > limit ? { nextAfter: results.at(-1)!.seq } : {}),
+    };
+  }
+  result(scope: TranscriptScope, seq: number) {
+    // Orphaned event IDs cannot establish Bot/conversation ownership without their run row.
+    if (!this.find(scope)) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
+    if (!integer(seq) || !seq) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
+    const row = this.db
+      .prepare('SELECT meta,body FROM transcript_events WHERE run=? AND seq=?')
+      .get(scope.runId, seq);
+    if (!row) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
+    const item = metadata(seq, String(row.meta));
+    if (item.kind !== 'result') throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
+    return { item, text: String(row.body) };
   }
   async close() {
     if (this.closed) return;

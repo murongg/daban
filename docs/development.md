@@ -128,3 +128,11 @@ macOS 的连接配置位于 `~/Library/Application Support/daban-preview/runtime
 客户端导出不包含完整的后台数据库、工作文件和 VM 磁盘，不能作为完整环境备份。模型密钥不应写入导出、截图、日志或 Git。
 
 `outputs/` 用于本机构建、截图、日志和验收记录；`docs/specs/` 与 `docs/plans/` 是本地工作文档，均不随 Git 提交。历史阶段的实现与验收说明可从 Git 历史查阅。
+
+## DSH 启动诊断
+
+后台在应用数据目录的 `agent/model/dsh-startup.log` 记录 SDK 加载、初始化开始、成功或失败、耗时和任务标识。macOS 默认位置为 `~/Library/Application Support/daban-preview/agent/model/dsh-startup.log`；Windows 位于 `%APPDATA%\daban-preview\agent\model\dsh-startup.log`。
+
+每份汇总日志最多 512 KiB，仅保留当前文件及 `.1`、`.2` 两份备份，总计最多 1.5 MiB。单条记录与启动临时快照均不超过 64 KiB；超量输出标记为截断。临时快照位于该任务的宿主机私有目录，收集后随 SDK 清理回收。
+
+启动快照包含进程、入口脚本、活动资源类型，以及初始化期间的 stderr 和崩溃信息。模型 Key、任务 RPC token、Bearer 凭据在写入前脱敏；不记录环境变量、请求/RPC 正文或正常聊天输出。收到初始化成功响应后立即停止采集。日志不可写不会中断任务，也不会自动延长 40 秒的初始化超时。

@@ -902,6 +902,7 @@ export async function startPrototype({
               recycle: ['bot', 'id', 'revision'],
               restore: ['bot', 'id', 'revision'],
               bind: ['bot', 'binding'],
+              copy: ['bot', 'id', 'revision', 'targetBot'],
             };
             if (
               !fields[action] ||
@@ -912,27 +913,56 @@ export async function startPrototype({
             if (!(await models.profiles.get(data.bot))) throw new Fault('SKILL_BOT_NOT_FOUND', 404);
             if (action === 'import-package' && isSkillPackage(data.package)) {
               models.profiles.assertActive(data.bot);
-              return json(res, await models.skills.importPackage(data.package));
+              return json(res, await models.skills.importPackage(data.package, data.bot));
             }
             if (
               validAgentId(data.id) &&
               Number.isSafeInteger(data.revision) &&
               Number(data.revision) > 0
             ) {
+              if (action === 'copy' && validAgentId(data.targetBot)) {
+                models.profiles.assertActive(data.bot);
+                if (!(await models.profiles.get(data.targetBot)))
+                  throw new Fault('SKILL_BOT_NOT_FOUND', 404);
+                models.profiles.assertActive(data.targetBot);
+                return json(
+                  res,
+                  await models.skills.copy(
+                    data.bot,
+                    data.id,
+                    Number(data.revision),
+                    data.targetBot,
+                  ),
+                );
+              }
               if (action === 'update-package' && isSkillPackage(data.package)) {
                 models.profiles.assertActive(data.bot);
                 return json(
                   res,
-                  await models.skills.updatePackage(data.id, Number(data.revision), data.package),
+                  await models.skills.updatePackage(
+                    data.id,
+                    Number(data.revision),
+                    data.package,
+                    data.bot,
+                  ),
                 );
               }
               if (action === 'resource' && isSkillPath(data.path))
                 return json(
                   res,
-                  await models.skills.readResource(data.id, Number(data.revision), data.path),
+                  await models.skills.readResource(
+                    data.id,
+                    Number(data.revision),
+                    data.path,
+                    data.bot,
+                  ),
                 );
               if (action === 'export-package') {
-                const bundle = await models.skills.exportPackage(data.id, Number(data.revision)),
+                const bundle = await models.skills.exportPackage(
+                    data.id,
+                    Number(data.revision),
+                    data.bot,
+                  ),
                   bytes = writeSkillZip(bundle);
                 return json(res, {
                   id: data.id,
@@ -958,24 +988,35 @@ export async function startPrototype({
                 ),
               });
             if (action === 'import' && isSkillContent(data.content))
-              return json(res, await models.skills.import(data.content));
+              return json(res, await models.skills.import(data.content, data.bot));
             if (action === 'bind' && isSkillBinding(data.binding))
               return json(res, {
                 bot: data.bot,
                 entry: await models.skills.bind(data.bot, data.binding),
               });
             if (validAgentId(data.id)) {
-              if (action === 'read') return json(res, await models.skills.read(data.id));
+              if (action === 'read') return json(res, await models.skills.read(data.id, data.bot));
               if (Number.isSafeInteger(data.revision) && Number(data.revision) > 0) {
                 if (action === 'update' && isSkillContent(data.content))
                   return json(
                     res,
-                    await models.skills.update(data.id, Number(data.revision), data.content),
+                    await models.skills.update(
+                      data.id,
+                      Number(data.revision),
+                      data.content,
+                      data.bot,
+                    ),
                   );
                 if (action === 'recycle')
-                  return json(res, await models.skills.recycle(data.id, Number(data.revision)));
+                  return json(
+                    res,
+                    await models.skills.recycle(data.id, Number(data.revision), data.bot),
+                  );
                 if (action === 'restore')
-                  return json(res, await models.skills.restore(data.id, Number(data.revision)));
+                  return json(
+                    res,
+                    await models.skills.restore(data.id, Number(data.revision), data.bot),
+                  );
               }
             }
             throw new Fault('INVALID_SKILL', 400);
@@ -1372,6 +1413,7 @@ export async function startPrototype({
                       events: [],
                       bots: {},
                     }),
+              botCapabilities: true,
               clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
               ...(host
                 ? {

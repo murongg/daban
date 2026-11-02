@@ -14,8 +14,9 @@ import type { ToolResult } from './computer-tools.js';
 import { Fault } from './control.js';
 import type { Interactions } from './interactions.js';
 import { inspectSkillPackage } from './skill-package.js';
+import { invokedSkills } from './skill-provider.js';
 import { SkillSources } from './skill-sources.js';
-import type { Skills } from './skills.js';
+import type { SkillSnapshot, Skills } from './skills.js';
 
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({
   type: 'object',
@@ -77,10 +78,15 @@ export class SkillDiscovery {
     {
       name: 'skill_install',
       description:
-        'Request human confirmation to install exactly one captured preview and enable it for the current Bot. Always explain its purpose/source first. It saves a standard package, does not run scripts or install dependencies, never overwrites different content, and applies to the next task. Report installed/enabled separately. Human refusal ends this request; do not repeatedly ask.',
+        'Request human confirmation to install exactly one captured preview and enable it for the current Bot. Always explain its purpose/source first. The installation and its versions belong only to this Bot; other Bots receive nothing. It saves a standard package, does not run scripts or install dependencies, never overwrites different content, and makes the approved skill resources available in this task. Report installed/enabled separately. Human refusal ends this request; do not repeatedly ask.',
       inputSchema: object({ previewId: { type: 'string' } }),
     },
   ];
+  private readonly activeSnapshots = new WeakMap<AgentToolRun, SkillSnapshot>();
+  snapshot(run: AgentToolRun) {
+    return this.activeSnapshots.get(run);
+  }
+  private readonly snapshotLeases = new WeakMap<AgentToolRun, Set<SkillSnapshot>>();
   private readonly previews = new WeakMap<AgentToolRun, Map<string, Preview>>();
   constructor(
     private readonly store: Skills,
@@ -89,6 +95,9 @@ export class SkillDiscovery {
   ) {}
   release(run: AgentToolRun) {
     this.previews.delete(run);
+    this.activeSnapshots.delete(run);
+    for (const snapshot of this.snapshotLeases.get(run) ?? []) this.store.release(snapshot);
+    this.snapshotLeases.delete(run);
   }
   async invoke(
     run: AgentToolRun,
@@ -181,8 +190,8 @@ export class SkillDiscovery {
           {
             id: 'install',
             header: 'Install skill',
-            question: `Install ${info.name} and enable it for this Bot?`,
-            detail: `${info.description.slice(0, 400)}\n${preview.origin.url}\nVersion: ${preview.origin.revision}\n${info.fileCount} files · ${info.bytes} bytes\nSHA-256: ${info.digest}\nScripts and dependencies will not run. The skill applies to the next task.`,
+            question: `Install ${info.name} only for the current Bot (${run.bot})?`,
+            detail: `${info.description.slice(0, 400)}\n${preview.origin.url}\nVersion: ${preview.origin.revision}\n${info.fileCount} files · ${info.bytes} bytes\nSHA-256: ${info.digest}\nScripts and dependencies will not run. Only this Bot receives the skill. It can read and use the approved instructions in this task.`,
             options: [{ label: 'Install and enable' }, { label: 'Cancel' }],
           },
         ],
@@ -208,7 +217,7 @@ export class SkillDiscovery {
       return json({ installed: false, enabled: false, reason: 'SKILL_INSTALL_DECLINED' }, true);
     }
     if (Date.now() - preview.created > 600000) throw new Fault('SKILL_PREVIEW_EXPIRED', 410);
-    const document = await this.store.importPackage(preview.bundle);
+    const document = await this.store.importPackage(preview.bundle, run.bot);
     try {
       run.abort.signal.throwIfAborted();
       const current = (await this.store.list(run.bot)).items.find(
@@ -223,13 +232,40 @@ export class SkillDiscovery {
         bindingRevision: current.bindingRevision,
         enabled: true,
       });
+      const previous = this.activeSnapshots.get(run) ?? run.skills;
+      const next = await this.store.extend(run.bot, previous, document.id, document.revision);
+      if (next !== previous) {
+        let leases = this.snapshotLeases.get(run);
+        if (!leases) {
+          leases = new Set();
+          this.snapshotLeases.set(run, leases);
+        }
+        // Keep earlier resource leases alive until concurrent tool reads in this task have drained.
+        if (previous) leases.add(previous);
+        leases.add(next);
+        // DSH's loaded provider and session fingerprint stay frozen; only resource tools see this approved addition.
+        this.activeSnapshots.set(run, next);
+      }
+      const usable =
+        document.invocation.modelInvocable ||
+        invokedSkills(run.task?.prompt ?? '', next.skills).includes(document.name);
       return json({
         installed: true,
         enabled: true,
         name: document.name,
         id: document.id,
         revision: document.revision,
-        applies: 'next-task',
+        ownerBot: run.bot,
+        applies: usable
+          ? 'current-task'
+          : document.invocation.userInvocable
+            ? 'manual-invocation'
+            : 'disabled-by-skill-policy',
+        nextStep: usable
+          ? 'Use skill_files and skill_read to read the approved skill instructions and resources, then continue the task. Tool permissions and script approval rules are unchanged.'
+          : document.invocation.userInvocable
+            ? `Installed for this Bot. This skill requires an explicit human /${document.name} invocation; do not automatically use it.`
+            : 'Installed for this Bot, but its invocation policy disables automatic and manual use. Review the policy in this Bot’s Skills panel.',
       });
     } catch (error) {
       // Import can succeed before enablement fails (for example the active-skill limit); preserve that distinction.

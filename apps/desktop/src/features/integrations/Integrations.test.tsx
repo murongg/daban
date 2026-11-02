@@ -6,7 +6,7 @@ import {
   type RuntimeCommand,
   type RuntimeReply,
 } from '@daban/protocol';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RuntimeProvider } from '../../app/Runtime';
@@ -46,7 +46,7 @@ const tool = {
 };
 function connect({
   empty = false,
-  protocol = 21,
+  protocol = 41,
   error = '',
   changeOnCheck = false,
   stale = false,
@@ -58,6 +58,7 @@ function connect({
   let saved: unknown;
   const bindings = new Map<string, McpAssignment>();
   const snapshot = disconnected(offline ? 'offline' : 'ready');
+  snapshot.botCapabilities = true;
   snapshot.protocolVersion = protocol;
   snapshot.mcp = { available: true, revision: 1 };
   snapshot.profiles = bots.map((bot) => ({
@@ -98,7 +99,11 @@ function connect({
         ok: true,
         value: {
           revision: 1,
-          items: rows.filter((row) => row.deleted === !!command.includeDeleted),
+          items: rows.filter(
+            (row) =>
+              row.deleted === !!command.includeDeleted &&
+              (!row.ownerBot || row.ownerBot === command.bot),
+          ),
         },
       };
     if (command.type === 'mcp.check' && changeOnCheck) {
@@ -120,7 +125,9 @@ function connect({
         value: {
           bot: command.bot,
           revision: 1,
-          items: rows.filter((row) => !row.deleted).map((row) => entry(command.bot, row)),
+          items: rows
+            .filter((row) => !row.deleted && (!row.ownerBot || row.ownerBot === command.bot))
+            .map((row) => entry(command.bot, row)),
         },
       };
     if (command.type === 'mcp.bind') {
@@ -141,6 +148,7 @@ function connect({
       if (error === 'MCP_CONFLICT') return { ok: false, error };
       const current = {
         ...connection,
+        ...(command.bot ? { ownerBot: command.bot } : {}),
         id: command.input.id,
         name: command.input.name,
         revision: command.input.revision + 1,
@@ -329,7 +337,9 @@ it('warns that archive revokes every Bot and restore never grants tools automati
 it('leaves older runtimes explicit and never sends new MCP commands to them', async () => {
   const invoke = connect({ protocol: 20 });
   render(view());
-  expect(await screen.findByText('更新本地运行环境后可配置外部工具。')).toBeVisible();
+  expect(
+    await screen.findByText('请更新本地 Agent，以使用 Bot 独立的技能安装和外部连接。'),
+  ).toBeVisible();
   expect(screen.getByRole('button', { name: '添加连接' })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command.type.startsWith('mcp.'))).toBe(false);
 });
@@ -399,4 +409,82 @@ it('does not select an archived identity when opening per-Bot external tool choi
   const target = await findSelectControl('使用工具的 Bot');
   expect(target).toHaveAttribute('data-value', 'mock-b');
   expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.bind')).toBe(false);
+});
+
+it('creates a connection for the Bot whose capability panel was opened, without granting another Bot', async () => {
+  const invoke = connect({ empty: true, protocol: 41 });
+  render(
+    <RuntimeProvider>
+      <Integrations bots={bots} bot={bots[1]} />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '添加连接' }));
+  await userEvent.type(screen.getByLabelText('连接名称'), 'Synthetic private connection');
+  await userEvent.type(screen.getByLabelText('服务地址'), 'https://mcp.example.test/mcp');
+  await userEvent.type(screen.getByLabelText('Bearer Token'), 'SYNTHETIC-BOT-KEY');
+  await userEvent.click(screen.getByRole('button', { name: '保存连接' }));
+  await waitFor(() =>
+    expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.save')).toBe(true),
+  );
+  const commands = invoke.mock.calls.map(([command]) => command);
+  expect(commands.find((command) => command.type === 'mcp.save')).toMatchObject({ bot: 'mock-b' });
+  expect(
+    commands
+      .filter((command) => command.type === 'mcp.list')
+      .every((command) => command.bot === 'mock-b'),
+  ).toBe(true);
+  expect(commands.some((command) => command.type === 'mcp.bind')).toBe(false);
+  expect(JSON.stringify(localStorage)).not.toContain('SYNTHETIC-BOT-KEY');
+});
+
+it('adding an MCP connection to another Bot requires fresh credentials and does not copy its tool grants', async () => {
+  const invoke = connect({ protocol: 41 });
+  render(view());
+  await userEvent.click(await screen.findByRole('button', { name: '添加 合成服务 到其他 Bot' }));
+  const dialog = screen.getByRole('dialog', { name: '为其他 Bot 添加连接' });
+  expect(within(dialog).getByLabelText('Bearer Token')).toHaveValue('');
+  expect(within(dialog).getByLabelText('服务地址')).toHaveValue('');
+  await userEvent.type(within(dialog).getByLabelText('服务地址'), 'https://other.example.test/mcp');
+  await userEvent.type(within(dialog).getByLabelText('Bearer Token'), 'SYNTHETIC-OTHER-BOT-KEY');
+  await userEvent.click(within(dialog).getByRole('button', { name: '保存连接' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: '为其他 Bot 添加连接' })).not.toBeInTheDocument(),
+  );
+  const commands = invoke.mock.calls.map(([command]) => command);
+  expect(commands.find((command) => command.type === 'mcp.save')).toMatchObject({
+    bot: 'mock-b',
+    input: {
+      revision: 0,
+      bearer: 'SYNTHETIC-OTHER-BOT-KEY',
+      endpoint: 'https://other.example.test/mcp',
+    },
+  });
+  expect(commands.some((command) => command.type === 'mcp.bind')).toBe(false);
+  expect(JSON.stringify(localStorage)).not.toContain('SYNTHETIC-OTHER-BOT-KEY');
+});
+
+it('verifies an uncertain copied connection with the original Bot and nonce without resending its key', async () => {
+  const invoke = connect({ protocol: 41, error: 'RUNTIME_SESSION_CHANGED' });
+  render(view());
+  await userEvent.click(await screen.findByRole('button', { name: '添加 合成服务 到其他 Bot' }));
+  const dialog = screen.getByRole('dialog', { name: '为其他 Bot 添加连接' });
+  await userEvent.type(within(dialog).getByLabelText('服务地址'), 'https://other.example.test/mcp');
+  await userEvent.type(within(dialog).getByLabelText('Bearer Token'), 'SYNTHETIC-COPY-KEY');
+  await userEvent.click(within(dialog).getByRole('button', { name: '保存连接' }));
+  await userEvent.click(await within(dialog).findByRole('button', { name: '核对保存结果' }));
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: '为其他 Bot 添加连接' })).not.toBeInTheDocument(),
+  );
+  const commands = invoke.mock.calls.map(([command]) => command);
+  const writes = commands.filter((command) => command.type === 'mcp.save');
+  expect(writes).toHaveLength(1);
+  const written = writes[0];
+  expect(written.type).toBe('mcp.save');
+  if (written.type !== 'mcp.save') throw Error('MISSING_SAVE');
+  expect(commands.find((command) => command.type === 'mcp.saved')).toEqual({
+    type: 'mcp.saved',
+    bot: 'mock-b',
+    id: written.input.requestId,
+    connection: written.input.id,
+  });
 });

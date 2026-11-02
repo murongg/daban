@@ -1,11 +1,19 @@
-import type { McpCatalog, McpConnection, McpSave, McpSaved } from '@daban/protocol';
+import {
+  agentId,
+  type McpCatalog,
+  type McpConnection,
+  type McpSave,
+  type McpSaved,
+} from '@daban/protocol';
 import { Archive, Plus, RefreshCw, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
 import { Dialog } from '../../components/controls/Dialog';
+import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
 import { IntegrationTools } from './IntegrationTools';
+import { McpCopy } from './McpCopy';
 
 interface Draft {
   id: string;
@@ -23,6 +31,7 @@ const definite = new Set([
   'MCP_CONNECTION_LIMIT',
   'MCP_STORAGE_LIMIT',
   'MCP_NOT_FOUND',
+  'MCP_SHARED_READ_ONLY',
   'MCP_REQUEST_ID_REUSED',
 ]);
 const health = {
@@ -33,10 +42,79 @@ const health = {
 
 export function Integrations({
   bots,
+  bot,
   onDialogChange,
+  onDirty,
 }: {
   bots: Bot[];
+  bot?: Bot;
   onDialogChange?: (open: boolean) => unknown;
+  onDirty?: (dirty: boolean) => unknown;
+}) {
+  useLocale();
+  const runtime = useRuntime();
+  const choices = bots.filter(
+    (item) =>
+      !item.members &&
+      !item.archived &&
+      runtime.snapshot.profiles.some(
+        (profile) => profile.id === agentId(item.id) && !profile.archived,
+      ),
+  );
+  const [selected, setSelected] = useState(bot?.id ?? choices[0]?.id ?? '');
+  const [dirty, setDirty] = useState(false);
+  const first = choices[0]?.id;
+  useEffect(() => {
+    if (!selected && first) setSelected(first);
+  }, [selected, first]);
+  useEffect(() => {
+    onDirty?.(dirty);
+    return () => {
+      onDirty?.(false);
+    };
+  }, [dirty, onDirty]);
+  const target = bot ?? bots.find((item) => item.id === selected);
+  return (
+    <>
+      {!bot && (
+        <div className="field-label">
+          {t('capabilities.chooseBot')}
+          <Select
+            label={t('capabilities.chooseBot')}
+            value={selected}
+            disabled={dirty}
+            onValueChange={setSelected}
+            options={choices.map((item) => ({ value: item.id, label: item.name }))}
+          />
+        </div>
+      )}
+      {target ? (
+        <BotIntegrations
+          key={target.id}
+          bots={bots}
+          bot={target}
+          privatePanel={!!bot}
+          onDialogChange={onDialogChange}
+          onDirty={setDirty}
+        />
+      ) : (
+        <p className="inline-note">{t('capabilities.createBotFirst')}</p>
+      )}
+    </>
+  );
+}
+function BotIntegrations({
+  bots,
+  bot,
+  privatePanel,
+  onDialogChange,
+  onDirty,
+}: {
+  bots: Bot[];
+  bot: Bot;
+  privatePanel: boolean;
+  onDialogChange?: (open: boolean) => unknown;
+  onDirty: (dirty: boolean) => unknown;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -47,8 +125,9 @@ export function Integrations({
   const [conflict, setConflict] = useState<McpConnection>();
   const [selected, setSelected] = useState<McpConnection>();
   const [accessDirty, setAccessDirty] = useState(false);
+  const [copying, setCopying] = useState<McpConnection>();
   const [archiving, setArchiving] = useState<McpConnection>();
-  const dialogOpen = !!archiving;
+  const dialogOpen = !!archiving || !!copying;
   useEffect(() => {
     onDialogChange?.(dialogOpen);
   }, [dialogOpen, onDialogChange]);
@@ -62,6 +141,8 @@ export function Integrations({
     runtime.enabled &&
     runtime.snapshot.phase === 'ready' &&
     runtime.snapshot.protocolVersion >= 21 &&
+    runtime.snapshot.botCapabilities === true &&
+    !bot.archived &&
     runtime.snapshot.mcp?.available === true;
   const revision = runtime.snapshot.mcp?.available ? runtime.snapshot.mcp.revision : undefined;
   useEffect(() => {
@@ -76,9 +157,10 @@ export function Integrations({
     const value = await runtime.command<{ revision: number; items: McpConnection[] }>({
       type: 'mcp.list',
       includeDeleted: trash,
+      bot: agentId(bot.id),
     });
     if (mounted.current && serial === reads.current) setRows(value.items);
-  }, [runtime.command, trash]);
+  }, [runtime.command, trash, bot.id]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Store revisions refresh metadata without replacing a private editor draft.
   useEffect(() => {
     if (!available) return;
@@ -142,18 +224,37 @@ export function Integrations({
     };
     setPending(input);
     try {
-      await acknowledge(await runtime.command<McpSaved>({ type: 'mcp.save', input }));
+      await acknowledge(
+        await runtime.command<McpSaved>({
+          type: 'mcp.save',
+          ...(rows.find((row) => row.id === input.id && !row.ownerBot) && !privatePanel
+            ? {}
+            : { bot: agentId(bot.id) }),
+          input,
+        }),
+      );
     } catch (error) {
       if (mounted.current && error instanceof Error && definite.has(error.message))
         setPending(undefined);
       throw error;
     }
   }
+  useEffect(() => {
+    onDirty(busy || !!draft || !!pending || accessDirty || !!archiving || !!copying);
+  }, [busy, draft, pending, accessDirty, archiving, copying, onDirty]);
   const entry = rows.find((row) => row.id === selected?.id) ?? selected;
   const blocked = !available || busy || !!draft || accessDirty;
   return (
     <div className="settings-section integration-settings">
       <h2>{t('common.externalTools')}</h2>
+      <p className="setting-description">
+        {t(
+          draft && draft.revision > 0 && rows.some((row) => row.id === draft.id && !row.ownerBot)
+            ? 'capabilities.editSharedMcp'
+            : 'capabilities.installForBot',
+          { 0: bot.name },
+        )}
+      </p>
       <p className="setting-description">
         {t('integrations.connectMcpServicesSelectToolsBotsEach')}
       </p>
@@ -162,8 +263,8 @@ export function Integrations({
       </p>
       {!available && (
         <p className="inline-note">
-          {runtime.snapshot.protocolVersion < 21
-            ? t('integrations.updateLocalRuntimeConfigureExternalTools')
+          {runtime.snapshot.protocolVersion < 21 || runtime.snapshot.botCapabilities !== true
+            ? t('capabilities.updateRuntime')
             : runtime.snapshot.phase !== 'ready'
               ? t('integrations.localRuntimeNotConnectedManageExternalTools')
               : t('integrations.externalToolsTemporarilyUnavailableOrdinaryChatExisting')}
@@ -304,6 +405,7 @@ export function Integrations({
                       acknowledge(
                         await runtime.command<McpSaved>({
                           type: 'mcp.saved',
+                          bot: agentId(bot.id),
                           id: pending.requestId,
                           connection: pending.id,
                         }),
@@ -331,6 +433,7 @@ export function Integrations({
                   perform(async () => {
                     const value = await runtime.command<McpCatalog>({
                       type: 'mcp.catalog',
+                      bot: agentId(bot.id),
                       id: draft.id,
                     });
                     if (mounted.current) setConflict(value.current);
@@ -369,6 +472,9 @@ export function Integrations({
             <p>{row.origin}</p>
             <span className="badge">{t(health[row.health])}</span>
             <span className="field-help">
+              {t(row.ownerBot ? 'capabilities.onlyThisBot' : 'capabilities.legacyShared')}
+            </span>
+            <span className="field-help">
               {row.toolCount}
               {t('integrations.tools')}
               {row.credentialConfigured
@@ -377,16 +483,48 @@ export function Integrations({
             </span>
           </div>
           <div className="integration-actions">
+            {!trash && (
+              <button
+                type="button"
+                className="secondary"
+                aria-label={t('capabilities.addMcpNamed', { 0: row.name })}
+                disabled={blocked}
+                onClick={() => setCopying(row)}
+              >
+                {t('capabilities.copyToBot')}
+              </button>
+            )}
+            {privatePanel && !row.ownerBot && !trash && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={blocked}
+                onClick={() => {
+                  setDraft({
+                    id: crypto.randomUUID(),
+                    revision: 0,
+                    name: row.name,
+                    endpoint: '',
+                    bearer: '',
+                    clearBearer: false,
+                  });
+                  setNotice(t('capabilities.newConnectionCredentials'));
+                }}
+              >
+                {t('capabilities.makePrivateCopy')}
+              </button>
+            )}
             {trash ? (
               <button
                 className="secondary"
                 type="button"
                 aria-label={t('common.restoreNamedItem', { 0: row.name })}
-                disabled={blocked}
+                disabled={blocked || (privatePanel && !row.ownerBot)}
                 onClick={() =>
                   perform(async () => {
                     await runtime.command({
                       type: 'mcp.restore',
+                      ...(row.ownerBot || privatePanel ? { bot: agentId(bot.id) } : {}),
                       id: row.id,
                       revision: row.revision,
                     });
@@ -405,7 +543,7 @@ export function Integrations({
                   className="secondary"
                   type="button"
                   aria-label={t('common.editNamedItem', { 0: row.name })}
-                  disabled={blocked}
+                  disabled={blocked || (privatePanel && !row.ownerBot)}
                   onClick={() => edit(row)}
                 >
                   {t('common.edit')}
@@ -414,11 +552,12 @@ export function Integrations({
                   className="secondary"
                   type="button"
                   aria-label={t('integrations.check', { 0: row.name })}
-                  disabled={!available || busy || !!draft}
+                  disabled={!available || busy || !!draft || (privatePanel && !row.ownerBot)}
                   onClick={() =>
                     perform(async () => {
                       await runtime.command({
                         type: 'mcp.check',
+                        ...(row.ownerBot || privatePanel ? { bot: agentId(bot.id) } : {}),
                         id: row.id,
                         revision: row.revision,
                       });
@@ -443,7 +582,7 @@ export function Integrations({
                   className="secondary"
                   type="button"
                   aria-label={t('integrations.archive', { 0: row.name })}
-                  disabled={blocked}
+                  disabled={blocked || (privatePanel && !row.ownerBot)}
                   onClick={() => setArchiving(row)}
                 >
                   <Archive />
@@ -457,9 +596,26 @@ export function Integrations({
       {entry && !trash && (
         <IntegrationTools
           connection={entry}
-          bots={bots}
+          bots={
+            privatePanel || entry.ownerBot
+              ? bots.filter((item) => agentId(item.id) === (entry.ownerBot ?? agentId(bot.id)))
+              : bots
+          }
           onDirty={setAccessDirty}
           onClose={() => setSelected(undefined)}
+        />
+      )}
+      {copying && (
+        <McpCopy
+          connection={copying}
+          bot={bot}
+          bots={bots}
+          onClose={() => setCopying(undefined)}
+          onCopied={(recipient) => {
+            setCopying(undefined);
+            setNotice(t('capabilities.mcpAdded', { 0: recipient.name }));
+            load().catch((cause) => setError(runtimeError(cause)));
+          }}
         />
       )}
       {archiving && (
@@ -477,7 +633,11 @@ export function Integrations({
           <p>
             {t('integrations.archiveNamePrefix')}
             {archiving.name}
-            {t('integrations.disablesAllBotsAccessConnectionCancelsCalls')}
+            {t(
+              archiving.ownerBot
+                ? 'capabilities.archiveMcp'
+                : 'integrations.disablesAllBotsAccessConnectionCancelsCalls',
+            )}
           </p>
           <p className="field-help">
             {t('integrations.connectionCanRestoredSelectEnableToolsAgain')}
@@ -491,6 +651,7 @@ export function Integrations({
                 perform(async () => {
                   await runtime.command({
                     type: 'mcp.archive',
+                    ...(archiving.ownerBot || privatePanel ? { bot: agentId(bot.id) } : {}),
                     id: archiving.id,
                     revision: archiving.revision,
                   });
