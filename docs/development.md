@@ -104,6 +104,8 @@ npm run bundle:desktop -- /absolute/path/to/environment-pack /absolute/path/to/n
 
 当前构建器固定使用已封存的 38 版无凭据基础镜像，并叠加当前执行端；环境包须匹配构建器校验，不能任意替换。环境准备与校验代码见 [environment.ts](../tools/environment.ts)、[guest.ts](../tools/guest.ts) 和 [desktop.ts](../tools/desktop.ts)。本地打包尚不代表完成公开发行签名、公证或自动更新。
 
+本地临时签名在重新构建后可能改变应用身份，macOS 因而要求重新授予录屏和辅助功能权限。若系统列表中仍显示旧条目已开启，但客户端检测未获授权，需移除 Daban 的旧条目，再添加当前应用并重新打开。公开分发需使用稳定的 Developer ID 签名。
+
 ## Windows 本机模式
 
 在 Windows x64 上准备官方 Node.js 24.22.1 目录（含 node.exe 与 LICENSE），然后执行：
