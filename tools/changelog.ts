@@ -88,7 +88,7 @@ async function main() {
   assert.ok(source.length <= 150000, 'CHANGELOG_RECORDS_TOO_LARGE');
   const result = await translateChangelog(source, {
     url: process.env.CHANGELOG_API_URL || 'https://api.deepseek.com/v1',
-    model: process.env.CHANGELOG_MODEL || 'deepseek-chat',
+    model: process.env.CHANGELOG_MODEL || 'deepseek-flash',
     key: process.env.CHANGELOG_API_KEY ?? '',
   });
   await mkdir('outputs/release-notes', { recursive: true });

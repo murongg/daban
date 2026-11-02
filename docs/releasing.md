@@ -26,7 +26,7 @@ CI 不使用 Apple 或模型凭据；发行工作流只由版本标签或手动�
 | Variable | 默认值 | 用途 |
 | --- | --- | --- |
 | `CHANGELOG_API_URL` | `https://api.deepseek.com/v1` | OpenAI Chat Completions 兼容的 HTTPS API 根地址 |
-| `CHANGELOG_MODEL` | `deepseek-chat` | 支持 JSON 输出的翻译模型 |
+| `CHANGELOG_MODEL` | `deepseek-flash` | 支持 JSON 输出的翻译模型 |
 | `MACOS_ENVIRONMENT_TAG` | `environment-v38` | 同仓库保存干净环境包的 Release 标签 |
 
 模型仅接收该版本的公开 PR 和提交记录，不接收源码、用户聊天或 Apple 凭据。中英文任一部分生成失败或被截断，Release 均不会发布；不会默默退回只有英文的日志。

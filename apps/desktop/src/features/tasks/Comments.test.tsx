@@ -291,12 +291,12 @@ it('publishes persisted exact intent and advances parent revision while preservi
   await userEvent.type(await open(), ' 合成评论原文 ');
   await userEvent.clear(screen.getByRole('textbox', { name: '任务标题' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务标题' }), '合成本机未保存任务标题');
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(live.writeComment).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(commentCard(cache(), 'mock-alpha').pending).toBeUndefined());
   expect(live.comments[0].comment.body).toBe(' 合成评论原文 ');
   expect(screen.getByRole('textbox', { name: '任务标题' })).toHaveValue('合成本机未保存任务标题');
-  await userEvent.click(screen.getByRole('button', { name: '保存任务', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '保存任务' }));
   await waitFor(() => expect(live.write).toHaveBeenCalledTimes(1));
   expect(live.write.mock.calls[0][0].revision).toBe(2);
 });
@@ -314,7 +314,7 @@ it('reopens an uncertain accepted comment through receipts only and keeps newer 
   });
   const view = fixture();
   await userEvent.type(await open(), '合成结果待确认');
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(commentCard(cache(), 'mock-alpha').pending).toBeDefined());
   view.unmount();
   const current = live.entries.get('mock-alpha')!;
@@ -322,7 +322,7 @@ it('reopens an uncertain accepted comment through receipts only and keeps newer 
   current.description = 'MOCK NEWER HUMAN DETAIL';
   live.receipt.mockImplementation(async (request) => live.acknowledgement(request));
   fixture();
-  await userEvent.click(await screen.findByRole('button', { name: '任务', exact: true }));
+  await userEvent.click(await screen.findByRole('button', { name: '任务' }));
   await waitFor(() => expect(live.receipt).toHaveBeenCalled());
   await waitFor(() => expect(commentCard(cache(), 'mock-alpha').pending).toBeUndefined());
   expect(live.writeComment).toHaveBeenCalledTimes(1);
@@ -337,7 +337,7 @@ it('retains unknown results and explicitly retries only the original comment req
   live.writeComment.mockRejectedValueOnce(Error('RUNTIME_OFFLINE'));
   fixture();
   await userEvent.type(await open(), '合成原请求重试');
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(live.writeComment).toHaveBeenCalledTimes(1));
   const original = structuredClone(live.writeComment.mock.calls[0][0]);
   await userEvent.click(await screen.findByRole('button', { name: '核对发表结果' }));
@@ -362,7 +362,7 @@ it('late acknowledgements cannot clear another card draft or redirect the task e
   });
   fixture();
   await userEvent.type(await open(), '合成评论甲');
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(live.writeComment).toHaveBeenCalledTimes(1));
   await userEvent.click(screen.getByRole('button', { name: '查看 合成任务乙' }));
   await userEvent.type(
@@ -384,13 +384,13 @@ it('allows draft editing during recovery but fences publish and keeps old-runtim
   live.snapshot.recovery = { available: false, error: 'RECOVERY_STORE_UNAVAILABLE' };
   const view = fixture();
   await userEvent.type(await open(), 'MOCK RECOVERY DRAFT');
-  expect(screen.getByRole('button', { name: '发表评论', exact: true })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '发表评论' })).toBeDisabled();
   expect(live.writeComment).not.toHaveBeenCalled();
   view.unmount();
   const old = connect({ protocol: 37, comments: cache() });
   fixture();
   expect(await open()).toHaveValue('MOCK RECOVERY DRAFT');
-  expect(screen.getByRole('button', { name: '发表评论', exact: true })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '发表评论' })).toBeDisabled();
   expect(
     old.calls.some(
       (call) =>
@@ -407,7 +407,7 @@ it('reviews material parent changes before sending and keeps comment body on a c
   await userEvent.type(await open(), '合成保留的评论正文');
   live.entries.get('mock-alpha')!.description = 'MOCK EXTERNAL TASK CHANGE';
   live.entries.get('mock-alpha')!.revision++;
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() =>
     expect(screen.getByRole('textbox', { name: '任务说明' })).toHaveValue(
       'MOCK EXTERNAL TASK CHANGE',
@@ -419,7 +419,7 @@ it('reviews material parent changes before sending and keeps comment body on a c
     live.entries.get('mock-alpha')!.revision++;
     throw Error('WORK_CONFLICT');
   });
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(live.writeComment).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(commentCard(cache(), 'mock-alpha').pending).toBeUndefined());
   expect(screen.getByRole('textbox', { name: '评论正文' })).not.toHaveAttribute('readonly');
@@ -448,7 +448,7 @@ it('keeps failed discussion loads distinct from empty history and never accepts 
     actor: { kind: 'human' },
   }));
   await userEvent.type(screen.getByRole('textbox', { name: '评论正文' }), '合成不接受伪造回执');
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(commentCard(cache(), 'mock-alpha').pending).toBeDefined());
   expect(screen.getByRole('textbox', { name: '评论正文' })).toHaveValue('合成不接受伪造回执');
 });
@@ -458,12 +458,12 @@ it('does not publish when persisting the pending comment fails', async () => {
   fixture();
   await userEvent.type(await open(), 'MOCK STORAGE DRAFT');
   const set = Storage.prototype.setItem;
-  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, raw) {
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, raw) {
     if (key === storageKey && JSON.parse(raw).state.comments?.cards['mock-alpha']?.pending)
       throw Error('MOCK_QUOTA');
     return set.call(this, key, raw);
   });
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   expect(await screen.findByText(/评论尚未发送/)).toBeVisible();
   expect(live.writeComment).not.toHaveBeenCalled();
   expect(screen.getByRole('textbox', { name: '评论正文' })).toHaveValue('MOCK STORAGE DRAFT');
@@ -484,7 +484,7 @@ it('pages older literal comments and reviews external task edits without losing 
   await userEvent.type(screen.getByRole('textbox', { name: '任务标题' }), '合成本机保留标题');
   live.entries.get('mock-alpha')!.description = 'MOCK LATER EXTERNAL DETAIL';
   live.entries.get('mock-alpha')!.revision++;
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   expect(await screen.findByText('后台当前内容')).toBeVisible();
   expect(live.writeComment).not.toHaveBeenCalled();
   expect(screen.getByRole('textbox', { name: '任务标题' })).toHaveValue('合成本机保留标题');
@@ -493,7 +493,7 @@ it('pages older literal comments and reviews external task edits without losing 
   expect(screen.getByRole('textbox', { name: '任务说明' })).toHaveValue(
     'MOCK LATER EXTERNAL DETAIL',
   );
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(live.writeComment).toHaveBeenCalledTimes(1));
   expect(screen.getByRole('textbox', { name: '任务标题' })).toHaveValue('合成本机保留标题');
 });
@@ -544,7 +544,7 @@ it('advances another card after a comment without disturbing a pending task writ
   const live = connect({ work });
   fixture();
   await userEvent.type(await open('合成任务乙'), '合成乙评论独立保存');
-  await userEvent.click(screen.getByRole('button', { name: '发表评论', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: '发表评论' }));
   await waitFor(() => expect(live.writeComment).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(commentCard(cache(), 'mock-beta').pending).toBeUndefined());
   expect(restore(localStorage.getItem(storageKey)).work?.draft?.base?.revision).toBe(2);
