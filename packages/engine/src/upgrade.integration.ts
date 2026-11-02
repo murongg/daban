@@ -10,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { startNativeAgent } from './host-server.js';
 import { privateClientOptions } from './private-channel.js';
 
-test('authenticated idle-only handoff fences all later admissions without cancelling an active job', async () => {
+test('authenticated idle-only handoff fences all later admissions without cancelling an active job', {
+  timeout: 15000,
+}, async () => {
   const temporary = await mkdtemp(path.join(tmpdir(), 'mock-upgrade-'));
   const root = path.join(temporary, 'private');
   const scope = createHash('sha256').update(root).digest('hex');
@@ -19,6 +21,10 @@ test('authenticated idle-only handoff fences all later admissions without cancel
       ? `\\\\.\\pipe\\daban-agent-${scope.slice(0, 24)}`
       : path.join(root, 'a.sock');
   let requested = 0;
+  let handedOff: () => unknown = () => {};
+  const handoff = new Promise<undefined>((resolve) => {
+    handedOff = () => resolve(undefined);
+  });
   const options = {
     dataRoot: root,
     nativeWorkspace: path.join(root, 'workspace'),
@@ -27,6 +33,7 @@ test('authenticated idle-only handoff fences all later admissions without cancel
     sdkFile: fileURLToPath(import.meta.url),
     onUpdate: () => {
       requested++;
+      handedOff();
     },
   };
   const app = await startNativeAgent(options);
@@ -79,6 +86,8 @@ test('authenticated idle-only handoff fences all later admissions without cancel
     assert.equal(accepted.status, 200);
     assert.equal(accepted.body.scope, scope);
     assert.equal(accepted.body.pid, process.pid);
+    // TLS can deliver the response before the server's finish callback runs on Windows.
+    await handoff;
     assert.equal(requested, 1);
     assert.equal(app.models.admit('mock-bot'), false);
     assert.equal((await call({ scope })).status, 503);
