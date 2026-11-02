@@ -40,7 +40,7 @@ export function documentCommand(paths: DocumentPaths, format: string) {
     '/app/runtime',
     '--ro-bind',
     path.join(paths.source, 'extract.js'),
-    '/app/runtime/extract.js',
+    '/app/runtime/extract.mjs',
     '--ro-bind',
     paths.dependencies,
     '/app/runtime/node_modules',
@@ -68,8 +68,8 @@ export function documentCommand(paths: DocumentPaths, format: string) {
     '--',
     '/engine/bin/node',
     '--max-old-space-size=256',
-    '--experimental-default-type=module',
-    '/app/runtime/extract.js',
+    // An explicit module extension works without Node's removed default-type flag or a package manifest.
+    '/app/runtime/extract.mjs',
     format,
   ];
   return { program: 'bwrap', args };
