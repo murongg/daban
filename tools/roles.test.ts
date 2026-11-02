@@ -1,11 +1,62 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import * as roles from './roles.ts';
 import { hostPackageFile, moduleGraph, sealHostPackage } from './roles.ts';
+
+test('desktop executor overrides must match the current compiled role instead of silently shipping stale DNS code', async () => {
+  const verify = Reflect.get(roles, 'verifyExecutorBuild') as
+    | ((archive: string, root: string) => Promise<unknown>)
+    | undefined;
+  assert.equal(typeof verify, 'function', 'executor override verification is required');
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-executor-build-'));
+  try {
+    const guest = path.join(root, 'guest');
+    const engine = path.join(root, 'packages/engine/dist');
+    const protocol = path.join(root, 'packages/protocol/dist');
+    const archivedEngine = path.join(guest, 'node_modules/@daban/engine/dist');
+    await mkdir(engine, { recursive: true });
+    await mkdir(protocol, { recursive: true });
+    await mkdir(path.join(root, 'dist-runtime'));
+    await mkdir(archivedEngine, { recursive: true });
+    await mkdir(path.join(guest, 'node_modules/@daban/protocol/dist'), { recursive: true });
+    for (const name of [
+      'executor.js',
+      'extract.js',
+      'desktop-files.js',
+      'app.js',
+      'fixture.js',
+      'web.js',
+    ]) {
+      const source =
+        name === 'executor.js' ? "import './web.js';" : 'export const value="SYNTHETIC CURRENT";';
+      await writeFile(path.join(engine, name), source);
+      await writeFile(path.join(archivedEngine, name), source);
+    }
+    for (const file of [
+      path.join(protocol, 'index.js'),
+      path.join(guest, 'node_modules/@daban/protocol/dist/index.js'),
+      path.join(root, 'dist-runtime/main.js'),
+      path.join(guest, 'main.js'),
+    ])
+      await writeFile(file, 'export const mock=1;');
+    const archive = path.join(root, 'executor.tar.gz');
+    const pack = () =>
+      execFileSync('tar', ['-czf', archive, '-C', guest, 'main.js', 'node_modules']);
+    pack();
+    await verify!(archive, root);
+    await writeFile(path.join(archivedEngine, 'web.js'), 'export const value="SYNTHETIC OLD";');
+    pack();
+    await assert.rejects(verify!(archive, root), /EXECUTOR_BUILD_MISMATCH/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('host packaging excludes source directories but preserves web and runtime modules in dist', () => {
   const root = '/mock/src/engine';

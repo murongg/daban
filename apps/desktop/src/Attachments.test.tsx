@@ -125,6 +125,7 @@ function connect(protocol = 11, prepare?: () => Promise<RuntimeReply>) {
 }
 it('keeps image drafts as references, previews original pixels and refuses a text-only model without consuming the draft', async () => {
   const backend = connect(26);
+  backend.snapshot.knowledge = { available: true, documentParsing: false };
   backend.snapshot.model.model = 'deepseek-v4-pro';
   const data =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
@@ -637,6 +638,25 @@ it('keeps a delayed upload with its originating Bot and prevents sending while i
     backend.invoke.mock.calls.find(([command]) => command.type === 'attachment.upload')?.[0],
   ).toMatchObject({ bot: 'a' });
 });
+it('rejects native-mode PDF attachments before reading bytes even when file selection bypasses accept', async () => {
+  const backend = connect(26);
+  backend.snapshot.knowledge = { available: true };
+  Object.assign(backend.snapshot.knowledge, { documentParsing: false });
+  render(<App />);
+  const picker = await screen.findByLabelText('选择附件');
+  expect(picker).not.toHaveAttribute('accept', expect.stringContaining('.pdf'));
+  expect(picker).toHaveAttribute('accept', expect.stringContaining('.png'));
+  const file = new File(['SYNTHETIC PDF'], 'mock-native.pdf', { type: 'application/pdf' });
+  const read = vi.fn(async () => new ArrayBuffer(0));
+  Object.defineProperty(file, 'arrayBuffer', { value: read });
+  await userEvent.setup({ applyAccept: false }).upload(picker, file);
+  expect(read).not.toHaveBeenCalled();
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'attachment.upload')).toBe(
+    false,
+  );
+  expect(await screen.findByText(/PDF.*Office.*Linux/)).toBeVisible();
+});
+
 it('rejects document uploads on older runtimes before reading or submitting bytes', async () => {
   const backend = connect(10);
   render(<App />);

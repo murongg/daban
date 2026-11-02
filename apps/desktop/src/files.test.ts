@@ -1,6 +1,9 @@
+import { disconnected } from '@daban/protocol';
 import { expect, it, vi } from 'vitest';
 import {
   attachment,
+  attachmentAccept,
+  canParseDocuments,
   documentUpload,
   download,
   downloadBlob,
@@ -8,6 +11,25 @@ import {
   stagedAttachment,
   taskFile,
 } from './files';
+
+it('keeps legacy Linux parsing while native mode fails closed and explicit capabilities take precedence', () => {
+  const snapshot = disconnected('ready');
+  expect(canParseDocuments(snapshot)).toBe(true);
+  snapshot.agent = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  expect(canParseDocuments(snapshot)).toBe(false);
+  expect(attachmentAccept(snapshot)).toContain('.png');
+  expect(attachmentAccept(snapshot)).not.toContain('.pdf');
+  snapshot.knowledge = { available: true, documentParsing: true };
+  expect(canParseDocuments(snapshot)).toBe(true);
+  expect(attachmentAccept(snapshot)).toContain('.pdf');
+  snapshot.knowledge.documentParsing = false;
+  expect(canParseDocuments(snapshot)).toBe(false);
+});
 
 it('decodes text strictly and distinguishes invalid encoding from a file read failure', async () => {
   const file = new File([new Uint8Array([255, 128])], 'mock.txt');

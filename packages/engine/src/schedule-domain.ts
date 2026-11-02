@@ -1,5 +1,7 @@
+import { pathToFileURL } from 'node:url';
 import type { ScheduleInput } from '@daban/protocol';
 import { Fault } from './control.js';
+import { defaultSdkFile, runtimeRequire } from './dsh.js';
 
 export interface NativeSchedule {
   id: string;
@@ -13,10 +15,9 @@ export interface ScheduleDomain {
   due(record: NativeSchedule, now: number): { occurrenceAt: string; nextScheduledAt?: string };
   decode(value: NativeSchedule): NativeSchedule;
 }
-export async function nativeSchedules(): Promise<ScheduleDomain> {
-  const native = await import(
-    '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-schedule/lib/index.js' as string
-  );
+export async function nativeSchedules(sdkFile = defaultSdkFile): Promise<ScheduleDomain> {
+  const entry = runtimeRequire(sdkFile).resolve('@deepseek-ai/dsh-schedule');
+  const native = await import(pathToFileURL(entry).href);
   return {
     create(input, now) {
       const { id, title, prompt, rule } = input;

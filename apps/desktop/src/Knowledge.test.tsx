@@ -105,6 +105,7 @@ function connect(protocol = 9) {
   });
   return {
     invoke,
+    snapshot,
     advance() {
       document = { ...document, revision: 2, content: '合成模型新版本' };
       snapshot = { ...snapshot, knowledge: { available: true, revision: 2 } };
@@ -114,6 +115,25 @@ function connect(protocol = 9) {
     },
   };
 }
+
+it('rejects unsupported native document imports before reading bytes while keeping the library usable', async () => {
+  const backend = connect(38);
+  Object.assign(backend.snapshot.knowledge!, { documentParsing: false });
+  render(<App />);
+  await userEvent.click(await screen.findByRole('tab', { name: '资料' }));
+  const picker = screen.getByLabelText('选择资料文件');
+  expect(picker).not.toHaveAttribute('accept', expect.stringContaining('.pdf'));
+  const file = new File(['SYNTHETIC PDF'], 'mock-native.pdf', { type: 'application/pdf' });
+  const read = vi.fn(async () => new ArrayBuffer(0));
+  Object.defineProperty(file, 'arrayBuffer', { value: read });
+  await userEvent.setup({ applyAccept: false }).upload(picker, file);
+  expect(read).not.toHaveBeenCalled();
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'knowledge.import')).toBe(
+    false,
+  );
+  expect(await screen.findByRole('alert')).toHaveTextContent(/PDF.*Office.*Linux/);
+  expect(screen.getByRole('button', { name: '新建资料' })).toBeEnabled();
+});
 
 it('keeps each Bot document draft and reviews a model change before saving a stale editor', async () => {
   const backend = connect();

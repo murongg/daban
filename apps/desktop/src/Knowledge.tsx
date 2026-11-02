@@ -13,7 +13,14 @@ import {
 import { Download, FileText, History, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { IconButton } from './Button';
-import { documentUpload, download, downloadBlob, readUtf8 } from './files';
+import {
+  canParseDocuments,
+  documentUpload,
+  download,
+  downloadBlob,
+  knowledgeAccept,
+  readUtf8,
+} from './files';
 import { getLocale, t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import {
@@ -296,7 +303,11 @@ export function Knowledge({
       <p className="panel-description">
         {t('knowledge.only')}
         {bot.name}
-        {t('knowledge.sLongTermReferenceDocumentsSupportsText')}
+        {t(
+          canParseDocuments(runtime.snapshot)
+            ? 'knowledge.sLongTermReferenceDocumentsSupportsText'
+            : 'knowledge.textOnlyReference',
+        )}
       </p>
       {!available && (
         <p className="form-error" role="alert">
@@ -321,7 +332,7 @@ export function Knowledge({
         hidden
         ref={picker}
         aria-label={t('knowledge.chooseDocumentFile')}
-        accept=".md,.txt,.csv,.json,.pdf,.docx,.xlsx,.pptx"
+        accept={knowledgeAccept(runtime.snapshot)}
         onChange={async (event) => {
           const target = bot.id,
             previous = state.knowledgeDrafts[target],
@@ -332,6 +343,7 @@ export function Knowledge({
           feedback(target, { busy: true, error: '' });
           try {
             if (isDocumentName(file.name)) {
+              if (!canParseDocuments(runtime.snapshot)) throw new Error('DOCUMENT_UNAVAILABLE');
               if (runtime.snapshot.protocolVersion < 10)
                 throw new Error('DOCUMENT_RUNTIME_TOO_OLD');
               if (!file.size || file.size > documentLimit) throw new Error('INVALID_DOCUMENT');

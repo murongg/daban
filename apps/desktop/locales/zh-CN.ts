@@ -1229,6 +1229,10 @@ export const chinese = {
   'files.image': '图片',
   'files.justAdded': '刚刚添加',
   'files.justUploaded': '刚刚上传',
+  'files.documentsRequireLinux': 'PDF 和 Office 文档需要可用的 Linux 工作区。',
+  'files.nativeAttachmentHint': '可添加文本和图片；PDF 和 Office 文档需要 Linux 工作区。',
+  'knowledge.textOnlyReference':
+    '的长期资料。当前可导入文本；PDF 和 Office 文档需要 Linux 工作区。',
   'files.kbOriginal': '{0} KB 原件',
   'formula.displayFormula': '独立公式',
   'formula.formulaCouldNotParsedOriginalTextRetained': '公式暂未解析，已保留原文',

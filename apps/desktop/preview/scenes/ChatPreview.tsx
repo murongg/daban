@@ -19,6 +19,7 @@ const query = new URLSearchParams(location.search),
   mode = query.get('mode') || 'active';
 const state = initialState();
 state.panel = null;
+if (mode === 'native') state.panel = 'knowledge';
 state.theme = query.get('theme') === 'dark' ? 'dark' : 'light';
 state.drafts.research = '合成未发送草稿：整理下一份方案时，再发送这些内容。';
 state.messages.research = [
@@ -34,6 +35,15 @@ if (mode === 'pending')
   state.chatRequests.research = { bot: 'a', id: 'mock-pending-chat', revision: 0 };
 clientCache().setItem(storageKey, serialize(state));
 let snapshot = previewSnapshot(mode === 'legacy' ? 29 : undefined);
+if (mode === 'native') {
+  snapshot.agent = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  snapshot.knowledge = { available: true, documentParsing: false };
+}
 snapshot.chats = {
   available: true,
   revision: mode === 'pending' || mode === 'history' ? 1 : 0,
@@ -140,6 +150,7 @@ function fixture(command: RuntimeCommand): unknown {
       ...(command.before ? {} : { nextBefore: 'mock-old-run' }),
     };
   if (command.type === 'files.list') return [];
+  if (mode === 'native' && command.type === 'knowledge.list') return [];
   if (command.type === 'task.start' && mode === 'streaming') {
     if (streamTimer) clearInterval(streamTimer);
     const task: RuntimeTask = {

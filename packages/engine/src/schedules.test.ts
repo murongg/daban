@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,10 +9,9 @@ import type { ScheduleRule } from '@daban/protocol';
 import { nativeSchedules } from './schedule-domain.js';
 import { type ScheduleDomain, Schedules } from './schedules.js';
 
-test('installed native calendar preserves public Sunday numbering, wall time and recurrence after DST', {
-  skip: !existsSync('/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-schedule/lib/index.js'),
-}, async (t) => {
-  const calendar = await nativeSchedules();
+test('installed native calendar preserves public Sunday numbering, wall time and recurrence after DST on the host', async (t) => {
+  const sdkFile = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-sdk-client');
+  const calendar = await nativeSchedules(sdkFile);
   const now = Date.parse('2026-10-29T12:00:00Z');
   const cases: { name: string; rule: ScheduleRule; times: string[] }[] = [
     {

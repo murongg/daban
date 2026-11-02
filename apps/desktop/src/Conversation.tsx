@@ -17,6 +17,7 @@ import { type Dispatch, useCallback, useRef } from 'react';
 import { Avatar } from './Avatar';
 import { IconButton } from './Button';
 import { Execution } from './Execution';
+import { attachmentAccept, canParseDocuments } from './files';
 import { useFollow } from './follow';
 import { useInputs } from './inputs';
 import { getLocale, t, useLocale } from './locale';
@@ -550,6 +551,9 @@ export function Conversation({
           <div className="composer-bottom">
             <IconButton
               label={t('common.addAttachment')}
+              title={
+                canParseDocuments(runtime.snapshot) ? undefined : t('files.nativeAttachmentHint')
+              }
               disabled={readOnly || pending || state.attachmentUploads[bot.id]}
               onClick={() => upload.current?.click()}
             >
@@ -559,7 +563,7 @@ export function Conversation({
               className="sr-only"
               ref={upload}
               type="file"
-              accept=".md,.txt,.csv,.json,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.webp,.gif"
+              accept={attachmentAccept(runtime.snapshot)}
               multiple
               disabled={readOnly || pending || state.attachmentUploads[bot.id]}
               onChange={async (e) => {

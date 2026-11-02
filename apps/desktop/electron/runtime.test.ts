@@ -835,6 +835,24 @@ function transport() {
   return { fetcher, calls };
 }
 describe('scoped runtime connection', () => {
+  it('preserves explicit parser capability without treating a working knowledge store as parser support', async () => {
+    const base = transport();
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      fetcher: async (url, options) =>
+        url.endsWith('/api/state')
+          ? Response.json({
+              ...raw,
+              clientProtocol: 10,
+              knowledge: { available: true, documentParsing: false },
+            })
+          : base.fetcher(url, options),
+    });
+    expect((await client.status()).knowledge).toMatchObject({
+      available: true,
+      documentParsing: false,
+    });
+  });
   it('connects to the real API shape without exposing its private capability or legacy notes', async () => {
     const t = transport(),
       client = new RuntimeClient({ origin: 'http://127.0.0.1:18766', fetcher: t.fetcher });

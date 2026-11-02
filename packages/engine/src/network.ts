@@ -5,7 +5,7 @@ import { request as secureRequest } from 'node:https';
 import { BlockList, connect, isIP, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { Fault } from './control.js';
-import { fallbackLookup } from './web.js';
+import { fallbackLookup } from './dns.js';
 
 const private4 = new BlockList();
 for (const [address, prefix] of [

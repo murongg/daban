@@ -37,6 +37,7 @@ import type { ToolRun } from './computer-tools.js';
 import { type ComputerFacade, computerToolList } from './computer-tools.js';
 import { errorCode, errorMessage, Fault } from './control.js';
 import type { Desktop } from './desktop.js';
+import { defaultSdkFile } from './dsh.js';
 import { observeTools } from './events.js';
 import { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
@@ -79,8 +80,6 @@ import { Work } from './work.js';
 import { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './workspace.js';
 
-const defaultSdkFile =
-  '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
 const model = 'deepseek-flash';
 // Every task owns its Harness process, so the native Google catalog route cannot alias another connection's key or session.
 const sdkProvider = (route: Pick<ResolvedModel, 'provider' | 'api'>) =>

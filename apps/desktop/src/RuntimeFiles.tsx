@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Attachments } from './Attachments';
 import { IconButton } from './Button';
 import { Dialog } from './Dialog';
-import { attachment, download, downloadBlob, stagedAttachment } from './files';
+import { attachment, canParseDocuments, download, downloadBlob, stagedAttachment } from './files';
 import { getLocale, t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import type { WorkspaceFile } from './state';
@@ -139,6 +139,8 @@ export function RuntimeFiles({
                   setBusy?.(true);
                   try {
                     if (isDocumentName(file.name) || imageMime(file.name)) {
+                      if (isDocumentName(file.name) && !canParseDocuments(runtime.snapshot))
+                        throw new Error('DOCUMENT_UNAVAILABLE');
                       if (
                         !targetBot ||
                         runtime.snapshot.protocolVersion < (imageMime(file.name) ? 26 : 11)

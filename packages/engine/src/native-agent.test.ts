@@ -57,6 +57,11 @@ test('native-only agent starts without a Linux executor or VM and reports its re
       privilege: 'workspace',
       approvals: 'host',
     });
+    assert.equal(
+      (raw.knowledge as { documentParsing?: boolean }).documentParsing,
+      process.platform === 'linux',
+      'document parser support must be reported separately from a working knowledge store',
+    );
   } finally {
     await agent.close();
     await rm(temporary, { recursive: true, force: true });

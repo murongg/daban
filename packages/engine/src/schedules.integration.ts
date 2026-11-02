@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { nativeSchedules } from './schedule-domain.js';
 import { Schedules } from './schedules.js';
 
-test('installed DSH scheduling computes real timezones, once, intervals and cron with durable round trips', {
-  skip: process.platform !== 'linux',
-}, async () => {
+test('installed DSH scheduling computes real timezones, once, intervals and cron with durable round trips', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-native-schedules-'));
   const options = {
+    domain: nativeSchedules(createRequire(import.meta.url).resolve('@deepseek-ai/dsh-sdk-client')),
     file: path.join(directory, 'schedules.sqlite'),
     clock: () => Date.parse('2026-01-02T00:00:00Z'),
     runner: { running: () => false, findRequest: () => undefined, start: async () => ({}) },

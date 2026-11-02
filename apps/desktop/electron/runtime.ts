@@ -355,7 +355,12 @@ export class RuntimeClient {
         profiles?: unknown[];
         interactions?: unknown[];
         schedules?: { available?: unknown; items?: unknown[]; error?: unknown };
-        knowledge?: { available?: unknown; revision?: unknown; error?: unknown };
+        knowledge?: {
+          available?: unknown;
+          revision?: unknown;
+          error?: unknown;
+          documentParsing?: unknown;
+        };
         work?: unknown;
         notes?: unknown;
         mode?: string;
@@ -555,10 +560,15 @@ export class RuntimeClient {
       if (raw.knowledge)
         snapshot.knowledge =
           typeof raw.knowledge.available === 'boolean' &&
+          (raw.knowledge.documentParsing === undefined ||
+            typeof raw.knowledge.documentParsing === 'boolean') &&
           (raw.knowledge.revision === undefined ||
             (Number.isSafeInteger(raw.knowledge.revision) && Number(raw.knowledge.revision) >= 0))
             ? {
                 available: raw.knowledge.available,
+                ...(typeof raw.knowledge.documentParsing === 'boolean'
+                  ? { documentParsing: raw.knowledge.documentParsing }
+                  : {}),
                 ...(typeof raw.knowledge.revision === 'number'
                   ? { revision: raw.knowledge.revision }
                   : {}),
@@ -566,7 +576,7 @@ export class RuntimeClient {
                   ? { error: raw.knowledge.error }
                   : {}),
               }
-            : { available: false, error: 'INVALID_RUNTIME_STATE' };
+            : { available: false, documentParsing: false, error: 'INVALID_RUNTIME_STATE' };
       if (raw.schedules) {
         const value = raw.schedules;
         snapshot.schedules =

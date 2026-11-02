@@ -1364,6 +1364,11 @@ export const english = {
   'files.image': 'Image',
   'files.justAdded': 'Just added',
   'files.justUploaded': 'Just uploaded',
+  'files.documentsRequireLinux': 'PDF and Office documents require an available Linux workspace.',
+  'files.nativeAttachmentHint':
+    'Add text or images. PDF and Office documents require a Linux workspace.',
+  'knowledge.textOnlyReference':
+    '’s reference documents. Text import is available; PDF and Office documents require a Linux workspace.',
   'files.kbOriginal': '{0} KB original',
   'formula.displayFormula': 'Display formula',
   'formula.formulaCouldNotParsedOriginalTextRetained':

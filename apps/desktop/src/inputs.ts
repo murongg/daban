@@ -14,7 +14,13 @@ import {
   useRef,
   useState,
 } from 'react';
-import { attachment, attachmentUpload, readUtf8, stagedAttachment } from './files';
+import {
+  attachment,
+  attachmentUpload,
+  canParseDocuments,
+  readUtf8,
+  stagedAttachment,
+} from './files';
 import { t } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
 import { type Action, type Bot, lifecycleRequest, type State } from './state';
@@ -80,6 +86,8 @@ export function useInputs(
         }
         if (isDocumentName(file.name) || imageMime(file.name)) {
           try {
+            if (isDocumentName(file.name) && !canParseDocuments(runtime.snapshot))
+              throw new Error('DOCUMENT_UNAVAILABLE');
             if (
               !runtime.enabled ||
               runtime.snapshot.protocolVersion <

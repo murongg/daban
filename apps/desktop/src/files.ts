@@ -6,10 +6,22 @@ import {
   isAttachmentReceipt,
   isDocumentName,
   isTaskFileName,
+  type RuntimeSnapshot,
   type TaskFile,
 } from '@daban/protocol';
 import { t } from './locale';
 import type { WorkspaceFile } from './state';
+
+export function canParseDocuments(snapshot: Pick<RuntimeSnapshot, 'knowledge' | 'agent'>) {
+  // Older Linux services omitted this field; older native-only services still identify their execution mode.
+  return snapshot.knowledge?.documentParsing ?? snapshot.agent?.execution !== 'local-workspace';
+}
+export function knowledgeAccept(snapshot: RuntimeSnapshot) {
+  return `.md,.txt,.csv,.json${canParseDocuments(snapshot) ? ',.pdf,.docx,.xlsx,.pptx' : ''}`;
+}
+export function attachmentAccept(snapshot: RuntimeSnapshot) {
+  return `${knowledgeAccept(snapshot)},.png,.jpg,.jpeg,.webp,.gif`;
+}
 
 export async function readUtf8(file: File) {
   const bytes = await file.arrayBuffer();

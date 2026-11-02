@@ -1324,7 +1324,7 @@ export interface RuntimeSnapshot {
   computerError?: 'COMPUTER_START_FAILED';
   browsers?: Partial<Record<RuntimeBot, BrowserState>>;
   groups?: { available: boolean; revision: number; items: Group[]; error?: string };
-  knowledge?: { available: boolean; revision?: number; error?: string };
+  knowledge?: { available: boolean; revision?: number; error?: string; documentParsing?: boolean };
   schedules?: { available: boolean; items: Schedule[]; error?: string };
   interactions?: Interaction[];
   software?: SoftwareState;

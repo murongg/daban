@@ -75,6 +75,7 @@ import { Recovery } from './recovery.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
 import { Risk } from './risk.js';
 import { type Browser, createBrowser } from './runtime.js';
+import { nativeSchedules } from './schedule-domain.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
@@ -1347,7 +1348,12 @@ export async function startPrototype({
               notes: models
                 ? await models.notes.availability()
                 : { available: false, error: 'NOTES_UNAVAILABLE' },
-              knowledge: models ? await models.knowledge.status() : { available: false },
+              knowledge: models
+                ? {
+                    ...(await models.knowledge.status()),
+                    documentParsing: !!host?.execution || platform() === 'linux',
+                  }
+                : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
@@ -1818,6 +1824,7 @@ export async function startPrototype({
       }
       schedules = new Schedules({
         file: path.join(modelDir, 'schedules.sqlite'),
+        domain: nativeSchedules(host?.sdkFile),
         runner: {
           running: (bot) => models!.running(bot),
           admit: (bot) => models!.admit(bot),

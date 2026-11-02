@@ -43,22 +43,24 @@ const abi = await run(
 );
 process.stdout.write(abi.stdout);
 const agent = path.resolve(target, 'resources/agent'),
-  smoke = path.join(agent, 'native-loop.test.js');
-await copyFile(
-  fileURLToPath(new URL('../dist-agent/native-loop.test.js', import.meta.url)),
-  smoke,
-  constants.COPYFILE_EXCL,
-);
+  smokes = ['native-loop.test.js', 'calendar.test.js'].map((name) => path.join(agent, name));
+for (const smoke of smokes)
+  await copyFile(
+    fileURLToPath(new URL(`../dist-agent/${path.basename(smoke)}`, import.meta.url)),
+    smoke,
+    constants.COPYFILE_EXCL,
+  );
 try {
   const sdk = await run(
     path.join(agent, 'node/node.exe'),
-    ['--experimental-sqlite', '--test', smoke],
+    ['--experimental-sqlite', '--test', ...smokes],
     { cwd: agent, timeout: 60000, maxBuffer: 2 * 1024 * 1024 },
   );
   assert.match(sdk.stdout, /real DSH dispatches/);
+  assert.match(sdk.stdout, /real host calendar recovers/);
   process.stdout.write(sdk.stdout);
 } finally {
-  await unlink(smoke);
+  for (const smoke of smokes) await unlink(smoke);
 }
 const child = spawn(path.resolve(target, 'Daban.exe'), [], {
   cwd: path.resolve(target),
@@ -124,6 +126,8 @@ try {
       assert.equal(value.localComputer.available, true);
       assert.equal(value.localComputer.session, undefined);
       assert.deepEqual(value.profiles, []);
+      assert.equal((value.knowledge as { documentParsing?: boolean }).documentParsing, false);
+      assert.equal((value.schedules as { available?: boolean }).available, true);
       ready = true;
       break;
     } catch (error) {

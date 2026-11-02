@@ -16,7 +16,13 @@ import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
 import { Avatar } from './Avatar';
 import { IconButton } from './Button';
 import { Execution } from './Execution';
-import { attachment, stagedAttachment, taskFile } from './files';
+import {
+  attachment,
+  attachmentAccept,
+  canParseDocuments,
+  stagedAttachment,
+  taskFile,
+} from './files';
 import { useFollow } from './follow';
 import { useInputs } from './inputs';
 import { t, useLocale } from './locale';
@@ -559,6 +565,9 @@ export function GroupChat({
           <div className="composer-bottom">
             <IconButton
               label={t('common.addAttachment')}
+              title={
+                canParseDocuments(runtime.snapshot) ? undefined : t('files.nativeAttachmentHint')
+              }
               disabled={
                 !ready || readOnly || sending || !!pending || !!state.attachmentUploads[bot.id]
               }
@@ -571,7 +580,7 @@ export function GroupChat({
               ref={upload}
               type="file"
               aria-label={t('common.chooseAttachment')}
-              accept=".md,.txt,.csv,.json,.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.webp,.gif"
+              accept={attachmentAccept(runtime.snapshot)}
               multiple
               disabled={
                 !ready || readOnly || sending || !!pending || !!state.attachmentUploads[bot.id]

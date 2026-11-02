@@ -324,7 +324,7 @@ export function runtimeError(error: unknown) {
     KNOWLEDGE_CORRUPT: t('errors.documentLibraryStorageUnreadablePreserveOriginalFiles'),
     DOCUMENT_RUNTIME_TOO_OLD: t('errors.updateLocalRuntimeImportPdfOfficeFiles'),
     INVALID_DOCUMENT: t('errors.selectPdfDocxXlsxPptxFileUp'),
-    DOCUMENT_UNAVAILABLE: t('errors.documentExtractionNotReadyCheckRuntimeDependencies'),
+    DOCUMENT_UNAVAILABLE: t('files.documentsRequireLinux'),
     DOCUMENT_BUSY: t('errors.anotherDocumentBeingExtractedRetryShortlyExisting'),
     DOCUMENT_EMPTY: t('errors.noUsableTextWasExtractedRunOcr'),
     DOCUMENT_ENCRYPTED: t('errors.fileEncryptedDecryptLocallyImporting'),

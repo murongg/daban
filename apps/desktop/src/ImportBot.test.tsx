@@ -2,17 +2,29 @@ import type { BotBundle, BotImportReceipt } from '@daban/protocol';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useReducer } from 'react';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { demoState as initialState } from './fixtures';
 import { ImportBot } from './ImportBot';
 import { reduce, type State } from './state';
 
-const mocks = vi.hoisted(() => ({ command: vi.fn(), read: vi.fn(), hash: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  command: vi.fn(),
+  read: vi.fn(),
+  hash: vi.fn(),
+  documentParsing: undefined as boolean | undefined,
+}));
+afterEach(() => {
+  mocks.documentParsing = undefined;
+});
 vi.mock('./Runtime', () => ({
   runtimeError: (error: Error) => error.message,
   useRuntime: () => ({
     enabled: true,
-    snapshot: { phase: 'ready', protocolVersion: 27 },
+    snapshot: {
+      phase: 'ready',
+      protocolVersion: 27,
+      knowledge: { available: true, documentParsing: mocks.documentParsing },
+    },
     command: mocks.command,
   }),
 }));
@@ -37,6 +49,32 @@ function Harness({
   state = current;
   return <ImportBot state={current} dispatch={dispatch} open close={close} notify={() => {}} />;
 }
+it('lets native users omit unsupported document originals before an import intent is saved', async () => {
+  mocks.documentParsing = false;
+  mocks.read.mockResolvedValue({
+    ...sample,
+    knowledge: [
+      {
+        path: 'mock.pdf.txt',
+        content: 'SYNTHETIC TEXT',
+        original: { name: 'mock.pdf', data: btoa('SYNTHETIC PDF') },
+      },
+    ],
+  });
+  render(<Harness />);
+  await userEvent.upload(
+    screen.getByLabelText('选择 Bot 导出包'),
+    new File(['SYNTHETIC'], 'mock.json', { type: 'application/json' }),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole('checkbox', { name: '包含 1 份当前资料' })).toBeInTheDocument(),
+  );
+  expect(screen.getByRole('button', { name: '导入为新 Bot' })).toBeDisabled();
+  expect(mocks.hash).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('checkbox', { name: '包含 1 份当前资料' }));
+  expect(screen.getByRole('button', { name: '导入为新 Bot' })).toBeEnabled();
+});
+
 it('previews content, persists only the reference and publishes a completed Bot after the exact receipt', async () => {
   const user = userEvent.setup();
   mocks.read.mockResolvedValue(sample);

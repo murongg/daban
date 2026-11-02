@@ -8,6 +8,7 @@ import {
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
 import { FilePicker } from './FilePicker';
+import { canParseDocuments } from './files';
 import { type MessageKey, t, useLocale } from './locale';
 import { bundleFile, bundleHeader } from './portable';
 import { runtimeError, useRuntime } from './Runtime';
@@ -170,8 +171,16 @@ export function ImportBot({
   const available =
     runtime.enabled && runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion >= 27;
   const pending = state.botImport;
+  const unsupportedDocuments =
+    withKnowledge &&
+    selected?.knowledge.some((document) => document.original) &&
+    !canParseDocuments(runtime.snapshot);
   async function submit() {
     if (!selected || !name.trim() || working || !available) return;
+    if (unsupportedDocuments) {
+      setError(t('files.documentsRequireLinux'));
+      return;
+    }
     setWorking(true);
     setError('');
     try {
@@ -414,6 +423,7 @@ export function ImportBot({
           <p className="field-help">{t('importbot.contentBecomesNewBotSRolePreferences')}</p>
         </div>
       )}
+      {unsupportedDocuments && <p className="field-help">{t('files.documentsRequireLinux')}</p>}
       {(error || receipt?.error) && (
         <p className="form-error" role="alert">
           {error || runtimeError(new Error(receipt!.error))}
@@ -453,6 +463,7 @@ export function ImportBot({
               working ||
               reading ||
               !available ||
+              unsupportedDocuments ||
               !!pending?.cancelRequested
             }
             onClick={submit}

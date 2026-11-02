@@ -19,7 +19,7 @@ import { environmentVersions, verifyAsset } from './environment.ts';
 import { writeIcon } from './icon.ts';
 import { packageNative } from './native.ts';
 import { packageNotices } from './notices.ts';
-import { buildExecutor, packageHost, sealHostPackage } from './roles.ts';
+import { buildExecutor, packageHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
 
 // Build-time macOS app assembly. Never reuse a user directory or package a Lima home.
 assert.equal(process.platform, 'darwin');
@@ -138,6 +138,7 @@ else {
     { env: { ...process.env, COPYFILE_DISABLE: '1' } },
   );
 }
+await verifyExecutorBuild(path.join(agent, 'executor.tar.gz'));
 for (const file of ['LICENSE', 'LICENSES.chromium.html'])
   await copyFile(
     path.join(path.dirname(source), file),

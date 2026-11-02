@@ -104,6 +104,9 @@ export async function buildExecutor(target: string) {
     'fixture.js',
   ]);
   for (const forbidden of [
+    'dsh.js',
+    'web.js',
+    'schedule-domain.js',
     'model.js',
     'settings.js',
     'interactions.js',
@@ -122,6 +125,42 @@ export async function buildExecutor(target: string) {
     JSON.stringify({ name: 'daban-executor', version: '0.1.0', private: true, type: 'module' }),
   );
   return graph;
+}
+export async function verifyExecutorBuild(archive: string, compiledRoot = root) {
+  const graph = await moduleGraph(path.join(compiledRoot, 'packages/engine/dist'), [
+    'executor.js',
+    'extract.js',
+    'desktop-files.js',
+    'app.js',
+    'fixture.js',
+  ]);
+  const expected = new Map([
+    ['main.js', path.join(compiledRoot, 'dist-runtime/main.js')],
+    [
+      'node_modules/@daban/protocol/dist/index.js',
+      path.join(compiledRoot, 'packages/protocol/dist/index.js'),
+    ],
+    ...graph.map(
+      (name) =>
+        [
+          `node_modules/@daban/engine/dist/${name.split(path.sep).join('/')}`,
+          path.join(compiledRoot, 'packages/engine/dist', name),
+        ] as const,
+    ),
+  ]);
+  // A valid archive seal proves integrity, not freshness. Verify overrides against this build's code.
+  for (const [member, file] of expected) {
+    let bytes: Buffer;
+    try {
+      bytes = execFileSync('tar', ['-xOf', archive, member], {
+        maxBuffer: 32 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch {
+      throw new Error(`EXECUTOR_BUILD_MISMATCH:${member}`);
+    }
+    if (!bytes.equals(await readFile(file))) throw new Error(`EXECUTOR_BUILD_MISMATCH:${member}`);
+  }
 }
 export async function packageHost(target: string, nodeDirectory: string) {
   const nodeFile =
