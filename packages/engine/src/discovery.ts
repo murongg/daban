@@ -1,10 +1,12 @@
 import {
   type DiscoveredModel,
   isDiscoveredModel,
+  type ModelCapabilities,
   type ModelEndpoint,
   type ModelInspection,
   type ModelInspectionRequest,
   modelApi,
+  modelModalities,
 } from '@daban/protocol';
 import { Fault } from './control.js';
 import { inferenceRequest, inferenceText } from './inference.js';
@@ -13,6 +15,27 @@ const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const limit = (value: unknown, min: number, max: number): value is number =>
   Number.isSafeInteger(value) && Number(value) >= min && Number(value) <= max;
+function capabilities(value: Record<string, unknown>): ModelCapabilities | undefined {
+  const result: ModelCapabilities = {};
+  for (const key of ['input', 'output'] as const) {
+    const modes = object(value.modalities) ? value.modalities[key] : undefined;
+    if (
+      Array.isArray(modes) &&
+      modes.length &&
+      modes.every((mode) => modelModalities.some((allowed) => allowed === mode))
+    )
+      result[key] = modelModalities.filter((mode) => modes.includes(mode));
+  }
+  for (const [field, key] of [
+    ['reasoning', 'reasoning'],
+    ['toolCall', 'tool_call'],
+    ['structuredOutput', 'structured_output'],
+    ['temperature', 'temperature'],
+  ] as const) {
+    if (typeof value[key] === 'boolean') result[field] = value[key];
+  }
+  return Object.keys(result).length ? result : undefined;
+}
 function metadata(value: unknown, id: string): DiscoveredModel {
   if (!object(value)) throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
   const label =
@@ -87,15 +110,19 @@ export class ModelDiscovery {
     for (const [providerId, provider] of Object.entries(catalog)) {
       if (!object(provider) || !object(provider.models)) continue;
       const item = provider.models[canonical];
-      if (!object(item) || !object(item.limit) || !limit(item.limit.context, 4096, 4000000))
-        continue;
-      const contextWindow = item.limit.context;
+      if (!object(item)) continue;
+      const contextWindow =
+        object(item.limit) && limit(item.limit.context, 4096, 4000000)
+          ? item.limit.context
+          : undefined;
+      const features = capabilities(item);
       const model: DiscoveredModel = {
         id,
         name: id.slice(0, 120),
-        contextWindow,
-        source: 'models.dev',
-        ...(limit(item.limit.output, 128, Math.min(262144, contextWindow))
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+        ...(features ? { capabilities: features } : {}),
+        ...(object(item.limit) &&
+        limit(item.limit.output, 128, Math.min(262144, contextWindow ?? 4000000))
           ? { maxTokens: item.limit.output }
           : {}),
       };
@@ -111,16 +138,47 @@ export class ModelDiscovery {
     const candidates = matches.some((match) => match.exact)
       ? matches.filter((match) => match.exact)
       : matches;
-    // An alias can have different limits at different gateways. Ambiguous matches stay manual.
-    if (new Set(candidates.map(({ model }) => model.contextWindow)).size === 1) {
-      const model = { ...candidates[0].model };
-      if (new Set(candidates.map(({ model }) => model.maxTokens)).size > 1) delete model.maxTokens;
+    if (!candidates.length) return;
+    // Gateways can disagree on one field without invalidating the others. Missing declarations are unknown.
+    const consensus = <T>(read: (model: DiscoveredModel) => T): T | undefined => {
+      const values = candidates.map(({ model }) => read(model));
+      return values[0] !== undefined &&
+        values.every((value) => JSON.stringify(value) === JSON.stringify(values[0]))
+        ? values[0]
+        : undefined;
+    };
+    const model: DiscoveredModel = { id, name: id.slice(0, 120) };
+    for (const field of ['contextWindow', 'maxTokens'] as const) {
+      const value = consensus((model) => model[field]);
+      if (value !== undefined) model[field] = value;
+    }
+    const features: ModelCapabilities = {};
+    for (const field of ['input', 'output'] as const) {
+      const value = consensus((model) => model.capabilities?.[field]);
+      if (value !== undefined) features[field] = value;
+    }
+    for (const field of ['reasoning', 'toolCall', 'structuredOutput', 'temperature'] as const) {
+      const value = consensus((model) => model.capabilities?.[field]);
+      if (value !== undefined) features[field] = value;
+    }
+    if (Object.keys(features).length) model.capabilities = features;
+    if (model.contextWindow !== undefined || model.maxTokens !== undefined || model.capabilities) {
+      model.source = 'models.dev';
       return model;
     }
   }
   async run(input: ModelInspectionRequest, apiKey: string): Promise<ModelInspection> {
     const signal = AbortSignal.timeout(20000);
     const { connection, revision, kind } = input;
+    if (kind === 'metadata')
+      return {
+        kind,
+        revision,
+        model: (await this.reference(connection, input.model)) ?? {
+          id: input.model,
+          name: input.model.slice(0, 120),
+        },
+      };
     const api = modelApi(connection);
     const base = connection.baseURL.replace(/\/+$/, '');
     const headers = new Headers({ accept: 'application/json' });
@@ -228,17 +286,22 @@ export class ModelDiscovery {
         model = models.get(input.model);
       }
       if (kind !== 'limits') throw new Fault('INVALID_MODEL_SETTINGS', 400);
-      const result =
-        model?.contextWindow === undefined
-          ? await this.reference(connection, input.model)
-          : undefined;
+      const result = await this.reference(connection, input.model);
       signal.throwIfAborted();
+      const merged: DiscoveredModel = {
+        ...(result ?? { id: input.model, name: input.model.slice(0, 120) }),
+        ...model,
+      };
+      if (model?.contextWindow === undefined && result?.contextWindow !== undefined)
+        merged.source = result.source;
+      // A gateway's smaller context also bounds any catalog-only output limit.
+      if (merged.maxTokens !== undefined && merged.contextWindow !== undefined)
+        merged.maxTokens = Math.min(merged.maxTokens, merged.contextWindow);
+      if (!isDiscoveredModel(merged)) throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
       return {
         kind,
         revision,
-        model: result
-          ? { ...result, name: model?.name ?? result.name }
-          : (model ?? { id: input.model, name: input.model.slice(0, 120) }),
+        model: merged,
       };
     } catch (error) {
       if (error instanceof Fault) throw error;

@@ -4910,6 +4910,29 @@ textarea.skill-source {
   color: var(--success);
   font-size: 12px;
 }
+.model-capabilities {
+  margin: 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.model-capabilities summary {
+  cursor: pointer;
+}
+.model-capabilities dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+.model-capabilities dl > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 12px;
+}
+.model-capabilities dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
 .model-catalog {
   margin-top: 16px;
   padding: 16px 0;

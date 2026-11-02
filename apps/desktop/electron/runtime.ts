@@ -1307,7 +1307,8 @@ export class RuntimeClient {
         value.kind !== command.input.kind ||
         value.revision !== command.input.revision ||
         (value.kind === 'test' && value.model !== command.input.model) ||
-        (value.kind === 'limits' && value.model.id !== command.input.model)
+        ((value.kind === 'limits' || value.kind === 'metadata') &&
+          value.model.id !== command.input.model)
       )
         throw new Error('INVALID_RUNTIME_STATE');
       return value;

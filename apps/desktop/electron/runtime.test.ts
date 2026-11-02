@@ -65,6 +65,13 @@ it('accepts only bounded model inspection commands and verifies matching public 
     reply = invalid;
     await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
   }
+  const metadata = parseCommand({ type: 'model.inspect', input: { ...input, kind: 'metadata' } });
+  reply = {
+    kind: 'metadata',
+    revision: 0,
+    model: { id: 'mock-other', name: 'Mock Other', capabilities: { input: ['text'] } },
+  };
+  await expect(client.invoke(metadata)).rejects.toThrow('INVALID_RUNTIME_STATE');
   const count = posts.length;
   supported = false;
   await expect(client.invoke(command)).rejects.toThrow('RUNTIME_TOO_OLD');

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { isModelDefinition, isModelInspection } from '@daban/protocol';
 import { ModelSettings } from './settings.js';
 
 const endpoint = {
@@ -11,6 +12,195 @@ const endpoint = {
   api: 'openai-completions',
 };
 const query = { kind: 'list', revision: 0, connection: endpoint, apiKey: 'synthetic-provider-key' };
+test('bounds merged output limits to a smaller provider context', async () =>
+  fixture(async (root) => {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url) =>
+      Response.json(
+        String(url).startsWith(endpoint.baseURL)
+          ? { data: [{ id: 'mock-alpha', context_length: 4096 }] }
+          : {
+              mock: {
+                api: endpoint.baseURL,
+                models: { 'mock-alpha': { limit: { context: 96000, output: 8192 } } },
+              },
+            },
+      ),
+    );
+    const result = await settings.inspect({ ...query, kind: 'limits', model: 'mock-alpha' });
+    assert.equal(isModelInspection(result), true);
+    assert.equal(result.kind === 'limits' ? result.model.maxTokens : undefined, 4096);
+  }));
+test('persists optional capability declarations without overriding an explicit image setting', async () =>
+  fixture(async (root) => {
+    const file = path.join(root, 'credentials.json');
+    const settings = new ModelSettings(file, async () =>
+      Response.json({ data: [{ id: 'mock-alpha' }] }),
+    );
+    const model = {
+      id: 'mock-alpha',
+      name: 'Mock Alpha',
+      contextWindow: 64000,
+      maxTokens: 8192,
+      vision: true,
+      capabilities: { input: ['text'], toolCall: false, temperature: false },
+    };
+    assert.equal(isModelDefinition(model), true);
+    for (const capabilities of [
+      { input: ['bad'] },
+      { input: ['text', 'text'] },
+      { toolCall: 'true' },
+      { extra: true },
+      {},
+    ])
+      assert.equal(isModelDefinition({ ...model, capabilities }), false);
+    await settings.configure({
+      revision: 0,
+      requestId: 'mock-capability-save',
+      model: `provider:${endpoint.id}:mock-alpha`,
+      apiKey: query.apiKey,
+      connection: { ...endpoint, name: 'Mock Provider', models: [model] },
+    });
+    assert.deepEqual(
+      (await new ModelSettings(file).status(true)).connections?.[0].models[0],
+      model,
+    );
+    assert.equal((await settings.resolve()).vision, true);
+  }));
+test('matches catalog capabilities without credentials or a provider request and keeps false distinct from unknown', async () =>
+  fixture(async (root) => {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
+      assert.equal(String(url), 'https://models.dev/api.json');
+      assert.equal(new Headers(init?.headers).get('authorization'), null);
+      return Response.json({
+        mock: {
+          api: endpoint.baseURL,
+          models: {
+            'mock-alpha': {
+              modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+              reasoning: true,
+              tool_call: false,
+              temperature: false,
+              limit: { context: 96000, output: 8192 },
+            },
+          },
+        },
+      });
+    });
+    assert.deepEqual(
+      await inspect(settings, {
+        kind: 'metadata',
+        revision: 0,
+        connection: endpoint,
+        model: 'mock-alpha',
+      }),
+      {
+        kind: 'metadata',
+        revision: 0,
+        model: {
+          id: 'mock-alpha',
+          name: 'mock-alpha',
+          contextWindow: 96000,
+          maxTokens: 8192,
+          source: 'models.dev',
+          capabilities: {
+            input: ['text', 'image', 'pdf'],
+            output: ['text'],
+            reasoning: true,
+            toolCall: false,
+            temperature: false,
+          },
+        },
+      },
+    );
+    await assert.rejects(readFile(path.join(root, 'credentials.json')), { code: 'ENOENT' });
+  }));
+test('keeps consensus capabilities when gateway limits conflict and omits conflicting declarations', async () =>
+  fixture(async (root) => {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+      Response.json({
+        one: {
+          models: {
+            'mock-alpha': {
+              limit: { context: 64000 },
+              modalities: { input: ['image', 'text'] },
+              reasoning: true,
+              tool_call: true,
+            },
+          },
+        },
+        two: {
+          models: {
+            'mock-alpha': {
+              limit: { context: 96000 },
+              modalities: { input: ['text', 'image'] },
+              reasoning: false,
+              tool_call: true,
+            },
+          },
+        },
+      }),
+    );
+    assert.deepEqual(
+      await inspect(settings, {
+        kind: 'metadata',
+        revision: 0,
+        connection: endpoint,
+        model: 'mock-alpha',
+      }),
+      {
+        kind: 'metadata',
+        revision: 0,
+        model: {
+          id: 'mock-alpha',
+          name: 'mock-alpha',
+          source: 'models.dev',
+          capabilities: { input: ['text', 'image'], toolCall: true },
+        },
+      },
+    );
+  }));
+test('merges capabilities with provider limits and prefers the exact catalog endpoint', async () =>
+  fixture(async (root) => {
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url) =>
+      Response.json(
+        String(url).startsWith(endpoint.baseURL)
+          ? { data: [{ id: 'mock-alpha', context_length: 32000 }] }
+          : {
+              exact: {
+                api: endpoint.baseURL,
+                models: {
+                  'mock-alpha': {
+                    limit: { context: 96000 },
+                    modalities: { input: ['text'] },
+                    tool_call: true,
+                  },
+                },
+              },
+              other: {
+                api: 'https://other.example.test/v1',
+                models: {
+                  'mock-alpha': {
+                    limit: { context: 128000 },
+                    modalities: { input: ['text', 'image'] },
+                    tool_call: false,
+                  },
+                },
+              },
+            },
+      ),
+    );
+    assert.deepEqual(await inspect(settings, { ...query, kind: 'limits', model: 'mock-alpha' }), {
+      kind: 'limits',
+      revision: 0,
+      model: {
+        id: 'mock-alpha',
+        name: 'mock-alpha',
+        contextWindow: 32000,
+        source: 'provider',
+        capabilities: { input: ['text'], toolCall: true },
+      },
+    });
+  }));
 async function inspect(settings: ModelSettings, input: unknown): Promise<unknown> {
   return settings.inspect(input);
 }

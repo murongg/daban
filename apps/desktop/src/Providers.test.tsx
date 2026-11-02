@@ -46,6 +46,7 @@ it('loads a searchable provider list and adds a selected model with matched cont
                     contextWindow: 96000,
                     maxTokens: 8192,
                     source: 'provider',
+                    capabilities: { input: ['text', 'image'], toolCall: true, reasoning: true },
                   },
                 },
         }
@@ -60,6 +61,7 @@ it('loads a searchable provider list and adds a selected model with matched cont
   await userEvent.click(screen.getByRole('button', { name: '加载模型列表' }));
   await userEvent.click(await screen.findByRole('button', { name: '添加 mock-gamma' }));
   expect(screen.getByLabelText('模型 3 ID')).toHaveValue('mock-gamma');
+  expect(screen.getByRole('checkbox', { name: '模型 3 支持图片' })).toBeChecked();
   await userEvent.click(screen.getAllByText('上下文与输出上限')[2]);
   expect(screen.getByRole('textbox', { name: '模型 3 上下文窗口' })).toHaveValue('96000');
   expect(backend.writes).toHaveLength(0);
@@ -71,6 +73,114 @@ it('loads a searchable provider list and adds a selected model with matched cont
       connection: { id: connection.id, baseURL: connection.baseURL },
     },
   });
+});
+it.each([
+  { clicks: 1, input: ['text'], checked: true, before: false },
+  { clicks: 2, input: ['text', 'image'], checked: false, before: false },
+  { clicks: 1, input: ['text'], checked: true, before: true },
+])(
+  'preserves a manual image choice after $clicks changes during automatic matching',
+  async ({ clicks, input, checked, before }) => {
+    const backend = connect();
+    backend.snapshot.model.inspection = true;
+    let finish: ((reply: RuntimeReply) => unknown) | undefined;
+    const reply = new Promise<RuntimeReply>((resolve) => {
+      finish = resolve;
+    });
+    const invoke = backend.invoke.getMockImplementation()!;
+    backend.invoke.mockImplementation((command) =>
+      command.type === 'model.inspect' ? reply : invoke(command),
+    );
+    mount();
+    await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+    await userEvent.clear(screen.getByLabelText('模型 2 ID'));
+    await userEvent.type(screen.getByLabelText('模型 2 ID'), 'mock-new');
+    const vision = screen.getByRole('checkbox', { name: '模型 2 支持图片' });
+    if (before) for (let i = 0; i < clicks; i++) await userEvent.click(vision);
+    await vi.waitFor(
+      () =>
+        expect(backend.invoke).toHaveBeenCalledWith({
+          type: 'model.inspect',
+          input: {
+            kind: 'metadata',
+            revision: 3,
+            connection: { id: connection.id, baseURL: connection.baseURL },
+            model: 'mock-new',
+          },
+        }),
+      { timeout: 2500 },
+    );
+    if (!before) for (let i = 0; i < clicks; i++) await userEvent.click(vision);
+    await act(async () => {
+      finish!({
+        ok: true,
+        value: {
+          kind: 'metadata',
+          revision: 3,
+          model: {
+            id: 'mock-new',
+            name: 'Mock New',
+            source: 'models.dev',
+            capabilities: { input, toolCall: false },
+          },
+        },
+      });
+      await reply;
+    });
+    expect(vision).toHaveProperty('checked', checked);
+    expect(backend.writes).toHaveLength(0);
+  },
+);
+it('retries automatic matching after a draft key change and saves the matched capabilities', async () => {
+  const backend = connect();
+  backend.snapshot.model.inspection = true;
+  let finish: ((reply: RuntimeReply) => unknown) | undefined;
+  const pending = new Promise<RuntimeReply>((resolve) => {
+    finish = resolve;
+  });
+  const invoke = backend.invoke.getMockImplementation()!;
+  let inspections = 0;
+  const metadata = {
+    kind: 'metadata',
+    revision: 3,
+    model: {
+      id: 'mock-new',
+      name: 'Mock New',
+      contextWindow: 96000,
+      source: 'models.dev',
+      capabilities: { input: ['text', 'image'], toolCall: true },
+    },
+  };
+  backend.invoke.mockImplementation((command) => {
+    if (command.type !== 'model.inspect') return invoke(command);
+    expect(command.input.apiKey).toBeUndefined();
+    return ++inspections === 1 ? pending : Promise.resolve({ ok: true, value: metadata });
+  });
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  expect(inspections).toBe(0);
+  await userEvent.clear(screen.getByLabelText('模型 2 ID'));
+  await userEvent.type(screen.getByLabelText('模型 2 ID'), 'mock-new');
+  await vi.waitFor(() => expect(inspections).toBe(1), { timeout: 2500 });
+  await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-new-key');
+  await act(async () => {
+    finish!({ ok: true, value: metadata });
+    await pending;
+  });
+  await vi.waitFor(
+    () => expect(screen.getByRole('checkbox', { name: '模型 2 支持图片' })).toBeChecked(),
+    { timeout: 2500 },
+  );
+  expect(inspections).toBe(2);
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  const command = backend.writes[0];
+  expect(command.type).toBe('model.configure');
+  if (command.type === 'model.configure')
+    expect(command.input.connection?.models[1]).toMatchObject({
+      vision: true,
+      contextWindow: 96000,
+      capabilities: metadata.model.capabilities,
+    });
 });
 it('tests an individual draft model and reports latency without saving or exposing the key', async () => {
   const backend = connect();
@@ -135,7 +245,7 @@ it('preserves a manual context edit made while automatic matching is in flight',
   );
   mount();
   await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
-  await userEvent.click(screen.getByRole('button', { name: '匹配模型 2 上下文' }));
+  await userEvent.click(screen.getByRole('button', { name: '匹配模型 2 能力' }));
   await userEvent.click(screen.getAllByText('上下文与输出上限')[1]);
   const context = screen.getByRole('textbox', { name: '模型 2 上下文窗口' });
   await userEvent.clear(context);
@@ -167,7 +277,7 @@ it('does not let late matching modify a frozen configuration whose save result i
   mount();
   await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
   await userEvent.click(screen.getAllByText('上下文与输出上限')[1]);
-  await userEvent.click(screen.getByRole('button', { name: '匹配模型 2 上下文' }));
+  await userEvent.click(screen.getByRole('button', { name: '匹配模型 2 能力' }));
   await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
   await screen.findByText('保存结果未确认。重试会核对同一次操作，不会改用其他密钥或模型。');
   await act(async () => {

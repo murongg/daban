@@ -2,6 +2,7 @@ import {
   type DiscoveredModel,
   isModelInspection,
   isModelInspectionRequest,
+  type ModelCapabilities,
   type ModelDefinition,
   type ModelInspection,
   type ModelInspectionRequest,
@@ -38,7 +39,11 @@ function useInspection(query: Query, enabled: boolean, scope = '') {
   async function run(kind: ModelInspectionRequest['kind'], model?: string) {
     if (!enabled || inFlight.current === identity) return;
     const input: ModelInspectionRequest =
-      kind === 'list' ? { ...query, kind } : { ...query, kind, model: model ?? '' };
+      kind === 'list'
+        ? { ...query, kind }
+        : kind === 'metadata'
+          ? { connection: query.connection, revision: query.revision, kind, model: model ?? '' }
+          : { ...query, kind, model: model ?? '' };
     if (!isModelInspectionRequest(input)) {
       setState({ identity, error: t('models.enterValidApiUrlKeyModelId') });
       return;
@@ -58,7 +63,7 @@ function useInspection(query: Query, enabled: boolean, scope = '') {
         result.kind !== kind ||
         result.revision !== input.revision ||
         (result.kind === 'test' && result.model !== model) ||
-        (result.kind === 'limits' && result.model.id !== model)
+        ((result.kind === 'limits' || result.kind === 'metadata') && result.model.id !== model)
       )
         throw new Error('INVALID_RUNTIME_STATE');
       // Route, secret or row changes invalidate an in-flight result, even if its network request succeeds.
@@ -117,11 +122,9 @@ export function ModelCatalog({
   }
   async function add(model: DiscoveredModel) {
     let entry = model;
-    if (entry.contextWindow === undefined) {
-      const result = await tool.run('limits', entry.id);
-      if (result?.kind !== 'limits') return;
-      entry = result.model;
-    }
+    const result = await tool.run('limits', entry.id);
+    if (result?.kind !== 'limits') return;
+    entry = result.model;
     onAdd(entry);
     setAdded({ identity: tool.identity, model: entry });
   }
@@ -202,34 +205,72 @@ export function ModelInspector({
   model,
   index,
   disabled,
+  matchingDisabled,
   onMatch,
 }: {
   query: Query;
   model: ModelDefinition;
   index: number;
   disabled: boolean;
-  onMatch: (model: DiscoveredModel) => unknown;
+  matchingDisabled: boolean;
+  onMatch: (model: DiscoveredModel, unchanged: { vision: boolean; limits: boolean }) => unknown;
 }) {
   useLocale();
-  const tool = useInspection(query, !disabled, model.id);
+  const tool = useInspection(query, !matchingDisabled, model.id);
   const identity = tool.identity;
-  const current = useRef(model);
-  current.current = model;
   const [result, setResult] = useState<{ identity: string; value: ModelInspection }>();
-  async function run(kind: 'limits' | 'test') {
+  const [automaticError, setAutomaticError] = useState<{ identity: string; error: string }>();
+  const edits = useRef({ model, vision: 0, limits: 0 });
+  if (edits.current.model.vision !== model.vision) edits.current.vision++;
+  if (
+    edits.current.model.contextWindow !== model.contextWindow ||
+    edits.current.model.maxTokens !== model.maxTokens
+  )
+    edits.current.limits++;
+  edits.current.model = model;
+  async function run(
+    kind: 'limits' | 'metadata' | 'test',
+    version = { vision: edits.current.vision, limits: edits.current.limits },
+  ) {
     setResult(undefined);
     const value = await tool.run(kind, model.id);
     if (!value) return;
-    // A manual limits edit made during lookup is newer intent than the lookup result.
-    if (
-      kind === 'limits' &&
-      (current.current.contextWindow !== model.contextWindow ||
-        current.current.maxTokens !== model.maxTokens)
-    )
-      return;
-    if (value.kind === 'limits' && value.model.contextWindow !== undefined) onMatch(value.model);
+    // A toggle edited and then restored is still newer intent; comparing only its value loses that intent.
+    if (value.kind === 'limits' || value.kind === 'metadata')
+      onMatch(value.model, {
+        vision: version.vision === edits.current.vision,
+        limits: version.limits === edits.current.limits,
+      });
     setResult({ identity, value });
   }
+  const lookup = useRef(run);
+  lookup.current = run;
+  const route = JSON.stringify([query.connection, query.revision, model.id]);
+  const originalRoute = useRef(route);
+  const edited = useRef(false);
+  if (route !== originalRoute.current) edited.current = true;
+  const automaticIdentity = edited.current ? identity : route;
+  const previousIdentity = useRef(automaticIdentity);
+  const matchable = isModelInspectionRequest({
+    connection: query.connection,
+    revision: query.revision,
+    kind: 'metadata',
+    model: model.id,
+  });
+  useEffect(() => {
+    if (previousIdentity.current === automaticIdentity || matchingDisabled || !matchable) return;
+    // Opening an existing configuration never overwrites it. Only a changed route/ID triggers matching.
+    const version = { vision: edits.current.vision, limits: edits.current.limits };
+    const timer = setTimeout(() => {
+      previousIdentity.current = automaticIdentity;
+      lookup
+        .current('metadata', version)
+        .catch((error) =>
+          setAutomaticError({ identity: automaticIdentity, error: runtimeError(error) }),
+        );
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [automaticIdentity, matchingDisabled, matchable]);
   const value = result?.identity === identity ? result.value : undefined;
   return (
     <div className="model-inspector">
@@ -247,16 +288,18 @@ export function ModelInspector({
         <button
           className="text-button"
           type="button"
-          aria-label={t('models.matchContextModel', { 0: index + 1 })}
-          disabled={disabled || !!tool.busy || !model.id.trim()}
-          onClick={() => run('limits')}
+          aria-label={t('models.matchCapabilitiesModel', { 0: index + 1 })}
+          disabled={matchingDisabled || !!tool.busy || !model.id.trim()}
+          onClick={() => run(disabled ? 'metadata' : 'limits')}
         >
-          {tool.busy === 'limits' ? (
+          {tool.busy === 'limits' || tool.busy === 'metadata' ? (
             <LoaderCircle size={14} className="model-tool-spinner" />
           ) : (
             <WandSparkles size={14} />
           )}
-          {tool.busy === 'limits' ? t('models.matching') : t('models.matchContext')}
+          {tool.busy === 'limits' || tool.busy === 'metadata'
+            ? t('models.matching')
+            : t('models.matchCapabilities')}
         </button>
       </div>
       {value?.kind === 'test' && (
@@ -265,7 +308,7 @@ export function ModelInspector({
           {t('models.callSucceededMs', { 0: value.latencyMs })}
         </p>
       )}
-      {value?.kind === 'limits' && (
+      {(value?.kind === 'limits' || value?.kind === 'metadata') && (
         <p className="field-help" role="status">
           {value.model.contextWindow === undefined
             ? t('models.noReliableContextLengthFoundExistingSettings')
@@ -277,7 +320,42 @@ export function ModelInspector({
             t('models.publicCatalogReferenceProviderSLimitsTake')}
         </p>
       )}
-      <Feedback error={tool.error} />
+      {model.capabilities && <Capabilities value={model.capabilities} />}
+      <Feedback
+        error={
+          tool.error ??
+          (automaticError?.identity === automaticIdentity ? automaticError.error : undefined)
+        }
+      />
     </div>
+  );
+}
+function Capabilities({ value }: { value: ModelCapabilities }) {
+  return (
+    <details className="model-capabilities">
+      <summary>{t('models.catalogCapabilities')} · models.dev</summary>
+      <dl>
+        {(['input', 'output'] as const).map(
+          (key) =>
+            value[key] && (
+              <div key={key}>
+                <dt>{t(key === 'input' ? 'models.inputModalities' : 'models.outputModalities')}</dt>
+                <dd>{value[key].map((mode) => t(`models.modality.${mode}`)).join(' · ')}</dd>
+              </div>
+            ),
+        )}
+        {(['reasoning', 'toolCall', 'structuredOutput', 'temperature'] as const).map(
+          (key) =>
+            value[key] !== undefined && (
+              <div key={key}>
+                <dt>{t(`models.capability.${key}`)}</dt>
+                <dd>{t(value[key] ? 'models.supported' : 'models.unsupported')}</dd>
+              </div>
+            ),
+        )}
+      </dl>
+      <p className="field-help">{t('models.catalogCapabilitiesHelp')}</p>
+      {value.toolCall === false && <p className="field-help">{t('models.noToolCallWarning')}</p>}
+    </details>
   );
 }

@@ -374,8 +374,8 @@ export class ModelSettings {
       existing.baseURL === value.connection.baseURL &&
       modelApi(existing) === modelApi(value.connection);
     const key = value.apiKey || (same ? existing.apiKey : undefined);
-    if (!key) throw new Fault('MODEL_CREDENTIAL_REQUIRED', 400);
-    const result = await this.discovery.run(value, key);
+    if (!key && value.kind !== 'metadata') throw new Fault('MODEL_CREDENTIAL_REQUIRED', 400);
+    const result = await this.discovery.run(value, key ?? '');
     const exposed =
       result.kind === 'test'
         ? [result.model]
@@ -383,7 +383,7 @@ export class ModelSettings {
             model.id,
             model.name,
           ]);
-    if (exposed.some((text) => text.includes(key)))
+    if (key && exposed.some((text) => text.includes(key)))
       throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
     if (((await this.privateConfig())?.revision ?? 0) !== value.revision)
       throw new Fault('MODEL_SETTINGS_CONFLICT', 409);

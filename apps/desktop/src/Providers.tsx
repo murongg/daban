@@ -127,6 +127,7 @@ export function Providers({
     : undefined;
   const inspectDisabled =
     !available || busy || !!pending || model.inspection !== true || (!retainKey && !draft?.apiKey);
+  const matchingDisabled = !available || busy || !!pending || model.inspection !== true;
   function addModel(info: DiscoveredModel) {
     setDraft((current) => {
       if (!current || current.connection.models.some((entry) => entry.id === info.id))
@@ -139,6 +140,8 @@ export function Providers({
         name: info.name,
         contextWindow: info.contextWindow ?? 128000,
         maxTokens: Math.min(8192, info.maxTokens ?? 8192, info.contextWindow ?? 128000),
+        vision: info.capabilities?.input?.includes('image') ?? false,
+        ...(info.capabilities ? { capabilities: info.capabilities } : {}),
       };
       return {
         ...current,
@@ -153,16 +156,14 @@ export function Providers({
       };
     });
   }
-  function matchModel(key: string, info: DiscoveredModel) {
+  function matchModel(
+    key: string,
+    info: DiscoveredModel,
+    unchanged: { vision: boolean; limits: boolean },
+  ) {
     setDraft((current) => {
       const index = current?.keys.indexOf(key) ?? -1;
-      if (
-        !current ||
-        index < 0 ||
-        current.connection.models[index].id !== info.id ||
-        info.contextWindow === undefined
-      )
-        return current;
+      if (!current || index < 0 || current.connection.models[index].id !== info.id) return current;
       return {
         ...current,
         connection: {
@@ -171,12 +172,20 @@ export function Providers({
             position === index
               ? {
                   ...entry,
-                  contextWindow: info.contextWindow!,
-                  maxTokens: Math.min(
-                    entry.maxTokens,
-                    info.maxTokens ?? entry.maxTokens,
-                    info.contextWindow!,
-                  ),
+                  capabilities: info.capabilities,
+                  ...(info.capabilities?.input && unchanged.vision
+                    ? { vision: info.capabilities.input.includes('image') }
+                    : {}),
+                  ...(info.contextWindow !== undefined && unchanged.limits
+                    ? {
+                        contextWindow: info.contextWindow,
+                        maxTokens: Math.min(
+                          entry.maxTokens,
+                          info.maxTokens ?? entry.maxTokens,
+                          info.contextWindow,
+                        ),
+                      }
+                    : {}),
                 }
               : entry,
           ),
@@ -295,7 +304,15 @@ export function Providers({
       connection: {
         ...draft.connection,
         models: draft.connection.models.map((entry, position) =>
-          position === index ? { ...entry, ...patch } : entry,
+          position === index
+            ? {
+                ...entry,
+                ...patch,
+                ...(patch.id !== undefined && patch.id !== entry.id
+                  ? { capabilities: undefined, vision: false }
+                  : {}),
+              }
+            : entry,
         ),
       },
     });
@@ -456,7 +473,12 @@ export function Providers({
                             ? { name: '', baseURL: '', api: preset.api }
                             : {}
                           : { name: t(preset.name), baseURL: preset.baseURL, api: preset.api }),
-                        ...(mode === 'onboarding' ? { models: [newModel()] } : {}),
+                        models:
+                          mode === 'onboarding'
+                            ? [newModel()]
+                            : draft.connection.models.map(
+                                ({ capabilities: _capabilities, ...model }) => model,
+                              ),
                       },
                     });
                   }}
@@ -488,7 +510,13 @@ export function Providers({
                     options={apiOptions}
                     onValueChange={(value) => {
                       if (!isModelApi(value)) return;
-                      const { api: _api, ...connection } = draft.connection;
+                      const { api: _api, ...saved } = draft.connection;
+                      const connection = {
+                        ...saved,
+                        models: saved.models.map(
+                          ({ capabilities: _capabilities, ...model }) => model,
+                        ),
+                      };
                       // Leaving an unchanged legacy connection absent preserves its original save fingerprint.
                       setDraft({
                         ...draft,
@@ -530,7 +558,13 @@ export function Providers({
                       onChange={(event) =>
                         setDraft({
                           ...draft,
-                          connection: { ...draft.connection, baseURL: event.target.value },
+                          connection: {
+                            ...draft.connection,
+                            baseURL: event.target.value,
+                            models: draft.connection.models.map(
+                              ({ capabilities: _capabilities, ...model }) => model,
+                            ),
+                          },
                         })
                       }
                     />
@@ -629,7 +663,8 @@ export function Providers({
                       model={entry}
                       index={index}
                       disabled={inspectDisabled}
-                      onMatch={(info) => matchModel(draft.keys[index], info)}
+                      matchingDisabled={matchingDisabled}
+                      onMatch={(info, unchanged) => matchModel(draft.keys[index], info, unchanged)}
                     />
                   )}
                   <label className="provider-vision">

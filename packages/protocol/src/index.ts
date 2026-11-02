@@ -2064,12 +2064,35 @@ export const isModelApi = (value: unknown): value is ModelApi =>
   );
 export const modelApi = (connection: { api?: ModelApi }): ModelApi =>
   connection.api ?? 'openai-completions';
+export const modelModalities = ['text', 'image', 'audio', 'video', 'pdf'] as const;
+export interface ModelCapabilities {
+  input?: (typeof modelModalities)[number][];
+  output?: (typeof modelModalities)[number][];
+  reasoning?: boolean;
+  toolCall?: boolean;
+  structuredOutput?: boolean;
+  temperature?: boolean;
+}
+export function isModelCapabilities(value: unknown): value is ModelCapabilities {
+  if (!profileObject(value) || !Object.keys(value).length) return false;
+  return Object.entries(value).every(([key, entry]) =>
+    key === 'input' || key === 'output'
+      ? Array.isArray(entry) &&
+        entry.length > 0 &&
+        entry.length <= modelModalities.length &&
+        entry.every((mode) => modelModalities.some((allowed) => allowed === mode)) &&
+        new Set(entry).size === entry.length
+      : ['reasoning', 'toolCall', 'structuredOutput', 'temperature'].includes(key) &&
+        typeof entry === 'boolean',
+  );
+}
 export interface ModelDefinition {
   id: string;
   name: string;
   vision: boolean;
   contextWindow: number;
   maxTokens: number;
+  capabilities?: ModelCapabilities;
 }
 export interface ModelConnection {
   id: string;
@@ -2139,7 +2162,7 @@ export function isModelDefinition(value: unknown): value is ModelDefinition {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['id', 'name', 'vision', 'contextWindow', 'maxTokens'].includes(key),
+      ['id', 'name', 'vision', 'contextWindow', 'maxTokens', 'capabilities'].includes(key),
     ) &&
     upstreamModelId(value.id) &&
     typeof value.name === 'string' &&
@@ -2147,6 +2170,7 @@ export function isModelDefinition(value: unknown): value is ModelDefinition {
     value.name.length <= 120 &&
     modelText(value.name) &&
     typeof value.vision === 'boolean' &&
+    (value.capabilities === undefined || isModelCapabilities(value.capabilities)) &&
     Number.isSafeInteger(value.contextWindow) &&
     Number(value.contextWindow) >= 4096 &&
     Number(value.contextWindow) <= 4000000 &&
@@ -2202,15 +2226,16 @@ export interface DiscoveredModel {
   contextWindow?: number;
   maxTokens?: number;
   source?: 'provider' | 'models.dev';
+  capabilities?: ModelCapabilities;
 }
 export type ModelInspectionRequest = {
   connection: ModelEndpoint;
   apiKey?: string;
   revision: number;
-} & ({ kind: 'list'; model?: never } | { kind: 'limits' | 'test'; model: string });
+} & ({ kind: 'list'; model?: never } | { kind: 'limits' | 'metadata' | 'test'; model: string });
 export type ModelInspection = { revision: number } & (
   | { kind: 'list'; models: DiscoveredModel[] }
-  | { kind: 'limits'; model: DiscoveredModel }
+  | { kind: 'limits' | 'metadata'; model: DiscoveredModel }
   | { kind: 'test'; model: string; latencyMs: number; checkedAt: string }
 );
 export function isModelInspectionRequest(value: unknown): value is ModelInspectionRequest {
@@ -2235,7 +2260,7 @@ export function isModelInspectionRequest(value: unknown): value is ModelInspecti
     return false;
   if (value.kind === 'list') return value.model === undefined;
   return (
-    ['limits', 'test'].includes(String(value.kind)) &&
+    ['limits', 'metadata', 'test'].includes(String(value.kind)) &&
     upstreamModelId(value.model) &&
     (connection.api !== 'google-generative-ai' ||
       /^(?:models\/)?[a-zA-Z0-9][a-zA-Z0-9._-]{0,159}$/.test(value.model))
@@ -2244,12 +2269,13 @@ export function isModelInspectionRequest(value: unknown): value is ModelInspecti
 export function isDiscoveredModel(value: unknown): value is DiscoveredModel {
   return (
     profileObject(value) &&
-    browserKeys(value, ['id', 'name', 'contextWindow', 'maxTokens', 'source']) &&
+    browserKeys(value, ['id', 'name', 'contextWindow', 'maxTokens', 'source', 'capabilities']) &&
     upstreamModelId(value.id) &&
     typeof value.name === 'string' &&
     value.name.trim().length > 0 &&
     value.name.length <= 120 &&
     modelText(value.name) &&
+    (value.capabilities === undefined || isModelCapabilities(value.capabilities)) &&
     (value.contextWindow === undefined ||
       (Number.isSafeInteger(value.contextWindow) &&
         Number(value.contextWindow) >= 4096 &&
@@ -2262,7 +2288,9 @@ export function isDiscoveredModel(value: unknown): value is DiscoveredModel {
           Number(value.maxTokens) <= Number(value.contextWindow)))) &&
     (value.source === undefined ||
       (['provider', 'models.dev'].includes(String(value.source)) &&
-        (value.contextWindow !== undefined || value.maxTokens !== undefined)))
+        (value.contextWindow !== undefined ||
+          value.maxTokens !== undefined ||
+          value.capabilities !== undefined)))
   );
 }
 export function isModelInspection(value: unknown): value is ModelInspection {
@@ -2275,7 +2303,7 @@ export function isModelInspection(value: unknown): value is ModelInspection {
       value.models.every(isDiscoveredModel) &&
       new Set(value.models.map((model) => model.id)).size === value.models.length
     );
-  if (value.kind === 'limits')
+  if (value.kind === 'limits' || value.kind === 'metadata')
     return browserKeys(value, ['kind', 'revision', 'model']) && isDiscoveredModel(value.model);
   return (
     value.kind === 'test' &&

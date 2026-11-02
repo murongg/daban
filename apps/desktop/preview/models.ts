@@ -101,7 +101,7 @@ export function modelPreview(empty = false) {
                   checkedAt: '2026-01-01T00:00:00.000Z',
                 }
               : {
-                  kind: 'limits',
+                  kind: input.kind,
                   revision: input.revision,
                   model: {
                     id: input.model,
@@ -109,6 +109,14 @@ export function modelPreview(empty = false) {
                     contextWindow: 256000,
                     maxTokens: 8192,
                     source: 'models.dev',
+                    capabilities: {
+                      input: ['text', 'image'],
+                      output: ['text'],
+                      reasoning: true,
+                      toolCall: true,
+                      structuredOutput: true,
+                      temperature: false,
+                    },
                   },
                 };
       } else if (command.type === 'model.configure') {
