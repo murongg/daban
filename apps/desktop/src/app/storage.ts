@@ -34,6 +34,8 @@ export function serialize(state: State) {
       chatStates: {},
       groupRevisions: {},
       attachmentUploads: {},
+      // Queued messages belong to the live session; a reload must not send them unattended.
+      queued: {},
     },
   });
 }
@@ -150,6 +152,8 @@ export function restore(raw: string | null): State {
       ),
     );
     s.attachmentUploads = {};
+    // Queued messages belong to the live session; a reload must not send them unattended.
+    s.queued = {};
     if (s.knowledgeDrafts === undefined) s.knowledgeDrafts = {};
     if (!record(s.knowledgeDrafts)) s.knowledgeDrafts = {};
     // An unsaved draft may exceed the server byte quota; retain editable text so repair does not erase the workspace.

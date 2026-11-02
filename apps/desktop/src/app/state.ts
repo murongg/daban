@@ -181,6 +181,13 @@ export interface RoutineDraft {
 export function routineDraft(): RoutineDraft {
   return { open: false, title: '', instruction: '', frequency: '每天', time: '09:00' };
 }
+export const messageQueueLimit = 20;
+export interface QueuedTask {
+  id: string;
+  prompt: string;
+  files: string[];
+  error?: boolean;
+}
 export interface State {
   sampleRevision?: 1 | 2;
   comments?: CommentsState;
@@ -207,6 +214,7 @@ export interface State {
   bots: Bot[];
   messages: Record<string, Message[]>;
   drafts: Record<string, string>;
+  queued: Record<string, QueuedTask[]>;
   controls: Record<string, Owner>;
   memories: Record<string, string>;
   memoryDrafts: Record<string, string>;
@@ -219,6 +227,10 @@ export interface State {
   attachmentUploads: Record<string, boolean>;
   runtimeRequests: Record<string, TaskRequest | undefined>;
   profileRevisions: Record<string, number>;
+}
+export function messageQueue(state: Pick<State, 'queued'>, bot: string): QueuedTask[] {
+  // IDs such as constructor are valid; inherited object properties are never queue state.
+  return Object.hasOwn(state.queued, bot) ? state.queued[bot] : [];
 }
 export function lifecycleRequest(
   state: State,
@@ -279,6 +291,11 @@ export type Action =
   | { type: 'theme'; theme: Theme }
   | { type: 'control'; bot: string; owner: Owner }
   | { type: 'draft'; bot: string; text: string }
+  | { type: 'queue-add'; bot: string; task: QueuedTask }
+  | { type: 'queue-edit'; bot: string; id: string }
+  | { type: 'queue-remove'; bot: string; id: string }
+  | { type: 'queue-fail'; bot: string; id: string }
+  | { type: 'queue-retry'; bot: string; id: string }
   | { type: 'send'; bot: string; id: string; time: string }
   | { type: 'memory-draft'; bot: string; text: string }
   | { type: 'routine-draft'; bot: string; draft: Partial<RoutineDraft> }
@@ -326,6 +343,7 @@ export function initialState(): State {
     bots: [],
     messages: {},
     drafts: {},
+    queued: {},
     controls: {},
     memories: {},
     memoryDrafts: {},
@@ -882,6 +900,73 @@ export function reduce(state: State, action: Action): State {
       return { ...state, controls: { ...state.controls, [action.bot]: action.owner } };
     case 'draft':
       return { ...state, drafts: { ...state.drafts, [action.bot]: action.text.slice(0, 12000) } };
+    case 'queue-add': {
+      const queue = messageQueue(state, action.bot);
+      const task = action.task;
+      if (queue.length >= messageQueueLimit || !task.id || task.prompt.length > 12000) return state;
+      if (!task.prompt.trim() && !task.files.length) return state;
+      if (task.files.some((id) => !state.files.some((file) => file.id === id))) return state;
+      return {
+        ...state,
+        queued: {
+          ...state.queued,
+          [action.bot]: [...queue, { ...task, prompt: task.prompt.trim() }],
+        },
+        drafts: { ...state.drafts, [action.bot]: '' },
+        attachments: { ...state.attachments, [action.bot]: [] },
+      };
+    }
+    case 'queue-edit': {
+      const queue = messageQueue(state, action.bot);
+      const item = queue.find((entry) => entry.id === action.id);
+      if (!item) return state;
+      const draft = state.drafts[action.bot] ?? '';
+      const prompt = draft && item.prompt ? `${draft}\n${item.prompt}` : item.prompt || draft;
+      return {
+        ...state,
+        queued: {
+          ...state.queued,
+          [action.bot]: queue.filter((entry) => entry.id !== action.id),
+        },
+        drafts: { ...state.drafts, [action.bot]: prompt.slice(0, 12000) },
+        attachments: {
+          ...state.attachments,
+          [action.bot]: [...(state.attachments[action.bot] ?? []), ...item.files],
+        },
+      };
+    }
+    case 'queue-remove': {
+      const queue = messageQueue(state, action.bot);
+      return queue.some((item) => item.id === action.id)
+        ? {
+            ...state,
+            queued: {
+              ...state.queued,
+              [action.bot]: queue.filter((item) => item.id !== action.id),
+            },
+          }
+        : state;
+    }
+    case 'queue-fail': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 0 || queue[index].error) return state;
+      const items = [...queue];
+      items[index] = { ...items[index], error: true };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-retry': {
+      const queue = messageQueue(state, action.bot);
+      const index = queue.findIndex((item) => item.id === action.id);
+      if (index < 0 || !queue[index].error) return state;
+      const items = [...queue];
+      items[index] = {
+        id: queue[index].id,
+        prompt: queue[index].prompt,
+        files: queue[index].files,
+      };
+      return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
     case 'memory-draft':
       return {
         ...state,

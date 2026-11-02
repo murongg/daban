@@ -1,11 +1,12 @@
 import { type Group, type GroupSend, isTaskFile } from '@daban/protocol';
 import { describe, expect, it } from 'vitest';
-import { stagedAttachment, taskFile } from '../features/files/files';
+import { attachment, stagedAttachment, taskFile } from '../features/files/files';
 import { demoState as initialState } from '../test/fixtures';
 import {
   initialState as emptyState,
   knowledgeDraft,
   lifecycleRequest,
+  messageQueue,
   reduce,
   skillDraft,
 } from './state';
@@ -925,4 +926,63 @@ it('preserves interrupted response text after another task and storage reload, b
     restored.messages.research.find((item) => item.id === 'runtime-partial:mock-stream-run'),
   ).toMatchObject({ text: '合成未完成文字', incomplete: true });
   expect(restored.messages.writer.some((item) => item.text === task.response.text)).toBe(false);
+});
+
+it('queues composer input with attachments and keeps the queue out of reloaded state', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const file = attachment('synthetic-queue.txt', 'SYNTHETIC QUEUE ATTACHMENT');
+  state = reduce(state, { type: 'attach', bot: bot.id, file });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC QUEUED MESSAGE' });
+  const queued = {
+    id: 'synthetic-queue-message',
+    prompt: 'SYNTHETIC QUEUED MESSAGE',
+    files: [file.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  expect(state.queued[bot.id]).toEqual([queued]);
+  expect(state.drafts[bot.id]).toBe('');
+  expect(state.attachments[bot.id]).toEqual([]);
+  state = reduce(state, { type: 'queue-fail', bot: bot.id, id: queued.id });
+  expect(state.queued[bot.id][0].error).toBe(true);
+  state = reduce(state, { type: 'queue-retry', bot: bot.id, id: queued.id });
+  expect(state.queued[bot.id][0]).toEqual(queued);
+  expect(restore(serialize(state)).queued).toEqual({});
+  expect(state.queued[bot.id]).toEqual([queued]);
+  state = reduce(state, { type: 'queue-remove', bot: bot.id, id: queued.id });
+  expect(state.queued[bot.id]).toEqual([]);
+});
+it('returns an edited queued message to the composer with its attachments', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const file = attachment('synthetic-edit.txt', 'SYNTHETIC EDIT ATTACHMENT');
+  state = reduce(state, { type: 'attach', bot: bot.id, file });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC EDIT MESSAGE' });
+  const queued = {
+    id: 'synthetic-edit-message',
+    prompt: 'SYNTHETIC EDIT MESSAGE',
+    files: [file.id],
+  };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: queued });
+  state = reduce(state, { type: 'draft', bot: bot.id, text: 'SYNTHETIC EXISTING DRAFT' });
+  state = reduce(state, { type: 'queue-edit', bot: bot.id, id: queued.id });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+  expect(state.drafts[bot.id]).toBe('SYNTHETIC EXISTING DRAFT\nSYNTHETIC EDIT MESSAGE');
+  expect(state.attachments[bot.id]).toEqual([file.id]);
+});
+it('isolates prototype-shaped Bot IDs in the message queue', () => {
+  let state = initialState();
+  state = reduce(state, {
+    type: 'create',
+    id: 'constructor',
+    name: 'SYNTHETIC QUEUE BOT',
+    role: '',
+    color: 'mint',
+  });
+  const queued = { id: 'synthetic-prototype-message', prompt: 'SYNTHETIC MESSAGE', files: [] };
+  state = reduce(state, { type: 'queue-add', bot: 'constructor', task: queued });
+  expect(messageQueue(state, 'constructor')).toEqual([queued]);
+  expect(messageQueue(state, 'toString')).toEqual([]);
+  state = reduce(state, { type: 'queue-remove', bot: 'constructor', id: queued.id });
+  expect(messageQueue(state, 'constructor')).toEqual([]);
 });

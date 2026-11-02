@@ -11,7 +11,7 @@ import {
   type RuntimeCommand,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -739,4 +739,218 @@ it('uses the acknowledged profile version when editing again before the next run
     revision: 2,
     patch: { name: '合成编辑乙', instructions: '合成职责' },
   });
+});
+
+type LiveTask = NonNullable<RuntimeSnapshot['agents']>[string];
+function liveQueueRuntime() {
+  let snapshot = disconnected('ready');
+  snapshot.protocolVersion = 29;
+  snapshot.model = {
+    configured: true,
+    available: true,
+    provider: 'deepseek-official',
+    model: 'deepseek-flash',
+    revision: 1,
+  };
+  snapshot.chats = { available: true, revision: 0, items: [] };
+  snapshot.agents = {
+    a: {
+      running: true,
+      phase: 'running',
+      runId: 'mock-queue-current-run',
+      requestId: 'mock-queue-current-request',
+      prompt: 'SYNTHETIC CURRENT TASK',
+      result: '',
+      error: '',
+      files: [],
+      toolCount: 0,
+      executedCount: 0,
+      trace: [],
+      history: [],
+    },
+  };
+  const listeners = new Set<(value: RuntimeSnapshot) => unknown>();
+  const starts: Extract<RuntimeCommand, { type: 'task.start' }>[] = [];
+  let failing = false;
+  const invoke = vi.fn(async (command: RuntimeCommand) => {
+    if (command.type === 'status') return { ok: true as const, value: snapshot };
+    if (command.type === 'task.start') {
+      starts.push(command);
+      if (failing) return { ok: false as const, error: 'INVALID_TASK' };
+      return {
+        ok: true as const,
+        value: {
+          chatRevision: command.task.chatRevision,
+          runId: `mock-queue-run-${starts.length}`,
+          requestId: command.task.requestId,
+          prompt: command.task.prompt,
+          result: '',
+          error: '',
+          files: [],
+          phase: 'running',
+          running: true,
+        },
+      };
+    }
+    return { ok: true as const, value: {} };
+  });
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: {
+      platform: 'darwin',
+      runtime: {
+        invoke,
+        subscribe: (listener: (value: RuntimeSnapshot) => unknown) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      } as unknown as RuntimeBridge,
+    },
+  });
+  return {
+    starts,
+    emit(task: LiveTask) {
+      snapshot = { ...snapshot, agents: { a: task } };
+      for (const listener of listeners) listener(snapshot);
+    },
+    fail() {
+      failing = true;
+    },
+    succeed() {
+      failing = false;
+    },
+  };
+}
+function liveTask(
+  runId: string,
+  requestId: string,
+  prompt: string,
+  phase: LiveTask['phase'],
+  running: boolean,
+  result = '',
+): LiveTask {
+  return {
+    running,
+    phase,
+    runId,
+    requestId,
+    prompt,
+    result,
+    error: '',
+    files: [],
+    toolCount: 0,
+    executedCount: 0,
+    trace: [],
+    history: [],
+  };
+}
+
+it('queues messages while a Bot is working and sends them in order after the task ends', async () => {
+  const runtime = liveQueueRuntime();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  expect(input).toBeEnabled();
+  await userEvent.type(input, 'SYNTHETIC QUEUED ONE');
+  await userEvent.keyboard('{Enter}');
+  await userEvent.type(input, 'SYNTHETIC QUEUED TWO');
+  await userEvent.keyboard('{Enter}');
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  expect(within(queue).getByText('SYNTHETIC QUEUED ONE')).toBeVisible();
+  expect(within(queue).getByText('SYNTHETIC QUEUED TWO')).toBeVisible();
+  expect(input).toHaveValue('');
+  expect(runtime.starts).toHaveLength(0);
+
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-current-run',
+        'mock-queue-current-request',
+        'SYNTHETIC CURRENT TASK',
+        'completed',
+        false,
+        'SYNTHETIC CURRENT DONE',
+      ),
+    ),
+  );
+  await waitFor(() => expect(runtime.starts).toHaveLength(1));
+  expect(runtime.starts[0].task.prompt).toBe('SYNTHETIC QUEUED ONE');
+  await waitFor(() =>
+    expect(within(queue).queryByText('SYNTHETIC QUEUED ONE')).not.toBeInTheDocument(),
+  );
+  expect(runtime.starts).toHaveLength(1);
+
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-run-1',
+        runtime.starts[0].task.requestId,
+        'SYNTHETIC QUEUED ONE',
+        'running',
+        true,
+      ),
+    ),
+  );
+  expect(runtime.starts).toHaveLength(1);
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-run-1',
+        runtime.starts[0].task.requestId,
+        'SYNTHETIC QUEUED ONE',
+        'completed',
+        false,
+        'SYNTHETIC FIRST DONE',
+      ),
+    ),
+  );
+  await waitFor(() => expect(runtime.starts).toHaveLength(2));
+  expect(runtime.starts[1].task.prompt).toBe('SYNTHETIC QUEUED TWO');
+  await waitFor(() =>
+    expect(screen.queryByRole('region', { name: '排队消息' })).not.toBeInTheDocument(),
+  );
+});
+
+it('returns a queued message to the composer for editing', async () => {
+  const runtime = liveQueueRuntime();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, 'SYNTHETIC EDITABLE QUEUE');
+  await userEvent.keyboard('{Enter}');
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  await userEvent.click(
+    within(queue).getByRole('button', { name: '编辑排队消息 SYNTHETIC EDITABLE QUEUE' }),
+  );
+  expect(input).toHaveValue('SYNTHETIC EDITABLE QUEUE');
+  expect(screen.queryByRole('region', { name: '排队消息' })).not.toBeInTheDocument();
+  expect(runtime.starts).toHaveLength(0);
+});
+it('keeps a queued message that failed to send so it can be retried', async () => {
+  const runtime = liveQueueRuntime();
+  runtime.fail();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, 'SYNTHETIC FAILED QUEUE');
+  await userEvent.keyboard('{Enter}');
+  act(() =>
+    runtime.emit(
+      liveTask(
+        'mock-queue-current-run',
+        'mock-queue-current-request',
+        'SYNTHETIC CURRENT TASK',
+        'completed',
+        false,
+        'SYNTHETIC CURRENT DONE',
+      ),
+    ),
+  );
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  expect(await within(queue).findByText('发送失败，可重试或移除。')).toBeVisible();
+  expect(runtime.starts).toHaveLength(1);
+  runtime.succeed();
+  await userEvent.click(within(queue).getByRole('button', { name: '重试发送' }));
+  await waitFor(() => expect(runtime.starts).toHaveLength(2));
+  expect(runtime.starts[1].task.prompt).toBe('SYNTHETIC FAILED QUEUE');
+  await waitFor(() =>
+    expect(screen.queryByRole('region', { name: '排队消息' })).not.toBeInTheDocument(),
+  );
 });

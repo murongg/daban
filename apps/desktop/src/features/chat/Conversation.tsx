@@ -3,14 +3,18 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  CornerDownRight,
   ExternalLink,
   FileText,
   Info,
   Mic,
   Monitor,
   Paperclip,
+  Pencil,
   Plus,
+  RotateCcw,
   Square,
+  Trash2,
   X,
 } from 'lucide-react';
 import { type Dispatch, useCallback, useRef } from 'react';
@@ -21,6 +25,7 @@ import {
   type Bot,
   chatRevision,
   lifecycleRequest,
+  messageQueue,
   type State,
   type WorkspaceFile,
 } from '../../app/state';
@@ -77,6 +82,10 @@ export function Conversation({
   preview,
   onModel,
   onSend,
+  onQueue,
+  onQueueEdit,
+  onQueueRemove,
+  onQueueRetry,
   onContinue,
   pending = false,
   onLifecycle,
@@ -89,6 +98,10 @@ export function Conversation({
   preview: (file: WorkspaceFile) => unknown;
   onModel: () => unknown;
   onSend?: () => unknown;
+  onQueue?: () => unknown;
+  onQueueEdit?: (id: string) => unknown;
+  onQueueRemove?: (id: string) => unknown;
+  onQueueRetry?: (id: string) => unknown;
   onContinue?: () => unknown;
   pending?: boolean;
   onLifecycle?: () => unknown;
@@ -172,6 +185,7 @@ export function Conversation({
   const attachments = state.attachments[bot.id]
     .map((id) => state.files.find((f) => f.id === id))
     .filter((f): f is WorkspaceFile => !!f);
+  const queued = live ? messageQueue(state, bot.id) : [];
   const pendingIds = (runtime.snapshot.interactions || [])
     .filter((item) => item.bot === target && !item.conversationId && item.status === 'pending')
     .map((item) => item.id)
@@ -189,6 +203,10 @@ export function Conversation({
       return;
     }
     if (busyInGroup || computerChanging || (!draft.trim() && !attachments.length)) return;
+    if (task?.running && onQueue) {
+      onQueue();
+      return;
+    }
     scroll.resume();
     if (onSend) {
       onSend();
@@ -482,6 +500,68 @@ export function Conversation({
             </button>
           </div>
         )}
+        {live && queued.length > 0 && (
+          <section className="message-queue" aria-label={t('chat.messageQueue')} aria-live="polite">
+            <ul>
+              {queued.map((item) => {
+                const text = item.prompt || t('common.reviewFilesCompleteTaskIDescribed');
+                return (
+                  <li
+                    className="queued-message"
+                    key={item.id}
+                    data-failed={item.error || undefined}
+                  >
+                    <CornerDownRight className="queued-message-glyph" aria-hidden="true" />
+                    <div className="queued-message-copy">
+                      <div className="queued-message-line">
+                        <p title={text}>{text}</p>
+                        {item.files.length > 0 && (
+                          <span className="queued-message-count">
+                            {t('chat.queuedAttachments', { 0: item.files.length })}
+                          </span>
+                        )}
+                      </div>
+                      {item.error && (
+                        <span className="queued-message-error" role="status">
+                          {t('chat.queuedMessageFailed')}
+                        </span>
+                      )}
+                    </div>
+                    <div className="queued-message-actions">
+                      {item.error && onQueueRetry && (
+                        <IconButton
+                          label={t('common.retrySend')}
+                          onClick={() => onQueueRetry(item.id)}
+                        >
+                          <RotateCcw />
+                        </IconButton>
+                      )}
+                      {onQueueEdit && (
+                        <IconButton
+                          label={t('chat.editQueuedMessage', { 0: text })}
+                          onClick={() => {
+                            onQueueEdit(item.id);
+                            input.current?.focus();
+                          }}
+                        >
+                          <Pencil />
+                        </IconButton>
+                      )}
+                      {onQueueRemove && (
+                        <IconButton
+                          label={t('chat.removeQueuedMessage', { 0: text })}
+                          onClick={() => onQueueRemove(item.id)}
+                        >
+                          <Trash2 />
+                        </IconButton>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
         <form
           {...transfer}
           className="composer"
@@ -533,7 +613,7 @@ export function Conversation({
             value={draft}
             maxLength={12000}
             rows={2}
-            disabled={pending || task?.running}
+            disabled={pending}
             readOnly={readOnly}
             onPaste={paste}
             onChange={(e) => {
@@ -609,7 +689,6 @@ export function Conversation({
                 recovering ||
                 pending ||
                 state.attachmentUploads[bot.id] ||
-                task?.running ||
                 computerChanging ||
                 !!busyInGroup ||
                 (!draft.trim() && !attachments.length) ||
@@ -624,7 +703,11 @@ export function Conversation({
           </div>
         </form>
         <div className="composer-hints">
-          <span>{t('common.enterSendShiftEnterNewLinePaste')}</span>
+          <span>
+            {task?.running
+              ? t('chat.enterQueuesMessage')
+              : t('common.enterSendShiftEnterNewLinePaste')}
+          </span>
           <span>{modelCaption}</span>
         </div>
       </div>
