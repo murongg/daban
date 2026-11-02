@@ -2618,6 +2618,7 @@ export const english = {
   'skills.chatDraftTooLongAddSkillInstructions':
     'The chat draft is too long to add skill instructions. Original content is retained.',
   'skills.chooseSkillInstructionFile': 'Choose skill instruction file',
+  'skills.collapseDescription': 'Collapse description for {0}',
   'skills.currentlySupportsSingleSkillMdFileSkill':
     'Currently supports a single SKILL.md file. Skill bundles with scripts or attachments cannot be imported yet. Changes apply to the next task.',
   'skills.currentServerRevisionShownBelowReviewDeciding':
@@ -2627,6 +2628,7 @@ export const english = {
   'skills.editSkillInstructions': 'Edit skill instructions',
   'skills.enable': 'Enable {1} for {0}',
   'skills.enabled': 'Enabled',
+  'skills.expandDescription': 'Expand description for {0}',
   'skills.exportCurrentSkillInstructions': 'Export current skill instructions',
   'skills.importSkill': 'Import skill',
   'skills.keepMyEditsUseCurrentRevision': 'Keep my edits and use current revision',

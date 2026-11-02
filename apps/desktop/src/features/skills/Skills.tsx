@@ -21,6 +21,7 @@ import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { t, useLocale } from '../../i18n/locale';
 import { downloadBlob, readUtf8 } from '../files/files';
+import { SkillDescription } from './SkillDescription';
 import { SkillFiles } from './SkillFiles';
 import { SkillInstall } from './SkillInstall';
 
@@ -497,7 +498,7 @@ export function Skills({
                 </label>
               )}
             </div>
-            <p className="skill-description">{entry.description}</p>
+            <SkillDescription name={entry.name} description={entry.description} />
             <p className="field-help">
               {entry.invocation.modelInvocable
                 ? t('skills.canLoadAutomaticallyTasks')

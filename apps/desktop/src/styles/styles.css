@@ -1693,11 +1693,34 @@ textarea.field {
   white-space: nowrap;
 }
 .skill-description {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 6px;
   margin-top: 7px;
   font-size: 12px;
   line-height: 1.8;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+.skill-description-text {
+  margin: 0;
+}
+.skill-description-text[data-expanded="false"] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.skill-description-toggle {
+  min-height: 28px;
+  padding: 3px 5px;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 400;
+}
+.skill-description-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 .skill-controls {
   flex-wrap: wrap;
