@@ -171,6 +171,58 @@ it('reads complete older conversation pages in explicit scope without running or
     mock.command.mock.calls.some(([command]) => ['task.start', 'chat.new'].includes(command.type)),
   ).toBe(false);
 });
+it('previews files linked from earlier inserted turn replies', async () => {
+  mock.command.mockResolvedValue({
+    bot: 'a',
+    revision: 1,
+    items: [
+      {
+        chatRevision: 1,
+        runId: 'mock-history-turns',
+        requestId: 'mock-history-primary',
+        prompt: 'SYNTHETIC FIRST REQUEST',
+        result: 'SYNTHETIC SECOND ANSWER',
+        error: '',
+        phase: 'completed',
+        files: [
+          {
+            path: 'model-runs/mock-history-turns/a/report.md',
+            name: 'report.md',
+            size: 20,
+            modified: '2026-01-01',
+          },
+        ],
+        turns: [
+          {
+            id: 'mock-history-primary',
+            prompt: 'SYNTHETIC FIRST REQUEST',
+            result: '已生成 [报告](report.md)',
+          },
+          {
+            id: 'mock-history-inserted',
+            prompt: 'SYNTHETIC SECOND REQUEST',
+            result: 'SYNTHETIC SECOND ANSWER',
+          },
+        ],
+      },
+    ],
+  });
+  const state = initialState();
+  const preview = vi.fn();
+  render(
+    <ChatHistory
+      bot={state.bots.find((bot) => bot.id === 'research')!}
+      revision={2}
+      close={() => {}}
+      notify={() => {}}
+      preview={preview}
+    />,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '报告' }));
+  expect(preview).toHaveBeenCalledWith(
+    expect.objectContaining({ runtimePath: 'model-runs/mock-history-turns/a/report.md' }),
+  );
+});
 it('retains local user cache without presenting shipped demo replies as real historical work', async () => {
   const state = initialState();
   mock.command.mockResolvedValue({ bot: 'a', revision: 0, items: [] });

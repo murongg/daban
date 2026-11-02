@@ -12,6 +12,10 @@ export function visibleMessages(messages: Message[], task?: RuntimeTask): Displa
       ? [...messages, { id: resultId, role: 'bot', text: task.result }]
       : messages;
   if (!task.response?.text) return messages;
+  // A settled stream belongs to the previous turn; it must not appear as the reply to a newly started turn.
+  const current = task.turns?.at(-1);
+  if (task.running && current && !current.result && task.response.state === 'settled')
+    return messages;
   const incomplete = ['failed', 'stopped', 'interrupted'].includes(task.phase) || !task.running;
   const id = incomplete ? `runtime-partial:${task.runId}` : resultId;
   if (messages.some((message) => message.id === id)) return messages;

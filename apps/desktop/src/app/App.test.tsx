@@ -219,6 +219,59 @@ it('continues an interrupted live task with its original input reference and a n
   if (command?.type === 'task.start') expect(command.task.requestId).not.toBe('mock-old-request');
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('下一项合成草稿');
 });
+it('continues the unfinished inserted turn instead of replaying completed work', async () => {
+  const snapshot = disconnected('ready');
+  snapshot.protocolVersion = 1;
+  snapshot.model.configured = true;
+  snapshot.bots.a = {
+    owner: 'agent',
+    epoch: 3,
+    task: {
+      running: false,
+      phase: 'failed',
+      runId: 'mock-turn-run',
+      requestId: 'mock-turn-request',
+      prompt: '合成原始请求',
+      result: '',
+      error: '合成插话失败',
+      files: [],
+      toolCount: 1,
+      executedCount: 1,
+      trace: [],
+      history: [],
+      turns: [
+        { id: 'mock-turn-request', prompt: '合成原始请求', result: '合成原始回复' },
+        { id: 'mock-turn-inserted', prompt: '合成失败的插话', result: '' },
+      ],
+    },
+  };
+  const invoke = vi.fn(async (command: RuntimeCommand) => ({
+    ok: true as const,
+    value:
+      command.type === 'status'
+        ? snapshot
+        : command.type === 'frame'
+          ? 'data:image/jpeg;base64,c3ludGhldGlj'
+          : {},
+  }));
+  Object.defineProperty(window, 'daban', {
+    value: {
+      platform: 'darwin',
+      runtime: { invoke, subscribe: () => () => undefined } as unknown as RuntimeBridge,
+    },
+    configurable: true,
+  });
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '继续处理' }));
+  const command = invoke.mock.calls
+    .map(([value]) => value)
+    .find((value) => value.type === 'task.start');
+  expect(command).toMatchObject({
+    type: 'task.start',
+    bot: 'a',
+    task: { prompt: '合成失败的插话', retryOf: 'mock-turn-run' },
+  });
+});
 it('keeps the draft editable after an explicit task validation rejection', async () => {
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = 1;

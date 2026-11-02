@@ -310,6 +310,7 @@ function Workbench() {
           result: task.result,
           error: task.error,
           files: task.files,
+          ...(task.turns?.length ? { turns: task.turns } : {}),
           response: ['failed', 'stopped', 'interrupted'].includes(task.phase)
             ? task.response
             : undefined,
@@ -327,6 +328,7 @@ function Workbench() {
           record.result,
           record.error,
           (record.files || []).map((file) => [file.path, file.name, file.size, file.modified]),
+          (record.turns || []).map((turn) => [turn.id, turn.prompt, turn.result, turn.error]),
           response && [response.revision, response.state, response.text],
         ]);
         // Streaming changes are rendered directly; unchanged history must not replay through the reducer on every frame.
@@ -473,9 +475,11 @@ function Workbench() {
   async function continueTask(botId: string) {
     const task = agentTask(runtime.snapshot, botId);
     if (!task?.runId || task.conversationId || !task.prompt || task.running) return;
+    // An inserted turn that failed keeps no reply; continuing must resume that turn, not replay finished work.
+    const unfinished = [...(task.turns || [])].reverse().find((turn) => !turn.result);
     await runTask(botId, {
       requestId: crypto.randomUUID(),
-      prompt: task.prompt,
+      prompt: unfinished?.prompt || task.prompt,
       retryOf: task.runId,
       ...(runtime.snapshot.protocolVersion >= 29
         ? { chatRevision: task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats) }

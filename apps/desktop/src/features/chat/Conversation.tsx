@@ -324,7 +324,7 @@ export function Conversation({
             <Markdown
               text={message.text}
               streaming={!!message.streaming || !!message.incomplete}
-              fileIds={message.files}
+              fileIds={message.files || message.references}
               files={state.files}
               preview={preview}
               openLink={openLink}

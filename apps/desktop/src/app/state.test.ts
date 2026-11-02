@@ -1200,6 +1200,88 @@ it('keeps each inserted turn and reply beside the original answer', () => {
     'SYNTHETIC INSERTED REPLY',
   );
 });
+it('shows completed turns while a later inserted turn is still streaming', () => {
+  const state = reduce(initialState(), {
+    type: 'runtime-task',
+    bot: 'research',
+    task: {
+      chatRevision: 0,
+      runId: 'mock-live-turn-run',
+      requestId: 'mock-live-turn-primary',
+      prompt: '合成第一问',
+      phase: 'running',
+      result: '',
+      error: '',
+      files: [],
+      response: { revision: 4, text: '合成第二问前缀', state: 'streaming' },
+      turns: [
+        { id: 'mock-live-turn-primary', prompt: '合成第一问', result: '合成第一答' },
+        { id: 'mock-live-turn-inserted', prompt: '合成第二问', result: '' },
+      ],
+    },
+  });
+  const messages = state.messages.research;
+  const order = [
+    'mock-live-turn-primary',
+    'runtime-turn:mock-live-turn-run:mock-live-turn-primary',
+    'inserted:mock-live-turn-inserted',
+  ];
+  const positions = order.map((id) => messages.findIndex((message) => message.id === id));
+  expect(
+    positions.every(
+      (position, index) => position >= 0 && (!index || position > positions[index - 1]),
+    ),
+  ).toBe(true);
+  expect(
+    messages.find(
+      (message) => message.id === 'runtime-turn:mock-live-turn-run:mock-live-turn-primary',
+    )?.text,
+  ).toBe('合成第一答');
+  expect(messages.find((message) => message.id === 'inserted:mock-live-turn-inserted')?.text).toBe(
+    '合成第二问',
+  );
+  // The running turn keeps its streaming slot so the live prefix is bound to the latest request.
+  expect(messages.some((message) => message.id === 'runtime-result:mock-live-turn-run')).toBe(
+    false,
+  );
+});
+it('gives every turn reply the task artifacts needed to preview its links', () => {
+  const state = reduce(initialState(), {
+    type: 'runtime-task',
+    bot: 'research',
+    task: {
+      chatRevision: 0,
+      runId: 'mock-artifact-run',
+      requestId: 'mock-artifact-primary',
+      prompt: '合成第一问',
+      phase: 'completed',
+      result: '合成第二答',
+      error: '',
+      files: [
+        {
+          path: 'model-runs/mock-artifact-run/a/report.md',
+          name: 'report.md',
+          size: 20,
+          modified: '2026-01-01',
+        },
+      ],
+      turns: [
+        { id: 'mock-artifact-primary', prompt: '合成第一问', result: '合成第一答' },
+        { id: 'mock-artifact-inserted', prompt: '合成第二问', result: '合成第二答' },
+      ],
+    },
+  });
+  const messages = state.messages.research;
+  const artifact = 'runtime:model-runs/mock-artifact-run/a/report.md';
+  expect(
+    messages.find(
+      (message) => message.id === 'runtime-turn:mock-artifact-run:mock-artifact-primary',
+    )?.references,
+  ).toEqual([artifact]);
+  expect(
+    messages.find((message) => message.id === 'runtime-result:mock-artifact-run')?.files,
+  ).toEqual([artifact]);
+});
 it('isolates prototype-shaped Bot IDs in the message queue', () => {
   let state = initialState();
   state = reduce(state, {

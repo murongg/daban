@@ -288,6 +288,7 @@ export function restore(raw: string | null): State {
             record(m) &&
             choice(m.role, ['user', 'bot', 'activity', 'notice']) &&
             (m.files === undefined || strings(m.files)) &&
+            (m.references === undefined || strings(m.references)) &&
             (m.author === undefined || typeof m.author === 'string'),
         )
       )

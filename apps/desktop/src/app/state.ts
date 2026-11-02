@@ -132,6 +132,7 @@ export interface Message {
   role: 'user' | 'bot' | 'activity' | 'notice';
   text: string;
   files?: string[];
+  references?: string[];
   handoff?: boolean;
   author?: string;
 }
@@ -869,55 +870,68 @@ export function reduce(state: State, action: Action): State {
         }
         artifacts.push(item.id);
       }
-      if (['completed', 'failed', 'stopped', 'interrupted'].includes(task.phase)) {
-        const turns = task.turns?.length
-          ? task.turns
-          : [{ id: task.requestId, prompt: task.prompt, result: task.result, error: task.error }];
-        const fallback =
-          task.phase === 'stopped'
-            ? t('state.taskStoppedSavedFilesRetained')
-            : t('state.taskFinishedCheckOutputFiles');
-        const turnUserId = (id: string) =>
-          id === task.requestId ? task.requestId : `inserted:${id}`;
-        turns.forEach((turn, index) => {
-          const last = index === turns.length - 1;
-          const next = turns[index + 1];
-          const before = next ? turnUserId(next.id) : undefined;
-          const userId = turnUserId(turn.id);
-          const saved = entries.find((message) => message.id === userId);
+      const finished = ['completed', 'failed', 'stopped', 'interrupted'].includes(task.phase);
+      const turns = task.turns?.length
+        ? task.turns
+        : finished
+          ? [{ id: task.requestId, prompt: task.prompt, result: task.result, error: task.error }]
+          : [];
+      const fallback =
+        task.phase === 'stopped'
+          ? t('state.taskStoppedSavedFilesRetained')
+          : t('state.taskFinishedCheckOutputFiles');
+      const turnUserId = (id: string) =>
+        id === task.requestId ? task.requestId : `inserted:${id}`;
+      turns.forEach((turn, index) => {
+        const last = index === turns.length - 1;
+        const next = turns[index + 1];
+        const before = next ? turnUserId(next.id) : undefined;
+        const userId = turnUserId(turn.id);
+        const saved = entries.find((message) => message.id === userId);
+        add(
+          {
+            id: userId,
+            role: 'user',
+            text: turn.prompt,
+            ...(saved?.files?.length ? { files: saved.files } : {}),
+          },
+          before,
+        );
+        // Finished turns keep their own reply on screen while a later turn streams.
+        if (!last) {
           add(
             {
-              id: userId,
-              role: 'user',
-              text: turn.prompt,
-              ...(saved?.files?.length ? { files: saved.files } : {}),
-            },
-            before,
-          );
-          if (last && task.phase !== 'completed' && task.response?.text)
-            add(
-              {
-                id: `runtime-partial:${task.runId}`,
-                role: 'bot',
-                text: task.response.text,
-                incomplete: true,
-              },
-              `runtime-result:${task.runId}`,
-            );
-          const text = last
-            ? task.result || turn.result || task.error || turn.error || fallback
-            : turn.result || turn.error || t('chathistory.noSavedResponses');
-          add(
-            {
-              id: last ? `runtime-result:${task.runId}` : `runtime-turn:${task.runId}:${turn.id}`,
+              id: `runtime-turn:${task.runId}:${turn.id}`,
               role: 'bot',
-              text,
-              ...(last && artifacts.length ? { files: artifacts } : {}),
+              text: turn.result || turn.error || t('chathistory.noSavedResponses'),
+              ...(artifacts.length ? { references: artifacts } : {}),
             },
             before,
           );
-        });
-      }
+          return;
+        }
+        // The latest turn streams through runtime-result until the task settles.
+        if (!finished) return;
+        if (task.phase !== 'completed' && task.response?.text)
+          add(
+            {
+              id: `runtime-partial:${task.runId}`,
+              role: 'bot',
+              text: task.response.text,
+              incomplete: true,
+            },
+            `runtime-result:${task.runId}`,
+          );
+        add(
+          {
+            id: `runtime-result:${task.runId}`,
+            role: 'bot',
+            text: task.result || turn.result || task.error || turn.error || fallback,
+            ...(artifacts.length ? { files: artifacts } : {}),
+          },
+          before,
+        );
+      });
       const pending = state.runtimeRequests[action.bot];
       const acknowledged = pending?.requestId === task.requestId;
       // An old accepted receipt settles uncertainty; it cannot erase work drafted in a later conversation.

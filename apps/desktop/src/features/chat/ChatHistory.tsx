@@ -251,8 +251,8 @@ export function ChatHistory({
                           <Markdown
                             text={text}
                             streaming={last && item.phase !== 'completed'}
-                            files={last ? files : []}
-                            fileIds={last ? files.map((file) => file.id) : []}
+                            files={files}
+                            fileIds={files.map((file) => file.id)}
                             preview={preview}
                             openLink={openLink}
                             copyText={copyText}
