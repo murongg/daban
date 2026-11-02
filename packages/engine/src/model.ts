@@ -54,6 +54,7 @@ import { Notes } from './notes.js';
 import { NotesTools } from './notes-tools.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
+import { promptCacheId } from './prompt-cache.js';
 import { redact, redactStream } from './redaction.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
 import type { ModelSettings, ResolvedModel } from './settings.js';
@@ -106,6 +107,7 @@ export function sdkPatch(
   bridge?: { socketPath: string; stdioEntry: string; certificateFile?: string },
   route?: ResolvedModel,
   sdkFile = defaultSdkFile,
+  cacheKey?: string,
 ) {
   const search = route ? !!route.searchApiKey : true;
   return [
@@ -127,6 +129,20 @@ export function sdkPatch(
     ].map((id) => ({ id, disabled: true })),
     {
       insert: [
+        ...(cacheKey && route
+          ? ([
+              {
+                id: 'daban-prompt-cache',
+                name: new URL('./prompt-cache.js', import.meta.url).href,
+                config: {
+                  api: route.api,
+                  baseURL: route.baseURL,
+                  model: route.apiModel,
+                  key: cacheKey,
+                },
+              },
+            ] as const)
+          : []),
         ...(task && skills.skills.length
           ? ([
               { id: 'daban-skills-registry', name: '@deepseek-ai/dsh-skill' },
@@ -1290,6 +1306,14 @@ export class ModelRuns {
             this.bridge,
             config,
             this.sdkFile,
+            promptCacheId({
+              workspace: this.dir,
+              provider: config.provider,
+              model: config.apiModel,
+              bot,
+              conversationId: job.conversationId,
+              chatRevision: job.chatRevision,
+            }),
           ),
         ),
         {
