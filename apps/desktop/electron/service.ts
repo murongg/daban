@@ -546,6 +546,14 @@ export function runtimeService(
         throw new Error('AGENT_UPDATE_BUSY');
       updating = true;
       try {
+        if (!nativeMode) {
+          const manager = daemon instanceof Daemon ? daemon : new Daemon(agentConfig);
+          daemon = manager;
+          if (await manager.inactive()) {
+            client = undefined;
+            return;
+          }
+        }
         await prepareAgentUpdate({ ...agentConfig, scope: agentScope! });
         client = undefined;
       } catch (error) {
