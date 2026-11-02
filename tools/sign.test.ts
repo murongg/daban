@@ -87,3 +87,32 @@ test('release signing rejects ad-hoc identities before touching an artifact', as
     /DEVELOPER_ID_REQUIRED/,
   );
 });
+
+test('signs native code and bundles while treating compressed guest images as data', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'daban-signing-files-'));
+  try {
+    const app = path.join(root, 'Synthetic.app');
+    await mkdir(app);
+    const native = path.join(app, 'synthetic.node');
+    const image = path.join(app, 'system.raw.gz');
+    await writeFile(native, Buffer.from('cffaedfe00000000', 'hex'));
+    await writeFile(image, Buffer.from('1f8b080000000000', 'hex'));
+    await signApplication(
+      app,
+      { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
+      {
+        sign: async (options) => {
+          assert.equal(typeof options.ignore, 'function');
+          if (typeof options.ignore !== 'function') throw Error('SIGNING_FILTER_MISSING');
+          assert.equal(options.ignore(app), false);
+          assert.equal(options.ignore(native), false);
+          assert.equal(options.ignore(image), true);
+        },
+        seal: async () => undefined,
+        run: async () => '',
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
+import { closeSync, constants, openSync, readSync, statSync } from 'node:fs';
 import {
   cp,
   mkdir,
@@ -136,6 +136,18 @@ export async function signApplication(
     type: 'distribution',
     preAutoEntitlements: false,
     preEmbedProvisioningProfile: false,
+    ignore: (file) => {
+      if (!statSync(file).isFile()) return false;
+      const handle = openSync(file, 'r');
+      try {
+        const bytes = Buffer.alloc(4);
+        readSync(handle, bytes, 0, 4, 0);
+        // Binary detection alone includes gzip images and fonts; these are sealed resources, not code.
+        return !isMachO(bytes);
+      } finally {
+        closeSync(handle);
+      }
+    },
     optionsForFile: () => ({ entitlements: appEntitlements, hardenedRuntime: true }),
   });
   // Nested signatures change Node/native bytes. Rebuild our host manifest before sealing the outer bundle.
@@ -176,10 +188,13 @@ async function main() {
   signingArguments(options);
   assert.ok(process.env.MACOS_NOTARY_PROFILE, 'MACOS_NOTARY_PROFILE_REQUIRED');
   await mkdir(output);
+  console.log('Signing the pinned Lima tools.');
   await signLima(path.join(app, 'Contents/Resources'), options);
+  console.log('Signing nested application code and sealing the host package.');
   await signApplication(app, options);
   const upload = path.join(output, 'notarization.zip');
   await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, upload]);
+  console.log('Submitting the signed application for Apple notarization.');
   await notarize(upload, options);
   await rm(upload);
   await run('/usr/bin/xcrun', ['stapler', 'staple', app]);
@@ -190,6 +205,7 @@ async function main() {
   ).version;
   assert.match(version, /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/);
   const staging = await mkdtemp(path.join(tmpdir(), 'daban-dmg-'));
+  console.log('The application passed notarization; building the distribution images.');
   try {
     await cp(app, path.join(staging, 'Daban.app'), {
       recursive: true,
@@ -210,6 +226,7 @@ async function main() {
       dmg,
     ]);
     await run('/usr/bin/codesign', [...signingArguments(options), dmg]);
+    console.log('Submitting the signed disk image for Apple notarization.');
     await notarize(dmg, options);
     await run('/usr/bin/xcrun', ['stapler', 'staple', dmg]);
     await run('/usr/bin/xcrun', ['stapler', 'validate', dmg]);
