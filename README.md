@@ -10,6 +10,8 @@ Daban 是基于 DeepSeek Harness 的桌面 AI 工作区。你可以和 Bot 聊�
 
 目前处于早期预览阶段。Apple 芯片 Mac 支持 Linux 虚拟机和本机桌面两种模式；Windows x64 提供本机桌面模式。
 
+使用说明：[简体中文](docs/zh-CN/README.md) · [English](docs/en/README.md) · [文档首页](docs/README.md)
+
 ## 能做什么
 
 - **从一个搭档开始**：在 Bot 广场选择预设，或创建自己的 Bot，设置职责、模型和工作偏好。

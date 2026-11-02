@@ -1,6 +1,6 @@
 # 开发指南
 
-本页说明源码开发、完整客户端运行与本地打包。产品介绍和使用入口见 [README](../README.md)。
+本页说明源码开发、完整客户端运行与本地打包。产品介绍见 [README](../README.md)，实际使用见[中文使用文档](zh-CN/README.md)或 [English user guide](en/README.md)。
 
 ## 环境要求
 
@@ -86,7 +86,7 @@ npm run test:runtime  # 执行与领域服务测试
 npm run build         # 构建全部工作区
 ```
 
-界面文案以 `apps/desktop/locale.ts` 的翻译入口和 `apps/desktop/locales/en.ts` 的英文目录维护，中文原文同时作为默认文案；插值使用 `{0}`、`{1}` 等占位符。只翻译应用自身文案，保留用户内容、模型回复、稳定标识、枚举值和审批参数；历史样例迁移数据不可随文案修改。
+界面文案通过 `apps/desktop/src/locale.ts` 的类型化翻译入口读取，英文语义 key 在 `apps/desktop/locales/en.ts` 与 `zh-CN.ts` 中成对维护；插值使用 `{0}`、`{1}` 等占位符，不使用中文原文作为 key。只翻译应用自身文案，保留用户内容、模型回复、稳定标识、枚举值和审批参数；历史样例迁移数据不可随文案修改。
 
 格式化使用 `npm run format`。行为变更先写使用合成数据的失败测试，再运行相关检查；不要把真实用户内容或凭据放进测试。
 
