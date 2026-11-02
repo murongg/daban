@@ -23,8 +23,8 @@ import { environmentAssets, hashAsset, verifyAsset } from './environment.ts';
 import { sealHostPackage } from './roles.ts';
 
 const execute = promisify(execFile);
-const run = async (program: string, args: string[]) =>
-  (await execute(program, args, { timeout: 35 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 })).stdout;
+const run = async (program: string, args: string[], timeout = 35 * 60 * 1000) =>
+  (await execute(program, args, { timeout, maxBuffer: 4 * 1024 * 1024 })).stdout;
 const appEntitlements = fileURLToPath(new URL('./entitlements/app.plist', import.meta.url));
 const limaEntitlements = fileURLToPath(new URL('./entitlements/lima.plist', import.meta.url));
 interface Signing {
@@ -159,21 +159,50 @@ async function notarize(file: string, options: Signing) {
   const profile = process.env.MACOS_NOTARY_PROFILE;
   assert.ok(profile, 'MACOS_NOTARY_PROFILE_REQUIRED');
   const result = JSON.parse(
-    await run('/usr/bin/xcrun', [
-      'notarytool',
-      'submit',
-      file,
-      '--keychain-profile',
-      profile,
-      ...(options.keychain ? ['--keychain', options.keychain] : []),
-      '--wait',
-      '--timeout',
-      '30m',
-      '--output-format',
-      'json',
-    ]),
+    await run(
+      '/usr/bin/xcrun',
+      [
+        'notarytool',
+        'submit',
+        file,
+        '--keychain-profile',
+        profile,
+        ...(options.keychain ? ['--keychain', options.keychain] : []),
+        '--wait',
+        '--timeout',
+        '30m',
+        '--output-format',
+        'json',
+      ],
+      65 * 60 * 1000,
+    ),
   );
   assert.equal(result.status, 'Accepted', `NOTARIZATION_REJECTED:${String(result.id)}`);
+}
+export async function notarizeDistribution(
+  app: string,
+  dmg: string,
+  options: Signing,
+  dependencies: {
+    submit: (file: string, options: Signing) => Promise<unknown>;
+    run: Run;
+  } = { submit: notarize, run },
+) {
+  // The outer DMG submission issues tickets for its nested app too; keep its signed payload unchanged.
+  await dependencies.submit(dmg, options);
+  for (const file of [app, dmg]) {
+    await dependencies.run('/usr/bin/xcrun', ['stapler', 'staple', file]);
+    await dependencies.run('/usr/bin/xcrun', ['stapler', 'validate', file]);
+  }
+  await dependencies.run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
+  await dependencies.run('/usr/sbin/spctl', [
+    '--assess',
+    '--type',
+    'open',
+    '--context',
+    'context:primary-signature',
+    dmg,
+  ]);
 }
 async function main() {
   assert.equal(process.platform, 'darwin');
@@ -192,20 +221,13 @@ async function main() {
   await signLima(path.join(app, 'Contents/Resources'), options);
   console.log('Signing nested application code and sealing the host package.');
   await signApplication(app, options);
-  const upload = path.join(output, 'notarization.zip');
-  await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, upload]);
-  console.log('Submitting the signed application for Apple notarization.');
-  await notarize(upload, options);
-  await rm(upload);
-  await run('/usr/bin/xcrun', ['stapler', 'staple', app]);
-  await run('/usr/bin/xcrun', ['stapler', 'validate', app]);
-  await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
   const version = JSON.parse(
     await readFile(path.join(app, 'Contents/Resources/app/package.json'), 'utf8'),
   ).version;
   assert.match(version, /^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/);
+  const dmg = path.resolve(output, `Daban-${version}-macos-arm64.dmg`);
   const staging = await mkdtemp(path.join(tmpdir(), 'daban-dmg-'));
-  console.log('The application passed notarization; building the distribution images.');
+  console.log('Building the signed distribution image.');
   try {
     await cp(app, path.join(staging, 'Daban.app'), {
       recursive: true,
@@ -213,7 +235,6 @@ async function main() {
       mode: constants.COPYFILE_FICLONE,
     });
     await symlink('/Applications', path.join(staging, 'Applications'));
-    const dmg = path.resolve(output, `Daban-${version}-macos-arm64.dmg`);
     await run('/usr/bin/hdiutil', [
       'create',
       '-volname',
@@ -226,21 +247,11 @@ async function main() {
       dmg,
     ]);
     await run('/usr/bin/codesign', [...signingArguments(options), dmg]);
-    console.log('Submitting the signed disk image for Apple notarization.');
-    await notarize(dmg, options);
-    await run('/usr/bin/xcrun', ['stapler', 'staple', dmg]);
-    await run('/usr/bin/xcrun', ['stapler', 'validate', dmg]);
-    await run('/usr/sbin/spctl', [
-      '--assess',
-      '--type',
-      'open',
-      '--context',
-      'context:primary-signature',
-      dmg,
-    ]);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
+  console.log('Submitting the signed disk image for Apple notarization.');
+  await notarizeDistribution(app, dmg, options);
   await run('/usr/bin/ditto', [
     '-c',
     '-k',

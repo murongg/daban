@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isMachO, sealSignedLima, signApplication } from './sign.ts';
+import { isMachO, notarizeDistribution, sealSignedLima, signApplication } from './sign.ts';
 
 test('detects native macOS code without treating scripts and Linux guests as signable', () => {
   for (const hex of ['cffaedfe', 'feedfacf', 'cafebabe', 'bebafeca', 'cafebabf'])
@@ -114,5 +114,32 @@ test('signs native code and bundles while treating compressed guest images as da
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('submits only the outer disk image and validates tickets for both download formats', async () => {
+  const events: string[] = [];
+  await notarizeDistribution(
+    '/synthetic/Daban.app',
+    '/synthetic/Daban.dmg',
+    {
+      identity: 'Developer ID Application: Synthetic (TESTTEAM01)',
+    },
+    {
+      submit: async (file) => {
+        events.push(`submit:${file}`);
+      },
+      run: async (_program, args) => {
+        events.push(args.join(' '));
+        return '';
+      },
+    },
+  );
+  assert.equal(events.filter((event) => event.startsWith('submit:')).length, 1);
+  assert.equal(events[0], 'submit:/synthetic/Daban.dmg');
+  for (const file of ['/synthetic/Daban.app', '/synthetic/Daban.dmg']) {
+    assert.ok(events.includes(`stapler staple ${file}`));
+    assert.ok(events.includes(`stapler validate ${file}`));
+    assert.ok(events.some((event) => event.startsWith('--assess') && event.endsWith(file)));
   }
 });

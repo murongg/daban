@@ -77,7 +77,7 @@ git push origin v0.1.0
 - Windows x64：已通过首次启动检查的便携 `.zip`，当前未做 Windows Authenticode 签名。
 - `CHANGELOG.zh-CN.md`、`CHANGELOG.en.md` 和 `SHA256SUMS.txt`；GitHub Release 正文同时展示两种语言和原始 PR/比较链接。
 
-macOS 过程会签名 Electron、内嵌 Node、原生模块与 Lima，重新固定签名后 Lima 的摘要，再生成宿主机完整性清单和应用外层签名。公证使用 Hardened Runtime；应用和 DMG 均通过 `stapler validate` 与 Gatekeeper 检查后才上传。
+macOS 过程会签名 Electron、内嵌 Node、原生模块与 Lima，重新固定签名后 Lima 的摘要，再生成宿主机完整性清单和应用外层签名。公证使用 Hardened Runtime；按 [Apple 的发行流程](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)，只提交最外层 DMG，即可取得容器与嵌套应用的票据，避免重复上传整个大包。应用和 DMG 均通过 `stapler validate` 与 Gatekeeper 检查后才上传；ZIP 在应用附票后生成。
 
 当前不构建 Intel Mac、Linux 客户端或应用内自动更新。普通 CI 不会自动启动 VM、调用真实模型或申请桌面控制权限。
 
