@@ -24,3 +24,5 @@ Hosted cloud execution, a mobile client, and live cross-device synchronization r
 源码运行、构建、检查与打包见[开发指南（中文）](development.md)。
 
 For source development, checks, builds, and packaging, see the [developer guide (Chinese)](development.md).
+
+持续集成、Apple 签名与公证、版本发布和双语更新日志见 [CI 与 Release / CI and releases](releasing.md)。

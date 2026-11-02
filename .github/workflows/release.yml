@@ -51,6 +51,9 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      # GitHub's generate-notes API requires write permission even though it does not save a release.
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:

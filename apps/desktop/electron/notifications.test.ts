@@ -534,6 +534,9 @@ it('waits for an in-flight native history read before disposing its owner', asyn
   const entered = new Promise((resolve) => {
     mock.historyCalled = () => resolve(undefined);
   });
+  // getHistory is a macOS API; exercise its mocked lifecycle on Linux/Windows runners too.
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
   const owner = new Notifications(file, {
     foreground: () => false,
     open: () => {},
@@ -554,8 +557,12 @@ it('waits for an in-flight native history read before disposing its owner', asyn
     release();
     mock.historyGate = undefined;
     mock.historyCalled = () => {};
-    await owner.close();
-    await fs.rm(root, { recursive: true, force: true });
+    try {
+      await owner.close();
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      await fs.rm(root, { recursive: true, force: true });
+    }
   }
 });
 it('reports a native test as submitted and surfaces a later OS failure without inventing permission or delivery', async () => {
