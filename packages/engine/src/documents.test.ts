@@ -39,6 +39,7 @@ test('the document worker arguments start a real Node ES module without a packag
 });
 
 test('relocated document readers bind their own code and protocol plus only Linux parser dependencies', () => {
+  const sourceEntry = path.join('/mock/engine/dist', 'extract.js');
   const command = documentCommand(
     {
       source: '/mock/engine/dist',
@@ -52,11 +53,8 @@ test('relocated document readers bind their own code and protocol plus only Linu
   assert.ok(command.args.includes('--unshare-all'));
   assert.ok(command.args.includes('--clearenv'));
   assert.deepEqual(
-    command.args.slice(
-      command.args.indexOf('/mock/engine/dist/extract.js'),
-      command.args.indexOf('/mock/engine/dist/extract.js') + 2,
-    ),
-    ['/mock/engine/dist/extract.js', '/app/runtime/extract.mjs'],
+    command.args.slice(command.args.indexOf(sourceEntry), command.args.indexOf(sourceEntry) + 2),
+    [sourceEntry, '/app/runtime/extract.mjs'],
   );
   assert.deepEqual(
     command.args.slice(
