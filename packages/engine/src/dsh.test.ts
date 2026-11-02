@@ -149,16 +149,36 @@ test('a checkpoint I/O failure cannot turn an otherwise healthy runtime into a s
         `
       import fs from 'node:fs';
       import {syncBuiltinESMExports} from 'node:module';
-      fs.closeSync=()=>{throw new Error('mock close failure');};
+      const checkpoint=process.env.DABAN_DSH_STARTUP_FILE+'.tmp';
+      const open=fs.openSync;
+      const close=fs.closeSync;
+      const descriptors=new Set();
+      let failures=0;
+      // Node also closes module-loader files; inject the fault only into our checkpoint descriptors.
+      fs.openSync=(file,...args)=>{
+        const descriptor=open(file,...args);
+        if(String(file)===checkpoint)descriptors.add(descriptor);
+        return descriptor;
+      };
+      fs.closeSync=(descriptor)=>{
+        if(descriptors.delete(descriptor)){
+          close(descriptor);
+          failures++;
+          throw new Error('mock close failure');
+        }
+        return close(descriptor);
+      };
       syncBuiltinESMExports();
       await import(${JSON.stringify(new URL('./dsh-preload.js', import.meta.url).href)});
       process.stderr.write('mock startup output');
-      process.stdout.write('mock runtime still runs');
+      process.stdout.write(JSON.stringify({running:true,failures}));
     `,
       ],
       { cwd: root, env: childEnvironment(path.join(root, 'snapshot.json')), timeout: 10000 },
     );
-    assert.equal(result.stdout, 'mock runtime still runs');
+    const resultValue = JSON.parse(result.stdout);
+    assert.equal(resultValue.running, true);
+    assert.ok(resultValue.failures > 0, 'the checkpoint fault must actually be exercised');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
