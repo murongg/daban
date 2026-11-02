@@ -1,6 +1,5 @@
 import { agentId, agentTask, isModelId, type RuntimeTask, recoveryBlocked } from '@daban/protocol';
 import {
-  ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
   Check,
@@ -9,6 +8,7 @@ import {
   ExternalLink,
   FileText,
   Info,
+  MessageSquarePlus,
   Mic,
   Monitor,
   Paperclip,
@@ -548,7 +548,7 @@ export function Conversation({
                           label={t('chat.insertQueuedMessage', { 0: text })}
                           onClick={() => onQueueInsert(item.id)}
                         >
-                          <ArrowDownToLine />
+                          <MessageSquarePlus />
                         </IconButton>
                       )}
                       {index > 0 && onQueuePromote && (
