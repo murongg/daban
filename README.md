@@ -1,16 +1,27 @@
-<p>
+<div align="center">
   <img src="apps/desktop/public/app-icon.png" width="80" alt="Daban 图标" />
-</p>
 
-# Daban
+  <h1>Daban</h1>
 
-**你的 AI 搭子，也有自己的电脑。**
+  <p><strong>你的 AI 搭子，也有自己的电脑。</strong></p>
 
-Daban 是基于 DeepSeek Harness 的桌面 AI 工作区。你可以和 Bot 聊天、查资料、处理文件，也可以让它使用独立的 Linux 桌面，操作浏览器、终端和其他应用。需要时，随时接管它的屏幕。
+  <p>
+    <a href="https://github.com/murongg/daban/actions/workflows/native-desktop.yml"><img src="https://github.com/murongg/daban/actions/workflows/native-desktop.yml/badge.svg?branch=main" alt="Native desktop CI" /></a>
+    <a href="#当前进度"><img src="https://img.shields.io/badge/status-early%20preview-9a6700" alt="Early preview" /></a>
+    <a href="#如何开始"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-555555" alt="macOS 和 Windows" /></a>
+    <a href="https://www.electronjs.org/"><img src="https://img.shields.io/badge/Electron-47848f?logo=electron&amp;logoColor=white" alt="Electron" /></a>
+    <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&amp;logoColor=white" alt="TypeScript" /></a>
+    <a href="https://github.com/murongg/daban/stargazers"><img src="https://img.shields.io/github/stars/murongg/daban?style=flat&amp;logo=github&amp;cacheSeconds=300" alt="GitHub stars" /></a>
+  </p>
 
-目前处于早期预览阶段。Apple 芯片 Mac 支持 Linux 虚拟机和本机桌面两种模式；Windows x64 提供本机桌面模式。
+  <p>Daban 是基于 DeepSeek Harness 的桌面 AI 工作区。你可以和 Bot 聊天、查资料、处理文件，也可以让它使用独立的 Linux 桌面，操作浏览器、终端和其他应用。需要时，随时接管它的屏幕。</p>
 
-使用说明：[简体中文](docs/zh-CN/README.md) · [English](docs/en/README.md) · [文档首页](docs/README.md)
+  <p>目前处于早期预览阶段。Apple 芯片 Mac 支持 Linux 虚拟机和本机桌面两种模式；Windows x64 提供本机桌面模式。</p>
+
+  <p>
+    使用说明：<a href="docs/zh-CN/README.md">简体中文</a> · <a href="docs/en/README.md">English</a> · <a href="docs/README.md">文档首页</a>
+  </p>
+</div>
 
 ## 能做什么
 

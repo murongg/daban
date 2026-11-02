@@ -1,50 +1,50 @@
-# daban 项目约束
+# Daban Project Guidelines
 
-## 源码语言
+## Source Language
 
-- 项目自己维护的客户端、Electron 主进程、预加载、Linux 运行时、浏览器脚本和测试全部使用 TypeScript。
-- JavaScript 只允许作为构建产物或第三方依赖存在；不得将手写逻辑放进生成目录规避此规则。
+- All project-maintained client code, Electron main and preload code, Linux runtime code, browser scripts, and tests must use TypeScript.
+- JavaScript is allowed only in build output and third-party dependencies. Do not place handwritten logic in generated directories to bypass this rule.
 
-## 禁止 void 关键字
+## No `void` Keyword
 
-- TS / TSX 源码禁止使用 `void` 关键字，包括 `void` 表达式和显式的 `void` 返回类型。
-- 异步操作使用 `await`，或提供明确的 `.catch(...)` 错误处理；禁止通过丢弃 Promise 隐藏失败。
-- 无返回值函数优先让 TypeScript 推断类型；回调契约可按语义使用 `unknown`，需要表达空值时使用 `undefined`。
-- 不得通过关闭严格检查、使用 `@ts-nocheck`、改成 `any` 或漏掉编译入口绕过检查。
+- TS / TSX source must not use the `void` keyword, including expressions and explicit return types.
+- Await asynchronous operations or handle failures explicitly with `.catch(...)`. Do not hide failures by discarding Promises.
+- Prefer inferred return types for functions that return no value. Use `unknown` for callback contracts where appropriate and `undefined` when an empty value must be explicit.
+- Do not bypass these rules by relaxing strict checks, adding `@ts-nocheck`, using `any`, or omitting files from compilation entry points.
 
-## 验证
+## Verification
 
-- `npm run check:source`：维护目录中只允许 TypeScript，并检查实际语法节点中没有禁用关键字。
-- `npm run typecheck`：客户端、Electron、Linux 运行时、构建脚本和测试的严格类型检查。
-- 修改行为时先写失败测试，使用合成数据；运行相关客户端、运行时及 Linux 集成回归。
-- 任务控制权、请求去重和文件访问检查不可被简化掉。关闭窗口不应停止虚拟机内正在执行的任务。
+- `npm run check:source` verifies that maintained directories contain only TypeScript and checks actual syntax nodes for forbidden keywords.
+- `npm run typecheck` runs strict type checks for the client, Electron, Linux runtime, build scripts, and tests.
+- For behavior changes, write a failing test first using synthetic data, then run the relevant client, runtime, and Linux integration regressions.
+- Do not weaken task ownership, request deduplication, or file access checks. Closing a window must not stop tasks running inside the VM.
 
-## 多语言
+## Internationalization
 
-- 翻译 key 使用英文语义标识，如 `settings.title`、`models.loadList`；不得使用中文文案作为 key，也不保留中文 key 的兼容映射。
-- 中文和英文文案分别维护在 `apps/desktop/locales/zh-CN.ts` 与 `en.ts`，两份字典的 key 和占位符必须一致。
-- 应用文案通过类型化的 `MessageKey` 调用；用户内容、模型输出、已保存的名称和业务枚举值保持原样，不作为翻译 key。
+- Translation keys must be semantic English identifiers, such as `settings.title` and `models.loadList`. Do not use Chinese text as keys or retain compatibility mappings for Chinese keys.
+- Maintain Chinese and English messages in `apps/desktop/locales/zh-CN.ts` and `en.ts`. Both dictionaries must have matching keys and placeholders.
+- Access application copy through typed `MessageKey` values. Preserve user content, model output, saved names, and domain enum values as authored; do not turn them into translation keys.
 
-## 可读性与代码检查
+## Readability and Linting
 
-- 维护的源码不得手写成压缩式代码，不得把多条独立语句挤在同一行；使用正常缩进、换行和清晰的代码块。
-- 使用项目锁定版本的 Biome 统一格式化和 lint：`npm run format`、`npm run lint`。
-- 保留严格 TypeScript 和禁用关键字检查；不得通过关闭检查或大范围忽略规则掩盖问题。
-- 构建产物和第三方依赖不参与源码格式化。
+- Do not handwrite minified source or pack independent statements onto one line. Use normal indentation, line breaks, and clear code blocks.
+- Use the pinned Biome version for consistent formatting and linting: `npm run format` and `npm run lint`.
+- Keep strict TypeScript and forbidden-keyword checks enabled. Do not hide problems by disabling checks or adding broad rule exclusions.
+- Exclude build output and third-party dependencies from source formatting.
 
-Biome 保留现有非空断言、CSS 层叠顺序和必要的 `!important` 风格；这些不作为 lint 禁令。正确性与可访问性检查保持开启。远程桌面焦点和弹窗背景的规则例外必须就近说明原因，不得移除键盘退出、焦点管理或控制权检查。
+Biome preserves existing non-null assertions, CSS cascade ordering, and necessary `!important` usage; these are not lint bans. Correctness and accessibility checks remain enabled. Explain exceptions for remote desktop focus and modal backdrops next to the affected code. Preserve keyboard dismissal, focus management, and control ownership checks.
 
-## 工作区边界
+## Workspace Boundaries
 
-- 使用 npm workspaces：`apps/desktop`（客户端）、`apps/agent`（宿主机控制服务）、`apps/runtime`（Linux 执行服务）、`packages/engine`（分角色实现库）、`packages/protocol`（公开协议）；仓库工具放在 `tools`。
-- 应用的依赖由应用声明；共享协议只通过 `@daban/protocol` 的公开入口导入。禁止应用互相导入、跨工作区相对路径和访问包内部源码。
-- 根目录命令按协议包 → 实现库 → 应用的顺序构建；保持现有构建入口和用户数据路径的兼容。
-- `apps/runtime/standalone-lock.json` 用于独立 Linux 部署，`apps/agent/standalone-lock.json` 用于宿主机后台部署。更新依赖时同步根 lockfile 与对应独立 lockfile，不依赖开发机 workspace 链接。
+- Use npm workspaces: `apps/desktop` for the client, `apps/agent` for the host control service, `apps/runtime` for the Linux execution service, `packages/engine` for role-specific implementations, and `packages/protocol` for the public protocol. Repository tooling belongs in `tools`.
+- Applications must declare their own dependencies. Import shared protocol definitions only through the public `@daban/protocol` entry point. Do not import between applications, use cross-workspace relative imports, or access package-internal source files.
+- Root commands build in this order: protocol package, implementation library, then applications. Preserve compatibility with existing build entry points and user data paths.
+- `apps/runtime/standalone-lock.json` supports standalone Linux deployment; `apps/agent/standalone-lock.json` supports host service deployment. When updating dependencies, synchronize the root lockfile and the corresponding standalone lockfiles. Do not depend on development-machine workspace links.
 
-## 验收产物与磁盘空间
+## Verification Artifacts and Disk Usage
 
-- 每个验收阶段结束后清理可重建的历史产物：客户端保留现用版本和一个回退版本，完整环境包保留最新版本和一个前序版本；报告、日志和清理记录可继续保留。
-- 测试虚拟机通常只保留一个可复用环境。独立安装验证临时创建的额外实例，在验证完成且不再承担恢复用途后及时退役；纯净镜像构建机按当前构建需要保留。
-- 删除测试 VM 前，核对验收报告、实际目录和镜像来源，确认已停止且无磁盘占用，再使用虚拟机管理器删除；不得仅凭目录名或历史报告批量删除。
-- 压缩环境包通过校验、使用方已停止且原始缓存可重建后，移除中间裸镜像和过期环境包。历史记录中的已退役资源不得因后续续跑而自动重建。
-- 不清理现用虚拟机、用户工作区、登录凭据或恢复备份；不删除运行中的客户端和测试资源。清理前后用 `df` 记录实际空间变化，避免将稀疏磁盘或克隆共享块的目录大小直接相加。
+- After each verification phase, remove obsolete artifacts that can be rebuilt. Keep the current client and one rollback version, and the latest complete environment package plus one previous version. Reports, logs, and cleanup records may be retained.
+- Normally keep one reusable test VM. Retire extra instances created for standalone installation checks after verification finishes and they are no longer needed for recovery. Keep clean-image build VMs only as required by current build work.
+- Before deleting a test VM, check the verification reports, actual directory, and image provenance. Confirm that the VM is stopped and its disks are not in use, then delete it through the VM manager. Do not bulk-delete based only on directory names or historical reports.
+- Once a compressed environment package passes verification, its consumers have stopped, and its original cache can be rebuilt, remove intermediate raw images and obsolete environment packages. Do not automatically recreate previously retired resources during later work.
+- Do not clean up currently used VMs, user workspaces, login credentials, or recovery backups. Do not delete running clients or active test resources. Record actual disk usage with `df` before and after cleanup; do not simply add directory sizes for sparse disks or clones that share storage blocks.
