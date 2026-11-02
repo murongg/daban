@@ -67,6 +67,10 @@ export class SkillTools {
       Object.assign(this.fields, discovery.fields);
     }
   }
+  release(run: AgentToolRun) {
+    this.prepared.delete(run);
+    this.discovery?.release(run);
+  }
   async invoke(
     run: AgentToolRun,
     name: string,

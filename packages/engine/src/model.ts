@@ -1313,6 +1313,7 @@ export class ModelRuns {
       return this.publicJob(job);
     } catch (error) {
       if (job.skills) this.skills.release(job.skills);
+      this.tools.skills?.release(job);
       job.imageInputs = undefined;
       job.running = false;
       job.phase = job.abort.signal.aborted ? 'stopped' : 'failed';
@@ -1624,6 +1625,8 @@ export class ModelRuns {
         job.error = 'EXECUTOR_DRAIN_UNAVAILABLE';
       });
       if (job.skills) this.skills.release(job.skills);
+      // Completed jobs remain visible in the UI; their preview buffers must not live as long as that retained job.
+      this.tools.skills?.release(job);
       // Native shutdown and endRun can still settle tools or cancel human cards; close their transcript afterwards.
       if (job.transcript && !job.transcriptFailed) {
         try {

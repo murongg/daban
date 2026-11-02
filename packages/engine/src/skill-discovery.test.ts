@@ -112,6 +112,10 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
       await accepted,
     );
     assert.equal((await cards.list()).length, 2);
+    Reflect.get(tools, 'release').call(tools, nextRun);
+    await assert.rejects(tools.invoke(nextRun, 'skill_install', { previewId: next.previewId }), {
+      code: 'SKILL_PREVIEW_EXPIRED',
+    });
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });

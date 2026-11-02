@@ -87,6 +87,9 @@ export class SkillDiscovery {
     private readonly cards: Interactions,
     private readonly sources: Pick<SkillSources, 'search' | 'preview'> = new SkillSources(),
   ) {}
+  release(run: AgentToolRun) {
+    this.previews.delete(run);
+  }
   async invoke(
     run: AgentToolRun,
     name: string,

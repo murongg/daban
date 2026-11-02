@@ -69,7 +69,16 @@ test('captured Bot skills use native plugins, change only the next task, and fen
   try {
     await settings.save({ apiKey: 'synthetic-skills-key' });
     await models.ready;
+    const released: unknown[] = [],
+      tools = models.tools.skills!,
+      originalRelease = Reflect.get(tools, 'release');
+    Reflect.set(tools, 'release', (run: unknown) => {
+      released.push(run);
+      if (typeof originalRelease === 'function')
+        return Reflect.apply(originalRelease, tools, [run]);
+    });
     const plain = await turn('mock-a', 'mock-no-skills', '合成普通问候');
+    assert.equal(released.length, 1, 'Completed jobs must release task-owned package buffers');
     const skill = await models.skills.import(document('SYNTHETIC-ORIGINAL'));
     await models.skills.bind('mock-a', {
       id: skill.id,
