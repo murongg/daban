@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { releaseVersion } from './release.ts';
+import { macVersion, releaseVersion } from './release.ts';
 
 test('accepts stable and prerelease tags only when all workspace versions agree', () => {
   assert.equal(releaseVersion('v1.2.3', ['1.2.3', '1.2.3']), '1.2.3');
@@ -13,6 +13,12 @@ test('accepts stable and prerelease tags only when all workspace versions agree'
   for (const tag of ['main', 'v01.2.3', 'v1.2', 'v1.2.3;echo injected', 'v1.2.3\n'])
     assert.throws(() => releaseVersion(tag, ['1.2.3']), /RELEASE_TAG/);
   assert.throws(() => releaseVersion('v1.2.3', ['1.2.3', '1.2.2']), /RELEASE_VERSION/);
+});
+
+test('keeps prerelease identifiers out of Apple numeric bundle version fields', () => {
+  assert.equal(macVersion('1.2.3'), '1.2.3');
+  assert.equal(macVersion('1.2.3-beta.1'), '1.2.3');
+  assert.throws(() => macVersion('synthetic-invalid-version'));
 });
 
 test('the CLI emits release outputs only for a matching tag whose commit belongs to main', async () => {

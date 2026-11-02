@@ -14,6 +14,12 @@ export function releaseVersion(tag: string, versions: string[]) {
   assert.ok(versions.length && versions.every((value) => value === version), 'RELEASE_VERSION');
   return version;
 }
+export function macVersion(version: string) {
+  const match = /^(\d+\.\d+\.\d+)(?:-[a-zA-Z0-9.-]+)?$/.exec(version);
+  assert.ok(match, 'MACOS_BUNDLE_VERSION');
+  // The full prerelease stays in package.json and artifact names; Apple's bundle fields are numeric.
+  return match[1];
+}
 async function main() {
   const tag = process.env.RELEASE_TAG ?? '';
   const packages = [
