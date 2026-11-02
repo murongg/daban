@@ -1,6 +1,42 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { documentCommand } from './documents.js';
+
+test('the document worker arguments start a real Node ES module without a package manifest', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'mock-document-entry-'));
+  try {
+    const { args } = documentCommand(
+      {
+        source: '/mock/source',
+        dependencies: '/mock/deps',
+        parserDependencies: '/mock/deps',
+        engine: '/mock/node',
+      },
+      'pdf',
+    );
+    const command = args.slice(args.indexOf('/engine/bin/node') + 1);
+    const index = command.findIndex((value) => value.startsWith('/app/runtime/extract.'));
+    assert.ok(index >= 0);
+    const entry = path.join(directory, path.posix.basename(command[index]));
+    await writeFile(
+      entry,
+      "import { argv } from 'node:process'; process.stdout.write(JSON.stringify({ format: argv[2], esm: import.meta.url.startsWith('file:') }));",
+    );
+    command[index] = entry;
+    const result = await promisify(execFile)(process.execPath, command, {
+      cwd: directory,
+      timeout: 5000,
+    });
+    assert.deepEqual(JSON.parse(result.stdout), { format: 'pdf', esm: true });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('relocated document readers bind their own code and protocol plus only Linux parser dependencies', () => {
   const command = documentCommand(
