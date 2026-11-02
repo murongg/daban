@@ -202,8 +202,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          EXPECTED_COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
           set -euo pipefail
+          # Signing can take a while; never attach old binaries to a tag moved during the build.
+          actual_commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)
+          test "$actual_commit" = "$EXPECTED_COMMIT"
           args=()
           if [ "$PRERELEASE" = true ]; then args+=(--prerelease); fi
           gh release create "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "Daban $RELEASE_TAG" --notes-file notes/notes.md "${args[@]}"
