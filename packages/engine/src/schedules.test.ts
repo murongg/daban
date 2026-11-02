@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import type { ScheduleRule } from '@daban/protocol';
+import { privateMetadata, secureDirectory } from './private-files.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { type ScheduleDomain, Schedules } from './schedules.js';
 
@@ -107,7 +108,9 @@ const domain: ScheduleDomain = {
   },
 };
 async function fixture() {
-  const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-schedules-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-schedules-'));
+  const directory = path.join(temporary, 'private');
+  await secureDirectory(directory);
   let now = anchor;
   const busy = new Set<string>();
   const receipts = new Map<string, { runId: string; phase: string; error: string }>();
@@ -157,7 +160,7 @@ async function fixture() {
     },
     async close() {
       await store.close();
-      await rm(directory, { recursive: true, force: true });
+      await rm(temporary, { recursive: true, force: true });
     },
   };
 }
@@ -352,7 +355,8 @@ test('durable schedules create idempotently, execute once per occurrence and pre
     await f.reopen();
     await f.store.tick();
     assert.equal(f.calls.length, 1);
-    assert.equal((await stat(f.options.file)).mode & 0o777, 0o600);
+    // Windows privacy comes from the protected root ACL, not emulated POSIX mode bits.
+    assert.equal(await privateMetadata(f.options.file, await stat(f.options.file), 0o600), true);
     await f.store.close();
     await f.store.close();
   } finally {
