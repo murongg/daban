@@ -468,6 +468,27 @@ function Workbench() {
       task: { id: crypto.randomUUID(), prompt, files: files.map((file) => file.id) },
     });
   }
+  async function insertQueued(botId: string, id: string) {
+    const item = messageQueue(state, botId).find((entry) => entry.id === id);
+    if (!item || item.files.length) return;
+    try {
+      const receipt = await runtime.command<{ ok?: unknown; id?: unknown }>({
+        type: 'task.insert',
+        bot: agentId(botId),
+        id: item.id,
+        text: item.prompt,
+      });
+      if (receipt?.ok !== true || receipt.id !== item.id) throw new Error('INVALID_TASK_ACK');
+      dispatch({
+        type: 'queue-insert',
+        bot: botId,
+        id: item.id,
+        revision: chatRevision(state, botId, runtime.snapshot.chats),
+      });
+    } catch (error) {
+      notify(runtimeError(error));
+    }
+  }
   // biome-ignore lint/correctness/useExhaustiveDependencies: runTask reads this render's state and runtime, and the effect already re-runs on both.
   useEffect(() => {
     if (!runtime.enabled || runtime.snapshot.phase !== 'ready') return;
@@ -820,6 +841,11 @@ function Workbench() {
                   onQueuePromote={
                     runtime.enabled
                       ? (id) => dispatch({ type: 'queue-promote', bot: bot.id, id })
+                      : undefined
+                  }
+                  onQueueInsert={
+                    runtime.enabled && runtime.snapshot.protocolVersion >= 41
+                      ? (id) => insertQueued(bot.id, id)
                       : undefined
                   }
                   onQueueRetry={

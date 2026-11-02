@@ -190,6 +190,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'files.read': ['type', 'path'],
     'files.download': ['type', 'path'],
     'task.start': ['type', 'bot', 'task'],
+    'task.insert': ['type', 'bot', 'id', 'text'],
     'task.stop': ['type', 'bot'],
     control: ['type', 'bot', 'epoch', 'owner', 'instance'],
     frame: ['type', 'bot', 'surface', 'instance', 'epoch'],
@@ -392,7 +393,13 @@ export function parseCommand(value: unknown): RuntimeCommand {
     return fail();
   if (['control', 'frame', 'input', 'app'].includes(v.type as string) && !validAgentId(v.bot))
     return fail();
-  if (['task.start', 'task.stop'].includes(v.type as string) && !validAgentId(v.bot)) return fail();
+  if (['task.start', 'task.insert', 'task.stop'].includes(v.type as string) && !validAgentId(v.bot))
+    return fail();
+  if (
+    v.type === 'task.insert' &&
+    (!validAgentId(v.id) || !string(v.text, 12000) || !(v.text as string).trim())
+  )
+    return fail();
   if (v.type === 'computer.action' && !isComputerRequest(v.request)) return fail();
   if (v.type === 'computer.receipt' && (!validAgentId(v.id) || !validAgentId(v.bot))) return fail();
   if (

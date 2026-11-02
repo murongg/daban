@@ -295,6 +295,7 @@ export type Action =
   | { type: 'queue-edit'; bot: string; id: string }
   | { type: 'queue-remove'; bot: string; id: string }
   | { type: 'queue-promote'; bot: string; id: string }
+  | { type: 'queue-insert'; bot: string; id: string; revision: number }
   | { type: 'queue-fail'; bot: string; id: string }
   | { type: 'queue-retry'; bot: string; id: string }
   | { type: 'send'; bot: string; id: string; time: string }
@@ -943,6 +944,30 @@ export function reduce(state: State, action: Action): State {
       const items = [...queue];
       items.unshift(items.splice(index, 1)[0]);
       return { ...state, queued: { ...state.queued, [action.bot]: items } };
+    }
+    case 'queue-insert': {
+      const queue = messageQueue(state, action.bot);
+      const item = queue.find((entry) => entry.id === action.id);
+      if (!item || item.files.length) return state;
+      return {
+        ...state,
+        queued: {
+          ...state.queued,
+          [action.bot]: queue.filter((entry) => entry.id !== action.id),
+        },
+        messages: {
+          ...state.messages,
+          [action.bot]: [
+            ...(state.messages[action.bot] || []),
+            {
+              id: `inserted:${item.id}`,
+              role: 'user',
+              text: item.prompt,
+              chatRevision: action.revision,
+            },
+          ],
+        },
+      };
     }
     case 'queue-remove': {
       const queue = messageQueue(state, action.bot);

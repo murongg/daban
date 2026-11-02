@@ -1748,6 +1748,24 @@ export class RuntimeClient {
       }
       case 'task.stop':
         return this.api(`${route}/model`, { running: false });
+      case 'task.insert': {
+        const current = await this.status();
+        if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+        if (current.protocolVersion < 41) throw new Error('RUNTIME_TOO_OLD');
+        const value: unknown = await this.api(`${route}/insert`, {
+          id: command.id,
+          text: command.text,
+        });
+        if (
+          !value ||
+          typeof value !== 'object' ||
+          Array.isArray(value) ||
+          (value as Record<string, unknown>).ok !== true ||
+          (value as Record<string, unknown>).id !== command.id
+        )
+          throw new Error('INVALID_TASK_ACK');
+        return value;
+      }
       case 'control':
         return this.api(`${route}/control`, {
           epoch: command.epoch,

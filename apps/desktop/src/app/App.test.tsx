@@ -744,7 +744,7 @@ it('uses the acknowledged profile version when editing again before the next run
 type LiveTask = NonNullable<RuntimeSnapshot['agents']>[string];
 function liveQueueRuntime() {
   let snapshot = disconnected('ready');
-  snapshot.protocolVersion = 29;
+  snapshot.protocolVersion = 41;
   snapshot.model = {
     configured: true,
     available: true,
@@ -792,6 +792,8 @@ function liveQueueRuntime() {
         },
       };
     }
+    if (command.type === 'task.insert')
+      return { ok: true as const, value: { ok: true, id: command.id } };
     return { ok: true as const, value: {} };
   });
   Object.defineProperty(window, 'daban', {
@@ -809,6 +811,7 @@ function liveQueueRuntime() {
   });
   return {
     starts,
+    invoke,
     emit(task: LiveTask) {
       snapshot = { ...snapshot, agents: { a: task } };
       for (const listener of listeners) listener(snapshot);
@@ -953,6 +956,35 @@ it('lets the user move a queued message to the front so it is sent next', async 
   );
   await waitFor(() => expect(runtime.starts).toHaveLength(1));
   expect(runtime.starts[0].task.prompt).toBe('SYNTHETIC QUEUED TWO');
+});
+it('inserts a queued message into the running task instead of sending it next', async () => {
+  const runtime = liveQueueRuntime();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, 'SYNTHETIC QUEUED ONE');
+  await userEvent.keyboard('{Enter}');
+  await userEvent.type(input, 'SYNTHETIC QUEUED TWO');
+  await userEvent.keyboard('{Enter}');
+  const queue = await screen.findByRole('region', { name: '排队消息' });
+  await userEvent.click(
+    within(queue).getByRole('button', {
+      name: '将排队消息 SYNTHETIC QUEUED TWO 插入当前任务',
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      runtime.invoke.mock.calls.some(
+        ([command]) =>
+          command.type === 'task.insert' &&
+          command.bot === 'a' &&
+          command.text === 'SYNTHETIC QUEUED TWO',
+      ),
+    ).toBe(true),
+  );
+  expect(within(queue).queryByText('SYNTHETIC QUEUED TWO')).not.toBeInTheDocument();
+  expect(within(queue).getByText('SYNTHETIC QUEUED ONE')).toBeVisible();
+  expect(await screen.findByText('SYNTHETIC QUEUED TWO')).toBeVisible();
+  expect(runtime.starts).toHaveLength(0);
 });
 it('returns focus to the composer after queuing a message', async () => {
   liveQueueRuntime();

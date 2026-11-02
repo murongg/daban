@@ -115,6 +115,123 @@ test('a captured supplier route controls DSH endpoint, model capabilities and in
   assert.equal(JSON.stringify(patch).includes(route.apiKey), false);
 });
 
+test('an inserted queued message runs as a follow-up turn in the same session', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-task-insert-'));
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+    Response.json({ data: [{ id: 'mock-chat' }] }),
+  );
+  const prompts: string[] = [];
+  let entered!: () => unknown;
+  const started = new Promise<unknown>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  let release!: () => unknown;
+  const held = new Promise<unknown>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  class Harness {
+    async start() {}
+    async close() {
+      release();
+    }
+    session(id = 'mock-insert-session') {
+      return {
+        id,
+        run: async (input: unknown) => {
+          const blocks =
+            typeof input === 'string'
+              ? []
+              : (input as { type: 'text'; text: string }[]).filter(
+                  (block) => block.type === 'text',
+                );
+          prompts.push(
+            typeof input === 'string' ? input : blocks.map((block) => block.text).join('\n'),
+          );
+          if (prompts.length === 1) {
+            entered();
+            await held;
+            return { sessionId: id, finalResponse: 'Synthetic first reply.' };
+          }
+          return { sessionId: id, finalResponse: 'Synthetic inserted reply.' };
+        },
+      };
+    }
+    async resumeSession(id: string) {
+      return this.session(id);
+    }
+  }
+  const models = new ModelRuns({
+    settings,
+    Harness,
+    workspace: path.join(root, 'workspace'),
+    dir: path.join(root, 'model'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  try {
+    await settings.configure({
+      revision: 0,
+      requestId: 'mock-insert-config',
+      model: 'provider:mock-insert:mock-chat',
+      apiKey: 'synthetic-insert-key',
+      connection: {
+        id: 'mock-insert',
+        name: 'mock-insert',
+        baseURL: 'https://mock-insert.example.test/v1',
+        models: [
+          {
+            id: 'mock-chat',
+            name: 'Synthetic chat',
+            vision: false,
+            contextWindow: 64000,
+            maxTokens: 4096,
+          },
+        ],
+      },
+    });
+    await models.profiles.register({
+      id: 'mock-insert',
+      name: 'mock-insert',
+      color: 'mint',
+      instructions: '',
+      memory: '',
+      model: 'provider:mock-insert:mock-chat',
+    });
+    await models.start('mock-insert', {
+      requestId: 'mock-insert-first',
+      prompt: 'Synthetic original request.',
+    });
+    await started;
+    assert.deepEqual(
+      await models.insert('mock-insert', {
+        id: 'mock-insert-one',
+        text: 'Synthetic inserted message.',
+      }),
+      { ok: true, id: 'mock-insert-one' },
+    );
+    assert.deepEqual(
+      await models.insert('mock-insert', {
+        id: 'mock-insert-one',
+        text: 'Synthetic ignored duplicate.',
+      }),
+      { ok: true, id: 'mock-insert-one' },
+    );
+    release();
+    await models.jobs.get('mock-insert')!.done;
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[0], /Synthetic original request\./);
+    assert.equal(prompts[1], 'Synthetic inserted message.');
+    assert.equal(models.jobs.get('mock-insert')!.result, 'Synthetic inserted reply.');
+    assert.equal(models.jobs.get('mock-insert')!.phase, 'completed');
+    await assert.rejects(
+      models.insert('mock-insert', { id: 'mock-insert-late', text: 'Synthetic late message.' }),
+      { code: 'MODEL_NOT_RUNNING' },
+    );
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('two suppliers with the same API model keep separate keys, capabilities and native session bindings', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-supplier-routes-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>

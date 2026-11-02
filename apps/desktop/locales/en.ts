@@ -213,6 +213,7 @@ export const english = {
   'chat.draftReadyReview': 'Draft ready for your review',
   'chat.editQueuedMessage': 'Edit queued message {0}',
   'chat.enterQueuesMessage': 'Enter queues after the current task · Shift+Enter for a new line',
+  'chat.insertQueuedMessage': 'Insert queued message {0} into the running task',
   'chat.exploreIdeaTogether': 'Explore this idea together',
   'chat.findingHistory': 'Finding history',
   'chat.giveBotGoalStartFirstMessage': 'Give this Bot a goal and start with your first message.',
@@ -1033,6 +1034,11 @@ export const english = {
     'Invalid skill instructions. Check the SKILL.md name, description, body and size.',
   'errors.invalidTaskAttachmentParametersEditResend':
     'Invalid task or attachment parameters. Edit and resend.',
+  'errors.invalidTaskInsertMessageKeptQueue': 'The inserted message was invalid. It stays queued.',
+  'errors.taskEndedMessageKeptQueue':
+    'The task ended before the message was inserted. It stays queued.',
+  'errors.taskInsertFullMessageKeptQueue':
+    'Too many messages are already inserted into this task. This one stays queued.',
   'errors.invalidTaskContentCheckTitleStatusText':
     'Invalid task content. Check the title, status and text length before saving.',
   'errors.invalidTaskFilterChooseAnotherFilterSearch':

@@ -194,6 +194,7 @@ export const chinese = {
   'chat.draftReadyReview': '草稿已就绪，等待你查看',
   'chat.editQueuedMessage': '编辑排队消息 {0}',
   'chat.enterQueuesMessage': 'Enter 加入队列，当前任务结束后发送 · Shift+Enter 换行',
+  'chat.insertQueuedMessage': '将排队消息 {0} 插入当前任务',
   'chat.exploreIdeaTogether': '一起完善这个想法',
   'chat.findingHistory': '正在查找历史',
   'chat.giveBotGoalStartFirstMessage': '给这位 Bot 一个目标，从第一条消息开始。',
@@ -941,6 +942,9 @@ export const chinese = {
   'errors.invalidSkillInstructionsCheckSkillMdName':
     '技能说明无效。请检查 SKILL.md 的名称、用途、正文和大小。',
   'errors.invalidTaskAttachmentParametersEditResend': '任务或附件参数无效，请修改后重新发送。',
+  'errors.invalidTaskInsertMessageKeptQueue': '插话参数无效，消息仍保留在队列中。',
+  'errors.taskEndedMessageKeptQueue': '任务已结束，消息仍保留在队列中，将作为下一条发送。',
+  'errors.taskInsertFullMessageKeptQueue': '当前任务的插话已满，消息仍保留在队列中。',
   'errors.invalidTaskContentCheckTitleStatusText':
     '任务内容无效，请核对标题、状态和文字长度后再保存。',
   'errors.invalidTaskFilterChooseAnotherFilterSearch': '任务筛选无效，请重新选择筛选或关键词。',

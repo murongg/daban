@@ -985,6 +985,23 @@ it('moves a queued message to the front so it is sent next', () => {
   );
   expect(reduce(state, { type: 'queue-promote', bot: bot.id, id: second.id })).toBe(state);
 });
+it('turns an inserted queued message into a visible user message', () => {
+  let state = initialState();
+  const bot = state.bots.find((entry) => entry.id === 'research')!;
+  const item = { id: 'synthetic-insert-one', prompt: 'SYNTHETIC INSERTED', files: [] };
+  state = reduce(state, { type: 'queue-add', bot: bot.id, task: item });
+  state = reduce(state, { type: 'queue-insert', bot: bot.id, id: item.id, revision: 7 });
+  expect(messageQueue(state, bot.id)).toEqual([]);
+  expect(state.messages[bot.id].at(-1)).toEqual({
+    id: `inserted:${item.id}`,
+    role: 'user',
+    text: item.prompt,
+    chatRevision: 7,
+  });
+  expect(reduce(state, { type: 'queue-insert', bot: bot.id, id: item.id, revision: 7 })).toBe(
+    state,
+  );
+});
 it('isolates prototype-shaped Bot IDs in the message queue', () => {
   let state = initialState();
   state = reduce(state, {

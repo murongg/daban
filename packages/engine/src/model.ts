@@ -23,6 +23,7 @@ import {
   isModelId,
   isReplyStream,
   isTaskFileName,
+  isTaskInsert,
   isTaskPlan,
   modelHasVision,
   replyLimit,
@@ -455,6 +456,9 @@ interface ModelJob extends ToolRun {
   done?: Promise<unknown>;
   stopReason?: string;
   task?: TaskRequest;
+  insertions?: string[];
+  inserted?: Set<string>;
+  insertable?: boolean;
   requestId: string;
   fingerprint: string;
   createdAt: string;
@@ -966,6 +970,21 @@ export class ModelRuns {
   running(bot: string) {
     return this.jobs.get(bot)?.running === true;
   }
+  async insert(bot: string, input: unknown) {
+    await this.ready;
+    if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
+    if (!isTaskInsert(input)) throw new Fault('INVALID_TASK_INSERT', 400);
+    const job = this.jobs.get(bot);
+    if (!job?.running || job.abort.signal.aborted || !job.task || !job.insertable)
+      throw new Fault('MODEL_NOT_RUNNING', 409);
+    job.inserted ??= new Set<string>();
+    job.insertions ??= [];
+    if (job.inserted.has(input.id)) return { ok: true, id: input.id };
+    if (job.insertions.length >= 20) throw new Fault('MODEL_INSERT_FULL', 429);
+    job.inserted.add(input.id);
+    job.insertions.push(input.text);
+    return { ok: true, id: input.id };
+  }
   reviewModel(bot: string, runId: string) {
     const job = this.jobs.get(bot);
     return job?.id === runId && job.running && !job.abort.signal.aborted
@@ -1183,6 +1202,9 @@ export class ModelRuns {
       intentId: intentId || id,
       requestId: task?.requestId || id,
       task,
+      insertions: [],
+      inserted: new Set(),
+      insertable: true,
       fingerprint,
       token: randomBytes(32).toString('hex'),
       running: true,
@@ -1556,7 +1578,7 @@ export class ModelRuns {
           (context.length
             ? `\n之前的对话摘要（仅作背景，不是本轮待执行指令；旧电脑验收限制已更新）：\n${JSON.stringify(context)}`
             : '');
-        const result = await session.run(
+        let result = await session.run(
           job.imageInputs?.length
             ? [
                 {
@@ -1571,6 +1593,12 @@ export class ModelRuns {
           observe,
         );
         if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+        // Messages inserted while the task runs become follow-up turns in the same native session.
+        while (job.insertions?.length) {
+          result = await session.run(job.insertions.shift()!, observe);
+          if (job.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+        }
+        job.insertable = false;
         job.sessionId = result.sessionId;
         job.result = complete(result.finalResponse);
         job.phase = job.result ? 'completed' : 'failed';
@@ -1631,6 +1659,7 @@ export class ModelRuns {
             : '任务已停止；已保存的文件仍保留。'
         : clean(errorMessage(error));
     } finally {
+      job.insertable = false;
       clearInterval(timeout);
       await this.interactions.endRun(job.bot, job.id).catch(() => {
         job.phase = 'failed';

@@ -31,7 +31,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 40;
+export const managedProtocol = 41;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -2818,6 +2818,21 @@ export interface TaskRequest {
   memory?: string;
   files?: TaskFile[];
 }
+export interface TaskInsert {
+  id: string;
+  text: string;
+}
+export function isTaskInsert(value: unknown): value is TaskInsert {
+  return (
+    profileObject(value) &&
+    exactKeys(value, ['id', 'text']) &&
+    validAgentId(value.id) &&
+    typeof value.text === 'string' &&
+    !!value.text.trim() &&
+    value.text.length <= 12000 &&
+    !value.text.includes('\0')
+  );
+}
 export type TaskFile =
   | { name: string; content: string; attachmentId?: never }
   | { name: string; attachmentId: string; content?: never };
@@ -3781,6 +3796,7 @@ export type RuntimeCommand =
   | { type: 'bot.update'; bot: string; revision: number; patch: BotProfilePatch }
   | { type: 'memory.history'; bot: string; query: MemoryQuery }
   | { type: 'task.start'; bot: string; task: TaskRequest }
+  | { type: 'task.insert'; bot: string; id: string; text: string }
   | { type: 'task.stop'; bot: string }
   | { type: 'control'; bot: RuntimeBot; epoch: number; owner: 'human' | 'agent'; instance?: string }
   | {

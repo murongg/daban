@@ -1,5 +1,6 @@
 import { agentId, agentTask, isModelId, type RuntimeTask, recoveryBlocked } from '@daban/protocol';
 import {
+  ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
   Check,
@@ -87,6 +88,7 @@ export function Conversation({
   onQueueEdit,
   onQueueRemove,
   onQueuePromote,
+  onQueueInsert,
   onQueueRetry,
   onContinue,
   pending = false,
@@ -104,6 +106,7 @@ export function Conversation({
   onQueueEdit?: (id: string) => unknown;
   onQueueRemove?: (id: string) => unknown;
   onQueuePromote?: (id: string) => unknown;
+  onQueueInsert?: (id: string) => unknown;
   onQueueRetry?: (id: string) => unknown;
   onContinue?: () => unknown;
   pending?: boolean;
@@ -540,6 +543,14 @@ export function Conversation({
                       )}
                     </div>
                     <div className="queued-message-actions">
+                      {onQueueInsert && task?.running && !item.files.length && (
+                        <IconButton
+                          label={t('chat.insertQueuedMessage', { 0: text })}
+                          onClick={() => onQueueInsert(item.id)}
+                        >
+                          <ArrowDownToLine />
+                        </IconButton>
+                      )}
                       {index > 0 && onQueuePromote && (
                         <IconButton
                           label={t('chat.promoteQueuedMessage', { 0: text })}

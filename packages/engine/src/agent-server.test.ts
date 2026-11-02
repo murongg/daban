@@ -121,6 +121,21 @@ test('model discovery runs through authenticated host IPC without forwarding a k
     assert.deepEqual(headers, ['Bearer synthetic-provider-key']);
     assert.equal(methods.includes('computer.request'), false);
     await assert.rejects(access(path.join(root, 'model/credentials.json')));
+    const inserted = await call(app.socketPath, '/api/bots/a/insert', app.token, {
+      id: 'mock-insert',
+      text: 'Synthetic inserted message.',
+    });
+    assert.equal(inserted.status, 409);
+    assert.deepEqual(inserted.value, { error: 'MODEL_NOT_RUNNING' });
+    assert.equal(
+      (
+        await call(app.socketPath, '/api/bots/a/insert', app.token, {
+          id: 'invalid id',
+          text: 'Synthetic inserted message.',
+        })
+      ).status,
+      400,
+    );
   } finally {
     await app.close();
     await new Promise<unknown>((resolve, reject) =>
