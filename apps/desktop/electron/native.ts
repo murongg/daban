@@ -114,19 +114,21 @@ export function desktopDriver(
     async requestPermissions() {
       if (platform === 'win32') return;
       if (platform !== 'darwin') throw new Error('LOCAL_PLATFORM_UNSUPPORTED');
-      systemPreferences.isTrustedAccessibilityClient(true);
-      // Enumerate without thumbnails to register the screen permission request without retaining pixels.
+      if (!systemPreferences.isTrustedAccessibilityClient(true)) {
+        await shell.openExternal(
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+        );
+        return;
+      }
+      // A zero-sized thumbnail only enumerates sources and cannot register the first recording request.
+      // Discard this one-pixel permission probe; model frames still require a separate Bot grant.
       if (!permissions().screen)
         await desktopCapturer
-          .getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
+          .getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
           .catch(() => []);
       if (!permissions().screen)
         await shell.openExternal(
           'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
-        );
-      else if (!permissions().accessibility)
-        await shell.openExternal(
-          'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
         );
     },
     async context() {

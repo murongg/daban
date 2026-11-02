@@ -195,7 +195,15 @@ export class LocalComputer {
       this.started = true;
       await this.driver.hide();
     }
-    const frame = await this.driver.capture();
+    let frame: LocalCapture;
+    try {
+      frame = await this.driver.capture();
+    } catch (error) {
+      // A pause can change focus while capture is pending; report that control fence before a camera error.
+      this.authorize(binding);
+      this.current(id, revision);
+      throw error;
+    }
     this.authorize(binding);
     this.current(id, revision);
     const observation = randomUUID();
@@ -271,6 +279,9 @@ export class LocalComputer {
         return await this.take(request);
       } catch (error) {
         await this.driver.release();
+        // Input failures must not hide a newer pause or revocation.
+        this.authorize(request);
+        this.current(session.id, session.revision);
         throw error;
       }
     });

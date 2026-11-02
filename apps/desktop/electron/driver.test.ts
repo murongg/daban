@@ -1,6 +1,9 @@
+import { desktopCapturer, shell } from 'electron';
 import { expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  screenPermission: vi.fn(() => 'granted'),
+  accessibility: vi.fn(() => true),
   dip: vi.fn((point: { x: number; y: number }) => ({ x: point.x * 1.25, y: point.y * 1.25 })),
 }));
 vi.mock('electron', () => ({
@@ -11,7 +14,7 @@ vi.mock('electron', () => ({
     getPrimaryDisplay: () => ({ id: 1, bounds: { x: 0, y: 0, width: 1536, height: 864 } }),
   },
   desktopCapturer: {
-    getSources: async () => [
+    getSources: vi.fn(async () => [
       {
         display_id: '1',
         thumbnail: {
@@ -22,10 +25,13 @@ vi.mock('electron', () => ({
           }),
         },
       },
-    ],
+    ]),
   },
-  shell: {},
-  systemPreferences: {},
+  shell: { openExternal: vi.fn(async () => {}) },
+  systemPreferences: {
+    getMediaAccessStatus: mocks.screenPermission,
+    isTrustedAccessibilityClient: mocks.accessibility,
+  },
 }));
 
 import { desktopDriver } from './native';
@@ -111,4 +117,47 @@ it('stops a long text input when the foreground window changes between Unicode c
     driver.input({ type: 'text', text: 'S'.repeat(200) }, frame, () => {}),
   ).rejects.toThrow('LOCAL_SCREEN_CHANGED');
   expect(api.typeString).toHaveBeenCalledTimes(1);
+});
+
+it('registers screen permission with a minimal thumbnail only after explicit human setup', async () => {
+  mocks.screenPermission.mockReturnValue('denied');
+  try {
+    const driver = desktopDriver(
+      () => undefined,
+      'darwin',
+      () => automation(),
+    );
+    await driver.requestPermissions?.();
+    expect(desktopCapturer.getSources).toHaveBeenLastCalledWith({
+      types: ['screen'],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+    expect(mocks.accessibility).toHaveBeenCalledWith(true);
+    expect(shell.openExternal).toHaveBeenCalledWith(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    );
+  } finally {
+    mocks.screenPermission.mockReturnValue('granted');
+  }
+});
+
+it('handles missing accessibility permission before requesting screen capture', async () => {
+  mocks.screenPermission.mockReturnValue('denied');
+  mocks.accessibility.mockReturnValue(false);
+  vi.mocked(desktopCapturer.getSources).mockClear();
+  try {
+    const driver = desktopDriver(
+      () => undefined,
+      'darwin',
+      () => automation(),
+    );
+    await driver.requestPermissions?.();
+    expect(desktopCapturer.getSources).not.toHaveBeenCalled();
+    expect(shell.openExternal).toHaveBeenLastCalledWith(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+    );
+  } finally {
+    mocks.accessibility.mockReturnValue(true);
+    mocks.screenPermission.mockReturnValue('granted');
+  }
 });

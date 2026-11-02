@@ -168,3 +168,47 @@ it('stopping during a capture discards its late image and observation', async ()
   await cancel;
   expect(controller.preview(status.session!.id, status.session!.revision)).toBeUndefined();
 });
+
+it('reports a human pause before a capture error that raced the pause', async () => {
+  const { controller, driver } = fixture();
+  await controller.connect(connect);
+  let entered!: () => unknown;
+  let fail!: (error: Error) => unknown;
+  const capturing = new Promise((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  driver.capture = () =>
+    new Promise((_resolve, reject) => {
+      fail = reject;
+      entered();
+    });
+  const pending = controller.capture(binding(controller));
+  const rejected = expect(pending).rejects.toThrow('LOCAL_PAUSED');
+  await capturing;
+  const session = controller.status().session!;
+  const paused = controller.pause(session.id, session.revision);
+  fail(new Error('LOCAL_SCREEN_CHANGED'));
+  await rejected;
+  await paused;
+  expect(controller.status().session?.owner).toBe('human');
+});
+
+it('reports a pause that races a foreground-window change before input', async () => {
+  const { controller, driver, actions } = fixture();
+  await controller.connect(connect);
+  const frame = await controller.capture(binding(controller));
+  let paused: Promise<unknown> = Promise.resolve();
+  driver.context = async () => {
+    paused = controller.interrupt();
+    return 'mock-new-window';
+  };
+  await expect(
+    controller.act({
+      ...binding(controller),
+      observation: frame.observation,
+      actions: [{ type: 'text', text: 'SYNTHETIC INPUT' }],
+    }),
+  ).rejects.toThrow('LOCAL_PAUSED');
+  await paused;
+  expect(actions).toHaveLength(0);
+});
