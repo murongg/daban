@@ -20,6 +20,7 @@ import { promisify } from 'node:util';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { type SignOptions, sign } from '@electron/osx-sign';
 import { environmentAssets, hashAsset, verifyAsset } from './environment.ts';
+import { packageMacUpdate } from './installer.ts';
 import { sealHostPackage } from './roles.ts';
 
 const execute = promisify(execFile);
@@ -252,13 +253,8 @@ async function main() {
   }
   console.log('Submitting the signed disk image for Apple notarization.');
   await notarizeDistribution(app, dmg, options);
-  await run('/usr/bin/ditto', [
-    '-c',
-    '-k',
-    '--keepParent',
-    app,
-    path.resolve(output, `Daban-${version}-macos-arm64.zip`),
-  ]);
+  await packageMacUpdate(app, path.resolve(output));
+  await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
   console.log('Developer ID signing, notarization, stapling and Gatekeeper assessment passed.');
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)

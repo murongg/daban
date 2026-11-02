@@ -25,6 +25,7 @@ import { Integrations } from '../integrations/Integrations';
 import { Models } from '../models/Models';
 import { Notifications } from '../notifications/Notifications';
 import { Language } from './Language';
+import { UpdatesPanel } from './Updates';
 import '../../styles/settings.css';
 
 export function Settings({
@@ -48,6 +49,7 @@ export function Settings({
   const [category, setCategory] = useState('general');
   const [error, setError] = useState('');
   const [connectionDialog, setConnectionDialog] = useState(false);
+  const [updateDialog, setUpdateDialog] = useState(false);
   const sections = [
     {
       id: 'general',
@@ -263,9 +265,6 @@ export function Settings({
               <div className="setting-label">Daban</div>
               <p className="setting-description">{t('settings.aiWorkCompanion')}</p>
             </div>
-            <span className="muted">
-              0.1.0 · {runtime.enabled ? 'Local Agent Preview' : 'UI Preview'}
-            </span>
           </div>
           <p className="inline-note">
             {runtime.enabled
@@ -274,6 +273,7 @@ export function Settings({
                 : t('settings.localLinuxDshConnectedMobileCrossDevice')
               : t('settings.previewIncludesOnlyAppInterfaceMobileCross')}
           </p>
+          <UpdatesPanel onDialogChange={setUpdateDialog} />
         </div>
       ),
     },
@@ -282,7 +282,7 @@ export function Settings({
     <Dialog
       title={t('settings.title')}
       onClose={onClose}
-      active={active && !connectionDialog}
+      active={active && !connectionDialog && !updateDialog}
       className="settings-dialog"
       motion
     >

@@ -30,6 +30,7 @@ const mock = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   app: {
     setName: vi.fn(),
+    getVersion: () => '1.0.0',
     getPath: () => '/mock',
     setPath: vi.fn(),
     requestSingleInstanceLock: () => true,
@@ -66,6 +67,7 @@ vi.mock('electron', () => ({
     }
   },
   globalShortcut: { register: vi.fn(() => true), unregister: vi.fn() },
+  ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
   powerMonitor: { on: vi.fn() },
   Menu: { buildFromTemplate: vi.fn((value) => value), setApplicationMenu: vi.fn() },
   Notification: { handleActivation: vi.fn() },

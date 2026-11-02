@@ -269,6 +269,15 @@ export class Daemon {
     });
     return this.starting;
   }
+  async inactive() {
+    this.checkOpen();
+    if (this.starting) return false;
+    // A missing socket alone can mean launchd is still booting the host. Both owners must be absent.
+    const result = await this.command(['print', `gui/${this.uid}/${this.label}`]);
+    if (result.code === 0) return false;
+    if (result.code !== 113) throw new Error('AGENT_DAEMON_UNAVAILABLE');
+    return (await this.identity()) === undefined;
+  }
   async close() {
     // The session service owns task lifetime; closing a UI must never unload or signal its launchd job.
     this.closed = true;

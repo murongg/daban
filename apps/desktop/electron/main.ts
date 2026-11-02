@@ -1,3 +1,4 @@
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -19,6 +20,9 @@ import { desktopDriver } from './native';
 import { noticeIpc } from './notification-ipc';
 import { Notifications } from './notifications';
 import { runtimeService } from './service';
+import { updateIpc } from './update-ipc';
+import { UpdateSave } from './update-save';
+import { Updates } from './updates';
 
 app.setName('Daban');
 app.setPath('userData', join(app.getPath('appData'), 'daban-preview'));
@@ -122,6 +126,10 @@ let service: ReturnType<typeof runtimeService> | undefined;
 let notifications: Notifications | undefined;
 let closeNoticeIpc: (() => unknown) | undefined;
 let exiting = false;
+let updateQuitting = false;
+let updates: Updates | undefined;
+let closeUpdateIpc: (() => unknown) | undefined;
+let updateTimer: ReturnType<typeof setTimeout> | undefined;
 if (primary) {
   app.on('second-instance', () => {
     if (app.isReady()) focusWindow();
@@ -203,6 +211,47 @@ if (primary) {
         callback(false),
       );
       createWindow();
+      const updateSupported =
+        app.isPackaged &&
+        ['darwin', 'win32'].includes(process.platform) &&
+        (await access(join(process.resourcesPath, 'app-update.yml')).then(
+          () => true,
+          () => false,
+        ));
+      const updateDriver = updateSupported
+        ? (await import('electron-updater')).autoUpdater
+        : undefined;
+      const save = new UpdateSave(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return undefined;
+        const target = mainWindow.webContents;
+        return { id: target.id, send: (message) => target.send('daban:update-message', message) };
+      });
+      updates = new Updates({
+        version: app.getVersion(),
+        supported: updateSupported,
+        driver: updateDriver,
+        save: () => save.request(),
+        prepare: async () => {
+          if (!service) throw Error('AGENT_UPDATE_UNAVAILABLE');
+          await service.prepareUpdate();
+        },
+        restore: async () => {
+          updateQuitting = false;
+          await service?.resumeAfterUpdate();
+        },
+        installing: () => {
+          updateQuitting = true;
+        },
+        changed: (status) => {
+          if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send('daban:update-message', { type: 'status', status });
+        },
+      });
+      closeUpdateIpc = updateIpc(updates, save, renderer);
+      if (updateSupported)
+        updateTimer = setTimeout(() => {
+          updates?.invoke({ type: 'check' }).catch(() => console.error('Update check unavailable'));
+        }, 20000);
       if (nativeLaunchId) await notifications.activate(nativeLaunchId);
       app.on('activate', () => {
         focusWindow();
@@ -229,12 +278,17 @@ if (primary) {
       await closeLocalServer?.();
       closeNoticeIpc?.();
       closeLocaleIpc?.();
+      if (updateTimer) clearTimeout(updateTimer);
+      closeUpdateIpc?.();
+      updates?.close();
       await notifications?.close();
       await service?.close();
     } catch {
       console.error('Runtime connection cleanup failed');
     } finally {
-      app.exit(0);
+      // Updater installers depend on Electron's normal quit event; app.exit bypasses that path.
+      if (updateQuitting) app.quit();
+      else app.exit(0);
     }
   });
 }

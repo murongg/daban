@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
-import { copyFile, cp, mkdir, readFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -12,6 +12,32 @@ export async function packageNotices(resources: string, owner: string) {
     constants.COPYFILE_EXCL,
   );
   const requireDesktop = createRequire(owner);
+  const seen = new Set<string>();
+  async function updaterNotices(name: string, from: string) {
+    const file = createRequire(from).resolve(`${name}/package.json`);
+    const pkg = JSON.parse(await readFile(file, 'utf8')) as {
+      name: string;
+      version: string;
+      dependencies?: Record<string, string>;
+    };
+    const id = `${pkg.name}@${pkg.version}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    const directory = path.dirname(file);
+    const target = path.join(resources, 'updater-notices', id.replaceAll('/', '_'));
+    await mkdir(target, { recursive: true });
+    for (const entry of await readdir(directory, { withFileTypes: true }))
+      if (entry.isFile() && /^(licen[sc]e|notice|copyright)(\.|$)/i.test(entry.name))
+        await copyFile(
+          path.join(directory, entry.name),
+          path.join(target, entry.name),
+          constants.COPYFILE_EXCL,
+        );
+    for (const dependency of Object.keys(pkg.dependencies ?? {}))
+      await updaterNotices(dependency, file);
+  }
+  await updaterNotices('electron-updater', owner);
+  await updaterNotices('builder-util-runtime', owner);
   const frontendNotices = path.join(resources, 'frontend-notices');
   await mkdir(frontendNotices);
   for (const [name, names] of [

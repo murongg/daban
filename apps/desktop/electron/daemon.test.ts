@@ -287,3 +287,32 @@ it('waits for a fresh bootstrap beyond thirty seconds while retaining a ten-minu
   expect(elapsed).toBeLessThanOrEqual(600000);
   await daemon.close();
 });
+
+it('proves a first-use host is absent without starting it, and never treats a booting job as absent', async () => {
+  const config = await fixture();
+  const inspect = vi.fn(async (): Promise<unknown> => undefined);
+  const run = vi.fn(async (_program: string, _args: string[], _options: unknown) => ({
+    code: 113,
+    stdout: '',
+  }));
+  const daemon = new Daemon(config, { run, inspect, platform: 'darwin' });
+  expect(await daemon.inactive()).toBe(true);
+  expect(run).toHaveBeenCalledWith(
+    '/bin/launchctl',
+    ['print', `gui/${process.getuid!()}/${daemon.label}`],
+    expect.anything(),
+  );
+  run.mockResolvedValueOnce({ code: 0, stdout: '' });
+  expect(await daemon.inactive()).toBe(false);
+  run.mockResolvedValueOnce({ code: 1, stdout: '' });
+  await expect(daemon.inactive()).rejects.toThrow('AGENT_DAEMON_UNAVAILABLE');
+  inspect.mockResolvedValueOnce({
+    role: 'agent',
+    scope: daemon.scope,
+    dataRoot: config.dataRoot,
+    socketPath: config.socketPath,
+  });
+  expect(await daemon.inactive()).toBe(false);
+  expect(run.mock.calls.every((call) => call[1][0] === 'print')).toBe(true);
+  await daemon.close();
+});

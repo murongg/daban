@@ -4,24 +4,24 @@
 
 在仓库根目录运行 `npm run dev:web`，再访问下列地址。组件场景放在 `scenes/`，公共入口是 `main.ts`；模型数据与接口模拟集中在 `models.ts`。
 
-| 页面                          | 用途                     | 常用参数                                                           |
-| ----------------------------- | ------------------------ | ------------------------------------------------------------------ |
-| `/preview/settings.html`      | 完整设置弹窗             | `theme=dark`                                                       |
-| `/preview/setup.html`         | 首次安装与搭子状态       | `phase=starting`、`progress=37`、`theme=dark`                      |
-| `/preview/onboarding.html`    | 首次模型配置与完成引导   | `configured=1`、`theme=dark`、`lang=en`                            |
-| `/preview/providers.html`     | 供应商与多模型表单       | `empty=1`、`theme=dark`                                            |
-| `/preview/controls.html`      | 下拉框、日期、时间等控件 | `theme=dark`                                                       |
-| `/preview/sidebar.html`       | 侧栏与整理菜单           | `controls=1`、`keep=1`                                             |
-| `/preview/chat.html`          | 私聊与历史、待确认操作   | `mode=history`、`busy`、`pending`、`uncertain`、`streaming`        |
-| `/preview/group.html`         | 群聊与归档、恢复         | `mode=archived`、`pending`                                         |
-| `/preview/copy.html`          | Bot 与群聊复制           | `kind=group`、`mode=pending`、`keep=1`                             |
-| `/preview/tasks.html`         | 共享任务与讨论           | `mode=discussion`、`discussion-long`、`pending`、`many`            |
-| `/preview/notes.html`         | 便笺与版本冲突           | `mode=editor`、`conflict`、`pending`、`empty`                      |
-| `/preview/preferences.html`   | 工作偏好与历史           | `mode=dirty`、`long`、`error`                                      |
-| `/preview/execution.html`     | 执行记录                 | `mode=group`、`history`、`long`、`incomplete`、`approval`、`empty` |
-| `/preview/inputs.html`        | 附件、粘贴与拖入         | `mode=paste`、`hover`、`group`、`error`                            |
-| `/preview/notifications.html` | 模拟桌面提醒             | `mode=on`、`task`、`defer`、`unsupported`                          |
-| `/preview/render.html`        | Markdown、公式与图表     | 使用页面内工具栏                                                   |
+| 页面                          | 用途                     | 常用参数                                                                   |
+| ----------------------------- | ------------------------ | -------------------------------------------------------------------------- |
+| `/preview/settings.html`      | 完整设置弹窗             | `theme=dark`、`updates=available` / `downloading` / `downloaded` / `error` |
+| `/preview/setup.html`         | 首次安装与搭子状态       | `phase=starting`、`progress=37`、`theme=dark`                              |
+| `/preview/onboarding.html`    | 首次模型配置与完成引导   | `configured=1`、`theme=dark`、`lang=en`                                    |
+| `/preview/providers.html`     | 供应商与多模型表单       | `empty=1`、`theme=dark`                                                    |
+| `/preview/controls.html`      | 下拉框、日期、时间等控件 | `theme=dark`                                                               |
+| `/preview/sidebar.html`       | 侧栏与整理菜单           | `controls=1`、`keep=1`                                                     |
+| `/preview/chat.html`          | 私聊与历史、待确认操作   | `mode=history`、`busy`、`pending`、`uncertain`、`streaming`                |
+| `/preview/group.html`         | 群聊与归档、恢复         | `mode=archived`、`pending`                                                 |
+| `/preview/copy.html`          | Bot 与群聊复制           | `kind=group`、`mode=pending`、`keep=1`                                     |
+| `/preview/tasks.html`         | 共享任务与讨论           | `mode=discussion`、`discussion-long`、`pending`、`many`                    |
+| `/preview/notes.html`         | 便笺与版本冲突           | `mode=editor`、`conflict`、`pending`、`empty`                              |
+| `/preview/preferences.html`   | 工作偏好与历史           | `mode=dirty`、`long`、`error`                                              |
+| `/preview/execution.html`     | 执行记录                 | `mode=group`、`history`、`long`、`incomplete`、`approval`、`empty`         |
+| `/preview/inputs.html`        | 附件、粘贴与拖入         | `mode=paste`、`hover`、`group`、`error`                                    |
+| `/preview/notifications.html` | 模拟桌面提醒             | `mode=on`、`task`、`defer`、`unsupported`                                  |
+| `/preview/render.html`        | Markdown、公式与图表     | 使用页面内工具栏                                                           |
 
 聊天页的 `mode=streaming` 在发送消息后生成连续的合成回复，用于验证自动滚动，不会调用模型。
 

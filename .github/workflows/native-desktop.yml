@@ -42,7 +42,7 @@ jobs:
         run: node --experimental-sqlite --test packages/engine/dist/skill-defaults.test.js packages/engine/dist/skill-discovery.test.js packages/engine/dist/skill-package.test.js packages/engine/dist/skills-packages.test.js packages/engine/dist/skill-tools.test.js packages/engine/dist/skill-sources.test.js packages/engine/dist/workspace-skills.test.js
       - name: Verify native DSH tool loop
         timeout-minutes: 3
-        run: node --experimental-sqlite --test dist-agent/native-loop.test.js dist-agent/calendar.test.js packages/engine/dist/web.test.js packages/engine/dist/web-read.test.js packages/engine/dist/schedules.test.js packages/engine/dist/schedules.integration.js packages/engine/dist/documents.test.js
+        run: node --experimental-sqlite --test dist-agent/native-loop.test.js dist-agent/calendar.test.js dist-agent/update.test.js packages/engine/dist/upgrade.test.js packages/engine/dist/upgrade.integration.js packages/engine/dist/web.test.js packages/engine/dist/web-read.test.js packages/engine/dist/schedules.test.js packages/engine/dist/schedules.integration.js packages/engine/dist/documents.test.js
       - name: Verify bundled native cryptography
         run: node --experimental-strip-types --test tools/native.test.ts tools/preload.test.ts tools/roles.test.ts tools/roles.integration.ts
       - name: Verify Electron encrypted transport
@@ -59,9 +59,24 @@ jobs:
       - name: Verify packaged dependencies and first-use startup
         timeout-minutes: 3
         run: node --experimental-strip-types tools/windows.acceptance.ts "${{ runner.temp }}/Daban-win-x64"
+      - name: Build per-user Windows installer and update metadata
+        run: node --experimental-strip-types tools/installer.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/Daban-installer"
+      - name: Verify isolated Windows online update and draft preservation
+        timeout-minutes: 8
+        run: node --experimental-strip-types tools/updates.acceptance.ts
       - uses: actions/upload-artifact@v4
         with:
           name: Daban-windows-x64
           path: ${{ runner.temp }}/Daban-win-x64
           retention-days: 7
           include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Daban-windows-installer
+          path: |
+            ${{ runner.temp }}/Daban-installer/*.exe
+            ${{ runner.temp }}/Daban-installer/*.blockmap
+            ${{ runner.temp }}/Daban-installer/*.yml
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

@@ -2,6 +2,7 @@ import type { RuntimeBridge, RuntimeSnapshot } from '@daban/protocol';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { LocaleBridge } from '../shared/locale';
 import { isNoticeMessage, type NoticeBridge } from '../shared/notifications';
+import { isUpdateMessage, type UpdateBridge } from '../shared/updates';
 
 const runtime: RuntimeBridge = {
   invoke: (command) => ipcRenderer.invoke('daban:runtime', command),
@@ -23,7 +24,17 @@ const notifications: NoticeBridge = {
   },
 };
 const locale: LocaleBridge = { invoke: (command) => ipcRenderer.invoke('daban:locale', command) };
+const updates: UpdateBridge = {
+  invoke: (command) => ipcRenderer.invoke('daban:updates', command),
+  subscribe(callback) {
+    const listener = (_event: unknown, value: unknown) => {
+      if (isUpdateMessage(value)) callback(value);
+    };
+    ipcRenderer.on('daban:update-message', listener);
+    return () => ipcRenderer.removeListener('daban:update-message', listener);
+  },
+};
 contextBridge.exposeInMainWorld(
   'daban',
-  Object.freeze({ platform: process.platform, runtime, notifications, locale }),
+  Object.freeze({ platform: process.platform, runtime, notifications, locale, updates }),
 );
