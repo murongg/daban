@@ -205,8 +205,11 @@ export function Conversation({
   const currentIds = new Set(
     task?.runId ? [`runtime-result:${task.runId}`, `runtime-partial:${task.runId}`] : [],
   );
-  const current = entries.filter((entry) => currentIds.has(entry.id));
-  const earlier = entries.filter((entry) => !currentIds.has(entry.id));
+  const replyIndex = entries.findIndex((entry) => currentIds.has(entry.id));
+  // Only the activity around the current reply moves; transcript entries keep their order.
+  const earlier = replyIndex < 0 ? entries : entries.slice(0, replyIndex);
+  const current = replyIndex < 0 ? [] : [entries[replyIndex]];
+  const later = replyIndex < 0 ? [] : entries.slice(replyIndex + 1);
   function send() {
     if (readOnly || recovering) return;
     if (state.attachmentUploads[bot.id]) {
@@ -431,6 +434,7 @@ export function Conversation({
             </div>
           )}
           {!pendingIds && current.map(renderMessage)}
+          {later.map(renderMessage)}
         </div>
       </div>
       <div className="composer-wrap">
