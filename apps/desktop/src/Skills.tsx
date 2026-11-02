@@ -12,7 +12,17 @@ import { Dialog } from './Dialog';
 import { downloadBlob, readUtf8 } from './files';
 import { t, useLocale } from './locale';
 import { runtimeError, useRuntime } from './Runtime';
-import { type Action, type Bot, type State, skillDirty, skillDraft, skillEditor } from './state';
+import { SkillFiles } from './SkillFiles';
+import { SkillInstall } from './SkillInstall';
+import {
+  type Action,
+  type Bot,
+  type SkillDraft,
+  type State,
+  skillDirty,
+  skillDraft,
+  skillEditor,
+} from './state';
 
 interface Status {
   busy?: boolean;
@@ -39,6 +49,11 @@ export function Skills({
   const [trash, setTrash] = useState(false),
     [refresh, setRefresh] = useState(0);
   const [recycling, setRecycling] = useState<{ nonce: string; entry: SkillEntry }>();
+  const [install, setInstall] = useState<{
+    bot: string;
+    previous?: SkillDraft;
+    target?: { id: string; revision: number };
+  }>();
   const draft = skillEditor(state, bot.id),
     status = Object.hasOwn(statuses, bot.id) ? statuses[bot.id] : {},
     catalog = Object.hasOwn(catalogs, bot.id) ? catalogs[bot.id] : undefined;
@@ -197,6 +212,21 @@ export function Skills({
       feedback(id, { busy: false });
     }
   }
+  function openInstall(replace = false) {
+    if (draft && skillDirty(draft)) {
+      feedback(bot.id, { error: t('skills.saveDiscardCurrentEditsImportingSkill') });
+      return;
+    }
+    if (runtime.snapshot.protocolVersion < 40) {
+      picker.current?.click();
+      return;
+    }
+    setInstall({
+      bot: bot.id,
+      previous: draft,
+      ...(replace && draft?.id ? { target: { id: draft.id, revision: draft.revision } } : {}),
+    });
+  }
   async function toggle(entry: SkillEntry) {
     const id = bot.id;
     feedback(id, { busy: true, error: '' });
@@ -269,7 +299,7 @@ export function Skills({
         <IconButton
           label={t('skills.importSkill')}
           disabled={!available || status.busy}
-          onClick={() => picker.current?.click()}
+          onClick={() => openInstall()}
         >
           <Upload size={16} />
         </IconButton>
@@ -289,7 +319,13 @@ export function Skills({
         </IconButton>
       </div>
       <p className="panel-description">{t('skills.allBotsShareSkillLibrarySeparateEnablement')}</p>
-      <p className="panel-description">{t('skills.currentlySupportsSingleSkillMdFileSkill')}</p>
+      <p className="panel-description">
+        {t(
+          runtime.snapshot.protocolVersion >= 40
+            ? 'skills.packageSupport'
+            : 'skills.currentlySupportsSingleSkillMdFileSkill',
+        )}
+      </p>
       <input
         ref={picker}
         type="file"
@@ -347,13 +383,14 @@ export function Skills({
             {draft.id ? t('skills.revision', { 0: draft.revision }) : ''}
           </p>
           <p className="field-help">{t('skills.useShortLowercaseNameSuchWeeklyReport')}</p>
+          {selected?.system && <p className="field-help">{t('skills.systemReadOnly')}</p>}
           <label className="field-label">
             SKILL.md
             <textarea
               className="field skill-source"
               aria-label={t('skills.skillInstructions')}
               value={draft.content}
-              readOnly={draft.deleted}
+              readOnly={draft.deleted || selected?.system}
               maxLength={200000}
               spellCheck={false}
               onChange={(event) =>
@@ -363,6 +400,16 @@ export function Skills({
           </label>
           {draft.deleted && (
             <p className="field-help">{t('skills.skillTrashRestoreContinueEditing')}</p>
+          )}
+          {draft.id && runtime.snapshot.protocolVersion >= 40 && (
+            <SkillFiles
+              key={`${bot.id}:${draft.id}:${draft.revision}`}
+              bot={target}
+              id={draft.id}
+              revision={draft.revision}
+              readOnly={draft.deleted || !!selected?.system || skillDirty(draft)}
+              onReplace={() => openInstall(true)}
+            />
           )}
           {status.conflict && (
             <div className="skill-conflict" role="status">
@@ -394,7 +441,9 @@ export function Skills({
             <button
               type="submit"
               className="primary"
-              disabled={!available || status.busy || draft.deleted || !skillDirty(draft)}
+              disabled={
+                !available || status.busy || draft.deleted || selected?.system || !skillDirty(draft)
+              }
             >
               {status.busy ? t('common.saving') : t('skills.saveSkill')}
             </button>
@@ -431,6 +480,7 @@ export function Skills({
           <article className="skill-item" key={entry.id}>
             <div className="skill-title">
               <strong>{entry.name}</strong>
+              {entry.system && <small className="muted">{t('skills.systemBuiltin')}</small>}
               <span className="spacer" />
               {!entry.deleted && (
                 <label className="skill-toggle">
@@ -461,12 +511,14 @@ export function Skills({
                 type="button"
                 className="secondary"
                 disabled={!available || status.busy}
-                aria-label={t('common.editNamedItem', { 0: entry.name })}
+                aria-label={t(entry.system ? 'common.view' : 'common.editNamedItem', {
+                  0: entry.name,
+                })}
                 onClick={() => {
                   open(entry).catch((cause) => report(bot.id, cause));
                 }}
               >
-                {t('skills.viewEdit')}
+                {t(entry.system ? 'skills.viewSystemSkill' : 'skills.viewEdit')}
               </button>
               {!entry.deleted && (
                 <button
@@ -494,7 +546,7 @@ export function Skills({
               ) : (
                 <IconButton
                   label={t('skills.moveTrash', { 0: entry.name })}
-                  disabled={!available || status.busy}
+                  disabled={!available || status.busy || entry.system}
                   onClick={() => {
                     if (draft?.id === entry.id && skillDirty(draft)) {
                       feedback(bot.id, { error: t('skills.saveDiscardSkillSEditsFirst') });
@@ -515,6 +567,25 @@ export function Skills({
           </p>
         )}
       </section>
+      {install && install.bot === bot.id && (
+        <SkillInstall
+          bot={agentId(install.bot)}
+          entries={catalog?.items ?? []}
+          target={install.target}
+          onClose={() => setInstall(undefined)}
+          onInstalled={(document) => {
+            dispatch({
+              type: 'skill-load',
+              bot: install.bot,
+              previous: install.previous,
+              document,
+            });
+            setRefresh((value) => value + 1);
+            setInstall(undefined);
+            notify(t('skills.packageInstalled'));
+          }}
+        />
+      )}
       {recycling && (
         <Dialog title={t('skills.moveSkillTrash')} onClose={closeRecycle}>
           <p className="dialog-description">

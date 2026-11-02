@@ -33,6 +33,7 @@ import type { NotesTools } from './notes-tools.js';
 import type { WorkspaceExecutor } from './remote-workspace.js';
 import { scheduleToolList } from './schedule-catalog.js';
 import type { ScheduleTools } from './schedule-tools.js';
+import type { SkillTools } from './skill-tools.js';
 import type { SkillSnapshot } from './skills.js';
 import type { SoftwareTools } from './software.js';
 import type { WorkTools } from './work-tools.js';
@@ -127,6 +128,7 @@ export class AgentTools {
   schedules?: ScheduleTools;
   integrations?: IntegrationTools;
   software?: SoftwareTools;
+  skills?: SkillTools;
   readonly computer: ComputerTools | undefined;
   authorizeComputer?: (run: ToolRun) => Promise<unknown>;
   executeRemote?: (
@@ -222,6 +224,7 @@ export class AgentTools {
       ...(this.work?.list || []),
       ...(this.notes?.list || []),
       ...(this.software?.list || []),
+      ...(run?.skills?.skills.length ? this.skills?.list || [] : []),
       ...(this.catalog?.list || []),
       ...(conversationId ? this.groups?.list || [] : []),
       ...(run?.bot === bot && run.conversationId === conversationId
@@ -758,6 +761,7 @@ export class AgentTools {
       this.notes,
       this.catalog,
       this.software,
+      this.skills,
       this.groups,
       this.hasBrowser(run.bot) ? this.browser : undefined,
     ].find((tools) => tools && Object.hasOwn(tools.fields, name));
@@ -793,7 +797,7 @@ export class AgentTools {
         throw new Fault('INVALID_TOOL_ARGS', 400);
       trace = { name, surface, phase: 'running', at: new Date().toISOString() };
       run.trace.push(trace);
-      if (dataTool && dataTool === this.software) {
+      if (dataTool && (dataTool === this.software || dataTool === this.skills)) {
         const response = await dataTool.invoke(run, name, args);
         trace.phase = response.isError ? 'rejected' : 'settled';
         return response;

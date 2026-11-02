@@ -17,7 +17,9 @@ import {
   isComputerRequest,
   isDocumentUpload,
   isExecutionRequest,
+  isSkillPackage,
   modelExecutionCapability,
+  skillPackageCapability,
   validAgentId,
 } from '@daban/protocol';
 import type { AgentToolRun } from './agent-tools.js';
@@ -495,7 +497,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         version: 1,
         boot,
         nonce,
-        capabilities: [...executionCapabilities, modelExecutionCapability],
+        capabilities: [...executionCapabilities, modelExecutionCapability, skillPackageCapability],
         computer: {
           mode: raw.mode,
           bots: raw.bots,
@@ -555,6 +557,10 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           params.limit === undefined ? undefined : Number(params.limit),
         );
       if (method === 'workspace.download') return files.download(String(params.path));
+      if (method === 'workspace.skill') {
+        if (!isSkillPackage(params.package)) throw new Fault('INVALID_SKILL_PACKAGE', 400);
+        return files.stageSkill(params.package, signal);
+      }
       if (method === 'workspace.create') {
         if (handles.size >= 256) throw new Fault('EXECUTION_HANDLE_LIMIT');
         const task = await files.create(params.parts as string[]);

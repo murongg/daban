@@ -34,6 +34,7 @@ import {
   isScheduleRule,
   isSkillBinding,
   isSkillContent,
+  isSkillPackageCommand,
   isTaskFile,
   isTaskFileName,
   isTranscriptContentQuery,
@@ -80,6 +81,12 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if (['work.comments', 'work.comment', 'work.comment-receipt'].includes(value.type))
     return isWorkCommentCommand(value) ? value : fail();
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();
+  if (
+    value.type.startsWith('skill.package.') ||
+    value.type === 'skill.pick' ||
+    value.type === 'skill.resource'
+  )
+    return isSkillPackageCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
     'work.list': ['type', 'query'],

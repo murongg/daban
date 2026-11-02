@@ -39,6 +39,7 @@ import { errorCode, errorMessage, Fault } from './control.js';
 import type { Desktop } from './desktop.js';
 import { defaultSdkFile } from './dsh.js';
 import { observeTools } from './events.js';
+import { builtinSkills } from './find-skills.js';
 import { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
 import { IntegrationTools } from './integration-tools.js';
@@ -48,6 +49,7 @@ import { Knowledge } from './knowledge.js';
 import { KnowledgeTools } from './knowledge-tools.js';
 import type { LocalComputerClient } from './local-computer.js';
 import { MemoryTools } from './memory.js';
+import { NativeWorkspace } from './native-workspace.js';
 import { Notes } from './notes.js';
 import { NotesTools } from './notes-tools.js';
 import { requestedUrls } from './policy.js';
@@ -55,7 +57,9 @@ import { BotProfiles, personaKey } from './profiles.js';
 import { redact, redactStream } from './redaction.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
 import type { ModelSettings, ResolvedModel } from './settings.js';
+import { SkillDiscovery } from './skill-discovery.js';
 import { invokedSkills } from './skill-provider.js';
+import { SkillTools } from './skill-tools.js';
 import { type SkillSnapshot, Skills } from './skills.js';
 import type { RawModelTask } from './snapshot.js';
 import { type SoftwareBackend, SoftwareTools } from './software.js';
@@ -592,7 +596,7 @@ export class ModelRuns {
       const job = this.jobs.get(bot);
       if (job?.running && !job.conversationId) throw new Fault('CHAT_BUSY');
     });
-    this.skills = new Skills(path.join(dir, 'skills.sqlite'));
+    this.skills = new Skills(path.join(dir, 'skills.sqlite'), builtinSkills);
     this.bundles = new BotBundles({
       documents,
       directory: path.join(dir, 'bundles'),
@@ -607,6 +611,27 @@ export class ModelRuns {
       if (job?.transcript && job.id === item.runId && job.conversationId === item.conversationId)
         this.recordTranscript(job, () => projectInteraction(item, job.redact!));
     });
+    this.tools.skills = new SkillTools(
+      this.skills,
+      async (run, bundle) => {
+        if (!run.id) throw new Fault('MODEL_RUN_UNKNOWN');
+        const native = this.tools.options.nativeOnly || this.tools.localSelected(run.bot, run);
+        let files = this.workspace.scope(run.workdir, run.canonicalRoot);
+        if (native && !this.tools.options.nativeOnly) {
+          const hostFiles = new NativeWorkspace(path.join(dir, 'skill-workspaces'));
+          await hostFiles.prepare();
+          const task = await hostFiles.create([run.bot, run.id]);
+          files = hostFiles.scope(task.path, task.canonical);
+          await task.close();
+        }
+        if (!files.stageSkill) throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
+        return {
+          directory: await files.stageSkill(bundle, run.abort.signal),
+          execution: native ? 'native-gui' : 'linux-workspace',
+        };
+      },
+      new SkillDiscovery(this.skills, this.interactions),
+    );
     if (software)
       this.tools.software = new SoftwareTools(this.interactions, software, {
         assertLive: (run) => {
@@ -1287,6 +1312,8 @@ export class ModelRuns {
       job.done = this.execute(job, config, patch);
       return this.publicJob(job);
     } catch (error) {
+      if (job.skills) this.skills.release(job.skills);
+      this.tools.skills?.release(job);
       job.imageInputs = undefined;
       job.running = false;
       job.phase = job.abort.signal.aborted ? 'stopped' : 'failed';
@@ -1597,6 +1624,9 @@ export class ModelRuns {
         job.phase = 'failed';
         job.error = 'EXECUTOR_DRAIN_UNAVAILABLE';
       });
+      if (job.skills) this.skills.release(job.skills);
+      // Completed jobs remain visible in the UI; their preview buffers must not live as long as that retained job.
+      this.tools.skills?.release(job);
       // Native shutdown and endRun can still settle tools or cancel human cards; close their transcript afterwards.
       if (job.transcript && !job.transcriptFailed) {
         try {

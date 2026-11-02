@@ -15,6 +15,7 @@ export async function fallbackLookup(
   signal: AbortSignal,
   resolve: Lookup = lookup,
   request: Fetch = fetch,
+  isPublic?: (address: string) => boolean,
 ): Promise<LookupAddress[]> {
   signal.throwIfAborted();
   let cancel: () => unknown = () => undefined;
@@ -29,16 +30,17 @@ export async function fallbackLookup(
   } finally {
     signal.removeEventListener('abort', cancel);
   }
+  const proxy = (entry: LookupAddress) =>
+    entry.family === 4
+      ? proxyAddresses.check(entry.address, 'ipv4')
+      : entry.family === 6 && proxyAddresses.check(entry.address, 'ipv6');
   if (
     !addresses.length ||
-    !addresses.every((entry) =>
-      entry.family === 4
-        ? proxyAddresses.check(entry.address, 'ipv4')
-        : entry.family === 6 && proxyAddresses.check(entry.address, 'ipv6'),
-    )
+    !addresses.some(proxy) ||
+    !addresses.every((entry) => proxy(entry) || isPublic?.(entry.address) === true)
   )
     return addresses;
-  // Dual-stack proxy benchmark addresses use this fixed TLS resolver; its answers still need public-IP validation and pinning.
+  // Mixed public/proxy answers are safe to re-resolve, but private addresses must never gain this fallback. Callers still validate and pin the TLS resolver's answers.
   const query = new URLSearchParams({ name: host, type: 'A' });
   const response = await request(`https://223.5.5.5/resolve?${query}`, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),

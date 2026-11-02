@@ -479,7 +479,9 @@ export class BotBundles {
       for (const skill of value.skills)
         if (parseSkill(skill.content).name !== skill.name) throw new Fault('INVALID_SKILL');
       if (value.skills.length)
-        await this.options.skills.checkImport(value.skills.map((skill) => skill.content));
+        await this.options.skills.checkImport(
+          value.skills.map((skill) => skill.package ?? skill.content),
+        );
       const total = value.knowledge.length + value.skills.length + 1;
       for (const [index, document] of value.knowledge.entries()) {
         signal.throwIfAborted();
@@ -495,7 +497,9 @@ export class BotBundles {
       }
       signal.throwIfAborted();
       if (value.skills.length)
-        await this.options.skills.checkImport(value.skills.map((skill) => skill.content));
+        await this.options.skills.checkImport(
+          value.skills.map((skill) => skill.package ?? skill.content),
+        );
       await this.change(async () => {
         const current = this.record(id)!;
         if (current.state === 'cancelled') throw new Fault('BOT_IMPORT_CANCELLED');
@@ -504,7 +508,9 @@ export class BotBundles {
         await this.save(current);
       });
       if (value.skills.length)
-        await this.options.skills.importBatch(value.skills.map((skill) => skill.content));
+        await this.options.skills.importBatch(
+          value.skills.map((skill) => skill.package ?? skill.content),
+        );
       if (value.knowledge.length)
         await this.options.knowledge.importBundle(
           record.target,
@@ -587,7 +593,13 @@ export class BotBundles {
             throw new Fault('SKILL_CONFLICT');
           const document = await this.options.skills.read(selection.id);
           if (document.revision !== selection.revision) throw new Fault('SKILL_CONFLICT');
-          skills.push({ name: document.name, content: document.content });
+          skills.push({
+            name: document.name,
+            content: document.content,
+            ...(document.package
+              ? { package: await this.options.skills.exportPackage(document.id, document.revision) }
+              : {}),
+          });
         }
       }
       for (const selection of input.knowledge) {
@@ -604,7 +616,8 @@ export class BotBundles {
       }
       const bundle: BotBundle = {
         format: 'daban.bot',
-        version: 1,
+        // Keep v1 receipts byte stable; only complete packages require the new format.
+        version: skills.some((skill) => skill.package) ? 2 : 1,
         profile: { name: profile.name, instructions: profile.instructions, color: profile.color },
         preferences: input.memory ? profile.memory : '',
         skills,

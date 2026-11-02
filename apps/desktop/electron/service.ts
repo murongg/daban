@@ -27,6 +27,7 @@ import type { LocalComputer } from './local-computer';
 import { NativeDaemon } from './native-daemon';
 import { RuntimeClient } from './runtime';
 import { Setup } from './setup';
+import { pickSkill } from './skill-picker';
 import { controlSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
 
@@ -308,6 +309,18 @@ export function runtimeService(
     return connecting;
   }
   async function dispatch(command: RuntimeCommand): Promise<unknown> {
+    if (command.type === 'skill.pick') {
+      if (closed || !client || state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 40) throw new Error('RUNTIME_TOO_OLD');
+      const owner = client,
+        epoch = connection;
+      const selected = await pickSkill(command.kind, agentTransport.signal);
+      if (closed || client !== owner || connection !== epoch) throw new Error('RUNTIME_OFFLINE');
+      const current = await owner.status(),
+        profile = current.profiles.find((item) => item.id === command.bot);
+      if (!profile || profile.archived) throw new Error('SKILL_BOT_NOT_FOUND');
+      return selected;
+    }
     if (isLocalComputerCommand(command)) {
       if (!local || !agentConfig || !state.localComputer)
         throw new Error('LOCAL_AGENT_UPDATE_REQUIRED');

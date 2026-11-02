@@ -7,6 +7,7 @@ import {
   isDocumentUpload,
   isModelId,
 } from './index.js';
+import { isSkillPackage, skillPackageCapability } from './skills.js';
 
 export const executionVersion = 1;
 export const modelExecutionCapability = 'model-capabilities-v1';
@@ -83,6 +84,7 @@ export const executionMethods = [
   'workspace.list',
   'workspace.read',
   'workspace.download',
+  'workspace.skill',
   'tools.open',
   'tools.invoke',
   'tools.poll',
@@ -153,6 +155,12 @@ export function isExecutionParams(
     );
   if (method === 'workspace.base' || method === 'workspace.list')
     return executionKeys(value, ['root', 'canonical']) && scope(value);
+  if (method === 'workspace.skill')
+    return (
+      executionKeys(value, ['root', 'canonical', 'package']) &&
+      scope(value) &&
+      isSkillPackage(value.package)
+    );
   if (method === 'workspace.create')
     return (
       executionKeys(value, ['root', 'canonical', 'parts']) &&
@@ -292,10 +300,12 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 1 ||
+    value.capabilities.length > executionCapabilities.length + 2 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
-      [...executionCapabilities, modelExecutionCapability].includes(capability),
+      [...executionCapabilities, modelExecutionCapability, skillPackageCapability].includes(
+        capability,
+      ),
     ) ||
     !executionCapabilities.every(
       (capability) => Array.isArray(value.capabilities) && value.capabilities.includes(capability),

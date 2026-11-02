@@ -1,4 +1,4 @@
-import { isSkillName } from '@daban/protocol';
+import { isSkillName, isSkillPackageInfo, isSkillResource } from '@daban/protocol';
 import type { SkillRecipe } from './skills.js';
 
 export const name = 'daban-skills';
@@ -43,6 +43,11 @@ export function apply(ctx: Context, config: { skills: SkillRecipe[]; invoked: st
         !skill.content.trim() ||
         skill.content.length > 100000 ||
         skill.content.includes('\0') ||
+        (skill.package !== undefined && !isSkillPackageInfo(skill.package)) ||
+        (skill.files !== undefined &&
+          (!Array.isArray(skill.files) ||
+            skill.files.length > 199 ||
+            !skill.files.every(isSkillResource))) ||
         !skill.invocation ||
         typeof skill.invocation.modelInvocable !== 'boolean' ||
         typeof skill.invocation.userInvocable !== 'boolean',
@@ -57,12 +62,14 @@ export function apply(ctx: Context, config: { skills: SkillRecipe[]; invoked: st
       name: skill.name,
       description: skill.description,
       content: skill.content,
+      ...(skill.metadata ? { metadata: skill.metadata } : {}),
       source: 'custom',
       provider: 'daban-user',
       resourceBase: {
         kind: 'opaque',
-        description:
-          'Single SKILL.md instructions only; support files and executable plugins were not installed.',
+        description: skill.package
+          ? 'Standard Agent Skills package. Resolve relative resources with skill_files and skill_read. Use skill_prepare for the complete directory before running scripts with existing authorized tools. Importing grants no execution or installation permissions.'
+          : 'Single SKILL.md instructions. Use skill_read for its captured source. No additional files or tool permissions were installed.',
       },
       // The SDK prompt also contains quoted history/files. Only gestures in the original accepted human text may invoke a manual-only recipe.
       invocation: {

@@ -1,0 +1,92 @@
+.skill-install-options {
+  display: grid;
+  gap: 12px;
+  padding: 12px 0;
+}
+.skill-install-options button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.skill-origin {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.skill-package-review h3 {
+  margin: 16px 0 4px;
+}
+.skill-file-list {
+  min-width: 0;
+  padding: 4px 0;
+  margin: 0;
+  border: 0;
+  max-height: 180px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.skill-file-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.skill-file-row > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.skill-file-row small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.skill-file-row[aria-pressed="true"] {
+  background: var(--selected);
+}
+.skill-file-preview {
+  margin: 16px 0;
+  max-height: 300px;
+  overflow: auto;
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 16px;
+  font:
+    12px / 1.7 ui-monospace,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.skill-resource-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.skill-detail-metadata {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+  margin: 20px 0;
+}
+.skill-detail-metadata div {
+  min-width: 0;
+}
+.skill-detail-metadata dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+.skill-detail-metadata dd {
+  margin: 0;
+  line-height: 1.7;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}

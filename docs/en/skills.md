@@ -1,38 +1,64 @@
-# Skill instructions
+# Skills
 
 [User guide](README.md) · [简体中文](../zh-CN/skills.md)
 
-Open **Skills** in a Bot's workspace. Skills hold reusable working instructions; they are not an application store and do not create tool permissions.
+Open **Skills** in a Bot's workspace. A skill is a reusable method with optional scripts, references and templates. Enablement is per Bot, and instructions do not grant tool permissions.
 
-## Create or import
+## Built-in find-skills
 
-1. Create a skill or import a single `SKILL.md`. Complete packages containing scripts, attachments, or executable dependencies are not currently supported.
-2. Review its name, purpose, source, and body.
-3. Save it to the shared library and enable it separately for each intended Bot.
-4. For manual use, add it to the draft, review the command, and send. Adding to a draft does not execute it.
+Daban includes its own adaptation of `find-skills`, enabled for Bots by default and independently switchable in the Skills panel. This read-only system skill needs no separate CLI installation.
 
-Minimal example:
+Ask, for example, “Find a skill for working with PDFs.” The Bot can search skills.sh, SkillsMP and ClawHub, or preview a public GitHub skill directory, then describe its purpose, source, version and files. After confirmation, Daban saves the exact previewed content and enables it for the current Bot from the next task. Other Bots remain unchanged.
+
+Declining prevents repeated installation prompts for the same content within that task. Installing a skill runs no scripts, hooks or dependency installers, and does not provide platform-specific tools. Rate limits or network restrictions can interrupt discovery; retry later or import a local package.
+
+## Local import and enablement
+
+1. Import a skill folder, ZIP or single `SKILL.md`.
+2. Review the purpose, file list and contents, then confirm. Installation only saves files.
+3. Enable it separately for each intended Bot. Locally imported custom skills start disabled.
+
+Bots share installed skills but keep separate enablement. Edits and replacements apply to future tasks; running tasks retain their captured version. Built-in system skills cannot be edited, replaced or deleted.
+
+## Standard packages
+
+Use the [Agent Skills](https://agentskills.io/specification) directory format:
+
+```text
+weekly-summary/
+  SKILL.md
+  scripts/report.py
+  references/guide.md
+  assets/template.csv
+```
+
+The directory directly contains `SKILL.md` and matches its frontmatter `name`. Other relative files, including binary templates, are preserved. Packages allow up to 200 files and 5 MiB unpacked; ZIP uploads allow 6 MiB. Symlinks, special files and escaping paths are rejected.
 
 ```markdown
 ---
 name: weekly-summary
 description: Summarize supplied weekly work records
+license: MIT
+compatibility: Python 3
+metadata:
+  author: example
 ---
 
-Check the date range, then summarize completed work, problems, and next steps.
+Read references/guide.md. If calculations are needed, prepare the full directory
+and run scripts/report.py from there so it can access assets/.
 State missing information rather than inventing numbers.
 ```
 
-Use a short lowercase English name. All Bots share the library, so editing a skill affects future use by other Bots. Enablement remains per Bot, and changes apply to subsequent tasks.
+Use a short lowercase English name. License, compatibility, metadata and `allowed-tools` declarations are retained as data, without granting permissions. Namespaced OpenClaw metadata is preserved without automatically executing its installers or hooks.
 
-## Automatic and manual invocation
+## How Bots use skills
 
-By default, skills can be loaded for relevant tasks or invoked with `/<skill-name>`. `disable-model-invocation: true` restricts automatic invocation; `user-invocable: false` restricts the manual entry point. Check the invocation state shown in the panel.
+Enabled Bots can read instructions and supporting files on demand, then prepare a complete directory before using scripts. Linux scripts use the existing command and approval flow. Missing dependencies require a separate installation; execution records determine the actual outcome. Native Mac / Windows mode provides managed resource files for authorized GUI work without adding host shell access.
 
-Disabling one invocation route does not grant permission through another. A skill can use only tools already available to the Bot. It does not bypass installation approvals, external-tool approval, or computer authorization.
+Skills can load for relevant tasks or be invoked with `/<skill-name>`. `disable-model-invocation: true` restricts automatic invocation, and `user-invocable: false` restricts the manual entry point. Check the invocation state shown in the panel.
 
-## Edit, export, and restore
+## Edit, export and restore
 
-Save or discard current edits before switching documents. Export the current instructions when needed. Trashing a skill disables it for all Bots. Restoring requires per-Bot enablement again.
+Editing `SKILL.md` preserves supporting files. Use **Replace package** to update the entire directory and review the revision. Preview or download individual files, or export a complete ZIP. A Markdown-only export contains just the instructions; use ZIP or [Bot transfer](bot-transfer.md) for a complete skill.
 
-The library retains at most 100 skills, including trash. Review third-party instructions before use and keep secrets or executable installation assumptions out of the body. See [Bot transfer](bot-transfer.md) to share selected skills with a Bot.
+Trashing disables the skill for all Bots; restoring requires enabling it again. The library retains up to 100 skills including trash, with a 200 MiB resource storage limit.

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { RuntimeDownload } from '@daban/protocol';
+import { type RuntimeDownload, type SkillPackage, skillPackageCapability } from '@daban/protocol';
 import { Fault } from './control.js';
 import type { AgentWorkspace, TaskDirectory, WorkspaceFile } from './workspace.js';
 
@@ -83,5 +83,22 @@ export class RemoteWorkspace implements AgentWorkspace {
       'workspace.download',
       this.params({ path: relative }),
     )) as RuntimeDownload;
+  }
+  async stageSkill(bundle: SkillPackage, signal?: AbortSignal) {
+    if (!this.execution.snapshot?.capabilities.includes(skillPackageCapability))
+      throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
+    const result = await this.execution.call(
+      'workspace.skill',
+      this.params({ package: bundle }),
+      signal,
+    );
+    const root = this.canonical ?? this.root;
+    if (
+      typeof result !== 'string' ||
+      !result.startsWith(root + '/.skills-') ||
+      result.slice(root.length + 1).includes('/')
+    )
+      throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
+    return result;
   }
 }

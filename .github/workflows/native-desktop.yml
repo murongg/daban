@@ -2,7 +2,7 @@ name: Native desktop
 on:
   workflow_dispatch:
   push:
-    branches: [main, 'feature/local-computer']
+    branches: [main, 'feature/local-computer', 'feature/standard-skills']
     paths:
       - 'apps/**'
       - 'packages/**'
@@ -27,6 +27,10 @@ jobs:
         run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/src/LocalComputer.test.tsx --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
         run: node --experimental-sqlite --test packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js
+      - name: Verify skill package UI and bindings
+        run: npx vitest run apps/desktop/electron/skills.test.ts apps/desktop/electron/portable.test.ts apps/desktop/src/SkillInstall.test.tsx apps/desktop/src/SkillMetadata.test.tsx --maxWorkers=2
+      - name: Verify standard skill packages
+        run: node --experimental-sqlite --test packages/engine/dist/skill-defaults.test.js packages/engine/dist/skill-discovery.test.js packages/engine/dist/skill-package.test.js packages/engine/dist/skills-packages.test.js packages/engine/dist/skill-tools.test.js packages/engine/dist/skill-sources.test.js packages/engine/dist/workspace-skills.test.js
       - name: Verify native DSH tool loop
         timeout-minutes: 3
         run: node --experimental-sqlite --test dist-agent/native-loop.test.js dist-agent/calendar.test.js packages/engine/dist/web.test.js packages/engine/dist/web-read.test.js packages/engine/dist/schedules.test.js packages/engine/dist/schedules.integration.js packages/engine/dist/documents.test.js

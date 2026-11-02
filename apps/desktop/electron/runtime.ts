@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
+import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
   botBundleLimit,
   botBundleText,
@@ -70,9 +71,11 @@ import {
   isRuntimeNoticeStatus,
   isSchedule,
   isScheduleFiring,
+  isSkillArchiveResult,
   isSkillBindingResult,
   isSkillCatalogResult,
   isSkillDocument,
+  isSkillResourceData,
   isSkillStatus,
   isSoftwareState,
   isTaskFile,
@@ -1101,6 +1104,61 @@ export class RuntimeClient {
           break;
       }
       if (!valid) throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    if (
+      command.type === 'skill.package.import' ||
+      command.type === 'skill.package.update' ||
+      command.type === 'skill.package.export' ||
+      command.type === 'skill.resource'
+    ) {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 40) throw new Error('RUNTIME_TOO_OLD');
+      const action =
+        command.type === 'skill.package.import'
+          ? 'import-package'
+          : command.type === 'skill.package.update'
+            ? 'update-package'
+            : command.type === 'skill.package.export'
+              ? 'export-package'
+              : 'resource';
+      const { type: _type, ...body } = command,
+        value = await this.api(`/api/skills/${action}`, body, true, 40);
+      if (command.type === 'skill.resource') {
+        if (
+          !isSkillResourceData(value) ||
+          value.id !== command.id ||
+          value.revision !== command.revision ||
+          value.file.path !== command.path ||
+          createHash('sha256').update(Buffer.from(value.data, 'base64')).digest('hex') !==
+            value.file.sha256
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        return value;
+      }
+      if (command.type === 'skill.package.export') {
+        if (
+          !isSkillArchiveResult(value) ||
+          value.id !== command.id ||
+          value.revision !== command.revision ||
+          createHash('sha256').update(Buffer.from(value.archive.data, 'base64')).digest('hex') !==
+            value.archive.sha256
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        return value.archive;
+      }
+      const preview = inspectSkillPackage(command.package);
+      if (
+        !isSkillDocument(value) ||
+        value.deleted ||
+        value.package?.digest !== preview.digest ||
+        ('id' in command &&
+          (value.id !== command.id ||
+            value.revision < command.revision ||
+            value.revision > command.revision + 1))
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
       return value;
     }
     if (

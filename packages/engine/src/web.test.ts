@@ -1,7 +1,40 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { publicAddress } from './network.js';
 import { apply, createFetcher, fallbackLookup } from './web.js';
+
+test('mixed public answers and known proxy IPv6 can be re-resolved, but private answers cannot', async () => {
+  const fake = { address: '2001:2::9', family: 6 };
+  let calls = 0;
+  const query = async () => {
+    calls++;
+    return Response.json({ Status: 0, Answer: [{ type: 1, data: '1.1.1.1' }] });
+  };
+  const mixed = [{ address: '8.8.8.8', family: 4 }, fake];
+  assert.deepEqual(
+    await Reflect.apply(fallbackLookup, undefined, [
+      'mock-public.example.test',
+      new AbortController().signal,
+      async () => mixed,
+      query,
+      publicAddress,
+    ]),
+    [{ address: '1.1.1.1', family: 4 }],
+  );
+  const privateMixed = [{ address: '192.168.1.9', family: 4 }, fake];
+  assert.deepEqual(
+    await Reflect.apply(fallbackLookup, undefined, [
+      'mock-private.example.test',
+      new AbortController().signal,
+      async () => privateMixed,
+      query,
+      publicAddress,
+    ]),
+    privateMixed,
+  );
+  assert.equal(calls, 1);
+});
 
 test('host web plugin registers its HTTP provider and retains private-address protection', async () => {
   let provider: ReturnType<typeof createFetcher> | undefined;

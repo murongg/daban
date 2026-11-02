@@ -21,7 +21,9 @@ Only selected saved content is included, not unsaved drafts or every historical 
 4. Import as a new Bot and wait for completion.
 5. Review its model selection and documents, then manually enable imported skills when appropriate.
 
-Imports containing PDF/Office originals require available Linux document parsing. Importing does not start tasks or connect a computer, and imported skill instructions are not automatically enabled.
+Imports containing PDF/Office originals require available Linux document parsing. Importing does not start tasks or connect a computer, and imported custom skills are not automatically enabled; the built-in find-skills retains its normal default behavior.
+
+Selected standard skills include their scripts, references and assets. These exports require an updated client with complete package support; legacy instruction-only exports remain readable.
 
 ## What does not migrate
 

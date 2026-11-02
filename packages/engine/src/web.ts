@@ -53,7 +53,7 @@ export function createFetcher(
           throw error;
         const host = new URL(input.url).hostname;
         if (isIP(host.startsWith('[') ? host.slice(1, -1) : host)) throw error;
-        const addresses = await fallbackLookup(host, signal, resolve, request);
+        const addresses = await fallbackLookup(host, signal, resolve, request, isPublic);
         if (
           !addresses.length ||
           addresses.some((entry) => entry.family !== 4 || !isPublic(entry.address))
