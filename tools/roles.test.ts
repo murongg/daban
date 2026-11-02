@@ -101,7 +101,10 @@ test('Host seals cover late Guest archives and changed native bytes without hash
     assert.equal(sealed.node, '24.22.1');
     assert.equal(sealed.dsh, '0.2.1-rc.3');
     assert.equal(sealed.files['executor.tar.gz'], hash('SYNTHETIC GUEST ARCHIVE'));
-    assert.equal(sealed.files['node/bin/node'], hash('SYNTHETIC SIGNED NATIVE BYTES'));
+    assert.equal(
+      sealed.files[path.join('node', 'bin', 'node')],
+      hash('SYNTHETIC SIGNED NATIVE BYTES'),
+    );
     assert.equal(Object.hasOwn(sealed.files, 'manifest.json'), false);
     assert.deepEqual(await sealHostPackage(root), sealed);
     assert.deepEqual(JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8')), sealed);
@@ -129,14 +132,25 @@ test('Host sealing rejects escaping links and never overwrites an external manif
   }
 });
 
-test('Host sealing accepts internal links and rejects special filesystem entries', async () => {
+test('Host sealing accepts internal links', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-host-seal-special-'));
-  const server = net.createServer();
   try {
     await writeFile(path.join(root, 'safe.js'), 'SYNTHETIC SAFE MODULE');
     await symlink('safe.js', path.join(root, 'alias.js'));
     const sealed = await sealHostPackage(root);
     assert.ok(sealed.files['safe.js']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Named pipes are not filesystem entries on Windows; its private pipe coverage lives in private-channel.test.
+test('Host sealing rejects POSIX filesystem socket entries', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-host-seal-socket-'));
+  const server = net.createServer();
+  try {
     await new Promise<unknown>((resolve, reject) => {
       server.once('error', reject);
       server.listen(path.join(root, 'socket'), () => resolve(undefined));
