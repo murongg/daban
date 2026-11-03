@@ -15,5 +15,5 @@
     "verbatimModuleSyntax": true,
     "types": ["vite/client", "vitest/globals", "node", "@testing-library/jest-dom/vitest"]
   },
-  "include": ["tools", "vitest.config.ts"]
+  "include": ["tools", "vitest.config.ts", "bump.config.ts"]
 }

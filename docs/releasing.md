@@ -58,16 +58,23 @@ gh release create environment-v38 \
 
 ## 发布版本
 
-1. 在 PR 中更新根包及各 workspace 的版本，并同步锁文件，合并 main。
-2. 为已合并提交创建并推送标签，例如 `v0.1.0` 或 `v0.1.0-beta.1`。
-3. `Release` 自动运行检查、生成双语日志、打包并发布。预发布标签自动标记为 prerelease。
+1. 将待发布的改动通过 PR 合并 main，切换到干净且已更新的 main，执行 `npm ci`。
+2. 运行 `npm run release`，由 bumpp 交互选择并确认版本；也可用 `--release` 指定版本，例如 `0.1.4` 或 `0.1.4-beta.1`。
+3. bumpp 同步根包、五个 workspace、内部依赖版本、根锁文件和两份独立部署锁文件，创建 `chore(release): v<version>` 提交与 `v<version>` annotated tag，并推送提交和标签。
+4. `Release` 自动运行检查、生成双语日志、打包并发布。预发布标签自动标记为 prerelease。
 
 ```sh
 git switch main
 git pull --ff-only
-git tag -a v0.1.0 -m "Daban v0.1.0"
-git push origin v0.1.0
+npm ci
+npm run release
+
+# 或指定版本（同样需要交互确认）：
+npm run release -- --release 0.1.4
+# 预发布示例：npm run release -- --release 0.1.4-beta.1
 ```
+
+版本同步由 `bump.config.ts` 的执行步骤处理，保留独立部署的 `file:` 路径和第三方依赖版本。不要手工改版本或用 `git tag` 绕过此流程。`npm run release` 会推送提交和标签，确认前应检查目标版本与当前分支。
 
 也可在 Actions 手动运行 `Release`，输入**已有**标签。任何检查、公证或日志生成失败都会阻止发布。重试不会覆盖已经发布的版本；修改版本内容应创建新版本。
 
@@ -103,6 +110,8 @@ Configure the secrets listed above. Apple secrets must contain a Developer ID Ap
 
 Upload the four verified, credential-free environment files above to the same repository's `environment-v38` release, or configure `MACOS_ENVIRONMENT_TAG`. The pinned base image and component checks must pass. Never distribute a used VM or modify expected hashes to accept an unverified image.
 
-Push a matching `vX.Y.Z` or `vX.Y.Z-beta.N` tag after merging its version update to main. An existing tag can also be selected via manual dispatch. Downloads include notarized Apple Silicon DMG/ZIP files, a Windows x64 portable ZIP, both language changelogs, and SHA-256 checksums. Release notes include both languages and the original change links. Existing releases are not overwritten. Windows signing and Intel Mac builds are not included. Installed clients support stable in-app updates; publish the NSIS installer, Mac ZIP, update manifests and blockmaps together. Portable Windows builds remain separate. Mac update configuration is embedded before signing, and ZIP packaging preserves the signed application.
+After merging the changes to release, use a clean, up-to-date main checkout, run `npm ci`, then `npm run release`. bumpp prompts for a version and confirmation; use `npm run release -- --release 0.1.4` or `npm run release -- --release 0.1.4-beta.1` for an explicit version. The configuration synchronizes all six package versions, internal dependency pins, the root lockfile, and both standalone lockfiles, preserving vendored `file:` paths and third-party versions. bumpp creates a `chore(release): v<version>` commit and an annotated `v<version>` tag, then pushes both to trigger `Release`. Use this command instead of manually editing versions or creating tags. An existing tag can also be selected via manual dispatch.
+
+Downloads include notarized Apple Silicon DMG/ZIP files, a Windows x64 portable ZIP, both language changelogs, and SHA-256 checksums. Release notes include both languages and the original change links. Existing releases are not overwritten. Windows signing and Intel Mac builds are not included. Installed clients support stable in-app updates; publish the NSIS installer, Mac ZIP, update manifests and blockmaps together. Portable Windows builds remain separate. Mac update configuration is embedded before signing, and ZIP packaging preserves the signed application.
 
 The model returns structured content; the release script controls Markdown layout. Notes start with a one-sentence summary, followed by nonempty categories in this order: Breaking changes, Features, Improvements, Fixes, Maintenance. Each change uses a single-level bullet, merges duplicate records, and retains PR/commit references and source links. Both languages must use matching categories, item counts and item order; structural validation and category counts are checked before publication. Downloaded changelogs use the version as an H1 and categories as H2 headings. The single-language files, `CHANGELOG.zh-CN.md` and `CHANGELOG.en.md`, are published as Release assets so a future client can select notes by interface language. The bilingual Release body uses H2 language headings and H3 categories, with original records and comparison links in a collapsed details section at the end.

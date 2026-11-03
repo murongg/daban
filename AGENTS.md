@@ -42,6 +42,12 @@ Biome preserves existing non-null assertions, CSS cascade ordering, and necessar
 - Root commands build in this order: protocol package, implementation library, then applications. Preserve compatibility with existing build entry points and user data paths.
 - `apps/runtime/standalone-lock.json` supports standalone Linux deployment; `apps/agent/standalone-lock.json` supports host service deployment. When updating dependencies, synchronize the root lockfile and the corresponding standalone lockfiles. Do not depend on development-machine workspace links.
 
+## Releases
+
+- Use `npm run release` (bumpp) from a clean, up-to-date `main` checkout after merging the changes to release. For an explicit version, use `npm run release -- --release <version>`; stable and prerelease versions are supported.
+- Keep the root package, all five workspaces, internal dependency versions, `package-lock.json`, and both standalone lockfiles synchronized through `bump.config.ts` and `tools/bump.ts`. Preserve standalone `file:` dependency paths and unrelated third-party versions.
+- bumpp creates the `chore(release): v<version>` commit, an annotated `v<version>` tag, and pushes both. Do not replace this flow with manual version edits or `git tag` commands. The tag triggers the existing `.github/workflows/release.yml`; its main-ancestry, version, signing, and changelog checks remain required. See `docs/releasing.md` for the full procedure.
+
 ## Verification Artifacts and Disk Usage
 
 - After each verification phase, remove obsolete artifacts that can be rebuilt. Keep the current client and one rollback version, and the latest complete environment package plus one previous version. Reports, logs, and cleanup records may be retained.
