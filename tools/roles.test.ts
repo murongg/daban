@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
 import * as roles from './roles.ts';
-import { hostPackageFile, moduleGraph, sealHostPackage } from './roles.ts';
+import { hostPackageFile, materializeHost, moduleGraph, sealHostPackage } from './roles.ts';
 
 test('desktop executor overrides must match the current compiled role instead of silently shipping stale DNS code', async () => {
   const verify = Reflect.get(roles, 'verifyExecutorBuild') as
@@ -146,6 +146,74 @@ test('Host sealing accepts internal links', async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('materializes npm junctions without replacing untouched runtime files', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-host-materialize-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const vendor = path.join(root, 'vendor/mock-module');
+  await mkdir(vendor, { recursive: true });
+  await mkdir(path.join(root, 'node_modules'));
+  await writeFile(path.join(root, 'main.js'), 'SYNTHETIC MAIN');
+  await writeFile(path.join(vendor, 'index.js'), 'SYNTHETIC DEPENDENCY');
+  const nested = path.join(root, 'vendor/mock-base');
+  await mkdir(nested);
+  await writeFile(path.join(nested, 'base.js'), 'SYNTHETIC NESTED DEPENDENCY');
+  await mkdir(path.join(vendor, 'node_modules'));
+  await symlink(nested, path.join(vendor, 'node_modules/mock-base'), 'junction');
+  await symlink(vendor, path.join(root, 'node_modules/mock-module'), 'junction');
+  const original = await lstat(path.join(root, 'main.js'));
+  await materializeHost(root);
+  expect((await lstat(path.join(root, 'node_modules/mock-module'))).isSymbolicLink()).toBe(false);
+  expect(await readFile(path.join(root, 'node_modules/mock-module/index.js'), 'utf8')).toBe(
+    'SYNTHETIC DEPENDENCY',
+  );
+  const installed = path.join(root, 'node_modules/mock-module/node_modules/mock-base');
+  expect((await lstat(installed)).isSymbolicLink()).toBe(false);
+  expect(await readFile(path.join(installed, 'base.js'), 'utf8')).toBe(
+    'SYNTHETIC NESTED DEPENDENCY',
+  );
+  await writeFile(path.join(vendor, 'index.js'), 'SYNTHETIC LATER VENDOR EDIT');
+  expect(await readFile(path.join(root, 'node_modules/mock-module/index.js'), 'utf8')).toBe(
+    'SYNTHETIC DEPENDENCY',
+  );
+  const after = await lstat(path.join(root, 'main.js'));
+  expect([after.dev, after.ino, after.mtimeMs]).toStrictEqual([
+    original.dev,
+    original.ino,
+    original.mtimeMs,
+  ]);
+});
+
+test('materialization refuses external junctions without copying or changing their targets', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-materialize-escape-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, 'package');
+  const outside = path.join(root, 'outside');
+  await mkdir(target);
+  await mkdir(outside);
+  await writeFile(path.join(outside, 'preserved.txt'), 'SYNTHETIC OUTSIDE');
+  await symlink(outside, path.join(target, 'escape'), 'junction');
+  await expect(materializeHost(target)).rejects.toThrowError(/HOST_PACKAGE_LINK_ESCAPE/);
+  expect((await lstat(path.join(target, 'escape'))).isSymbolicLink()).toBe(true);
+  expect(await readFile(path.join(outside, 'preserved.txt'), 'utf8')).toBe('SYNTHETIC OUTSIDE');
+});
+
+test('validates nested links before replacing any npm junction', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'mock-nested-materialize-'));
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const root = path.join(directory, 'package');
+  const vendor = path.join(root, 'vendor/mock-module');
+  const outside = path.join(directory, 'outside');
+  await mkdir(vendor, { recursive: true });
+  await mkdir(path.join(root, 'node_modules'));
+  await mkdir(outside);
+  await writeFile(path.join(outside, 'preserved.txt'), 'SYNTHETIC OUTSIDE');
+  const junction = path.join(root, 'node_modules/mock-module');
+  await symlink(vendor, junction, 'junction');
+  await symlink(outside, path.join(vendor, 'escape'), 'junction');
+  await expect(materializeHost(root)).rejects.toThrowError(/HOST_PACKAGE_LINK_ESCAPE/);
+  expect((await lstat(junction)).isSymbolicLink()).toBe(true);
 });
 
 // Named pipes are not filesystem entries on Windows; its private pipe coverage lives in private-channel.test.

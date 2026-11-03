@@ -52,7 +52,9 @@ const reference = JSON.parse(
 assert.equal((await hashAsset(archive, 'sha256')).digest, reference.assets[0].sha256);
 await assert.rejects(access(path.resolve(target, 'resources/agent')), { code: 'ENOENT' });
 const inspect = await mkdtemp(path.join(tmpdir(), 'daban-runtime-acceptance-'));
+console.time('acceptance:inspect-extract');
 await run('tar.exe', ['-xf', path.resolve(archive), '-C', inspect]);
+console.timeEnd('acceptance:inspect-extract');
 const cache = path.join(root, 'components/downloads');
 await mkdir(cache, { recursive: true });
 await copyFile(archive, path.join(cache, reference.assets[0].sha256 + '.zip'));
@@ -65,6 +67,7 @@ for (const smoke of smokes)
     constants.COPYFILE_EXCL,
   );
 try {
+  console.time('acceptance:sdk-smoke');
   const sdk = await run(
     path.join(agent, 'node/node.exe'),
     [
@@ -84,6 +87,7 @@ try {
   assert.match(sdk.stdout, /real DSH dispatches/);
   assert.match(sdk.stdout, /real host calendar recovers/);
   process.stdout.write(sdk.stdout);
+  console.timeEnd('acceptance:sdk-smoke');
 } finally {
   for (const smoke of smokes) await unlink(smoke);
   await rm(inspect, { recursive: true, force: true });

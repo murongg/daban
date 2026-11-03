@@ -73,8 +73,11 @@ export async function verifyHostFiles(root: string, manifest: unknown, signal?: 
   files.delete('manifest.json');
   if (files.size !== expected.size || [...files.keys()].some((name) => !expected.has(name)))
     throw Error('COMPONENT_INTEGRITY');
+  const entries = [...expected];
+  let index = 0;
+  let failed = false;
   // This manifest comes from the hash-verified archive, never from the mutable installed copy.
-  for (const [name, digest] of expected) {
+  async function verify(name: string, digest: string) {
     signal?.throwIfAborted();
     const file = path.join(base, ...name.split('/'));
     if ((await realpath(file)) !== file) throw Error('COMPONENT_UNSAFE');
@@ -99,4 +102,20 @@ export async function verifyHostFiles(root: string, manifest: unknown, signal?: 
       await handle.close();
     }
   }
+  // Drain every worker before returning: callers may immediately remove a failed installation.
+  const workers = await Promise.allSettled(
+    Array.from({ length: Math.min(4, entries.length) }, async () => {
+      while (!failed && index < entries.length) {
+        const [name, digest] = entries[index++];
+        try {
+          await verify(name, digest);
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
+      }
+    }),
+  );
+  const failure = workers.find((worker) => worker.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
 }

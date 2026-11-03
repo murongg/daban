@@ -1,9 +1,101 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import fs, { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { verifyComponentTree, verifyHostFiles } from './component-files.js';
+
+async function payload() {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-host-files-'));
+  await mkdir(path.join(root, 'node'), { mode: 0o700 });
+  const files: Record<string, string> = {};
+  for (const name of [
+    'main.js',
+    'node/node.exe',
+    ...Array.from({ length: 6 }, (_, i) => `${i}.js`),
+  ]) {
+    const bytes = `SYNTHETIC ${name}`;
+    await writeFile(path.join(root, name), bytes, { mode: 0o600 });
+    files[name] = createHash('sha256').update(bytes).digest('hex');
+  }
+  return { root, manifest: { node: '0.0.0-synthetic', dsh: '0.0.0-synthetic', files } };
+}
+
+test('verifies independent host files concurrently with at most four open handles', async () => {
+  const { root, manifest } = await payload();
+  const original = fs.open;
+  const active = new Set<Awaited<ReturnType<typeof fs.open>>>();
+  let peak = 0;
+  vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await original(...args);
+    active.add(handle);
+    peak = Math.max(peak, active.size);
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, 'close').mockImplementation(async () => {
+      try {
+        await close();
+      } finally {
+        active.delete(handle);
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return handle;
+  });
+  syncBuiltinESMExports();
+  try {
+    await verifyHostFiles(root, manifest);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(active.size).toBe(0);
+  } finally {
+    vi.restoreAllMocks();
+    syncBuiltinESMExports();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('waits for in-flight file handles to close before reporting an integrity failure', async () => {
+  const { root, manifest } = await payload();
+  manifest.files['main.js'] = '0'.repeat(64);
+  const original = fs.open;
+  const active = new Set<Awaited<ReturnType<typeof fs.open>>>();
+  vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+    const handle = await original(...args);
+    active.add(handle);
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, 'close').mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      try {
+        await close();
+      } finally {
+        active.delete(handle);
+      }
+    });
+    return handle;
+  });
+  syncBuiltinESMExports();
+  try {
+    await expect(verifyHostFiles(root, manifest)).rejects.toThrowError(/COMPONENT_INTEGRITY/);
+    expect(active.size).toBe(0);
+  } finally {
+    vi.restoreAllMocks();
+    syncBuiltinESMExports();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('preserves hard-link rejection and cancellation during host verification', async (t) => {
+  const { root, manifest } = await payload();
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const cancellation = new AbortController();
+  cancellation.abort(Error('synthetic cancellation'));
+  await expect(verifyHostFiles(root, manifest, cancellation.signal)).rejects.toThrowError(
+    /synthetic cancellation/,
+  );
+  await link(path.join(root, 'main.js'), path.join(root, 'alias.js'));
+  await expect(verifyHostFiles(root, manifest)).rejects.toThrowError(/COMPONENT_UNSAFE/);
+});
 
 test('verifies materialized host files against the trusted archive manifest, not the mutable cache manifest', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-component-files-'));
