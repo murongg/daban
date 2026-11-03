@@ -2,12 +2,14 @@ import { Download, LoaderCircle, Pause } from 'lucide-react';
 import { useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { t } from '../../i18n/locale';
+import { WindowsSetup } from './WindowsSetup';
 export function LinuxSetup() {
   const runtime = useRuntime(),
     status = runtime.snapshot.setup;
   const [pending, setPending] = useState(false),
     [error, setError] = useState('');
   if (status?.target !== 'linux' || (!status.required && status.phase !== 'waiting')) return null;
+  if (status.windows) return <WindowsSetup status={status} />;
   const working = [
     'verifying',
     'downloading',

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, rename } from 'node:fs/promises';
+import { lstat, open, rename } from 'node:fs/promises';
 import path from 'node:path';
+import { syncDirectory } from '@daban/engine/host';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import { type ExecutionSnapshot, isExecutionSnapshot, isRebootOperation } from '@daban/protocol';
 
 interface CachedExecution {
@@ -30,14 +32,19 @@ export function isWorkspaceRoot(value: unknown): value is string {
 }
 async function privateJson(file: string, code: string): Promise<unknown> {
   try {
+    const identity = await lstat(file);
+    if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1)
+      throw new Error(code);
+    if (process.platform === 'win32') await secureDirectory(path.dirname(file));
     const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const info = await handle.stat();
       if (
         !info.isFile() ||
         info.nlink !== 1 ||
-        info.uid !== process.getuid?.() ||
-        (info.mode & 0o777) !== 0o600 ||
+        info.dev !== identity.dev ||
+        info.ino !== identity.ino ||
+        !(await privateMetadata(file, info, 0o600)) ||
         info.size > 8 * 1024 * 1024
       )
         throw new Error(code);
@@ -125,15 +132,7 @@ export async function saveExecutionSnapshot(options: {
   )
     throw new Error('AGENT_EXECUTION_CACHE_INVALID');
   const parent = path.dirname(options.file);
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  const directory = await lstat(parent);
-  if (
-    !directory.isDirectory() ||
-    directory.isSymbolicLink() ||
-    directory.uid !== process.getuid?.() ||
-    (directory.mode & 0o777) !== 0o700
-  )
-    throw new Error('AGENT_EXECUTION_CACHE_INVALID');
+  await secureDirectory(parent);
   const temporary = `${options.file}.${randomUUID()}.tmp`;
   const handle = await open(temporary, 'wx', 0o600);
   try {
@@ -152,7 +151,7 @@ export async function saveExecutionSnapshot(options: {
   await rename(temporary, options.file);
   const entry = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY);
   try {
-    await entry.sync();
+    await syncDirectory(entry);
   } finally {
     await entry.close();
   }

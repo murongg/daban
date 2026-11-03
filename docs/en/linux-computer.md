@@ -2,7 +2,7 @@
 
 [User guide](README.md) · [简体中文](../zh-CN/linux-computer.md)
 
-Available on Apple silicon Macs with the local Linux environment. Windows currently provides [native desktop control](local-computer.md), not these independent Linux desktops.
+Available on Apple silicon Macs with the local Linux environment and on Windows x64 using the [optional QEMU environment](../windows-vm.md). Windows downloads Linux only when you choose to install it, then creates and connects the computer automatically. WHPX hardware acceleration is the default, with explicitly selected slower compatibility mode as an alternative. [Native desktop control](local-computer.md) can also be authorized separately.
 
 ## Connect a Bot's computer
 

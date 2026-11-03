@@ -8,6 +8,7 @@ import { count, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test, vi } from 'vitest';
 import { tables } from './database.js';
+import { secureDirectory } from './private-files.js';
 import { Work } from './work.js';
 import { workItems, workMeta, workOperations } from './work-schema.js';
 
@@ -27,7 +28,8 @@ const create = (item = 'mock-item', id = 'mock-create') => ({
   value: { ...fields },
 });
 async function fixture() {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-work-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-work-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'work.sqlite');
   let store = new Work(file);
   await store.ready;
@@ -44,13 +46,14 @@ async function fixture() {
     },
     async close() {
       await store.close();
-      await rm(root, { recursive: true, force: true });
+      await rm(temporary, { recursive: true, force: true });
     },
   };
 }
 
 test('a pre-ORM schema3 work file keeps items, receipts and authority after the schema baseline', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-work-legacy-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-work-legacy-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'work.sqlite');
   const at = '2026-01-01T00:00:00.000Z';
   const input = { ...create(), revision: 0 as const };
@@ -133,7 +136,7 @@ test('a pre-ORM schema3 work file keeps items, receipts and authority after the 
     }
   } finally {
     await store.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -547,7 +550,8 @@ test('corrupt or linked storage is preserved and closed stores cannot admit new 
   } finally {
     await f.close();
   }
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-work-path-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-work-path-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   try {
     const original = path.join(root, 'original');
     await writeFile(original, 'MOCK ORIGINAL BYTES');
@@ -565,7 +569,7 @@ test('corrupt or linked storage is preserved and closed stores cannot admit new 
     await closed.close();
     await expect(closed.write(create(), human)).rejects.toThrowError(/WORK_CLOSED/);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -658,7 +662,8 @@ test('loss of revision authority during service life cannot publish an untracked
 });
 
 test('a storage failure during initial schema creation leaves no partially published authority', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-work-init-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-work-init-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'work.sqlite');
   const prepare = DatabaseSync.prototype.prepare;
   let injected = false;
@@ -700,6 +705,6 @@ test('a storage failure during initial schema creation leaves no partially publi
   } finally {
     vi.restoreAllMocks();
     await failed.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });

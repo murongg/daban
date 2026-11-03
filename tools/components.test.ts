@@ -95,6 +95,7 @@ test('component identity follows runtime sources and dependencies, independently
     'tools/entitlements/app.plist',
     'tools/components.ts',
     'tools/roles.ts',
+    'tools/sdk.ts',
     'tools/sign.ts',
     'tools/environment.ts',
     'LICENSE',
@@ -139,6 +140,9 @@ test('component identity follows runtime sources and dependencies, independently
   await put('apps/desktop/src/App.tsx', 'SYNTHETIC RENDERER EDIT');
   await put('packages/engine/src/model.test.ts', 'SYNTHETIC TEST EDIT');
   expect(await componentSourceId(root)).toBe(first);
+  await put('tools/sdk.ts', 'SYNTHETIC SDK CONSOLE PATCH CHANGE');
+  expect(await componentSourceId(root)).not.toBe(first);
+  await put('tools/sdk.ts', 'SYNTHETIC RUNTIME SOURCE');
   await put(
     'apps/agent/package.json',
     JSON.stringify({

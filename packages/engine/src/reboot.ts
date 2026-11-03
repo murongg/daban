@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { type FileHandle, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
+import { type FileHandle, lstat, mkdir, open, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, isAbsolute } from 'node:path';
 import {
   isRebootOperation,
@@ -15,6 +15,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { syncDirectory } from './durability.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 type Binding = Pick<RecoveryRequest, 'id' | 'revision' | 'review'>;
 type Vm = 'running' | 'stopped' | 'unknown';
@@ -70,7 +71,12 @@ export class Reboot {
   }
   private async read() {
     let file: FileHandle;
+    let identity: Awaited<ReturnType<typeof lstat>>;
     try {
+      identity = await lstat(this.options.file);
+      if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1)
+        throw new Error('RECOVERY_HOST_STORE_UNAVAILABLE');
+      if (process.platform === 'win32') await secureDirectory(dirname(this.options.file));
       file = await open(this.options.file, constants.O_RDONLY | constants.O_NOFOLLOW);
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
@@ -79,7 +85,16 @@ export class Reboot {
     }
     try {
       const info = await file.stat();
-      if (!info.isFile() || info.nlink !== 1 || info.size > 256 * 1024 || (info.mode & 0o077) !== 0)
+      if (
+        !info.isFile() ||
+        info.nlink !== 1 ||
+        info.size > 256 * 1024 ||
+        info.dev !== identity.dev ||
+        info.ino !== identity.ino ||
+        (process.platform === 'win32'
+          ? !(await privateMetadata(this.options.file, info, 0o600))
+          : (info.mode & 0o077) !== 0)
+      )
         throw new Error('RECOVERY_HOST_STORE_UNAVAILABLE');
       return await file.readFile('utf8');
     } finally {
@@ -174,6 +189,7 @@ export class Reboot {
     const text = JSON.stringify(document);
     try {
       await mkdir(dirname(this.options.file), { recursive: true, mode: 0o700 });
+      if (process.platform === 'win32') await secureDirectory(dirname(this.options.file));
       const directory = await realpath(dirname(this.options.file));
       if (this.canonical && this.canonical !== directory) throw new Error('authority moved');
       const old = await this.read();

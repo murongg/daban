@@ -30,6 +30,8 @@ const mock = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   app: {
     setName: vi.fn(),
+    setAppUserModelId: vi.fn(),
+    commandLine: { getSwitchValue: vi.fn(() => '') },
     getVersion: () => '1.0.0',
     getPath: () => '/mock',
     setPath: vi.fn(),
@@ -145,10 +147,15 @@ it.each([false, true])(
         nativeFirst: true,
         entry: packaged
           ? join('/mock/Resources/agent', 'main.js')
-          : expect.stringMatching(/\/resources\/agent\/main\.js$/),
+          : expect.stringMatching(/[\\/]resources[\\/]agent[\\/]main\.js$/),
         executable: packaged
-          ? join('/mock/Resources/agent', 'node/bin/node')
-          : expect.stringMatching(/\/resources\/agent\/node\/bin\/node$/),
+          ? join(
+              '/mock/Resources/agent',
+              process.platform === 'win32' ? 'node/node.exe' : 'node/bin/node',
+            )
+          : process.platform === 'win32'
+            ? expect.stringMatching(/[\\/]resources[\\/]agent[\\/]node[\\/]node\.exe$/)
+            : expect.stringMatching(/\/resources\/agent\/node\/bin\/node$/),
       });
       mock.windows[0].emit('ready-to-show');
       expect(mock.activate).toHaveBeenCalledWith('mock-cold-id');

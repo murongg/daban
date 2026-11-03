@@ -65,6 +65,10 @@ export function desktopCommand(
       '--symlink',
       'usr/lib',
       '/lib',
+      // Debian amd64's ELF loader lives behind /lib64; /usr stays read-only in the sandbox.
+      '--symlink',
+      'usr/lib64',
+      '/lib64',
       '--symlink',
       'usr/sbin',
       '/sbin',

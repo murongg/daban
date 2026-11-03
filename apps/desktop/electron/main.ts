@@ -1,5 +1,5 @@
 import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   app,
@@ -27,7 +27,12 @@ import { UpdateSave } from './update-save';
 import { Updates } from './updates';
 
 app.setName('Daban');
-app.setPath('userData', join(app.getPath('appData'), 'daban-preview'));
+// Honor Electron's explicit profile switch so acceptance can run without touching the user's saved workspace.
+const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
+app.setPath(
+  'userData',
+  requestedProfile ? resolve(requestedProfile) : join(app.getPath('appData'), 'daban-preview'),
+);
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
 if (process.platform === 'win32') app.setAppUserModelId('dev.daban.app');
@@ -202,6 +207,13 @@ if (primary) {
                 process.platform === 'darwin'
                   ? join(process.resourcesPath, '../..')
                   : app.getPath('exe'),
+              ...(process.platform === 'win32' &&
+              (await access(join(process.resourcesPath, 'runtime.zip')).then(
+                () => true,
+                () => false,
+              ))
+                ? { bundledArchive: join(process.resourcesPath, 'runtime.zip') }
+                : {}),
             }),
           }
         : {

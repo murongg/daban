@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import {
   componentAsset,
   componentIndex,
@@ -11,6 +11,30 @@ import {
 const id = '1'.repeat(64);
 const mac = { platform: 'darwin', arch: 'arm64', bytes: 1024, sha256: 'a'.repeat(64) };
 const win = { platform: 'win32', arch: 'x64', bytes: 2048, sha256: 'b'.repeat(64) };
+
+test('a host control protocol update does not invalidate the independently sealed QEMU environment', async () => {
+  vi.resetModules();
+  vi.doMock('@daban/protocol', async (original) => ({
+    ...(await original<typeof import('@daban/protocol')>()),
+    managedProtocol: 999,
+  }));
+  try {
+    const { qemuIndex, windowsEnvironment } = await import('./component.js');
+    const reference = {
+      version: 1,
+      protocol: windowsEnvironment.protocol,
+      bytes: 4096,
+      sha256: 'a'.repeat(64),
+      unpackedBytes: 8192,
+      requiredBytes: 8 * 1024 ** 3,
+    };
+    expect(qemuIndex(reference)).toEqual(reference);
+    expect(() => qemuIndex({ ...reference, protocol: 999 })).toThrow('QEMU_DOWNLOAD_REFERENCE');
+  } finally {
+    vi.doUnmock('@daban/protocol');
+    vi.resetModules();
+  }
+});
 
 test('pins the optional Linux bundle and its signed Lima archive without accepting URL overrides', () => {
   const reference = {

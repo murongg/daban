@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { componentIndex } from '@daban/engine/component';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import type { SetupStatus } from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 import { componentPaths } from './component-install';
@@ -24,15 +25,17 @@ afterEach(async () => {
   hooks.pointer = undefined;
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
-async function fixture() {
-  const directory = await mkdtemp(path.join(tmpdir(), 'mock-runtime-preparation-'));
-  roots.push(directory);
+async function fixture(platform: 'darwin' | 'win32' = 'darwin') {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-runtime-preparation-'));
+  roots.push(root);
+  // Fresh private children receive Windows ACLs; mkdtemp inherits the shared temp ACL.
+  const directory = await secureDirectory(path.join(root, 'private'));
   const bytes = Buffer.from('SYNTHETIC VERIFIED COMPONENT ARCHIVE'),
     id = 'a'.repeat(64);
   const options = {
     directory,
-    platform: 'darwin' as const,
-    arch: 'arm64',
+    platform,
+    arch: platform === 'darwin' ? 'arm64' : 'x64',
     publisher: path.join(directory, 'SyntheticClient.app'),
     reference: componentIndex(
       {
@@ -40,8 +43,8 @@ async function fixture() {
         id,
         assets: [
           {
-            platform: 'darwin',
-            arch: 'arm64',
+            platform,
+            arch: platform === 'darwin' ? 'arm64' : 'x64',
             bytes: bytes.length,
             sha256: createHash('sha256').update(bytes).digest('hex'),
           },
@@ -55,32 +58,69 @@ async function fixture() {
     ),
   };
   const extract = vi.fn(async (_archive: string, target: string) => {
-    const paths = componentPaths(target, 'darwin');
+    const paths = componentPaths(target, platform);
     await mkdir(path.dirname(paths.entry), { recursive: true });
     await mkdir(path.dirname(paths.executable), { recursive: true });
     await writeFile(paths.entry, 'SYNTHETIC HOST MAIN');
     await writeFile(paths.executable, 'SYNTHETIC NODE', { mode: 0o700 });
   });
   const verify = vi.fn(async (input: { directory: string }) => {
-    const files = componentPaths(input.directory, 'darwin');
+    const files = componentPaths(input.directory, platform);
     await lstat(files.entry);
     await lstat(files.executable);
   });
   return { options, bytes, extract, verify };
 }
 
-it('prepares a component once and checks its cached installation again after restart', async () => {
-  const f = await fixture(),
-    changes: SetupStatus[] = [];
+it.each(['darwin', 'win32'] as const)(
+  'prepares a component once and verifies cached startup without showing installation again (%s)',
+  async (platform) => {
+    const f = await fixture(platform),
+      changes: SetupStatus[] = [];
+    const first = new Components(f.options, f);
+    const files = await first.prepare((status) => changes.push(status));
+    expect(await readFile(files.entry, 'utf8')).toBe('SYNTHETIC HOST MAIN');
+    expect(changes.some((item) => item.phase === 'downloading')).toBe(true);
+    expect(first.status()).toMatchObject({ required: false, target: 'agent', phase: 'complete' });
+    await expect(first.cancel()).resolves.toMatchObject({ phase: 'complete', required: false });
+    const next = new Components(f.options, f);
+    const restart: SetupStatus[] = [];
+    expect(await next.prepare((status) => restart.push(status))).toEqual(files);
+    expect(restart.every((status) => !status.required)).toBe(true);
+    expect(f.options.fetcher).toHaveBeenCalledTimes(1);
+    expect(f.extract).toHaveBeenCalledTimes(1);
+    expect(f.verify).toHaveBeenCalledTimes(2);
+  },
+);
+
+it('prepares the bundled runtime offline and applies the same archive integrity and installation verification', async () => {
+  const f = await fixture();
+  const archive = path.join(f.options.directory, 'bundled.zip');
+  await writeFile(archive, f.bytes);
+  const source = new Components({ ...f.options, bundledArchive: archive }, f);
+  await source.prepare();
+  expect(f.options.fetcher).not.toHaveBeenCalled();
+  expect(f.verify).toHaveBeenCalledTimes(1);
+  const cached = Reflect.get(source, 'archive') as string;
+  expect(await privateMetadata(cached, await lstat(cached), 0o600)).toBe(true);
+  const broken = await fixture();
+  await writeFile(archive, 'SYNTHETIC CORRUPTION');
+  await expect(
+    new Components({ ...broken.options, bundledArchive: archive }, broken).prepare(),
+  ).rejects.toThrow('COMPONENT_INTEGRITY');
+  expect(broken.extract).not.toHaveBeenCalled();
+});
+
+it('shows download progress when a Windows trust archive needs repair while retaining verified executable files', async () => {
+  const f = await fixture('win32');
   const first = new Components(f.options, f);
-  const files = await first.prepare((status) => changes.push(status));
-  expect(await readFile(files.entry, 'utf8')).toBe('SYNTHETIC HOST MAIN');
-  expect(changes.some((item) => item.phase === 'downloading')).toBe(true);
-  expect(first.status()).toMatchObject({ required: false, target: 'agent', phase: 'complete' });
-  await expect(first.cancel()).resolves.toMatchObject({ phase: 'complete', required: false });
-  const next = new Components(f.options, f);
-  expect(await next.prepare()).toEqual(files);
-  expect(f.options.fetcher).toHaveBeenCalledTimes(1);
+  const files = await first.prepare();
+  await rm(Reflect.get(first, 'archive') as string);
+  const changes: SetupStatus[] = [];
+  const reopened = new Components(f.options, f);
+  expect(await reopened.prepare((status) => changes.push(status))).toEqual(files);
+  expect(changes.some((status) => status.required && status.phase === 'downloading')).toBe(true);
+  expect(f.options.fetcher).toHaveBeenCalledTimes(2);
   expect(f.extract).toHaveBeenCalledTimes(1);
   expect(f.verify).toHaveBeenCalledTimes(2);
 });

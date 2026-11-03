@@ -8,6 +8,7 @@ import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { Knowledge } from './knowledge.js';
 import { sources } from './knowledge-schema.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 test('a pre-ORM knowledge file keeps documents, history and originals and gains the import table', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-knowledge-legacy-'));
@@ -192,7 +193,8 @@ test('imports retain immutable originals through edits, trash, restore and resta
 });
 
 test('knowledge commits owned content and history atomically, rejects stale edits and restores without rewriting history', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-knowledge-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-knowledge-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   let store = new Knowledge(path.join(root, 'knowledge.sqlite'));
   try {
     expect((await store.status()).revision).toBe(0);
@@ -256,10 +258,11 @@ test('knowledge commits owned content and history atomically, rejects stale edit
     await store.close();
     store = new Knowledge(path.join(root, 'knowledge.sqlite'));
     expect(await store.read('mock-alpha', first.id)).toStrictEqual(restored);
-    expect((await stat(path.join(root, 'knowledge.sqlite'))).mode & 0o777).toBe(0o600);
+    const file = path.join(root, 'knowledge.sqlite');
+    expect(await privateMetadata(file, await stat(file), 0o600)).toBe(true);
   } finally {
     await store.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 

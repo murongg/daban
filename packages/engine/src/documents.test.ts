@@ -6,6 +6,20 @@ import { promisify } from 'node:util';
 import { expect, test } from 'vitest';
 import { documentCommand } from './documents.js';
 
+test('the isolated document reader preserves the Debian amd64 loader alias', () => {
+  const command = documentCommand(
+    {
+      source: '/mock/source',
+      dependencies: '/mock/deps',
+      parserDependencies: '/mock/deps',
+      engine: '/mock/node',
+    },
+    'pdf',
+  );
+  expect(command.args).toContain('/lib64');
+  expect(command.args[command.args.indexOf('/lib64') - 1]).toBe('usr/lib64');
+});
+
 test('the document worker arguments start a real Node ES module without a package manifest', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-document-entry-'));
   try {

@@ -30,6 +30,10 @@ export function documentCommand(paths: DocumentPaths, format: string) {
     '--symlink',
     'usr/lib',
     '/lib',
+    // Debian amd64's ELF loader must remain reachable inside the isolated reader.
+    '--symlink',
+    'usr/lib64',
+    '/lib64',
     '--proc',
     '/proc',
     '--dev',

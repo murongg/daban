@@ -8,6 +8,7 @@ import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { Attachments } from './attachments.js';
 import { purges, uploads } from './attachments-schema.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 const digest = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');
 
@@ -253,7 +254,8 @@ test('retained extracted text is bounded independently of highly compressed orig
 });
 
 test('confirmed attachments retain immutable originals and text across restart, deduplicate uploads and enforce Bot scope', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-uploads-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-uploads-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   let store = new Attachments(path.join(root, 'uploads.sqlite'));
   const data = Buffer.from('%PDF-1.7\nsynthetic-original');
   const file = { name: 'mock.pdf', data: data.toString('base64') };
@@ -278,7 +280,8 @@ test('confirmed attachments retain immutable originals and text across restart, 
     await store.close();
     store = new Attachments(path.join(root, 'uploads.sqlite'));
     expect((await store.read('mock-alpha', first.id)).receipt).toStrictEqual(first);
-    expect((await stat(path.join(root, 'uploads.sqlite'))).mode & 0o777).toBe(0o600);
+    const databaseFile = path.join(root, 'uploads.sqlite');
+    expect(await privateMetadata(databaseFile, await stat(databaseFile), 0o600)).toBe(true);
     const db = new DatabaseSync(path.join(root, 'uploads.sqlite'));
     db.prepare('UPDATE uploads SET data=? WHERE bot=? AND id=?').run(
       Buffer.from('synthetic corruption'),
@@ -294,7 +297,7 @@ test('confirmed attachments retain immutable originals and text across restart, 
     });
   } finally {
     await store.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 

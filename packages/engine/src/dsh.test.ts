@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { expect, test } from 'vitest';
 import { DshLog, readDshStartup, startupLogLimit, startupSnapshotLimit } from './dsh.js';
@@ -122,7 +121,7 @@ test('startup logging never follows an existing symlink', {
   }
 });
 
-const preload = fileURLToPath(new URL('./dsh-preload.js', import.meta.url));
+const preload = new URL('./dsh-preload.js', import.meta.url).href;
 function childEnvironment(file: string) {
   return {
     PATH: process.env.PATH,

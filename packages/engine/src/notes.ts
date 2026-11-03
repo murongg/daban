@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, open } from 'node:fs/promises';
+import { chmod, lstat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -25,7 +25,7 @@ import { errorCode, Fault } from './control.js';
 import { configure, type Database, migrate, tables, unwrap } from './database.js';
 import { migrations } from './notes-migrations.js';
 import { noteItems, noteMeta, noteOperations } from './notes-schema.js';
-import { privateMetadata } from './private-files.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 type Row = Record<string, unknown>;
 const capacity = 1000,
@@ -59,7 +59,8 @@ export class Notes {
   private async load() {
     let client: DatabaseSync | undefined;
     try {
-      await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      // Windows privacy comes from the verified parent ACL rather than Unix file mode bits.
+      await secureDirectory(path.dirname(this.file));
       const existing = await lstat(this.file).catch((error) => {
         if (errorCode(error) !== 'ENOENT') throw error;
         return undefined;

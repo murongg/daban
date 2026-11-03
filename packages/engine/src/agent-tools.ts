@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { type FileHandle, link, lstat, open, realpath, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  browserTaskCapability,
   documentLimit,
   isTaskFileName,
   type ModelId,
@@ -260,6 +261,11 @@ export class AgentTools {
         canonicalRoot: run.canonicalRoot,
         ...(run.model ? { model: run.model } : {}),
         ...(capabilities && run.vision !== undefined ? { vision: run.vision } : {}),
+        // Pass the authorized prompt only. The host task also carries private memory and attachments.
+        ...(this.options.execution.snapshot?.capabilities.includes(browserTaskCapability) &&
+        run.task?.prompt.trim()
+          ? { prompt: run.task.prompt }
+          : {}),
         limit: run.limit,
       },
       run.abort.signal,

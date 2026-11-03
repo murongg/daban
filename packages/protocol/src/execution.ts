@@ -11,6 +11,7 @@ import { isSkillPackage, skillPackageCapability } from './skills.js';
 
 export const executionVersion = 1;
 export const modelExecutionCapability = 'model-capabilities-v1';
+export const browserTaskCapability = 'browser-task-v1';
 export const executionCapabilities = [
   'workspace',
   'tools',
@@ -70,6 +71,7 @@ export interface ExecutionRun {
   canonicalRoot: string;
   model?: ModelId;
   vision?: boolean;
+  prompt?: string;
   limit: number;
 }
 export const executionMethods = [
@@ -127,13 +129,23 @@ const scope = (value: Record<string, unknown>) =>
 export function isExecutionRun(value: unknown): value is ExecutionRun {
   return (
     executionRecord(value) &&
-    executionKeys(value, ['id', 'bot', 'workdir', 'canonicalRoot', 'model', 'vision', 'limit']) &&
+    executionKeys(value, [
+      'id',
+      'bot',
+      'workdir',
+      'canonicalRoot',
+      'model',
+      'vision',
+      'prompt',
+      'limit',
+    ]) &&
     validAgentId(value.id) &&
     validAgentId(value.bot) &&
     absolute(value.workdir) &&
     absolute(value.canonicalRoot) &&
     (value.model === undefined || isModelId(value.model)) &&
     (value.vision === undefined || typeof value.vision === 'boolean') &&
+    (value.prompt === undefined || (text(value.prompt, 12000) && !!value.prompt.trim())) &&
     integer(value.limit) &&
     Number(value.limit) >= 1 &&
     Number(value.limit) <= 1000
@@ -300,12 +312,15 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 2 ||
+    value.capabilities.length > executionCapabilities.length + 3 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
-      [...executionCapabilities, modelExecutionCapability, skillPackageCapability].includes(
-        capability,
-      ),
+      [
+        ...executionCapabilities,
+        modelExecutionCapability,
+        skillPackageCapability,
+        browserTaskCapability,
+      ].includes(capability),
     ) ||
     !executionCapabilities.every(
       (capability) => Array.isArray(value.capabilities) && value.capabilities.includes(capability),

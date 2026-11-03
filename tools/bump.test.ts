@@ -165,9 +165,18 @@ test('the release command commits synchronized files and pushes an annotated tag
     git('init', '--bare', remote);
     git('remote', 'add', 'origin', remote);
     git('push', '-u', 'origin', 'main');
-    execFileSync('npm', ['run', 'release', '--', '--release', '2.3.4-beta.1', '--yes'], {
+    const npm = process.platform === 'win32' ? process.execPath : 'npm';
+    const prefix =
+      process.platform === 'win32'
+        ? [
+            process.env.npm_execpath ||
+              path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
+          ]
+        : [];
+    execFileSync(npm, [...prefix, 'run', 'release', '--', '--release', '2.3.4-beta.1', '--yes'], {
       cwd: root,
       stdio: 'pipe',
+      windowsHide: true,
     });
     await verifyVersions(root, '2.3.4-beta.1');
     expect(git('status', '--porcelain')).toBe('');

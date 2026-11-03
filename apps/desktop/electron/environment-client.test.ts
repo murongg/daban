@@ -26,6 +26,16 @@ it('uses the authenticated scoped host endpoint and validates Linux progress', a
     action: 'start',
   });
   expect(fetcher.mock.calls[0][1].headers).toHaveProperty('x-prototype-token', 'synthetic-token');
+  await client.invoke('start', { mode: 'tcg' });
+  expect(JSON.parse(fetcher.mock.calls[1][1].body as string)).toMatchObject({
+    action: 'start',
+    mode: 'tcg',
+  });
+  await client.invoke('enable', { confirmed: true });
+  expect(JSON.parse(fetcher.mock.calls[2][1].body as string)).toMatchObject({
+    action: 'enable',
+    confirmed: true,
+  });
   fetcher.mockImplementation(async () =>
     Response.json({ required: true, target: 'agent', phase: 'downloading' }),
   );

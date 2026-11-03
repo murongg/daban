@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { syncDirectory } from '@daban/engine/host';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 
 const transferCodes = new Set([
   'MIGRATION_CACHE_CHANGED',
@@ -83,7 +85,7 @@ export function startupErrorCode(error: unknown) {
         ? error.message
         : '';
   if (transferCodes.has(code)) return code;
-  return /^(?:AGENT|EXECUTION|EXECUTOR|PROVISION|RECOVERY|RUNTIME|BUNDLE_MIGRATION|INVALID)_[A-Z0-9_]{1,80}$/.test(
+  return /^(?:AGENT|EXECUTION|EXECUTOR|PROVISION|RECOVERY|RUNTIME|BUNDLE_MIGRATION|INVALID|VM|QEMU)_[A-Z0-9_]{1,80}$/.test(
     code,
   )
     ? code
@@ -100,8 +102,7 @@ async function privateProgress(file: string) {
     (info.isFile() &&
       !info.isSymbolicLink() &&
       info.nlink === 1 &&
-      info.uid === process.getuid?.() &&
-      (info.mode & 0o777) === 0o600)
+      (await privateMetadata(file, info, 0o600)))
   );
 }
 export async function writeStartupFailure(dataRoot: string, error: unknown): Promise<boolean> {
@@ -109,12 +110,12 @@ export async function writeStartupFailure(dataRoot: string, error: unknown): Pro
   let temporary: string | undefined;
   let directory: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    if (process.platform === 'win32') await secureDirectory(dataRoot);
     const info = await lstat(dataRoot);
     if (
       !info.isDirectory() ||
       info.isSymbolicLink() ||
-      info.uid !== process.getuid?.() ||
-      (info.mode & 0o777) !== 0o700
+      !(await privateMetadata(dataRoot, info, 0o700))
     )
       return false;
     directory = await open(
@@ -146,12 +147,12 @@ export async function writeStartupFailure(dataRoot: string, error: unknown): Pro
       current.ino !== info.ino ||
       current.isSymbolicLink() ||
       current.uid !== info.uid ||
-      (current.mode & 0o777) !== 0o700 ||
+      !(await privateMetadata(dataRoot, current, 0o700)) ||
       !(await privateProgress(file))
     )
       return false;
     await rename(temporary, file);
-    await directory.sync();
+    await syncDirectory(directory);
     return true;
   } catch {
     return false;

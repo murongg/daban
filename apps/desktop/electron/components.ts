@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdtemp, open, rename, rm, unlink } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdtemp, open, rename, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type ComponentIndex,
@@ -20,6 +20,7 @@ export interface ComponentOptions {
   arch: string;
   publisher: string;
   fetcher?: typeof fetch;
+  bundledArchive?: string;
 }
 export interface PreparedAgentFiles {
   entry: string;
@@ -181,28 +182,76 @@ export class Components implements RuntimePreparation {
     signal.throwIfAborted();
     return componentPaths(directory, this.options.platform);
   }
-  private async download(signal: AbortSignal) {
-    this.publish({ required: true, phase: 'downloading', error: undefined, progress: undefined });
+  private async prepareArchive(
+    signal: AbortSignal,
+    progress?: (value: { received: number; total: number }) => unknown,
+  ) {
+    if (this.options.bundledArchive) {
+      const source = this.options.bundledArchive;
+      const info = await lstat(source);
+      if (
+        !info.isFile() ||
+        info.isSymbolicLink() ||
+        info.nlink !== 1 ||
+        info.size !== this.payload.bytes
+      )
+        throw Error('COMPONENT_INTEGRITY');
+      const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const temporary = this.archive + '.' + randomUUID() + '.tmp';
+      try {
+        const current = await handle.stat();
+        if (current.ino !== info.ino || current.dev !== info.dev)
+          throw Error('COMPONENT_INTEGRITY');
+        const hash = createHash('sha256');
+        for await (const chunk of handle.createReadStream({ autoClose: false })) {
+          signal.throwIfAborted();
+          hash.update(chunk);
+        }
+        if (hash.digest('hex') !== this.payload.sha256) throw Error('COMPONENT_INTEGRITY');
+        await copyFile(source, temporary, constants.COPYFILE_EXCL);
+        // Bundled archives may be world-readable; the private cache must satisfy the downloader's ownership checks.
+        await chmod(temporary, 0o600);
+        // Verify the copied bytes through the existing downloader before any extraction or execution.
+        await rename(temporary, this.archive);
+      } finally {
+        await handle.close();
+        await unlink(temporary).catch((error) => {
+          if (!absent(error)) throw error;
+        });
+      }
+    }
     await downloadPayload(this.archive, this.payload, {
       fetcher: this.options.fetcher,
       signal,
-      progress: ({ received, total }) =>
-        this.publish({
-          downloaded: received,
-          total,
-          progress: Math.floor((received / total) * 100),
-        }),
+      progress,
+    });
+  }
+  private async download(signal: AbortSignal) {
+    this.publish({ required: true, phase: 'downloading', error: undefined, progress: undefined });
+    await this.prepareArchive(signal, (value) => this.downloadProgress(value));
+  }
+  private downloadProgress({ received, total }: { received: number; total: number }) {
+    return this.publish({
+      required: true,
+      phase: 'downloading',
+      downloaded: received,
+      total,
+      progress: Math.floor((received / total) * 100),
     });
   }
   private async install(signal: AbortSignal) {
     await this.init();
     if ((await text(path.join(this.root, 'paused.json'))) !== undefined)
       throw Error('COMPONENT_PAUSED');
-    this.publish({ required: true, phase: 'verifying', error: undefined });
     const pointer = await text(path.join(this.slot, 'current.json'));
+    // Cached startup still verifies every executable and its trust anchor; it is not another installation.
+    this.publish({ required: !pointer, phase: 'verifying', error: undefined });
     let archiveReady = false;
     if (pointer && this.options.platform === 'win32') {
-      await this.download(signal);
+      await this.prepareArchive(signal, (value) => {
+        if (value.received < value.total || this.value.required) this.downloadProgress(value);
+      });
+      this.publish({ phase: 'verifying' });
       archiveReady = true;
     }
     if (pointer) {
@@ -233,7 +282,7 @@ export class Components implements RuntimePreparation {
       }
     }
     if (!archiveReady) await this.download(signal);
-    this.publish({ phase: 'extracting', progress: undefined });
+    this.publish({ required: true, phase: 'extracting', progress: undefined });
     const stage = await mkdtemp(path.join(this.slot, 'install-'));
     const identity = await lstat(stage);
     let published = false;
