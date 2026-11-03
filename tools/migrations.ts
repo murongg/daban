@@ -27,6 +27,8 @@ type Store = (typeof stores)[number];
 
 const schema = (store: Store) => path.join(engine, 'src', `${store}-schema.ts`);
 const folder = (store: Store) => path.join(engine, 'drizzle', store);
+// drizzle-kit treats --schema as a glob, so Windows paths must be relative with forward slashes.
+const posix = (file: string) => path.relative(root, file).split(path.sep).join('/');
 const embedded = (store: Store) => path.join(engine, 'src', `${store}-migrations.ts`);
 
 function store(name: string | undefined): Store {
@@ -92,9 +94,9 @@ async function check() {
       '--dialect',
       'sqlite',
       '--schema',
-      schema(item),
+      posix(schema(item)),
       '--out',
-      folder(item),
+      posix(folder(item)),
       '--explain',
       '--output',
       'json',
@@ -118,9 +120,9 @@ if (command === 'generate') {
       '--dialect',
       'sqlite',
       '--schema',
-      schema(item),
+      posix(schema(item)),
       '--out',
-      folder(item),
+      posix(folder(item)),
       ...(label ? ['--name', label] : []),
     ],
     { stdio: 'inherit' },
