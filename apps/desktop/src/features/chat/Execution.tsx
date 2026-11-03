@@ -23,6 +23,7 @@ const tools: Record<string, MessageKey> = {
   web_search: 'execution.searchWeb',
   web_fetch: 'execution.readWebpage',
   read_file: 'execution.readFile',
+  read_image: 'execution.readImage',
   write_file: 'execution.writeFile',
   list_files: 'common.viewFiles',
   shell: 'execution.runCommand',

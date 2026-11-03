@@ -116,6 +116,7 @@ export function sdkPatch(
   sdkFile = defaultSdkFile,
   cacheKey?: string,
   turnFile?: string,
+  office = false,
 ) {
   const search = route ? !!route.searchApiKey : true;
   const budget = contextBudget(route?.contextWindow ?? 1000000, route?.maxTokens ?? 8192);
@@ -162,7 +163,7 @@ export function sdkPatch(
               },
             ] as const)
           : []),
-        ...(task && skills.skills.length
+        ...(task && (skills.skills.length || office)
           ? ([
               { id: 'daban-skills-registry', name: '@deepseek-ai/dsh-skill' },
               {
@@ -174,6 +175,15 @@ export function sdkPatch(
                 },
               },
               { id: 'daban-tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
+            ] as const)
+          : []),
+        ...(task && office
+          ? ([
+              {
+                id: 'daban-office',
+                name: new URL('./office.js', import.meta.url).href,
+                config: { sdkFile },
+              },
             ] as const)
           : []),
         { id: 'approval', name: '@deepseek-ai/dsh-user-approval', config: { policy: 'ask' } },
@@ -1493,6 +1503,15 @@ export class ModelRuns {
             `${config.binding}:local-desktop:${this.tools.options.nativeOnly ? 'native' : 'vm'}`,
           )
           .digest('hex');
+      const office =
+        !!(this.execution || this.runtime) &&
+        !this.tools.options.nativeOnly &&
+        this.tools
+          .list(job.bot, job.model, job.conversationId, job)
+          .some((tool) => tool.name === 'shell');
+      // Native sessions retain skill catalogs. A newly available Office provider needs a fresh SDK context.
+      if (office)
+        job.binding = createHash('sha256').update(`${job.binding}:office-v1`).digest('hex');
       const patch = path.join(job.privateDir, 'computer.patch.yml');
       await writeFile(
         patch,
@@ -1517,6 +1536,7 @@ export class ModelRuns {
               chatRevision: job.chatRevision,
             }),
             path.join(job.privateDir, 'turn.json'),
+            office,
           ),
         ),
         {

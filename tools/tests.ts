@@ -123,6 +123,7 @@ export const suites = {
     'skills.integration',
   ],
   integrations: [
+    'office.integration',
     'network.test',
     'mcp-fetch.test',
     'mcp.test',
