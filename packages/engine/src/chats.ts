@@ -12,11 +12,21 @@ import {
   isChatState,
   validAgentId,
 } from '@daban/protocol';
+import { asc, count, eq, sql } from 'drizzle-orm';
+import { migrations } from './chats-migrations.js';
+import { chatMeta, chatReceipts, chats } from './chats-schema.js';
 import { Fault } from './control.js';
+import { configure, type Database, migrate } from './database.js';
+
+function legacy(client: DatabaseSync) {
+  client.exec(`CREATE TABLE IF NOT EXISTS chats(bot TEXT PRIMARY KEY,value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS chat_receipts(id TEXT PRIMARY KEY,bot TEXT NOT NULL,value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS chat_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);`);
+}
 
 export class Chats {
   readonly ready: Promise<unknown>;
-  private db!: DatabaseSync;
+  private db!: Database;
   private failure = false;
   private closed = false;
   private chain: Promise<unknown> = Promise.resolve();
@@ -42,12 +52,15 @@ export class Chats {
     } finally {
       await handle.close();
     }
-    this.db = new DatabaseSync(this.file);
-    this.db.exec(`PRAGMA journal_mode=WAL;
-      CREATE TABLE IF NOT EXISTS chats(bot TEXT PRIMARY KEY,value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS chat_receipts(id TEXT PRIMARY KEY,bot TEXT NOT NULL,value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS chat_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
-      INSERT OR IGNORE INTO chat_meta VALUES(1,0);`);
+    const client = new DatabaseSync(this.file);
+    try {
+      configure(client, { journal: 'WAL' });
+      this.db = migrate(client, migrations, legacy);
+      this.db.insert(chatMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
+    } catch (error) {
+      client.close();
+      throw error;
+    }
   }
   private usable() {
     if (this.closed || this.failure || !this.db) throw new Fault('CHAT_UNAVAILABLE', 503);
@@ -55,11 +68,11 @@ export class Chats {
   current(bot: string): ChatState {
     this.usable();
     if (!validAgentId(bot)) throw new Fault('INVALID_CHAT_REQUEST', 400);
-    const row = this.db.prepare('SELECT value FROM chats WHERE bot=?').get(bot);
+    const row = this.db.select({ value: chats.value }).from(chats).where(eq(chats.bot, bot)).get();
     if (!row) return { bot, revision: 0 };
     let value: unknown;
     try {
-      value = JSON.parse(String(row.value));
+      value = JSON.parse(row.value);
     } catch {
       throw new Fault('CHAT_CORRUPT');
     }
@@ -73,15 +86,19 @@ export class Chats {
     return current.revision;
   }
   private record(id: string): ChatReceipt | undefined {
-    const row = this.db.prepare('SELECT bot,value FROM chat_receipts WHERE id=?').get(id);
+    const row = this.db
+      .select({ bot: chatReceipts.bot, value: chatReceipts.value })
+      .from(chatReceipts)
+      .where(eq(chatReceipts.id, id))
+      .get();
     if (!row) return;
     let receipt: unknown;
     try {
-      receipt = JSON.parse(String(row.value));
+      receipt = JSON.parse(row.value);
     } catch {
       throw new Fault('CHAT_CORRUPT');
     }
-    const ack = { chat: this.current(String(row.bot)), receipt };
+    const ack = { chat: this.current(row.bot), receipt };
     if (!isChatAck(ack) || ack.receipt.request.id !== id) throw new Fault('CHAT_CORRUPT');
     return ack.receipt;
   }
@@ -99,44 +116,43 @@ export class Chats {
   renew(input: unknown): Promise<ChatAck> {
     if (!isChatRequest(input)) return Promise.reject(new Fault('INVALID_CHAT_REQUEST', 400));
     const request = { id: input.id, bot: input.bot, revision: input.revision };
-    return this.exclusive(() => {
-      this.db.exec('BEGIN IMMEDIATE');
-      try {
-        const prior = this.record(request.id);
-        if (prior) {
-          if (JSON.stringify(prior.request) !== JSON.stringify(request))
-            throw new Fault('CHAT_REQUEST_ID_REUSED');
-          this.db.exec('COMMIT');
-          return { chat: this.current(request.bot), receipt: prior };
-        }
-        this.assertCurrent(request.bot, request.revision);
-        // Admission and the boundary commit are synchronous: a new job cannot slip between them.
-        this.admit(request.bot);
-        if (Number(this.db.prepare('SELECT count(*) AS n FROM chat_receipts').get()!.n) >= 10000)
-          throw new Fault('CHAT_LIMIT');
-        const completedAt = new Date().toISOString();
-        const chat: ChatState = {
-          bot: request.bot,
-          revision: request.revision + 1,
-          updatedAt: completedAt,
-        };
-        const receipt: ChatReceipt = { request, revision: chat.revision, completedAt };
-        this.db
-          .prepare(
-            'INSERT INTO chats VALUES(?,?) ON CONFLICT(bot) DO UPDATE SET value=excluded.value',
-          )
-          .run(chat.bot, JSON.stringify(chat));
-        this.db
-          .prepare('INSERT INTO chat_receipts VALUES(?,?,?)')
-          .run(request.id, request.bot, JSON.stringify(receipt));
-        this.db.exec('UPDATE chat_meta SET revision=revision+1 WHERE id=1');
-        this.db.exec('COMMIT');
-        return { chat, receipt };
-      } catch (error) {
-        this.db.exec('ROLLBACK');
-        throw error;
-      }
-    });
+    return this.exclusive(() =>
+      this.db.transaction(
+        (tx) => {
+          const prior = this.record(request.id);
+          if (prior) {
+            if (JSON.stringify(prior.request) !== JSON.stringify(request))
+              throw new Fault('CHAT_REQUEST_ID_REUSED');
+            return { chat: this.current(request.bot), receipt: prior };
+          }
+          this.assertCurrent(request.bot, request.revision);
+          // Admission and the boundary commit are synchronous: a new job cannot slip between them.
+          this.admit(request.bot);
+          if (tx.select({ n: count() }).from(chatReceipts).get()!.n >= 10000)
+            throw new Fault('CHAT_LIMIT');
+          const completedAt = new Date().toISOString();
+          const chat: ChatState = {
+            bot: request.bot,
+            revision: request.revision + 1,
+            updatedAt: completedAt,
+          };
+          const receipt: ChatReceipt = { request, revision: chat.revision, completedAt };
+          tx.insert(chats)
+            .values({ bot: chat.bot, value: JSON.stringify(chat) })
+            .onConflictDoUpdate({ target: chats.bot, set: { value: sql`excluded.value` } })
+            .run();
+          tx.insert(chatReceipts)
+            .values({ id: request.id, bot: request.bot, value: JSON.stringify(receipt) })
+            .run();
+          tx.update(chatMeta)
+            .set({ revision: sql`${chatMeta.revision} + 1` })
+            .where(eq(chatMeta.id, 1))
+            .run();
+          return { chat, receipt };
+        },
+        { behavior: 'immediate' },
+      ),
+    );
   }
   receipt(bot: string, id: string): Promise<ChatAck> {
     if (!validAgentId(bot) || !validAgentId(id))
@@ -151,11 +167,13 @@ export class Chats {
     try {
       return await this.exclusive(() => ({
         available: true,
-        revision: Number(this.db.prepare('SELECT revision FROM chat_meta').get()!.revision),
+        revision: this.db.select({ revision: chatMeta.revision }).from(chatMeta).get()!.revision,
         items: this.db
-          .prepare('SELECT bot FROM chats ORDER BY bot')
+          .select({ bot: chats.bot })
+          .from(chats)
+          .orderBy(asc(chats.bot))
           .all()
-          .map((row) => this.current(String(row.bot))),
+          .map((row) => this.current(row.bot)),
       }));
     } catch {
       return { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' };
@@ -166,6 +184,6 @@ export class Chats {
     this.closed = true;
     await this.chain.catch(() => {});
     await this.ready.catch(() => {});
-    this.db?.close();
+    this.db?.$client.close();
   }
 }

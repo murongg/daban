@@ -26,7 +26,9 @@ export function hostPackageFile(directory: string, source: string) {
   const name = path.relative(directory, source);
   // Directory names must match whole segments: /dist/web.js is a production dependency.
   return (
-    !name.split(path.sep).some((part) => ['node_modules', 'src', 'web'].includes(part)) &&
+    !name
+      .split(path.sep)
+      .some((part) => ['node_modules', 'src', 'web', 'drizzle'].includes(part)) &&
     !/^tsconfig(?:\.web)?\.json$/.test(name) &&
     !/\.(?:test|acceptance|integration|fixture)\./.test(name)
   );

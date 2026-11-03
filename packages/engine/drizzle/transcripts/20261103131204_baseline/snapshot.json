@@ -1,0 +1,128 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "3a109f73-f6ce-4cca-9cec-7301843f18db",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "name": "transcript_events",
+      "entityType": "tables"
+    },
+    {
+      "name": "transcript_runs",
+      "entityType": "tables"
+    },
+    {
+      "table": "transcript_events",
+      "name": "run",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_events",
+      "name": "seq",
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_events",
+      "name": "source",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_events",
+      "name": "meta",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_events",
+      "name": "body",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_runs",
+      "name": "run",
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_runs",
+      "name": "scope",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_runs",
+      "name": "state",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "transcript_events",
+      "name": "transcript_events_pk",
+      "columns": [
+        "run",
+        "seq"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "table": "transcript_runs",
+      "name": "transcript_runs_pk",
+      "columns": [
+        "run"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "table": "transcript_events",
+      "name": "transcript_events_run_source",
+      "columns": [
+        "run",
+        "source"
+      ],
+      "nameExplicit": true,
+      "entityType": "uniques"
+    }
+  ],
+  "renames": []
+}

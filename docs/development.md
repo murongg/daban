@@ -4,7 +4,7 @@
 
 ## 环境要求
 
-- Node.js 22.15+（22.x）或 24+，以及 npm；建议使用 Node.js 24。
+- Node.js 22.16+（22.x）或 24+，以及 npm；建议使用 Node.js 24。
 - Linux 虚拟机模式和 macOS 打包需要 Apple 芯片 Mac；Windows x64 可构建无需 VM 的本机模式。
 - 执行模型任务需要所选供应商的 API Key，在客户端设置中填写。
 

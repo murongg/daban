@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
 import { Integrations } from './integrations.js';
 
@@ -36,6 +37,145 @@ async function fixture() {
     },
   };
 }
+const legacyTables = `CREATE TABLE integration_bindings(bot TEXT NOT NULL,connection TEXT NOT NULL,revision INTEGER NOT NULL,config_revision INTEGER NOT NULL,digest TEXT,tools TEXT NOT NULL,enabled INTEGER NOT NULL,PRIMARY KEY(bot,connection));
+  CREATE TABLE config_commands(id TEXT PRIMARY KEY,hash TEXT NOT NULL,connection TEXT NOT NULL,revision INTEGER NOT NULL);
+  CREATE TABLE call_receipts(id TEXT PRIMARY KEY,hash TEXT NOT NULL,semantic TEXT NOT NULL,bot TEXT NOT NULL,run TEXT NOT NULL,session TEXT NOT NULL,connection TEXT NOT NULL,config_revision INTEGER NOT NULL,tool TEXT NOT NULL,phase TEXT NOT NULL,preview TEXT NOT NULL,result TEXT,error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);
+  CREATE INDEX receipt_owner ON call_receipts(bot,run,semantic);
+  CREATE TABLE integration_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
+  INSERT INTO integration_meta VALUES(1,3);`;
+const legacyIntegrations = {
+  1: 'CREATE TABLE integrations(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,endpoint TEXT NOT NULL,bearer TEXT,deleted INTEGER NOT NULL,health TEXT NOT NULL,catalog TEXT NOT NULL,digest TEXT,checked TEXT,error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);',
+  2: "CREATE TABLE integrations(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,name TEXT NOT NULL,name_key TEXT NOT NULL,endpoint TEXT NOT NULL,bearer TEXT,deleted INTEGER NOT NULL,health TEXT NOT NULL,catalog TEXT NOT NULL,digest TEXT,checked TEXT,error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL,owner TEXT); CREATE UNIQUE INDEX integration_owner_name ON integrations(COALESCE(owner,''),name_key);",
+};
+// Builds a file exactly as a pre-ORM build left it at the given user_version.
+function legacyFile(file: string, version: 1 | 2, extra = '') {
+  const old = new DatabaseSync(file);
+  const at = '2026-01-01T00:00:00.000Z';
+  old.exec(
+    `${legacyIntegrations[version]} ${legacyTables} PRAGMA user_version=${version}; ${extra}`,
+  );
+  old
+    .prepare(
+      "INSERT INTO integrations(id,revision,name,name_key,endpoint,bearer,deleted,health,catalog,digest,checked,error,created,updated) VALUES(?,1,?,?,?,NULL,0,'unchecked','[]',NULL,NULL,NULL,?,?)",
+    )
+    .run('mock-legacy', 'Mock Legacy', 'mock legacy', 'https://mcp.example.test/mcp', at, at);
+  old
+    .prepare("INSERT INTO integration_bindings VALUES('mock-a',?,1,1,NULL,'[]',0)")
+    .run('mock-legacy');
+  old
+    .prepare('INSERT INTO config_commands VALUES(?,?,?,1)')
+    .run('mock-old-save', 'a'.repeat(64), 'mock-legacy');
+  old
+    .prepare(
+      "INSERT INTO call_receipts VALUES(?,?,?,'mock-a','mock-run','mock-session','mock-legacy',1,'synthetic_echo','dispatched','{}',NULL,NULL,?,?)",
+    )
+    .run('mock-old-call', 'b'.repeat(64), 'c'.repeat(64), at, at);
+  old.close();
+}
+test.each([1, 2] as const)(
+  'a pre-ORM user_version %i MCP file keeps its connections, receipts and owner rules after the schema baseline',
+  async (version) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'mock-integrations-legacy-'));
+    const file = path.join(root, 'integrations.sqlite');
+    legacyFile(file, version);
+    let store = new Integrations(file);
+    try {
+      expect(await store.status()).toStrictEqual({ available: true, revision: 3 });
+      expect((await store.read('mock-legacy')).name).toBe('Mock Legacy');
+      expect((await store.saved('mock-old-save', 'mock-legacy')).receipt.revision).toBe(1);
+      expect((await store.receipt('mock-a', 'mock-run', 'mock-old-call')).phase).toBe('unknown');
+      expect((await store.assignments('mock-a')).items[0].revision).toBe(1);
+      const renamed = await store.save({
+        requestId: 'mock-rename',
+        id: 'mock-legacy',
+        revision: 1,
+        name: 'Mock Shared',
+      });
+      expect(renamed.current.revision).toBe(2);
+      await expect(
+        store.save({ ...save, requestId: 'mock-duplicate', name: 'mock shared' }),
+      ).rejects.toMatchObject({ code: 'MCP_NAME_CONFLICT' });
+      const owned = await store.save({ ...save, name: 'Mock Shared' }, 'mock-a');
+      expect(owned.current.ownerBot).toBe('mock-a');
+      await store.close();
+      store = new Integrations(file);
+      expect((await store.status()).revision).toBe(5);
+      expect((await store.list(false, 'mock-a')).items.map((item) => item.id).sort()).toStrictEqual(
+        [save.id, 'mock-legacy'],
+      );
+      expect((await store.list()).items.map((item) => item.id)).toStrictEqual(['mock-legacy']);
+    } finally {
+      await store.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+test('pre-ORM MCP files the old schema checks rejected remain unavailable and unconverted', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-integrations-rejected-'));
+  try {
+    const cases: [string, (file: string) => unknown][] = [
+      ['newer', (file) => legacyFile(file, 2, 'PRAGMA user_version=3;')],
+      ['extra', (file) => legacyFile(file, 1, 'CREATE TABLE mock_extra(id TEXT);')],
+      ['meta', (file) => legacyFile(file, 2, 'DELETE FROM integration_meta;')],
+      [
+        'unversioned',
+        (file) => {
+          const old = new DatabaseSync(file);
+          old.exec('CREATE TABLE mock_other(id TEXT);');
+          old.close();
+        },
+      ],
+    ];
+    for (const [name, build] of cases) {
+      const file = path.join(root, `${name}.sqlite`);
+      build(file);
+      const store = new Integrations(file);
+      expect((await store.status()).available).toBe(false);
+      await store.close();
+      const check = new DatabaseSync(file);
+      expect(
+        check.prepare("SELECT name FROM sqlite_master WHERE name='__drizzle_migrations'").get(),
+      ).toBe(undefined);
+      check.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test('a migrated MCP file cannot recreate missing revision authority', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-integrations-authority-'));
+  const file = path.join(root, 'integrations.sqlite');
+  let store = new Integrations(file);
+  try {
+    await store.save(save);
+    expect(await store.status()).toStrictEqual({ available: true, revision: 1 });
+    await store.close();
+    const corrupt = new DatabaseSync(file);
+    corrupt.exec('DELETE FROM integration_meta');
+    corrupt.close();
+
+    store = new Integrations(file);
+    expect(await store.status()).toStrictEqual({
+      available: false,
+      error: 'MCP_STORE_UNAVAILABLE',
+    });
+    await expect(store.read(save.id)).rejects.toMatchObject({ code: 'MCP_STORE_UNAVAILABLE' });
+    await expect(store.save(save)).rejects.toMatchObject({ code: 'MCP_STORE_UNAVAILABLE' });
+    await store.close();
+
+    const inspect = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect(inspect.prepare('SELECT COUNT(*) AS n FROM integration_meta').get()!.n).toBe(0);
+      expect(inspect.prepare('SELECT id FROM integrations').get()!.id).toBe(save.id);
+      expect(inspect.prepare('SELECT id FROM config_commands').get()!.id).toBe(save.requestId);
+    } finally {
+      inspect.close();
+    }
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test('private MCP settings never echo endpoint parameters or credentials; exact save retries are read-only and stale edits preserve the new config', async () => {
   const f = await fixture();
   try {

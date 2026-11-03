@@ -34,6 +34,14 @@
 
 Biome preserves existing non-null assertions, CSS cascade ordering, and necessary `!important` usage; these are not lint bans. Correctness and accessibility checks remain enabled. Explain exceptions for remote desktop focus and modal backdrops next to the affected code. Preserve keyboard dismissal, focus management, and control ownership checks.
 
+## Database Access
+
+- SQLite stores must use Drizzle ORM (`drizzle-orm/node-sqlite`) through `packages/engine/src/database.ts`. Declare tables in `<store>-schema.ts` and use the Drizzle query builder for reads, writes, upserts, and transactions. Do not call `prepare` or `exec` on `DatabaseSync`, or write SQL strings, in store code.
+- Raw SQL is allowed only when the ORM cannot reasonably express a complex query, such as window functions, recursive CTEs, or SQLite-specific expressions. Use Drizzle's parameterized `sql` template for such fragments and add a one-line comment explaining why. Column arithmetic such as `` sql`${table.revision} + 1` `` and `excluded.*` in upserts are ordinary builder usage and need no comment. Never pass untrusted values to `sql.raw`.
+- Other allowed SQL: connection pragmas inside `database.ts`, generated migrations, the legacy step passed to `migrate()` that upgrades pre-ORM files to the baseline schema, and test fixtures that build legacy or corrupt files.
+- To change a schema, edit `<store>-schema.ts`, run `npm run db:generate -- <store> <name>`, and review the generated `packages/engine/drizzle/<store>` SQL. After manually editing a migration (for example, to add `STRICT`), run `npm run db:embed`. Do not edit generated `*-migrations.ts` files or migrations that have already shipped. `npm run db:check`, part of `npm run lint`, verifies schemas, migrations, and embedded copies.
+- Existing user database files must keep opening after an upgrade. Keep legacy steps working and cover them with tests that create pre-ORM files.
+
 ## Workspace Boundaries
 
 - Use npm workspaces: `apps/desktop` for the client, `apps/agent` for the host control service, `apps/runtime` for the Linux execution service, `packages/engine` for role-specific implementations, and `packages/protocol` for the public protocol. Repository tooling belongs in `tools`.

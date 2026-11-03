@@ -2,9 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { count, eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { Integrations } from './integrations.js';
 import { Skills } from './skills.js';
+import { skillPackages, skills } from './skills-schema.js';
 
 const content = (version: string) =>
   `---\nname: synthetic-recipe\ndescription: Synthetic scoped recipe\n---\n${version}\n`;
@@ -28,11 +31,11 @@ test('Bot installations have independent names, versions and lifecycle while pac
     await expect(store.read(first.id, 'mock-beta')).rejects.toThrowError(/SKILL_NOT_FOUND/);
     const second = await store.importPackage(bundle('SYNTHETIC BETA'), 'mock-beta');
     expect(first.id).not.toBe(second.id);
-    const db = new DatabaseSync(file, { readOnly: true });
+    const db = drizzle({ client: new DatabaseSync(file, { readOnly: true }) });
     try {
-      expect(db.prepare('SELECT COUNT(*) AS count FROM skill_packages').get()!.count).toBe(1);
+      expect(db.select({ count: count() }).from(skillPackages).get()!.count).toBe(1);
     } finally {
-      db.close();
+      db.$client.close();
     }
     const before = await store.capture('mock-alpha');
     await store.update(first.id, first.revision, content('SYNTHETIC ALPHA EDIT'), 'mock-alpha');
@@ -359,9 +362,9 @@ test('known built-in updates retain Bot opt-outs and never replace an unknown us
     expect((await store.read('mock-builtin')).content).toBe(content('SYNTHETIC BUILTIN CURRENT'));
     await store.close();
     const tampered = content('SYNTHETIC UNKNOWN REVISION');
-    const db = new DatabaseSync(file);
-    db.prepare('UPDATE skills SET content=? WHERE id=?').run(tampered, 'mock-builtin');
-    db.close();
+    const db = drizzle({ client: new DatabaseSync(file) });
+    db.update(skills).set({ content: tampered }).where(eq(skills.id, 'mock-builtin')).run();
+    db.$client.close();
     const expectedDefault = {
       id: 'mock-builtin',
       package: current,
@@ -369,13 +372,17 @@ test('known built-in updates retain Bot opt-outs and never replace an unknown us
     };
     store = new Skills(file, [expectedDefault]);
     expect((await store.status()).available).toBe(false);
-    const retained = new DatabaseSync(file, { readOnly: true });
+    const retained = drizzle({ client: new DatabaseSync(file, { readOnly: true }) });
     try {
       expect(
-        retained.prepare('SELECT content FROM skills WHERE id=?').get('mock-builtin')!.content,
+        retained
+          .select({ content: skills.content })
+          .from(skills)
+          .where(eq(skills.id, 'mock-builtin'))
+          .get()!.content,
       ).toBe(tampered);
     } finally {
-      retained.close();
+      retained.$client.close();
     }
   } finally {
     await store.close();

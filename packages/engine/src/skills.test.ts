@@ -3,10 +3,60 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
+import { tables } from './database.js';
 import { parseSkill, Skills } from './skills.js';
 
 const markdown = (name = 'mock-summary', body = '只整理用户提供的合成记录。') =>
   `---\nname: ${name}\ndescription: 合成记录汇总工作流\nmetadata:\n  synthetic: true\n---\n\n${body}\n`;
+
+test('pre-ORM catalogs the old build rejected stay rejected and untouched', async () => {
+  const v1 = `CREATE TABLE skills(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);
+    CREATE TABLE skill_bindings(bot TEXT NOT NULL,skill TEXT NOT NULL,revision INTEGER NOT NULL,enabled INTEGER NOT NULL,PRIMARY KEY(bot,skill));
+    CREATE TABLE skill_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
+    INSERT INTO skill_meta VALUES(1,3);
+    INSERT INTO skills VALUES('mock-id','mock-summary',1,'${markdown()}',0,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');`;
+  for (const [label, setup, version, expected] of [
+    ['unversioned', 'CREATE TABLE mock_other(value TEXT);', 0, ['mock_other']],
+    ['newer', `${v1} PRAGMA user_version=4;`, 4, ['skill_bindings', 'skill_meta', 'skills']],
+    [
+      'extra table',
+      `${v1} CREATE TABLE mock_other(value TEXT); PRAGMA user_version=1;`,
+      1,
+      ['mock_other', 'skill_bindings', 'skill_meta', 'skills'],
+    ],
+    [
+      'corrupt binding',
+      `${v1} INSERT INTO skill_bindings VALUES('mock-a','mock-id',1,2); PRAGMA user_version=1;`,
+      1,
+      ['skill_bindings', 'skill_meta', 'skills'],
+    ],
+  ] as const) {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-skill-legacy-'));
+    const file = path.join(root, 'skills.sqlite');
+    const old = new DatabaseSync(file);
+    old.exec(setup);
+    old.close();
+    const store = new Skills(file);
+    try {
+      expect((await store.status()).available, label).toBe(false);
+      await expect(store.import(markdown('mock-new'))).rejects.toMatchObject({
+        code: 'SKILLS_UNAVAILABLE',
+      });
+      await store.close();
+      // A failed legacy upgrade rolls back with migrate's transaction, leaving the old layout intact.
+      const reader = new DatabaseSync(file, { readOnly: true });
+      try {
+        expect(tables(reader), label).toStrictEqual(expected);
+        expect(reader.prepare('PRAGMA user_version').get()!.user_version, label).toBe(version);
+      } finally {
+        reader.close();
+      }
+    } finally {
+      await store.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
 
 test('SKILL.md parsing keeps the original document and native invocation policy without granting tools', () => {
   const content = markdown().replace(

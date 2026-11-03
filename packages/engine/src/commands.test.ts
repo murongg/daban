@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { isInteractionInput } from '@daban/protocol';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import type { CommandReview } from './commands.js';
 import { Commands } from './commands.js';
+import { commands as commandsTable } from './commands-schema.js';
 import type { ToolResult } from './computer-tools.js';
 import { Interactions } from './interactions.js';
 import { Risk } from './risk.js';
@@ -146,6 +148,70 @@ async function pending(interactions: Interactions) {
   }
   throw new Error('Mock approval was not published');
 }
+
+test('a pre-ORM command file keeps settled receipts and fences an interrupted dispatch after the schema baseline', async () => {
+  const context = await fixture();
+  const source = path.join(context.root, 'source.sqlite');
+  let dispatches = 0;
+  const dispatch = async () => {
+    dispatches++;
+    return output;
+  };
+  let commands = new Commands({ ...context, file: source, review: async () => 'allow' });
+  try {
+    for (const wire of ['mock-settled', 'mock-interrupted'])
+      expect(await commands.invoke(run(), 'shell', { command: wire }, wire, dispatch)).toEqual(
+        output,
+      );
+    await commands.close();
+    const reader = new DatabaseSync(source);
+    const rows = drizzle({ client: reader }).select().from(commandsTable).all();
+    reader.close();
+    expect(rows.length).toBe(2);
+    const old = new DatabaseSync(context.file);
+    old.exec(
+      'CREATE TABLE commands(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,request TEXT NOT NULL,phase TEXT NOT NULL,decision TEXT,result TEXT);',
+    );
+    for (const row of rows) {
+      const interrupted = row.request.includes('mock-interrupted');
+      old
+        .prepare('INSERT INTO commands VALUES(?,?,?,?,?,?)')
+        .run(
+          row.id,
+          row.fingerprint,
+          row.request,
+          interrupted ? 'dispatching' : row.phase,
+          row.decision,
+          interrupted ? null : row.result,
+        );
+    }
+    old.close();
+    commands = new Commands({ ...context, review: async () => 'allow' });
+    await commands.ready;
+    expect(
+      await commands.invoke(run(), 'shell', { command: 'mock-settled' }, 'mock-settled', dispatch),
+    ).toEqual(output);
+    const interrupted = await commands.invoke(
+      run(),
+      'shell',
+      { command: 'mock-interrupted' },
+      'mock-interrupted',
+      dispatch,
+    );
+    expect(interrupted).toEqual({
+      isError: true,
+      content: [{ type: 'text', text: 'COMMAND_OUTCOME_UNKNOWN' }],
+    });
+    expect(dispatches).toBe(2);
+    expect(
+      await commands.invoke(run(), 'shell', { command: 'mock-new' }, 'mock-new', dispatch),
+    ).toEqual(output);
+    expect(dispatches).toBe(3);
+  } finally {
+    await commands.close();
+    await rm(context.root, { recursive: true, force: true });
+  }
+});
 
 test('raw commands ask by default and denial cannot dispatch', async () => {
   const context = await fixture();

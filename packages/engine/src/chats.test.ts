@@ -1,8 +1,42 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
 import { Chats } from './chats.js';
+
+test('a pre-ORM chat file keeps its boundary and receipts after the schema baseline', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-chats-legacy-'));
+  const file = path.join(root, 'chats.sqlite');
+  const chat = { bot: 'mock-alpha', revision: 1, updatedAt: '2026-01-01T00:00:00.000Z' };
+  const receipt = {
+    request: { id: 'mock-old', bot: 'mock-alpha', revision: 0 },
+    revision: 1,
+    completedAt: chat.updatedAt,
+  };
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE chats(bot TEXT PRIMARY KEY,value TEXT NOT NULL);
+    CREATE TABLE chat_receipts(id TEXT PRIMARY KEY,bot TEXT NOT NULL,value TEXT NOT NULL);
+    CREATE TABLE chat_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
+    INSERT INTO chat_meta VALUES(1,4);`);
+  old.prepare('INSERT INTO chats VALUES(?,?)').run(chat.bot, JSON.stringify(chat));
+  old
+    .prepare('INSERT INTO chat_receipts VALUES(?,?,?)')
+    .run(receipt.request.id, chat.bot, JSON.stringify(receipt));
+  old.close();
+  const chats = new Chats(file, () => {});
+  try {
+    await chats.ready;
+    expect(await chats.receipt(chat.bot, receipt.request.id)).toStrictEqual({ chat, receipt });
+    expect((await chats.status()).revision).toBe(4);
+    const next = await chats.renew({ id: 'mock-new', bot: chat.bot, revision: 1 });
+    expect(next.chat.revision).toBe(2);
+    expect((await chats.status()).revision).toBe(5);
+  } finally {
+    await chats.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('a fresh personal conversation commits its boundary and durable receipt together; replay cannot replace later state', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-chats-'));

@@ -33,25 +33,101 @@ import {
   workKey,
   workPriorities,
 } from '@daban/protocol';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  lt,
+  max,
+  min,
+  notInArray,
+  or,
+  type SQL,
+  type SQLWrapper,
+  sql,
+  sum,
+} from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { errorCode, Fault } from './control.js';
+import { configure, type Database, migrate, tables, unwrap } from './database.js';
 import { privateMetadata } from './private-files.js';
+import { migrations } from './work-migrations.js';
+import { workComments, workItems, workMeta, workOperations } from './work-schema.js';
 
-type Row = Record<string, unknown>;
+type ItemRow = typeof workItems.$inferSelect;
+type OperationRow = typeof workOperations.$inferSelect;
+type CommentRow = typeof workComments.$inferSelect;
 const capacity = 1000,
   operations = 10000;
+const legacyTables = ['work_items', 'work_meta', 'work_operations'];
+const currentTables = ['work_comments', ...legacyTables];
+// SQLite maintains AUTOINCREMENT counters here; it is read only and never part of the migrated schema.
+const sequence = sqliteTable('sqlite_sequence', { name: text(), seq: integer() });
 const signature = (request: WorkWrite, actor: WorkAuthor) =>
   createHash('sha256').update(workKey(request, actor)).digest('hex');
 const commentSignature = (request: WorkCommentWrite, actor: WorkAuthor) =>
   createHash('sha256').update(workCommentKey(request, actor)).digest('hex');
 const commentSchema = `CREATE TABLE work_comments(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,item TEXT NOT NULL REFERENCES work_items(id),body TEXT NOT NULL,creator TEXT NOT NULL,signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;`;
+
+function validateColumns(client: DatabaseSync, version: number) {
+  // Check legacy layout before DDL: a check after COMMIT would already have adopted an unsupported store.
+  const columns = client.prepare('PRAGMA table_info(work_items)').all();
+  const core = [
+    'seq',
+    'id',
+    'title',
+    'description',
+    'progress',
+    'status',
+    'revision',
+    'deleted',
+    'created',
+    'updated',
+    'completed',
+    'creator',
+    'editor',
+  ];
+  const names = version < 3 ? core : [...core, 'priority', 'assignee'];
+  if (JSON.stringify(columns.map((row) => row.name)) !== JSON.stringify(names))
+    throw new Fault('WORK_CORRUPT');
+  for (const row of columns) {
+    const name = String(row.name);
+    const type = ['seq', 'revision', 'deleted'].includes(name) ? 'INTEGER' : 'TEXT';
+    if (
+      row.type !== type ||
+      row.pk !== (name === 'seq' ? 1 : 0) ||
+      row.notnull !== (['seq', 'completed', 'assignee'].includes(name) ? 0 : 1)
+    )
+      throw new Fault('WORK_CORRUPT');
+  }
+  if (version < 3) return;
+  const priority = columns.find((row) => row.name === 'priority');
+  const assignee = columns.find((row) => row.name === 'assignee');
+  if (
+    columns.length !== 15 ||
+    priority?.type !== 'TEXT' ||
+    priority.notnull !== 1 ||
+    priority.dflt_value !== "'normal'" ||
+    priority.pk !== 0 ||
+    assignee?.type !== 'TEXT' ||
+    assignee.notnull !== 0 ||
+    assignee.dflt_value !== null ||
+    assignee.pk !== 0
+  )
+    throw new Fault('WORK_CORRUPT');
+}
+
 export class Work {
   // One local runtime owns this file; add a process lease before multiple service writers are supported.
   readonly ready: Promise<unknown>;
-  private db?: DatabaseSync;
+  private db?: Database;
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
   private loading = true;
-  private schemaVersion = 0;
   constructor(
     readonly file: string,
     private readonly admit: (actor: WorkAuthor) => undefined = () => undefined,
@@ -75,85 +151,68 @@ export class Work {
       throw new Fault('WORK_CORRUPT');
     if (!existing) await (await open(this.file, 'wx', 0o600)).close();
     await chmod(this.file, 0o600);
+    let client: DatabaseSync | undefined;
     try {
-      this.db = new DatabaseSync(this.file);
-      const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-      this.schemaVersion = version;
-      const names = this.db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-        )
-        .all()
-        .map((row) => String(row.name));
-      if (
-        version === 0
-          ? names.length > 0
-          : ![1, 2, 3].includes(version) ||
-            JSON.stringify(names) !==
-              JSON.stringify(
-                version === 1
-                  ? ['work_items', 'work_meta', 'work_operations']
-                  : ['work_comments', 'work_items', 'work_meta', 'work_operations'],
-              )
-      )
-        throw new Fault('WORK_CORRUPT');
-      if (version > 0) {
-        this.validateColumns(version);
-        const meta = this.db.prepare('SELECT id,revision FROM work_meta').all();
-        if (
-          meta.length !== 1 ||
-          meta[0].id !== 1 ||
-          !Number.isSafeInteger(meta[0].revision) ||
-          Number(meta[0].revision) < 0 ||
-          Number(meta[0].revision) > operations
-        )
-          throw new Fault('WORK_CORRUPT');
-      }
-      this.db.exec(
-        'PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;',
-      );
-      // Validate every legacy receipt and comment before adopting a new schema.
-      if (version === 1 || version === 2) this.validateWork();
-      if (version === 2) {
-        this.commentAuthority();
-        for (const row of this.db.prepare('SELECT * FROM work_comments').all())
-          this.commentRow(row);
-      }
-      if (version < 3)
-        this.transaction(() => {
-          if (version === 0) {
-            this.db!.exec(`
-        CREATE TABLE work_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,description TEXT NOT NULL,progress TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL,priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),assignee TEXT) STRICT;
-        CREATE TABLE work_operations(id TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES work_items(id),signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
-        CREATE TABLE work_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)) STRICT;
-        INSERT INTO work_meta VALUES(1,0,0);`);
-            this.db!.exec(commentSchema);
-          } else {
-            if (version === 1) {
-              this.db!.exec(
-                'ALTER TABLE work_meta ADD COLUMN comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)',
-              );
-              this.db!.exec(commentSchema);
-            }
-            this.db!.exec(
-              "ALTER TABLE work_items ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent'))",
-            );
-            this.db!.exec('ALTER TABLE work_items ADD COLUMN assignee TEXT');
-          }
-          this.db!.exec('PRAGMA user_version=3');
-        });
-      this.schemaVersion = 3;
-      this.validateColumns(3);
-      this.validateWork();
-      this.commentAuthority();
-      for (const row of this.db.prepare('SELECT * FROM work_comments').all()) this.commentRow(row);
+      client = new DatabaseSync(this.file);
+      configure(client, {
+        journal: 'WAL',
+        synchronous: 'FULL',
+        foreignKeys: true,
+        busyTimeout: 5000,
+      });
+      this.db = migrate(client, migrations, (legacy) => this.upgrade(legacy));
+      this.validate(this.db, 3);
     } catch {
-      this.db?.close();
+      client?.close();
       this.db = undefined;
       throw new Fault('WORK_CORRUPT');
     } finally {
       this.loading = false;
     }
+  }
+  // Pre-ORM files carry user_version 1-3. This runs inside migrate's transaction, so any refusal
+  // leaves the old file untouched and every accepted file ends at the baseline schema.
+  private upgrade(client: DatabaseSync) {
+    const version = Number(client.prepare('PRAGMA user_version').get()?.user_version);
+    if (
+      ![1, 2, 3].includes(version) ||
+      JSON.stringify(tables(client)) !==
+        JSON.stringify(version === 1 ? legacyTables : currentTables)
+    )
+      throw new Fault('WORK_CORRUPT');
+    validateColumns(client, version);
+    const meta = client.prepare('SELECT id,revision FROM work_meta').all();
+    if (
+      meta.length !== 1 ||
+      meta[0].id !== 1 ||
+      !Number.isSafeInteger(meta[0].revision) ||
+      Number(meta[0].revision) < 0 ||
+      Number(meta[0].revision) > operations
+    )
+      throw new Fault('WORK_CORRUPT');
+    if (version === 1) {
+      client.exec(
+        'ALTER TABLE work_meta ADD COLUMN comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)',
+      );
+      client.exec(commentSchema);
+    }
+    if (version < 3) {
+      client.exec(
+        "ALTER TABLE work_items ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent'))",
+      );
+      client.exec('ALTER TABLE work_items ADD COLUMN assignee TEXT');
+      client.exec('PRAGMA user_version=3');
+    }
+    validateColumns(client, 3);
+    // Validate every legacy receipt and comment before the baseline is recorded.
+    this.validate(drizzle({ client }), version);
+  }
+  private validate(db: Database, version: number) {
+    if (JSON.stringify(tables(db)) !== JSON.stringify(currentTables))
+      throw new Fault('WORK_CORRUPT');
+    this.validateWork(db, version);
+    this.commentAuthority(db);
+    for (const row of db.select().from(workComments).all()) this.commentRow(row, db);
   }
   private exclusive<T>(action: () => T, signal?: AbortSignal): Promise<T> {
     const next = this.chain
@@ -162,7 +221,11 @@ export class Work {
         await this.ready;
         if (this.closed || !this.db) throw new Fault('WORK_CLOSED');
         signal?.throwIfAborted();
-        return action();
+        try {
+          return action();
+        } catch (error) {
+          throw unwrap(error);
+        }
       });
     this.chain = next;
     return next;
@@ -172,143 +235,108 @@ export class Work {
     if (!this.db || (this.closed && !this.loading)) throw new Fault('WORK_CLOSED');
     return this.db;
   }
-  private validateColumns(version: number) {
-    // Check legacy layout before DDL: a check after COMMIT would already have adopted an unsupported store.
-    const columns = this.database().prepare('PRAGMA table_info(work_items)').all();
-    const core = [
-      'seq',
-      'id',
-      'title',
-      'description',
-      'progress',
-      'status',
-      'revision',
-      'deleted',
-      'created',
-      'updated',
-      'completed',
-      'creator',
-      'editor',
-    ];
-    const names = version < 3 ? core : [...core, 'priority', 'assignee'];
-    if (JSON.stringify(columns.map((row) => row.name)) !== JSON.stringify(names))
-      throw new Fault('WORK_CORRUPT');
-    for (const row of columns) {
-      const name = String(row.name);
-      const type = ['seq', 'revision', 'deleted'].includes(name) ? 'INTEGER' : 'TEXT';
-      if (
-        row.type !== type ||
-        row.pk !== (name === 'seq' ? 1 : 0) ||
-        row.notnull !== (['seq', 'completed', 'assignee'].includes(name) ? 0 : 1)
-      )
-        throw new Fault('WORK_CORRUPT');
-    }
-    if (version < 3) return;
-    const priority = columns.find((row) => row.name === 'priority');
-    const assignee = columns.find((row) => row.name === 'assignee');
-    if (
-      columns.length !== 15 ||
-      priority?.type !== 'TEXT' ||
-      priority.notnull !== 1 ||
-      priority.dflt_value !== "'normal'" ||
-      priority.pk !== 0 ||
-      assignee?.type !== 'TEXT' ||
-      assignee.notnull !== 0 ||
-      assignee.dflt_value !== null ||
-      assignee.pk !== 0
-    )
-      throw new Fault('WORK_CORRUPT');
-  }
-  private validateWork() {
-    const db = this.database(),
-      rows = db.prepare('SELECT * FROM work_items').all();
+  private validateWork(db: Database, version: number) {
+    const rows = db.select().from(workItems).all();
     if (rows.length > capacity) throw new Fault('WORK_CORRUPT');
-    for (const row of rows) this.item(row);
-    const revision = db.prepare('SELECT revision FROM work_meta WHERE id=1').get()?.revision;
-    const sum = rows.reduce((total, row) => total + Number(row.revision), 0);
-    if (!Number.isSafeInteger(sum) || revision !== sum) throw new Fault('WORK_CORRUPT');
+    for (const row of rows) this.item(row, version < 3);
+    const revision = db
+      .select({ revision: workMeta.revision })
+      .from(workMeta)
+      .where(eq(workMeta.id, 1))
+      .get()?.revision;
+    const total = rows.reduce((value, row) => value + Number(row.revision), 0);
+    if (!Number.isSafeInteger(total) || revision !== total) throw new Fault('WORK_CORRUPT');
     const receipts = db
-      .prepare(
-        'SELECT o.*,w.revision AS item_revision FROM work_operations o LEFT JOIN work_items w ON w.id=o.item',
-      )
+      .select({
+        id: workOperations.id,
+        item: workOperations.item,
+        signature: workOperations.signature,
+        revision: workOperations.revision,
+        at: workOperations.at,
+        itemRevision: workItems.revision,
+      })
+      .from(workOperations)
+      .leftJoin(workItems, eq(workItems.id, workOperations.item))
       .all();
     if (receipts.length > operations) throw new Fault('WORK_CORRUPT');
-    if (
-      Number(db.prepare('PRAGMA user_version').get()!.user_version) === 1 &&
-      receipts.length < sum
-    )
-      throw new Fault('WORK_CORRUPT');
+    if (version === 1 && receipts.length < total) throw new Fault('WORK_CORRUPT');
     for (const row of receipts) {
       this.operation(row);
-      if (Number(row.item_revision) < Number(row.revision)) throw new Fault('WORK_CORRUPT');
+      if (Number(row.itemRevision) < Number(row.revision)) throw new Fault('WORK_CORRUPT');
     }
   }
-  private commentAuthority() {
-    const db = this.database(),
-      meta = db.prepare('SELECT revision,comments FROM work_meta WHERE id=1').get();
+  private commentAuthority(db = this.database()) {
+    const meta = db
+      .select({ revision: workMeta.revision, comments: workMeta.comments })
+      .from(workMeta)
+      .where(eq(workMeta.id, 1))
+      .get();
     const counts = db
-      .prepare('SELECT COUNT(*) AS n,MIN(seq) AS first,MAX(seq) AS last FROM work_comments')
+      .select({ n: count(), first: min(workComments.seq), last: max(workComments.seq) })
+      .from(workComments)
       .get()!;
-    const sequence =
-      db.prepare("SELECT seq FROM sqlite_sequence WHERE name='work_comments'").get()?.seq ?? 0;
-    const legacy = Number(db.prepare('SELECT COUNT(*) AS n FROM work_operations').get()!.n);
-    const itemRevisions = db
-      .prepare('SELECT COALESCE(SUM(revision),0) AS n FROM work_items')
-      .get()!.n;
+    const sequenced =
+      db
+        .select({ seq: sequence.seq })
+        .from(sequence)
+        .where(eq(sequence.name, 'work_comments'))
+        .get()?.seq ?? 0;
+    const legacy = db.select({ n: count() }).from(workOperations).get()!.n;
+    const itemRevisions =
+      db
+        .select({ n: sum(workItems.revision).mapWith(Number) })
+        .from(workItems)
+        .get()?.n ?? 0;
     if (
       !meta ||
       !Number.isSafeInteger(meta.revision) ||
-      Number(meta.revision) < 0 ||
-      Number(meta.revision) > operations ||
+      meta.revision < 0 ||
+      meta.revision > operations ||
       !Number.isSafeInteger(meta.comments) ||
-      Number(meta.comments) < 0 ||
-      Number(meta.comments) > Number(meta.revision) ||
+      meta.comments < 0 ||
+      meta.comments > meta.revision ||
       meta.revision !== itemRevisions ||
-      Number(meta.revision) > legacy + Number(counts.n) ||
+      meta.revision > legacy + counts.n ||
       meta.comments !== counts.n ||
-      sequence !== counts.n ||
-      (Number(counts.n) > 0 && (counts.first !== 1 || counts.last !== counts.n)) ||
-      legacy + Number(counts.n) > operations ||
-      db.prepare('SELECT 1 FROM work_comments c JOIN work_operations o ON o.id=c.id LIMIT 1').get()
+      sequenced !== counts.n ||
+      (counts.n > 0 && (counts.first !== 1 || counts.last !== counts.n)) ||
+      legacy + counts.n > operations ||
+      db
+        .select({ id: workComments.id })
+        .from(workComments)
+        .innerJoin(workOperations, eq(workOperations.id, workComments.id))
+        .limit(1)
+        .get()
     )
       throw new Fault('WORK_CORRUPT');
-    return Number(meta.comments);
+    return meta.comments;
   }
   private operationCount() {
     return (
-      Number(this.database().prepare('SELECT COUNT(*) AS n FROM work_operations').get()!.n) +
-      this.commentAuthority()
+      this.database().select({ n: count() }).from(workOperations).get()!.n + this.commentAuthority()
     );
   }
   private revision() {
-    const row = this.database().prepare('SELECT revision FROM work_meta WHERE id=1').get();
+    const row = this.database()
+      .select({ revision: workMeta.revision })
+      .from(workMeta)
+      .where(eq(workMeta.id, 1))
+      .get();
     if (
       !row ||
       !Number.isSafeInteger(row.revision) ||
-      Number(row.revision) < 0 ||
-      Number(row.revision) > operations
+      row.revision < 0 ||
+      row.revision > operations
     )
       throw new Fault('WORK_CORRUPT');
     this.commentAuthority();
-    return Number(row.revision);
+    return row.revision;
   }
-  private transaction<T>(action: () => T) {
-    const db = this.database();
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const value = action();
-      db.exec('COMMIT');
-      return value;
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
-  }
-  private item(row: Row): WorkItem {
-    if (this.schemaVersion < 3) {
-      if (!legacyWorkStates.includes(row.status as (typeof legacyWorkStates)[number]))
-        throw new Fault('WORK_CORRUPT');
-    } else if (
+  private item(row: ItemRow, legacy = false): WorkItem {
+    // Pre-workflow files only knew the three legacy states; anything else there is corruption.
+    if (legacy && !legacyWorkStates.includes(row.status as (typeof legacyWorkStates)[number]))
+      throw new Fault('WORK_CORRUPT');
+    if (
       !workPriorities.includes(row.priority as (typeof workPriorities)[number]) ||
       (row.assignee !== null && !validAgentId(row.assignee))
     )
@@ -326,8 +354,8 @@ export class Work {
       description: row.description,
       progress: row.progress,
       status: row.status,
-      ...(this.schemaVersion >= 3 && row.priority !== 'normal' ? { priority: row.priority } : {}),
-      ...(this.schemaVersion >= 3 && row.assignee !== null ? { assignee: row.assignee } : {}),
+      ...(row.priority !== 'normal' ? { priority: row.priority } : {}),
+      ...(row.assignee !== null ? { assignee: row.assignee } : {}),
       revision: row.revision,
       deleted: row.deleted === 1,
       createdAt: row.created,
@@ -339,9 +367,9 @@ export class Work {
     if (!isWorkItem(item) || ![0, 1].includes(Number(row.deleted))) throw new Fault('WORK_CORRUPT');
     return item;
   }
-  private find(id: string) {
+  private find(id: string, db = this.database()) {
     if (!validAgentId(id)) throw new Fault('INVALID_WORK_QUERY', 400);
-    const row = this.database().prepare('SELECT * FROM work_items WHERE id=?').get(id);
+    const row = db.select().from(workItems).where(eq(workItems.id, id)).get();
     if (!row) throw new Fault('WORK_NOT_FOUND', 404);
     return this.item(row);
   }
@@ -353,8 +381,8 @@ export class Work {
       await this.ready;
       if (this.closed) return { available: false, error: 'WORK_CLOSED' };
       const db = this.database();
-      const count = Number(db.prepare('SELECT COUNT(*) AS count FROM work_items').get()!.count);
-      return { available: true, revision: this.revision(), count };
+      const total = db.select({ count: count() }).from(workItems).get()!.count;
+      return { available: true, revision: this.revision(), count: total };
     } catch {
       return { available: false, error: 'WORK_CORRUPT' };
     }
@@ -363,43 +391,39 @@ export class Work {
     if (!isWorkQuery(input)) return Promise.reject(new Fault('INVALID_WORK_QUERY', 400));
     const query = structuredClone(input);
     return this.exclusive(() => {
-      const filter = query.filter ?? 'all',
-        conditions = [filter === 'trash' ? 'deleted=1' : 'deleted=0'];
-      const values: (string | number)[] = [];
-      if (filter === 'open') conditions.push("status NOT IN ('done','closed')");
-      if (filter === 'done') conditions.push("status IN ('done','closed')");
-      if (query.before !== undefined) {
-        conditions.push('seq<?');
-        values.push(query.before);
-      }
+      const filter = query.filter ?? 'all';
+      const conditions: (SQL | undefined)[] = [eq(workItems.deleted, filter === 'trash' ? 1 : 0)];
+      if (filter === 'open') conditions.push(notInArray(workItems.status, ['done', 'closed']));
+      if (filter === 'done') conditions.push(inArray(workItems.status, ['done', 'closed']));
+      if (query.before !== undefined) conditions.push(lt(workItems.seq, query.before));
       if (query.text) {
         const text = `%${query.text.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+        // The builder's like() has no ESCAPE clause; the pattern itself stays a bound parameter.
+        const contains = (column: SQLWrapper) => sql`${column} LIKE ${text} ESCAPE '\\'`;
         conditions.push(
-          "(title LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' OR progress LIKE ? ESCAPE '\\')",
+          or(
+            contains(workItems.title),
+            contains(workItems.description),
+            contains(workItems.progress),
+          ),
         );
-        values.push(text, text, text);
       }
-      if (query.status !== undefined) {
-        conditions.push('status=?');
-        values.push(query.status);
-      }
-      if (query.priority !== undefined) {
-        conditions.push('priority=?');
-        values.push(query.priority);
-      }
-      if (Object.hasOwn(query, 'assignee')) {
-        if (query.assignee === null) conditions.push('assignee IS NULL');
-        else {
-          conditions.push('assignee=?');
-          values.push(query.assignee!);
-        }
-      }
+      if (query.status !== undefined) conditions.push(eq(workItems.status, query.status));
+      if (query.priority !== undefined) conditions.push(eq(workItems.priority, query.priority));
+      if (Object.hasOwn(query, 'assignee'))
+        conditions.push(
+          query.assignee === null
+            ? isNull(workItems.assignee)
+            : eq(workItems.assignee, query.assignee!),
+        );
       const limit = query.limit ?? 50;
       const rows = this.database()
-        .prepare(
-          `SELECT * FROM work_items WHERE ${conditions.join(' AND ')} ORDER BY seq DESC LIMIT ?`,
-        )
-        .all(...values, limit + 1);
+        .select()
+        .from(workItems)
+        .where(and(...conditions))
+        .orderBy(desc(workItems.seq))
+        .limit(limit + 1)
+        .all();
       const page = rows.slice(0, limit);
       return {
         revision: this.revision(),
@@ -412,18 +436,18 @@ export class Work {
             progressTruncated: chars.length > 200,
           };
         }),
-        ...(rows.length > limit ? { nextBefore: Number(page.at(-1)!.seq) } : {}),
+        ...(rows.length > limit ? { nextBefore: page.at(-1)!.seq } : {}),
       };
     });
   }
-  private operation(row: Row) {
+  private operation(row: OperationRow) {
     if (
       !validAgentId(row.id) ||
       !validAgentId(row.item) ||
       typeof row.signature !== 'string' ||
       !/^[a-f0-9]{64}$/.test(row.signature) ||
       !Number.isSafeInteger(row.revision) ||
-      Number(row.revision) < 1 ||
+      row.revision < 1 ||
       typeof row.at !== 'string' ||
       row.at.length > 40 ||
       !/^\d{4}-\d{2}-\d{2}T/.test(row.at) ||
@@ -432,9 +456,16 @@ export class Work {
       throw new Fault('WORK_CORRUPT');
   }
   private accepted(request: WorkWrite, actor: WorkAuthor): WorkAck | undefined {
-    const row = this.database().prepare('SELECT * FROM work_operations WHERE id=?').get(request.id);
+    const db = this.database();
+    const row = db.select().from(workOperations).where(eq(workOperations.id, request.id)).get();
     if (!row) {
-      if (this.database().prepare('SELECT 1 FROM work_comments WHERE id=?').get(request.id))
+      if (
+        db
+          .select({ id: workComments.id })
+          .from(workComments)
+          .where(eq(workComments.id, request.id))
+          .get()
+      )
         throw new Fault('WORK_REQUEST_CONFLICT');
       return undefined;
     }
@@ -443,7 +474,7 @@ export class Work {
     if (
       row.item !== request.item ||
       !Number.isSafeInteger(row.revision) ||
-      Number(row.revision) < 1 ||
+      row.revision < 1 ||
       typeof row.at !== 'string' ||
       !Number.isFinite(Date.parse(row.at))
     )
@@ -454,12 +485,12 @@ export class Work {
     } catch {
       throw new Fault('WORK_CORRUPT');
     }
-    if (item.revision < Number(row.revision)) throw new Fault('WORK_CORRUPT');
+    if (item.revision < row.revision) throw new Fault('WORK_CORRUPT');
     const accepted: WorkAck = {
       state: 'complete',
       request,
       actor,
-      acceptedRevision: Number(row.revision),
+      acceptedRevision: row.revision,
       acceptedAt: row.at,
       item,
     };
@@ -501,13 +532,13 @@ export class Work {
       this.revision();
       const db = this.database();
       if (this.operationCount() >= operations) throw new Fault('WORK_OPERATION_LIMIT');
-      const row = db.prepare('SELECT * FROM work_items WHERE id=?').get(request.item);
+      const row = db.select().from(workItems).where(eq(workItems.id, request.item)).get();
       let now = new Date().toISOString();
       let item: WorkItem,
         changed = true;
       if (request.action === 'create') {
         if (row) throw new Fault('WORK_ID_CONFLICT');
-        if (Number(db.prepare('SELECT COUNT(*) AS count FROM work_items').get()!.count) >= capacity)
+        if (db.select({ count: count() }).from(workItems).get()!.count >= capacity)
           throw new Fault('WORK_LIMIT');
         item = {
           ...request.value,
@@ -590,70 +621,81 @@ export class Work {
           else delete item.completedAt;
         }
       }
-      return this.transaction(() => {
-        if (request.action === 'create')
-          db.prepare(
-            'INSERT INTO work_items(id,title,description,progress,status,revision,deleted,created,updated,completed,creator,editor,priority,assignee) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          ).run(
-            item.id,
-            item.title,
-            item.description,
-            item.progress,
-            item.status,
-            item.revision,
-            Number(item.deleted),
-            item.createdAt,
-            item.updatedAt,
-            item.completedAt ?? null,
-            JSON.stringify(item.createdBy),
-            JSON.stringify(item.updatedBy),
-            item.priority ?? 'normal',
-            item.assignee ?? null,
-          );
-        else if (changed) {
-          const result = db
-            .prepare(
-              'UPDATE work_items SET title=?,description=?,progress=?,status=?,revision=?,deleted=?,updated=?,completed=?,editor=?,priority=?,assignee=? WHERE id=? AND revision=?',
-            )
-            .run(
-              item.title,
-              item.description,
-              item.progress,
-              item.status,
-              item.revision,
-              Number(item.deleted),
-              item.updatedAt,
-              item.completedAt ?? null,
-              JSON.stringify(item.updatedBy),
-              item.priority ?? 'normal',
-              item.assignee ?? null,
-              item.id,
-              request.revision,
-            );
-          if (Number(result.changes) !== 1) throw new Fault('WORK_CONFLICT');
-        }
-        db.prepare(
-          'INSERT INTO work_operations(id,item,signature,revision,at) VALUES(?,?,?,?,?)',
-        ).run(request.id, item.id, signature(request, actor), item.revision, now);
-        if (
-          changed &&
-          Number(
-            db.prepare('UPDATE work_meta SET revision=revision+1 WHERE id=1').run().changes,
-          ) !== 1
-        )
-          throw new Fault('WORK_CORRUPT');
-        return {
-          state: 'complete' as const,
-          request,
-          actor,
-          acceptedRevision: item.revision,
-          acceptedAt: now,
-          item,
-        };
-      });
+      return db.transaction(
+        (tx) => {
+          if (request.action === 'create')
+            tx.insert(workItems)
+              .values({
+                id: item.id,
+                title: item.title,
+                description: item.description,
+                progress: item.progress,
+                status: item.status,
+                revision: item.revision,
+                deleted: Number(item.deleted),
+                created: item.createdAt,
+                updated: item.updatedAt,
+                completed: item.completedAt ?? null,
+                creator: JSON.stringify(item.createdBy),
+                editor: JSON.stringify(item.updatedBy),
+                priority: item.priority ?? 'normal',
+                assignee: item.assignee ?? null,
+              })
+              .run();
+          else if (changed) {
+            const result = tx
+              .update(workItems)
+              .set({
+                title: item.title,
+                description: item.description,
+                progress: item.progress,
+                status: item.status,
+                revision: item.revision,
+                deleted: Number(item.deleted),
+                updated: item.updatedAt,
+                completed: item.completedAt ?? null,
+                editor: JSON.stringify(item.updatedBy),
+                priority: item.priority ?? 'normal',
+                assignee: item.assignee ?? null,
+              })
+              .where(and(eq(workItems.id, item.id), eq(workItems.revision, request.revision)))
+              .run();
+            if (Number(result.changes) !== 1) throw new Fault('WORK_CONFLICT');
+          }
+          tx.insert(workOperations)
+            .values({
+              id: request.id,
+              item: item.id,
+              signature: signature(request, actor),
+              revision: item.revision,
+              at: now,
+            })
+            .run();
+          if (
+            changed &&
+            Number(
+              tx
+                .update(workMeta)
+                .set({ revision: sql`${workMeta.revision} + 1` })
+                .where(eq(workMeta.id, 1))
+                .run().changes,
+            ) !== 1
+          )
+            throw new Fault('WORK_CORRUPT');
+          return {
+            state: 'complete' as const,
+            request,
+            actor,
+            acceptedRevision: item.revision,
+            acceptedAt: now,
+            item,
+          };
+        },
+        { behavior: 'immediate' },
+      );
     }, signal);
   }
-  private commentRow(row: Row): WorkComment {
+  private commentRow(row: CommentRow, db = this.database()): WorkComment {
     let author: unknown;
     try {
       author = JSON.parse(String(row.creator));
@@ -670,9 +712,9 @@ export class Work {
     if (
       !isWorkComment(value) ||
       !Number.isSafeInteger(row.seq) ||
-      Number(row.seq) < 1 ||
+      row.seq < 1 ||
       !Number.isSafeInteger(row.revision) ||
-      Number(row.revision) < 2 ||
+      row.revision < 2 ||
       typeof row.signature !== 'string' ||
       !/^[a-f0-9]{64}$/.test(row.signature)
     )
@@ -681,18 +723,18 @@ export class Work {
       id: value.id,
       item: value.item,
       body: value.body,
-      revision: Number(row.revision) - 1,
+      revision: row.revision - 1,
     };
     if (commentSignature(request, value.createdBy) !== row.signature)
       throw new Fault('WORK_CORRUPT');
     let item: WorkItem;
     try {
-      item = this.find(value.item);
+      item = this.find(value.item, db);
     } catch {
       throw new Fault('WORK_CORRUPT');
     }
     if (
-      item.revision < Number(row.revision) ||
+      item.revision < row.revision ||
       Date.parse(value.createdAt) < Date.parse(item.createdAt) ||
       Date.parse(value.createdAt) > Date.parse(item.updatedAt)
     )
@@ -705,9 +747,15 @@ export class Work {
   ): WorkCommentAck | undefined {
     this.commentAuthority();
     const db = this.database(),
-      row = db.prepare('SELECT * FROM work_comments WHERE id=?').get(request.id);
+      row = db.select().from(workComments).where(eq(workComments.id, request.id)).get();
     if (!row) {
-      if (db.prepare('SELECT 1 FROM work_operations WHERE id=?').get(request.id))
+      if (
+        db
+          .select({ id: workOperations.id })
+          .from(workOperations)
+          .where(eq(workOperations.id, request.id))
+          .get()
+      )
         throw new Fault('WORK_REQUEST_CONFLICT');
       return undefined;
     }
@@ -718,7 +766,7 @@ export class Work {
       state: 'complete' as const,
       request,
       actor,
-      acceptedRevision: Number(row.revision),
+      acceptedRevision: row.revision,
       acceptedAt: comment.createdAt,
       comment,
       item: this.find(request.item),
@@ -771,39 +819,46 @@ export class Work {
         comment,
       };
       if (!isWorkCommentReceipt(result)) throw new Fault('WORK_CORRUPT');
-      return this.transaction(() => {
-        const db = this.database();
-        if (
-          Number(
-            db
-              .prepare(
-                'UPDATE work_items SET revision=?,updated=?,editor=? WHERE id=? AND revision=?',
-              )
-              .run(item.revision, now, JSON.stringify(actor), item.id, request.revision).changes,
-          ) !== 1
-        )
-          throw new Fault('WORK_CONFLICT');
-        db.prepare(
-          'INSERT INTO work_comments(id,item,body,creator,signature,revision,at) VALUES(?,?,?,?,?,?,?)',
-        ).run(
-          comment.id,
-          comment.item,
-          comment.body,
-          JSON.stringify(actor),
-          commentSignature(request, actor),
-          item.revision,
-          now,
-        );
-        if (
-          Number(
-            db
-              .prepare('UPDATE work_meta SET revision=revision+1,comments=comments+1 WHERE id=1')
-              .run().changes,
-          ) !== 1
-        )
-          throw new Fault('WORK_CORRUPT');
-        return result;
-      });
+      return this.database().transaction(
+        (tx) => {
+          if (
+            Number(
+              tx
+                .update(workItems)
+                .set({ revision: item.revision, updated: now, editor: JSON.stringify(actor) })
+                .where(and(eq(workItems.id, item.id), eq(workItems.revision, request.revision)))
+                .run().changes,
+            ) !== 1
+          )
+            throw new Fault('WORK_CONFLICT');
+          tx.insert(workComments)
+            .values({
+              id: comment.id,
+              item: comment.item,
+              body: comment.body,
+              creator: JSON.stringify(actor),
+              signature: commentSignature(request, actor),
+              revision: item.revision,
+              at: now,
+            })
+            .run();
+          if (
+            Number(
+              tx
+                .update(workMeta)
+                .set({
+                  revision: sql`${workMeta.revision} + 1`,
+                  comments: sql`${workMeta.comments} + 1`,
+                })
+                .where(eq(workMeta.id, 1))
+                .run().changes,
+            ) !== 1
+          )
+            throw new Fault('WORK_CORRUPT');
+          return result;
+        },
+        { behavior: 'immediate' },
+      );
     }, signal);
   }
   comments(input: unknown): Promise<WorkCommentPage> {
@@ -812,14 +867,19 @@ export class Work {
     return this.exclusive(() => {
       const item = this.find(query.item);
       this.commentAuthority();
-      const values: (string | number)[] = [query.item];
-      if (query.before !== undefined) values.push(query.before);
       const limit = query.limit ?? 50;
       const rows = this.database()
-        .prepare(
-          `SELECT * FROM work_comments WHERE item=? ${query.before === undefined ? '' : 'AND seq<?'} ORDER BY seq DESC LIMIT ?`,
+        .select()
+        .from(workComments)
+        .where(
+          and(
+            eq(workComments.item, query.item),
+            query.before === undefined ? undefined : lt(workComments.seq, query.before),
+          ),
         )
-        .all(...values, limit + 1);
+        .orderBy(desc(workComments.seq))
+        .limit(limit + 1)
+        .all();
       const comments: WorkComment[] = [];
       let last: number | undefined;
       for (const row of rows.slice(0, limit)) {
@@ -829,11 +889,11 @@ export class Work {
           item: item.id,
           revision: item.revision,
           comments: [...comments, next],
-          nextBefore: Number(row.seq),
+          nextBefore: row.seq,
         };
         if (Buffer.byteLength(JSON.stringify(projected)) > 120 * 1024) break;
         comments.push(next);
-        last = Number(row.seq);
+        last = row.seq;
       }
       return {
         item: item.id,
@@ -847,7 +907,7 @@ export class Work {
     this.closed = true;
     await this.chain.catch(() => {});
     await this.ready.catch(() => {});
-    this.db?.close();
+    this.db?.$client.close();
     this.db = undefined;
   }
 }

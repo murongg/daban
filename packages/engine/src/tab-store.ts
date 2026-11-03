@@ -3,7 +3,11 @@ import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { publicUrl, validAgentId } from '@daban/protocol';
+import { and, eq, sql } from 'drizzle-orm';
 import { Fault } from './control.js';
+import { configure, type Database, migrate, tables, unwrap } from './database.js';
+import { migrations } from './tab-store-migrations.js';
+import { browserActive, browserCommands, browserMeta, browserTabs } from './tab-store-schema.js';
 
 export interface SavedTab {
   id: string;
@@ -20,11 +24,23 @@ export interface TabReceipt {
   error?: string;
   uncertain?: boolean;
 }
+const names = ['browser_active', 'browser_commands', 'browser_meta', 'browser_tabs'];
+
+// Pre-ORM files: version 1 may hold any subset of the four tables; the old bootstrap completes it.
+function legacy(client: DatabaseSync) {
+  const version = Number(client.prepare('PRAGMA user_version').get()!.user_version);
+  if (version !== 1 || tables(client).some((name) => !names.includes(name)))
+    throw new Fault('BROWSER_STATE_UNAVAILABLE');
+  client.exec(`CREATE TABLE IF NOT EXISTS browser_tabs(id TEXT PRIMARY KEY,bot TEXT NOT NULL,url TEXT NOT NULL,title TEXT NOT NULL,position INTEGER NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS browser_active(bot TEXT PRIMARY KEY,tab TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS browser_commands(id TEXT PRIMARY KEY,bot TEXT NOT NULL,signature TEXT NOT NULL,phase TEXT NOT NULL,error TEXT,uncertain INTEGER) STRICT;
+    CREATE TABLE IF NOT EXISTS browser_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;`);
+}
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 export class TabStore {
   readonly ready: Promise<unknown>;
-  private db?: DatabaseSync;
+  private db?: Database;
   private failed = false;
   private closed = false;
   constructor(
@@ -56,28 +72,20 @@ export class TabStore {
     } finally {
       await handle.close();
     }
-    this.db = new DatabaseSync(this.file);
-    const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-    const tables = this.db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-      .all()
-      .map((row) => String(row.name));
-    if (
-      ![0, 1].includes(version) ||
-      (version === 0 && tables.length) ||
-      tables.some(
-        (name) =>
-          !['browser_tabs', 'browser_active', 'browser_commands', 'browser_meta'].includes(name),
-      )
-    )
+    const client = new DatabaseSync(this.file);
+    try {
+      configure(client, { synchronous: 'FULL', busyTimeout: 1000 });
+      // Refused files are checked before chmod and WAL so they are retained unchanged.
+      this.db = migrate(client, migrations, legacy);
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+    if (JSON.stringify(tables(this.db)) !== JSON.stringify(names))
       throw new Fault('BROWSER_STATE_UNAVAILABLE');
     await chmod(this.file, 0o600);
-    this.db.exec(`PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000;
-      CREATE TABLE IF NOT EXISTS browser_tabs(id TEXT PRIMARY KEY,bot TEXT NOT NULL,url TEXT NOT NULL,title TEXT NOT NULL,position INTEGER NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS browser_active(bot TEXT PRIMARY KEY,tab TEXT NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS browser_commands(id TEXT PRIMARY KEY,bot TEXT NOT NULL,signature TEXT NOT NULL,phase TEXT NOT NULL,error TEXT,uncertain INTEGER) STRICT;
-      CREATE TABLE IF NOT EXISTS browser_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;
-      INSERT OR IGNORE INTO browser_meta VALUES(1,0);PRAGMA user_version=1;`);
+    configure(client, { journal: 'WAL' });
+    this.db.insert(browserMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
     this.registry();
   }
   private available() {
@@ -132,10 +140,20 @@ export class TabStore {
   private registry(): TabRegistry | undefined {
     const db = this.available();
     const tabs = db
-      .prepare('SELECT id,bot,url,title FROM browser_tabs ORDER BY bot,position LIMIT ?')
-      .all((this.bots?.length ?? 2000) * 8 + 1)
-      .map((row) => ({ ...row }));
-    const active = db.prepare('SELECT bot,tab FROM browser_active').all();
+      .select({
+        id: browserTabs.id,
+        bot: browserTabs.bot,
+        url: browserTabs.url,
+        title: browserTabs.title,
+      })
+      .from(browserTabs)
+      .orderBy(browserTabs.bot, browserTabs.position)
+      .limit((this.bots?.length ?? 2000) * 8 + 1)
+      .all();
+    const active = db
+      .select({ bot: browserActive.bot, tab: browserActive.tab })
+      .from(browserActive)
+      .all();
     if (!tabs.length && !active.length) return;
     const value = {
       tabs,
@@ -146,39 +164,37 @@ export class TabStore {
   }
   private transaction<T>(operation: () => T) {
     const db = this.available();
-    db.exec('BEGIN IMMEDIATE');
     try {
-      const result = operation();
-      db.exec('COMMIT');
-      return result;
+      // Boxing keeps the generic result distinguishable from a Promise for Drizzle's sync typing.
+      return db.transaction(() => ({ result: operation() }), { behavior: 'immediate' }).result;
     } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
+      throw unwrap(error);
     }
   }
   private saveRows(state: TabRegistry) {
     const db = this.available();
-    if (this.bots) db.exec('DELETE FROM browser_active;DELETE FROM browser_tabs;');
-    else
+    if (this.bots) {
+      db.delete(browserActive).run();
+      db.delete(browserTabs).run();
+    } else
       for (const bot of Object.keys(state.active)) {
-        db.prepare('DELETE FROM browser_active WHERE bot=?').run(bot);
-        db.prepare('DELETE FROM browser_tabs WHERE bot=?').run(bot);
+        db.delete(browserActive).where(eq(browserActive.bot, bot)).run();
+        db.delete(browserTabs).where(eq(browserTabs.bot, bot)).run();
       }
     const positions = new Map<string, number>();
     for (const tab of state.tabs) {
       const position = positions.get(tab.bot) || 0;
       positions.set(tab.bot, position + 1);
-      db.prepare('INSERT INTO browser_tabs VALUES(?,?,?,?,?)').run(
-        tab.id,
-        tab.bot,
-        tab.url,
-        tab.title,
-        position,
-      );
+      db.insert(browserTabs)
+        .values({ id: tab.id, bot: tab.bot, url: tab.url, title: tab.title, position })
+        .run();
     }
     for (const bot of this.bots ?? Object.keys(state.active))
-      db.prepare('INSERT INTO browser_active VALUES(?,?)').run(bot, state.active[bot]);
-    db.exec('UPDATE browser_meta SET revision=revision+1 WHERE id=1');
+      db.insert(browserActive).values({ bot, tab: state.active[bot] }).run();
+    db.update(browserMeta)
+      .set({ revision: sql`${browserMeta.revision} + 1` })
+      .where(eq(browserMeta.id, 1))
+      .run();
   }
   async read() {
     await this.ready;
@@ -192,7 +208,11 @@ export class TabStore {
   async revision() {
     await this.ready;
     const value = Number(
-      this.available().prepare('SELECT revision FROM browser_meta WHERE id=1').get()!.revision,
+      this.available()
+        .select({ revision: browserMeta.revision })
+        .from(browserMeta)
+        .where(eq(browserMeta.id, 1))
+        .get()!.revision,
     );
     if (!Number.isSafeInteger(value) || value < 0) throw new Fault('BROWSER_STATE_UNAVAILABLE');
     return value;
@@ -203,7 +223,7 @@ export class TabStore {
       throw new Fault('INVALID_BROWSER_REQUEST', 400);
     return this.transaction(() => {
       const db = this.available(),
-        prior = db.prepare('SELECT * FROM browser_commands WHERE id=?').get(id);
+        prior = db.select().from(browserCommands).where(eq(browserCommands.id, id)).get();
       if (prior) {
         if (prior.bot !== bot || prior.signature !== signature)
           throw new Fault('BROWSER_REQUEST_ID_REUSED');
@@ -212,9 +232,7 @@ export class TabStore {
         return prior.phase as 'claimed' | 'settled';
       }
       // Claim before any browser effect. A claimed record after restart is uncertain and must never be executed again.
-      db.prepare(
-        "INSERT INTO browser_commands(id,bot,signature,phase) VALUES(?,?,?,'claimed')",
-      ).run(id, bot, signature);
+      db.insert(browserCommands).values({ id, bot, signature, phase: 'claimed' }).run();
       return 'new';
     });
   }
@@ -225,22 +243,33 @@ export class TabStore {
       throw new Fault('INVALID_BROWSER_REQUEST', 400);
     return this.transaction(() => {
       const db = this.available(),
-        prior = db.prepare('SELECT phase FROM browser_commands WHERE id=? AND bot=?').get(id, bot);
+        prior = db
+          .select({ phase: browserCommands.phase })
+          .from(browserCommands)
+          .where(and(eq(browserCommands.id, id), eq(browserCommands.bot, bot)))
+          .get();
       if (!prior) throw new Fault('BROWSER_REQUEST_NOT_FOUND', 404);
       if (prior.phase === 'settled') return;
       if (prior.phase !== 'claimed') throw new Fault('BROWSER_STATE_UNAVAILABLE');
       this.saveRows(state);
-      db.prepare(
-        "UPDATE browser_commands SET phase='settled',error=?,uncertain=? WHERE id=? AND bot=?",
-      ).run(error || null, uncertain ? 1 : 0, id, bot);
+      db.update(browserCommands)
+        .set({ phase: 'settled', error: error || null, uncertain: uncertain ? 1 : 0 })
+        .where(and(eq(browserCommands.id, id), eq(browserCommands.bot, bot)))
+        .run();
     });
   }
   async receipt(id: string, bot: string): Promise<TabReceipt | undefined> {
     await this.ready;
     if (!validAgentId(id) || !this.owner(bot)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
     const row = this.available()
-      .prepare('SELECT phase,error,uncertain FROM browser_commands WHERE id=? AND bot=?')
-      .get(id, bot);
+      .select({
+        phase: browserCommands.phase,
+        error: browserCommands.error,
+        uncertain: browserCommands.uncertain,
+      })
+      .from(browserCommands)
+      .where(and(eq(browserCommands.id, id), eq(browserCommands.bot, bot)))
+      .get();
     if (!row) return;
     if (!['claimed', 'settled'].includes(String(row.phase)))
       throw new Fault('BROWSER_STATE_UNAVAILABLE');
@@ -253,6 +282,6 @@ export class TabStore {
     if (this.closed) return;
     this.closed = true;
     await this.ready;
-    this.db?.close();
+    this.db?.$client.close();
   }
 }

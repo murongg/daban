@@ -12,8 +12,11 @@ import {
   type NoteWrite,
   noteKey,
 } from '@daban/protocol';
+import { count } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test, vi } from 'vitest';
 import { Notes } from './notes.js';
+import { noteItems, noteOperations } from './notes-schema.js';
 
 const alpha = 'mock-alpha',
   beta = 'mock-beta';
@@ -53,6 +56,67 @@ async function fixture() {
     },
   };
 }
+
+test('a pre-ORM version 1 notes file keeps its notes and receipts after the schema baseline', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-notes-legacy-'));
+  const file = path.join(root, 'notes.sqlite');
+  const at = '2026-01-01T00:00:00.000Z',
+    request = create(),
+    key = createHash('sha256')
+      .update(noteKey(alpha, request, human))
+      .digest('hex');
+  const old = new DatabaseSync(file);
+  old.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE note_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,bot TEXT NOT NULL,id TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL,UNIQUE(bot,id)) STRICT;
+    CREATE TABLE note_operations(bot TEXT NOT NULL,id TEXT NOT NULL,note TEXT NOT NULL,signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL,PRIMARY KEY(bot,id),FOREIGN KEY(bot,note) REFERENCES note_items(bot,id)) STRICT;
+    CREATE TABLE note_meta(bot TEXT PRIMARY KEY,revision INTEGER NOT NULL) STRICT;
+    PRAGMA user_version=1;`);
+  old
+    .prepare(
+      'INSERT INTO note_items(bot,id,title,body,status,revision,deleted,created,updated,completed,creator,editor) VALUES(?,?,?,?,?,1,0,?,?,NULL,?,?)',
+    )
+    .run(
+      alpha,
+      request.note,
+      '合成独立便笺',
+      'MOCK PRIVATE DETAIL',
+      'open',
+      at,
+      at,
+      JSON.stringify(human),
+      JSON.stringify(human),
+    );
+  old
+    .prepare('INSERT INTO note_operations VALUES(?,?,?,?,1,?)')
+    .run(alpha, request.id, request.note, key, at);
+  old.prepare('INSERT INTO note_meta VALUES(?,1)').run(alpha);
+  old.close();
+  const store = new Notes(file);
+  try {
+    await store.ready;
+    const prior = await store.receipt(alpha, request, human);
+    expect.assert(prior.state === 'complete');
+    expect(prior.acceptedAt).toBe(at);
+    expect(prior.item.title).toBe('合成独立便笺');
+    expect(await store.status(alpha)).toStrictEqual({ available: true, revision: 1, count: 1 });
+    const next = await store.write(
+      alpha,
+      {
+        id: 'mock-legacy-update',
+        note: request.note,
+        action: 'update',
+        revision: 1,
+        value: { status: 'parked' },
+      },
+      human,
+    );
+    expect(next.item.revision).toBe(2);
+    expect((await store.list(alpha)).items.map((item) => item.id)).toStrictEqual([request.note]);
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('private notes and operation identities are scoped to the selected Bot', async () => {
   const f = await fixture();
@@ -460,7 +524,7 @@ test('caller mutation and patch property order cannot alter scope or defeat exac
 test('unknown or unrelated databases remain intact instead of being converted to notes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-note-schema-'));
   try {
-    for (const version of [0, 2]) {
+    for (const version of [0, 1, 2]) {
       const file = path.join(root, `schema-${version}.sqlite`),
         db = new DatabaseSync(file);
       db.exec(
@@ -504,10 +568,10 @@ test('missing per-Bot authority cannot turn existing notes into a new empty name
       await expect(operation).rejects.toThrowError(/NOTES_CORRUPT/);
     expect(await f.store.status(alpha)).toStrictEqual({ available: false, error: 'NOTES_CORRUPT' });
     await expect(f.reopen()).rejects.toThrowError(/NOTES_CORRUPT/);
-    const inspect = new DatabaseSync(f.file, { readOnly: true });
-    expect(inspect.prepare('SELECT COUNT(*) AS n FROM note_items').get()!.n).toBe(1);
-    expect(inspect.prepare('SELECT COUNT(*) AS n FROM note_operations').get()!.n).toBe(1);
-    inspect.close();
+    const inspect = drizzle({ client: new DatabaseSync(f.file, { readOnly: true }) });
+    expect(inspect.select({ n: count() }).from(noteItems).get()!.n).toBe(1);
+    expect(inspect.select({ n: count() }).from(noteOperations).get()!.n).toBe(1);
+    inspect.$client.close();
   } finally {
     await f.close();
   }
@@ -530,20 +594,20 @@ test('malformed receipts are refused as corruption before their fingerprint is c
 test('a failed initial schema transaction stays retryable without partially published tables', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-note-init-'));
   const file = path.join(root, 'notes.sqlite'),
-    execute = DatabaseSync.prototype.exec;
+    prepare = DatabaseSync.prototype.prepare;
   let injected = false;
-  vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (
+  vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
     this: DatabaseSync,
     sql: string,
   ) {
-    if (!injected && sql.includes('CREATE TABLE note_operations')) {
+    if (!injected && sql.includes('CREATE TABLE `note_operations`')) {
       injected = true;
-      return execute.call(
+      return prepare.call(
         this,
-        sql.replace('CREATE TABLE note_operations', 'MOCK_STORAGE_REFUSAL note_operations'),
+        sql.replace('CREATE TABLE `note_operations`', 'MOCK_STORAGE_REFUSAL note_operations'),
       );
     }
-    return execute.call(this, sql);
+    return prepare.call(this, sql);
   });
   const failed = new Notes(file);
   try {
@@ -594,32 +658,31 @@ test('the operation quota refuses new writes while accepted retries remain reada
   const f = await fixture();
   try {
     const initial = await f.store.write(alpha, create(), human),
-      db = new DatabaseSync(f.file);
-    const insert = db.prepare(
-      'INSERT INTO note_operations(bot,id,note,signature,revision,at) VALUES(?,?,?,?,?,?)',
-    );
-    db.exec('BEGIN');
-    for (let n = 0; n < 9999; n++) {
-      const request: NoteWrite = {
-        id: `mock-ledger-${n}`,
-        note: 'mock-note',
-        action: 'update',
-        revision: 1,
-        value: { body: initial.item.body },
-      };
-      insert.run(
-        alpha,
-        request.id,
-        request.note,
-        createHash('sha256')
-          .update(noteKey(alpha, request, human))
-          .digest('hex'),
-        1,
-        initial.acceptedAt,
-      );
-    }
-    db.exec('COMMIT');
-    db.close();
+      db = drizzle({ client: new DatabaseSync(f.file) });
+    db.transaction((tx) => {
+      for (let n = 0; n < 9999; n++) {
+        const request: NoteWrite = {
+          id: `mock-ledger-${n}`,
+          note: 'mock-note',
+          action: 'update',
+          revision: 1,
+          value: { body: initial.item.body },
+        };
+        tx.insert(noteOperations)
+          .values({
+            bot: alpha,
+            id: request.id,
+            note: request.note,
+            signature: createHash('sha256')
+              .update(noteKey(alpha, request, human))
+              .digest('hex'),
+            revision: 1,
+            at: initial.acceptedAt,
+          })
+          .run();
+      }
+    });
+    db.$client.close();
     await expect(
       f.store.write(
         alpha,

@@ -68,6 +68,7 @@ test('host packaging excludes source directories but preserves web and runtime m
   expect(hostPackageFile(root, `${root}/dist/images.fixture.d.ts`)).toBe(false);
   expect(hostPackageFile(root, `${root}/dist/tls.fixture.js`)).toBe(false);
   expect(hostPackageFile(root, `${root}/node_modules/mock/index.js`)).toBe(false);
+  expect(hostPackageFile(root, `${root}/drizzle/chats/0000_baseline/migration.sql`)).toBe(false);
 });
 
 test('role graph follows actual compiled edges and refuses cross-role root escape', async () => {
