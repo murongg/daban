@@ -39,7 +39,7 @@ export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
   directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
-  source?(bot: string, runId: string): { intentId: string } | undefined;
+  source?(bot: string, runId: string, conversationId?: string): { intentId: string } | undefined;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
@@ -1079,6 +1079,7 @@ export class Groups {
       .get(group.id, source.bot);
     const receipt = row ? this.runner.findRequest(source.bot, requestId(row)) : undefined;
     if (
+      (this.runner.source && !this.runner.source(source.bot, source.runId, source.group)) ||
       !row ||
       !receipt ||
       receipt.runId !== source.runId ||

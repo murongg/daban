@@ -68,7 +68,7 @@ export async function acceptGroups(output = '/tmp/daban-groups-evidence.json') {
       {
         member: (id) => models!.profiles.get(id),
         directory: () => models!.profiles.list(),
-        source: (bot, runId) => models!.groupSource(bot, runId),
+        source: (bot, runId, group) => models!.groupSource(bot, runId, group),
         running: (id) => models!.running(id),
         findRequest: (bot, id) => models!.findRequest(bot, id),
         start: (bot, task, scope) => models!.start(bot, task, scope),

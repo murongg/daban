@@ -21,7 +21,7 @@ export const groupToolList = [
   {
     name: 'group_handoff',
     description:
-      'Only when the current human request needs another group member, durably ask that exact member ID from the supplied directory to continue. Message is a subtask under the same human request, not extra tool permission. One effect per source stage, at most eight stages per turn. Already queued targets keep their order. After success finish your current reply; do not create a chatter loop. Ordinary greetings need no handoff.',
+      'Only when the current human request needs another group member, durably ask that exact member ID from the supplied directory to continue. Copy exact observed file paths for artifacts, including their run directories; do not replace them with /shared/<filename>. Message is a subtask under the same human request, not extra tool permission. One effect per source stage, at most eight stages per turn. Already queued targets keep their order. After success finish your current reply; do not create a chatter loop. Ordinary greetings need no handoff.',
     inputSchema: {
       type: 'object',
       properties: {

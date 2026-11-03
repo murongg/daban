@@ -435,6 +435,7 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  finalizing?: boolean;
   checkpoint?: ConversationCheckpoint;
   route?: ResolvedModel;
   vision?: boolean;
@@ -974,9 +975,10 @@ export class ModelRuns {
       response: job.phase === 'completed' ? undefined : job.response,
       plan: job.plan,
       files: job.files,
-      running: job.running,
-      phase:
-        job.running && this.interactions.pending(job.bot, job.id)
+      running: job.running || !!job.finalizing,
+      phase: job.finalizing
+        ? 'running'
+        : job.running && this.interactions.pending(job.bot, job.id)
           ? 'waiting'
           : job.running && job.waitingForComputer
             ? 'paused'
@@ -1020,7 +1022,8 @@ export class ModelRuns {
     };
   }
   running(bot: string) {
-    return this.jobs.get(bot)?.running === true;
+    const job = this.jobs.get(bot);
+    return !!job && (job.running || !!job.finalizing);
   }
   async insert(bot: string, input: unknown) {
     await this.ready;
@@ -1093,16 +1096,17 @@ export class ModelRuns {
   }
   groupRunning(group: string) {
     return Array.from(this.jobs.values()).some(
-      (job) => job.running && job.conversationId === group,
+      (job) => this.running(job.bot) && job.conversationId === group,
     );
   }
-  groupSource(bot: string, runId: string) {
+  groupSource(bot: string, runId: string, conversationId?: string) {
     const job = this.jobs.get(bot);
     if (
       !job?.running ||
       job.id !== runId ||
       !job.task ||
-      job.conversationId ||
+      job.conversationId !== conversationId ||
+      job.finalizing ||
       job.abort.signal.aborted
     )
       return undefined;
@@ -1121,7 +1125,12 @@ export class ModelRuns {
     // Queue owners receive a public receipt, never private session paths, capabilities or fingerprints.
     return {
       runId: current ? current.id : saved!.runId,
-      phase: source.phase,
+      phase:
+        current?.finalizing ||
+        (current?.running &&
+          ['completed', 'failed', 'stopped', 'interrupted'].includes(current.phase))
+          ? 'running'
+          : source.phase,
       conversationId: source.conversationId,
       result: source.result,
       error: source.error,
@@ -1133,7 +1142,8 @@ export class ModelRuns {
   async stopRequest(bot: string, requestId: string, conversationId: string) {
     const current = this.jobs.get(bot);
     if (
-      current?.running &&
+      current &&
+      this.running(bot) &&
       current.requestId === requestId &&
       current.conversationId === conversationId
     )
@@ -1866,6 +1876,8 @@ export class ModelRuns {
             : 'MODEL_CANCELLED'
         : clean(errorMessage(error));
     } finally {
+      // Keep queue receipts and admission active until artifacts and the final journal record are complete.
+      job.finalizing = true;
       job.insertable = false;
       clearInterval(timeout);
       await this.interactions.endRun(job.bot, job.id).catch(() => {
@@ -1946,6 +1958,7 @@ export class ModelRuns {
       // Session reuse is scoped by Bot and conversation; failed or empty chat turns must retire that exact cached entry.
       if (job.task && job.phase !== 'completed' && this.jobs.get(job.bot) === job)
         this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
+      job.finalizing = false;
     }
   }
   private async collectFiles(job: ModelJob) {
@@ -1963,7 +1976,10 @@ export class ModelRuns {
   }
   async stop(bot: string, reason = 'user-stop') {
     const job = this.jobs.get(bot);
-    if (!job?.running) return;
+    if (!job?.running) {
+      if (job?.finalizing) await job.done;
+      return;
+    }
     job.stopReason ??= reason;
     job.abort.abort();
     let cancelFailed = false;

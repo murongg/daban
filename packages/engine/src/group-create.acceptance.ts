@@ -42,7 +42,17 @@ export async function acceptGroupCreation(
   const creations: { bot: string; args: Record<string, unknown>; result: unknown }[] = [];
   const probes: { bot: string; historyDenied: boolean; nestedCreationDenied: boolean }[] = [];
   const stages: { bot: string; session: string | undefined; prompt: string; trace: unknown }[] = [];
-  const report: Record<string, unknown> = { passed: false, model: route.apiModel };
+  const runs: {
+    bot: string;
+    runId: string;
+    requestId: string;
+    group?: string;
+    phase: string;
+    result: string;
+    error: string;
+    trace: unknown;
+  }[] = [];
+  const report: Record<string, unknown> = { passed: false, model: route.apiModel, runs };
   let models!: ModelRuns;
   let groups!: Groups;
   let sourceRun = '';
@@ -90,6 +100,17 @@ export async function acceptGroupCreation(
           timer = setTimeout(() => reject(new Error('LIVE_ACCEPTANCE_TIMEOUT')), 240000);
         }),
       ]);
+      if (!runs.some((run) => run.runId === job.id))
+        runs.push({
+          bot,
+          runId: job.id,
+          requestId: job.requestId,
+          group: job.conversationId,
+          phase: job.phase,
+          result: job.result,
+          error: job.error,
+          trace: job.trace,
+        });
       assert.equal(job.phase, 'completed', job.error || `Task failed: ${bot}`);
       return job;
     } catch (error) {
@@ -115,7 +136,7 @@ export async function acceptGroupCreation(
       {
         member: (id) => models.profiles.get(id),
         directory: () => models.profiles.list(),
-        source: (bot, runId) => models.groupSource(bot, runId),
+        source: (bot, runId, group) => models.groupSource(bot, runId, group),
         running: (bot) => models.running(bot),
         groupRunning: (id) => models.groupRunning(id),
         admit: (bot) => models.admit(bot),
@@ -198,7 +219,7 @@ export async function acceptGroupCreation(
     const task: TaskRequest = {
       requestId: 'mock-create-collaboration',
       prompt:
-        'This synthetic task needs ledger calculation and editorial review. Find suitable existing Bots by their roles and create a group with only the necessary specialists. A visual artist is unnecessary. Share this task and assignments only, without earlier private conversations or the attached isolation file. Data: invoice MOCK-A is paid, amount 7; MOCK-B is paid, amount 11; MOCK-C is cancelled, amount 100. The ledger specialist must read group history, calculate paid_count and paid_total, write calculation.json with these fields and marker MOCK-CALC-18, then use the group handoff tool to give its exact /shared file path to the editorial reviewer and finish. The reviewer must read group history and that actual file, verify the figures, and write review.md containing MOCK-REVIEW-18. You coordinate, then run last in the group: read both actual files and write final.md containing MOCK-FINAL-18, paid_count=2 and paid_total=18; finish with MOCK-GROUP-DONE-18. Each member performs only its own assignment. No web, GUI, shell, external messages, extra Bots or extra groups. After creating the group, replay the exact same creation arguments once to test transport retry, then finish this private reply with the group name. Do not execute the specialists’ work in this private conversation.',
+        'This synthetic task needs ledger calculation and editorial review. Find suitable existing Bots by their roles and create a group with only the necessary specialists. A visual artist is unnecessary. Share this task and assignments only, without earlier private conversations or the attached isolation file. Data: invoice MOCK-A is paid, amount 7; MOCK-B is paid, amount 11; MOCK-C is cancelled, amount 100. The ledger specialist must read group history, calculate paid_count and paid_total, write calculation.json with these fields and marker MOCK-CALC-18, then use the group handoff tool to give the exact observed file path returned by write_file to the editorial reviewer and finish. The reviewer must read group history and that actual file, verify the figures, and write review.md containing MOCK-REVIEW-18. You coordinate, then run last in the group: read both actual files and write final.md containing MOCK-FINAL-18, paid_count=2 and paid_total=18; finish with MOCK-GROUP-DONE-18. Each member performs only its own assignment. No web, GUI, shell, external messages, extra Bots or extra groups. After creating the group, replay the exact same creation arguments once to test transport retry, then finish this private reply with the group name. Do not execute the specialists’ work in this private conversation.',
       files: [{ name: 'private-isolation.txt', content: `ATTACHMENT-ONLY-${marker}` }],
     };
     await models.start(coordinator, task);
