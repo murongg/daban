@@ -35,8 +35,18 @@ function store(name: string | undefined): Store {
   return found;
 }
 
-function bin(name: string) {
-  return path.join(root, 'node_modules/.bin', process.platform === 'win32' ? `${name}.cmd` : name);
+const scripts = {
+  biome: 'node_modules/@biomejs/biome/bin/biome',
+  'drizzle-kit': 'node_modules/drizzle-kit/bin.cjs',
+};
+
+// Windows refuses to spawn .cmd shims without a shell, so run the JS entry points with node.
+function run(name: keyof typeof scripts, args: string[], options: { stdio?: 'inherit' } = {}) {
+  return execFileSync(process.execPath, [path.join(root, scripts[name]), ...args], {
+    cwd: root,
+    encoding: 'utf8',
+    ...options,
+  });
 }
 
 function read(item: Store): MigrationMeta[] {
@@ -55,8 +65,7 @@ export const migrations: Migration[] = ${JSON.stringify(read(item), null, 2)};
     await writeFile(embedded(item), text);
     files.push(embedded(item));
   }
-  if (files.length)
-    execFileSync(bin('biome'), ['format', '--write', ...files], { stdio: 'inherit' });
+  if (files.length) run('biome', ['format', '--write', ...files], { stdio: 'inherit' });
 }
 
 async function check() {
@@ -78,22 +87,18 @@ async function check() {
     } catch {
       issues.push(`${item}: embedded migrations are stale; run npm run db:embed`);
     }
-    const plan = execFileSync(
-      bin('drizzle-kit'),
-      [
-        'generate',
-        '--dialect',
-        'sqlite',
-        '--schema',
-        schema(item),
-        '--out',
-        folder(item),
-        '--explain',
-        '--output',
-        'json',
-      ],
-      { cwd: root, encoding: 'utf8' },
-    );
+    const plan = run('drizzle-kit', [
+      'generate',
+      '--dialect',
+      'sqlite',
+      '--schema',
+      schema(item),
+      '--out',
+      folder(item),
+      '--explain',
+      '--output',
+      'json',
+    ]);
     if (JSON.parse(plan).status !== 'no_changes')
       issues.push(`${item}: schema has changes without a migration; run npm run db:generate`);
   }
@@ -106,8 +111,8 @@ async function check() {
 const [command, name, label] = process.argv.slice(2);
 if (command === 'generate') {
   const item = store(name);
-  execFileSync(
-    bin('drizzle-kit'),
+  run(
+    'drizzle-kit',
     [
       'generate',
       '--dialect',
@@ -118,7 +123,7 @@ if (command === 'generate') {
       folder(item),
       ...(label ? ['--name', label] : []),
     ],
-    { cwd: root, stdio: 'inherit' },
+    { stdio: 'inherit' },
   );
   await embed([item]);
 } else if (command === 'embed') await embed(name ? [store(name)] : stores);
