@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Shared Node implementation with separate trusted agent and Linux executor entry graphs.",
   "engines": {
-    "node": ">=22.15.0"
+    "node": "^22.16.0 || >=24.0.0"
   },
   "dependencies": {
     "@daban/protocol": "0.1.4",
