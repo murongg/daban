@@ -22,9 +22,16 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
       onPlan?.(structuredClone(data.todos));
     if (
       event.type === 'tool/call' &&
-      ['web_fetch', 'web_search', 'ask_user_question', 'todo_write', 'skill'].includes(
-        String(data.name),
-      ) &&
+      [
+        'web_fetch',
+        'web_search',
+        'ask_user_question',
+        'todo_write',
+        'skill',
+        'subagent',
+        'send_message',
+        'interrupt_agent',
+      ].includes(String(data.name)) &&
       typeof data.callId === 'string' &&
       data.callId.length <= 200 &&
       !calls.has(data.callId)
@@ -34,11 +41,13 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
         name: String(data.name),
         surface: ['web_fetch', 'web_search'].includes(String(data.name))
           ? 'web'
-          : data.name === 'skill'
-            ? 'skill'
-            : data.name === 'todo_write'
-              ? 'plan'
-              : 'human',
+          : ['subagent', 'send_message', 'interrupt_agent'].includes(String(data.name))
+            ? 'delegation'
+            : data.name === 'skill'
+              ? 'skill'
+              : data.name === 'todo_write'
+                ? 'plan'
+                : 'human',
         phase: 'running',
         at: new Date().toISOString(),
       };

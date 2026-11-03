@@ -32,6 +32,9 @@ const tools: Record<string, MessageKey> = {
   todo_write: 'execution.updatePlan',
   ask_user_question: 'execution.ask',
   skill: 'execution.loadSkill',
+  subagent: 'execution.delegateTask',
+  send_message: 'execution.messageWorker',
+  interrupt_agent: 'execution.stopWorker',
 };
 function label(item: TranscriptItem, name?: string) {
   const tool = name ? t(tools[name.split('__').at(-1)!]) || name : t('execution.tool');
