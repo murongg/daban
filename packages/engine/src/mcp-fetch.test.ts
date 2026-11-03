@@ -1,7 +1,20 @@
+import { X509Certificate } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { expect, test } from 'vitest';
 import { McpFetch } from './mcp-fetch.js';
 import { tlsFixture } from './tls.fixture.js';
+
+test('synthetic MCP TLS certificate is a valid self-issued CA for its hostname', async (t) => {
+  const fixture = await tlsFixture((_req, res) => res.end());
+  t.onTestFinished(async () => {
+    await fixture.close();
+  });
+  const certificate = new X509Certificate(fixture.ca);
+  expect(certificate.ca).toBe(true);
+  expect(certificate.checkIssued(certificate)).toBe(true);
+  expect(certificate.checkHost('mcp.example.test')).toBe('mcp.example.test');
+  expect(certificate.verify(certificate.publicKey)).toBe(true);
+});
 
 test('MCP HTTP uses the exact endpoint, validated public IP and verified TLS name while keeping authorization on that request', async () => {
   let calls = 0;
