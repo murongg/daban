@@ -1,4 +1,5 @@
 import {
+  type GoalProgress,
   isTranscriptContent,
   isTranscriptPage,
   sameTranscriptScope,
@@ -32,6 +33,9 @@ const tools: Record<string, MessageKey> = {
   todo_write: 'execution.updatePlan',
   ask_user_question: 'execution.ask',
   skill: 'execution.loadSkill',
+  get_goal: 'execution.readGoal',
+  create_goal: 'execution.createGoal',
+  update_goal: 'execution.updateGoal',
 };
 function label(item: TranscriptItem, name?: string) {
   const tool = name ? t(tools[name.split('__').at(-1)!]) || name : t('execution.tool');
@@ -313,11 +317,24 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
   const ready = runtime.enabled && runtime.snapshot.phase === 'ready';
   const compatible = ready && runtime.snapshot.protocolVersion >= 33;
   const active = runtime.snapshot.agents[scope.bot];
-  const planning =
+  const sameRun =
     active?.runId === scope.runId &&
     active.conversationId === scope.conversationId &&
-    (scope.conversationId !== undefined || (active.chatRevision ?? 0) === scope.chatRevision) &&
-    active.planning;
+    (scope.conversationId !== undefined || (active.chatRevision ?? 0) === scope.chatRevision);
+  const planning = sameRun && active?.planning;
+  const goal = sameRun ? active?.goal : undefined;
+  const goalStates: Record<GoalProgress['phase'], MessageKey> = {
+    active: 'execution.goalActive',
+    paused: 'execution.goalPaused',
+    blocked: 'execution.goalBlocked',
+    complete: 'execution.goalComplete',
+  };
+  const goalState =
+    goal?.phase === 'active' && (!active?.running || goal.activation === 'disarmed')
+      ? 'execution.goalWaiting'
+      : goal
+        ? goalStates[goal.phase]
+        : undefined;
   const preparing = compatible && phase === 'starting';
   const available = compatible && !preparing;
   return (
@@ -331,9 +348,20 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
         <ListChecks />
         <span>{t('execution.execution')}</span>
         {planning && <span className="execution-phase">{t('execution.planningMode')}</span>}
+        {goal && goalState && (
+          <span className="execution-phase">
+            {t('execution.goalStatus', { 0: t(goalState), 1: goal.rounds, 2: goal.limit })}
+          </span>
+        )}
         {phase && <span className="execution-phase">{taskPhase(phase)}</span>}
         <ChevronDown className="execution-chevron" />
       </summary>
+      {open && goal && (
+        <p className="field-help">
+          {t('execution.goalObjective', { 0: goal.objective })}
+          {goal.reason ? ` · ${goal.reason}` : ''}
+        </p>
+      )}
       {open &&
         (preparing ? (
           <p className="field-help">

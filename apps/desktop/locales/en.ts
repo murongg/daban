@@ -21,6 +21,22 @@ export const english = {
     'The source task has ended or is no longer available for group collaboration.',
   'errors.groupCollaborationConflict':
     'This task already has a collaboration group. Reuse the original request.',
+  'execution.goalStatus': 'Goal · {0} · {1}/{2} rounds',
+  'execution.goalObjective': 'Objective: {0}',
+  'execution.goalActive': 'In progress',
+  'execution.goalWaiting': 'Awaiting resume',
+  'execution.goalPaused': 'Paused',
+  'execution.goalBlocked': 'Blocked',
+  'execution.goalComplete': 'Marked complete',
+  'execution.readGoal': 'Read goal',
+  'execution.createGoal': 'Create goal',
+  'execution.updateGoal': 'Update goal',
+  'errors.goalRequiresNewTask': 'Send goal controls after this task ends, or stop it first.',
+  'errors.goalRoundLimit':
+    'The goal reached its continuation limit. Inspect its status or clear it before creating another.',
+  'errors.goalIncomplete':
+    'The goal was not marked complete. Check its state and execution details.',
+  'errors.goalBlocked': 'The goal reported a blocker. Check its saved reason.',
   'execution.planningMode': 'Plan mode',
   'execution.groupDirectory': 'Find collaborators',
   'execution.groupCreate': 'Create collaboration group',

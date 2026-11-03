@@ -113,6 +113,31 @@ it('shows plan mode only for the exact displayed conversation and run', async ()
   expect(await screen.findByText('计划模式')).toBeVisible();
 });
 
+it('shows the scoped goal outcome and continuation bound without marking shared work complete', async () => {
+  const backend = bridge(() => ({ ...scope, state: 'complete', items: [] }));
+  backend.snapshot.agents[scope.bot] = {
+    ...orderTask,
+    runId: scope.runId,
+    chatRevision: 0,
+    goal: {
+      id: 'mock-goal',
+      revision: 2,
+      objective: 'SYNTHETIC GOAL',
+      phase: 'blocked',
+      activation: 'disarmed',
+      rounds: 3,
+      limit: 3,
+    },
+  };
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="failed" />
+    </RuntimeProvider>,
+  );
+  await userEvent.setup().click(await screen.findByText('执行过程'));
+  expect(await screen.findByText('目标 · 受阻 · 3/3 轮')).toBeVisible();
+});
+
 it('loads metadata only after opening and pages full tool content and later events without invoking actions', async () => {
   const long = `${'x'.repeat(31999)}😀合成尾部`;
   const backend = bridge((command) => {
