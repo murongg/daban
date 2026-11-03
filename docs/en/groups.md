@@ -13,6 +13,14 @@ Use **Create Bot group** beside your Bots. Groups contain existing Bots; they ar
 
 Example: “Have the researcher assemble evidence, then the writing companion produce a one-page summary; identify missing information first.” Multiple selected recipients work in sequence rather than simultaneously controlling one screen. Members can also hand off work within the group.
 
+## Groups initiated by a Bot
+
+When the current private task needs complementary roles, a Bot can inspect existing available Bots by name and role, choose 1–7 collaborators, and create a group that also includes itself. The group appears in the sidebar. Collaborators work in sequence, and the initiating Bot summarizes last in the group. Ordinary greetings and tasks it can complete alone need no group.
+
+The Bot shares only the current goal, necessary context, and assignments. The summary is attributed to that Bot. Private chat history, work memory, and attachments are not automatically copied, and group creation grants no additional computer or external-tool permissions. Members cannot create another group from inside a group; they use the existing handoff tools.
+
+Each task, including its retries, can create one collaboration group. Repeating identical arguments returns the existing group without dispatching again; changed arguments are rejected. The receipt survives restarts. Retries never restart stopped work or restore an archived group. A separate task can create its own group.
+
 ## Shared context
 
 The group conversation is shared, while members retain individual work memory and workspaces. Joining does not merge all private conversations or knowledge, nor grant computer or external-tool access.

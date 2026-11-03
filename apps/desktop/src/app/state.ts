@@ -126,6 +126,8 @@ export interface Bot {
   members?: string[];
 }
 export interface Message {
+  // Only runtime failures carry this marker; authored text resembling an error code must stay literal.
+  error?: string;
   chatRevision?: number;
   incomplete?: boolean;
   id: string;
@@ -904,6 +906,7 @@ export function reduce(state: State, action: Action): State {
               id: `runtime-turn:${task.runId}:${turn.id}`,
               role: 'bot',
               text: turn.result || turn.error || t('chathistory.noSavedResponses'),
+              error: turn.result ? undefined : turn.error || undefined,
               ...(artifacts.length ? { references: artifacts } : {}),
             },
             before,
@@ -927,6 +930,7 @@ export function reduce(state: State, action: Action): State {
             id: `runtime-result:${task.runId}`,
             role: 'bot',
             text: task.result || turn.result || task.error || turn.error || fallback,
+            error: task.result || turn.result ? undefined : task.error || turn.error || undefined,
             ...(artifacts.length ? { files: artifacts } : {}),
           },
           before,

@@ -10,21 +10,16 @@ import {
 } from '@daban/protocol';
 import { ChevronDown, ListChecks, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { runtimeError, useRuntime } from '../../app/Runtime';
+import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app/Runtime';
 import { IconButton } from '../../components/controls/Button';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
+import { taskPhase } from '../../i18n/tasks';
 
-const phases: Partial<Record<TaskPhase, MessageKey>> = {
-  starting: 'execution.preparing',
-  running: 'common.running',
-  waiting: 'execution.waitingReply',
-  paused: 'common.waitingComputerHandback',
-  completed: 'common.completed',
-  failed: 'common.incomplete',
-  stopped: 'common.stopped',
-  interrupted: 'common.interrupted',
-};
 const tools: Record<string, MessageKey> = {
+  group_directory: 'execution.groupDirectory',
+  group_create: 'execution.groupCreate',
+  group_history: 'execution.groupHistory',
+  group_handoff: 'execution.groupHandoff',
   web_search: 'execution.searchWeb',
   web_fetch: 'execution.readWebpage',
   read_file: 'execution.readFile',
@@ -164,7 +159,7 @@ function Entry({
           <ChevronDown className="execution-chevron" />
           <span>{label(item, name)}</span>
           <span className="execution-sequence">{t('execution.record', { 0: item.seq })}</span>
-          {item.code && <span className="form-error">{item.code}</span>}
+          {item.code && <span className="form-error">{taskError(item.code)}</span>}
         </summary>
         {open && <Content scope={scope} item={item} />}
       </details>
@@ -329,7 +324,7 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
       <summary>
         <ListChecks />
         <span>{t('execution.execution')}</span>
-        {phase && <span className="execution-phase">{t(phases[phase])}</span>}
+        {phase && <span className="execution-phase">{taskPhase(phase)}</span>}
         <ChevronDown className="execution-chevron" />
       </summary>
       {open &&

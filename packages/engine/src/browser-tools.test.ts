@@ -701,7 +701,9 @@ test('DSH receives truthful DOM browser capabilities for both text and vision ro
       await models.jobs.get(bot)!.done;
       const prompt = prompts.at(-1)!;
       expect(prompt).toMatch(/browser_navigate/);
-      expect(prompt).not.toMatch(/仅支持本地演示站|没有桌面或浏览器工具/);
+      expect(prompt).not.toMatch(
+        /browser supports only the local demo site|desktop and browser tools are unavailable/,
+      );
       expect(models.jobs.get(bot)!.toolCount).toBe(0);
     }
     expect(fake.calls.length).toBe(0);

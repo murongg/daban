@@ -13,7 +13,7 @@ import {
 } from '@daban/protocol';
 import { ArrowUp, FileText, Paperclip, Plus, X } from 'lucide-react';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
-import { runtimeError, useRuntime } from '../../app/Runtime';
+import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app/Runtime';
 import {
   type Action,
   type Bot,
@@ -25,6 +25,7 @@ import { Markdown } from '../../components/content/Markdown';
 import { IconButton } from '../../components/controls/Button';
 import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
+import { taskPhase } from '../../i18n/tasks';
 import { Avatar } from '../bots/Avatar';
 import { Execution } from '../chat/Execution';
 import { useFollow } from '../chat/follow';
@@ -306,12 +307,14 @@ export function GroupChat({
               copyText={copyText}
               notify={notify}
             />
+          ) : value.role === 'notice' ? (
+            taskError(value.text)
           ) : (
             value.text
           )}
         </div>
         {value.phase && value.phase !== 'completed' && (
-          <p className="inline-note">{t('groupchat.taskStatus', { 0: value.phase })}</p>
+          <p className="inline-note">{t('groupchat.taskStatus', { 0: taskPhase(value.phase) })}</p>
         )}
         {files.map((file) => (
           <button

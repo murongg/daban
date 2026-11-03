@@ -202,6 +202,6 @@ test('workspace reads actual nested files while rejecting traversal, symlink esc
 });
 test('the turn carries current computer availability rather than advertising unavailable tools', () => {
   const input = { requestId: 'mock-capabilities', prompt: '你有什么功能' };
-  expect(taskPrompt('chief', '/synthetic/run', input)).toMatch(/当前未连接电脑/);
-  expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/当前已连接电脑/);
+  expect(taskPrompt('chief', '/synthetic/run', input)).toMatch(/No computer is connected/);
+  expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/A computer is connected/);
 });

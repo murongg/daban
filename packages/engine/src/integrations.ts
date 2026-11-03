@@ -665,12 +665,14 @@ export class Integrations {
           !config.catalogDigest ||
           binding.digest !== config.catalogDigest
         ) {
-          warnings.push(`${config.name}的配置或工具目录已变化，需要重新核对。`);
+          warnings.push(
+            `${config.name}: configuration or tool catalog has changed; recheck before use.`,
+          );
           continue;
         }
         const selected = JSON.parse(String(binding.tools)) as string[];
         if (selected.some((name) => !config.tools.some((tool) => tool.name === name))) {
-          warnings.push(`${config.name}的工具选择需要重新核对。`);
+          warnings.push(`${config.name}: tool selection needs to be rechecked before use.`);
           continue;
         }
         connections.push({
@@ -700,7 +702,9 @@ export class Integrations {
         available: false,
         key: 'unavailable',
         connections: [],
-        warnings: ['MCP 连接暂不可用；普通对话和已有工作区工具仍可使用。'],
+        warnings: [
+          'MCP connections are unavailable; ordinary conversation and existing workspace tools remain available.',
+        ],
       };
     }
   }

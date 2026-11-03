@@ -487,7 +487,7 @@ test('document references copy immutable originals and extracted text into fresh
     const mapping = first.documentInputs![0];
     expect(mapping.textName).not.toBe('document-1.txt');
     expect(await readFile(path.join(first.workdir, mapping.textName), 'utf8')).toBe('MOCK-47');
-    expect.assert(prompts[0].includes(mapping.textName) && prompts[0].includes('提取文本'));
+    expect.assert(prompts[0].includes(mapping.textName) && prompts[0].includes('extracted text'));
     expect((await models.knowledge.list('a')).length).toBe(0);
     expect((await models.start('a', request)).runId).toBe(first.id);
     expect(prompts.length).toBe(1);
@@ -743,8 +743,8 @@ test('ordinary dialogue can finish with zero tools and no files while the screen
     expect(status.result).toBe('你好，有什么可以帮你？');
     expect(system).toMatch(/general.purpose/i);
     expect.assert(!system.includes('Your only tools are the computer'));
-    expect.assert(!prompt.includes('开始先截图'));
-    expect.assert(!prompt.includes('输入文件已放在这个目录'));
+    expect.assert(!prompt.includes('Take a screenshot first'));
+    expect.assert(!prompt.includes('Input file:'));
     await models.close();
   } finally {
     await rm(root, { recursive: true, force: true });

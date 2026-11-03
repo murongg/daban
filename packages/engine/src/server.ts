@@ -2007,6 +2007,8 @@ export async function startPrototype({
         path.join(modelDir, 'groups.sqlite'),
         {
           member: (bot) => models!.profiles.get(bot),
+          directory: () => models!.profiles.list(),
+          source: (bot, runId) => models!.groupSource(bot, runId),
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),

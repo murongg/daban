@@ -10,6 +10,48 @@ import { setLocale } from './locale';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
 
+it('translates generated task failures on language changes while preserving identical model text', async () => {
+  let state = reduce(initialState(), {
+    type: 'create',
+    id: 'mock-failure',
+    name: 'Mock',
+    role: '',
+    color: 'mint',
+  });
+  state = reduce(state, {
+    type: 'runtime-task',
+    bot: 'mock-failure',
+    task: {
+      runId: 'mock-failed-run',
+      requestId: 'mock-failed-request',
+      prompt: 'SYNTHETIC REQUEST',
+      phase: 'stopped',
+      result: '',
+      error: 'MODEL_TIME_LIMIT',
+      files: [],
+    },
+  });
+  state.messages['mock-failure'].push({
+    id: 'mock-authored-code',
+    role: 'bot',
+    text: 'MODEL_TIME_LIMIT',
+  });
+  localStorage.setItem(storageKey, serialize(state));
+  render(<App />);
+  await act(async () => {
+    await setLocale('en');
+  });
+  expect(
+    screen.getByText('Task reached its time limit and stopped. Saved files are retained.'),
+  ).toBeVisible();
+  expect(screen.getByText('MODEL_TIME_LIMIT')).toBeVisible();
+  await act(async () => {
+    await setLocale('zh-CN');
+  });
+  expect(screen.getByText('任务达到实际运行时长上限，已停止；已保存文件仍保留。')).toBeVisible();
+  expect(screen.getByText('MODEL_TIME_LIMIT')).toBeVisible();
+});
+
 it('switches the whole workspace immediately and retains the chosen language after reopening settings', async () => {
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: '设置' }));

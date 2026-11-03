@@ -244,7 +244,7 @@ test('an oversized final answer is an explicit incomplete failure rather than a 
     expect(result.phase).toBe('failed');
     expect(result.result).toBe('');
     expect(result.response?.text).toBe('合成已提交的前缀');
-    expect(result.error || '').toMatch(/长度限制/);
+    expect(result.error).toBe('RESPONSE_TOO_LARGE');
   } finally {
     await f.close();
   }

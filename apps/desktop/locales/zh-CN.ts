@@ -1,6 +1,17 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'errors.taskTimeLimit': '任务达到实际运行时长上限，已停止；已保存文件仍保留。',
+  'errors.taskToolLimit': '任务达到操作次数上限，已停止；请核对已有文件后继续。',
+  'errors.taskReplyTooLarge': '回复超过当前长度限制，请改为生成文件或分段回答。',
+  'errors.taskEnvironmentRestarted': '执行环境曾重启，任务已中断；文件保留，可以重新发送任务。',
+  'errors.taskNoVisibleResult': '任务未返回可见结果。',
+  'errors.groupSourceClosed': '原任务已结束，或已无法用于群内协作。',
+  'errors.groupCollaborationConflict': '当前任务已有协作群，请复用原请求。',
+  'execution.groupDirectory': '查找协作成员',
+  'execution.groupCreate': '创建协作群',
+  'execution.groupHistory': '读取群聊历史',
+  'execution.groupHandoff': '交接群内任务',
   'agentUpgrade.title': '后台需要升级',
   'agentUpgrade.summary': '已连接到旧工作区，升级后台后可使用新版能力。',
   'agentUpgrade.confirm': '重启 Daban 后台以完成升级。Linux 电脑和数据会保留。',
