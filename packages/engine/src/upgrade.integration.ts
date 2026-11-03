@@ -75,12 +75,17 @@ test('authenticated idle-only handoff fences all later admissions without cancel
     assert.equal((await call({ scope }, 'synthetic-invalid')).status, 403);
     assert.equal((await call({ scope }, token, 'GET')).status, 400);
     assert.equal((await call({ scope: '0'.repeat(64) })).status, 400);
-    app.models.jobs.set('mock-running', { running: true } as Parameters<
+    app.models.jobs.set('mock-running', { bot: 'mock-running', running: true } as Parameters<
       typeof app.models.jobs.set
     >[1]);
     assert.equal((await call({ scope })).status, 409);
     assert.equal(requested, 0);
     assert.equal(app.models.jobs.get('mock-running')?.running, true);
+    const finalizing = app.models.jobs.get('mock-running')!;
+    finalizing.running = false;
+    finalizing.finalizing = true;
+    assert.equal((await call({ scope })).status, 409);
+    assert.equal(requested, 0);
     app.models.jobs.delete('mock-running');
     const accepted = await call({ scope });
     assert.equal(accepted.status, 200);
