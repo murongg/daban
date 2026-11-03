@@ -67,6 +67,7 @@ import { planningCommand, projectPlanning } from './planning.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
 import { promptCacheId } from './prompt-cache.js';
+import { programmatic } from './ptc.js';
 import { redact, redactStream } from './redaction.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
 import type { ModelSettings, ResolvedModel } from './settings.js';
@@ -254,6 +255,18 @@ export function sdkPatch(
                   ...(bridge
                     ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
                     : {}),
+                },
+              },
+            ] as const)
+          : []),
+        ...(task
+          ? ([
+              {
+                id: 'pure-program-runtime',
+                name: new URL('./ptc.js', import.meta.url).href,
+                config: {
+                  sdkFile,
+                  active: programmatic(task.prompt, !!task.planning, !!task.retryOf),
                 },
               },
             ] as const)

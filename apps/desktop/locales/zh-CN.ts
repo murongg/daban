@@ -16,6 +16,7 @@ export const chinese = {
   'errors.taskNoVisibleResult': '任务未返回可见结果。',
   'errors.groupSourceClosed': '原任务已结束，或已无法用于群内协作。',
   'errors.groupCollaborationConflict': '当前任务已有协作群，请复用原请求。',
+  'execution.runProgram': '运行工具程序',
   'execution.goalStatus': '目标 · {0} · {1}/{2} 轮',
   'execution.goalObjective': '目标：{0}',
   'execution.goalActive': '推进中',
