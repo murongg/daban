@@ -142,6 +142,40 @@ test('pre-ORM MCP files the old schema checks rejected remain unavailable and un
     await rm(root, { recursive: true, force: true });
   }
 });
+test('a migrated MCP file cannot recreate missing revision authority', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-integrations-authority-'));
+  const file = path.join(root, 'integrations.sqlite');
+  let store = new Integrations(file);
+  try {
+    await store.save(save);
+    expect(await store.status()).toStrictEqual({ available: true, revision: 1 });
+    await store.close();
+    const corrupt = new DatabaseSync(file);
+    corrupt.exec('DELETE FROM integration_meta');
+    corrupt.close();
+
+    store = new Integrations(file);
+    expect(await store.status()).toStrictEqual({
+      available: false,
+      error: 'MCP_STORE_UNAVAILABLE',
+    });
+    await expect(store.read(save.id)).rejects.toMatchObject({ code: 'MCP_STORE_UNAVAILABLE' });
+    await expect(store.save(save)).rejects.toMatchObject({ code: 'MCP_STORE_UNAVAILABLE' });
+    await store.close();
+
+    const inspect = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect(inspect.prepare('SELECT COUNT(*) AS n FROM integration_meta').get()!.n).toBe(0);
+      expect(inspect.prepare('SELECT id FROM integrations').get()!.id).toBe(save.id);
+      expect(inspect.prepare('SELECT id FROM config_commands').get()!.id).toBe(save.requestId);
+    } finally {
+      inspect.close();
+    }
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 test('private MCP settings never echo endpoint parameters or credentials; exact save retries are read-only and stale edits preserve the new config', async () => {
   const f = await fixture();
   try {

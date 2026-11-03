@@ -187,7 +187,7 @@ export class Integrations {
     try {
       configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
       this.db = migrate(client, migrations, legacy);
-      this.db.insert(integrationMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
+      // Only the baseline seeds revision authority; recreating it on reopen would hide corruption.
       this.verify(this.db);
       // Neither an uncommitted decision nor a dispatched external effect is replayed after service reconstruction.
       const dispatched = sql`${callReceipts.phase} = 'dispatched'`;

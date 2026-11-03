@@ -60,3 +60,5 @@ CREATE TABLE `integrations` (
 --> statement-breakpoint
 CREATE INDEX `receipt_owner` ON `call_receipts` (`bot`,`run`,`semantic`);--> statement-breakpoint
 CREATE UNIQUE INDEX `integration_owner_name` ON `integrations` (COALESCE("owner",''),`name_key`);
+--> statement-breakpoint
+INSERT INTO `integration_meta` (`id`, `revision`) VALUES (1, 0);
