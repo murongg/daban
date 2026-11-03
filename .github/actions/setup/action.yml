@@ -1,0 +1,28 @@
+name: Install desktop dependencies
+description: Set up Node and cache package and desktop tool downloads
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24.22.1'
+        cache: npm
+    - name: Configure desktop download caches
+      shell: bash
+      run: |
+        printf 'electron_config_cache=%s/electron\nELECTRON_BUILDER_CACHE=%s/electron-builder\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+    - uses: actions/cache@v4
+      with:
+        # Cache downloads only; signed bundles and credentials remain job-local.
+        path: |
+          ${{ runner.temp }}/electron
+          ${{ runner.temp }}/electron-builder
+        key: desktop-downloads-${{ runner.os }}-${{ runner.arch }}-v1-${{ hashFiles('package-lock.json') }}
+        restore-keys: desktop-downloads-${{ runner.os }}-${{ runner.arch }}-v1-
+    - uses: actions/cache@v4
+      with:
+        path: outputs/host-agent/npm-cache
+        key: host-npm-${{ runner.os }}-${{ runner.arch }}-v1-${{ hashFiles('apps/agent/standalone-lock.json') }}
+        restore-keys: host-npm-${{ runner.os }}-${{ runner.arch }}-v1-
+    - run: npm ci --no-audit --no-fund
+      shell: bash
