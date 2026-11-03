@@ -9,6 +9,7 @@ import type {
   RunTurn,
   RuntimeFile,
   RuntimeNotice,
+  SessionStats,
   TaskPlan,
   TaskRequest,
   TaskTrace,
@@ -19,6 +20,7 @@ import {
   isReplyStream,
   isRunInsert,
   isRunTurn,
+  isSessionStats,
   isTaskFile,
   turnLimit,
   validAgentId,
@@ -248,6 +250,8 @@ export interface TaskRecord {
   goalSession?: boolean;
   goal?: GoalProgress;
   planning?: boolean;
+  stats?: SessionStats;
+  elapsedMs?: number;
   checkpoint?: import('./checkpoint.js').ConversationCheckpoint;
   chatRevision?: number;
   conversationId?: string;
@@ -378,7 +382,13 @@ export class TaskJournal {
           delete task.goalSession;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
         if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
+        if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
+        if (
+          task.elapsedMs !== undefined &&
+          (!Number.isSafeInteger(task.elapsedMs) || task.elapsedMs < 0)
+        )
+          delete task.elapsedMs;
         if (task.intentId !== undefined && !validAgentId(task.intentId)) delete task.intentId;
         // A field this build cannot validate is dropped alone; the rest of the saved task stays queryable.
         if (
@@ -414,6 +424,8 @@ export class TaskJournal {
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.planning !== undefined && typeof value.planning !== 'boolean')
       throw new Fault('INVALID_PLAN_MODE', 400);
+    if (value.stats !== undefined && !isSessionStats(value.stats))
+      throw new Fault('INVALID_STATISTICS', 400);
     if (value.checkpoint !== undefined && !isConversationCheckpoint(value.checkpoint))
       throw new Fault('INVALID_CONTEXT_CHECKPOINT', 400);
     if (
@@ -450,6 +462,7 @@ export class TaskJournal {
       'executedCount',
       'trace',
       'createdAt',
+      'elapsedMs',
       'files',
       'inputs',
       'documentInputs',
@@ -461,6 +474,7 @@ export class TaskJournal {
       'planning',
       'goal',
       'goalSession',
+      'stats',
     ];
     const task = Object.fromEntries(
       fields

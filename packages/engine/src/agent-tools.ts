@@ -24,6 +24,7 @@ import {
 import { errorCode, errorMessage, Fault } from './control.js';
 import type { GroupTools } from './group-tools.js';
 import type { HistoryTools } from './history.js';
+import { imageInput } from './images.js';
 import type { IntegrationTools } from './integration-tools.js';
 import type { McpSnapshot } from './integrations.js';
 import type { KnowledgeTools } from './knowledge-tools.js';
@@ -53,6 +54,17 @@ export interface AgentToolRun extends ToolRun {
   canonicalRoot: string;
 }
 const workspaceToolList = [
+  {
+    name: 'read_image',
+    description:
+      'Read an existing PNG/JPEG/GIF/WebP image from this task or /shared as actual pixels. Use for generated document previews. Requires an image-capable model; no desktop is needed.',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string' } },
+      required: ['path'],
+      additionalProperties: false,
+    },
+  },
   {
     name: 'list_files',
     description:
@@ -104,6 +116,7 @@ const workspaceToolList = [
 export const agentToolList = [...workspaceToolList, ...computerToolList];
 const fields: Record<string, string[]> = {
   list_files: ['path'],
+  read_image: ['path'],
   read_file: ['path', 'offset', 'limit'],
   write_file: ['path', 'content'],
   shell: ['command'],
@@ -205,14 +218,17 @@ export class AgentTools {
     const offered = this.options.nativeOnly
       ? tools.filter((tool) => !workspaceToolList.some((item) => item.name === tool.name))
       : tools;
+    const visible = offered.filter(
+      (tool) => tool.name !== 'read_image' || (run?.vision ?? (!model || modelHasVision(model))),
+    );
     return [
       ...(local
-        ? offered.filter(
+        ? visible.filter(
             (tool) =>
               !computerToolList.some((item) => item.name === tool.name) &&
               !tool.name.startsWith('browser_'),
           )
-        : offered),
+        : visible),
       ...(local && (run?.vision ?? (!model || modelHasVision(model)))
         ? this.localComputer?.list || []
         : []),
@@ -707,6 +723,8 @@ export class AgentTools {
         : this.localRuns.get(run) && name.startsWith('browser_')
           ? 'LOCAL_BROWSER_SURFACE_UNAVAILABLE'
           : undefined;
+    if (name === 'read_image' && !(run.vision ?? (!run.model || modelHasVision(run.model))))
+      return { isError: true, content: [{ type: 'text', text: 'MODEL_IMAGE_UNSUPPORTED' }] };
     if (!unavailable && this.localRuns.get(run)) {
       if (computerToolList.some((tool) => tool.name === name)) {
         await this.authorizeComputer?.(run);
@@ -838,6 +856,13 @@ export class AgentTools {
             (!info.isDirectory() && info.nlink !== 1)
           )
             throw new Fault('INVALID_FILE', 400);
+          if (name === 'read_image') {
+            const source = await this.workspace.download(path.relative(root, file));
+            const image = imageInput(source);
+            run.abort.signal.throwIfAborted();
+            trace.phase = 'settled';
+            return { content: [{ type: 'image', data: image.data, mimeType: image.mimeType }] };
+          }
           if (name === 'list_files') {
             if (!info.isDirectory()) throw new Fault('INVALID_FILE', 400);
             result = { directory: file, files: await new WorkspaceFiles(canonical).list() };

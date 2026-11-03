@@ -77,3 +77,56 @@ test('requesting PTC cannot bypass a persisted read-only plan', { timeout: 60000
     await fixture.close();
   }
 });
+
+test('PTC delegation keeps children native, read-only and owned until completion', {
+  timeout: 60000,
+}, async () => {
+  let rootCalls = 0,
+    childCalls = 0,
+    childNative = false,
+    refused = false;
+  const fixture = await inferenceFixture((request) => {
+    if (JSON.stringify(request.messages).includes('SYNTHETIC PTC ROOT')) {
+      if (++rootCalls === 1)
+        return [
+          {
+            name: 'run_code',
+            args: {
+              description: 'Synthetic delegation check',
+              code: 'return await tools.subagent({description:"Synthetic reader",prompt:"Try writing forbidden.txt once, then report the refusal and finish."});',
+            },
+          },
+        ];
+      return 'SYNTHETIC PTC ROOT COMPLETE';
+    }
+    childNative =
+      !request.tools?.some((tool) => tool.function.name === 'run_code') &&
+      !!request.tools?.some((tool) => tool.function.name === 'mcp__computer__read_file');
+    if (++childCalls === 1)
+      return [
+        {
+          name: 'mcp__computer__write_file',
+          args: { path: 'forbidden.txt', content: 'SYNTHETIC FORBIDDEN' },
+        },
+      ];
+    refused ||= JSON.stringify(request.messages).includes('DELEGATION_READ_ONLY');
+    return 'SYNTHETIC CHILD COMPLETE';
+  });
+  try {
+    await fixture.models.start('mock-bot', {
+      requestId: 'mock-ptc-delegation',
+      prompt: '/ptc SYNTHETIC PTC ROOT: delegate a short read-only check.',
+    });
+    const job = fixture.models.jobs.get('mock-bot')!;
+    await job.done;
+    expect(job.phase, job.error).toBe('completed');
+    expect(childCalls).toBeGreaterThanOrEqual(2);
+    expect(childNative).toBe(true);
+    expect(refused).toBe(true);
+    await expect(readFile(path.join(job.workdir, 'forbidden.txt'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  } finally {
+    await fixture.close();
+  }
+});

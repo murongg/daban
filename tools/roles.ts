@@ -17,6 +17,7 @@ import {
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAst } from 'rolldown/parseAst';
@@ -122,6 +123,13 @@ export async function buildExecutor(target: string) {
     if (graph.includes(forbidden)) throw new Error(`EXECUTOR_HOST_MODULE:${forbidden}`);
   await mkdir(target, { recursive: true });
   await packageLibrary(target, graph);
+  // The pinned base image predates Drizzle; the executor must carry its ORM instead of relying on host workspace links.
+  const requireEngine = createRequire(path.join(root, 'packages/engine/package.json'));
+  await cp(
+    path.dirname(requireEngine.resolve('drizzle-orm')),
+    path.join(target, 'node_modules/drizzle-orm'),
+    { recursive: true, verbatimSymlinks: true, force: false, errorOnExist: true },
+  );
   await copyFile(path.join(root, 'LICENSE'), path.join(target, 'LICENSE'));
   await copyFile(path.join(root, 'dist-runtime/main.js'), path.join(target, 'main.js'));
   await writeFile(

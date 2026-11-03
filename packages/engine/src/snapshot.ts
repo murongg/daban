@@ -23,6 +23,7 @@ export interface WindowInfo {
 export interface RawModelTask {
   goal?: GoalProgress;
   planning?: boolean;
+  elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
   model?: ModelId;

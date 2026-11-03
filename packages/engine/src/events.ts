@@ -32,6 +32,9 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
         'get_goal',
         'create_goal',
         'update_goal',
+        'subagent',
+        'send_message',
+        'interrupt_agent',
       ].includes(String(data.name)) &&
       typeof data.callId === 'string' &&
       data.callId.length <= 200 &&
@@ -46,11 +49,13 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
             ? 'program'
             : ['get_goal', 'create_goal', 'update_goal'].includes(String(data.name))
               ? 'goal'
-              : data.name === 'skill'
-                ? 'skill'
-                : data.name === 'todo_write'
-                  ? 'plan'
-                  : 'human',
+              : ['subagent', 'send_message', 'interrupt_agent'].includes(String(data.name))
+                ? 'delegation'
+                : data.name === 'skill'
+                  ? 'skill'
+                  : data.name === 'todo_write'
+                    ? 'plan'
+                    : 'human',
         phase: 'running',
         at: new Date().toISOString(),
       };
