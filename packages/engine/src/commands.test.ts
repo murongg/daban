@@ -38,6 +38,48 @@ const run = () => ({
   workdir: '/mock-guest/task',
   task: { requestId: 'mock-request', prompt: 'Prepare synthetic project.' },
 });
+
+test('ask mode overrides risk auto-approval and full mode still deduplicates its exact command', async () => {
+  const context = await fixture();
+  const commands = new Commands({
+    ...context,
+    review: async (request) => (request.command.startsWith('rm') ? 'deny' : 'allow'),
+  });
+  let dispatches = 0;
+  const dispatch = async () => {
+    dispatches++;
+    return output;
+  };
+  try {
+    const strict = { ...run(), task: { ...run().task, approvalMode: 'ask' as const } };
+    const pendingCall = commands.invoke(
+      strict,
+      'shell',
+      { command: 'ls' },
+      'mock-strict-call',
+      dispatch,
+    );
+    const approval = await pending(context.interactions);
+    expect(dispatches).toBe(0);
+    await context.interactions.reply(strict.bot, strict.id, approval.id, {
+      kind: 'decision',
+      allow: false,
+    });
+    expect((await pendingCall).isError).toBe(true);
+    const full = {
+      ...run(),
+      id: 'mock-full-run',
+      task: { ...run().task, approvalMode: 'full' as const },
+    };
+    const args = { command: 'rm mock-output.txt' };
+    expect(await commands.invoke(full, 'shell', args, 'mock-full-call', dispatch)).toEqual(output);
+    expect(await commands.invoke(full, 'shell', args, 'mock-full-call', dispatch)).toEqual(output);
+    expect(dispatches).toBe(1);
+  } finally {
+    await commands.close();
+    await rm(context.root, { recursive: true, force: true });
+  }
+});
 test('production risk policy auto-runs reads once but opens a human approval for deletion', async () => {
   const context = await fixture();
   const policy = new Risk({

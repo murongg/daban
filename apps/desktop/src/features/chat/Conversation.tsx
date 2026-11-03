@@ -24,6 +24,7 @@ import { demoIds } from '../../app/samples';
 import {
   type Action,
   type Bot,
+  chatApprovalMode,
   chatRevision,
   lifecycleRequest,
   messageQueue,
@@ -38,6 +39,7 @@ import { Avatar } from '../bots/Avatar';
 import { attachmentAccept, canParseDocuments } from '../files/files';
 import { modelName as displayModel, modelIcon } from '../models/model-options';
 import { Requests } from '../requests/Requests';
+import { ApprovalMode } from './ApprovalMode';
 import { Execution } from './Execution';
 import { useFollow } from './follow';
 import { useInputs } from './inputs';
@@ -730,6 +732,15 @@ export function Conversation({
                 <ChevronDown />
               </button>
             </Tooltip>
+            {live && runtime.snapshot.protocolVersion >= 44 && (
+              <ApprovalMode
+                value={chatApprovalMode(state, bot.id, revision)}
+                disabled={readOnly || pending || recovering}
+                onChange={(mode) =>
+                  dispatch({ type: 'approval-mode', bot: bot.id, revision, mode })
+                }
+              />
+            )}
             <span className="spacer" />
             <IconButton
               label={t('chat.voiceInputNotConnectedYet')}

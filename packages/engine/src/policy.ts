@@ -1,4 +1,4 @@
-import { isTaskPlan } from '@daban/protocol';
+import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
 
 export const name = 'daban-budget';
 export const inject = ['tools', 'approval'];
@@ -48,7 +48,10 @@ export function requestedUrls(prompt: string) {
     ),
   ];
 }
-export function apply(ctx: Context, config: { limit: number; urls: string[] }) {
+export function apply(
+  ctx: Context,
+  config: { limit: number; urls: string[]; approvalMode?: ApprovalMode },
+) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
   let calls = 0;
@@ -92,7 +95,7 @@ export function apply(ctx: Context, config: { limit: number; urls: string[] }) {
           ? normalizedUrl(value.url)
           : undefined;
       // Page text cannot authorize another destination or append private data to an approved URL.
-      if (url && !urls.has(url) && exec.agent && ctx.approval) {
+      if (url && (config.approvalMode === 'ask' || !urls.has(url)) && exec.agent && ctx.approval) {
         const decision = await ctx.approval.request({
           agent: exec.agent,
           toolName: 'web_fetch',
@@ -120,7 +123,7 @@ export function apply(ctx: Context, config: { limit: number; urls: string[] }) {
           },
         };
       }
-      if (!url || !urls.has(url))
+      if (!url || config.approvalMode === 'ask' || !urls.has(url))
         return {
           kind: 'deny',
           reason:

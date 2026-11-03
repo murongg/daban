@@ -113,6 +113,7 @@ test('human question and approval bridges retain a server-owned conversation sco
                 ...pending,
                 conversationId: changed ? 'mock-other-group' : pending.conversationId,
                 status: 'resolved',
+                ...(input.kind === 'approval' ? { decisionSource: 'policy' } : {}),
                 reply:
                   input.kind === 'question'
                     ? {

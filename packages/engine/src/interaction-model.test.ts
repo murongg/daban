@@ -6,124 +6,158 @@ import { expect, test, vi } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
-test('DSH questions pause only their own task, receive exact replies, persist plans and cannot impersonate another session', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-human-model-'));
-  let models: ModelRuns | undefined;
-  try {
-    await mkdir(path.join(root, 'workspace'));
-    const settings = new ModelSettings(path.join(root, 'credentials.json'));
-    await settings.save({ apiKey: 'mock-private-key' });
-    let entered: () => unknown = () => undefined;
-    const ready = new Promise<unknown>((resolve) => {
-      entered = () => resolve(undefined);
-    });
-    class Harness {
-      async start() {}
-      async close() {}
-      session() {
-        return {
-          id: 'mock-human-session',
-          run: async (
-            _prompt: unknown,
-            observer: { onNotification: (note: unknown) => unknown },
-          ) => {
-            expect.assert(models);
-            const job = models.jobs.get('mock-bot')!;
-            observer.onNotification({
-              method: 'session.event',
-              params: {
-                sessionId: 'mock-human-session',
-                event: {
-                  type: 'todo/write',
-                  data: { todos: [{ content: '等待合成选择', status: 'in_progress' }] },
+test.each(['auto', 'full'] as const)(
+  'DSH %s policy keeps questions human-owned and approvals bound to the accepted task',
+  async (approvalMode) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'mock-human-model-'));
+    let models: ModelRuns | undefined;
+    try {
+      await mkdir(path.join(root, 'workspace'));
+      const settings = new ModelSettings(path.join(root, 'credentials.json'));
+      await settings.save({ apiKey: 'mock-private-key' });
+      let entered: () => unknown = () => undefined;
+      const ready = new Promise<unknown>((resolve) => {
+        entered = () => resolve(undefined);
+      });
+      class Harness {
+        async start() {}
+        async close() {}
+        session() {
+          return {
+            id: 'mock-human-session',
+            run: async (
+              _prompt: unknown,
+              observer: { onNotification: (note: unknown) => unknown },
+            ) => {
+              expect.assert(models);
+              const job = models.jobs.get('mock-bot')!;
+              observer.onNotification({
+                method: 'session.event',
+                params: {
+                  sessionId: 'mock-human-session',
+                  event: {
+                    type: 'todo/write',
+                    data: { todos: [{ content: '等待合成选择', status: 'in_progress' }] },
+                  },
                 },
-              },
-            });
-            const auth = `Bearer ${job.token}`;
-            await expect(
-              models.rpc('mock-bot', auth, {
-                id: 1,
+              });
+              const auth = `Bearer ${job.token}`;
+              const approval = await models.rpc('mock-bot', auth, {
+                id: 'mock-web-policy',
                 method: 'interaction.open',
                 params: {
-                  id: 'mock-forged',
+                  id: 'mock-web-policy',
+                  sessionId: 'mock-human-session',
+                  kind: 'approval',
+                  tool: 'web_fetch',
+                  url: 'https://example.test/mock',
+                },
+              });
+              expect(approval).toMatchObject({
+                result: { status: approvalMode === 'full' ? 'resolved' : 'pending' },
+              });
+              if (approvalMode === 'auto')
+                await models.interactions.reply('mock-bot', job.id, 'mock-web-policy', {
+                  kind: 'decision',
+                  allow: true,
+                });
+              else
+                expect(approval).toMatchObject({
+                  result: { decisionSource: 'policy', reply: { kind: 'decision', allow: true } },
+                });
+              await expect(
+                models.rpc('mock-bot', auth, {
+                  id: 1,
+                  method: 'interaction.open',
+                  params: {
+                    id: 'mock-forged',
+                    kind: 'question',
+                    sessionId: 'other-session',
+                    questions: [{ id: 'choice', question: '合成选择？' }],
+                  },
+                }),
+              ).rejects.toMatchObject({ code: 'INVALID_INTERACTION' });
+              await models.rpc('mock-bot', auth, {
+                id: 2,
+                method: 'interaction.open',
+                params: {
+                  id: 'mock-request',
                   kind: 'question',
-                  sessionId: 'other-session',
+                  sessionId: 'mock-human-session',
                   questions: [{ id: 'choice', question: '合成选择？' }],
                 },
-              }),
-            ).rejects.toMatchObject({ code: 'INVALID_INTERACTION' });
-            await models.rpc('mock-bot', auth, {
-              id: 2,
-              method: 'interaction.open',
-              params: {
-                id: 'mock-request',
-                kind: 'question',
-                sessionId: 'mock-human-session',
-                questions: [{ id: 'choice', question: '合成选择？' }],
-              },
-            });
-            entered();
-            const result = await models.rpc('mock-bot', auth, {
-              id: 3,
-              method: 'interaction.wait',
-              params: { id: 'mock-request' },
-            });
-            expect((result as { result: { reply: unknown } }).result.reply).toStrictEqual({
-              kind: 'answer',
-              answers: [{ id: 'choice', selected: [], custom: '合成答案' }],
-            });
-            observer.onNotification({
-              method: 'session.event',
-              params: {
-                sessionId: 'mock-human-session',
-                event: {
-                  type: 'todo/write',
-                  data: { todos: [{ content: '等待合成选择', status: 'completed' }] },
+              });
+              entered();
+              const result = await models.rpc('mock-bot', auth, {
+                id: 3,
+                method: 'interaction.wait',
+                params: { id: 'mock-request' },
+              });
+              expect((result as { result: { reply: unknown } }).result.reply).toStrictEqual({
+                kind: 'answer',
+                answers: [{ id: 'choice', selected: [], custom: '合成答案' }],
+              });
+              observer.onNotification({
+                method: 'session.event',
+                params: {
+                  sessionId: 'mock-human-session',
+                  event: {
+                    type: 'todo/write',
+                    data: { todos: [{ content: '等待合成选择', status: 'completed' }] },
+                  },
                 },
-              },
-            });
-            return { sessionId: 'mock-human-session', finalResponse: '收到合成答案。' };
-          },
-        };
+              });
+              return { sessionId: 'mock-human-session', finalResponse: '收到合成答案。' };
+            },
+          };
+        }
+        async resumeSession() {
+          return this.session();
+        }
       }
-      async resumeSession() {
-        return this.session();
-      }
+      const options = {
+        settings,
+        workspace: path.join(root, 'workspace'),
+        dir: path.join(root, 'model'),
+        origin: 'http://127.0.0.1:12345',
+        Harness,
+      };
+      models = new ModelRuns(options);
+      await models.start('mock-bot', {
+        requestId: 'mock-human-task',
+        prompt: '先询问合成选择，再执行计划。',
+        approvalMode,
+      });
+      await ready;
+      expect(models.status().bots['mock-bot'].phase).toBe('waiting');
+      expect(models.status().bots.b.running).toBe(false);
+      await models.interactions.reply('mock-bot', models.jobs.get('mock-bot')!.id, 'mock-request', {
+        kind: 'answer',
+        answers: [{ id: 'choice', selected: [], custom: '合成答案' }],
+      });
+      await models.jobs.get('mock-bot')!.done;
+      expect(models.status().bots['mock-bot'].phase).toBe('completed');
+      const plan = models.status().bots['mock-bot'].plan as TaskPlan;
+      expect(plan[0].status).toBe('completed');
+      await expect(
+        models.start('mock-bot', {
+          requestId: 'mock-human-task',
+          prompt: '先询问合成选择，再执行计划。',
+          approvalMode: approvalMode === 'full' ? 'auto' : 'full',
+        }),
+      ).rejects.toMatchObject({ code: 'REQUEST_ID_REUSED' });
+      await models.close();
+      const restored = new ModelRuns(options);
+      await restored.ready;
+      expect(restored.status().bots['mock-bot'].plan).toStrictEqual(plan);
+      expect((await restored.interactions.list())[0].status).toBe('resolved');
+      await restored.close();
+    } finally {
+      await models?.close();
+      await rm(root, { recursive: true, force: true });
     }
-    const options = {
-      settings,
-      workspace: path.join(root, 'workspace'),
-      dir: path.join(root, 'model'),
-      origin: 'http://127.0.0.1:12345',
-      Harness,
-    };
-    models = new ModelRuns(options);
-    await models.start('mock-bot', {
-      requestId: 'mock-human-task',
-      prompt: '先询问合成选择，再执行计划。',
-    });
-    await ready;
-    expect(models.status().bots['mock-bot'].phase).toBe('waiting');
-    expect(models.status().bots.b.running).toBe(false);
-    await models.interactions.reply('mock-bot', models.jobs.get('mock-bot')!.id, 'mock-request', {
-      kind: 'answer',
-      answers: [{ id: 'choice', selected: [], custom: '合成答案' }],
-    });
-    await models.jobs.get('mock-bot')!.done;
-    expect(models.status().bots['mock-bot'].phase).toBe('completed');
-    const plan = models.status().bots['mock-bot'].plan as TaskPlan;
-    expect(plan[0].status).toBe('completed');
-    await models.close();
-    const restored = new ModelRuns(options);
-    await restored.ready;
-    expect(restored.status().bots['mock-bot'].plan).toStrictEqual(plan);
-    expect((await restored.interactions.list())[0].status).toBe('resolved');
-    await restored.close();
-  } finally {
-    await models?.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
+  },
+);
 test('a long human wait preserves the active execution budget and cancellation still stops the run', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
   let now = 0;

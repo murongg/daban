@@ -20,6 +20,14 @@ test('full guest instructions describe VM sudo and host approval without exposin
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
 
+test('task approval mode accepts only the three explicit user policies', () => {
+  const task = { requestId: 'mock-policy-request', prompt: 'Synthetic task' };
+  for (const approvalMode of ['ask', 'auto', 'full'])
+    expect(validateTask({ ...task, approvalMode })).toEqual({ ...task, approvalMode });
+  for (const approvalMode of ['never', null, true, {}, ''])
+    expect(() => validateTask({ ...task, approvalMode })).toThrowError();
+});
+
 test('a continuation turn requires a bounded retry reference', () => {
   const input = {
     requestId: 'mock-retry-request',

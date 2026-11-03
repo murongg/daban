@@ -1,5 +1,6 @@
 import {
   agentId,
+  isApprovalMode,
   isAttachmentRef,
   isBotCopyRequest,
   isBotImportReference,
@@ -89,6 +90,16 @@ export function restore(raw: string | null): State {
       if (record(bot) && bot.model !== undefined && !isModelId(bot.model)) delete bot.model;
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
+    s.approvalModes = Object.fromEntries(
+      Object.entries(record(s.approvalModes) ? s.approvalModes : {}).filter(
+        ([bot, value]) =>
+          ids.includes(bot) &&
+          record(value) &&
+          Number.isSafeInteger(value.revision) &&
+          Number(value.revision) >= 0 &&
+          isApprovalMode(value.mode),
+      ),
+    );
     // Optional private editor damage must not reset chats or another Bot's pending operation.
     if (s.notes !== undefined)
       s.notes = Object.fromEntries(

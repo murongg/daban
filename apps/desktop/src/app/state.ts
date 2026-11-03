@@ -1,4 +1,5 @@
 import {
+  type ApprovalMode,
   type AttachmentRef,
   agentId,
   type BotCopyRequest,
@@ -14,6 +15,7 @@ import {
   type GroupCopyRequest,
   type GroupSend,
   groupCopyKey,
+  isApprovalMode,
   isBotCopyRequest,
   isBotImportReference,
   isBotLifecycleRequest,
@@ -51,6 +53,14 @@ export function chatRevision(state: Pick<State, 'chatStates'>, bot: string, late
     state.chatStates[bot]?.revision ?? 0,
     latest?.items.find((item) => item.bot === agentId(bot))?.revision ?? 0,
   );
+}
+export function chatApprovalMode(
+  state: Pick<State, 'approvalModes'>,
+  bot: string,
+  revision: number,
+): ApprovalMode {
+  const choice = Object.hasOwn(state.approvalModes, bot) ? state.approvalModes[bot] : undefined;
+  return choice?.revision === revision ? choice.mode : 'auto';
 }
 export type Panel = 'computer' | 'files' | 'knowledge' | 'skills' | 'memory' | 'routines' | 'notes';
 export interface SkillDraft {
@@ -212,6 +222,7 @@ export interface State {
   groupRequests: Record<string, GroupSend | undefined>;
   groupActions: Record<string, GroupActionRequest | undefined>;
   chatStates: Record<string, ChatState>;
+  approvalModes: Record<string, { revision: number; mode: ApprovalMode }>;
   chatRequests: Record<string, ChatRequest | undefined>;
   groupRevisions: Record<string, number>;
   groupTargets: Record<string, string>;
@@ -336,6 +347,7 @@ export type Action =
   | { type: 'profiles'; profiles: BotProfile[] }
   | { type: 'profile-local'; bot: string; name: string; instructions: string }
   | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
+  | { type: 'approval-mode'; bot: string; revision: number; mode: ApprovalMode }
   | { type: 'chats'; items: ChatState[] }
   | { type: 'chat-pending'; bot: string; request: ChatRequest }
   | { type: 'chat-clear'; bot: string; id: string }
@@ -390,6 +402,7 @@ export function initialState(): State {
     groupRequests: {},
     groupActions: {},
     chatStates: {},
+    approvalModes: {},
     chatRequests: {},
     groupRevisions: {},
     groupTargets: {},
@@ -824,6 +837,21 @@ export function reduce(state: State, action: Action): State {
               }
             : bot,
         ),
+      };
+    case 'approval-mode':
+      if (
+        !isApprovalMode(action.mode) ||
+        !Number.isSafeInteger(action.revision) ||
+        action.revision < chatRevision(state, action.bot) ||
+        state.bots.find((bot) => bot.id === action.bot)?.members
+      )
+        return state;
+      return {
+        ...state,
+        approvalModes: {
+          ...state.approvalModes,
+          [action.bot]: { revision: action.revision, mode: action.mode },
+        },
       };
     case 'runtime-pending':
       return {

@@ -83,6 +83,28 @@ function connect(interactions: RuntimeSnapshot['interactions'] = []) {
   };
 }
 
+it('captures the current conversation approval choice in a new send and keeps an uncertain send unchanged', async () => {
+  const backend = connect();
+  backend.state.protocolVersion = 44;
+  backend.state.chats = { available: true, revision: 0, items: [] };
+  backend.emit('a', { running: false, phase: 'completed', response: undefined });
+  render(<App />);
+  const trigger = await screen.findByRole('button', { name: /审批模式/ });
+  await userEvent.click(trigger);
+  await userEvent.click(screen.getByRole('option', { name: /^完全访问权限/ }));
+  await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC POLICY TASK');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  const sent = backend.invoke.mock.calls
+    .map(([command]) => command)
+    .find((command) => command.type === 'task.start');
+  expect(sent).toMatchObject({
+    type: 'task.start',
+    task: { approvalMode: 'full', chatRevision: 0 },
+  });
+  const stored = JSON.parse(localStorage.getItem(seedStorageKey)!);
+  expect(stored.state.runtimeRequests.research.approvalMode).toBe('full');
+});
+
 it('stops the selected Bot through an accessible icon with a tooltip', async () => {
   const backend = connect();
   render(<App />);

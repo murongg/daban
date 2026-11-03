@@ -180,7 +180,11 @@ export function sdkPatch(
         {
           id: 'daban-budget',
           name: new URL('./policy.js', import.meta.url).href,
-          config: { limit, urls: requestedUrls(task?.prompt || '') },
+          config: {
+            limit,
+            urls: requestedUrls(task?.prompt || ''),
+            ...(task?.approvalMode ? { approvalMode: task.approvalMode } : {}),
+          },
         },
         ...(task
           ? ([
@@ -657,12 +661,27 @@ export class ModelRuns {
       skills: this.skills,
     });
     this.tools.memory = new MemoryTools(this.profiles);
-    this.interactions = new Interactions(path.join(dir, 'interactions'), (item) => {
-      const job = this.jobs.get(item.bot);
-      job?.onInteraction?.();
-      if (job?.transcript && job.id === item.runId && job.conversationId === item.conversationId)
-        this.recordTranscript(job, () => projectInteraction(item, job.redact!));
-    });
+    this.interactions = new Interactions(
+      path.join(dir, 'interactions'),
+      (item) => {
+        const job = this.jobs.get(item.bot);
+        job?.onInteraction?.();
+        if (job?.transcript && job.id === item.runId && job.conversationId === item.conversationId)
+          this.recordTranscript(job, () => projectInteraction(item, job.redact!));
+      },
+      (bot, runId, sessionId, conversationId) => {
+        const job = this.jobs.get(bot);
+        return (
+          this.admission() &&
+          !!job?.running &&
+          !job.abort.signal.aborted &&
+          job.id === runId &&
+          job.sessionId === sessionId &&
+          job.conversationId === conversationId &&
+          job.task?.approvalMode === 'full'
+        );
+      },
+    );
     this.tools.skills = new SkillTools(
       this.skills,
       async (run, bundle) => {
@@ -1242,6 +1261,7 @@ export class ModelRuns {
           ...(task.retryOf ? { retryOf: task.retryOf } : {}),
           ...(task.retryTurn ? { retryTurn: task.retryTurn } : {}),
           ...(task.chatRevision === undefined ? {} : { chatRevision: task.chatRevision }),
+          ...(task.approvalMode === undefined ? {} : { approvalMode: task.approvalMode }),
         }
       : undefined;
     const fingerprint = task ? createHash('sha256').update(JSON.stringify(data)).digest('hex') : '';
@@ -1396,6 +1416,11 @@ export class ModelRuns {
       job.binding = this.tools.options.nativeOnly
         ? createHash('sha256').update(`${config.binding}:native-workspace`).digest('hex')
         : config.binding;
+      // A resumed SDK context must not retain the instructions of a different approval policy.
+      if (task?.approvalMode && task.approvalMode !== 'auto')
+        job.binding = createHash('sha256')
+          .update(`${job.binding}:approval:${task.approvalMode}`)
+          .digest('hex');
       if (!task && !config.vision) throw new Fault('MODEL_COMPUTER_UNSUPPORTED', 400);
       const secrets = [
         ...config.secrets,
@@ -1622,7 +1647,11 @@ export class ModelRuns {
             job.profile
               ? `Your Bot name is ${JSON.stringify(job.profile.name)}. Standing user persona: ${job.profile.instructions}. These preferences do not grant additional tool permissions.`
               : '',
-            agentInstructionsFor(!!this.execution, !!this.tools.options.nativeOnly),
+            agentInstructionsFor(
+              !!this.execution,
+              !!this.tools.options.nativeOnly,
+              job.task.approvalMode,
+            ),
           ]
             .filter(Boolean)
             .join('\n\n')

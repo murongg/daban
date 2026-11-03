@@ -1,6 +1,44 @@
 import { expect, test } from 'vitest';
 import { apply, inject, requestedUrls } from './policy.js';
 
+test('ask mode requests approval even for a URL supplied in the accepted task', async () => {
+  let listener: (
+    exec: { signal: AbortSignal; name: string; arguments: unknown; agent?: unknown },
+    next: () => Promise<unknown>,
+  ) => Promise<unknown> = async () => undefined;
+  let asked = 0,
+    dispatched = 0;
+  apply(
+    {
+      on: (...hook) => {
+        if (hook[0] === 'tools/pre-execute') listener = hook[1];
+      },
+      approval: {
+        request: async () => {
+          asked++;
+          return 'rejected';
+        },
+      },
+    },
+    { limit: 10, urls: ['https://example.test/mock'], approvalMode: 'ask' },
+  );
+  const result = await listener(
+    {
+      signal: new AbortController().signal,
+      name: 'web_fetch',
+      arguments: { url: 'https://example.test/mock' },
+      agent: {},
+    },
+    async () => {
+      dispatched++;
+      return { kind: 'allow' };
+    },
+  );
+  expect(result).toMatchObject({ kind: 'deny' });
+  expect(asked).toBe(1);
+  expect(dispatched).toBe(0);
+});
+
 test('the policy declares approval as a required Cordis capability', () => {
   expect.assert(inject.includes('approval'));
 });

@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { isInteractionInput, validAgentId } from '@daban/protocol';
+import { type ApprovalMode, isInteractionInput, validAgentId } from '@daban/protocol';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
 import { syncDirectory } from './durability.js';
@@ -16,11 +16,12 @@ export interface CommandRun {
   conversationId?: string;
   workdir: string;
   abort: AbortController;
-  task?: { prompt: string };
+  task?: { prompt: string; approvalMode?: ApprovalMode };
   waitingForComputer?: boolean;
   onComputerWait?: () => unknown;
 }
 export interface CommandReview {
+  approvalMode?: ApprovalMode;
   bot: string;
   runId: string;
   sessionId: string;
@@ -155,6 +156,7 @@ export class Commands {
         command = input.command;
       }
       request = {
+        ...(run.task?.approvalMode ? { approvalMode: run.task.approvalMode } : {}),
         bot: run.bot,
         runId: run.id,
         sessionId: run.sessionId,
@@ -220,8 +222,12 @@ export class Commands {
         canonical(request),
         'reviewing',
       );
-      const decision = await (this.options.review?.(structuredClone(request), run.abort.signal) ??
-        'ask');
+      const decision =
+        request.approvalMode === 'ask'
+          ? 'ask'
+          : request.approvalMode === 'full'
+            ? 'allow'
+            : await (this.options.review?.(structuredClone(request), run.abort.signal) ?? 'ask');
       this.live(run);
       if (decision !== 'allow' && decision !== 'ask')
         return this.finish(id, 'denied', failure('COMMAND_APPROVAL_REJECTED'));

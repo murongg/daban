@@ -81,7 +81,8 @@ await withComponentStage(async (inspect) => {
       '--maxWorkers=1',
       ...smokes,
     ],
-    { cwd: agent, timeout: 60000, maxBuffer: 2 * 1024 * 1024 },
+    // The serial 60s native-loop and 30s calendar checks also need runner startup time.
+    { cwd: agent, timeout: 120000, maxBuffer: 2 * 1024 * 1024 },
   );
   assert.match(sdk.stdout, /real DSH dispatches/);
   assert.match(sdk.stdout, /real host calendar recovers/);
