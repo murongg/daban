@@ -87,6 +87,38 @@ function bridge(read: (command: RuntimeCommand) => unknown | Promise<unknown>, p
   };
 }
 
+it('shows saved cumulative session statistics inside the read-only execution disclosure', async () => {
+  bridge((command) => {
+    if (command.type !== 'transcript.list' && command.type !== 'transcript.statistics')
+      throw new Error('UNEXPECTED_SYNTHETIC_ACTION');
+    return {
+      ...scope,
+      ...(command.type === 'transcript.list' ? { state: 'complete', items: [] } : {}),
+      ...(command.type === 'transcript.statistics'
+        ? {
+            stats: {
+              turns: 3,
+              steps: 5,
+              llmMs: 2500,
+              toolMs: 1250,
+              ttftMs: 900,
+              ttftSteps: 3,
+              decodeMs: 1600,
+              decodeTokens: 80,
+            },
+          }
+        : {}),
+    };
+  });
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="completed" />
+    </RuntimeProvider>,
+  );
+  await userEvent.setup().click(await screen.findByText('执行过程'));
+  expect(await screen.findByText(/会话累计.*3.*5.*2.5.*1.3.*0.3/)).toBeVisible();
+});
+
 it('keeps thinking folded with the execution process, follows live updates and preserves the open state on completion', async () => {
   const backend = bridge(() => ({ ...scope, state: 'recording', items: [] }));
   backend.snapshot.agents[scope.bot] = {
@@ -325,7 +357,9 @@ it('loads metadata only after opening and pages full tool content and later even
   expect(await screen.findByText('第 2 条')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.list', 'transcript.content'].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list', 'transcript.content'].includes(
+        command.type,
+      ),
     ),
   ).toBe(true);
 });
@@ -354,7 +388,7 @@ it('refreshes from an accessible icon without closing the history or rerunning a
   expect(reads).toBe(2);
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.list'].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list'].includes(command.type),
     ),
   ).toBe(true);
 });

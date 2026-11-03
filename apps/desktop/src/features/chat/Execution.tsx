@@ -1,7 +1,9 @@
 import {
+  isRunStatistics,
   isTranscriptContent,
   isTranscriptPage,
   type ReplyStream,
+  type SessionStats,
   sameTranscriptScope,
   type TaskPhase,
   type TranscriptContent,
@@ -198,6 +200,40 @@ function Entry({
   );
 }
 
+function Statistics({ scope, refresh }: { scope: TranscriptScope; refresh?: TranscriptPage }) {
+  useLocale();
+  const runtime = useRuntime();
+  const [stats, setStats] = useState<SessionStats>();
+  useEffect(() => {
+    if (!refresh) return;
+    let active = true;
+    runtime
+      .command({ type: 'transcript.statistics', query: { scope } })
+      .then((value) => {
+        if (active && isRunStatistics(value) && sameTranscriptScope(value, scope))
+          setStats(value.stats);
+      })
+      .catch(() => {
+        // Older services have no statistics route. Optional telemetry must not break execution-history reads.
+        if (active) setStats(undefined);
+      });
+    return () => {
+      active = false;
+    };
+  }, [runtime.command, scope, refresh]);
+  return stats ? (
+    <p className="field-help">
+      {t('execution.sessionStatistics', {
+        0: stats.turns,
+        1: stats.steps,
+        2: (stats.llmMs / 1000).toFixed(1),
+        3: (stats.toolMs / 1000).toFixed(1),
+        4: stats.ttftSteps ? (stats.ttftMs / stats.ttftSteps / 1000).toFixed(1) : '—',
+      })}
+    </p>
+  ) : null;
+}
+
 function Reader({
   scope,
   thinking,
@@ -300,6 +336,7 @@ function Reader({
       >
         <RefreshCw />
       </IconButton>
+      <Statistics scope={target} refresh={page} />
       {page?.state === 'unavailable' && (
         <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}

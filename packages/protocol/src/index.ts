@@ -1132,6 +1132,48 @@ export interface TranscriptContentQuery {
   seq: number;
   offset?: number;
 }
+export interface SessionStats {
+  turns: number;
+  steps: number;
+  llmMs: number;
+  toolMs: number;
+  ttftMs: number;
+  ttftSteps: number;
+  decodeMs: number;
+  decodeTokens: number;
+}
+export function isSessionStats(value: unknown): value is SessionStats {
+  const fields = [
+    'turns',
+    'steps',
+    'llmMs',
+    'toolMs',
+    'ttftMs',
+    'ttftSteps',
+    'decodeMs',
+    'decodeTokens',
+  ];
+  return (
+    profileObject(value) &&
+    Object.keys(value).length === fields.length &&
+    fields.every((key) => {
+      const number = value[key];
+      return (
+        typeof number === 'number' &&
+        Number.isFinite(number) &&
+        number >= 0 &&
+        number <= Number.MAX_SAFE_INTEGER &&
+        (!['turns', 'steps', 'ttftSteps'].includes(key) || Number.isSafeInteger(number))
+      );
+    })
+  );
+}
+export type RunStatistics = TranscriptScope & { stats?: SessionStats };
+export function isRunStatistics(value: unknown): value is RunStatistics {
+  return (
+    transcriptScope(value, ['stats']) && (value.stats === undefined || isSessionStats(value.stats))
+  );
+}
 export type TranscriptPage = TranscriptScope & {
   state: TranscriptState;
   items: TranscriptItem[];
@@ -1538,6 +1580,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
+    'transcript.statistics',
     'transcript.list',
     'transcript.content',
     'memory.history',
@@ -3886,6 +3929,7 @@ export type RuntimeCommand =
   | { type: 'work.list'; query: WorkQuery }
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
+  | { type: 'transcript.statistics'; query: TranscriptQuery }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }
