@@ -21,6 +21,9 @@ export const english = {
     'The source task has ended or is no longer available for group collaboration.',
   'errors.groupCollaborationConflict':
     'This task already has a collaboration group. Reuse the original request.',
+  'execution.delegateTask': 'Delegate subtask',
+  'execution.messageWorker': 'Message worker',
+  'execution.stopWorker': 'Stop worker',
   'execution.readImage': 'View image',
   'execution.sessionStatistics':
     'Session total through this task: {0} turns · {1} steps · model {2}s · tools {3}s · average first token {4}s',
