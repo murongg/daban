@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import http, {
@@ -11,7 +10,7 @@ import http, {
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { bridgeRequest, callBridge } from './bridge.js';
 
 async function socketServer(
@@ -45,33 +44,29 @@ test('private bridge keeps capability in headers and rejects RPC errors without 
     { value: 'synthetic' },
     new AbortController().signal,
     async (_url, init) => {
-      assert.equal(
-        new Headers(init.headers).get('authorization'),
-        'Bearer mock-private-capability',
-      );
-      assert.equal(String(init.body).includes('mock-private-capability'), false);
+      expect(new Headers(init.headers).get('authorization')).toBe('Bearer mock-private-capability');
+      expect(String(init.body).includes('mock-private-capability')).toBe(false);
       return Response.json({ result: { accepted: true } });
     },
   );
-  assert.deepEqual(value, { accepted: true });
-  await assert.rejects(
+  expect(value).toStrictEqual({ accepted: true });
+  await expect(
     callBridge(config, 'mock.method', {}, new AbortController().signal, async () =>
       Response.json({ error: { message: 'mock-private-payload' } }),
     ),
-    /BRIDGE_UNAVAILABLE/,
-  );
+  ).rejects.toThrowError(/BRIDGE_UNAVAILABLE/);
 });
 
 test('Unix callback transport sends the logical route and optional capability without using fetch', async () => {
   const received: string[] = [];
   const server = await socketServer(async (request, response) => {
-    assert.equal(request.url, '/mcp/mock-bot');
-    assert.equal(request.headers.host, '127.0.0.1:8766');
+    expect(request.url).toBe('/mcp/mock-bot');
+    expect(request.headers.host).toBe('127.0.0.1:8766');
     received.push(request.headers.authorization || '');
     let body = '';
     for await (const chunk of request) body += String(chunk);
-    assert.equal(body.includes('mock-private-capability'), false);
-    assert.equal(JSON.parse(body).method, 'mock.method');
+    expect(body.includes('mock-private-capability')).toBe(false);
+    expect(JSON.parse(body).method).toBe('mock.method');
     response.end(JSON.stringify({ jsonrpc: '2.0', result: { accepted: true } }));
   });
   try {
@@ -85,9 +80,9 @@ test('Unix callback transport sends the logical route and optional capability wi
           throw new Error('FETCH_MUST_NOT_RUN');
         },
       );
-      assert.deepEqual(value, { accepted: true });
+      expect(value).toStrictEqual({ accepted: true });
     }
-    assert.deepEqual(received, ['Bearer mock-private-capability', '']);
+    expect(received).toStrictEqual(['Bearer mock-private-capability', '']);
   } finally {
     await server.close();
   }
@@ -108,21 +103,20 @@ test('Unix bridge preserves complete RPC envelopes and empty notification acknow
       response.writeHead(202);
       response.end();
     } else {
-      assert.deepEqual(input, rpc);
+      expect(input).toStrictEqual(rpc);
       response.end(JSON.stringify(failure));
     }
   });
   const config = { url: 'http://127.0.0.1:8766/mcp/mock-bot', socketPath: server.socketPath };
   try {
-    assert.deepEqual(await bridgeRequest(config, rpc, new AbortController().signal), failure);
-    assert.equal(
+    expect(await bridgeRequest(config, rpc, new AbortController().signal)).toStrictEqual(failure);
+    expect(
       await bridgeRequest(
         config,
         { jsonrpc: '2.0', method: 'notifications/initialized' },
         new AbortController().signal,
       ),
-      undefined,
-    );
+    ).toBe(undefined);
   } finally {
     await server.close();
   }
@@ -137,15 +131,14 @@ test('Unix bridge bypasses an ambient HTTP agent so model proxy settings cannot 
     throw new Error('AMBIENT_AGENT_MUST_NOT_RUN');
   };
   try {
-    assert.equal(
+    expect(
       await callBridge(
         { url: 'http://127.0.0.1:8766/mcp/mock-bot', socketPath: server.socketPath },
         'mock.method',
         {},
         new AbortController().signal,
       ),
-      true,
-    );
+    ).toBe(true);
   } finally {
     globalAgent.createConnection = previous;
     await server.close();
@@ -157,15 +150,17 @@ test('Unix bridge rejects oversized padding even when the retained prefix is val
     response.end(`{"result":true}${' '.repeat(16 * 1024 * 1024)}`),
   );
   try {
-    await assert.rejects(
+    await expect(
       callBridge(
         { url: 'http://127.0.0.1:8766/mcp/mock-bot', socketPath: server.socketPath },
         'mock.method',
         {},
         new AbortController().signal,
       ),
-      /^Error: BRIDGE_UNAVAILABLE$/,
-    );
+    ).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^BRIDGE_UNAVAILABLE$/),
+    });
   } finally {
     await server.close();
   }
@@ -191,15 +186,17 @@ test('Unix bridge rejects the byte limit before a simultaneous end event can res
   }) as typeof http.request;
   syncBuiltinESMExports();
   try {
-    await assert.rejects(
+    await expect(
       callBridge(
         { url: 'http://127.0.0.1:8766/mcp/mock-bot', socketPath: '/tmp/mock-private.sock' },
         'mock.method',
         {},
         new AbortController().signal,
       ),
-      /^Error: BRIDGE_UNAVAILABLE$/,
-    );
+    ).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^BRIDGE_UNAVAILABLE$/),
+    });
   } finally {
     http.request = previous;
     syncBuiltinESMExports();
@@ -213,29 +210,33 @@ test('Unix bridge fails closed on unavailable sockets, abort, oversized response
     socketPath: '/tmp/mock-absent-daban.sock',
     capability: 'mock-private-capability',
   };
-  await assert.rejects(
+  await expect(
     callBridge(missing, 'mock.method', {}, new AbortController().signal, async () => {
       fetches++;
       return Response.json({ result: true });
     }),
-    /^Error: BRIDGE_UNAVAILABLE$/,
-  );
-  assert.equal(fetches, 0);
+  ).rejects.toMatchObject({
+    name: 'Error',
+    message: expect.stringMatching(/^BRIDGE_UNAVAILABLE$/),
+  });
+  expect(fetches).toBe(0);
   for (const body of [
     'mock-private-payload',
     JSON.stringify({ result: 'x'.repeat(16 * 1024 * 1024) }),
   ]) {
     const server = await socketServer((_request, response) => response.end(body));
     try {
-      await assert.rejects(
+      await expect(
         callBridge(
           { ...missing, socketPath: server.socketPath },
           'mock.method',
           {},
           new AbortController().signal,
         ),
-        /^Error: BRIDGE_UNAVAILABLE$/,
-      );
+      ).rejects.toMatchObject({
+        name: 'Error',
+        message: expect.stringMatching(/^BRIDGE_UNAVAILABLE$/),
+      });
     } finally {
       await server.close();
     }
@@ -255,8 +256,7 @@ test('Unix bridge fails closed on unavailable sockets, abort, oversized response
     );
     await received;
     abort.abort();
-    await assert.rejects(
-      result,
+    await expect(result).rejects.toSatisfy(
       (error: unknown) => error instanceof Error && error.name === 'AbortError',
     );
   } finally {

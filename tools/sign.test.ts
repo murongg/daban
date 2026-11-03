@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import {
   isMachO,
   notarizeDistribution,
@@ -13,9 +12,9 @@ import {
 
 test('detects native macOS code without treating scripts and Linux guests as signable', () => {
   for (const hex of ['cffaedfe', 'feedfacf', 'cafebabe', 'bebafeca', 'cafebabf'])
-    assert.equal(isMachO(Buffer.from(hex, 'hex')), true);
+    expect(isMachO(Buffer.from(hex, 'hex'))).toBe(true);
   for (const data of [Buffer.from('#!/bin/sh'), Buffer.from('7f454c46', 'hex'), Buffer.alloc(2)])
-    assert.equal(isMachO(data), false);
+    expect(isMachO(data)).toBe(false);
 });
 
 test('pins the re-signed Lima archive in both the environment and host code', async () => {
@@ -35,10 +34,9 @@ test('pins the re-signed Lima archive in both the environment and host code', as
     const manifest = JSON.parse(
       await readFile(path.join(root, 'environment/manifest.json'), 'utf8'),
     );
-    assert.deepEqual(manifest.image, { sha256: 'synthetic-unchanged-image' });
-    assert.deepEqual(manifest.lima, { file: 'lima.tar.gz', ...result });
-    assert.equal(
-      await readFile(path.join(root, 'agent/assets.js'), 'utf8'),
+    expect(manifest.image).toStrictEqual({ sha256: 'synthetic-unchanged-image' });
+    expect(manifest.lima).toStrictEqual({ file: 'lima.tar.gz', ...result });
+    expect(await readFile(path.join(root, 'agent/assets.js'), 'utf8')).toBe(
       `export const limaDigest = '${result.sha256}';\n`,
     );
   } finally {
@@ -56,40 +54,38 @@ test('refreshes the host integrity seal after nested signing and before the oute
     },
     {
       sign: async (options) => {
-        assert.equal(options.identity, 'Developer ID Application: Synthetic (TESTTEAM01)');
-        assert.equal(options.platform, 'darwin');
-        assert.equal(options.preAutoEntitlements, false);
-        assert.equal(
+        expect(options.identity).toBe('Developer ID Application: Synthetic (TESTTEAM01)');
+        expect(options.platform).toBe('darwin');
+        expect(options.preAutoEntitlements).toBe(false);
+        expect(
           options.optionsForFile?.('/synthetic/file', { platform: 'darwin' }).hardenedRuntime,
-          true,
-        );
+        ).toBe(true);
         events.push('nested');
       },
       seal: async (directory) => {
-        assert.equal(directory, path.join('/synthetic/Daban.app', 'Contents/Resources/agent'));
+        expect(directory).toBe(path.join('/synthetic/Daban.app', 'Contents/Resources/agent'));
         events.push('seal');
       },
       run: async (program, args) => {
-        assert.equal(program, '/usr/bin/codesign');
+        expect(program).toBe('/usr/bin/codesign');
         if (args.includes('--sign')) {
-          assert.ok(args.includes('--timestamp'));
-          assert.ok(args.includes('runtime'));
-          assert.equal(args.includes('--deep'), false);
+          expect.assert(args.includes('--timestamp'));
+          expect.assert(args.includes('runtime'));
+          expect(args.includes('--deep')).toBe(false);
           events.push('outer');
         } else {
-          assert.ok(args.includes('--verify'));
+          expect.assert(args.includes('--verify'));
           events.push('verify');
         }
         return '';
       },
     },
   );
-  assert.deepEqual(events, ['nested', 'seal', 'outer', 'verify']);
+  expect(events).toStrictEqual(['nested', 'seal', 'outer', 'verify']);
 });
 
 test('release signing rejects ad-hoc identities before touching an artifact', async () => {
-  await assert.rejects(
-    signApplication('/synthetic/Daban.app', { identity: '-' }),
+  await expect(signApplication('/synthetic/Daban.app', { identity: '-' })).rejects.toThrowError(
     /DEVELOPER_ID_REQUIRED/,
   );
 });
@@ -108,11 +104,11 @@ test('signs native code and bundles while treating compressed guest images as da
       { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
       {
         sign: async (options) => {
-          assert.equal(typeof options.ignore, 'function');
+          expect(typeof options.ignore).toBe('function');
           if (typeof options.ignore !== 'function') throw Error('SIGNING_FILTER_MISSING');
-          assert.equal(options.ignore(app), false);
-          assert.equal(options.ignore(native), false);
-          assert.equal(options.ignore(image), true);
+          expect(options.ignore(app)).toBe(false);
+          expect(options.ignore(native)).toBe(false);
+          expect(options.ignore(image)).toBe(true);
         },
         seal: async () => undefined,
         run: async () => '',
@@ -141,12 +137,12 @@ test('submits only the outer disk image and validates tickets for both download 
       },
     },
   );
-  assert.equal(events.filter((event) => event.startsWith('submit:')).length, 1);
-  assert.equal(events[0], 'submit:/synthetic/Daban.dmg');
+  expect(events.filter((event) => event.startsWith('submit:')).length).toBe(1);
+  expect(events[0]).toBe('submit:/synthetic/Daban.dmg');
   for (const file of ['/synthetic/Daban.app', '/synthetic/Daban.dmg']) {
-    assert.ok(events.includes(`stapler staple ${file}`));
-    assert.ok(events.includes(`stapler validate ${file}`));
-    assert.ok(events.some((event) => event.startsWith('--assess') && event.endsWith(file)));
+    expect.assert(events.includes(`stapler staple ${file}`));
+    expect.assert(events.includes(`stapler validate ${file}`));
+    expect.assert(events.some((event) => event.startsWith('--assess') && event.endsWith(file)));
   }
 });
 
@@ -157,14 +153,14 @@ test('reports bounded signing command output without dumping unrelated process m
     stderr: 'Synthetic command error',
     env: { SYNTHETIC_PRIVATE_VALUE: 'must-not-be-dumped' },
   });
-  assert.deepEqual(signingDiagnostics(failure), [
+  expect(signingDiagnostics(failure)).toStrictEqual([
     'stdout:\nSynthetic ticket validation detail',
     'stderr:\nSynthetic command error',
   ]);
-  assert.deepEqual(signingDiagnostics(new Error('Synthetic ordinary error')), []);
-  assert.deepEqual(signingDiagnostics(null), []);
+  expect(signingDiagnostics(new Error('Synthetic ordinary error'))).toStrictEqual([]);
+  expect(signingDiagnostics(null)).toStrictEqual([]);
   const output = signingDiagnostics({ stdout: 'x'.repeat(20000), stderr: undefined });
-  assert.equal(output[0].length, 'stdout:\n'.length + 16000);
+  expect(output[0].length).toBe('stdout:\n'.length + 16000);
 });
 
 test('signs the runtime code, refreshes its host manifest, then seals the outer runtime app', async () => {
@@ -189,7 +185,7 @@ test('signs the runtime code, refreshes its host manifest, then seals the outer 
         },
       },
     );
-    assert.deepEqual(events, ['native', 'seal', 'outer', 'verify']);
+    expect(events).toStrictEqual(['native', 'seal', 'outer', 'verify']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

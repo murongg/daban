@@ -76,7 +76,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const result = spawnSync(
       executable,
       mode === 'transport'
-        ? ['--test', 'packages/engine/dist/private-channel.test.js']
+        ? [
+            fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url)),
+            'run',
+            '--project',
+            'node',
+            '--maxWorkers=1',
+            'packages/engine/dist/private-channel.test.js',
+          ]
         : [
             '--experimental-strip-types',
             fileURLToPath(import.meta.url),

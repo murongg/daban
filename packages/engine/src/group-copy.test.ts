@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { type GroupRunner, Groups } from './groups.js';
 
 const source = {
@@ -81,26 +80,26 @@ test('copies membership into an independent empty group while the source collabo
     });
     f.runner.groupRunning = () => true;
     const before = await f.groups.read(source.id);
-    assert.deepEqual(await f.groups.copyReceipt(request), { request, state: 'unknown' });
+    expect(await f.groups.copyReceipt(request)).toStrictEqual({ request, state: 'unknown' });
     const copied = await f.groups.copy(request);
-    assert.equal(copied.state, 'complete');
-    assert.deepEqual(copied.request, request);
-    assert.equal(copied.group.id, request.id);
-    assert.equal(copied.group.name, request.name);
-    assert.equal(copied.group.revision, 1);
-    assert.deepEqual(copied.group.members, source.members);
+    expect(copied.state).toBe('complete');
+    expect(copied.request).toStrictEqual(request);
+    expect(copied.group.id).toBe(request.id);
+    expect(copied.group.name).toBe(request.name);
+    expect(copied.group.revision).toBe(1);
+    expect(copied.group.members).toStrictEqual(source.members);
     const page = await f.groups.read(request.id),
       original = await f.groups.read(source.id);
-    assert.deepEqual(page.messages, []);
-    assert.deepEqual(page.deliveries, []);
-    assert.deepEqual(original.group, before.group);
-    assert.deepEqual(original.messages, before.messages);
-    assert.deepEqual(original.deliveries, before.deliveries);
-    assert.deepEqual(f.starts, []);
+    expect(page.messages).toStrictEqual([]);
+    expect(page.deliveries).toStrictEqual([]);
+    expect(original.group).toStrictEqual(before.group);
+    expect(original.messages).toStrictEqual(before.messages);
+    expect(original.deliveries).toStrictEqual(before.deliveries);
+    expect(f.starts).toStrictEqual([]);
     copied.group.members.push('mock-gamma');
     const receipt = await f.groups.copyReceipt(request);
-    assert.ok(receipt.state === 'complete');
-    assert.deepEqual(receipt.group.members, source.members);
+    expect.assert(receipt.state === 'complete');
+    expect(receipt.group.members).toStrictEqual(source.members);
   } finally {
     await f.close();
   }
@@ -128,12 +127,12 @@ test('exact replay returns current target state after edits, archive and restart
     });
     await f.reopen();
     f.members.clear();
-    assert.deepEqual((await f.groups.copy(request)).group, archived.group);
+    expect((await f.groups.copy(request)).group).toStrictEqual(archived.group);
     const receipt = await f.groups.copyReceipt(request);
-    assert.ok(receipt.state === 'complete');
-    assert.deepEqual(receipt.group, archived.group);
-    assert.equal((await f.groups.status()).items.length, 2);
-    assert.deepEqual(f.starts, []);
+    expect.assert(receipt.state === 'complete');
+    expect(receipt.group).toStrictEqual(archived.group);
+    expect((await f.groups.status()).items.length).toBe(2);
+    expect(f.starts).toStrictEqual([]);
   } finally {
     await f.close();
   }
@@ -142,15 +141,15 @@ test('exact replay returns current target state after edits, archive and restart
 test('source version, archive, unavailable members and personal identities are checked before a new target is created', async () => {
   const f = await fixture();
   try {
-    await assert.rejects(f.groups.copy({ ...request, revision: 2 }), /GROUP_CONFLICT/);
+    await expect(f.groups.copy({ ...request, revision: 2 })).rejects.toThrowError(/GROUP_CONFLICT/);
     f.blocked.add('mock-beta');
-    await assert.rejects(f.groups.copy(request), /BOT_UNAVAILABLE/);
+    await expect(f.groups.copy(request)).rejects.toThrowError(/BOT_UNAVAILABLE/);
     f.blocked.clear();
     f.members.delete('mock-beta');
-    await assert.rejects(f.groups.copy(request), /GROUP_MEMBER_REQUIRED/);
+    await expect(f.groups.copy(request)).rejects.toThrowError(/GROUP_MEMBER_REQUIRED/);
     f.members.add('mock-beta');
     f.members.add(request.id);
-    await assert.rejects(f.groups.copy(request), /GROUP_ID_CONFLICT/);
+    await expect(f.groups.copy(request)).rejects.toThrowError(/GROUP_ID_CONFLICT/);
     f.members.delete(request.id);
     await f.groups.action({
       id: 'mock-source-archived',
@@ -158,9 +157,9 @@ test('source version, archive, unavailable members and personal identities are c
       action: 'archive',
       revision: 1,
     });
-    await assert.rejects(f.groups.copy(request), /GROUP_ARCHIVED/);
-    assert.deepEqual(await f.groups.copyReceipt(request), { request, state: 'unknown' });
-    assert.equal((await f.groups.status()).items.length, 1);
+    await expect(f.groups.copy(request)).rejects.toThrowError(/GROUP_ARCHIVED/);
+    expect(await f.groups.copyReceipt(request)).toStrictEqual({ request, state: 'unknown' });
+    expect((await f.groups.status()).items.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -174,25 +173,23 @@ test('foreign targets and changed payloads cannot be claimed as a copy receipt',
       name: '合成既有群聊',
       members: source.members,
     });
-    await assert.rejects(
-      f.groups.copy({ ...request, id: 'mock-foreign-target' }),
+    await expect(f.groups.copy({ ...request, id: 'mock-foreign-target' })).rejects.toThrowError(
       /GROUP_COPY_CONFLICT/,
     );
-    await assert.rejects(
+    await expect(
       f.groups.copyReceipt({ ...request, id: 'mock-foreign-target' }),
-      /GROUP_COPY_CONFLICT/,
-    );
+    ).rejects.toThrowError(/GROUP_COPY_CONFLICT/);
     await f.groups.copy(request);
     for (const input of [
       { ...request, name: '合成不同名称' },
       { ...request, revision: 2 },
       { ...request, group: 'mock-other-source' },
     ]) {
-      await assert.rejects(f.groups.copy(input), /GROUP_COPY_CONFLICT/);
-      await assert.rejects(f.groups.copyReceipt(input), /GROUP_COPY_CONFLICT/);
+      await expect(f.groups.copy(input)).rejects.toThrowError(/GROUP_COPY_CONFLICT/);
+      await expect(f.groups.copyReceipt(input)).rejects.toThrowError(/GROUP_COPY_CONFLICT/);
     }
-    assert.deepEqual((await f.groups.copyReceipt(request)).request, request);
-    assert.deepEqual(f.starts, []);
+    expect((await f.groups.copyReceipt(request)).request).toStrictEqual(request);
+    expect(f.starts).toStrictEqual([]);
   } finally {
     await f.close();
   }
@@ -215,20 +212,20 @@ test('closed copy inputs are captured before queueing and concurrent retries cre
       { ...request, members: source.members },
     ];
     for (const input of invalid) {
-      await assert.rejects(f.groups.copy(input), /INVALID_GROUP_COPY/);
-      await assert.rejects(f.groups.copyReceipt(input), /INVALID_GROUP_COPY/);
+      await expect(f.groups.copy(input)).rejects.toThrowError(/INVALID_GROUP_COPY/);
+      await expect(f.groups.copyReceipt(input)).rejects.toThrowError(/INVALID_GROUP_COPY/);
     }
     const input = { ...request };
     const pending = f.groups.copy(input);
     input.name = 'MOCK MUTATED INPUT';
     const [one, two] = await Promise.all([pending, f.groups.copy(request)]);
-    assert.deepEqual(one, two);
-    assert.deepEqual(one.request, request);
+    expect(one).toStrictEqual(two);
+    expect(one.request).toStrictEqual(request);
     const reading = { ...request };
     const receipt = f.groups.copyReceipt(reading);
     reading.name = 'MOCK MUTATED READ';
-    assert.deepEqual(await receipt, one);
-    assert.equal((await f.groups.status()).items.length, 2);
+    expect(await receipt).toStrictEqual(one);
+    expect((await f.groups.status()).items.length).toBe(2);
   } finally {
     await f.close();
   }
@@ -241,12 +238,12 @@ test('the definition and private receipt roll back together if the SQLite transa
     db.exec(
       "CREATE TRIGGER mock_abort_copy BEFORE UPDATE ON group_meta BEGIN SELECT RAISE(ABORT,'MOCK_WRITE_FAILURE'); END",
     );
-    await assert.rejects(f.groups.copy(request), /MOCK_WRITE_FAILURE/);
-    assert.deepEqual(await f.groups.copyReceipt(request), { request, state: 'unknown' });
-    assert.equal((await f.groups.status()).items.length, 1);
+    await expect(f.groups.copy(request)).rejects.toThrowError(/MOCK_WRITE_FAILURE/);
+    expect(await f.groups.copyReceipt(request)).toStrictEqual({ request, state: 'unknown' });
+    expect((await f.groups.status()).items.length).toBe(1);
     db.exec('DROP TRIGGER mock_abort_copy');
     const accepted = await f.groups.copy(request);
-    assert.deepEqual(await f.groups.copyReceipt(request), accepted);
+    expect(await f.groups.copyReceipt(request)).toStrictEqual(accepted);
   } finally {
     db.close();
     await f.close();
@@ -267,19 +264,18 @@ test('copy origins migrate privately from legacy groups and survive ordinary val
     db.prepare('UPDATE group_defs SET value=? WHERE id=?').run(JSON.stringify(edited), request.id);
     await f.reopen();
     const receipt = await f.groups.copyReceipt(request);
-    assert.ok(receipt.state === 'complete');
-    assert.deepEqual(receipt.group, edited);
-    assert.equal(JSON.stringify(await f.groups.status()).includes('copy_origin'), false);
-    await assert.rejects(
+    expect.assert(receipt.state === 'complete');
+    expect(receipt.group).toStrictEqual(edited);
+    expect(JSON.stringify(await f.groups.status()).includes('copy_origin')).toBe(false);
+    await expect(
       f.groups.register({ ...edited, copy_origin: 'MOCK FORGED ORIGIN' }),
-      /INVALID_GROUP/,
-    );
+    ).rejects.toThrowError(/INVALID_GROUP/);
     db.prepare('UPDATE group_defs SET copy_origin=? WHERE id=?').run(
       'MOCK CORRUPT ORIGIN',
       request.id,
     );
-    await assert.rejects(f.groups.copyReceipt(request), /GROUP_COPY_CONFLICT/);
-    assert.deepEqual((await f.groups.read(request.id)).group, edited);
+    await expect(f.groups.copyReceipt(request)).rejects.toThrowError(/GROUP_COPY_CONFLICT/);
+    expect((await f.groups.read(request.id)).group).toStrictEqual(edited);
   } finally {
     db.close();
     await f.close();
@@ -296,13 +292,15 @@ test('copies respect the existing retained-group capacity while accepted receipt
         members: source.members,
       });
     const accepted = await f.groups.copy(request);
-    assert.equal((await f.groups.status()).items.length, 50);
-    await assert.rejects(f.groups.copy({ ...request, id: 'mock-over-capacity' }), /GROUP_LIMIT/);
-    assert.deepEqual(await f.groups.copyReceipt({ ...request, id: 'mock-over-capacity' }), {
+    expect((await f.groups.status()).items.length).toBe(50);
+    await expect(f.groups.copy({ ...request, id: 'mock-over-capacity' })).rejects.toThrowError(
+      /GROUP_LIMIT/,
+    );
+    expect(await f.groups.copyReceipt({ ...request, id: 'mock-over-capacity' })).toStrictEqual({
       request: { ...request, id: 'mock-over-capacity' },
       state: 'unknown',
     });
-    assert.deepEqual(await f.groups.copy(request), accepted);
+    expect(await f.groups.copy(request)).toStrictEqual(accepted);
   } finally {
     await f.close();
   }
@@ -326,7 +324,7 @@ test('creation admission cannot yield to another lifecycle owner before the grou
     await f.groups.copy(request);
     target = 'mock-ordinary-creation';
     await f.groups.register({ id: target, name: '合成普通创建', members: source.members });
-    assert.deepEqual(observed, [true, true]);
+    expect(observed).toStrictEqual([true, true]);
   } finally {
     db.close();
     await f.close();

@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
 import type { SkillPackage } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { Skills } from './skills.js';
 
 const content =
@@ -45,15 +44,15 @@ test('migrates legacy skill storage without changing saved content, bindings or 
     db.close();
     const store = new Skills(file);
     try {
-      assert.equal((await store.read('mock-id')).content, content);
+      expect((await store.read('mock-id')).content).toBe(content);
       const item = (await store.list('mock-bot')).items[0];
-      assert.equal(item.enabled, true);
-      assert.equal(item.revision, 3);
-      assert.equal(item.bindingRevision, 2);
-      assert.equal((await store.status()).revision, 7);
+      expect(item.enabled).toBe(true);
+      expect(item.revision).toBe(3);
+      expect(item.bindingRevision).toBe(2);
+      expect((await store.status()).revision).toBe(7);
       const reader = new DatabaseSync(file, { readOnly: true });
       try {
-        assert.equal(reader.prepare('PRAGMA user_version').get()!.user_version, 3);
+        expect(reader.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
       } finally {
         reader.close();
       }
@@ -67,9 +66,9 @@ test('retains binary resources, preserves immutable active snapshots and keeps i
     try {
       const imported = await Reflect.apply(store.importBatch, store, [[bundle()]]);
       const skill = imported[0];
-      assert.ok(skill.package);
-      assert.equal(skill.package.fileCount, 3);
-      assert.equal((await store.list('mock-a')).items[0].enabled, false);
+      expect.assert(skill.package);
+      expect(skill.package.fileCount).toBe(3);
+      expect((await store.list('mock-a')).items[0].enabled).toBe(false);
       await store.bind('mock-a', {
         id: skill.id,
         revision: skill.revision,
@@ -89,41 +88,38 @@ test('retains binary resources, preserves immutable active snapshots and keeps i
         'mock-complete',
         'references/guide.txt',
       );
-      assert.equal(Buffer.from(old.data, 'base64').toString(), 'SYNTHETIC ORIGINAL');
+      expect(Buffer.from(old.data, 'base64').toString()).toBe('SYNTHETIC ORIGINAL');
       const current = await Reflect.get(store, 'readResource').call(
         store,
         skill.id,
         updated.revision,
         'references/guide.txt',
       );
-      assert.equal(Buffer.from(current.data, 'base64').toString(), 'SYNTHETIC NEW');
+      expect(Buffer.from(current.data, 'base64').toString()).toBe('SYNTHETIC NEW');
       const full = await Reflect.get(store, 'exportPackage').call(
         store,
         skill.id,
         updated.revision,
       );
-      assert.deepEqual(
+      expect(
         Buffer.from(
           full.files.find((f: { path: string }) => f.path === 'assets/data.bin')!.data,
           'base64',
         ),
-        Buffer.from([0, 1, 255]),
-      );
+      ).toStrictEqual(Buffer.from([0, 1, 255]));
       await Reflect.get(store, 'release').call(store, captured);
-      await assert.rejects(
+      await expect(
         Reflect.get(store, 'readCaptured').call(
           store,
           captured,
           'mock-complete',
           'references/guide.txt',
         ),
-        { code: 'SKILL_SNAPSHOT_EXPIRED' },
-      );
-      assert.equal((await store.capture('mock-b')).skills.length, 0);
-      await assert.rejects(
+      ).rejects.toMatchObject({ code: 'SKILL_SNAPSHOT_EXPIRED' });
+      expect((await store.capture('mock-b')).skills.length).toBe(0);
+      await expect(
         Reflect.get(store, 'updatePackage').call(store, skill.id, skill.revision, bundle()),
-        { code: 'SKILL_CONFLICT' },
-      );
+      ).rejects.toMatchObject({ code: 'SKILL_CONFLICT' });
     } finally {
       await store.close();
     }

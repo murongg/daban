@@ -1,10 +1,8 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { link, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
 import {
   isNoteItem,
   isNotePage,
@@ -14,6 +12,7 @@ import {
   type NoteWrite,
   noteKey,
 } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { Notes } from './notes.js';
 
 const alpha = 'mock-alpha',
@@ -22,7 +21,7 @@ const human = { kind: 'human' as const };
 const actor = { kind: 'bot' as const, bot: alpha };
 async function revision(store: Notes) {
   const status = await store.status(alpha);
-  assert.ok(status.available);
+  expect.assert(status.available);
   return status.revision;
 }
 const create = (note = 'mock-note', id = 'mock-create'): NoteWrite => ({
@@ -59,24 +58,26 @@ test('private notes and operation identities are scoped to the selected Bot', as
   const f = await fixture();
   try {
     const first = await f.store.write(alpha, create(), human);
-    assert.equal(first.item.bot, alpha);
-    assert.equal(first.item.status, 'open');
-    assert.deepEqual(first.item.createdBy, human);
-    await assert.rejects(f.store.get(beta, 'mock-note'), /NOTE_NOT_FOUND/);
-    assert.deepEqual((await f.store.list(beta)).items, []);
-    assert.deepEqual(await f.store.receipt(beta, create(), human), {
+    expect(first.item.bot).toBe(alpha);
+    expect(first.item.status).toBe('open');
+    expect(first.item.createdBy).toStrictEqual(human);
+    await expect(f.store.get(beta, 'mock-note')).rejects.toThrowError(/NOTE_NOT_FOUND/);
+    expect((await f.store.list(beta)).items).toStrictEqual([]);
+    expect(await f.store.receipt(beta, create(), human)).toStrictEqual({
       state: 'unknown',
       bot: beta,
       request: create(),
       actor: human,
     });
-    await assert.rejects(f.store.write(beta, create('mock-other'), actor), /INVALID_NOTE_AUTHOR/);
+    await expect(f.store.write(beta, create('mock-other'), actor)).rejects.toThrowError(
+      /INVALID_NOTE_AUTHOR/,
+    );
     const own = await f.store.write(beta, create(), { kind: 'bot', bot: beta });
-    assert.equal(own.item.bot, beta);
-    assert.deepEqual(own.item.createdBy, { kind: 'bot', bot: beta });
-    assert.deepEqual(await f.store.status(alpha), { available: true, revision: 1, count: 1 });
-    assert.deepEqual(await f.store.status(beta), { available: true, revision: 1, count: 1 });
-    assert.equal((await f.store.get(alpha, 'mock-note')).bot, alpha);
+    expect(own.item.bot).toBe(beta);
+    expect(own.item.createdBy).toStrictEqual({ kind: 'bot', bot: beta });
+    expect(await f.store.status(alpha)).toStrictEqual({ available: true, revision: 1, count: 1 });
+    expect(await f.store.status(beta)).toStrictEqual({ available: true, revision: 1, count: 1 });
+    expect((await f.store.get(alpha, 'mock-note')).bot).toBe(alpha);
   } finally {
     await f.close();
   }
@@ -104,12 +105,12 @@ test('open, parked and done persist with completion, trash and creator provenanc
       },
       actor,
     );
-    assert.equal(parked.item.title, '合成独立便笺');
-    assert.equal(parked.item.body, 'MOCK PRIVATE DETAIL');
-    assert.equal(parked.item.completedAt, undefined);
-    assert.deepEqual(parked.item.createdBy, human);
-    assert.deepEqual(parked.item.updatedBy, actor);
-    assert.equal((await f.store.list(alpha)).items.length, 1);
+    expect(parked.item.title).toBe('合成独立便笺');
+    expect(parked.item.body).toBe('MOCK PRIVATE DETAIL');
+    expect(parked.item.completedAt).toBe(undefined);
+    expect(parked.item.createdBy).toStrictEqual(human);
+    expect(parked.item.updatedBy).toStrictEqual(actor);
+    expect((await f.store.list(alpha)).items.length).toBe(1);
     const done = await f.store.write(
       alpha,
       {
@@ -121,16 +122,16 @@ test('open, parked and done persist with completion, trash and creator provenanc
       },
       actor,
     );
-    assert.ok(done.item.completedAt);
-    assert.equal((await f.store.list(alpha)).items.length, 0);
-    assert.equal((await f.store.list(alpha, { filter: 'done' })).items.length, 1);
+    expect.assert(done.item.completedAt);
+    expect((await f.store.list(alpha)).items.length).toBe(0);
+    expect((await f.store.list(alpha, { filter: 'done' })).items.length).toBe(1);
     const trashed = await f.store.write(
       alpha,
       { id: 'mock-trash', note: 'mock-note', revision: 3, action: 'trash' },
       human,
     );
-    assert.equal(trashed.item.completedAt, done.item.completedAt);
-    await assert.rejects(
+    expect(trashed.item.completedAt).toBe(done.item.completedAt);
+    await expect(
       f.store.write(
         alpha,
         {
@@ -142,15 +143,14 @@ test('open, parked and done persist with completion, trash and creator provenanc
         },
         human,
       ),
-      /NOTE_TRASHED/,
-    );
+    ).rejects.toThrowError(/NOTE_TRASHED/);
     const restored = await f.store.write(
       alpha,
       { id: 'mock-restore', note: 'mock-note', revision: 4, action: 'restore' },
       human,
     );
-    assert.equal(restored.item.body, done.item.body);
-    assert.equal(restored.item.completedAt, done.item.completedAt);
+    expect(restored.item.body).toBe(done.item.body);
+    expect(restored.item.completedAt).toBe(done.item.completedAt);
     const open = await f.store.write(
       alpha,
       {
@@ -162,10 +162,10 @@ test('open, parked and done persist with completion, trash and creator provenanc
       },
       actor,
     );
-    assert.equal(open.item.completedAt, undefined);
+    expect(open.item.completedAt).toBe(undefined);
     await f.reopen();
-    assert.deepEqual(await f.store.get(alpha, 'mock-note'), open.item);
-    assert.deepEqual(await f.store.status(beta), { available: true, revision: 0, count: 0 });
+    expect(await f.store.get(alpha, 'mock-note')).toStrictEqual(open.item);
+    expect(await f.store.status(beta)).toStrictEqual({ available: true, revision: 0, count: 0 });
   } finally {
     await f.close();
   }
@@ -193,10 +193,10 @@ test('CAS rejects a competing draft and old receipts return current content afte
       f.store.write(alpha, request, actor),
       f.store.write(alpha, competing, human),
     ]);
-    assert.equal(results[0].status, 'fulfilled');
-    assert.equal(results[1].status, 'rejected');
-    assert.match(String((results[1] as PromiseRejectedResult).reason), /NOTE_CONFLICT/);
-    assert.equal((await f.store.receipt(alpha, competing, human)).state, 'unknown');
+    expect(results[0].status).toBe('fulfilled');
+    expect(results[1].status).toBe('rejected');
+    expect(String((results[1] as PromiseRejectedResult).reason)).toMatch(/NOTE_CONFLICT/);
+    expect((await f.store.receipt(alpha, competing, human)).state).toBe('unknown');
     const later = await f.store.write(
       alpha,
       {
@@ -210,17 +210,18 @@ test('CAS rejects a competing draft and old receipts return current content afte
     );
     await f.reopen();
     const receipt = await f.store.receipt(alpha, request, actor);
-    assert.equal(receipt.state, 'complete');
-    assert.ok(receipt.state === 'complete');
-    assert.equal(receipt.acceptedRevision, 2);
-    assert.deepEqual(receipt.item, later.item);
-    assert.deepEqual(await f.store.write(alpha, request, actor), receipt);
-    await assert.rejects(
+    expect(receipt.state).toBe('complete');
+    expect.assert(receipt.state === 'complete');
+    expect(receipt.acceptedRevision).toBe(2);
+    expect(receipt.item).toStrictEqual(later.item);
+    expect(await f.store.write(alpha, request, actor)).toStrictEqual(receipt);
+    await expect(
       f.store.write(alpha, { ...request, value: { body: 'MOCK DIFFERENT' } }, actor),
+    ).rejects.toThrowError(/NOTE_REQUEST_CONFLICT/);
+    await expect(f.store.receipt(alpha, request, human)).rejects.toThrowError(
       /NOTE_REQUEST_CONFLICT/,
     );
-    await assert.rejects(f.store.receipt(alpha, request, human), /NOTE_REQUEST_CONFLICT/);
-    assert.equal(await revision(f.store), 3);
+    expect(await revision(f.store)).toBe(3);
   } finally {
     await f.close();
   }
@@ -238,9 +239,9 @@ test('a no-op has an exact receipt without changing note author, completion or f
       value: { body: initial.item.body },
     };
     const result = await f.store.write(alpha, request, actor);
-    assert.deepEqual(result.item, initial.item);
-    assert.equal(await revision(f.store), 1);
-    assert.deepEqual(await f.store.receipt(alpha, request, actor), result);
+    expect(result.item).toStrictEqual(initial.item);
+    expect(await revision(f.store)).toBe(1);
+    expect(await f.store.receipt(alpha, request, actor)).toStrictEqual(result);
   } finally {
     await f.close();
   }
@@ -264,11 +265,11 @@ test('Bot-local literal search and stable pages include parked items and bounded
       );
     await f.store.write(beta, create('mock-beta-only'), { kind: 'bot', bot: beta });
     const first = await f.store.list(alpha, { limit: 1 });
-    assert.equal(first.items[0].id, 'mock-3');
-    assert.equal(Array.from(first.items[0].body).length, 200);
-    assert.equal(first.items[0].bodyTruncated, true);
-    assert.ok(first.nextBefore);
-    assert.equal(first.revision, 3);
+    expect(first.items[0].id).toBe('mock-3');
+    expect(Array.from(first.items[0].body).length).toBe(200);
+    expect(first.items[0].bodyTruncated).toBe(true);
+    expect.assert(first.nextBefore);
+    expect(first.revision).toBe(3);
     await f.store.write(
       alpha,
       {
@@ -281,14 +282,13 @@ test('Bot-local literal search and stable pages include parked items and bounded
       human,
     );
     const second = await f.store.list(alpha, { before: first.nextBefore, limit: 1 });
-    assert.equal(second.items[0].id, 'mock-2');
-    assert.equal(second.revision, 4);
-    assert.deepEqual(
+    expect(second.items[0].id).toBe('mock-2');
+    expect(second.revision).toBe(4);
+    expect(
       (await f.store.list(alpha, { text: '%_\\' })).items.map((item) => item.id),
-      ['mock-3'],
-    );
-    assert.equal((await f.store.list(alpha, { text: 'PRIVATE' })).items.length, 0);
-    assert.equal((await f.store.list(alpha, { filter: 'parked' })).items.length, 1);
+    ).toStrictEqual(['mock-3']);
+    expect((await f.store.list(alpha, { text: 'PRIVATE' })).items.length).toBe(0);
+    expect((await f.store.list(alpha, { filter: 'parked' })).items.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -299,14 +299,16 @@ test('cancellation and close reject queued writes without publishing a receipt',
   try {
     const controller = new AbortController();
     controller.abort();
-    await assert.rejects(f.store.write(alpha, create(), human, controller.signal), /abort/i);
-    assert.equal((await f.store.receipt(alpha, create(), human)).state, 'unknown');
+    await expect(f.store.write(alpha, create(), human, controller.signal)).rejects.toThrowError(
+      /abort/i,
+    );
+    expect((await f.store.receipt(alpha, create(), human)).state).toBe('unknown');
     const pending = f.store.write(alpha, create(), human);
     await f.store.close();
-    await assert.rejects(pending, /NOTES_CLOSED/);
+    await expect(pending).rejects.toThrowError(/NOTES_CLOSED/);
     await f.reopen();
-    assert.equal((await f.store.list(alpha)).items.length, 0);
-    assert.equal((await f.store.receipt(alpha, create(), human)).state, 'unknown');
+    expect((await f.store.list(alpha)).items.length).toBe(0);
+    expect((await f.store.receipt(alpha, create(), human)).state).toBe('unknown');
   } finally {
     await f.close();
   }
@@ -327,10 +329,10 @@ test('the note, local revision and operation receipt roll back together on a fai
       revision: 1,
       value: { body: 'MOCK SHOULD ROLLBACK' },
     };
-    await assert.rejects(f.store.write(alpha, request, actor), /MOCK_NOTE_COMMIT/);
-    assert.deepEqual(await f.store.get(alpha, 'mock-note'), old.item);
-    assert.equal(await revision(f.store), 1);
-    assert.equal((await f.store.receipt(alpha, request, actor)).state, 'unknown');
+    await expect(f.store.write(alpha, request, actor)).rejects.toThrowError(/MOCK_NOTE_COMMIT/);
+    expect(await f.store.get(alpha, 'mock-note')).toStrictEqual(old.item);
+    expect(await revision(f.store)).toBe(1);
+    expect((await f.store.receipt(alpha, request, actor)).state).toBe('unknown');
     db.exec('DROP TRIGGER mock_block_notes');
     db.close();
   } finally {
@@ -346,9 +348,9 @@ test('corrupt note ownership refuses to appear empty', async () => {
     const db = new DatabaseSync(f.file);
     db.prepare('UPDATE note_items SET editor=?').run(JSON.stringify({ kind: 'bot', bot: beta }));
     db.close();
-    await assert.rejects(f.reopen(), /NOTES_CORRUPT/);
-    assert.deepEqual(await f.store.status(alpha), { available: false, error: 'NOTES_CORRUPT' });
-    await assert.rejects(f.store.list(alpha), /NOTES_CORRUPT/);
+    await expect(f.reopen()).rejects.toThrowError(/NOTES_CORRUPT/);
+    expect(await f.store.status(alpha)).toStrictEqual({ available: false, error: 'NOTES_CORRUPT' });
+    await expect(f.store.list(alpha)).rejects.toThrowError(/NOTES_CORRUPT/);
   } finally {
     await f.close();
   }
@@ -366,17 +368,17 @@ test('private note files reject symbolic and hard links', async () => {
       const file = path.join(root, name);
       await make(source, file);
       const store = new Notes(file);
-      await assert.rejects(store.ready, /NOTES_CORRUPT/);
+      await expect(store.ready).rejects.toThrowError(/NOTES_CORRUPT/);
       await store.close();
     }
-    assert.equal((await lstat(source)).mode & 0o777, 0o600);
+    expect((await lstat(source)).mode & 0o777).toBe(0o600);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test('Note DTOs reject foreign scope, unknown fields, malformed revisions and forged authors', () => {
-  assert.equal(isNoteWrite(create()), true);
+  expect(isNoteWrite(create())).toBe(true);
   for (const value of [
     { ...create(), bot: beta },
     { ...create(), revision: 1 },
@@ -385,12 +387,12 @@ test('Note DTOs reject foreign scope, unknown fields, malformed revisions and fo
     Object.assign([], create()),
     Object.create(create()),
   ])
-    assert.equal(isNoteWrite(value), false);
-  assert.equal(isNoteQuery({ filter: 'parked', text: '%_\\', limit: 50 }), true);
-  assert.equal(isNoteQuery({ bot: beta }), false);
-  assert.equal(isNoteQuery({ filter: ['active'] }), false);
-  assert.equal(isNoteQuery({ limit: 51 }), false);
-  assert.equal(
+    expect(isNoteWrite(value)).toBe(false);
+  expect(isNoteQuery({ filter: 'parked', text: '%_\\', limit: 50 })).toBe(true);
+  expect(isNoteQuery({ bot: beta })).toBe(false);
+  expect(isNoteQuery({ filter: ['active'] })).toBe(false);
+  expect(isNoteQuery({ limit: 51 })).toBe(false);
+  expect(
     isNoteItem({
       bot: alpha,
       id: 'mock-note',
@@ -404,17 +406,15 @@ test('Note DTOs reject foreign scope, unknown fields, malformed revisions and fo
       createdBy: human,
       updatedBy: { kind: 'bot', bot: beta },
     }),
-    false,
-  );
-  assert.equal(
+  ).toBe(false);
+  expect(
     isNoteReceipt({
       state: 'unknown',
       bot: alpha,
       request: create(),
       actor: { kind: 'bot', bot: beta },
     }),
-    false,
-  );
+  ).toBe(false);
 });
 
 test('caller mutation and patch property order cannot alter scope or defeat exact retries', async () => {
@@ -434,9 +434,9 @@ test('caller mutation and patch property order cannot alter scope or defeat exac
     request.value.body = 'MOCK MUTATED';
     by.bot = beta;
     const saved = await pending;
-    assert.equal(saved.item.id, original.note);
-    assert.equal(saved.item.body, original.value.body);
-    assert.deepEqual(saved.item.createdBy, actor);
+    expect(saved.item.id).toBe(original.note);
+    expect(saved.item.body).toBe(original.value.body);
+    expect(saved.item.createdBy).toStrictEqual(actor);
     const patch: NoteWrite = {
       id: 'mock-ordered',
       note: original.note,
@@ -445,14 +445,13 @@ test('caller mutation and patch property order cannot alter scope or defeat exac
       value: { title: 'MOCK NEW TITLE', body: 'MOCK NEW BODY' },
     };
     const changed = await f.store.write(alpha, patch, human);
-    assert.deepEqual(
+    expect(
       await f.store.write(
         alpha,
         { ...patch, value: { body: 'MOCK NEW BODY', title: 'MOCK NEW TITLE' } },
         human,
       ),
-      changed,
-    );
+    ).toStrictEqual(changed);
   } finally {
     await f.close();
   }
@@ -470,9 +469,9 @@ test('unknown or unrelated databases remain intact instead of being converted to
       db.close();
       const bytes = await readFile(file),
         store = new Notes(file);
-      await assert.rejects(store.ready, /NOTES_CORRUPT/);
+      await expect(store.ready).rejects.toThrowError(/NOTES_CORRUPT/);
       await store.close();
-      assert.deepEqual(await readFile(file), bytes);
+      expect(await readFile(file)).toStrictEqual(bytes);
     }
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -502,12 +501,12 @@ test('missing per-Bot authority cannot turn existing notes into a new empty name
         human,
       ),
     ])
-      await assert.rejects(operation, /NOTES_CORRUPT/);
-    assert.deepEqual(await f.store.status(alpha), { available: false, error: 'NOTES_CORRUPT' });
-    await assert.rejects(f.reopen(), /NOTES_CORRUPT/);
+      await expect(operation).rejects.toThrowError(/NOTES_CORRUPT/);
+    expect(await f.store.status(alpha)).toStrictEqual({ available: false, error: 'NOTES_CORRUPT' });
+    await expect(f.reopen()).rejects.toThrowError(/NOTES_CORRUPT/);
     const inspect = new DatabaseSync(f.file, { readOnly: true });
-    assert.equal(inspect.prepare('SELECT COUNT(*) AS n FROM note_items').get()!.n, 1);
-    assert.equal(inspect.prepare('SELECT COUNT(*) AS n FROM note_operations').get()!.n, 1);
+    expect(inspect.prepare('SELECT COUNT(*) AS n FROM note_items').get()!.n).toBe(1);
+    expect(inspect.prepare('SELECT COUNT(*) AS n FROM note_operations').get()!.n).toBe(1);
     inspect.close();
   } finally {
     await f.close();
@@ -521,19 +520,22 @@ test('malformed receipts are refused as corruption before their fingerprint is c
     const db = new DatabaseSync(f.file);
     db.prepare('UPDATE note_operations SET signature=?').run('MOCK INVALID');
     db.close();
-    await assert.rejects(f.store.receipt(alpha, create(), human), /NOTES_CORRUPT/);
-    await assert.rejects(f.reopen(), /NOTES_CORRUPT/);
+    await expect(f.store.receipt(alpha, create(), human)).rejects.toThrowError(/NOTES_CORRUPT/);
+    await expect(f.reopen()).rejects.toThrowError(/NOTES_CORRUPT/);
   } finally {
     await f.close();
   }
 });
 
-test('a failed initial schema transaction stays retryable without partially published tables', async (t) => {
+test('a failed initial schema transaction stays retryable without partially published tables', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-note-init-'));
   const file = path.join(root, 'notes.sqlite'),
     execute = DatabaseSync.prototype.exec;
   let injected = false;
-  t.mock.method(DatabaseSync.prototype, 'exec', function (this: DatabaseSync, sql: string) {
+  vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (
+    this: DatabaseSync,
+    sql: string,
+  ) {
     if (!injected && sql.includes('CREATE TABLE note_operations')) {
       injected = true;
       return execute.call(
@@ -545,25 +547,24 @@ test('a failed initial schema transaction stays retryable without partially publ
   });
   const failed = new Notes(file);
   try {
-    await assert.rejects(failed.ready, /NOTES_CORRUPT/);
+    await expect(failed.ready).rejects.toThrowError(/NOTES_CORRUPT/);
     await failed.close();
-    assert.equal(injected, true);
+    expect(injected).toBe(true);
     const inspect = new DatabaseSync(file, { readOnly: true });
-    assert.deepEqual(
+    expect(
       inspect
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         .all(),
-      [],
-    );
-    assert.equal(inspect.prepare('PRAGMA user_version').get()!.user_version, 0);
+    ).toStrictEqual([]);
+    expect(inspect.prepare('PRAGMA user_version').get()!.user_version).toBe(0);
     inspect.close();
-    t.mock.restoreAll();
+    vi.restoreAllMocks();
     const recovered = new Notes(file);
     await recovered.ready;
-    assert.deepEqual(await recovered.status(alpha), { available: true, revision: 0, count: 0 });
+    expect(await recovered.status(alpha)).toStrictEqual({ available: true, revision: 0, count: 0 });
     await recovered.close();
   } finally {
-    t.mock.restoreAll();
+    vi.restoreAllMocks();
     await failed.close();
     await rm(root, { recursive: true, force: true });
   }
@@ -579,11 +580,11 @@ test('retained-item capacity includes trash while other Bot metadata remains sco
       { id: 'mock-trash-capacity', note: 'mock-card-0', action: 'trash', revision: 1 },
       human,
     );
-    await assert.rejects(f.store.write(beta, create(), human), /NOTE_LIMIT/);
-    assert.deepEqual(await f.store.status(beta), { available: true, revision: 0, count: 0 });
-    assert.equal((await f.store.status(alpha)).available, true);
+    await expect(f.store.write(beta, create(), human)).rejects.toThrowError(/NOTE_LIMIT/);
+    expect(await f.store.status(beta)).toStrictEqual({ available: true, revision: 0, count: 0 });
+    expect((await f.store.status(alpha)).available).toBe(true);
     await f.reopen();
-    assert.equal((await f.store.list(alpha, { filter: 'trash' })).items.length, 1);
+    expect((await f.store.list(alpha, { filter: 'trash' })).items.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -619,7 +620,7 @@ test('the operation quota refuses new writes while accepted retries remain reada
     }
     db.exec('COMMIT');
     db.close();
-    await assert.rejects(
+    await expect(
       f.store.write(
         alpha,
         {
@@ -631,10 +632,9 @@ test('the operation quota refuses new writes while accepted retries remain reada
         },
         human,
       ),
-      /NOTE_OPERATION_LIMIT/,
-    );
+    ).rejects.toThrowError(/NOTE_OPERATION_LIMIT/);
     await f.reopen();
-    assert.deepEqual(await f.store.write(alpha, create(), human), initial);
+    expect(await f.store.write(alpha, create(), human)).toStrictEqual(initial);
   } finally {
     await f.close();
   }
@@ -645,19 +645,18 @@ test('page and receipt projections keep the exact Bot and reject impossible curs
   try {
     const accepted = await f.store.write(alpha, create(), human);
     const page = await f.store.list(alpha);
-    assert.equal(isNotePage(page), true);
-    assert.equal(isNotePage({ ...page, revision: 0 }), false);
-    assert.equal(isNotePage({ ...page, bot: beta }), false);
-    assert.equal(isNotePage({ ...page, items: [...page.items, ...page.items] }), false);
-    assert.equal(isNotePage({ ...page, items: [], nextBefore: 1 }), false);
-    assert.equal(isNoteReceipt(accepted), true);
-    assert.equal(isNoteReceipt({ ...accepted, bot: beta }), false);
-    assert.equal(isNoteReceipt({ ...accepted, acceptedRevision: 2 }), false);
-    assert.equal(
+    expect(isNotePage(page)).toBe(true);
+    expect(isNotePage({ ...page, revision: 0 })).toBe(false);
+    expect(isNotePage({ ...page, bot: beta })).toBe(false);
+    expect(isNotePage({ ...page, items: [...page.items, ...page.items] })).toBe(false);
+    expect(isNotePage({ ...page, items: [], nextBefore: 1 })).toBe(false);
+    expect(isNoteReceipt(accepted)).toBe(true);
+    expect(isNoteReceipt({ ...accepted, bot: beta })).toBe(false);
+    expect(isNoteReceipt({ ...accepted, acceptedRevision: 2 })).toBe(false);
+    expect(
       isNoteReceipt({ ...accepted, acceptedRevision: 2, item: { ...accepted.item, revision: 2 } }),
-      false,
-    );
-    assert.equal(
+    ).toBe(false);
+    expect(
       isNoteReceipt({
         ...accepted,
         request: {
@@ -669,10 +668,9 @@ test('page and receipt projections keep the exact Bot and reject impossible curs
         },
         item: { ...accepted.item, revision: 6 },
       }),
-      false,
-    );
-    assert.equal(isNoteReceipt({ ...accepted, actor: { kind: 'bot', bot: beta } }), false);
-    assert.equal(isNoteItem({ ...accepted.item, status: 'done' }), false);
+    ).toBe(false);
+    expect(isNoteReceipt({ ...accepted, actor: { kind: 'bot', bot: beta } })).toBe(false);
+    expect(isNoteItem({ ...accepted.item, status: 'done' })).toBe(false);
   } finally {
     await f.close();
   }
@@ -699,10 +697,10 @@ test('an impossible accepted version cannot turn a damaged create receipt into s
       'mock-create',
     );
     db.close();
-    await assert.rejects(f.store.receipt(alpha, create(), human), /NOTES_CORRUPT/);
+    await expect(f.store.receipt(alpha, create(), human)).rejects.toThrowError(/NOTES_CORRUPT/);
     await f.reopen();
-    await assert.rejects(f.store.write(alpha, create(), human), /NOTES_CORRUPT/);
-    assert.equal((await f.store.get(alpha, 'mock-note')).body, 'MOCK LATER');
+    await expect(f.store.write(alpha, create(), human)).rejects.toThrowError(/NOTES_CORRUPT/);
+    expect((await f.store.get(alpha, 'mock-note')).body).toBe('MOCK LATER');
   } finally {
     await f.close();
   }
@@ -722,10 +720,13 @@ test('rewound or orphaned local authority cannot expose a false empty or untrack
           : 'DELETE FROM note_items WHERE bot=?',
       ).run(alpha);
       db.close();
-      await assert.rejects(f.store.get(alpha, 'mock-note'), /NOTES_CORRUPT/);
-      await assert.rejects(f.store.list(alpha), /NOTES_CORRUPT/);
-      assert.deepEqual(await f.store.status(alpha), { available: false, error: 'NOTES_CORRUPT' });
-      await assert.rejects(f.reopen(), /NOTES_CORRUPT/);
+      await expect(f.store.get(alpha, 'mock-note')).rejects.toThrowError(/NOTES_CORRUPT/);
+      await expect(f.store.list(alpha)).rejects.toThrowError(/NOTES_CORRUPT/);
+      expect(await f.store.status(alpha)).toStrictEqual({
+        available: false,
+        error: 'NOTES_CORRUPT',
+      });
+      await expect(f.reopen()).rejects.toThrowError(/NOTES_CORRUPT/);
     } finally {
       await f.close();
     }

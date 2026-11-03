@@ -1,15 +1,27 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { X509Certificate } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
+import { expect, test } from 'vitest';
 import { McpFetch } from './mcp-fetch.js';
 import { tlsFixture } from './tls.fixture.js';
+
+test('synthetic MCP TLS certificate is a valid self-issued CA for its hostname', async (t) => {
+  const fixture = await tlsFixture((_req, res) => res.end());
+  t.onTestFinished(async () => {
+    await fixture.close();
+  });
+  const certificate = new X509Certificate(fixture.ca);
+  expect(certificate.ca).toBe(true);
+  expect(certificate.checkIssued(certificate)).toBe(true);
+  expect(certificate.checkHost('mcp.example.test')).toBe('mcp.example.test');
+  expect(certificate.verify(certificate.publicKey)).toBe(true);
+});
 
 test('MCP HTTP uses the exact endpoint, validated public IP and verified TLS name while keeping authorization on that request', async () => {
   let calls = 0;
   const fixture = await tlsFixture((req, res) => {
     calls++;
-    assert.equal(req.url, '/mcp?key=synthetic-url-secret');
-    assert.equal(req.headers.authorization, 'Bearer synthetic-header-secret');
+    expect(req.url).toBe('/mcp?key=synthetic-url-secret');
+    expect(req.headers.authorization).toBe('Bearer synthetic-header-secret');
     res.setHeader('content-type', 'application/json');
     res.end('{"ok":true}');
   });
@@ -27,13 +39,12 @@ test('MCP HTTP uses the exact endpoint, validated public IP and verified TLS nam
       headers: { authorization: 'Bearer synthetic-header-secret' },
       body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
     });
-    assert.deepEqual(await response.json(), { ok: true });
-    assert.deepEqual(pins, ['8.8.8.8']);
-    await assert.rejects(
+    expect(await response.json()).toStrictEqual({ ok: true });
+    expect(pins).toStrictEqual(['8.8.8.8']);
+    await expect(
       request.fetch(fixture.endpoint.replace('/mcp?', '/foreign?'), { method: 'POST' }),
-      { code: 'MCP_NETWORK_BLOCKED' },
-    );
-    assert.equal(calls, 1);
+    ).rejects.toMatchObject({ code: 'MCP_NETWORK_BLOCKED' });
+    expect(calls).toBe(1);
     const mixed = new McpFetch(fixture.endpoint, {
       ...fixture,
       resolve: async () => [
@@ -41,18 +52,16 @@ test('MCP HTTP uses the exact endpoint, validated public IP and verified TLS nam
         { address: '127.0.0.1', family: 4 },
       ],
     });
-    await assert.rejects(mixed.fetch(fixture.endpoint, { method: 'POST' }), {
+    await expect(mixed.fetch(fixture.endpoint, { method: 'POST' })).rejects.toMatchObject({
       code: 'MCP_NETWORK_BLOCKED',
     });
     const untrusted = new McpFetch(fixture.endpoint, {
       resolve: fixture.resolve,
       dial: fixture.dial,
     });
-    await assert.rejects(untrusted.fetch(fixture.endpoint, { method: 'POST' }));
-    assert.equal(
-      calls,
+    await expect(untrusted.fetch(fixture.endpoint, { method: 'POST' })).rejects.toThrowError();
+    expect(calls, 'a self-signed test endpoint must fail without its explicit synthetic CA').toBe(
       1,
-      'a self-signed test endpoint must fail without its explicit synthetic CA',
     );
   } finally {
     await fixture.close();
@@ -72,18 +81,18 @@ test('MCP fetch refuses redirects, bounded decompression and cancelled reads wit
   });
   try {
     const request = new McpFetch(fixture.endpoint, { ...fixture, maxBytes: 1024 });
-    await assert.rejects(request.fetch(fixture.endpoint, { method: 'POST' }), {
+    await expect(request.fetch(fixture.endpoint, { method: 'POST' })).rejects.toMatchObject({
       code: 'MCP_REDIRECT_REFUSED',
     });
     mode = 'large';
-    await assert.rejects(request.fetch(fixture.endpoint, { method: 'POST' }), {
+    await expect(request.fetch(fixture.endpoint, { method: 'POST' })).rejects.toMatchObject({
       code: 'MCP_RESPONSE_TOO_LARGE',
     });
     mode = 'hang';
     const abort = new AbortController();
     const pending = request.fetch(fixture.endpoint, { method: 'POST', signal: abort.signal });
     abort.abort();
-    await assert.rejects(pending);
+    await expect(pending).rejects.toThrowError();
   } finally {
     await fixture.close();
   }
@@ -112,19 +121,23 @@ test('one approved MCP invocation can physically dispatch tools/call only once, 
         params: { name: 'synthetic_write', arguments: { value: 47 } },
       });
     await request.fetch(fixture.endpoint, { method: 'POST', body: body(1) });
-    await assert.rejects(request.fetch(fixture.endpoint, { method: 'POST', body: body(2) }), {
+    await expect(
+      request.fetch(fixture.endpoint, { method: 'POST', body: body(2) }),
+    ).rejects.toMatchObject({
       code: 'MCP_REPLAY_BLOCKED',
     });
-    assert.equal(calls, 1);
-    assert.equal(claims, 1);
+    expect(calls).toBe(1);
+    expect(claims).toBe(1);
     const denied = new McpFetch(fixture.endpoint, {
       ...fixture,
       onDispatch: async () => {
         throw new Error('synthetic claim failure');
       },
     });
-    await assert.rejects(denied.fetch(fixture.endpoint, { method: 'POST', body: body(3) }));
-    assert.equal(calls, 1);
+    await expect(
+      denied.fetch(fixture.endpoint, { method: 'POST', body: body(3) }),
+    ).rejects.toThrowError();
+    expect(calls).toBe(1);
   } finally {
     await fixture.close();
   }

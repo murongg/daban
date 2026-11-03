@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { parseSkill, Skills } from './skills.js';
 
 const markdown = (name = 'mock-summary', body = '只整理用户提供的合成记录。') =>
@@ -15,13 +14,13 @@ test('SKILL.md parsing keeps the original document and native invocation policy 
     'disable-model-invocation: yes\nuser-invocable: true\nallowed-tools: shell\ndescription:',
   );
   const parsed = parseSkill(content);
-  assert.equal(parsed.name, 'mock-summary');
-  assert.equal(parsed.description, '合成记录汇总工作流');
-  assert.equal(parsed.content, content);
-  assert.equal(parsed.body, '只整理用户提供的合成记录。');
-  assert.equal(parsed.invocation.modelInvocable, false);
-  assert.equal(parsed.invocation.userInvocable, true);
-  assert.equal('allowedTools' in parsed, false);
+  expect(parsed.name).toBe('mock-summary');
+  expect(parsed.description).toBe('合成记录汇总工作流');
+  expect(parsed.content).toBe(content);
+  expect(parsed.body).toBe('只整理用户提供的合成记录。');
+  expect(parsed.invocation.modelInvocable).toBe(false);
+  expect(parsed.invocation.userInvocable).toBe(true);
+  expect('allowedTools' in parsed).toBe(false);
   for (const invalid of [
     'missing frontmatter',
     markdown('../escape'),
@@ -32,7 +31,9 @@ test('SKILL.md parsing keeps the original document and native invocation policy 
     markdown('mock-empty', ''),
     markdown('mock-large', 'x'.repeat(100001)),
   ])
-    assert.throws(() => parseSkill(invalid), { code: 'INVALID_SKILL' });
+    expect(() => parseSkill(invalid)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_SKILL' }),
+    );
 });
 
 test('import is disabled, content-preserving and idempotent; edits are CAS and never overwrite a conflicting name', async () => {
@@ -40,12 +41,12 @@ test('import is disabled, content-preserving and idempotent; edits are CAS and n
   const store = new Skills(path.join(root, 'skills.sqlite'));
   try {
     const first = await store.import(markdown());
-    assert.equal(first.revision, 1);
-    assert.equal((await store.import(markdown())).id, first.id);
-    assert.equal((await store.list('mock-a')).items[0].enabled, false);
-    assert.equal((await store.list('mock-a')).items[0].bindingRevision, 0);
-    assert.equal((await store.capture('mock-a')).key, '');
-    await assert.rejects(store.import(markdown('mock-summary', '不同的合成正文')), {
+    expect(first.revision).toBe(1);
+    expect((await store.import(markdown())).id).toBe(first.id);
+    expect((await store.list('mock-a')).items[0].enabled).toBe(false);
+    expect((await store.list('mock-a')).items[0].bindingRevision).toBe(0);
+    expect((await store.capture('mock-a')).key).toBe('');
+    await expect(store.import(markdown('mock-summary', '不同的合成正文'))).rejects.toMatchObject({
       code: 'SKILL_NAME_CONFLICT',
     });
     const changed = await store.update(
@@ -53,16 +54,16 @@ test('import is disabled, content-preserving and idempotent; edits are CAS and n
       first.revision,
       markdown('mock-summary', '新的合成说明'),
     );
-    assert.equal(changed.revision, 2);
-    await assert.rejects(store.update(first.id, first.revision, markdown()), {
+    expect(changed.revision).toBe(2);
+    await expect(store.update(first.id, first.revision, markdown())).rejects.toMatchObject({
       code: 'SKILL_CONFLICT',
     });
     const other = await store.import(markdown('mock-other'));
-    await assert.rejects(store.update(other.id, other.revision, markdown()), {
+    await expect(store.update(other.id, other.revision, markdown())).rejects.toMatchObject({
       code: 'SKILL_NAME_CONFLICT',
     });
-    assert.equal((await store.read(first.id)).content, changed.content);
-    assert.equal((await stat(path.join(root, 'skills.sqlite'))).mode & 0o777, 0o600);
+    expect((await store.read(first.id)).content).toBe(changed.content);
+    expect((await stat(path.join(root, 'skills.sqlite'))).mode & 0o777).toBe(0o600);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -78,14 +79,11 @@ test('Bot bindings are independent, revision-bound and captured immutably; recyc
     const input = { id: skill.id, revision: skill.revision, bindingRevision: 0, enabled: true };
     await store.bind('mock-a', input);
     const captured = await store.capture('mock-a');
-    assert.equal(captured.available, true);
-    assert.notEqual(captured.key, '');
-    assert.deepEqual(
-      captured.skills.map((item) => item.name),
-      ['mock-summary'],
-    );
-    assert.equal((await store.capture('mock-b')).skills.length, 0);
-    await assert.rejects(store.bind('mock-a', { ...input, enabled: false }), {
+    expect(captured.available).toBe(true);
+    expect(captured.key).not.toBe('');
+    expect(captured.skills.map((item) => item.name)).toStrictEqual(['mock-summary']);
+    expect((await store.capture('mock-b')).skills.length).toBe(0);
+    await expect(store.bind('mock-a', { ...input, enabled: false })).rejects.toMatchObject({
       code: 'SKILL_BINDING_CONFLICT',
     });
     const edited = await store.update(
@@ -93,22 +91,24 @@ test('Bot bindings are independent, revision-bound and captured immutably; recyc
       skill.revision,
       markdown('mock-summary', '修改后说明'),
     );
-    await assert.rejects(store.bind('mock-b', input), { code: 'SKILL_CONFLICT' });
-    assert.notEqual((await store.capture('mock-a')).key, captured.key);
-    assert.equal(captured.skills[0].content, '只整理用户提供的合成记录。');
+    await expect(store.bind('mock-b', input)).rejects.toMatchObject({ code: 'SKILL_CONFLICT' });
+    expect((await store.capture('mock-a')).key).not.toBe(captured.key);
+    expect(captured.skills[0].content).toBe('只整理用户提供的合成记录。');
     const recycled = await store.recycle(skill.id, edited.revision);
-    assert.equal((await store.list('mock-a')).items.length, 0);
-    assert.equal((await store.list('mock-a', true)).items[0].deleted, true);
-    assert.equal((await store.capture('mock-a')).key, '');
+    expect((await store.list('mock-a')).items.length).toBe(0);
+    expect((await store.list('mock-a', true)).items[0].deleted).toBe(true);
+    expect((await store.capture('mock-a')).key).toBe('');
     const restored = await store.restore(skill.id, recycled.revision);
-    assert.equal((await store.list('mock-a')).items[0].enabled, false);
-    await assert.rejects(store.bind('mock-a', { ...input, revision: restored.revision }), {
+    expect((await store.list('mock-a')).items[0].enabled).toBe(false);
+    await expect(
+      store.bind('mock-a', { ...input, revision: restored.revision }),
+    ).rejects.toMatchObject({
       code: 'SKILL_BINDING_CONFLICT',
     });
     await store.close();
     store = new Skills(file);
-    assert.equal((await store.read(skill.id)).content, edited.content);
-    assert.equal((await store.capture('mock-a')).skills.length, 0);
+    expect((await store.read(skill.id)).content).toBe(edited.content);
+    expect((await store.capture('mock-a')).skills.length).toBe(0);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -122,11 +122,11 @@ test('corrupt skill storage is retained and reports a missing capability instead
   await writeFile(file, raw, { mode: 0o600 });
   const store = new Skills(file);
   try {
-    assert.equal((await store.status()).available, false);
-    assert.equal((await store.capture('mock-a')).available, false);
-    assert.equal((await store.capture('mock-a')).skills.length, 0);
-    await assert.rejects(store.import(markdown()), { code: 'SKILLS_UNAVAILABLE' });
-    assert.deepEqual(await readFile(file), raw);
+    expect((await store.status()).available).toBe(false);
+    expect((await store.capture('mock-a')).available).toBe(false);
+    expect((await store.capture('mock-a')).skills.length).toBe(0);
+    await expect(store.import(markdown())).rejects.toMatchObject({ code: 'SKILLS_UNAVAILABLE' });
+    expect(await readFile(file)).toStrictEqual(raw);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -156,9 +156,9 @@ test('invalid persisted bindings or catalog versions disable skills rather than 
       db.exec(sql);
       db.close();
       store = new Skills(file);
-      assert.equal((await store.status()).available, false, sql);
-      assert.equal((await store.capture('mock-a')).available, false);
-      await assert.rejects(store.import(markdown()), { code: 'SKILLS_UNAVAILABLE' });
+      expect((await store.status()).available, sql).toBe(false);
+      expect((await store.capture('mock-a')).available).toBe(false);
+      await expect(store.import(markdown())).rejects.toMatchObject({ code: 'SKILLS_UNAVAILABLE' });
     } finally {
       await store.close();
       await rm(root, { recursive: true, force: true });
@@ -172,25 +172,23 @@ test('portable recipe batches are atomic, idempotent and disabled without modify
   try {
     const original = await store.import(markdown('mock-existing'));
     const before = await store.status();
-    await assert.rejects(
+    await expect(
       store.importBatch([markdown('mock-new'), markdown('mock-existing', 'SYNTHETIC CONFLICT')]),
-      { code: 'SKILL_NAME_CONFLICT' },
-    );
-    assert.equal((await store.list('mock-target')).items.length, 1);
-    assert.deepEqual(await store.status(), before);
+    ).rejects.toMatchObject({ code: 'SKILL_NAME_CONFLICT' });
+    expect((await store.list('mock-target')).items.length).toBe(1);
+    expect(await store.status()).toStrictEqual(before);
     const created = await store.importBatch([markdown('mock-existing'), markdown('mock-new')]);
-    assert.equal(created[0].id, original.id);
-    assert.ok(
+    expect(created[0].id).toBe(original.id);
+    expect.assert(
       (await store.list('mock-target')).items.every(
         (item) => !item.enabled && item.bindingRevision === 0,
       ),
     );
     const complete = await store.status();
-    assert.deepEqual(
+    expect(
       await store.importBatch([markdown('mock-existing'), markdown('mock-new')]),
-      created,
-    );
-    assert.deepEqual(await store.status(), complete);
+    ).toStrictEqual(created);
+    expect(await store.status()).toStrictEqual(complete);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });

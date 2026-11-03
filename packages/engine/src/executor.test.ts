@@ -1,16 +1,15 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rename, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { documentLimit } from '@daban/protocol';
+import { expect, type TestContext, test } from 'vitest';
 import { RemoteExecutor } from './execution.js';
 import { startExecutor } from './executor.js';
 
-async function fixture(t: { after: (action: () => unknown) => unknown }) {
+async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-executor-'));
   const service = await startExecutor({ directory: root, port: 0, boot: 'mock-guest-boot' });
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await service.close();
     await rm(root, { recursive: true, force: true });
   });
@@ -22,18 +21,19 @@ async function fixture(t: { after: (action: () => unknown) => unknown }) {
 
 test('executor authenticates one narrow RPC surface without model or approval endpoints', async (t) => {
   const { service, client } = await fixture(t);
-  assert.equal(client.snapshot?.role, 'executor');
-  assert.equal(client.snapshot?.version, 1);
-  assert.equal(client.snapshot?.boot, 'mock-guest-boot');
-  assert.equal('model' in client.snapshot!.computer, false);
-  assert.equal((await fetch(`${service.origin}/api/model/settings`)).status, 404);
-  assert.equal((await fetch(`${service.origin}/exec`, { method: 'POST', body: '{}' })).status, 403);
-  await assert.rejects(client.call('model.configure', {}), { code: 'EXECUTION_INVALID_REQUEST' });
-  await assert.rejects(
+  expect(client.snapshot?.role).toBe('executor');
+  expect(client.snapshot?.version).toBe(1);
+  expect(client.snapshot?.boot).toBe('mock-guest-boot');
+  expect('model' in client.snapshot!.computer).toBe(false);
+  expect((await fetch(`${service.origin}/api/model/settings`)).status).toBe(404);
+  expect((await fetch(`${service.origin}/exec`, { method: 'POST', body: '{}' })).status).toBe(403);
+  await expect(client.call('model.configure', {})).rejects.toMatchObject({
+    code: 'EXECUTION_INVALID_REQUEST',
+  });
+  await expect(
     client.call('computer.request', { method: 'POST', path: '/api/model/configure', body: {} }),
-    { code: 'EXECUTION_INVALID_ROUTE' },
-  );
-  await assert.rejects(
+  ).rejects.toMatchObject({ code: 'EXECUTION_INVALID_ROUTE' });
+  await expect(
     client.call('tools.open', {
       id: 'mock-run',
       bot: 'mock-a',
@@ -42,8 +42,7 @@ test('executor authenticates one narrow RPC surface without model or approval en
       limit: 10,
       apiKey: 'SYNTHETIC-PRIVATE',
     }),
-    { code: 'EXECUTION_INVALID_REQUEST' },
-  );
+  ).rejects.toMatchObject({ code: 'EXECUTION_INVALID_REQUEST' });
 });
 
 test('workspace handles stay in the guest and reject moved roots and outside scopes', async (t) => {
@@ -54,7 +53,7 @@ test('workspace handles stay in the guest and reject moved roots and outside sco
     canonical: string;
     handleId: string;
   }>('workspace.create', { parts: ['mock-run', 'mock-a'] });
-  assert.deepEqual(Object.keys(directory).sort(), ['canonical', 'handleId', 'path', 'root']);
+  expect(Object.keys(directory).sort()).toStrictEqual(['canonical', 'handleId', 'path', 'root']);
   await client.call('workspace.write', {
     handleId: directory.handleId,
     name: 'input.txt',
@@ -63,13 +62,15 @@ test('workspace handles stay in the guest and reject moved roots and outside sco
   const result = await client.call<{ content: string }>('workspace.read', {
     path: 'mock-run/mock-a/input.txt',
   });
-  assert.equal(result.content, 'SYNTHETIC-47');
-  await assert.rejects(client.call('workspace.list', { root: '/tmp' }), {
+  expect(result.content).toBe('SYNTHETIC-47');
+  await expect(client.call('workspace.list', { root: '/tmp' })).rejects.toMatchObject({
     code: 'EXECUTION_WORKSPACE_SCOPE',
   });
   await rename(directory.path, `${directory.path}-moved`);
   await symlink(`${directory.path}-moved`, directory.path);
-  await assert.rejects(client.call('workspace.verify', { handleId: directory.handleId }), {
+  await expect(
+    client.call('workspace.verify', { handleId: directory.handleId }),
+  ).rejects.toMatchObject({
     code: 'TASK_DIRECTORY_MOVED',
   });
   await client.call('workspace.close', { handleId: directory.handleId });
@@ -89,16 +90,15 @@ test('the public document limit survives RPC staging and download while one extr
   const downloaded = await client.call<{ data: string; size: number }>('workspace.download', {
     path: 'mock-size/mock-a/synthetic-max.bin',
   });
-  assert.equal(downloaded.size, documentLimit);
-  assert.equal(downloaded.data, data);
-  await assert.rejects(
+  expect(downloaded.size).toBe(documentLimit);
+  expect(downloaded.data).toBe(data);
+  await expect(
     client.call('workspace.write', {
       handleId: directory.handleId,
       name: 'synthetic-over.bin',
       data: Buffer.alloc(documentLimit + 1, 47).toString('base64'),
     }),
-    { code: 'EXECUTION_INVALID_REQUEST' },
-  );
+  ).rejects.toMatchObject({ code: 'EXECUTION_INVALID_REQUEST' });
 });
 
 test('guest tools retain an operation receipt instead of executing a retried write', async (t) => {
@@ -126,14 +126,13 @@ test('guest tools retain an operation receipt instead of executing a retried wri
     if (state?.phase === 'settled') break;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  assert.equal(state?.phase, 'settled');
-  assert.equal(state?.result?.isError, undefined);
-  assert.equal(state?.toolCount, 1);
-  assert.deepEqual(await client.call('tools.invoke', request), state);
-  await assert.rejects(
+  expect(state?.phase).toBe('settled');
+  expect(state?.result?.isError).toBe(undefined);
+  expect(state?.toolCount).toBe(1);
+  expect(await client.call('tools.invoke', request)).toStrictEqual(state);
+  await expect(
     client.call('tools.invoke', { ...request, args: { path: 'other.txt', content: 'wrong' } }),
-    { code: 'EXECUTION_OPERATION_CONFLICT' },
-  );
+  ).rejects.toMatchObject({ code: 'EXECUTION_OPERATION_CONFLICT' });
   await client.call('tools.drain', { runId: 'mock-run' });
 });
 
@@ -152,8 +151,8 @@ test('full guest catalog offers persistent process tools and retains process inp
       limit: 20,
     },
   );
-  assert.ok(opened.tools.some((tool) => tool.name === 'process_start'));
-  assert.match(opened.tools.find((tool) => tool.name === 'shell')!.description, /sudo/);
+  expect.assert(opened.tools.some((tool) => tool.name === 'process_start'));
+  expect(opened.tools.find((tool) => tool.name === 'shell')!.description).toMatch(/sudo/);
   const invoke = async (operationId: string, name: string, args: Record<string, unknown>) => {
     await client.call('tools.invoke', { runId: 'mock-process-run', operationId, name, args });
     for (let count = 0; count < 100; count++) {
@@ -169,7 +168,7 @@ test('full guest catalog offers persistent process tools and retains process inp
   const started = await invoke('mock-process-start', 'process_start', {
     command: 'read -r value; printf "%s" "$value"',
   });
-  assert.equal(started.id, 'mock-process-start');
+  expect(started.id).toBe('mock-process-start');
   await invoke('mock-process-input', 'process_input', {
     id: started.id,
     data: 'SYNTHETIC-INPUT\n',
@@ -179,22 +178,21 @@ test('full guest catalog offers persistent process tools and retains process inp
     result = await invoke(`mock-process-poll-${count}`, 'process_poll', { id: started.id });
     if (result.phase === 'exited') break;
   }
-  assert.equal(result.stdout, 'SYNTHETIC-INPUT');
+  expect(result.stdout).toBe('SYNTHETIC-INPUT');
   const pending = await invoke('mock-process-background', 'process_start', {
     command: 'sleep 30 & wait',
   });
   await client.call('tools.cancel', { runId: 'mock-process-run' });
-  await assert.rejects(
+  await expect(
     client.call('tools.invoke', {
       runId: 'mock-process-run',
       operationId: 'mock-after-stop',
       name: 'write_file',
       args: { path: 'late.txt', content: 'SYNTHETIC-LATE' },
     }),
-    { code: 'EXECUTION_RUN_CLOSED' },
-  );
+  ).rejects.toMatchObject({ code: 'EXECUTION_RUN_CLOSED' });
   const cancelled = await client.call<{ phase: string }>('process.poll', { id: pending.id });
-  assert.equal(cancelled.phase, 'cancelled');
+  expect(cancelled.phase).toBe('cancelled');
   await client.call('tools.drain', { runId: 'mock-process-run' });
 });
 
@@ -202,7 +200,7 @@ test('a shell operation retried after service replacement keeps its original dur
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-shell-owner-'));
   const first = await startExecutor({ directory: root, port: 0, boot: 'mock-shell-boot' });
   let second: Awaited<ReturnType<typeof startExecutor>> | undefined;
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await first.close();
     await second?.close();
     await rm(root, { recursive: true, force: true });
@@ -249,14 +247,14 @@ test('a shell operation retried after service replacement keeps its original dur
   await first.close();
   second = await startExecutor({ directory: root, port: 0, boot: 'mock-shell-boot' });
   await invoke(await connect(second.origin));
-  assert.equal(await readFile(path.join(directory.path, 'marker'), 'utf8'), 'x');
+  expect(await readFile(path.join(directory.path, 'marker'), 'utf8')).toBe('x');
 });
 
 test('closed runs do not consume active capacity and their ids remain retired after restart', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-closed-runs-'));
   const first = await startExecutor({ directory: root, port: 0, boot: 'mock-run-boot' });
   let second: Awaited<ReturnType<typeof startExecutor>> | undefined;
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await first.close();
     await second?.close();
     await rm(root, { recursive: true, force: true });
@@ -284,13 +282,17 @@ test('closed runs do not consume active capacity and their ids remain retired af
     await client.call('tools.open', { id, ...fields });
     await client.call('tools.drain', { runId: id });
   }
-  await assert.rejects(client.call('tools.open', { id: 'mock-retired-0', ...fields }), {
+  await expect(
+    client.call('tools.open', { id: 'mock-retired-0', ...fields }),
+  ).rejects.toMatchObject({
     code: 'EXECUTION_RUN_CLOSED',
   });
   await first.close();
   second = await startExecutor({ directory: root, port: 0, boot: 'mock-next-run-boot' });
   const restarted = await connect(second.origin);
-  await assert.rejects(restarted.call('tools.open', { id: 'mock-retired-0', ...fields }), {
+  await expect(
+    restarted.call('tools.open', { id: 'mock-retired-0', ...fields }),
+  ).rejects.toMatchObject({
     code: 'EXECUTION_RUN_CLOSED',
   });
   await restarted.call('tools.open', { id: 'mock-new-live', ...fields });

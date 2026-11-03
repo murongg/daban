@@ -1,16 +1,15 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, type TestContext, test, vi } from 'vitest';
 import { ProcessManager } from './processes.js';
 
-async function fixture(t: { after: (action: () => unknown) => unknown }) {
+async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-execution-process-'));
   const manager = new ProcessManager({ directory: path.join(root, 'receipts'), boot: 'mock-boot' });
   await manager.ready;
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await manager.close();
     await rm(root, { recursive: true, force: true });
   });
@@ -32,7 +31,7 @@ test('guest shell preserves exact receipts, accepts input once, and never inheri
     'read -r value; if [ -z "$SYNTHETIC_HOST_SECRET" ]; then printf "%s:unset" "$value"; fi; printf x >> marker';
   const before = process.env.SYNTHETIC_HOST_SECRET;
   process.env.SYNTHETIC_HOST_SECRET = 'SYNTHETIC-PRIVATE';
-  t.after(() => {
+  t.onTestFinished(() => {
     if (before === undefined) delete process.env.SYNTHETIC_HOST_SECRET;
     else process.env.SYNTHETIC_HOST_SECRET = before;
   });
@@ -40,20 +39,19 @@ test('guest shell preserves exact receipts, accepts input once, and never inheri
   await manager.start(request);
   await manager.start(request);
   await manager.start({ command, cwd: root, id: request.id });
-  await assert.rejects(manager.start({ ...request, command: 'printf duplicate' }), {
+  await expect(manager.start({ ...request, command: 'printf duplicate' })).rejects.toMatchObject({
     code: 'PROCESS_REQUEST_CONFLICT',
   });
   await manager.input({ id: request.id, requestId: 'mock-write', data: 'SYNTHETIC\n' });
   await manager.input({ id: request.id, requestId: 'mock-write', data: 'SYNTHETIC\n' });
-  await assert.rejects(
+  await expect(
     manager.input({ id: request.id, requestId: 'mock-write', data: 'different\n' }),
-    { code: 'PROCESS_REQUEST_CONFLICT' },
-  );
+  ).rejects.toMatchObject({ code: 'PROCESS_REQUEST_CONFLICT' });
   const state = await settled(manager, request.id);
-  assert.equal(state.stdout, 'SYNTHETIC:unset');
-  assert.equal(state.exitCode, 0);
-  assert.equal(await readFile(path.join(root, 'marker'), 'utf8'), 'x');
-  assert.deepEqual(await manager.start(request), state);
+  expect(state.stdout).toBe('SYNTHETIC:unset');
+  expect(state.exitCode).toBe(0);
+  expect(await readFile(path.join(root, 'marker'), 'utf8')).toBe('x');
+  expect(await manager.start(request)).toStrictEqual(state);
 });
 
 test('process output is bounded and cancellation terminates its process group', async (t) => {
@@ -64,13 +62,15 @@ test('process output is bounded and cancellation terminates its process group', 
     cwd: root,
   });
   const state = await settled(manager, 'mock-output');
-  assert.equal(state.phase, 'failed');
-  assert.equal(state.error, 'PROCESS_OUTPUT_LIMIT');
-  assert.ok(Buffer.byteLength(state.stdout) + Buffer.byteLength(state.stderr) <= 65536);
+  expect(state.phase).toBe('failed');
+  expect(state.error).toBe('PROCESS_OUTPUT_LIMIT');
+  expect.assert(Buffer.byteLength(state.stdout) + Buffer.byteLength(state.stderr) <= 65536);
   await manager.start({ id: 'mock-group', command: 'sleep 30 & wait', cwd: root });
   const cancelled = await manager.cancel({ id: 'mock-group', requestId: 'mock-cancel' });
-  assert.equal(cancelled.phase, 'cancelled');
-  assert.deepEqual(await manager.cancel({ id: 'mock-group', requestId: 'mock-cancel' }), cancelled);
+  expect(cancelled.phase).toBe('cancelled');
+  expect(await manager.cancel({ id: 'mock-group', requestId: 'mock-cancel' })).toStrictEqual(
+    cancelled,
+  );
 });
 
 test('a new service instance reports an old running receipt unknown and does not rerun it', async (t) => {
@@ -83,9 +83,11 @@ test('a new service instance reports an old running receipt unknown and does not
     boot: 'mock-new-boot',
   });
   await restarted.ready;
-  t.after(() => restarted.close());
-  assert.equal((await restarted.start(request)).phase, 'unknown');
-  assert.equal(await readFile(path.join(root, 'marker'), 'utf8'), 'x');
+  t.onTestFinished(async () => {
+    await restarted.close();
+  });
+  expect((await restarted.start(request)).phase).toBe('unknown');
+  expect(await readFile(path.join(root, 'marker'), 'utf8')).toBe('x');
 });
 
 test('binary command output cannot expand past the UTF-8 response byte limit', async (t) => {
@@ -96,8 +98,8 @@ test('binary command output cannot expand past the UTF-8 response byte limit', a
     cwd: root,
   });
   const state = await settled(manager, 'mock-binary');
-  assert.equal(state.error, 'PROCESS_OUTPUT_LIMIT');
-  assert.ok(Buffer.byteLength(state.stdout) + Buffer.byteLength(state.stderr) <= 65536);
+  expect(state.error).toBe('PROCESS_OUTPUT_LIMIT');
+  expect.assert(Buffer.byteLength(state.stdout) + Buffer.byteLength(state.stderr) <= 65536);
 });
 
 test('shutdown cancels a process whose valid external id already uses the full length', async (t) => {
@@ -105,7 +107,7 @@ test('shutdown cancels a process whose valid external id already uses the full l
   const id = `mock-${'x'.repeat(75)}`;
   await manager.start({ id, command: 'sleep 0.3', cwd: root });
   await manager.close();
-  assert.equal((await manager.poll(id)).phase, 'cancelled');
+  expect((await manager.poll(id)).phase).toBe('cancelled');
 });
 
 test('concurrent process admission counts durable claims that have not spawned yet', async (t) => {
@@ -115,9 +117,9 @@ test('concurrent process admission counts durable claims that have not spawned y
       manager.start({ id: `mock-capacity-${index}`, command: 'sleep 0.5', cwd: root }),
     ),
   );
-  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 16);
+  expect(results.filter((result) => result.status === 'fulfilled').length).toBe(16);
   const rejection = results.find((result) => result.status === 'rejected');
-  assert.ok(rejection?.status === 'rejected' && rejection.reason.code === 'PROCESS_CAPACITY');
+  expect.assert(rejection?.status === 'rejected' && rejection.reason.code === 'PROCESS_CAPACITY');
 });
 
 test('UTF-8 command output preserves a character split across pipe reads', async (t) => {
@@ -127,7 +129,7 @@ test('UTF-8 command output preserves a character split across pipe reads', async
     command: 'printf "\\344"; sleep 0.03; printf "\\270\\255"',
     cwd: root,
   });
-  assert.equal((await settled(manager, 'mock-unicode')).stdout, '中');
+  expect((await settled(manager, 'mock-unicode')).stdout).toBe('中');
 });
 
 test('more than256 terminal receipts stay queryable and cannot replay while new commands remain available', async (t) => {
@@ -161,15 +163,21 @@ test('more than256 terminal receipts stay queryable and cannot replay while new 
   );
   const history = new ProcessManager({ directory, boot: 'mock-current' });
   await history.ready;
-  t.after(() => history.close());
-  assert.equal((await history.start(request)).stdout, 'SYNTHETIC-OLD-RESULT');
+  t.onTestFinished(async () => {
+    await history.close();
+  });
+  expect((await history.start(request)).stdout).toBe('SYNTHETIC-OLD-RESULT');
   await history.start({ id: 'mock-after-history', command: 'printf SYNTHETIC-NEW', cwd: root });
-  assert.equal((await settled(history, 'mock-after-history')).stdout, 'SYNTHETIC-NEW');
+  expect((await settled(history, 'mock-after-history')).stdout).toBe('SYNTHETIC-NEW');
   const restarted = new ProcessManager({ directory, boot: 'mock-next' });
   await restarted.ready;
-  t.after(() => restarted.close());
-  assert.equal((await restarted.start(request)).stdout, 'SYNTHETIC-OLD-RESULT');
-  await assert.rejects(readFile(path.join(root, 'must-not-exist')), { code: 'ENOENT' });
+  t.onTestFinished(async () => {
+    await restarted.close();
+  });
+  expect((await restarted.start(request)).stdout).toBe('SYNTHETIC-OLD-RESULT');
+  await expect(readFile(path.join(root, 'must-not-exist'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  });
 });
 
 test('a save failure after spawn reports queryable uncertainty without replaying the command', async (t) => {
@@ -177,7 +185,7 @@ test('a save failure after spawn reports queryable uncertainty without replaying
   const target = manager as unknown as { persist: (receipt: unknown) => Promise<unknown> };
   const persist = target.persist.bind(manager);
   let writes = 0;
-  t.mock.method(target, 'persist', async (receipt: unknown) => {
+  vi.spyOn(target, 'persist').mockImplementation(async (receipt: unknown) => {
     if (++writes < 2) return persist(receipt);
     for (let attempt = 0; attempt < 100; attempt++) {
       if (
@@ -193,16 +201,18 @@ test('a save failure after spawn reports queryable uncertainty without replaying
   });
   const request = { id: 'mock-save-failure', command: 'printf x >> effect', cwd: root };
   const result = await manager.start(request);
-  assert.equal(result.phase, 'unknown');
-  assert.equal(result.error, 'PROCESS_OUTCOME_UNKNOWN');
-  assert.equal((await manager.poll(request.id)).phase, 'unknown');
-  assert.equal(await readFile(path.join(root, 'effect'), 'utf8'), 'x');
+  expect(result.phase).toBe('unknown');
+  expect(result.error).toBe('PROCESS_OUTCOME_UNKNOWN');
+  expect((await manager.poll(request.id)).phase).toBe('unknown');
+  expect(await readFile(path.join(root, 'effect'), 'utf8')).toBe('x');
   const restarted = new ProcessManager({
     directory: path.join(root, 'receipts'),
     boot: 'mock-after-save-failure',
   });
   await restarted.ready;
-  t.after(() => restarted.close());
-  assert.equal((await restarted.start(request)).phase, 'unknown');
-  assert.equal(await readFile(path.join(root, 'effect'), 'utf8'), 'x');
+  t.onTestFinished(async () => {
+    await restarted.close();
+  });
+  expect((await restarted.start(request)).phase).toBe('unknown');
+  expect(await readFile(path.join(root, 'effect'), 'utf8')).toBe('x');
 });

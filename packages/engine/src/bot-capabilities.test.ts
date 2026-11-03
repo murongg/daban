@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Integrations } from './integrations.js';
 import { Skills } from './skills.js';
 
@@ -25,35 +24,34 @@ test('Bot installations have independent names, versions and lifecycle while pac
   let store = new Skills(file);
   try {
     const first = await store.importPackage(bundle('SYNTHETIC ALPHA'), 'mock-alpha');
-    assert.deepEqual((await store.list('mock-beta')).items, []);
-    await assert.rejects(store.read(first.id, 'mock-beta'), /SKILL_NOT_FOUND/);
+    expect((await store.list('mock-beta')).items).toStrictEqual([]);
+    await expect(store.read(first.id, 'mock-beta')).rejects.toThrowError(/SKILL_NOT_FOUND/);
     const second = await store.importPackage(bundle('SYNTHETIC BETA'), 'mock-beta');
-    assert.notEqual(first.id, second.id);
+    expect(first.id).not.toBe(second.id);
     const db = new DatabaseSync(file, { readOnly: true });
     try {
-      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM skill_packages').get()!.count, 1);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM skill_packages').get()!.count).toBe(1);
     } finally {
       db.close();
     }
     const before = await store.capture('mock-alpha');
     await store.update(first.id, first.revision, content('SYNTHETIC ALPHA EDIT'), 'mock-alpha');
-    assert.equal((await store.read(second.id, 'mock-beta')).content, content('SYNTHETIC BETA'));
-    await assert.rejects(
+    expect((await store.read(second.id, 'mock-beta')).content).toBe(content('SYNTHETIC BETA'));
+    await expect(
       store.bind('mock-beta', {
         id: first.id,
         revision: first.revision,
         bindingRevision: 0,
         enabled: true,
       }),
-      /SKILL_NOT_FOUND/,
-    );
+    ).rejects.toThrowError(/SKILL_NOT_FOUND/);
     await store.recycle(first.id, first.revision + 1, 'mock-alpha');
-    assert.equal((await store.list('mock-alpha')).items.length, 0);
-    assert.equal((await store.list('mock-beta')).items[0].id, second.id);
+    expect((await store.list('mock-alpha')).items.length).toBe(0);
+    expect((await store.list('mock-beta')).items[0].id).toBe(second.id);
     store.release(before);
     await store.close();
     store = new Skills(file);
-    assert.equal((await store.read(second.id, 'mock-beta')).content, content('SYNTHETIC BETA'));
+    expect((await store.read(second.id, 'mock-beta')).content).toBe(content('SYNTHETIC BETA'));
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -66,11 +64,13 @@ test('adding a skill to another Bot creates an independent installation rather t
   try {
     const original = await store.importPackage(bundle('SYNTHETIC INITIAL'), 'mock-alpha');
     const copied = await store.copy('mock-alpha', original.id, original.revision, 'mock-beta');
-    assert.notEqual(copied.id, original.id);
-    assert.equal((await store.list('mock-beta')).items[0].enabled, true);
+    expect(copied.id).not.toBe(original.id);
+    expect((await store.list('mock-beta')).items[0].enabled).toBe(true);
     await store.update(original.id, original.revision, content('SYNTHETIC CHANGED'), 'mock-alpha');
-    assert.equal((await store.read(copied.id, 'mock-beta')).content, content('SYNTHETIC INITIAL'));
-    await assert.rejects(store.copy('mock-beta', original.id, 2, 'mock-alpha'), /SKILL_NOT_FOUND/);
+    expect((await store.read(copied.id, 'mock-beta')).content).toBe(content('SYNTHETIC INITIAL'));
+    await expect(store.copy('mock-beta', original.id, 2, 'mock-alpha')).rejects.toThrowError(
+      /SKILL_NOT_FOUND/,
+    );
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -91,11 +91,11 @@ test('MCP connections and credentials belong to their Bot and cannot be granted 
   });
   try {
     const first = await store.save(input('connection-alpha', 'SYNTHETIC-ALPHA-KEY'), 'mock-alpha');
-    assert.equal((await store.list(false, 'mock-beta')).items.length, 0);
+    expect((await store.list(false, 'mock-beta')).items.length).toBe(0);
     await store.save(input('connection-beta', 'SYNTHETIC-BETA-KEY'), 'mock-beta');
-    assert.equal((await store.assignments('mock-beta')).items.length, 1);
-    await assert.rejects(store.read(first.current.id, 'mock-beta'), /MCP_NOT_FOUND/);
-    await assert.rejects(
+    expect((await store.assignments('mock-beta')).items.length).toBe(1);
+    await expect(store.read(first.current.id, 'mock-beta')).rejects.toThrowError(/MCP_NOT_FOUND/);
+    await expect(
       store.save(
         {
           ...input('connection-alpha', 'SYNTHETIC-CHANGED'),
@@ -104,9 +104,8 @@ test('MCP connections and credentials belong to their Bot and cannot be granted 
         },
         'mock-beta',
       ),
-      /MCP_NOT_FOUND/,
-    );
-    await assert.rejects(
+    ).rejects.toThrowError(/MCP_NOT_FOUND/);
+    await expect(
       store.bind('mock-beta', {
         connection: first.current.id,
         configRevision: 1,
@@ -114,15 +113,16 @@ test('MCP connections and credentials belong to their Bot and cannot be granted 
         tools: ['synthetic_echo'],
         enabled: true,
       }),
+    ).rejects.toThrowError(/MCP_NOT_FOUND/);
+    await expect(store.archive(first.current.id, 1, 'mock-beta')).rejects.toThrowError(
       /MCP_NOT_FOUND/,
     );
-    await assert.rejects(store.archive(first.current.id, 1, 'mock-beta'), /MCP_NOT_FOUND/);
-    assert.equal((await store.privateConfig('connection-alpha')).bearer, 'SYNTHETIC-ALPHA-KEY');
-    assert.equal((await store.privateConfig('connection-beta')).bearer, 'SYNTHETIC-BETA-KEY');
+    expect((await store.privateConfig('connection-alpha')).bearer).toBe('SYNTHETIC-ALPHA-KEY');
+    expect((await store.privateConfig('connection-beta')).bearer).toBe('SYNTHETIC-BETA-KEY');
     await store.close();
     store = new Integrations(file);
-    assert.equal((await store.list(false, 'mock-alpha')).items[0].id, 'connection-alpha');
-    assert.equal((await store.list(false, 'mock-beta')).items[0].id, 'connection-beta');
+    expect((await store.list(false, 'mock-alpha')).items[0].id).toBe('connection-alpha');
+    expect((await store.list(false, 'mock-beta')).items[0].id).toBe('connection-beta');
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -146,7 +146,7 @@ test('HTTP imports and MCP saves bind ownership to the explicit Bot and reject g
     return { status: response.status, value: await response.json() };
   };
   try {
-    assert.ok(app.models);
+    expect.assert(app.models);
     for (const id of ['mock-alpha', 'mock-beta'])
       await app.models.profiles.register({
         id,
@@ -159,18 +159,16 @@ test('HTTP imports and MCP saves bind ownership to the explicit Bot and reject g
       bot: 'mock-alpha',
       package: bundle('SYNTHETIC API SKILL'),
     });
-    assert.equal(installed.status, 200);
-    assert.equal(installed.value.ownerBot, 'mock-alpha');
-    assert.equal(
+    expect(installed.status).toBe(200);
+    expect(installed.value.ownerBot).toBe('mock-alpha');
+    expect(
       (await post('/api/skills/list', { bot: 'mock-beta' })).value.catalog.items.some(
         (entry: { id: string }) => entry.id === installed.value.id,
       ),
-      false,
-    );
-    assert.equal(
+    ).toBe(false);
+    expect(
       (await post('/api/skills/read', { bot: 'mock-beta', id: installed.value.id })).status,
-      404,
-    );
+    ).toBe(404);
     const connection = await post('/api/mcp/save', {
       type: 'mcp.save',
       bot: 'mock-alpha',
@@ -183,9 +181,9 @@ test('HTTP imports and MCP saves bind ownership to the explicit Bot and reject g
         bearer: 'SYNTHETIC-KEY',
       },
     });
-    assert.equal(connection.status, 200);
-    assert.equal(connection.value.current.ownerBot, 'mock-alpha');
-    assert.equal(
+    expect(connection.status).toBe(200);
+    expect(connection.value.current.ownerBot).toBe('mock-alpha');
+    expect(
       (
         await post('/api/mcp/catalog', {
           type: 'mcp.catalog',
@@ -193,12 +191,10 @@ test('HTTP imports and MCP saves bind ownership to the explicit Bot and reject g
           id: 'mock-private-mcp',
         })
       ).status,
-      404,
-    );
-    assert.equal(
+    ).toBe(404);
+    expect(
       (await post('/api/mcp/list', { type: 'mcp.list', bot: 'mock-beta' })).value.items.length,
-      0,
-    );
+    ).toBe(0);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -228,16 +224,14 @@ test('a confirmed install extends only that task snapshot and does not pull in u
       enabled: true,
     });
     const after = await store.extend('mock-alpha', before, installed.id, 1);
-    assert.deepEqual(before.skills, []);
-    assert.deepEqual(
-      after.skills.map((item) => item.name),
-      ['synthetic-recipe'],
-    );
-    assert.equal(
+    expect(before.skills).toStrictEqual([]);
+    expect(after.skills.map((item) => item.name)).toStrictEqual(['synthetic-recipe']);
+    expect(
       (await store.readCaptured(after, 'synthetic-recipe', 'references/example.txt')).data,
-      Buffer.from('SYNTHETIC SHARED RESOURCE').toString('base64'),
+    ).toBe(Buffer.from('SYNTHETIC SHARED RESOURCE').toString('base64'));
+    await expect(store.extend('mock-beta', before, installed.id, 1)).rejects.toThrowError(
+      /SKILL_NOT_FOUND/,
     );
-    await assert.rejects(store.extend('mock-beta', before, installed.id, 1), /SKILL_NOT_FOUND/);
     store.release(before);
     store.release(after);
   } finally {
@@ -273,7 +267,7 @@ test('preparing an approved replacement never reuses files staged for an older s
     }));
     const firstBlock = (await tools.invoke(run, 'skill_prepare', { skill: 'synthetic-recipe' }))
       .content[0];
-    assert.ok(firstBlock.type === 'text');
+    expect.assert(firstBlock.type === 'text');
     const first = JSON.parse(firstBlock.text);
     const unrelated = await store.import(
       content('SYNTHETIC OTHER').replace('synthetic-recipe', 'synthetic-unrelated'),
@@ -289,22 +283,21 @@ test('preparing an approved replacement never reuses files staged for an older s
     run.skills = withOther;
     const sameBlock = (await tools.invoke(run, 'skill_prepare', { skill: 'synthetic-recipe' }))
       .content[0];
-    assert.ok(sameBlock.type === 'text');
-    assert.equal(
+    expect.assert(sameBlock.type === 'text');
+    expect(
       JSON.parse(sameBlock.text).directory,
-      first.directory,
       'An unrelated installation must not reset an existing prepared working directory',
-    );
+    ).toBe(first.directory);
     const next = await store.importPackage(bundle('SYNTHETIC APPROVED'), 'mock-alpha');
     await store.bind('mock-alpha', { id: next.id, revision: 1, bindingRevision: 0, enabled: true });
     const after = await store.extend('mock-alpha', withOther, next.id, 1);
     run.skills = after;
     const secondBlock = (await tools.invoke(run, 'skill_prepare', { skill: 'synthetic-recipe' }))
       .content[0];
-    assert.ok(secondBlock.type === 'text');
+    expect.assert(secondBlock.type === 'text');
     const second = JSON.parse(secondBlock.text);
-    assert.notEqual(first.directory, second.directory);
-    assert.equal(count, 2);
+    expect(first.directory).not.toBe(second.directory);
+    expect(count).toBe(2);
     store.release(before);
     store.release(withOther);
     store.release(after);
@@ -322,15 +315,14 @@ test('copying a legacy shared skill preserves other Bots and cannot resurrect it
     const shared = await store.import(content('SYNTHETIC LEGACY'));
     for (const bot of ['mock-alpha', 'mock-beta'])
       await store.bind(bot, { id: shared.id, revision: 1, bindingRevision: 0, enabled: true });
-    await assert.rejects(
+    await expect(
       store.update(shared.id, 1, content('SYNTHETIC WRONG SHARED EDIT'), 'mock-alpha'),
-      /SKILL_SHARED_READ_ONLY/,
-    );
+    ).rejects.toThrowError(/SKILL_SHARED_READ_ONLY/);
     const own = await store.copy('mock-alpha', shared.id, 1, 'mock-alpha');
-    assert.notEqual(own.id, shared.id);
+    expect(own.id).not.toBe(shared.id);
     await store.recycle(own.id, 1, 'mock-alpha');
-    assert.equal((await store.capture('mock-alpha')).skills.length, 0);
-    assert.equal((await store.capture('mock-beta')).skills[0].content, 'SYNTHETIC LEGACY');
+    expect((await store.capture('mock-alpha')).skills.length).toBe(0);
+    expect((await store.capture('mock-beta')).skills[0].content).toBe('SYNTHETIC LEGACY');
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -360,11 +352,11 @@ test('known built-in updates retain Bot opt-outs and never replace an unknown us
     };
     store = new Skills(file, [nextDefault]);
     const updated = (await store.list('mock-alpha')).items[0];
-    assert.equal(updated.revision, 2);
-    assert.equal(updated.enabled, false);
-    assert.equal(updated.bindingRevision, 1);
-    assert.equal((await store.list('mock-beta')).items[0].enabled, true);
-    assert.equal((await store.read('mock-builtin')).content, content('SYNTHETIC BUILTIN CURRENT'));
+    expect(updated.revision).toBe(2);
+    expect(updated.enabled).toBe(false);
+    expect(updated.bindingRevision).toBe(1);
+    expect((await store.list('mock-beta')).items[0].enabled).toBe(true);
+    expect((await store.read('mock-builtin')).content).toBe(content('SYNTHETIC BUILTIN CURRENT'));
     await store.close();
     const tampered = content('SYNTHETIC UNKNOWN REVISION');
     const db = new DatabaseSync(file);
@@ -376,13 +368,12 @@ test('known built-in updates retain Bot opt-outs and never replace an unknown us
       previousDigests: [inspectSkillPackage(previous).digest],
     };
     store = new Skills(file, [expectedDefault]);
-    assert.equal((await store.status()).available, false);
+    expect((await store.status()).available).toBe(false);
     const retained = new DatabaseSync(file, { readOnly: true });
     try {
-      assert.equal(
+      expect(
         retained.prepare('SELECT content FROM skills WHERE id=?').get('mock-builtin')!.content,
-        tampered,
-      );
+      ).toBe(tampered);
     } finally {
       retained.close();
     }

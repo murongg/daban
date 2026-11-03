@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 
 const uri = new URL('./playwright-input.js', import.meta.url).href;
 test('the pinned input shim adds native cancellation exactly once and refuses an unfamiliar engine', async () => {
@@ -19,13 +18,12 @@ async wheel(deltaX, deltaY) { await this._page._channel.mouseWheel({ deltaX, del
 };
 Touchscreen2 = class {};`;
   const changed = patchInput(source, '1.62.1');
-  assert.equal((changed.match(/signal: options.signal/g) || []).length, 7);
-  assert.match(changed, /insertText\(text2, options = \{\}\)/);
-  assert.match(changed, /wheel\(deltaX, deltaY, options = \{\}\)/);
-  assert.throws(() => patchInput(source, '0.0.0'), /BROWSER_INPUT_ENGINE_UNSUPPORTED/);
-  assert.throws(
-    () => patchInput(source.replace('mouseDown', 'unfamiliarDown'), '1.62.1'),
+  expect((changed.match(/signal: options.signal/g) || []).length).toBe(7);
+  expect(changed).toMatch(/insertText\(text2, options = \{\}\)/);
+  expect(changed).toMatch(/wheel\(deltaX, deltaY, options = \{\}\)/);
+  expect(() => patchInput(source, '0.0.0')).toThrowError(/BROWSER_INPUT_ENGINE_UNSUPPORTED/);
+  expect(() => patchInput(source.replace('mouseDown', 'unfamiliarDown'), '1.62.1')).toThrowError(
     /BROWSER_INPUT_ENGINE_UNSUPPORTED/,
   );
-  assert.throws(() => patchInput(changed, '1.62.1'), /BROWSER_INPUT_ENGINE_UNSUPPORTED/);
+  expect(() => patchInput(changed, '1.62.1')).toThrowError(/BROWSER_INPUT_ENGINE_UNSUPPORTED/);
 });

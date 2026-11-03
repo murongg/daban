@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
 import type { WorkItem } from '@daban/protocol';
+import { expect, type TestContext, test, vi } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { CatalogTools } from './catalog.js';
 import type { ToolResult } from './computer-tools.js';
@@ -13,9 +12,9 @@ import { WorkTools, workToolList } from './work-tools.js';
 import { WorkspaceFiles } from './workspace.js';
 
 function value<T>(result: ToolResult): T {
-  assert.equal(result.isError, undefined, JSON.stringify(result));
+  expect(result.isError, JSON.stringify(result)).toBe(undefined);
   const block = result.content[0];
-  assert.equal(block.type, 'text');
+  expect(block.type).toBe('text');
   return JSON.parse(block.type === 'text' ? block.text : '') as T;
 }
 const item = (result: ToolResult) => value<{ untrusted: boolean; item: WorkItem }>(result).item;
@@ -26,7 +25,7 @@ async function fixture(t: TestContext) {
   const store = new Work(path.join(root, 'work.sqlite'));
   const tools = new AgentTools(undefined, new WorkspaceFiles(workdir));
   tools.work = new WorkTools(store);
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await store.close();
     await rm(root, { recursive: true, force: true });
   });
@@ -48,27 +47,24 @@ test('shared Work tools use one store across Bots, require full reads and preser
   const { store, tools, run } = await fixture(t);
   const a = run(),
     b = run('mock-beta', 'mock-second-intent');
-  assert.ok(
+  expect.assert(
     workToolList.every((tool) => tools.list(a.bot).some((entry) => entry.name === tool.name)),
   );
-  assert.equal(
-    tools.list(a.bot).some((tool) => tool.name === 'screenshot'),
-    false,
-  );
+  expect(tools.list(a.bot).some((tool) => tool.name === 'screenshot')).toBe(false);
   const created = item(
     await tools.invoke(a, 'work_create', {
       title: ' 合成共享任务 ',
       description: 'MOCK KEEP DETAIL',
     }),
   );
-  assert.equal(created.title, '合成共享任务');
-  assert.deepEqual(created.createdBy, { kind: 'bot', bot: a.bot });
+  expect(created.title).toBe('合成共享任务');
+  expect(created.createdBy).toStrictEqual({ kind: 'bot', bot: a.bot });
   const list = value<{ untrusted: boolean; items: { id: string }[] }>(
     await tools.invoke(b, 'work_list'),
   );
-  assert.equal(list.untrusted, true);
-  assert.equal(list.items[0].id, created.id);
-  assert.match(
+  expect(list.untrusted).toBe(true);
+  expect(list.items[0].id).toBe(created.id);
+  expect(
     JSON.stringify(
       await tools.invoke(b, 'work_update', {
         id: created.id,
@@ -76,8 +72,7 @@ test('shared Work tools use one store across Bots, require full reads and preser
         patch: { status: 'doing' },
       }),
     ),
-    /WORK_READ_REQUIRED/,
-  );
+  ).toMatch(/WORK_READ_REQUIRED/);
   await tools.invoke(b, 'work_read', { id: created.id });
   const changed = item(
     await tools.invoke(b, 'work_update', {
@@ -86,9 +81,9 @@ test('shared Work tools use one store across Bots, require full reads and preser
       patch: { status: 'doing', progress: 'MOCK CHECKED STEP' },
     }),
   );
-  assert.equal(changed.description, created.description);
-  assert.deepEqual(changed.updatedBy, { kind: 'bot', bot: b.bot });
-  assert.deepEqual(changed.createdBy, created.createdBy);
+  expect(changed.description).toBe(created.description);
+  expect(changed.updatedBy).toStrictEqual({ kind: 'bot', bot: b.bot });
+  expect(changed.createdBy).toStrictEqual(created.createdBy);
   await tools.invoke(a, 'work_read', { id: created.id });
   await store.write(
     {
@@ -100,7 +95,7 @@ test('shared Work tools use one store across Bots, require full reads and preser
     },
     { kind: 'human' },
   );
-  assert.match(
+  expect(
     JSON.stringify(
       await tools.invoke(a, 'work_update', {
         id: created.id,
@@ -108,9 +103,8 @@ test('shared Work tools use one store across Bots, require full reads and preser
         patch: { status: 'done' },
       }),
     ),
-    /WORK_CONFLICT/,
-  );
-  assert.equal((await store.get(created.id)).title, '合成人工修改');
+  ).toMatch(/WORK_CONFLICT/);
+  expect((await store.get(created.id)).title).toBe('合成人工修改');
   await tools.invoke(a, 'work_read', { id: created.id });
   const done = item(
     await tools.invoke(a, 'work_update', {
@@ -119,17 +113,17 @@ test('shared Work tools use one store across Bots, require full reads and preser
       patch: { status: 'done' },
     }),
   );
-  assert.ok(done.completedAt);
+  expect.assert(done.completedAt);
   await tools.invoke(b, 'work_read', { id: created.id });
   const trash = item(await tools.invoke(b, 'work_trash', { id: created.id, revision: 4 }));
-  assert.equal(trash.deleted, true);
-  assert.equal((await store.list()).items.length, 0);
+  expect(trash.deleted).toBe(true);
+  expect((await store.list()).items.length).toBe(0);
   await tools.invoke(a, 'work_read', { id: created.id });
   const restored = item(await tools.invoke(a, 'work_restore', { id: created.id, revision: 5 }));
-  assert.equal(restored.deleted, false);
-  assert.equal(restored.completedAt, done.completedAt);
-  assert.equal(JSON.stringify(a.trace).includes('MOCK KEEP DETAIL'), false);
-  assert.ok(
+  expect(restored.deleted).toBe(false);
+  expect(restored.completedAt).toBe(done.completedAt);
+  expect(JSON.stringify(a.trace).includes('MOCK KEEP DETAIL')).toBe(false);
+  expect.assert(
     [...a.trace, ...b.trace].every(
       (entry) => entry.surface === 'work' && entry.phase !== 'running',
     ),
@@ -146,7 +140,7 @@ test('create identity survives argument order, continuation and store reconstruc
     status: 'todo',
   };
   const first = item(await tools.invoke(a, 'work_create', args));
-  assert.equal(first.id, 'work-f959efa272cada714edcdb987e7ba1ccbeb50b3f654812a71cd74187b9cbf7e5');
+  expect(first.id).toBe('work-f959efa272cada714edcdb987e7ba1ccbeb50b3f654812a71cd74187b9cbf7e5');
   const human = await store.write(
     {
       id: 'mock-human-progress',
@@ -165,19 +159,19 @@ test('create identity survives argument order, continuation and store reconstruc
       title: args.title,
     }),
   );
-  assert.deepEqual(repeated, human.item);
+  expect(repeated).toStrictEqual(human.item);
   await store.close();
   const reopened = new Work(path.join(root, 'work.sqlite'));
   try {
     tools.work = new WorkTools(reopened);
     const continuation = { ...run(), id: 'mock-continuation', intentId: a.id };
-    assert.deepEqual(item(await tools.invoke(continuation, 'work_create', args)), human.item);
-    assert.equal((await reopened.list()).items.length, 1);
+    expect(item(await tools.invoke(continuation, 'work_create', args))).toStrictEqual(human.item);
+    expect((await reopened.list()).items.length).toBe(1);
     const other = item(
       await tools.invoke(run('mock-alpha', 'mock-distinct-human-request'), 'work_create', args),
     );
-    assert.notEqual(other.id, first.id);
-    assert.equal((await reopened.list()).items.length, 2);
+    expect(other.id).not.toBe(first.id);
+    expect((await reopened.list()).items.length).toBe(2);
   } finally {
     await reopened.close();
   }
@@ -190,7 +184,7 @@ test('exact edit replay is receipt-only after continuation and cannot overwrite 
   await tools.invoke(a, 'work_read', { id: first.id });
   const args = { id: first.id, revision: 1, patch: { progress: 'MOCK VERIFIED', status: 'doing' } };
   const edited = item(await tools.invoke(a, 'work_update', args));
-  assert.equal(edited.revision, 2);
+  expect(edited.revision).toBe(2);
   const human = await store.write(
     {
       id: 'mock-new-human-status',
@@ -202,8 +196,8 @@ test('exact edit replay is receipt-only after continuation and cannot overwrite 
     { kind: 'human' },
   );
   const resumed = { ...run(), id: 'mock-retry', intentId: a.id };
-  assert.deepEqual(item(await tools.invoke(resumed, 'work_update', args)), human.item);
-  assert.match(
+  expect(item(await tools.invoke(resumed, 'work_update', args))).toStrictEqual(human.item);
+  expect(
     JSON.stringify(
       await tools.invoke(resumed, 'work_update', {
         ...args,
@@ -211,9 +205,8 @@ test('exact edit replay is receipt-only after continuation and cannot overwrite 
         patch: { status: 'todo' },
       }),
     ),
-    /WORK_READ_REQUIRED/,
-  );
-  assert.equal((await store.get(first.id)).status, 'done');
+  ).toMatch(/WORK_READ_REQUIRED/);
+  expect((await store.get(first.id)).status).toBe('done');
 });
 
 test('a delayed effect acknowledgement cannot consume a newer full-read observation', async (t) => {
@@ -230,7 +223,7 @@ test('a delayed effect acknowledgement cannot consume a newer full-read observat
   });
   const write = store.write.bind(store);
   let hold = true;
-  t.mock.method(store, 'write', async (...args: Parameters<typeof write>) => {
+  vi.spyOn(store, 'write').mockImplementation(async (...args: Parameters<typeof write>) => {
     const saved = await write(...args);
     if (hold) {
       hold = false;
@@ -246,10 +239,10 @@ test('a delayed effect acknowledgement cannot consume a newer full-read observat
   });
   try {
     await committed;
-    assert.equal(item(await tools.invoke(a, 'work_read', { id: first.id })).revision, 2);
+    expect(item(await tools.invoke(a, 'work_read', { id: first.id })).revision).toBe(2);
     release();
     item(await pending);
-    assert.equal(
+    expect(
       item(
         await tools.invoke(a, 'work_update', {
           id: first.id,
@@ -257,8 +250,7 @@ test('a delayed effect acknowledgement cannot consume a newer full-read observat
           patch: { status: 'doing' },
         }),
       ).revision,
-      3,
-    );
+    ).toBe(3);
   } finally {
     release();
     await pending;
@@ -279,32 +271,30 @@ test('closed tool arguments cannot forge actor, identity, timestamps or empty pa
     ['work_update', { id: 'mock-work', revision: 1, patch: {} }],
     ['work_restore', { id: 'mock-work', revision: 0 }],
   ] as const)
-    assert.equal((await tools.invoke(a, name, args)).isError, true);
-  assert.equal((await store.list()).items.length, 0);
+    expect((await tools.invoke(a, name, args)).isError).toBe(true);
+  expect((await store.list()).items.length).toBe(0);
 });
 
 test('work tools share the existing budget and cancellation drain without leaking secret-bearing data in results or traces', async (t) => {
   const { store, tools, run } = await fixture(t);
   const limited = { ...run(), limit: 1 };
   await tools.invoke(limited, 'work_list');
-  assert.match(
+  expect(
     JSON.stringify(await tools.invoke(limited, 'work_create', { title: '合成不得创建' })),
-    /TOOL_LIMIT/,
-  );
-  assert.equal((await store.list()).items.length, 0);
+  ).toMatch(/TOOL_LIMIT/);
+  expect((await store.list()).items.length).toBe(0);
   const stopped = run();
   const receipt = store.receipt.bind(store);
-  t.mock.method(store, 'receipt', async (...args: Parameters<typeof receipt>) => {
+  vi.spyOn(store, 'receipt').mockImplementation(async (...args: Parameters<typeof receipt>) => {
     const value = await receipt(...args);
     stopped.abort.abort();
     return value;
   });
-  assert.match(
+  expect(
     JSON.stringify(await tools.invoke(stopped, 'work_create', { title: '合成取消创建' })),
-    /MODEL_CANCELLED/,
-  );
-  assert.equal((await store.list()).items.length, 0);
-  t.mock.restoreAll();
+  ).toMatch(/MODEL_CANCELLED/);
+  expect((await store.list()).items.length).toBe(0);
+  vi.restoreAllMocks();
   const secret = 'mock-"provider\\secret\n47';
   await store.write(
     {
@@ -321,10 +311,10 @@ test('work tools share the existing budget and cancellation drain without leakin
     redact: (text: string) => text.replaceAll(secret, '[credential redacted]'),
   };
   const response = await tools.invoke(a, 'work_read', { id: 'mock-secret-item' });
-  assert.equal(value<{ item: WorkItem }>(response).item.description, '[credential redacted]');
-  assert.equal(JSON.stringify(response).includes(secret), false);
-  assert.equal(JSON.stringify(a.trace).includes(secret), false);
-  assert.equal((await store.get('mock-secret-item')).description, secret);
+  expect(value<{ item: WorkItem }>(response).item.description).toBe('[credential redacted]');
+  expect(JSON.stringify(response).includes(secret)).toBe(false);
+  expect(JSON.stringify(a.trace).includes(secret)).toBe(false);
+  expect((await store.get('mock-secret-item')).description).toBe(secret);
   await tools.drain(a);
 });
 
@@ -359,10 +349,10 @@ test('model list and catalog previews cannot publish a credential prefix cut by 
   const list = value<{ items: { progress: string; progressTruncated: boolean }[] }>(
     await tools.invoke(a, 'work_list'),
   );
-  assert.equal(list.items[0].progress, 'x'.repeat(190));
-  assert.equal(list.items[0].progressTruncated, true);
+  expect(list.items[0].progress).toBe('x'.repeat(190));
+  expect(list.items[0].progressTruncated).toBe(true);
   const catalog = value<{ work: { page: { items: { progress: string }[] } } }>(
     await tools.invoke(a, 'task_catalog'),
   );
-  assert.equal(catalog.work.page.items[0].progress, 'x'.repeat(190));
+  expect(catalog.work.page.items[0].progress).toBe('x'.repeat(190));
 });

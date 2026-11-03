@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { CatalogTools } from './catalog.js';
 import { ScheduleTools } from './schedule-tools.js';
@@ -84,22 +83,19 @@ test('task catalog reads actual shared Work, this Bot schedules, captured skills
         enabled: false,
       });
     const result = await tools.invoke(run, 'task_catalog');
-    assert.equal(result.isError, undefined);
+    expect(result.isError).toBe(undefined);
     const block = result.content[0];
-    assert.equal(block.type, 'text');
+    expect(block.type).toBe('text');
     const catalog = JSON.parse(block.type === 'text' ? block.text : '');
-    assert.equal(catalog.untrusted, true);
-    assert.equal(catalog.work.page.items[0].id, 'mock-open-card');
-    assert.deepEqual(
-      catalog.schedules.items.map((row: { id: string }) => row.id),
-      ['mock-alpha-schedule'],
-    );
-    assert.deepEqual(
-      catalog.skills.items.map((row: { name: string }) => row.name),
-      ['mock-skill'],
-    );
-    assert.deepEqual(
-      catalog.tools.map((row: { name: string }) => row.name),
+    expect(catalog.untrusted).toBe(true);
+    expect(catalog.work.page.items[0].id).toBe('mock-open-card');
+    expect(catalog.schedules.items.map((row: { id: string }) => row.id)).toStrictEqual([
+      'mock-alpha-schedule',
+    ]);
+    expect(catalog.skills.items.map((row: { name: string }) => row.name)).toStrictEqual([
+      'mock-skill',
+    ]);
+    expect(catalog.tools.map((row: { name: string }) => row.name)).toStrictEqual(
       tools.list(run.bot, run.model, run.conversationId, run).map((row) => row.name),
     );
     for (const secret of [
@@ -107,16 +103,12 @@ test('task catalog reads actual shared Work, this Bot schedules, captured skills
       'MOCK PRIVATE SKILL BODY',
       'MOCK PRIVATE SCHEDULE BODY',
     ])
-      assert.equal(JSON.stringify(catalog).includes(secret), false);
-    assert.equal(
-      catalog.tools.some((row: { name: string }) => row.name === 'screenshot'),
-      false,
-    );
-    assert.equal(started, 0);
-    assert.equal(run.toolCount, 1);
-    assert.equal(run.trace[0].surface, 'catalog');
-    assert.match(
-      JSON.stringify(await tools.invoke(run, 'task_catalog', { bot: 'mock-beta' })),
+      expect(JSON.stringify(catalog).includes(secret)).toBe(false);
+    expect(catalog.tools.some((row: { name: string }) => row.name === 'screenshot')).toBe(false);
+    expect(started).toBe(0);
+    expect(run.toolCount).toBe(1);
+    expect(run.trace[0].surface).toBe('catalog');
+    expect(JSON.stringify(await tools.invoke(run, 'task_catalog', { bot: 'mock-beta' }))).toMatch(
       /INVALID_TOOL_ARGS/,
     );
   } finally {
@@ -152,16 +144,16 @@ test('catalog separately reports unavailable stores and honestly bounds tool met
   try {
     await work.close();
     const value = await tools.invoke(run, 'task_catalog', {});
-    assert.equal(value.work.available, false);
-    assert.equal(value.schedules.available, false);
-    assert.equal(value.skills.available, false);
-    assert.equal(value.tools.length, 128);
-    assert.equal(value.toolsTotal, 130);
-    assert.equal(value.toolsTruncated, true);
-    assert.equal(Array.from(value.tools[0].description).length, 200);
-    assert.equal(value.tools[0].descriptionTruncated, true);
+    expect(value.work.available).toBe(false);
+    expect(value.schedules.available).toBe(false);
+    expect(value.skills.available).toBe(false);
+    expect(value.tools.length).toBe(128);
+    expect(value.toolsTotal).toBe(130);
+    expect(value.toolsTruncated).toBe(true);
+    expect(Array.from(value.tools[0].description).length).toBe(200);
+    expect(value.tools[0].descriptionTruncated).toBe(true);
     run.abort.abort();
-    await assert.rejects(tools.invoke(run, 'task_catalog', {}));
+    await expect(tools.invoke(run, 'task_catalog', {})).rejects.toThrowError();
   } finally {
     await work.close();
     await rm(root, { recursive: true, force: true });
@@ -192,8 +184,8 @@ test('catalog redacts decoded values before shortening descriptions containing e
   };
   try {
     const value = await tools.invoke(run, 'task_catalog', {});
-    assert.equal(value.tools[0].description, `${prefix}[credential redacted]`);
-    assert.equal(value.tools[0].descriptionTruncated, false);
+    expect(value.tools[0].description).toBe(`${prefix}[credential redacted]`);
+    expect(value.tools[0].descriptionTruncated).toBe(false);
   } finally {
     await work.close();
     await rm(root, { recursive: true, force: true });

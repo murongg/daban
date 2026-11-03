@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { RecoveryScreen } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { Recovery } from './recovery.js';
 
 async function fixture(quiesce: () => Promise<unknown> = async () => undefined) {
@@ -59,11 +58,11 @@ test('claim waits for accepted queue preparation to drain before issuing its dur
       started,
       new Promise((_, reject) => setTimeout(() => reject(new Error('DRAIN_NOT_CALLED')), 100)),
     ]);
-    assert.equal(settled, false);
-    assert.equal(f.owner.receipt(prepared.id).phase, 'prepared');
-    assert.equal(f.owner.admit(), false);
+    expect(settled).toBe(false);
+    expect(f.owner.receipt(prepared.id).phase).toBe('prepared');
+    expect(f.owner.admit()).toBe(false);
     release();
-    assert.equal((await claiming).phase, 'claimed');
+    expect((await claiming).phase).toBe('claimed');
   } finally {
     release();
     await f.owner.close();
@@ -84,16 +83,16 @@ test('a drain timeout keeps the prepared fence cancellable and a late drain cann
       review: review.digest,
       confirmation: 'restart-all-apps',
     });
-    await assert.rejects(f.owner.claim(prepared.id, prepared.revision), {
+    await expect(f.owner.claim(prepared.id, prepared.revision)).rejects.toMatchObject({
       code: 'RECOVERY_DRAIN_TIMEOUT',
     });
-    assert.equal(f.owner.receipt(prepared.id).phase, 'prepared');
-    assert.equal(f.owner.admit(), false);
+    expect(f.owner.receipt(prepared.id).phase).toBe('prepared');
+    expect(f.owner.admit()).toBe(false);
     await f.owner.cancel(prepared.id, prepared.revision);
     release();
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(f.owner.receipt(prepared.id).phase, 'cancelled');
-    assert.equal(f.owner.admit(), true);
+    expect(f.owner.receipt(prepared.id).phase).toBe('cancelled');
+    expect(f.owner.admit()).toBe(true);
   } finally {
     release();
     await f.owner.close();
@@ -124,10 +123,10 @@ test('a changed control/resource review cannot be claimed and an old prepared se
       confirmation: 'restart-all-apps',
     });
     f.state.screens[0].lease!.epoch++;
-    await assert.rejects(f.owner.claim(value.id, value.revision), {
+    await expect(f.owner.claim(value.id, value.revision)).rejects.toMatchObject({
       code: 'RECOVERY_REVIEW_CHANGED',
     });
-    assert.equal(f.owner.receipt(value.id).phase, 'prepared');
+    expect(f.owner.receipt(value.id).phase).toBe('prepared');
     await f.owner.close();
     const restarted = new Recovery({
       file: f.file,
@@ -137,12 +136,12 @@ test('a changed control/resource review cannot be claimed and an old prepared se
       snapshot: () => structuredClone(f.state),
     });
     await restarted.ready;
-    assert.equal(restarted.admit(), false);
-    await assert.rejects(restarted.claim(value.id, value.revision), {
+    expect(restarted.admit()).toBe(false);
+    await expect(restarted.claim(value.id, value.revision)).rejects.toMatchObject({
       code: 'RECOVERY_REVIEW_CHANGED',
     });
     await restarted.cancel(value.id, value.revision);
-    assert.equal(restarted.admit(), true);
+    expect(restarted.admit()).toBe(true);
     await restarted.close();
   } finally {
     await f.owner.close();
@@ -173,8 +172,8 @@ test('a corrupt review digest is retained across a new boot rather than accepted
       snapshot: () => structuredClone(f.state),
     });
     await restarted.ready;
-    assert.equal(restarted.admit(), false);
-    assert.equal(await readFile(f.file, 'utf8'), bytes);
+    expect(restarted.admit()).toBe(false);
+    expect(await readFile(f.file, 'utf8')).toBe(bytes);
     await restarted.close();
   } finally {
     await f.owner.close();
@@ -186,39 +185,36 @@ test('busy work and stale reviews reject without fencing existing work; prepared
   try {
     const first = f.owner.review();
     f.state.running = ['mock-task'];
-    await assert.rejects(
+    await expect(
       f.owner.prepare({
         id: 'mock-busy',
         revision: first.revision,
         review: first.digest,
         confirmation: 'restart-all-apps',
       }),
-      { code: 'RECOVERY_TASKS_RUNNING' },
-    );
-    assert.equal(f.owner.admit(), true);
+    ).rejects.toMatchObject({ code: 'RECOVERY_TASKS_RUNNING' });
+    expect(f.owner.admit()).toBe(true);
     f.state.running = [];
     const release = f.owner.enter();
-    await assert.rejects(
+    await expect(
       f.owner.prepare({
         id: 'mock-writing',
         revision: first.revision,
         review: first.digest,
         confirmation: 'restart-all-apps',
       }),
-      { code: 'RECOVERY_CHANGES_RUNNING' },
-    );
+    ).rejects.toMatchObject({ code: 'RECOVERY_CHANGES_RUNNING' });
     release();
     release();
     f.state.computersRevision++;
-    await assert.rejects(
+    await expect(
       f.owner.prepare({
         id: 'mock-stale',
         revision: first.revision,
         review: first.digest,
         confirmation: 'restart-all-apps',
       }),
-      { code: 'RECOVERY_REVIEW_CHANGED' },
-    );
+    ).rejects.toMatchObject({ code: 'RECOVERY_REVIEW_CHANGED' });
     const review = f.owner.review();
     const request = {
       id: 'mock-prepare',
@@ -235,16 +231,18 @@ test('busy work and stale reviews reject without fencing existing work; prepared
         id: request.id,
       }),
     ]);
-    assert.deepEqual(a, b);
-    assert.equal(a.phase, 'prepared');
-    assert.equal(f.owner.admit(), false);
-    assert.throws(() => f.owner.enter(), { code: 'RUNTIME_RECOVERY_PENDING' });
-    assert.equal(JSON.parse(await readFile(f.file, 'utf8')).receipt.id, request.id);
-    assert.deepEqual(f.owner.receipt(request.id), a);
+    expect(a).toStrictEqual(b);
+    expect(a.phase).toBe('prepared');
+    expect(f.owner.admit()).toBe(false);
+    expect(() => f.owner.enter()).toThrowError(
+      expect.objectContaining({ code: 'RUNTIME_RECOVERY_PENDING' }),
+    );
+    expect(JSON.parse(await readFile(f.file, 'utf8')).receipt.id).toBe(request.id);
+    expect(f.owner.receipt(request.id)).toStrictEqual(a);
     const cancelled = await f.owner.cancel(request.id, a.revision);
-    assert.equal(cancelled.phase, 'cancelled');
-    assert.equal(f.owner.admit(), true);
-    assert.deepEqual(await f.owner.prepare(request), cancelled);
+    expect(cancelled.phase).toBe('cancelled');
+    expect(f.owner.admit()).toBe(true);
+    expect(await f.owner.prepare(request)).toStrictEqual(cancelled);
   } finally {
     await f.owner.close();
     await rm(f.dir, { recursive: true, force: true });
@@ -261,11 +259,11 @@ test('claim and cancellation serialize, same-boot restart stays fenced, and only
       confirmation: 'restart-all-apps',
     });
     const claimed = await f.owner.claim(prepared.id, prepared.revision);
-    assert.equal(claimed.phase, 'claimed');
-    await assert.rejects(f.owner.cancel(prepared.id, claimed.revision), {
+    expect(claimed.phase).toBe('claimed');
+    await expect(f.owner.cancel(prepared.id, claimed.revision)).rejects.toMatchObject({
       code: 'RECOVERY_ALREADY_CLAIMED',
     });
-    assert.deepEqual(await f.owner.claim(prepared.id, prepared.revision), claimed);
+    expect(await f.owner.claim(prepared.id, prepared.revision)).toStrictEqual(claimed);
     await f.owner.close();
     const same = new Recovery({
       file: f.file,
@@ -275,8 +273,8 @@ test('claim and cancellation serialize, same-boot restart stays fenced, and only
       snapshot: () => structuredClone(f.state),
     });
     await same.ready;
-    assert.equal(same.admit(), false);
-    assert.equal(same.receipt(prepared.id).phase, 'claimed');
+    expect(same.admit()).toBe(false);
+    expect(same.receipt(prepared.id).phase).toBe('claimed');
     await same.close();
     const fresh = new Recovery({
       file: f.file,
@@ -286,9 +284,9 @@ test('claim and cancellation serialize, same-boot restart stays fenced, and only
       snapshot: () => structuredClone(f.state),
     });
     await fresh.ready;
-    assert.equal(fresh.admit(), true);
-    assert.equal(fresh.receipt(prepared.id).phase, 'complete');
-    assert.equal(fresh.receipt(prepared.id).boot, 'mock-boot-two');
+    expect(fresh.admit()).toBe(true);
+    expect(fresh.receipt(prepared.id).phase).toBe('complete');
+    expect(fresh.receipt(prepared.id).boot).toBe('mock-boot-two');
     await fresh.close();
   } finally {
     await f.owner.close();
@@ -308,9 +306,11 @@ test('malformed recovery authority is retained and cannot silently admit work or
       snapshot: () => structuredClone(f.state),
     });
     await corrupt.ready;
-    assert.equal(corrupt.admit(), false);
-    assert.throws(() => corrupt.review(), { code: 'RECOVERY_STORE_UNAVAILABLE' });
-    assert.equal(await readFile(f.file, 'utf8'), 'SYNTHETIC-CORRUPT-AUTHORITY');
+    expect(corrupt.admit()).toBe(false);
+    expect(() => corrupt.review()).toThrowError(
+      expect.objectContaining({ code: 'RECOVERY_STORE_UNAVAILABLE' }),
+    );
+    expect(await readFile(f.file, 'utf8')).toBe('SYNTHETIC-CORRUPT-AUTHORITY');
     await corrupt.close();
   } finally {
     await rm(f.dir, { recursive: true, force: true });

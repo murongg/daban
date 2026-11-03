@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { RemoteWorkspace } from './remote-workspace.js';
 
 test('remote task staging and output inspection never require a host directory', async () => {
@@ -27,13 +26,13 @@ test('remote task staging and output inspection never require a host directory',
   await directory.verify();
   const files = await workspace.scope(directory.path, directory.canonical).list();
   await directory.close();
-  assert.equal(files[0].path, 'mock.txt');
-  assert.deepEqual(calls.find((call) => call.method === 'workspace.write')?.params, {
+  expect(files[0].path).toBe('mock.txt');
+  expect(calls.find((call) => call.method === 'workspace.write')?.params).toStrictEqual({
     handleId: 'mock-handle',
     name: 'mock.txt',
     data: Buffer.from('mock').toString('base64'),
   });
-  assert.equal(calls.at(-1)?.method, 'workspace.close');
+  expect(calls.at(-1)?.method).toBe('workspace.close');
 });
 
 test('remote workspace errors never fall back to host files', async () => {
@@ -45,6 +44,6 @@ test('remote workspace errors never fall back to host files', async () => {
     },
     '/synthetic-no-host-directory',
   );
-  await assert.rejects(workspace.prepare(), /MOCK_GUEST_OFFLINE/);
-  await assert.rejects(workspace.read('mock.txt'), /MOCK_GUEST_OFFLINE/);
+  await expect(workspace.prepare()).rejects.toThrowError(/MOCK_GUEST_OFFLINE/);
+  await expect(workspace.read('mock.txt')).rejects.toThrowError(/MOCK_GUEST_OFFLINE/);
 });

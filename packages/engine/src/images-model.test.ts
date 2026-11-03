@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { imageMime } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { syntheticAnimatedWebp, syntheticGif, syntheticPng } from './images.fixture.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
@@ -44,7 +43,9 @@ test('native image prompts use immutable bytes, keep group ownership and retry t
     const images = [syntheticPng, syntheticGif, syntheticAnimatedWebp];
     const receipts = await Promise.all(
       images.map((image) =>
-        models.attachments.upload('mock-group', image, async () => assert.fail('must not extract')),
+        models.attachments.upload('mock-group', image, async () =>
+          expect.unreachable('must not extract'),
+        ),
       ),
     );
     const task = {
@@ -55,7 +56,9 @@ test('native image prompts use immutable bytes, keep group ownership and retry t
         attachmentId: receipt.id,
       })),
     };
-    await assert.rejects(models.start('mock-a', task), { code: 'ATTACHMENT_NOT_FOUND' });
+    await expect(models.start('mock-a', task)).rejects.toMatchObject({
+      code: 'ATTACHMENT_NOT_FOUND',
+    });
     await models.start(
       'mock-a',
       { ...task, requestId: 'mock-image-group' },
@@ -63,17 +66,15 @@ test('native image prompts use immutable bytes, keep group ownership and retry t
     );
     const job = models.jobs.get('mock-a')!;
     await job.done;
-    assert.equal(job.phase, 'completed');
-    assert.ok(Array.isArray(prompts[0]));
-    assert.deepEqual(
-      prompts[0].slice(1),
+    expect(job.phase).toBe('completed');
+    expect.assert(Array.isArray(prompts[0]));
+    expect(prompts[0].slice(1)).toStrictEqual(
       images.map((image) => ({ type: 'image', data: image.data, mimeType: imageMime(image.name) })),
     );
-    assert.equal(prompts[0][0].type, 'text');
-    assert.equal(job.toolCount, 0);
+    expect(prompts[0][0].type).toBe('text');
+    expect(job.toolCount).toBe(0);
     for (const [index, image] of images.entries())
-      assert.deepEqual(
-        await readFile(path.join(job.workdir, task.files[index].name)),
+      expect(await readFile(path.join(job.workdir, task.files[index].name))).toStrictEqual(
         Buffer.from(image.data, 'base64'),
       );
     await writeFile(path.join(job.workdir, task.files[0].name), 'synthetic changed workspace copy');
@@ -81,7 +82,7 @@ test('native image prompts use immutable bytes, keep group ownership and retry t
       path.join(options.dir, 'task-journal', `${job.id}.json`),
       'utf8',
     );
-    for (const image of images) assert.equal(journal.includes(image.data), false);
+    for (const image of images) expect(journal.includes(image.data)).toBe(false);
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
@@ -91,9 +92,9 @@ test('native image prompts use immutable bytes, keep group ownership and retry t
       { id: 'mock-group', context: 'Synthetic group data' },
     );
     await models.jobs.get('mock-a')!.done;
-    assert.ok(Array.isArray(prompts[1]));
-    assert.deepEqual(prompts[1].slice(1), prompts[0].slice(1));
-    assert.deepEqual(resumed, ['mock-image-session']);
+    expect.assert(Array.isArray(prompts[1]));
+    expect(prompts[1].slice(1)).toStrictEqual(prompts[0].slice(1));
+    expect(resumed).toStrictEqual(['mock-image-session']);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -131,17 +132,16 @@ test('a captured text-only model refuses pixels before any harness starts', asyn
       syntheticPng,
       async () => 'must not extract',
     );
-    await assert.rejects(
+    await expect(
       models.start('mock-a', {
         requestId: 'mock-refused-image',
         prompt: '描述合成图',
         files: [{ name: image.name, attachmentId: image.id }],
       }),
-      { code: 'MODEL_IMAGE_UNSUPPORTED' },
-    );
-    assert.equal(starts, 0);
-    assert.equal(models.jobs.get('mock-a')!.running, false);
-    assert.deepEqual((await models.attachments.source('mock-a', image.id)).file, syntheticPng);
+    ).rejects.toMatchObject({ code: 'MODEL_IMAGE_UNSUPPORTED' });
+    expect(starts).toBe(0);
+    expect(models.jobs.get('mock-a')!.running).toBe(false);
+    expect((await models.attachments.source('mock-a', image.id)).file).toStrictEqual(syntheticPng);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });

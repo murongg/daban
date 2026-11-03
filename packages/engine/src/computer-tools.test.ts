@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import type { ComputerFacade, ToolRun } from './computer-tools.js';
 import { ComputerTools } from './computer-tools.js';
 import { Control } from './control.js';
@@ -40,14 +39,11 @@ function setup() {
 test('model tools bind all screenshots and actions to the assigned Bot', async () => {
   const { calls, run, tools } = setup();
   const shot = await tools.invoke(run, 'screenshot', { surface: 'desktop' });
-  assert.equal(shot.content[1].type, 'image');
+  expect(shot.content[1].type).toBe('image');
   await tools.invoke(run, 'act', { surface: 'desktop', actions: [{ type: 'key', key: 'Enter' }] });
-  assert.deepEqual(
-    calls.map((call) => call.id),
-    ['a'],
-  );
+  expect(calls.map((call) => call.id)).toStrictEqual(['a']);
   const rejected = await tools.invoke(run, 'screenshot', { surface: 'desktop', bot: 'b' });
-  assert.equal(rejected.isError, true);
+  expect(rejected.isError).toBe(true);
 });
 
 test('model native actions require a new screenshot after only the screen instance changes', async () => {
@@ -60,12 +56,12 @@ test('model native actions require a new screenshot after only the screen instan
     surface: 'desktop',
     actions: [{ type: 'key', key: 'Enter' }],
   });
-  assert.equal(result.isError, true);
-  assert.equal(run.trace.at(-1)?.code, 'DESKTOP_VIEW_STALE');
-  assert.deepEqual(calls, []);
+  expect(result.isError).toBe(true);
+  expect(run.trace.at(-1)?.code).toBe('DESKTOP_VIEW_STALE');
+  expect(calls).toStrictEqual([]);
   await tools.invoke(run, 'screenshot', { surface: 'desktop' });
-  assert.equal((await tools.invoke(run, 'open_app', { app: 'terminal' })).isError, undefined);
-  assert.equal(calls.length, 1);
+  expect((await tools.invoke(run, 'open_app', { app: 'terminal' })).isError).toBe(undefined);
+  expect(calls.length).toBe(1);
 });
 
 test('a delayed model screenshot cannot authorize input on its replacement instance', async () => {
@@ -87,9 +83,9 @@ test('a delayed model screenshot cannot authorize input on its replacement insta
   await started;
   instance = 'mock-native-after';
   release(Buffer.from('SYNTHETIC-OLD-SHOT'));
-  assert.equal((await pending).isError, true);
-  assert.equal(run.seen.desktop, undefined);
-  assert.equal(run.trace.at(-1)?.code, 'DESKTOP_VIEW_STALE');
+  expect((await pending).isError).toBe(true);
+  expect(run.seen.desktop).toBe(undefined);
+  expect(run.trace.at(-1)?.code).toBe('DESKTOP_VIEW_STALE');
 });
 
 test('a screenshot interrupted by takeover cannot publish an observation from the old lease', async () => {
@@ -110,8 +106,8 @@ test('a screenshot interrupted by takeover cannot publish an observation from th
   release(Buffer.from('SYNTHETIC-OLD-LEASE'));
   const human = await takeover;
   await control.transfer('a', human.epoch, 'agent');
-  assert.equal((await pending).isError, true);
-  assert.equal(run.seen.desktop, undefined);
+  expect((await pending).isError).toBe(true);
+  expect(run.seen.desktop).toBe(undefined);
 });
 
 test('an uncertain native action consumes its observation so a retry must inspect the actual screen first', async () => {
@@ -123,13 +119,13 @@ test('an uncertain native action consumes its observation so a retry must inspec
   };
   await tools.invoke(run, 'screenshot', { surface: 'desktop' });
   const input = { surface: 'desktop', actions: [{ type: 'key', key: 'Enter' }] };
-  assert.equal((await tools.invoke(run, 'act', input)).isError, true);
-  assert.equal((await tools.invoke(run, 'act', input)).isError, true);
-  assert.equal(run.trace.at(-1)?.code, 'FRESH_SCREENSHOT_REQUIRED');
-  assert.equal(calls.length, 1);
+  expect((await tools.invoke(run, 'act', input)).isError).toBe(true);
+  expect((await tools.invoke(run, 'act', input)).isError).toBe(true);
+  expect(run.trace.at(-1)?.code).toBe('FRESH_SCREENSHOT_REQUIRED');
+  expect(calls.length).toBe(1);
   await tools.invoke(run, 'screenshot', { surface: 'desktop' });
-  assert.equal((await tools.invoke(run, 'act', input)).isError, undefined);
-  assert.equal(calls.length, 2);
+  expect((await tools.invoke(run, 'act', input)).isError).toBe(undefined);
+  expect(calls.length).toBe(2);
 });
 
 test('a failed native observation never leaves older coordinates authorized for input', async () => {
@@ -138,10 +134,10 @@ test('a failed native observation never leaves older coordinates authorized for 
   tools.runtime.frame = async () => {
     throw new Error('synthetic capture unavailable');
   };
-  assert.equal((await tools.invoke(run, 'screenshot', { surface: 'desktop' })).isError, true);
+  expect((await tools.invoke(run, 'screenshot', { surface: 'desktop' })).isError).toBe(true);
   await tools.invoke(run, 'act', { surface: 'desktop', actions: [{ type: 'key', key: 'Enter' }] });
-  assert.deepEqual(calls, []);
-  assert.equal(run.trace.at(-1)?.code, 'FRESH_SCREENSHOT_REQUIRED');
+  expect(calls).toStrictEqual([]);
+  expect(run.trace.at(-1)?.code).toBe('FRESH_SCREENSHOT_REQUIRED');
 });
 
 test('human takeover holds pending actions, rejects old coordinates, and resumes on a fresh screenshot', async () => {
@@ -156,42 +152,40 @@ test('human takeover holds pending actions, rejects old coordinates, and resumes
       return result;
     });
   await new Promise((resolve) => setTimeout(resolve, 130));
-  assert.equal(settled, false);
-  assert.equal((run as unknown as Record<string, unknown>).waitingForComputer, true);
-  assert.equal(calls.length, 0);
-  assert.equal(control.state('b').owner, 'agent');
+  expect(settled).toBe(false);
+  expect((run as unknown as Record<string, unknown>).waitingForComputer).toBe(true);
+  expect(calls.length).toBe(0);
+  expect(control.state('b').owner).toBe('agent');
   await control.transfer('a', 1, 'agent');
-  assert.equal((await pending).isError, true);
-  assert.equal((run as unknown as Record<string, unknown>).waitingForComputer, false);
-  assert.equal(run.trace.at(-1)?.code, 'FRESH_SCREENSHOT_REQUIRED');
-  assert.equal(calls.length, 0);
+  expect((await pending).isError).toBe(true);
+  expect((run as unknown as Record<string, unknown>).waitingForComputer).toBe(false);
+  expect(run.trace.at(-1)?.code).toBe('FRESH_SCREENSHOT_REQUIRED');
+  expect(calls.length).toBe(0);
   await tools.invoke(run, 'screenshot', { surface: 'desktop' });
-  assert.equal(
+  expect(
     (
       await tools.invoke(run, 'act', {
         surface: 'desktop',
         actions: [{ type: 'key', key: 'Enter' }],
       })
     ).isError,
-    undefined,
-  );
-  assert.equal(calls.length, 1);
+  ).toBe(undefined);
+  expect(calls.length).toBe(1);
 });
 
 test('tool budgets and cancellation do not permit further native input', async () => {
   const { calls, run, tools } = setup();
   run.limit = 1;
   await tools.invoke(run, 'screenshot', { surface: 'desktop' });
-  assert.equal(
+  expect(
     (
       await tools.invoke(run, 'act', {
         surface: 'desktop',
         actions: [{ type: 'key', key: 'Enter' }],
       })
     ).isError,
-    true,
-  );
+  ).toBe(true);
   run.abort.abort();
-  assert.equal((await tools.invoke(run, 'screenshot', { surface: 'desktop' })).isError, true);
-  assert.equal(calls.length, 0);
+  expect((await tools.invoke(run, 'screenshot', { surface: 'desktop' })).isError).toBe(true);
+  expect(calls.length).toBe(0);
 });

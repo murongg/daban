@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import type { BrowserContext, Page } from 'playwright';
+import { expect, test } from 'vitest';
 import { Control } from './control.js';
 import { Tabs } from './tabs.js';
 
@@ -45,12 +44,12 @@ test('cancelling a blocked read releases the lease and a late password query can
     const snapshot = tabs.snapshot('a', 'agent', 0, controller.signal, 'mock-run');
     await entered;
     controller.abort();
-    await assert.rejects(snapshot, /abort/i);
+    await expect(snapshot).rejects.toThrowError(/abort/i);
     const human = await control.transfer('a', 0, 'human');
     release(['SYNTHETIC-LATE-PASSWORD']);
     await new Promise(setImmediate);
     const resumed = await control.transfer('a', human.epoch, 'agent');
-    await assert.rejects(
+    await expect(
       tabs.act(
         'a',
         'agent',
@@ -60,8 +59,7 @@ test('cancelling a blocked read releases the lease and a late password query can
         new AbortController().signal,
         'mock-run',
       ),
-      { code: 'BROWSER_OBSERVATION_STALE' },
-    );
+    ).rejects.toMatchObject({ code: 'BROWSER_OBSERVATION_STALE' });
   } finally {
     release([]);
     tabs.dispose();
@@ -84,7 +82,7 @@ test('an aborted metadata request is rejected before publishing cached state', a
   const stop = new AbortController();
   stop.abort();
   try {
-    await assert.rejects(tabs.state('a', stop.signal), /abort/i);
+    await expect(tabs.state('a', stop.signal)).rejects.toThrowError(/abort/i);
   } finally {
     tabs.dispose();
   }
@@ -110,7 +108,7 @@ test('browser metadata never waits for JavaScript execution or a dialog-blocked 
   );
   try {
     await tabs.state('a');
-    assert.equal(reads, 0);
+    expect(reads).toBe(0);
   } finally {
     tabs.dispose();
   }

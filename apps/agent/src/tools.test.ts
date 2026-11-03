@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { ensureLima } from './tools.js';
 
 test('first installation verifies its bundled tool archive before creating a usable private tool root', async () => {
@@ -36,9 +35,9 @@ test('first installation verifies its bundled tool archive before creating a usa
         },
       },
     );
-    assert.equal(await readFile(binary, 'utf8'), 'SYNTHETIC TOOL');
-    assert.equal(commands, 1);
-    assert.equal(
+    expect(await readFile(binary, 'utf8')).toBe('SYNTHETIC TOOL');
+    expect(commands).toBe(1);
+    expect(
       await ensureLima(
         {
           dataRoot: path.join(root, 'agent'),
@@ -52,10 +51,9 @@ test('first installation verifies its bundled tool archive before creating a usa
           },
         },
       ),
-      binary,
-    );
+    ).toBe(binary);
     await writeFile(path.join(pack, 'lima.tar.gz'), 'MOCK MODIFIED ARCHIVE');
-    await assert.rejects(
+    await expect(
       ensureLima(
         {
           dataRoot: path.join(root, 'other-agent'),
@@ -69,8 +67,7 @@ test('first installation verifies its bundled tool archive before creating a usa
           },
         },
       ),
-      /AGENT_TOOLS_INTEGRITY/,
-    );
+    ).rejects.toThrowError(/AGENT_TOOLS_INTEGRITY/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -111,19 +108,18 @@ test('an existing private VM configuration retains its source identity while usi
         },
       },
     );
-    assert.equal(selected, path.join(root, 'agent/tools/bin/limactl'));
-    assert.notEqual(selected, binary);
-    assert.equal(await readFile(selected, 'utf8'), 'SYNTHETIC PRIVATE BUNDLED TOOL');
-    assert.deepEqual(await readFile(path.join(root, 'runtime.json')), original);
+    expect(selected).toBe(path.join(root, 'agent/tools/bin/limactl'));
+    expect(selected).not.toBe(binary);
+    expect(await readFile(selected, 'utf8')).toBe('SYNTHETIC PRIVATE BUNDLED TOOL');
+    expect(await readFile(path.join(root, 'runtime.json'))).toStrictEqual(original);
     await chmod(path.join(root, 'runtime.json'), 0o644);
-    await assert.rejects(
+    await expect(
       ensureLima({
         dataRoot: path.join(root, 'agent'),
         vmConfigFile: path.join(root, 'runtime.json'),
         packDirectory: '/mock-missing-assets',
       }),
-      /AGENT_VM_CONFIG/,
-    );
+    ).rejects.toThrowError(/AGENT_VM_CONFIG/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -148,21 +144,19 @@ test('an owned private Lima cache is reused even when the configured external ex
   );
   try {
     const original = await readFile(vmConfigFile);
-    assert.equal(
+    expect(
       await ensureLima({ dataRoot, vmConfigFile, packDirectory: '/mock-missing-assets' }),
-      binary,
-    );
-    assert.deepEqual(await readFile(vmConfigFile), original);
+    ).toBe(binary);
+    expect(await readFile(vmConfigFile)).toStrictEqual(original);
     for (const invalid of [
       { limactl: '/mock/bin/limactl', limaHome: '../legacy', vm: 'mock-vm', port: 18766 },
       { limactl: '/mock/bin/limactl', limaHome: '/mock/lima', vm: 'invalid;vm', port: 18766 },
       { limactl: '/mock/bin/limactl', limaHome: '/mock/lima', vm: 'mock-vm', port: 22 },
     ]) {
       await writeFile(vmConfigFile, JSON.stringify(invalid), { mode: 0o600 });
-      await assert.rejects(
+      await expect(
         ensureLima({ dataRoot, vmConfigFile, packDirectory: '/mock-missing-assets' }),
-        /AGENT_VM_CONFIG/,
-      );
+      ).rejects.toThrowError(/AGENT_VM_CONFIG/);
     }
   } finally {
     await rm(root, { recursive: true, force: true });

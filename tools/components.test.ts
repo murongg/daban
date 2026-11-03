@@ -1,13 +1,12 @@
-import assert from 'node:assert/strict';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { assembleComponent, componentSourceId } from './components.ts';
 
 test('component identity follows runtime sources and dependencies, independently of renderer edits', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-component-source-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const put = async (name: string, text: string) => {
     await mkdir(path.dirname(path.join(root, name)), { recursive: true });
     await writeFile(path.join(root, name), text);
@@ -61,10 +60,10 @@ test('component identity follows runtime sources and dependencies, independently
     }),
   );
   const first = await componentSourceId(root);
-  assert.match(first, /^[a-f0-9]{64}$/);
+  expect(first).toMatch(/^[a-f0-9]{64}$/);
   await put('apps/desktop/src/App.tsx', 'SYNTHETIC RENDERER EDIT');
   await put('packages/engine/src/model.test.ts', 'SYNTHETIC TEST EDIT');
-  assert.equal(await componentSourceId(root), first);
+  expect(await componentSourceId(root)).toBe(first);
   await put(
     'apps/agent/package.json',
     JSON.stringify({
@@ -83,10 +82,10 @@ test('component identity follows runtime sources and dependencies, independently
       },
     }),
   );
-  assert.equal(await componentSourceId(root), first);
+  expect(await componentSourceId(root)).toBe(first);
   await put('packages/engine/src/model.ts', 'SYNTHETIC RUNTIME CHANGED');
   const second = await componentSourceId(root);
-  assert.notEqual(second, first);
+  expect(second).not.toBe(first);
   await put(
     'apps/agent/standalone-lock.json',
     JSON.stringify({
@@ -97,18 +96,18 @@ test('component identity follows runtime sources and dependencies, independently
       },
     }),
   );
-  assert.notEqual(await componentSourceId(root), second);
+  expect(await componentSourceId(root)).not.toBe(second);
   const third = await componentSourceId(root);
   await put('apps/runtime/src/main.ts', 'SYNTHETIC EXECUTOR ENTRY CHANGED');
   const fourth = await componentSourceId(root);
-  assert.notEqual(fourth, third);
+  expect(fourth).not.toBe(third);
   await put('apps/agent/tsconfig.json', JSON.stringify({ compilerOptions: { target: 'ES2023' } }));
-  assert.notEqual(await componentSourceId(root), fourth);
+  expect(await componentSourceId(root)).not.toBe(fourth);
 });
 
 test('assembles a host component without Electron, renderer assets or a Linux disk image', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-component-layout-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const platforms =
     process.platform === 'win32' ? (['win32'] as const) : (['darwin', 'win32'] as const);
   for (const platform of platforms) {
@@ -146,27 +145,32 @@ test('assembles a host component without Electron, renderer assets or a Linux di
         },
       },
     );
-    assert.equal(
+    expect(
       JSON.parse(await readFile(path.join(result.resources, 'component.json'), 'utf8')).id,
-      id,
-    );
-    await assert.rejects(lstat(path.join(result.resources, 'environment/system.raw.gz')), {
+    ).toBe(id);
+    await expect(
+      lstat(path.join(result.resources, 'environment/system.raw.gz')),
+    ).rejects.toMatchObject({
       code: 'ENOENT',
     });
-    await assert.rejects(lstat(path.join(result.resources, 'app/dist')), { code: 'ENOENT' });
-    await assert.rejects(lstat(path.join(result.directory, 'Contents/Frameworks')), {
+    await expect(lstat(path.join(result.resources, 'app/dist'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    await expect(lstat(path.join(result.directory, 'Contents/Frameworks'))).rejects.toMatchObject({
       code: 'ENOENT',
     });
     if (platform === 'darwin') {
-      assert.equal(tools, 1);
+      expect(tools).toBe(1);
       const entry = path.join(result.directory, 'Contents/MacOS/agent');
-      assert.equal((await lstat(entry)).isFile(), true);
-      await assert.rejects(lstat(path.join(result.agent, 'node/bin/node')), { code: 'ENOENT' });
-      assert.ok(
+      expect((await lstat(entry)).isFile()).toBe(true);
+      await expect(lstat(path.join(result.agent, 'node/bin/node'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+      expect.assert(
         (await readFile(path.join(result.directory, 'Contents/Info.plist'), 'utf8')).includes(
           'dev.daban.runtime',
         ),
       );
-    } else assert.equal(tools, 0);
+    } else expect(tools).toBe(0);
   }
 });

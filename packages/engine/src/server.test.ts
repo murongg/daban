@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { Screens } from './desktop.js';
 import { ModelRuns } from './model.js';
@@ -13,13 +12,13 @@ test('a failed optional desktop leaves ordinary Agent stores and HTTP tools avai
   timeout: 10000,
 }, async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-computer-unavailable-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  t.mock.method(Screens.prototype, 'start', async () => {
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  vi.spyOn(Screens.prototype, 'start').mockImplementation(async () => {
     throw new Fault('SYNTHETIC_PRIVATE_GUI_FAILURE', 503, '/private/synthetic-config');
   });
   const closeScreens = Screens.prototype.close;
   let cleaned = 0;
-  t.mock.method(Screens.prototype, 'close', async function (this: Screens) {
+  vi.spyOn(Screens.prototype, 'close').mockImplementation(async function (this: Screens) {
     cleaned++;
     await closeScreens.call(this);
   });
@@ -32,7 +31,9 @@ test('a failed optional desktop leaves ordinary Agent stores and HTTP tools avai
     port: 0,
     desktop: { dir: directory },
   });
-  t.after(() => app.close());
+  t.onTestFinished(async () => {
+    await app.close();
+  });
   const call = async (route: string, data?: unknown, authorized = true) => {
     const response = await fetch(`${app.url}${route}`, {
       method: data === undefined ? 'GET' : 'POST',
@@ -45,21 +46,23 @@ test('a failed optional desktop leaves ordinary Agent stores and HTTP tools avai
     return { status: response.status, value: await response.json() };
   };
   const state = await call('/api/state');
-  assert.equal(state.status, 200);
-  assert.equal(state.value.clientProtocol, 18);
-  assert.equal(state.value.mode, 'agent');
-  assert.equal(state.value.computerError, 'COMPUTER_START_FAILED');
-  assert.deepEqual(state.value.bots, {});
-  assert.equal(state.value.sharedLogin, false);
-  assert.ok(!JSON.stringify(state.value).includes('SYNTHETIC_PRIVATE_GUI_FAILURE'));
-  assert.ok(!JSON.stringify(state.value).includes('/private/synthetic-config'));
-  assert.equal(cleaned, process.platform === 'linux' ? 1 : 0);
-  assert.throws(() => app.runtime, { code: 'COMPUTER_NOT_CONNECTED' });
-  assert.ok(app.models);
+  expect(state.status).toBe(200);
+  expect(state.value.clientProtocol).toBe(18);
+  expect(state.value.mode).toBe('agent');
+  expect(state.value.computerError).toBe('COMPUTER_START_FAILED');
+  expect(state.value.bots).toStrictEqual({});
+  expect(state.value.sharedLogin).toBe(false);
+  expect.assert(!JSON.stringify(state.value).includes('SYNTHETIC_PRIVATE_GUI_FAILURE'));
+  expect.assert(!JSON.stringify(state.value).includes('/private/synthetic-config'));
+  expect(cleaned).toBe(process.platform === 'linux' ? 1 : 0);
+  expect(() => app.runtime).toThrowError(
+    expect.objectContaining({ code: 'COMPUTER_NOT_CONNECTED' }),
+  );
+  expect.assert(app.models);
   const names = app.models.tools.list('mock-headless').map((tool) => tool.name);
-  assert.ok(names.includes('read_file'));
+  expect.assert(names.includes('read_file'));
   for (const name of ['screenshot', 'act', 'open_app', 'browser_navigate'])
-    assert.ok(!names.includes(name));
+    expect.assert(!names.includes(name));
   const profile = {
     id: 'mock-headless',
     name: '合成普通 Bot',
@@ -67,22 +70,21 @@ test('a failed optional desktop leaves ordinary Agent stores and HTTP tools avai
     memory: '',
     color: 'mint',
   };
-  assert.equal((await call('/api/bots', profile)).value.id, profile.id);
-  assert.equal((await call('/api/bots')).value.length, 1);
-  assert.equal((await call('/api/model/settings')).status, 200);
+  expect((await call('/api/bots', profile)).value.id).toBe(profile.id);
+  expect((await call('/api/bots')).value.length).toBe(1);
+  expect((await call('/api/model/settings')).status).toBe(200);
   const file = await call('/api/files/read', { path: 'existing.txt' });
-  assert.equal(file.value.content, 'SYNTHETIC-EXISTING-47');
-  assert.equal(
-    await readFile(path.join(workspace, 'existing.txt'), 'utf8'),
+  expect(file.value.content).toBe('SYNTHETIC-EXISTING-47');
+  expect(await readFile(path.join(workspace, 'existing.txt'), 'utf8')).toBe(
     'SYNTHETIC-EXISTING-47',
   );
-  assert.equal(state.value.knowledge.available, true);
-  assert.equal(state.value.groups.available, true);
+  expect(state.value.knowledge.available).toBe(true);
+  expect(state.value.groups.available).toBe(true);
   // The host may lack DSH's schedule domain; Linux acceptance verifies that dependency independently of graphics.
-  assert.ok(app.schedules);
-  assert.equal(typeof state.value.schedules.available, 'boolean');
-  assert.ok(Array.isArray(state.value.schedules.items));
-  assert.equal((await call('/api/state', undefined, false)).status, 403);
+  expect.assert(app.schedules);
+  expect(typeof state.value.schedules.available).toBe('boolean');
+  expect.assert(Array.isArray(state.value.schedules.items));
+  expect((await call('/api/state', undefined, false)).status).toBe(403);
   for (const [route, input] of [
     ['/api/bots/a/frame', undefined],
     ['/api/bots/a/browser-view', undefined],
@@ -91,23 +93,25 @@ test('a failed optional desktop leaves ordinary Agent stores and HTTP tools avai
     ['/api/bots/a/app', { epoch: 0, app: 'terminal' }],
   ] as const) {
     const result = await call(route, input);
-    assert.equal(result.status, 503);
-    assert.equal(result.value.error, 'COMPUTER_NOT_CONNECTED');
+    expect(result.status).toBe(503);
+    expect(result.value.error).toBe('COMPUTER_NOT_CONNECTED');
   }
-  await assert.rejects(app.models.start(profile.id), { code: 'COMPUTER_NOT_CONNECTED' });
+  await expect(app.models.start(profile.id)).rejects.toMatchObject({
+    code: 'COMPUTER_NOT_CONNECTED',
+  });
 });
 
 test('a failed ordinary-service initialization closes its stores and HTTP listener after graphical failure', {
   timeout: 10000,
 }, async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-agent-startup-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  t.mock.method(Screens.prototype, 'start', async () => {
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  vi.spyOn(Screens.prototype, 'start').mockImplementation(async () => {
     throw new Error('synthetic GUI failure');
   });
   const closeModels = ModelRuns.prototype.close;
   let closed = 0;
-  t.mock.method(ModelRuns.prototype, 'close', async function (this: ModelRuns) {
+  vi.spyOn(ModelRuns.prototype, 'close').mockImplementation(async function (this: ModelRuns) {
     closed++;
     await closeModels.call(this);
   });
@@ -118,20 +122,19 @@ test('a failed ordinary-service initialization closes its stores and HTTP listen
     listener.listen(0, '127.0.0.1', () => resolve(undefined)),
   );
   const address = listener.address();
-  assert.ok(address && typeof address !== 'string');
+  expect.assert(address && typeof address !== 'string');
   await new Promise<unknown>((resolve) => listener.close(() => resolve(undefined)));
-  await assert.rejects(
+  await expect(
     startPrototype({ profileDir: path.join(root, 'profile'), port: address.port, desktop: true }),
-    { code: 'EEXIST' },
-  );
-  assert.equal(closed, 1);
-  await assert.rejects(fetch(`http://127.0.0.1:${address.port}/`));
+  ).rejects.toMatchObject({ code: 'EEXIST' });
+  expect(closed).toBe(1);
+  await expect(fetch(`http://127.0.0.1:${address.port}/`)).rejects.toThrowError();
 });
 
 test('public bootstrap never publishes the control capability and authenticated diagnostics still work', async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-private-bootstrap-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  t.mock.method(Screens.prototype, 'start', async () => {
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  vi.spyOn(Screens.prototype, 'start').mockImplementation(async () => {
     throw new Fault('SYNTHETIC_GUI_FAILURE');
   });
   const app = await startPrototype({
@@ -139,16 +142,17 @@ test('public bootstrap never publishes the control capability and authenticated 
     port: 0,
     desktop: true,
   });
-  t.after(() => app.close());
+  t.onTestFinished(async () => {
+    await app.close();
+  });
   const publicReply = await fetch(app.url);
   const publicText = await publicReply.text();
-  assert.ok(!publicText.includes(app.token));
-  assert.ok(!publicText.includes('prototype-token'));
-  assert.deepEqual(JSON.parse(publicText), { service: 'daban', authentication: 'ssh-file' });
+  expect.assert(!publicText.includes(app.token));
+  expect.assert(!publicText.includes('prototype-token'));
+  expect(JSON.parse(publicText)).toStrictEqual({ service: 'daban', authentication: 'ssh-file' });
   const diagnostic = await fetch(app.url, { headers: { 'x-prototype-token': app.token } });
-  assert.ok((await diagnostic.text()).includes(app.token));
-  assert.equal(
-    (await readFile(path.join(directory, 'model/control-token'), 'utf8')).trim(),
+  expect.assert((await diagnostic.text()).includes(app.token));
+  expect((await readFile(path.join(directory, 'model/control-token'), 'utf8')).trim()).toBe(
     app.token,
   );
 });

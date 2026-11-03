@@ -1,16 +1,15 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { access, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import {
   type BotBundle,
   botBundleText,
   type ExecutionSnapshot,
   executionCapabilities,
 } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { startAgent } from './host-server.js';
 import { LocalComputerClient } from './local-computer.js';
 
@@ -82,7 +81,7 @@ test('model discovery runs through authenticated host IPC without forwarding a k
   });
   await new Promise<unknown>((resolve) => vendor.listen(0, '127.0.0.1', () => resolve(undefined)));
   const address = vendor.address();
-  assert.ok(address && typeof address === 'object');
+  expect.assert(address && typeof address === 'object');
   const app = await startAgent({
     dataRoot: root,
     socketPath: path.join(root, 'agent.sock'),
@@ -107,29 +106,28 @@ test('model discovery runs through authenticated host IPC without forwarding a k
       connection: { id: 'mock-provider', baseURL: `http://127.0.0.1:${address.port}/v1` },
       apiKey: 'synthetic-provider-key',
     };
-    assert.equal(
-      (await call(app.socketPath, '/api/model/inspect', 'wrong-token', input)).status,
+    expect((await call(app.socketPath, '/api/model/inspect', 'wrong-token', input)).status).toBe(
       403,
     );
     const result = await call(app.socketPath, '/api/model/inspect', app.token, input);
-    assert.equal(result.status, 200);
-    assert.deepEqual(result.value, {
+    expect(result.status).toBe(200);
+    expect(result.value).toStrictEqual({
       kind: 'list',
       revision: 0,
       models: [{ id: 'mock-alpha', name: 'mock-alpha', contextWindow: 64000, source: 'provider' }],
     });
-    assert.deepEqual(headers, ['Bearer synthetic-provider-key']);
-    assert.equal(methods.includes('computer.request'), false);
-    await assert.rejects(access(path.join(root, 'model/credentials.json')));
+    expect(headers).toStrictEqual(['Bearer synthetic-provider-key']);
+    expect(methods.includes('computer.request')).toBe(false);
+    await expect(access(path.join(root, 'model/credentials.json'))).rejects.toThrowError();
     const inserted = await call(app.socketPath, '/api/bots/a/insert', app.token, {
       id: 'mock-insert',
       text: 'Synthetic inserted message.',
       runId: 'mock-missing-run',
       chatRevision: 0,
     });
-    assert.equal(inserted.status, 409);
-    assert.deepEqual(inserted.value, { error: 'TASK_INSERT_STALE' });
-    assert.equal(
+    expect(inserted.status).toBe(409);
+    expect(inserted.value).toStrictEqual({ error: 'TASK_INSERT_STALE' });
+    expect(
       (
         await call(app.socketPath, '/api/bots/a/insert', app.token, {
           id: 'invalid id',
@@ -138,8 +136,7 @@ test('model discovery runs through authenticated host IPC without forwarding a k
           chatRevision: 0,
         })
       ).status,
-      400,
-    );
+    ).toBe(400);
   } finally {
     await app.close();
     await new Promise<unknown>((resolve, reject) =>
@@ -174,39 +171,38 @@ test('host agent listens only on private Unix IPC and composes authoritative sta
   });
   try {
     const identity = await call(socket, '/agent/identity');
-    assert.equal(identity.status, 200);
-    assert.equal((identity.value as { role: string }).role, 'agent');
+    expect(identity.status).toBe(200);
+    expect((identity.value as { role: string }).role).toBe('agent');
     const rejected = await call(socket, '/api/state', 'mock-guest-execution-token');
-    assert.equal(rejected.status, 403);
+    expect(rejected.status).toBe(403);
     const response = await call(socket, '/api/state', agent.token);
-    assert.equal(response.status, 200);
+    expect(response.status).toBe(200);
     const state = response.value as {
       profiles: unknown[];
       interactions: unknown[];
       computers: unknown;
       agent: { location: string };
     };
-    assert.deepEqual(state.profiles, []);
-    assert.deepEqual(state.interactions, []);
-    assert.deepEqual(state.computers, snapshot.status);
-    assert.equal(state.agent.location, 'host');
-    assert.ok(methods.includes('workspace.base'));
-    await assert.rejects(access(guestRoot));
+    expect(state.profiles).toStrictEqual([]);
+    expect(state.interactions).toStrictEqual([]);
+    expect(state.computers).toStrictEqual(snapshot.status);
+    expect(state.agent.location).toBe('host');
+    expect.assert(methods.includes('workspace.base'));
+    await expect(access(guestRoot)).rejects.toThrowError();
   } finally {
     await agent.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 test('host production composition refuses missing guest configuration instead of local execution fallback', async () => {
-  await assert.rejects(
+  await expect(
     startAgent({
       dataRoot: '/mock/root',
       socketPath: '/mock/root/agent.sock',
       scope: 'a'.repeat(64),
       sdkFile: '/mock/sdk.js',
     } as Parameters<typeof startAgent>[0]),
-    /AGENT_REMOTE_REQUIRED/,
-  );
+  ).rejects.toThrowError(/AGENT_REMOTE_REQUIRED/);
 });
 
 test('guest service restarts keep a claimed host fence while actual new boots complete it', async () => {
@@ -239,15 +235,15 @@ test('guest service restarts keep a claimed host fence while actual new boots co
     });
     await previous.claim(prepared.id, prepared.revision);
     current = { ...current, nonce: 'mock-new-service' };
-    assert.equal((await call(app.socketPath, '/api/state', app.token)).status, 200);
-    assert.equal(app.recovery, previous);
-    assert.equal(app.recovery!.receipt('mock-reboot').phase, 'claimed');
+    expect((await call(app.socketPath, '/api/state', app.token)).status).toBe(200);
+    expect(app.recovery).toBe(previous);
+    expect(app.recovery!.receipt('mock-reboot').phase).toBe('claimed');
     current = { ...current, boot: 'mock-new-boot', nonce: 'mock-new-boot-service' };
     await app.refreshExecution();
-    assert.equal((await call(app.socketPath, '/api/state', app.token)).status, 200);
-    assert.notEqual(app.recovery, previous);
-    assert.equal(app.recovery!.receipt('mock-reboot').phase, 'complete');
-    assert.equal(app.recovery!.admit(), true);
+    expect((await call(app.socketPath, '/api/state', app.token)).status).toBe(200);
+    expect(app.recovery).not.toBe(previous);
+    expect(app.recovery!.receipt('mock-reboot').phase).toBe('complete');
+    expect(app.recovery!.admit()).toBe(true);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -293,19 +289,18 @@ test('authenticated host power operations run outside the generic recovery mutat
         confirmation: 'restart-all-apps',
       },
     });
-    assert.equal(response.status, 200);
-    assert.equal((response.value as { phase: string }).phase, 'claimed');
+    expect(response.status).toBe(200);
+    expect((response.value as { phase: string }).phase).toBe('claimed');
     const state = await call(app.socketPath, '/api/state', app.token);
-    assert.equal((state.value as { reboot: { vm: string } }).reboot.vm, 'running');
-    assert.equal(
+    expect((state.value as { reboot: { vm: string } }).reboot.vm).toBe('running');
+    expect(
       (
         await call(app.socketPath, '/api/host/recovery', app.token, {
           type: 'task.start',
           bot: 'mock-bot',
         })
       ).status,
-      400,
-    );
+    ).toBe(400);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -337,13 +332,10 @@ test('host state and recovery remain readable while Linux execution is stopped',
   try {
     offline = true;
     const result = await call(app.socketPath, '/api/state', app.token);
-    assert.equal(result.status, 200);
-    assert.equal(
-      (result.value as { computers: { available: boolean } }).computers.available,
-      false,
-    );
-    assert.deepEqual((result.value as { interactions: unknown[] }).interactions, []);
-    assert.equal((await call(app.socketPath, '/api/recovery', app.token)).status, 200);
+    expect(result.status).toBe(200);
+    expect((result.value as { computers: { available: boolean } }).computers.available).toBe(false);
+    expect((result.value as { interactions: unknown[] }).interactions).toStrictEqual([]);
+    expect((await call(app.socketPath, '/api/recovery', app.token)).status).toBe(200);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -360,7 +352,7 @@ test('missing SDK and unsafe existing socket files are refused without modifying
   };
   const socketPath = path.join(root, 'agent.sock');
   try {
-    await assert.rejects(
+    await expect(
       startAgent({
         dataRoot: root,
         socketPath,
@@ -368,10 +360,9 @@ test('missing SDK and unsafe existing socket files are refused without modifying
         execution,
         sdkFile: path.join(root, 'missing-sdk.js'),
       }),
-      /AGENT_SDK_UNAVAILABLE/,
-    );
+    ).rejects.toThrowError(/AGENT_SDK_UNAVAILABLE/);
     await writeFile(socketPath, 'mock existing host file', { mode: 0o600 });
-    await assert.rejects(
+    await expect(
       startAgent({
         dataRoot: root,
         socketPath,
@@ -379,9 +370,8 @@ test('missing SDK and unsafe existing socket files are refused without modifying
         execution,
         sdkFile: await mockSdk(root),
       }),
-      /AGENT_UNSAFE_SOCKET/,
-    );
-    assert.equal(await readFile(socketPath, 'utf8'), 'mock existing host file');
+    ).rejects.toThrowError(/AGENT_UNSAFE_SOCKET/);
+    expect(await readFile(socketPath, 'utf8')).toBe('mock existing host file');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -405,8 +395,8 @@ test('private Unix identity retains requested absolute paths across macOS tempor
   });
   try {
     const identity = await call(socketPath, '/agent/identity');
-    assert.equal((identity.value as { dataRoot: string }).dataRoot, path.resolve(root));
-    assert.equal((identity.value as { socketPath: string }).socketPath, path.resolve(socketPath));
+    expect((identity.value as { dataRoot: string }).dataRoot).toBe(path.resolve(root));
+    expect((identity.value as { socketPath: string }).socketPath).toBe(path.resolve(socketPath));
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -461,10 +451,10 @@ test('only native routes reach the guest and connect holds a host admission/life
       '/api/bots/mock-bot/frame?instance=mock-instance&epoch=0',
       app.token,
     );
-    assert.equal(frame.status, 200);
-    assert.deepEqual(frame.value, image);
-    assert.equal((await call(app.socketPath, '/api/model/private', app.token)).status, 404);
-    assert.equal(forwarded.length, 1);
+    expect(frame.status).toBe(200);
+    expect(frame.value).toStrictEqual(image);
+    expect((await call(app.socketPath, '/api/model/private', app.token)).status).toBe(404);
+    expect(forwarded.length).toBe(1);
     const connect = call(app.socketPath, '/api/computers/action', app.token, {
       id: 'mock-connect',
       bot: profile.id,
@@ -472,21 +462,19 @@ test('only native routes reach the guest and connect holds a host admission/life
       revision: 0,
     });
     await entered;
-    await assert.rejects(
+    await expect(
       app.models.start(profile.id, { requestId: 'mock-start', prompt: 'Mock task' }),
-      { code: 'COMPUTER_CHANGING' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'COMPUTER_CHANGING' });
+    await expect(
       app.lifecycle!.operate({
         id: 'mock-archive',
         bot: profile.id,
         action: 'archive',
         revision: profile.revision,
       }),
-      { code: 'BOT_COMPUTER_CONNECTED' },
-    );
+    ).rejects.toMatchObject({ code: 'BOT_COMPUTER_CONNECTED' });
     release();
-    assert.equal((await connect).status, 200);
+    expect((await connect).status).toBe(200);
   } finally {
     release();
     await app.close();
@@ -544,8 +532,8 @@ test('host portable imports revalidate original documents through the guest docu
     await app.models.bundles.begin(header);
     await app.models.bundles.submit(header.id, bundle);
     await app.models.bundles.settled;
-    assert.equal((await app.models.bundles.status(header.id)).state, 'complete');
-    assert.equal(extracts, 1);
+    expect((await app.models.bundles.status(header.id)).state).toBe('complete');
+    expect(extracts).toBe(1);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -580,17 +568,17 @@ test('offline cold start serves host recovery from a cached root without guest c
     offlineWorkspaceRoot: workspaceRoot,
   });
   try {
-    assert.equal(calls, 0);
-    assert.equal((await call(app.socketPath, '/api/recovery', app.token)).status, 200);
+    expect(calls).toBe(0);
+    expect((await call(app.socketPath, '/api/recovery', app.token)).status).toBe(200);
     const state = await call(app.socketPath, '/api/state', app.token);
-    assert.equal(state.status, 200);
-    assert.equal((state.value as { computers: { available: boolean } }).computers.available, false);
+    expect(state.status).toBe(200);
+    expect((state.value as { computers: { available: boolean } }).computers.available).toBe(false);
     online = true;
     await app.refreshExecution();
-    assert.equal((await call(app.socketPath, '/api/state', app.token)).status, 200);
+    expect((await call(app.socketPath, '/api/state', app.token)).status).toBe(200);
     workspaceRoot = '/mock-guest/moved-workspace';
-    await assert.rejects(app.refreshExecution(), /WORKSPACE_CHANGED/);
-    assert.equal(app.models.admit('mock-bot'), false);
+    await expect(app.refreshExecution()).rejects.toThrowError(/WORKSPACE_CHANGED/);
+    expect(app.models.admit('mock-bot')).toBe(false);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -639,18 +627,17 @@ test('a host with a VM also blocks archiving a Bot that still owns the native de
       memory: '',
       color: 'mint',
     });
-    await assert.rejects(
+    await expect(
       app.lifecycle!.operate({
         id: 'mock-archive',
         bot: profile.id,
         action: 'archive',
         revision: profile.revision,
       }),
-      { code: 'BOT_COMPUTER_CONNECTED' },
-    );
+    ).rejects.toMatchObject({ code: 'BOT_COMPUTER_CONNECTED' });
     const retained = await app.models.profiles.get(profile.id);
-    assert.ok(retained);
-    assert.notEqual(retained.archived, true);
+    expect.assert(retained);
+    expect(retained.archived).not.toBe(true);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

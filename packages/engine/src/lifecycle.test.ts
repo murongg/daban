@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { isBotLifecycleAck } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { Fault } from './control.js';
 import { BotLifecycle } from './lifecycle.js';
 import { BotProfiles } from './profiles.js';
@@ -62,12 +61,14 @@ test('an already-running Bot is rejected without transiently fencing its ongoing
   const f = await fixture();
   try {
     f.busy.add(archive.bot);
-    const operation = assert.rejects(f.lifecycle.operate(archive), { code: 'BOT_TASK_RUNNING' });
+    const operation = expect(f.lifecycle.operate(archive)).rejects.toMatchObject({
+      code: 'BOT_TASK_RUNNING',
+    });
     await Promise.resolve();
     await Promise.resolve();
-    assert.equal(f.profiles.admit(archive.bot), true);
+    expect(f.profiles.admit(archive.bot)).toBe(true);
     await operation;
-    assert.equal(f.suspended.length, 0);
+    expect(f.suspended.length).toBe(0);
   } finally {
     await f.close();
   }
@@ -82,26 +83,26 @@ test('archive preflights live work, preserves profiles and returns exact read-on
       [f.queued, 'BOT_GROUP_PENDING'],
     ] as const) {
       set.add(archive.bot);
-      await assert.rejects(f.lifecycle.operate(archive), { code });
+      await expect(f.lifecycle.operate(archive)).rejects.toMatchObject({ code });
       set.clear();
-      assert.equal((await f.profiles.get(archive.bot))?.archived, undefined);
+      expect((await f.profiles.get(archive.bot))?.archived).toBe(undefined);
     }
-    assert.equal(f.suspended.length, 0);
+    expect(f.suspended.length).toBe(0);
     const result = await f.lifecycle.operate(archive);
-    assert.ok(isBotLifecycleAck(result));
-    assert.equal(result.receipt.phase, 'complete');
-    assert.equal(result.profile.archived, true);
-    assert.equal(result.profile.memory, 'SYNTHETIC-RETAINED-MEMORY');
+    expect.assert(isBotLifecycleAck(result));
+    expect(result.receipt.phase).toBe('complete');
+    expect(result.profile.archived).toBe(true);
+    expect(result.profile.memory).toBe('SYNTHETIC-RETAINED-MEMORY');
     const bytes = await readFile(path.join(f.root, 'mock-a.json'));
     f.busy.add(archive.bot);
-    assert.deepEqual(await f.lifecycle.operate(archive), result);
-    assert.deepEqual(await f.lifecycle.receipt(archive.bot, archive.id), result);
-    assert.deepEqual(await readFile(path.join(f.root, 'mock-a.json')), bytes);
-    assert.equal(f.suspended.length, 1);
-    await assert.rejects(f.lifecycle.receipt('mock-b', archive.id), {
+    expect(await f.lifecycle.operate(archive)).toStrictEqual(result);
+    expect(await f.lifecycle.receipt(archive.bot, archive.id)).toStrictEqual(result);
+    expect(await readFile(path.join(f.root, 'mock-a.json'))).toStrictEqual(bytes);
+    expect(f.suspended.length).toBe(1);
+    await expect(f.lifecycle.receipt('mock-b', archive.id)).rejects.toMatchObject({
       code: 'BOT_LIFECYCLE_NOT_FOUND',
     });
-    await assert.rejects(f.lifecycle.operate({ ...archive, action: 'restore' }), {
+    await expect(f.lifecycle.operate({ ...archive, action: 'restore' })).rejects.toMatchObject({
       code: 'BOT_REQUEST_ID_REUSED',
     });
     f.busy.clear();
@@ -111,11 +112,13 @@ test('archive preflights live work, preserves profiles and returns exact read-on
       action: 'restore',
       revision: result.profile.revision,
     });
-    assert.equal(restored.profile.archived, false);
-    assert.equal(f.suspended.length, 1);
-    assert.equal(f.profiles.admit(archive.bot), true);
-    await assert.rejects(f.lifecycle.operate(archive), { code: 'BOT_PROFILE_CONFLICT' });
-    assert.equal((await f.profiles.get('mock-b'))?.revision, 1);
+    expect(restored.profile.archived).toBe(false);
+    expect(f.suspended.length).toBe(1);
+    expect(f.profiles.admit(archive.bot)).toBe(true);
+    await expect(f.lifecycle.operate(archive)).rejects.toMatchObject({
+      code: 'BOT_PROFILE_CONFLICT',
+    });
+    expect((await f.profiles.get('mock-b'))?.revision).toBe(1);
   } finally {
     await f.close();
   }
@@ -126,35 +129,36 @@ test('accepted archive remains fenced after cleanup failure and is resumed idemp
   let reopened: BotLifecycle | undefined;
   try {
     f.fail(true);
-    await assert.rejects(f.lifecycle.operate(archive), { code: 'BOT_ARCHIVE_INCOMPLETE' });
+    await expect(f.lifecycle.operate(archive)).rejects.toMatchObject({
+      code: 'BOT_ARCHIVE_INCOMPLETE',
+    });
     const pending = await f.lifecycle.receipt(archive.bot, archive.id);
-    assert.ok(isBotLifecycleAck(pending));
-    assert.equal(pending.profile.archived, true);
-    assert.equal(pending.receipt.phase, 'pending');
-    assert.equal(pending.receipt.error, 'BOT_ARCHIVE_INCOMPLETE');
-    assert.equal(f.profiles.admit(archive.bot), false);
-    await assert.rejects(
+    expect.assert(isBotLifecycleAck(pending));
+    expect(pending.profile.archived).toBe(true);
+    expect(pending.receipt.phase).toBe('pending');
+    expect(pending.receipt.error).toBe('BOT_ARCHIVE_INCOMPLETE');
+    expect(f.profiles.admit(archive.bot)).toBe(false);
+    await expect(
       f.lifecycle.operate({
         id: 'mock-premature-restore',
         bot: archive.bot,
         action: 'restore',
         revision: pending.profile.revision,
       }),
-      { code: 'BOT_RESTORE_NOT_READY' },
-    );
+    ).rejects.toMatchObject({ code: 'BOT_RESTORE_NOT_READY' });
     await f.lifecycle.close();
     f.fail(false);
     const profiles = new BotProfiles(f.root);
     reopened = new BotLifecycle({ ...f.options, profiles });
     await reopened.recover();
     const receipt = await reopened.receipt(archive.bot, archive.id);
-    assert.equal(receipt.receipt.phase, 'complete');
-    assert.equal(receipt.profile.revision, 3);
-    assert.equal(profiles.admit(archive.bot), false);
-    assert.equal((await profiles.get('mock-b'))?.memory, 'SYNTHETIC-RETAINED-MEMORY');
+    expect(receipt.receipt.phase).toBe('complete');
+    expect(receipt.profile.revision).toBe(3);
+    expect(profiles.admit(archive.bot)).toBe(false);
+    expect((await profiles.get('mock-b'))?.memory).toBe('SYNTHETIC-RETAINED-MEMORY');
     const effects = f.suspended.length;
     await reopened.recover();
-    assert.equal(f.suspended.length, effects);
+    expect(f.suspended.length).toBe(effects);
   } finally {
     await reopened?.close();
     await f.close();
@@ -180,9 +184,11 @@ test('concurrent exact archive retries share work; another identity and a later 
   try {
     const first = f.lifecycle.operate(archive);
     await start;
-    assert.equal(f.profiles.admit(archive.bot), false);
+    expect(f.profiles.admit(archive.bot)).toBe(false);
     const retry = f.lifecycle.operate(archive);
-    await assert.rejects(f.lifecycle.operate({ ...archive, id: 'mock-different-operation' }), {
+    await expect(
+      f.lifecycle.operate({ ...archive, id: 'mock-different-operation' }),
+    ).rejects.toMatchObject({
       code: 'BOT_CHANGING',
     });
     const other = await f.lifecycle.operate({
@@ -191,16 +197,15 @@ test('concurrent exact archive retries share work; another identity and a later 
       action: 'archive',
       revision: 1,
     });
-    assert.equal(other.profile.archived, true);
+    expect(other.profile.archived).toBe(true);
     release();
-    assert.deepEqual(await first, await retry);
-    assert.equal(f.suspended.filter((bot) => bot === archive.bot).length, 1);
+    expect(await first).toStrictEqual(await retry);
+    expect(f.suspended.filter((bot) => bot === archive.bot).length).toBe(1);
     const valid = await f.lifecycle.receipt(archive.bot, archive.id);
-    assert.equal(
-      isBotLifecycleAck({ ...valid, receipt: { ...valid.receipt, bot: 'mock-b' } }),
+    expect(isBotLifecycleAck({ ...valid, receipt: { ...valid.receipt, bot: 'mock-b' } })).toBe(
       false,
     );
-    assert.equal(isBotLifecycleAck({ ...valid, path: '/synthetic/private' }), false);
+    expect(isBotLifecycleAck({ ...valid, path: '/synthetic/private' })).toBe(false);
   } finally {
     release();
     await f.close();
@@ -226,11 +231,11 @@ test('shutdown before accepting intent releases admission without changing the p
     await start;
     const closing = f.lifecycle.close();
     release();
-    await assert.rejects(operation, { code: 'BOT_LIFECYCLE_CLOSED' });
+    await expect(operation).rejects.toMatchObject({ code: 'BOT_LIFECYCLE_CLOSED' });
     await closing;
-    assert.equal((await f.profiles.get(archive.bot))?.archived, undefined);
-    assert.equal(f.profiles.admit(archive.bot), true);
-    assert.equal(f.suspended.length, 0);
+    expect((await f.profiles.get(archive.bot))?.archived).toBe(undefined);
+    expect(f.profiles.admit(archive.bot)).toBe(true);
+    expect(f.suspended.length).toBe(0);
   } finally {
     release();
     await f.close();
@@ -259,13 +264,13 @@ test('shutdown drains an accepted archive before its dependent stores may close'
       closed = true;
     });
     await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.equal(closed, false);
-    assert.equal((await f.lifecycle.receipt(archive.bot, archive.id)).receipt.phase, 'pending');
+    expect(closed).toBe(false);
+    expect((await f.lifecycle.receipt(archive.bot, archive.id)).receipt.phase).toBe('pending');
     release();
-    assert.equal((await operation).receipt.phase, 'complete');
+    expect((await operation).receipt.phase).toBe('complete');
     await closing;
-    assert.equal(closed, true);
-    assert.equal(f.profiles.admit(archive.bot), false);
+    expect(closed).toBe(true);
+    expect(f.profiles.admit(archive.bot)).toBe(false);
   } finally {
     release();
     await f.close();

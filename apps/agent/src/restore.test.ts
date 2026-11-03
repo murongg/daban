@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import type { MigrationManifest } from './migration.js';
 import { restorePublicData, scanPublicSecrets } from './restore.js';
 import { restoreWorker } from './restore-worker.js';
@@ -20,10 +19,10 @@ test('public-data scanning detects provider keys across UTF-8 and UTF-16LE chunk
       Buffer.from(key, encoding),
       Buffer.from('suffix'),
     ]);
-    await assert.rejects(
-      scanPublicSecrets(chunks(bytes), key),
-      /^Error: MIGRATION_SECRET_IN_PUBLIC$/,
-    );
+    await expect(scanPublicSecrets(chunks(bytes), key)).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_SECRET_IN_PUBLIC$/),
+    });
   }
   await scanPublicSecrets(chunks(Buffer.from('synthetic public browser/session data')), key);
 });
@@ -38,15 +37,17 @@ test('secret scanning handles a large public metadata chunk without rejecting sa
     key,
   );
   Buffer.from(key).copy(bytes, bytes.length - key.length);
-  await assert.rejects(
+  await expect(
     scanPublicSecrets(
       (async function* () {
         yield bytes;
       })(),
       key,
     ),
-    /^Error: MIGRATION_SECRET_IN_PUBLIC$/,
-  );
+  ).rejects.toMatchObject({
+    name: 'Error',
+    message: expect.stringMatching(/^MIGRATION_SECRET_IN_PUBLIC$/),
+  });
 });
 
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -106,7 +107,7 @@ async function fixture(secret = false) {
   let temporary = 0;
   const run = async (program: string, args: string[], settings: { env: NodeJS.ProcessEnv }) => {
     calls.push({ program, args, env: settings.env });
-    assert.equal(program, '/mock/tools/limactl');
+    expect(program).toBe('/mock/tools/limactl');
     if (args.includes('sha256sum'))
       return { code: 0, stdout: `${hash(await fs.readFile(physical(args.at(-1)!)))}  synthetic\n` };
     if (args.includes('mktemp')) {
@@ -172,31 +173,30 @@ test('host sends only verified public data to the fresh guest and completed repl
   const f = await fixture();
   try {
     const result = await restorePublicData(f.options, { run: f.run });
-    assert.equal(result.files, 2);
-    assert.equal(result.browserFiles, 1);
-    assert.equal(result.sharedFiles, 1);
+    expect(result.files).toBe(2);
+    expect(result.browserFiles).toBe(1);
+    expect(result.sharedFiles).toBe(1);
     const browser = path.join(f.guest, 'var/lib/bot-prototype/profile/Default/Preferences');
     const script = path.join(f.guest, 'var/lib/bot-prototype/desktops/shared/bin/mock.sh');
-    assert.deepEqual(await fs.readFile(browser), f.browserBytes);
-    assert.deepEqual(await fs.readFile(script), f.sharedBytes);
-    assert.equal((await fs.lstat(script)).mode & 0o777, 0o755);
-    assert.equal(JSON.stringify(f.calls).includes(f.key), false);
-    assert.equal(
-      f.calls.some((call) => call.args[0] === 'start' || call.args[0] === 'stop'),
-      false,
-    );
+    expect(await fs.readFile(browser)).toStrictEqual(f.browserBytes);
+    expect(await fs.readFile(script)).toStrictEqual(f.sharedBytes);
+    expect((await fs.lstat(script)).mode & 0o777).toBe(0o755);
+    expect(JSON.stringify(f.calls).includes(f.key)).toBe(false);
+    expect(f.calls.some((call) => call.args[0] === 'start' || call.args[0] === 'stop')).toBe(false);
     const copies = f.calls.filter((call) => call.args[0] === 'copy').length;
     await fs.writeFile(browser, 'SYNTHETIC LATER USER EDIT');
-    assert.deepEqual(await restorePublicData(f.options, { run: f.run }), result);
-    assert.equal(await fs.readFile(browser, 'utf8'), 'SYNTHETIC LATER USER EDIT');
-    assert.equal(f.calls.filter((call) => call.args[0] === 'copy').length, copies);
-    await assert.rejects(
+    expect(await restorePublicData(f.options, { run: f.run })).toStrictEqual(result);
+    expect(await fs.readFile(browser, 'utf8')).toBe('SYNTHETIC LATER USER EDIT');
+    expect(f.calls.filter((call) => call.args[0] === 'copy').length).toBe(copies);
+    await expect(
       restorePublicData(
         { ...f.options, config: { ...f.options.config, vm: 'mock-other' } },
         { run: f.run },
       ),
-      /^Error: MIGRATION_TARGET_CHANGED$/,
-    );
+    ).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_TARGET_CHANGED$/),
+    });
   } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }
@@ -205,15 +205,12 @@ test('host sends only verified public data to the fresh guest and completed repl
 test('provider key bytes in public files block all uploads and no private payload enters command arguments', async () => {
   const f = await fixture(true);
   try {
-    await assert.rejects(
-      restorePublicData(f.options, { run: f.run }),
-      /^Error: MIGRATION_SECRET_IN_PUBLIC$/,
-    );
-    assert.equal(
-      f.calls.some((call) => call.args[0] === 'copy'),
-      false,
-    );
-    assert.equal(JSON.stringify(f.calls).includes(f.key), false);
+    await expect(restorePublicData(f.options, { run: f.run })).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_SECRET_IN_PUBLIC$/),
+    });
+    expect(f.calls.some((call) => call.args[0] === 'copy')).toBe(false);
+    expect(JSON.stringify(f.calls).includes(f.key)).toBe(false);
   } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }
@@ -223,24 +220,18 @@ test('unlisted links and changed source hashes are rejected before archive uploa
   const f = await fixture();
   try {
     await fs.writeFile(f.sharedFile, 'SYNTHETIC CHANGED SOURCE');
-    await assert.rejects(
-      restorePublicData(f.options, { run: f.run }),
-      /^Error: MIGRATION_INTEGRITY_FAILED$/,
-    );
-    assert.equal(
-      f.calls.some((call) => call.args[0] === 'copy'),
-      false,
-    );
+    await expect(restorePublicData(f.options, { run: f.run })).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_INTEGRITY_FAILED$/),
+    });
+    expect(f.calls.some((call) => call.args[0] === 'copy')).toBe(false);
     await fs.writeFile(f.sharedFile, f.sharedBytes);
     await fs.symlink(f.options.credentialFile, path.join(f.directory, 'browser/linked-private'));
-    await assert.rejects(
-      restorePublicData(f.options, { run: f.run }),
-      /^Error: MIGRATION_UNSAFE_PUBLIC$/,
-    );
-    assert.equal(
-      f.calls.some((call) => call.args[0] === 'copy'),
-      false,
-    );
+    await expect(restorePublicData(f.options, { run: f.run })).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_UNSAFE_PUBLIC$/),
+    });
+    expect(f.calls.some((call) => call.args[0] === 'copy')).toBe(false);
   } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }
@@ -263,7 +254,7 @@ test('public manifests and worker receipts use semantic fields rather than JSON 
         return reply;
       },
     });
-    assert.equal(result.phase, 'complete');
+    expect(result.phase).toBe('complete');
   } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }
@@ -276,10 +267,9 @@ test('canonical PAX transfer preserves long Unicode public paths without adding 
   f.options.shared.files[0].path = name;
   try {
     await restorePublicData(f.options, { run: f.run });
-    assert.deepEqual(
+    expect(
       await fs.readFile(path.join(f.guest, 'var/lib/bot-prototype/desktops/shared', name)),
-      f.sharedBytes,
-    );
+    ).toStrictEqual(f.sharedBytes);
   } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }

@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { SoftwarePlan, SoftwareReceipt } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { Interactions } from './interactions.js';
 import { type SoftwareBackend, SoftwareTools } from './software.js';
 
@@ -75,16 +74,16 @@ test('installation requires exact durable approval; duplicate requests never ins
   try {
     const pending = f.call(),
       card = await f.pending();
-    assert.equal(card.kind, 'approval');
-    assert.equal(f.counts().effects, 0);
+    expect(card.kind).toBe('approval');
+    expect(f.counts().effects).toBe(0);
     const duplicate = f.call();
     await f.cards.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
-    assert.equal((await pending).isError, undefined);
-    assert.equal((await duplicate).isError, undefined);
-    assert.equal(f.counts().effects, 1);
+    expect((await pending).isError).toBe(undefined);
+    expect((await duplicate).isError).toBe(undefined);
+    expect(f.counts().effects).toBe(1);
     await f.call();
-    assert.equal(f.counts().effects, 1);
-    assert.equal(f.counts().plans, 1);
+    expect(f.counts().effects).toBe(1);
+    expect(f.counts().plans).toBe(1);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
@@ -95,15 +94,15 @@ test('refusal and stopping before dispatch cannot install; changed args cannot r
     const pending = f.call(),
       card = await f.pending();
     await f.cards.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: false });
-    assert.equal((await pending).isError, true);
-    assert.equal(f.counts().effects, 0);
+    expect((await pending).isError).toBe(true);
+    expect(f.counts().effects).toBe(0);
     await f.call();
-    assert.equal(f.counts().effects, 0);
+    expect(f.counts().effects).toBe(0);
     const invalid = await f.tools.invoke(f.run, 'software_install', {
       packages: ['-y'],
       purpose: '合成用途',
     });
-    assert.equal(invalid.isError, true);
+    expect(invalid.isError).toBe(true);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
@@ -112,8 +111,8 @@ test('refusal and stopping before dispatch cannot install; changed args cannot r
     const pending = g.call();
     await g.pending();
     g.run.abort.abort();
-    assert.equal((await pending).isError, true);
-    assert.equal(g.counts().effects, 0);
+    expect((await pending).isError).toBe(true);
+    expect(g.counts().effects).toBe(0);
   } finally {
     await rm(g.root, { recursive: true, force: true });
   }
@@ -129,10 +128,10 @@ test('a lost dispatch reply is inspected and never automatically retried after a
     const pending = f.call(),
       card = await f.pending();
     await f.cards.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
-    assert.equal((await pending).isError, true);
-    assert.equal(calls, 1);
+    expect((await pending).isError).toBe(true);
+    expect(calls).toBe(1);
     await f.call();
-    assert.equal(calls, 1);
+    expect(calls).toBe(1);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
@@ -141,12 +140,12 @@ test('installed software needs no new effect or approval, and list reads shared 
   const f = await fixture();
   try {
     f.set({ plan, phase: 'installed', updatedAt: plan.createdAt });
-    assert.equal((await f.call()).isError, undefined);
-    assert.equal((await f.cards.list()).length, 0);
-    assert.equal(f.counts().effects, 0);
+    expect((await f.call()).isError).toBe(undefined);
+    expect((await f.cards.list()).length).toBe(0);
+    expect(f.counts().effects).toBe(0);
     const result = await f.tools.invoke({ ...f.run, bot: 'mock-b' }, 'software_list', {});
-    assert.equal(result.isError, undefined);
-    assert.match(JSON.stringify(result), /mock-calculator/);
+    expect(result.isError).toBe(undefined);
+    expect(JSON.stringify(result)).toMatch(/mock-calculator/);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }

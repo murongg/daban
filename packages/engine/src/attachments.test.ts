@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Attachments } from './attachments.js';
 
 test('raster uploads retain immutable scoped originals without invoking document extraction', async () => {
@@ -19,41 +18,41 @@ test('raster uploads retain immutable scoped originals without invoking document
       extracted = true;
       return 'MUST NOT EXTRACT PIXELS AS DOCUMENT TEXT';
     });
-    assert.equal(extracted, false);
-    assert.match(receipt.content, /image\/png/);
-    assert.deepEqual((await store.source('mock-alpha', receipt.id)).file, image);
-    assert.deepEqual(
-      (await store.read('mock-alpha', receipt.id)).data,
+    expect(extracted).toBe(false);
+    expect(receipt.content).toMatch(/image\/png/);
+    expect((await store.source('mock-alpha', receipt.id)).file).toStrictEqual(image);
+    expect((await store.read('mock-alpha', receipt.id)).data).toStrictEqual(
       Buffer.from(image.data, 'base64'),
     );
-    await assert.rejects(store.read('mock-beta', receipt.id), { code: 'ATTACHMENT_NOT_FOUND' });
-    await assert.rejects(
+    await expect(store.read('mock-beta', receipt.id)).rejects.toMatchObject({
+      code: 'ATTACHMENT_NOT_FOUND',
+    });
+    await expect(
       store.upload(
         'mock-alpha',
         { name: 'fake.png', data: Buffer.from('<svg/>').toString('base64') },
         async () => 'never',
       ),
-      { code: 'IMAGE_UNREADABLE' },
-    );
+    ).rejects.toMatchObject({ code: 'IMAGE_UNREADABLE' });
     const huge = Buffer.from(image.data, 'base64');
     huge.writeUInt32BE(100000, 16);
-    await assert.rejects(
+    await expect(
       store.upload(
         'mock-alpha',
         { name: 'huge.png', data: huge.toString('base64') },
         async () => 'never',
       ),
-      { code: 'IMAGE_LIMIT' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'IMAGE_LIMIT' });
+    await expect(
       store.upload('mock-alpha', { name: 'wrong.jpg', data: image.data }, async () => 'never'),
-      { code: 'IMAGE_UNREADABLE' },
-    );
+    ).rejects.toMatchObject({ code: 'IMAGE_UNREADABLE' });
     const entry = (await store.list('mock-alpha', {})).items[0];
     const trashed = await store.trash('mock-alpha', entry.id, entry.version);
-    await assert.rejects(store.read('mock-alpha', entry.id), { code: 'ATTACHMENT_TRASHED' });
+    await expect(store.read('mock-alpha', entry.id)).rejects.toMatchObject({
+      code: 'ATTACHMENT_TRASHED',
+    });
     await store.restore('mock-alpha', entry.id, trashed.version);
-    assert.deepEqual((await store.source('mock-alpha', entry.id)).file, image);
+    expect((await store.source('mock-alpha', entry.id)).file).toStrictEqual(image);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -64,9 +63,9 @@ test('health checks attachment database readiness without returning content and 
   const dir = await mkdtemp(path.join(tmpdir(), 'mock-attachment-health-'));
   const store = new Attachments(path.join(dir, 'uploads.sqlite'));
   try {
-    assert.deepEqual(await store.status(), { available: true });
+    expect(await store.status()).toStrictEqual({ available: true });
     await store.close();
-    assert.deepEqual(await store.status(), { available: false });
+    expect(await store.status()).toStrictEqual({ available: false });
   } finally {
     await store.close();
     await rm(dir, { recursive: true, force: true });
@@ -90,20 +89,21 @@ test('legacy uploads migrate without changing bytes and failed purge rolls back 
     );
     db.close();
     store = new Attachments(file);
-    assert.deepEqual((await store.read('mock-alpha', receipt.id)).receipt, receipt);
+    expect((await store.read('mock-alpha', receipt.id)).receipt).toStrictEqual(receipt);
     const entry = (await store.list('mock-alpha', {})).items[0];
     const trashed = await store.trash('mock-alpha', entry.id, entry.version);
     db = new DatabaseSync(file);
     db.exec(
       "CREATE TRIGGER reject_purge BEFORE DELETE ON uploads BEGIN SELECT RAISE(ABORT,'synthetic refusal'); END;",
     );
-    await assert.rejects(store.purge('mock-alpha', entry.id, trashed.version, source.name));
-    assert.deepEqual((await store.source('mock-alpha', entry.id)).file, source);
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM purges').get()!.count, 0);
+    await expect(
+      store.purge('mock-alpha', entry.id, trashed.version, source.name),
+    ).rejects.toThrowError();
+    expect((await store.source('mock-alpha', entry.id)).file).toStrictEqual(source);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM purges').get()!.count).toBe(0);
     db.exec('DROP TRIGGER reject_purge');
     db.close();
-    assert.equal(
-      (await store.purge('mock-alpha', entry.id, trashed.version, source.name)).purged,
+    expect((await store.purge('mock-alpha', entry.id, trashed.version, source.name)).purged).toBe(
       true,
     );
   } finally {
@@ -119,51 +119,61 @@ test('attachment trash is recoverable, permanent purge releases quota and stale 
   try {
     const uploaded = await store.upload('mock-alpha', file, async () => 'MOCK-47');
     const page = await store.list('mock-alpha', {});
-    assert.equal(page.items.length, 1);
+    expect(page.items.length).toBe(1);
     const first = page.items[0];
-    assert.equal(page.originalBytes, uploaded.size);
+    expect(page.originalBytes).toBe(uploaded.size);
     const removed = await store.trash('mock-alpha', first.id, first.version);
-    assert.equal(removed.deleted, true);
-    assert.deepEqual(await store.trash('mock-alpha', first.id, first.version), removed);
-    assert.equal((await store.list('mock-alpha', {})).items.length, 0);
-    assert.equal((await store.list('mock-alpha', { trash: true })).items.length, 1);
-    await assert.rejects(store.read('mock-alpha', first.id), { code: 'ATTACHMENT_TRASHED' });
-    await assert.rejects(
+    expect(removed.deleted).toBe(true);
+    expect(await store.trash('mock-alpha', first.id, first.version)).toStrictEqual(removed);
+    expect((await store.list('mock-alpha', {})).items.length).toBe(0);
+    expect((await store.list('mock-alpha', { trash: true })).items.length).toBe(1);
+    await expect(store.read('mock-alpha', first.id)).rejects.toMatchObject({
+      code: 'ATTACHMENT_TRASHED',
+    });
+    await expect(
       store.upload('mock-alpha', file, async () => 'must not resurrect'),
-      { code: 'ATTACHMENT_TRASHED' },
-    );
-    assert.deepEqual((await store.source('mock-alpha', first.id)).file, file);
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_TRASHED' });
+    expect((await store.source('mock-alpha', first.id)).file).toStrictEqual(file);
     const restored = await store.restore('mock-alpha', first.id, removed.version);
-    assert.equal(restored.deleted, false);
-    await assert.rejects(store.trash('mock-alpha', first.id, first.version), {
+    expect(restored.deleted).toBe(false);
+    await expect(store.trash('mock-alpha', first.id, first.version)).rejects.toMatchObject({
       code: 'ATTACHMENT_CONFLICT',
     });
-    await assert.rejects(store.purge('mock-alpha', first.id, restored.version, file.name), {
+    await expect(
+      store.purge('mock-alpha', first.id, restored.version, file.name),
+    ).rejects.toMatchObject({
       code: 'ATTACHMENT_NOT_TRASHED',
     });
     const trashed = await store.trash('mock-alpha', first.id, restored.version);
-    await assert.rejects(store.purge('mock-other', first.id, trashed.version, file.name), {
+    await expect(
+      store.purge('mock-other', first.id, trashed.version, file.name),
+    ).rejects.toMatchObject({
       code: 'ATTACHMENT_NOT_FOUND',
     });
-    await assert.rejects(store.purge('mock-alpha', first.id, trashed.version, 'wrong.pdf'), {
+    await expect(
+      store.purge('mock-alpha', first.id, trashed.version, 'wrong.pdf'),
+    ).rejects.toMatchObject({
       code: 'ATTACHMENT_CONFIRMATION',
     });
     const purged = await store.purge('mock-alpha', first.id, trashed.version, file.name);
-    assert.equal(purged.purged, true);
-    assert.equal(
-      (await store.purge('mock-alpha', first.id, trashed.version, file.name)).purged,
+    expect(purged.purged).toBe(true);
+    expect((await store.purge('mock-alpha', first.id, trashed.version, file.name)).purged).toBe(
       true,
     );
-    assert.equal((await store.list('mock-alpha', { trash: true })).originalBytes, 0);
-    await assert.rejects(store.source('mock-alpha', first.id), { code: 'ATTACHMENT_NOT_FOUND' });
+    expect((await store.list('mock-alpha', { trash: true })).originalBytes).toBe(0);
+    await expect(store.source('mock-alpha', first.id)).rejects.toMatchObject({
+      code: 'ATTACHMENT_NOT_FOUND',
+    });
     await store.upload('mock-alpha', file, async () => 'MOCK-47');
     const fresh = (await store.list('mock-alpha', {})).items[0];
-    assert.notEqual(fresh.version, first.version);
+    expect(fresh.version).not.toBe(first.version);
     await store.trash('mock-alpha', fresh.id, fresh.version);
-    await assert.rejects(store.purge('mock-alpha', fresh.id, trashed.version, file.name), {
+    await expect(
+      store.purge('mock-alpha', fresh.id, trashed.version, file.name),
+    ).rejects.toMatchObject({
       code: 'ATTACHMENT_CONFLICT',
     });
-    assert.deepEqual((await store.source('mock-alpha', fresh.id)).file, file);
+    expect((await store.source('mock-alpha', fresh.id)).file).toStrictEqual(file);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -181,20 +191,18 @@ test('retained extracted text is bounded independently of highly compressed orig
     const first = await store.list('mock-alpha', {});
     const second = await store.list('mock-alpha', { before: first.next });
     const third = await store.list('mock-alpha', { before: second.next });
-    assert.equal(first.items.length, 50);
-    assert.equal(second.items.length, 50);
-    assert.equal(third.items.length, 2);
-    assert.equal(third.next, undefined);
-    assert.equal(
+    expect(first.items.length).toBe(50);
+    expect(second.items.length).toBe(50);
+    expect(third.items.length).toBe(2);
+    expect(third.next).toBe(undefined);
+    expect(
       new Set([...first.items, ...second.items, ...third.items].map((item) => item.id)).size,
-      102,
-    );
-    assert.equal((await store.list('mock-alpha', { query: 'mock-1.pdf' })).items.length, 1);
-    assert.equal((await store.list('mock-other', {})).items.length, 0);
-    await assert.rejects(
+    ).toBe(102);
+    expect((await store.list('mock-alpha', { query: 'mock-1.pdf' })).items.length).toBe(1);
+    expect((await store.list('mock-other', {})).items.length).toBe(0);
+    await expect(
       store.upload('mock-alpha', { name: 'one-too-many.pdf', data }, async () => content),
-      { code: 'ATTACHMENT_STORAGE_LIMIT' },
-    );
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_STORAGE_LIMIT' });
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -213,19 +221,21 @@ test('confirmed attachments retain immutable originals and text across restart, 
   };
   try {
     const first = await store.upload('mock-alpha', file, extract);
-    assert.equal(first.content, 'MOCK-47');
-    assert.equal(first.size, data.length);
-    assert.deepEqual((await store.source('mock-alpha', first.id)).file, file);
-    assert.deepEqual(await store.upload('mock-alpha', file, extract), first);
-    assert.equal(parses, 1);
+    expect(first.content).toBe('MOCK-47');
+    expect(first.size).toBe(data.length);
+    expect((await store.source('mock-alpha', first.id)).file).toStrictEqual(file);
+    expect(await store.upload('mock-alpha', file, extract)).toStrictEqual(first);
+    expect(parses).toBe(1);
     const beta = await store.upload('mock-beta', file, extract);
-    assert.equal(beta.bot, 'mock-beta');
-    await assert.rejects(store.source('mock-other', first.id), { code: 'ATTACHMENT_NOT_FOUND' });
-    assert.equal((await store.read('mock-alpha', first.id)).data.equals(data), true);
+    expect(beta.bot).toBe('mock-beta');
+    await expect(store.source('mock-other', first.id)).rejects.toMatchObject({
+      code: 'ATTACHMENT_NOT_FOUND',
+    });
+    expect((await store.read('mock-alpha', first.id)).data.equals(data)).toBe(true);
     await store.close();
     store = new Attachments(path.join(root, 'uploads.sqlite'));
-    assert.deepEqual((await store.read('mock-alpha', first.id)).receipt, first);
-    assert.equal((await stat(path.join(root, 'uploads.sqlite'))).mode & 0o777, 0o600);
+    expect((await store.read('mock-alpha', first.id)).receipt).toStrictEqual(first);
+    expect((await stat(path.join(root, 'uploads.sqlite'))).mode & 0o777).toBe(0o600);
     const db = new DatabaseSync(path.join(root, 'uploads.sqlite'));
     db.prepare('UPDATE uploads SET data=? WHERE bot=? AND id=?').run(
       Buffer.from('synthetic corruption'),
@@ -233,8 +243,12 @@ test('confirmed attachments retain immutable originals and text across restart, 
       first.id,
     );
     db.close();
-    await assert.rejects(store.source('mock-alpha', first.id), { code: 'ATTACHMENT_CORRUPT' });
-    await assert.rejects(store.upload('mock-alpha', file, extract), { code: 'ATTACHMENT_CORRUPT' });
+    await expect(store.source('mock-alpha', first.id)).rejects.toMatchObject({
+      code: 'ATTACHMENT_CORRUPT',
+    });
+    await expect(store.upload('mock-alpha', file, extract)).rejects.toMatchObject({
+      code: 'ATTACHMENT_CORRUPT',
+    });
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -247,25 +261,23 @@ test('failed, empty and cancelled extraction publishes no attachment, and invali
   const file = { name: 'mock.pdf', data: Buffer.from('synthetic').toString('base64') };
   let parses = 0;
   try {
-    await assert.rejects(
+    await expect(
       store.upload('mock-alpha', { ...file, name: '../escape.pdf' }, async () => {
         parses++;
         return 'bad';
       }),
-      { code: 'INVALID_ATTACHMENT' },
-    );
-    assert.equal(parses, 0);
-    await assert.rejects(
-      store.upload('mock-alpha', file, async () => ''),
-      { code: 'DOCUMENT_EMPTY' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'INVALID_ATTACHMENT' });
+    expect(parses).toBe(0);
+    await expect(store.upload('mock-alpha', file, async () => '')).rejects.toMatchObject({
+      code: 'DOCUMENT_EMPTY',
+    });
+    await expect(
       store.upload('mock-alpha', file, async () => {
         throw new Error('synthetic parser failure');
       }),
-    );
+    ).rejects.toThrowError();
     const abort = new AbortController();
-    await assert.rejects(
+    await expect(
       store.upload(
         'mock-alpha',
         file,
@@ -275,12 +287,12 @@ test('failed, empty and cancelled extraction publishes no attachment, and invali
         },
         abort.signal,
       ),
-    );
+    ).rejects.toThrowError();
     const db = new DatabaseSync(path.join(root, 'uploads.sqlite'));
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM uploads').get()!.count, 0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM uploads').get()!.count).toBe(0);
     db.close();
     const saved = await store.upload('mock-alpha', file, async () => 'RECOVERED');
-    assert.equal((await store.read('mock-alpha', saved.id)).receipt.content, 'RECOVERED');
+    expect((await store.read('mock-alpha', saved.id)).receipt.content).toBe('RECOVERED');
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });

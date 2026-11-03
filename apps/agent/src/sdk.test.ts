@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
 test('agent resolves its owned SDK entry only when both SDK and DSH match the pinned version', async () => {
@@ -27,15 +26,25 @@ test('agent resolves its owned SDK entry only when both SDK and DSH match the pi
       manifest('@deepseek-ai/dsh-sdk-client', '0.2.1-rc.3'),
     );
     await writeFile(join(runtime, 'package.json'), manifest('@deepseek-ai/dsh', '0.2.1-rc.3'));
-    assert.equal(resolveSdk(owner), await realpath(join(client, 'index.js')));
+    expect(resolveSdk(owner)).toBe(await realpath(join(client, 'index.js')));
     await writeFile(join(runtime, 'package.json'), manifest('@deepseek-ai/dsh', '0.2.1-rc.4'));
-    assert.throws(() => resolveSdk(owner), /^Error: AGENT_SDK_VERSION_UNSUPPORTED$/);
+    expect(() => resolveSdk(owner)).toThrowError(
+      expect.objectContaining({
+        name: 'Error',
+        message: expect.stringMatching(/^AGENT_SDK_VERSION_UNSUPPORTED$/),
+      }),
+    );
     await writeFile(join(runtime, 'package.json'), manifest('@deepseek-ai/dsh', '0.2.1-rc.3'));
     await writeFile(
       join(client, 'package.json'),
       manifest('@deepseek-ai/dsh-sdk-client', '0.2.1-rc.4'),
     );
-    assert.throws(() => resolveSdk(owner), /^Error: AGENT_SDK_VERSION_UNSUPPORTED$/);
+    expect(() => resolveSdk(owner)).toThrowError(
+      expect.objectContaining({
+        name: 'Error',
+        message: expect.stringMatching(/^AGENT_SDK_VERSION_UNSUPPORTED$/),
+      }),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -46,7 +55,12 @@ test('agent reports unavailable SDK packages without exposing resolution diagnos
   try {
     const owner = join(root, 'package.json');
     await writeFile(owner, '{"name":"mock-agent"}');
-    assert.throws(() => resolveSdk(owner), /^Error: AGENT_SDK_UNAVAILABLE$/);
+    expect(() => resolveSdk(owner)).toThrowError(
+      expect.objectContaining({
+        name: 'Error',
+        message: expect.stringMatching(/^AGENT_SDK_UNAVAILABLE$/),
+      }),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 
 interface Registry {
   tabs: { id: string; bot: string; url: string; title: string }[];
@@ -61,13 +60,13 @@ test('dynamic tab owners merge their own saved state without erasing disconnecte
     await store.close();
     store = new TabStore(file);
     await store.ready;
-    assert.deepEqual(await store.read(), {
+    expect(await store.read()).toStrictEqual({
       tabs: [...first.tabs, ...second.tabs],
       active: { ...first.active, ...second.active },
     });
-    assert.equal((await store.receipt('mock-human-b', 'mock-agent-b'))?.phase, 'settled');
-    assert.equal(await store.receipt('mock-human-b', 'mock-agent-a'), undefined);
-    await assert.rejects(store.claim('mock-invalid', '../private', 'b'.repeat(64)), {
+    expect((await store.receipt('mock-human-b', 'mock-agent-b'))?.phase).toBe('settled');
+    expect(await store.receipt('mock-human-b', 'mock-agent-a')).toBe(undefined);
+    await expect(store.claim('mock-invalid', '../private', 'b'.repeat(64))).rejects.toMatchObject({
       code: 'INVALID_BROWSER_REQUEST',
     });
   } finally {
@@ -92,7 +91,7 @@ test('dynamic ownership retains the legacy saved a/b registry while a new Bot ob
       active: { 'mock-new-owner': 'mock-new-owner-tab' },
     };
     await store.save(added);
-    assert.deepEqual(await store.read(), {
+    expect(await store.read()).toStrictEqual({
       tabs: [...state.tabs, ...added.tabs],
       active: { ...state.active, ...added.active },
     });
@@ -115,36 +114,36 @@ test('private tab state and command receipts survive reopening without replaying
   let store = new TabStore(file, ['a', 'b']);
   try {
     await store.ready;
-    assert.equal(await store.read(), undefined);
+    expect(await store.read()).toBe(undefined);
     await store.save(state);
-    assert.equal((await stat(file)).mode & 0o777, 0o600);
-    assert.equal(await store.claim('mock-claimed', 'a', 'a'.repeat(64)), 'new');
-    assert.equal(await store.claim('mock-claimed', 'a', 'a'.repeat(64)), 'claimed');
-    await assert.rejects(store.claim('mock-claimed', 'b', 'a'.repeat(64)), {
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect(await store.claim('mock-claimed', 'a', 'a'.repeat(64))).toBe('new');
+    expect(await store.claim('mock-claimed', 'a', 'a'.repeat(64))).toBe('claimed');
+    await expect(store.claim('mock-claimed', 'b', 'a'.repeat(64))).rejects.toMatchObject({
       code: 'BROWSER_REQUEST_ID_REUSED',
     });
-    await assert.rejects(store.claim('mock-claimed', 'a', 'b'.repeat(64)), {
+    await expect(store.claim('mock-claimed', 'a', 'b'.repeat(64))).rejects.toMatchObject({
       code: 'BROWSER_REQUEST_ID_REUSED',
     });
-    assert.equal(await store.claim('mock-done', 'b', 'c'.repeat(64)), 'new');
+    expect(await store.claim('mock-done', 'b', 'c'.repeat(64))).toBe('new');
     await store.finish('mock-done', 'b', state, 'SYNTHETIC_REFUSAL', false);
     await store.close();
     store = new TabStore(file, ['a', 'b']);
     await store.ready;
-    assert.deepEqual(await store.read(), state);
-    assert.equal(await store.claim('mock-claimed', 'a', 'a'.repeat(64)), 'claimed');
-    assert.equal(await store.claim('mock-done', 'b', 'c'.repeat(64)), 'settled');
-    assert.deepEqual(await store.receipt('mock-done', 'b'), {
+    expect(await store.read()).toStrictEqual(state);
+    expect(await store.claim('mock-claimed', 'a', 'a'.repeat(64))).toBe('claimed');
+    expect(await store.claim('mock-done', 'b', 'c'.repeat(64))).toBe('settled');
+    expect(await store.receipt('mock-done', 'b')).toStrictEqual({
       phase: 'settled',
       error: 'SYNTHETIC_REFUSAL',
       uncertain: false,
     });
-    assert.equal(await store.receipt('mock-done', 'a'), undefined);
+    expect(await store.receipt('mock-done', 'a')).toBe(undefined);
     for (let i = 0; i < 140; i++) {
       await store.claim(`mock-old-${i}`, 'a', 'd'.repeat(64));
       await store.finish(`mock-old-${i}`, 'a', state);
     }
-    assert.equal(await store.claim('mock-old-0', 'a', 'd'.repeat(64)), 'settled');
+    expect(await store.claim('mock-old-0', 'a', 'd'.repeat(64))).toBe('settled');
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -163,21 +162,21 @@ test('invalid metadata, symlinks and corrupt tab storage fail closed without rep
       { ...state, tabs: [{ ...state.tabs[0], url: 'file:///etc/passwd' }, state.tabs[1]] },
       { ...state, tabs: [{ ...state.tabs[0], bot: 'other-owner' }, state.tabs[1]] },
     ])
-      await assert.rejects(store.save(value), { code: 'INVALID_BROWSER_STATE' });
-    assert.deepEqual(await store.read(), state);
+      await expect(store.save(value)).rejects.toMatchObject({ code: 'INVALID_BROWSER_STATE' });
+    expect(await store.read()).toStrictEqual(state);
     await store.close();
     const corrupt = path.join(root, 'corrupt.sqlite');
     await writeFile(corrupt, 'SYNTHETIC-CORRUPT-NOT-A-DATABASE');
     store = new TabStore(corrupt, ['a', 'b']);
     await store.ready;
-    await assert.rejects(store.read(), { code: 'BROWSER_STATE_UNAVAILABLE' });
+    await expect(store.read()).rejects.toMatchObject({ code: 'BROWSER_STATE_UNAVAILABLE' });
     await store.close();
-    assert.equal(await readFile(corrupt, 'utf8'), 'SYNTHETIC-CORRUPT-NOT-A-DATABASE');
+    expect(await readFile(corrupt, 'utf8')).toBe('SYNTHETIC-CORRUPT-NOT-A-DATABASE');
     const link = path.join(root, 'link.sqlite');
     await symlink(corrupt, link);
     store = new TabStore(link, ['a', 'b']);
     await store.ready;
-    await assert.rejects(store.read(), { code: 'BROWSER_STATE_UNAVAILABLE' });
+    await expect(store.read()).rejects.toMatchObject({ code: 'BROWSER_STATE_UNAVAILABLE' });
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });

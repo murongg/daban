@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { TaskPlan } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -28,7 +27,7 @@ test('DSH questions pause only their own task, receive exact replies, persist pl
             _prompt: unknown,
             observer: { onNotification: (note: unknown) => unknown },
           ) => {
-            assert.ok(models);
+            expect.assert(models);
             const job = models.jobs.get('mock-bot')!;
             observer.onNotification({
               method: 'session.event',
@@ -41,7 +40,7 @@ test('DSH questions pause only their own task, receive exact replies, persist pl
               },
             });
             const auth = `Bearer ${job.token}`;
-            await assert.rejects(
+            await expect(
               models.rpc('mock-bot', auth, {
                 id: 1,
                 method: 'interaction.open',
@@ -52,8 +51,7 @@ test('DSH questions pause only their own task, receive exact replies, persist pl
                   questions: [{ id: 'choice', question: '合成选择？' }],
                 },
               }),
-              { code: 'INVALID_INTERACTION' },
-            );
+            ).rejects.toMatchObject({ code: 'INVALID_INTERACTION' });
             await models.rpc('mock-bot', auth, {
               id: 2,
               method: 'interaction.open',
@@ -70,7 +68,7 @@ test('DSH questions pause only their own task, receive exact replies, persist pl
               method: 'interaction.wait',
               params: { id: 'mock-request' },
             });
-            assert.deepEqual((result as { result: { reply: unknown } }).result.reply, {
+            expect((result as { result: { reply: unknown } }).result.reply).toStrictEqual({
               kind: 'answer',
               answers: [{ id: 'choice', selected: [], custom: '合成答案' }],
             });
@@ -105,31 +103,31 @@ test('DSH questions pause only their own task, receive exact replies, persist pl
       prompt: '先询问合成选择，再执行计划。',
     });
     await ready;
-    assert.equal(models.status().bots['mock-bot'].phase, 'waiting');
-    assert.equal(models.status().bots.b.running, false);
+    expect(models.status().bots['mock-bot'].phase).toBe('waiting');
+    expect(models.status().bots.b.running).toBe(false);
     await models.interactions.reply('mock-bot', models.jobs.get('mock-bot')!.id, 'mock-request', {
       kind: 'answer',
       answers: [{ id: 'choice', selected: [], custom: '合成答案' }],
     });
     await models.jobs.get('mock-bot')!.done;
-    assert.equal(models.status().bots['mock-bot'].phase, 'completed');
+    expect(models.status().bots['mock-bot'].phase).toBe('completed');
     const plan = models.status().bots['mock-bot'].plan as TaskPlan;
-    assert.equal(plan[0].status, 'completed');
+    expect(plan[0].status).toBe('completed');
     await models.close();
     const restored = new ModelRuns(options);
     await restored.ready;
-    assert.deepEqual(restored.status().bots['mock-bot'].plan, plan);
-    assert.equal((await restored.interactions.list())[0].status, 'resolved');
+    expect(restored.status().bots['mock-bot'].plan).toStrictEqual(plan);
+    expect((await restored.interactions.list())[0].status).toBe('resolved');
     await restored.close();
   } finally {
     await models?.close();
     await rm(root, { recursive: true, force: true });
   }
 });
-test('a long human wait preserves the active execution budget and cancellation still stops the run', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+test('a long human wait preserves the active execution budget and cancellation still stops the run', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
   let now = 0;
-  t.mock.method(performance, 'now', () => now);
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
   const root = await mkdtemp(path.join(tmpdir(), 'mock-human-budget-'));
   let models: ModelRuns | undefined;
   try {
@@ -184,26 +182,26 @@ test('a long human wait preserves the active execution budget and cancellation s
       },
     });
     now = 600000;
-    t.mock.timers.tick(600000);
+    vi.advanceTimersByTime(600000);
     await new Promise(setImmediate);
-    assert.equal(job.abort.signal.aborted, false, 'waiting must not trigger a background timeout');
-    assert.equal(models.running('mock-bot'), true, 'human waiting is not model execution time');
+    expect(job.abort.signal.aborted, 'waiting must not trigger a background timeout').toBe(false);
+    expect(models.running('mock-bot'), 'human waiting is not model execution time').toBe(true);
     await models.interactions.reply('mock-bot', job.id, 'mock-wait', {
       kind: 'answer',
       answers: [{ id: 'choice', selected: [], custom: '合成答案' }],
     });
-    t.mock.timers.tick(1000);
+    vi.advanceTimersByTime(1000);
     now += 300001;
-    t.mock.timers.tick(300001);
+    vi.advanceTimersByTime(300001);
     await job.done;
-    assert.equal(models.status().bots['mock-bot'].phase, 'stopped');
-    assert.match(models.status().bots['mock-bot'].error || '', /时长上限/);
+    expect(models.status().bots['mock-bot'].phase).toBe('stopped');
+    expect(models.status().bots['mock-bot'].error || '').toMatch(/时长上限/);
   } finally {
     await models?.close();
     await rm(root, { recursive: true, force: true });
   }
 });
-test('a failure to persist cancellation still closes DSH and drains the task', async (t) => {
+test('a failure to persist cancellation still closes DSH and drains the task', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-human-stop-failure-'));
   let models: ModelRuns | undefined;
   let restore = () => {};
@@ -248,13 +246,15 @@ test('a failure to persist cancellation still closes DSH and drains the task', a
     });
     await models.start('mock-bot', { requestId: 'mock-stop-task', prompt: '合成任务' });
     await ready;
-    const failure = t.mock.method(models.interactions, 'endRun', async () => {
+    const failure = vi.spyOn(models.interactions, 'endRun').mockImplementation(async () => {
       throw new Error('mock disk failure');
     });
-    restore = () => failure.mock.restore();
-    await assert.rejects(models.stop('mock-bot'), { code: 'INTERACTION_SAVE_FAILED' });
-    assert.ok(closed > 0);
-    assert.equal(models.running('mock-bot'), false);
+    restore = () => failure.mockRestore();
+    await expect(models.stop('mock-bot')).rejects.toMatchObject({
+      code: 'INTERACTION_SAVE_FAILED',
+    });
+    expect.assert(closed > 0);
+    expect(models.running('mock-bot')).toBe(false);
   } finally {
     restore();
     await models?.close();

@@ -1,11 +1,10 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
 import { isWorkCommentReceipt, workKey } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { Work } from './work.js';
 
 const human = { kind: 'human' as const };
@@ -88,32 +87,31 @@ async function fixture(legacy = false) {
 test('additive migration retains legacy items, fingerprints and accepted receipts', async () => {
   const f = await fixture(true);
   try {
-    assert.equal((await f.store.get(create.item)).revision, 1);
-    assert.equal((await f.store.receipt(create, human)).state, 'complete');
-    assert.deepEqual(await f.store.comments({ item: create.item }), {
+    expect((await f.store.get(create.item)).revision).toBe(1);
+    expect((await f.store.receipt(create, human)).state).toBe('complete');
+    expect(await f.store.comments({ item: create.item })).toStrictEqual({
       item: create.item,
       revision: 1,
       comments: [],
     });
     const db = new DatabaseSync(f.file, { readOnly: true });
     try {
-      assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
-      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_items').get()!.n, 1);
-      assert.equal(
-        db.prepare('SELECT signature FROM work_operations').get()!.signature,
+      expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM work_items').get()!.n).toBe(1);
+      expect(db.prepare('SELECT signature FROM work_operations').get()!.signature).toBe(
         createHash('sha256').update(workKey(create, human)).digest('hex'),
       );
-      assert.equal(db.prepare('SELECT comments FROM work_meta').get()!.comments, 0);
+      expect(db.prepare('SELECT comments FROM work_meta').get()!.comments).toBe(0);
     } finally {
       db.close();
     }
     await f.store.comment(input(), bot);
     await f.reopen();
     const old = await f.store.receipt(create, human);
-    assert.equal(old.state, 'complete');
+    expect(old.state).toBe('complete');
     if (old.state === 'complete') {
-      assert.equal(old.acceptedRevision, 1);
-      assert.equal(old.item.revision, 2);
+      expect(old.acceptedRevision).toBe(1);
+      expect(old.item.revision).toBe(2);
     }
   } finally {
     await f.close();
@@ -125,23 +123,23 @@ test('comments keep literal text/provenance and touch only current item version,
   try {
     const request = input();
     const response = await f.store.comment(request, bot);
-    assert.equal(isWorkCommentReceipt(response), true);
-    assert.equal(response.acceptedRevision, 2);
-    assert.equal(response.item.revision, 2);
-    assert.equal(response.comment.body, request.body);
-    assert.equal(response.comment.id, request.id);
-    assert.deepEqual(response.comment.createdBy, bot);
-    assert.deepEqual(response.item.updatedBy, bot);
-    assert.deepEqual(response.item.createdBy, human);
+    expect(isWorkCommentReceipt(response)).toBe(true);
+    expect(response.acceptedRevision).toBe(2);
+    expect(response.item.revision).toBe(2);
+    expect(response.comment.body).toBe(request.body);
+    expect(response.comment.id).toBe(request.id);
+    expect(response.comment.createdBy).toStrictEqual(bot);
+    expect(response.item.updatedBy).toStrictEqual(bot);
+    expect(response.item.createdBy).toStrictEqual(human);
     for (const key of ['title', 'description', 'progress', 'status'] as const)
-      assert.equal(response.item[key], fields[key]);
-    assert.equal(response.item.completedAt, undefined);
-    assert.equal((await f.store.status()).revision, 2);
+      expect(response.item[key]).toBe(fields[key]);
+    expect(response.item.completedAt).toBe(undefined);
+    expect((await f.store.status()).revision).toBe(2);
     response.comment.body = 'MOCK MUTATED REPLY';
-    assert.equal((await f.store.comments({ item: create.item })).comments[0].body, request.body);
-    assert.equal(Object.hasOwn(response, 'runId'), false);
+    expect((await f.store.comments({ item: create.item })).comments[0].body).toBe(request.body);
+    expect(Object.hasOwn(response, 'runId')).toBe(false);
     await f.reopen();
-    assert.equal((await f.store.comments({ item: create.item })).comments.length, 1);
+    expect((await f.store.comments({ item: create.item })).comments.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -168,33 +166,36 @@ test('exact current-state receipt precedes CAS/trash across reopen and global op
     );
     await f.reopen();
     const reply = await f.store.comment(request, bot);
-    assert.equal(reply.acceptedRevision, 2);
-    assert.equal(reply.item.revision, 4);
-    assert.equal(reply.item.deleted, true);
-    assert.equal(reply.item.description, newer.item.description);
-    assert.equal(reply.item.completedAt, newer.item.completedAt);
-    assert.deepEqual(await f.store.commentReceipt(request, bot), reply);
-    assert.equal((await f.store.comments({ item: create.item })).comments.length, 1);
+    expect(reply.acceptedRevision).toBe(2);
+    expect(reply.item.revision).toBe(4);
+    expect(reply.item.deleted).toBe(true);
+    expect(reply.item.description).toBe(newer.item.description);
+    expect(reply.item.completedAt).toBe(newer.item.completedAt);
+    expect(await f.store.commentReceipt(request, bot)).toStrictEqual(reply);
+    expect((await f.store.comments({ item: create.item })).comments.length).toBe(1);
     for (const [arg, actor] of [
       [{ ...request, body: 'MOCK CHANGED' }, bot],
       [request, human],
       [{ ...request, item: 'mock-other' }, bot],
     ] as const)
-      await assert.rejects(f.store.commentReceipt(arg, actor), { code: 'WORK_REQUEST_CONFLICT' });
-    await assert.rejects(f.store.comment({ ...input(create.id), revision: 4 }, human), {
+      await expect(f.store.commentReceipt(arg, actor)).rejects.toMatchObject({
+        code: 'WORK_REQUEST_CONFLICT',
+      });
+    await expect(
+      f.store.comment({ ...input(create.id), revision: 4 }, human),
+    ).rejects.toMatchObject({
       code: 'WORK_REQUEST_CONFLICT',
     });
-    await assert.rejects(
+    await expect(
       f.store.write({ id: request.id, item: create.item, revision: 4, action: 'restore' }, bot),
-      { code: 'WORK_REQUEST_CONFLICT' },
-    );
+    ).rejects.toMatchObject({ code: 'WORK_REQUEST_CONFLICT' });
     await f.store.write(
       { id: 'mock-restore', item: create.item, revision: 4, action: 'restore' },
       human,
     );
     const next = await f.store.comment(input('mock-after-restore', 5), human);
-    assert.equal(next.item.status, 'done');
-    assert.equal(next.item.completedAt, newer.item.completedAt);
+    expect(next.item.status).toBe('done');
+    expect(next.item.completedAt).toBe(newer.item.completedAt);
   } finally {
     await f.close();
   }
@@ -206,20 +207,20 @@ test('two queued writers capture one revision and failed CAS leaves no comment r
     const a = input('mock-first'),
       b = input('mock-second');
     const both = await Promise.allSettled([f.store.comment(a, bot), f.store.comment(b, human)]);
-    assert.equal(both[0].status, 'fulfilled');
-    assert.equal(both[1].status, 'rejected');
-    if (both[1].status === 'rejected') assert.equal(both[1].reason.code, 'WORK_CONFLICT');
-    assert.equal((await f.store.commentReceipt(b, human)).state, 'unknown');
-    assert.equal((await f.store.get(create.item)).revision, 2);
+    expect(both[0].status).toBe('fulfilled');
+    expect(both[1].status).toBe('rejected');
+    if (both[1].status === 'rejected') expect(both[1].reason.code).toBe('WORK_CONFLICT');
+    expect((await f.store.commentReceipt(b, human)).state).toBe('unknown');
+    expect((await f.store.get(create.item)).revision).toBe(2);
     await f.store.write(
       { id: 'mock-trash', item: create.item, revision: 2, action: 'trash' },
       human,
     );
-    await assert.rejects(f.store.comment(input('mock-trashed', 3), human), {
+    await expect(f.store.comment(input('mock-trashed', 3), human)).rejects.toMatchObject({
       code: 'WORK_TRASHED',
     });
-    assert.equal((await f.store.commentReceipt(input('mock-trashed', 3), human)).state, 'unknown');
-    assert.equal((await f.store.comments({ item: create.item })).comments.length, 1);
+    expect((await f.store.commentReceipt(input('mock-trashed', 3), human)).state).toBe('unknown');
+    expect((await f.store.comments({ item: create.item })).comments.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -231,29 +232,24 @@ test('paging is item-bound, stable under later edits and bounded by count and se
     for (let i = 1; i <= 4; i++)
       await f.store.comment({ ...input(`mock-page-${i}`, i), body: `MOCK ${i}` }, human);
     const first = await f.store.comments({ item: create.item, limit: 2 });
-    assert.deepEqual(
-      first.comments.map((c) => c.body),
-      ['MOCK 4', 'MOCK 3'],
-    );
-    assert.ok(first.nextBefore);
+    expect(first.comments.map((c) => c.body)).toStrictEqual(['MOCK 4', 'MOCK 3']);
+    expect.assert(first.nextBefore);
     await f.store.comment({ ...input('mock-large', 5), body: '\u0001'.repeat(10000) }, bot);
     await f.store.comment({ ...input('mock-large-b', 6), body: '\u0001'.repeat(10000) }, bot);
     await f.store.comment({ ...input('mock-large-c', 7), body: '\u0001'.repeat(10000) }, bot);
     const bounded = await f.store.comments({ item: create.item, limit: 50 });
-    assert.ok(Buffer.byteLength(JSON.stringify(bounded)) <= 128 * 1024);
-    assert.ok(bounded.nextBefore);
-    assert.ok(bounded.comments.length < 7);
+    expect.assert(Buffer.byteLength(JSON.stringify(bounded)) <= 128 * 1024);
+    expect.assert(bounded.nextBefore);
+    expect.assert(bounded.comments.length < 7);
     const next = await f.store.comments({ item: create.item, limit: 2, before: first.nextBefore });
-    assert.deepEqual(
-      next.comments.map((c) => c.body),
-      ['MOCK 2', 'MOCK 1'],
-    );
+    expect(next.comments.map((c) => c.body)).toStrictEqual(['MOCK 2', 'MOCK 1']);
     await f.store.write({ ...create, id: 'mock-other-create', item: 'mock-other' }, human);
-    assert.deepEqual(
+    expect(
       (await f.store.comments({ item: 'mock-other', before: first.nextBefore })).comments,
-      [],
-    );
-    await assert.rejects(f.store.comments({ item: 'mock-missing' }), { code: 'WORK_NOT_FOUND' });
+    ).toStrictEqual([]);
+    await expect(f.store.comments({ item: 'mock-missing' })).rejects.toMatchObject({
+      code: 'WORK_NOT_FOUND',
+    });
   } finally {
     await f.close();
   }
@@ -268,27 +264,32 @@ test('invalid inputs, cancellation, queued argument mutation and close preserve 
       { ...input(), actor: bot },
       { ...input(), revision: 0 },
     ])
-      await assert.rejects(f.store.comment(value, human), { code: 'INVALID_WORK_COMMENT' });
-    await assert.rejects(f.store.comment(input(), { kind: 'human', bot: 'mock-spoof' }), {
+      await expect(f.store.comment(value, human)).rejects.toMatchObject({
+        code: 'INVALID_WORK_COMMENT',
+      });
+    await expect(
+      f.store.comment(input(), { kind: 'human', bot: 'mock-spoof' }),
+    ).rejects.toMatchObject({
       code: 'INVALID_WORK_ACTOR',
     });
-    await assert.rejects(f.store.comments({ item: create.item, limit: 51 }), {
+    await expect(f.store.comments({ item: create.item, limit: 51 })).rejects.toMatchObject({
       code: 'INVALID_WORK_QUERY',
     });
     const abort = new AbortController();
     abort.abort(new Error('MOCK CANCELLED'));
-    await assert.rejects(
-      f.store.comment(input('mock-cancel'), human, abort.signal),
+    await expect(f.store.comment(input('mock-cancel'), human, abort.signal)).rejects.toThrowError(
       /MOCK CANCELLED/,
     );
-    assert.equal((await f.store.commentReceipt(input('mock-cancel'), human)).state, 'unknown');
+    expect((await f.store.commentReceipt(input('mock-cancel'), human)).state).toBe('unknown');
     const mutable = input('mock-captured');
     const saved = mutable.body;
     const pending = f.store.comment(mutable, human);
     mutable.body = 'MOCK MUTATED CALL';
-    assert.equal((await pending).comment.body, saved);
+    expect((await pending).comment.body).toBe(saved);
     await f.store.close();
-    await assert.rejects(f.store.comment(input('mock-closed', 2), human), { code: 'WORK_CLOSED' });
+    await expect(f.store.comment(input('mock-closed', 2), human)).rejects.toMatchObject({
+      code: 'WORK_CLOSED',
+    });
   } finally {
     await f.close();
   }
@@ -308,10 +309,10 @@ test('comments and legacy writes share one retained operation capacity', async (
       db.close();
     }
     await f.store.comment(input(), human);
-    await assert.rejects(f.store.comment(input('mock-over', 2), human), {
+    await expect(f.store.comment(input('mock-over', 2), human)).rejects.toMatchObject({
       code: 'WORK_OPERATION_LIMIT',
     });
-    await assert.rejects(
+    await expect(
       f.store.write(
         {
           id: 'mock-over-write',
@@ -322,9 +323,8 @@ test('comments and legacy writes share one retained operation capacity', async (
         },
         human,
       ),
-      { code: 'WORK_OPERATION_LIMIT' },
-    );
-    assert.equal((await f.store.get(create.item)).revision, 2);
+    ).rejects.toMatchObject({ code: 'WORK_OPERATION_LIMIT' });
+    expect((await f.store.get(create.item)).revision).toBe(2);
   } finally {
     await f.close();
   }
@@ -344,8 +344,8 @@ test('comment corruption and missing append-only authority are not silently adop
       const db = new DatabaseSync(f.file);
       db.exec(sql);
       db.close();
-      await assert.rejects(f.reopen(), { code: 'WORK_CORRUPT' });
-      assert.deepEqual(await f.store.status(), { available: false, error: 'WORK_CORRUPT' });
+      await expect(f.reopen()).rejects.toMatchObject({ code: 'WORK_CORRUPT' });
+      expect(await f.store.status()).toStrictEqual({ available: false, error: 'WORK_CORRUPT' });
     } finally {
       await f.close();
     }
@@ -360,11 +360,11 @@ test('a comment transaction rollback does not publish text, version or authority
       "CREATE TRIGGER mock_comment_abort BEFORE INSERT ON work_comments BEGIN SELECT RAISE(ABORT,'MOCK ROLLBACK'); END;",
     );
     db.close();
-    await assert.rejects(f.store.comment(input(), human), /MOCK ROLLBACK/);
-    assert.equal((await f.store.get(create.item)).revision, 1);
-    assert.equal((await f.store.status()).revision, 1);
-    assert.equal((await f.store.commentReceipt(input(), human)).state, 'unknown');
-    assert.equal((await f.store.comments({ item: create.item })).comments.length, 0);
+    await expect(f.store.comment(input(), human)).rejects.toThrowError(/MOCK ROLLBACK/);
+    expect((await f.store.get(create.item)).revision).toBe(1);
+    expect((await f.store.status()).revision).toBe(1);
+    expect((await f.store.commentReceipt(input(), human)).state).toBe('unknown');
+    expect((await f.store.comments({ item: create.item })).comments.length).toBe(0);
   } finally {
     await f.close();
   }
@@ -398,42 +398,39 @@ test('initialization and schema1 migration publish comments and version atomical
     let broken: Work | undefined;
     try {
       broken = new Work(file);
-      await assert.rejects(broken.ready, { code: 'WORK_CORRUPT' });
+      await expect(broken.ready).rejects.toMatchObject({ code: 'WORK_CORRUPT' });
     } finally {
       DatabaseSync.prototype.exec = original;
       await broken?.close();
     }
     try {
-      assert.equal(injected, true);
+      expect(injected).toBe(true);
       const db = new DatabaseSync(file, { readOnly: true });
       try {
-        assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, legacy ? 1 : 0);
-        assert.equal(
+        expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(legacy ? 1 : 0);
+        expect(
           db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='work_comments'").get()!.n,
-          0,
-        );
+        ).toBe(0);
         if (legacy) {
-          assert.deepEqual(
+          expect(
             db
               .prepare('PRAGMA table_info(work_meta)')
               .all()
               .map((row) => row.name),
-            ['id', 'revision'],
-          );
-          assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_items').get()!.n, 1);
-          assert.equal(db.prepare('SELECT COUNT(*) AS n FROM work_operations').get()!.n, 1);
+          ).toStrictEqual(['id', 'revision']);
+          expect(db.prepare('SELECT COUNT(*) AS n FROM work_items').get()!.n).toBe(1);
+          expect(db.prepare('SELECT COUNT(*) AS n FROM work_operations').get()!.n).toBe(1);
         } else
-          assert.equal(
+          expect(
             db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table'").get()!.n,
-            0,
-          );
+          ).toBe(0);
       } finally {
         db.close();
       }
       const retry = new Work(file);
       await retry.ready;
       try {
-        if (legacy) assert.equal((await retry.receipt(create, human)).state, 'complete');
+        if (legacy) expect((await retry.receipt(create, human)).state).toBe('complete');
       } finally {
         await retry.close();
       }
@@ -460,25 +457,22 @@ test('unknown schemas and malformed legacy rows are retained without migration',
       );
       db.exec(mutation);
       db.close();
-      await assert.rejects(f.reopen(), { code: 'WORK_CORRUPT' });
+      await expect(f.reopen()).rejects.toMatchObject({ code: 'WORK_CORRUPT' });
       const check = new DatabaseSync(f.file, { readOnly: true });
       try {
-        assert.equal(
-          check.prepare('PRAGMA user_version').get()!.user_version,
+        expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(
           mutation.includes('99') ? 99 : 1,
         );
-        assert.equal(
+        expect(
           check.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='work_comments'").get()!
             .n,
-          0,
-        );
-        assert.deepEqual(
+        ).toBe(0);
+        expect(
           check
             .prepare('PRAGMA table_info(work_meta)')
             .all()
             .map((row) => row.name),
-          ['id', 'revision'],
-        );
+        ).toStrictEqual(['id', 'revision']);
       } finally {
         check.close();
       }
@@ -495,9 +489,9 @@ test('valid-shaped but rewound or inflated authority cannot publish a comment', 
       const db = new DatabaseSync(f.file);
       db.prepare('UPDATE work_meta SET revision=?').run(revision);
       db.close();
-      await assert.rejects(f.store.comment(input(), human), { code: 'WORK_CORRUPT' });
-      assert.equal((await f.store.get(create.item)).revision, 1);
-      assert.deepEqual(await f.store.status(), { available: false, error: 'WORK_CORRUPT' });
+      await expect(f.store.comment(input(), human)).rejects.toMatchObject({ code: 'WORK_CORRUPT' });
+      expect((await f.store.get(create.item)).revision).toBe(1);
+      expect(await f.store.status()).toStrictEqual({ available: false, error: 'WORK_CORRUPT' });
     } finally {
       await f.close();
     }
@@ -510,17 +504,17 @@ test('immediate close drains schema initialization without misclassifying the st
   const store = new Work(file);
   try {
     await store.close();
-    assert.deepEqual(await store.status(), { available: false, error: 'WORK_CLOSED' });
+    expect(await store.status()).toStrictEqual({ available: false, error: 'WORK_CLOSED' });
     const db = new DatabaseSync(file, { readOnly: true });
     try {
-      assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
+      expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
     } finally {
       db.close();
     }
     const reopened = new Work(file);
     await reopened.ready;
     try {
-      assert.deepEqual(await reopened.status(), { available: true, revision: 0, count: 0 });
+      expect(await reopened.status()).toStrictEqual({ available: true, revision: 0, count: 0 });
     } finally {
       await reopened.close();
     }
@@ -550,10 +544,10 @@ test('a legacy edit after clock rollback cannot make accepted discussion history
       },
       human,
     );
-    assert.ok(Date.parse(edited.item.updatedAt) >= Date.parse(accepted.acceptedAt));
+    expect.assert(Date.parse(edited.item.updatedAt) >= Date.parse(accepted.acceptedAt));
     await f.reopen();
-    assert.equal((await f.store.comments({ item: create.item })).comments.length, 1);
-    assert.equal((await f.store.commentReceipt(input(), bot)).state, 'complete');
+    expect((await f.store.comments({ item: create.item })).comments.length).toBe(1);
+    expect((await f.store.commentReceipt(input(), bot)).state).toBe('complete');
   } finally {
     await f.close();
   }

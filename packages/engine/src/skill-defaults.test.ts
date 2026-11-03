@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Skills } from './skills.js';
 
 const content =
@@ -19,26 +18,28 @@ test('system defaults are present for every Bot, read-only and independently dis
   let store = Reflect.construct(Skills, [file, defaults]) as Skills;
   try {
     const a = (await store.list('mock-a')).items[0];
-    assert(a, 'DEFAULT_MISSING');
-    assert.equal(a.enabled, true);
-    assert.equal((await store.list('mock-b')).items[0].enabled, true);
-    assert.equal((await store.capture('mock-a')).skills[0].name, 'mock-default');
+    expect.assert(a, 'DEFAULT_MISSING');
+    expect(a.enabled).toBe(true);
+    expect((await store.list('mock-b')).items[0].enabled).toBe(true);
+    expect((await store.capture('mock-a')).skills[0].name).toBe('mock-default');
     await store.bind('mock-a', {
       id: a.id,
       revision: a.revision,
       bindingRevision: 0,
       enabled: false,
     });
-    assert.equal((await store.capture('mock-a')).skills.length, 0);
-    assert.equal((await store.list('mock-b')).items[0].enabled, true);
-    await assert.rejects(store.update(a.id, a.revision, content + 'Changed'), {
+    expect((await store.capture('mock-a')).skills.length).toBe(0);
+    expect((await store.list('mock-b')).items[0].enabled).toBe(true);
+    await expect(store.update(a.id, a.revision, content + 'Changed')).rejects.toMatchObject({
       code: 'SKILL_SYSTEM_READ_ONLY',
     });
-    await assert.rejects(store.recycle(a.id, a.revision), { code: 'SKILL_SYSTEM_READ_ONLY' });
+    await expect(store.recycle(a.id, a.revision)).rejects.toMatchObject({
+      code: 'SKILL_SYSTEM_READ_ONLY',
+    });
     await store.close();
     store = Reflect.construct(Skills, [file, defaults]) as Skills;
-    assert.equal((await store.list('mock-a')).items.length, 1);
-    assert.equal((await store.list('mock-a')).items[0].enabled, false);
+    expect((await store.list('mock-a')).items.length).toBe(1);
+    expect((await store.list('mock-a')).items[0].enabled).toBe(false);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -53,10 +54,10 @@ test('adding a system default never overwrites or implicitly enables a user skil
     await store.close();
     store = Reflect.construct(Skills, [file, defaults]) as Skills;
     const catalog = await store.list('mock-a');
-    assert.equal(catalog.items.length, 1);
-    assert.equal(catalog.items[0].id, user.id);
-    assert.equal(catalog.items[0].enabled, false);
-    assert.equal((await store.read(user.id)).content, content + 'User authored.');
+    expect(catalog.items.length).toBe(1);
+    expect(catalog.items[0].id).toBe(user.id);
+    expect(catalog.items[0].enabled).toBe(false);
+    expect((await store.read(user.id)).content).toBe(content + 'User authored.');
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -79,12 +80,11 @@ test('introducing a default does not evict twenty previously enabled user skills
     await store.close();
     store = new Skills(file, defaults);
     const snapshot = await store.capture('mock-a');
-    assert.equal(snapshot.available, true);
-    assert.equal(snapshot.skills.length, 20);
-    assert.equal(
+    expect(snapshot.available).toBe(true);
+    expect(snapshot.skills.length).toBe(20);
+    expect(
       (await store.list('mock-a')).items.find((item) => item.id === defaults[0].id)?.enabled,
-      false,
-    );
+    ).toBe(false);
     await store.bind('mock-a', {
       id: defaults[0].id,
       revision: 1,
@@ -98,10 +98,9 @@ test('introducing a default does not evict twenty previously enabled user skills
       bindingRevision: user.bindingRevision,
       enabled: false,
     });
-    assert.equal(
+    expect(
       (await store.capture('mock-a')).skills.some((item) => item.name === 'mock-default'),
-      false,
-    );
+    ).toBe(false);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });

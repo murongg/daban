@@ -1,10 +1,8 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { startAgent, type startNativeAgent } from '@daban/engine/agent';
 import {
   type ExecutionSnapshot,
@@ -12,6 +10,7 @@ import {
   type RecoveryReceipt,
   type RecoveryReview,
 } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { writeSetupRecord } from './bootstrap.js';
 import { ExecutionConnection } from './connection.js';
 import {
@@ -159,7 +158,10 @@ async function fixture() {
           throw new Error('Mock remote call refused');
         },
         async rebind(value) {
-          assert.deepEqual(value, { origin: 'http://127.0.0.1:12346', token: 'mock-start-token' });
+          expect(value).toStrictEqual({
+            origin: 'http://127.0.0.1:12346',
+            token: 'mock-start-token',
+          });
           events.push('rebind');
           connected = true;
           return snapshot;
@@ -228,9 +230,8 @@ test('CLI parsing is closed and daemon scope uses the requested normalized paths
     '--vm-config',
     './runtime.json',
   ]);
-  assert.equal(options.dataRoot, path.resolve('./mock-data'));
-  assert.equal(
-    agentScope(options.dataRoot, options.vmConfigFile),
+  expect(options.dataRoot).toBe(path.resolve('./mock-data'));
+  expect(agentScope(options.dataRoot, options.vmConfigFile)).toBe(
     createHash('sha256')
       .update(JSON.stringify([options.dataRoot, options.vmConfigFile]))
       .digest('hex'),
@@ -241,33 +242,33 @@ test('CLI parsing is closed and daemon scope uses the requested normalized paths
     ['--unknown', 'x'],
     ['--data', '/a', '--data', '/b', '--socket', '/s', '--vm-config', '/v'],
   ])
-    assert.throws(() => parseAgentArguments(args), /AGENT_ARGUMENTS_INVALID/);
+    expect(() => parseAgentArguments(args)).toThrowError(/AGENT_ARGUMENTS_INVALID/);
 });
 
 test('production wiring binds real VM identity, lazy recovery revisions and explicit start order', async () => {
   const f = await fixture();
   const app = await startAgentProcess(f.options, f.dependencies);
   try {
-    assert.deepEqual(f.events.slice(0, 3), ['tools', 'bootstrap', 'core']);
-    assert.equal(f.powerOptions.target, agentVmTarget(config));
-    assert.equal(f.coreOptions.scope, agentScope(f.options.dataRoot, f.options.vmConfigFile));
-    assert.equal(f.coreOptions.sdkFile, '/mock/private/sdk.js');
-    assert.ok(f.coreOptions.stdioEntry?.endsWith('mcp-stdio.js'));
+    expect(f.events.slice(0, 3)).toStrictEqual(['tools', 'bootstrap', 'core']);
+    expect(f.powerOptions.target).toBe(agentVmTarget(config));
+    expect(f.coreOptions.scope).toBe(agentScope(f.options.dataRoot, f.options.vmConfigFile));
+    expect(f.coreOptions.sdkFile).toBe('/mock/private/sdk.js');
+    expect.assert(f.coreOptions.stdioEntry?.endsWith('mcp-stdio.js'));
     await f.powerOptions.driver.claim({ id: 'mock-restart', revision: 4, review: review.digest });
     await f.powerOptions.driver.cancel({ id: 'mock-restart', revision: 4, review: review.digest });
-    assert.ok(f.events.includes('claim:5'));
-    assert.ok(f.events.includes('cancel:5'));
-    await assert.rejects(f.powerOptions.beforeStop!(), /RECOVERY_STOP_NOT_CLAIMED/);
+    expect.assert(f.events.includes('claim:5'));
+    expect.assert(f.events.includes('cancel:5'));
+    await expect(f.powerOptions.beforeStop!()).rejects.toThrowError(/RECOVERY_STOP_NOT_CLAIMED/);
     f.claim();
     await f.powerOptions.beforeStop!();
-    assert.ok(f.events.includes('stop-model:mock-running'));
-    assert.ok(!f.events.includes('stop-model:mock-idle'));
+    expect.assert(f.events.includes('stop-model:mock-running'));
+    expect.assert(!f.events.includes('stop-model:mock-idle'));
     const before = f.events.length;
     await f.powerOptions.driver.start();
-    assert.deepEqual(f.events.slice(before), ['vm-start', 'rebind', 'core-refresh']);
+    expect(f.events.slice(before)).toStrictEqual(['vm-start', 'rebind', 'core-refresh']);
   } finally {
     await app.close();
-    assert.ok(!f.events.includes('vm-stop'));
+    expect.assert(!f.events.includes('vm-stop'));
     await f.cleanup();
   }
 });
@@ -293,13 +294,13 @@ test('a cold daemon with pending power and a cached snapshot never ensures or st
   );
   const app = await startAgentProcess(f.options, f.dependencies);
   try {
-    assert.equal(f.connectionOptions.attachOnly, true);
-    assert.deepEqual(f.connectionOptions.initialSnapshot, snapshot);
-    assert.equal(f.coreOptions.offlineWorkspaceRoot, '/mock-guest/workspace');
-    assert.ok(!f.events.includes('ensure'));
-    assert.ok(!f.events.includes('vm-start'));
+    expect(f.connectionOptions.attachOnly).toBe(true);
+    expect(f.connectionOptions.initialSnapshot).toStrictEqual(snapshot);
+    expect(f.coreOptions.offlineWorkspaceRoot).toBe('/mock-guest/workspace');
+    expect.assert(!f.events.includes('ensure'));
+    expect.assert(!f.events.includes('vm-start'));
     await f.powerOptions.driver.start();
-    assert.ok(f.events.includes('vm-start'));
+    expect.assert(f.events.includes('vm-start'));
   } finally {
     await app.close();
     await f.cleanup();
@@ -329,7 +330,7 @@ test('CLI pause exits cleanly and failures expose only a sanitized uppercase cod
     f.options.vmConfigFile,
   ];
   try {
-    assert.equal(
+    expect(
       await runAgentCli(
         args,
         {
@@ -340,11 +341,12 @@ test('CLI pause exits cleanly and failures expose only a sanitized uppercase cod
         },
         runtime,
       ),
-      0,
-    );
-    assert.deepEqual(reports, []);
-    await assert.rejects(readFile(path.join(f.root, 'progress.json')), { code: 'ENOENT' });
-    assert.equal(
+    ).toBe(0);
+    expect(reports).toStrictEqual([]);
+    await expect(readFile(path.join(f.root, 'progress.json'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    expect(
       await runAgentCli(
         args,
         {
@@ -355,15 +357,14 @@ test('CLI pause exits cleanly and failures expose only a sanitized uppercase cod
         },
         runtime,
       ),
-      1,
-    );
-    assert.deepEqual(reports, ['AGENT_START_FAILED']);
-    assert.ok(
+    ).toBe(1);
+    expect(reports).toStrictEqual(['AGENT_START_FAILED']);
+    expect.assert(
       !(await readFile(path.join(f.root, 'progress.json'), 'utf8')).includes(
         'synthetic-private-key',
       ),
     );
-    assert.deepEqual(masks, [0o077, 0o077]);
+    expect(masks).toStrictEqual([0o077, 0o077]);
   } finally {
     await f.cleanup();
   }
@@ -387,12 +388,14 @@ test('SIGTERM closes power, core and connection without issuing a VM stop', asyn
     for (let count = 0; count < 100 && !f.events.includes('core'); count++)
       await new Promise((resolve) => setTimeout(resolve, 2));
     signals.emit('SIGTERM');
-    assert.equal(await run, 0);
-    assert.deepEqual(
-      f.events.filter((event) => event.endsWith('-close')),
-      ['power-close', 'core-close', 'connection-close', 'link-close'],
-    );
-    assert.ok(!f.events.includes('vm-stop'));
+    expect(await run).toBe(0);
+    expect(f.events.filter((event) => event.endsWith('-close'))).toStrictEqual([
+      'power-close',
+      'core-close',
+      'connection-close',
+      'link-close',
+    ]);
+    expect.assert(!f.events.includes('vm-stop'));
   } finally {
     await f.cleanup();
   }
@@ -412,14 +415,13 @@ test('pending recovery without a usable cache never creates the HostCore or star
     { mode: 0o600 },
   );
   try {
-    await assert.rejects(
-      startAgentProcess(f.options, f.dependencies),
+    await expect(startAgentProcess(f.options, f.dependencies)).rejects.toThrowError(
       /AGENT_RECOVERY_CACHE_REQUIRED/,
     );
-    assert.ok(!f.events.includes('core'));
-    assert.ok(!f.events.includes('ensure'));
-    assert.ok(!f.events.includes('vm-start'));
-    assert.ok(f.events.includes('connection-close'));
+    expect.assert(!f.events.includes('core'));
+    expect.assert(!f.events.includes('ensure'));
+    expect.assert(!f.events.includes('vm-start'));
+    expect.assert(f.events.includes('connection-close'));
   } finally {
     await f.cleanup();
   }
@@ -440,9 +442,9 @@ test('a failed durable power owner cannot start HostCore even if execution is re
       await app.close();
       return app;
     });
-    await assert.rejects(result, /RECOVERY_HOST_STORE_UNAVAILABLE/);
-    assert.ok(!f.events.includes('core'));
-    assert.ok(!f.events.includes('vm-start'));
+    await expect(result).rejects.toThrowError(/RECOVERY_HOST_STORE_UNAVAILABLE/);
+    expect.assert(!f.events.includes('core'));
+    expect.assert(!f.events.includes('vm-start'));
   } finally {
     await f.cleanup();
   }
@@ -529,25 +531,25 @@ test('real cold HostCore recovery stays offline until an explicit user start com
         confirmation: 'restart-all-apps',
       },
     });
-    assert.equal(running, false);
-    assert.equal(stops, 1);
+    expect(running).toBe(false);
+    expect(stops).toBe(1);
     await first.close();
     first = undefined;
     const originalEnsures = ensures;
     const originalStarts = starts;
     second = await startAgentProcess(options, factory);
-    assert.equal(ensures, originalEnsures);
-    assert.equal(starts, originalStarts);
-    assert.equal(running, false);
-    assert.equal(core!.recovery!.receipt('mock-cold-reboot').phase, 'claimed');
+    expect(ensures).toBe(originalEnsures);
+    expect(starts).toBe(originalStarts);
+    expect(running).toBe(false);
+    expect(core!.recovery!.receipt('mock-cold-reboot').phase).toBe('claimed');
     startFails = false;
     await power!.handle({ type: 'recovery.start', id: 'mock-cold-reboot' });
     const status = power!.status();
-    assert.equal(status.available && status.operation?.stage, 'complete');
-    assert.equal(core!.recovery!.receipt('mock-cold-reboot').phase, 'complete');
-    assert.equal(running, true);
-    assert.equal(starts, originalStarts + 1);
-    assert.equal(stops, 1);
+    expect(status.available && status.operation?.stage).toBe('complete');
+    expect(core!.recovery!.receipt('mock-cold-reboot').phase).toBe('complete');
+    expect(running).toBe(true);
+    expect(starts).toBe(originalStarts + 1);
+    expect(stops).toBe(1);
   } finally {
     await first?.close();
     await second?.close();
@@ -590,12 +592,12 @@ test('migration startup failures replace creating progress with the same safe co
           },
         },
       );
-      assert.equal(result, 1);
+      expect(result).toBe(1);
       const progress = await readFile(path.join(f.root, 'progress.json'), 'utf8');
-      assert.deepEqual(JSON.parse(progress), { required: true, phase: 'failed', error: code });
-      assert.equal(reports.at(-1), code);
-      assert.ok(!progress.includes(secret));
-      assert.ok(!JSON.stringify(reports).includes(secret));
+      expect(JSON.parse(progress)).toStrictEqual({ required: true, phase: 'failed', error: code });
+      expect(reports.at(-1)).toBe(code);
+      expect.assert(!progress.includes(secret));
+      expect.assert(!JSON.stringify(reports).includes(secret));
     }
   } finally {
     await f.cleanup();
@@ -608,7 +610,7 @@ test('an aborted bootstrap leaves its last progress intact instead of presenting
   const progress = JSON.stringify({ required: true, phase: 'creating' });
   await writeFile(path.join(f.root, 'progress.json'), progress, { mode: 0o600 });
   try {
-    await assert.rejects(
+    await expect(
       startAgentProcess(
         f.options,
         {
@@ -620,10 +622,9 @@ test('an aborted bootstrap leaves its last progress intact instead of presenting
         },
         controller.signal,
       ),
-      { name: 'AbortError' },
-    );
-    assert.equal(await readFile(path.join(f.root, 'progress.json'), 'utf8'), progress);
-    assert.ok(!f.events.includes('core'));
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(await readFile(path.join(f.root, 'progress.json'), 'utf8')).toBe(progress);
+    expect.assert(!f.events.includes('core'));
   } finally {
     await f.cleanup();
   }
@@ -649,8 +650,8 @@ test('native-first startup defers Linux tools and bootstrap until explicit envir
     },
   );
   try {
-    assert.deepEqual(f.events, []);
-    assert.equal((await captured!.environment!.status()).target, 'linux');
+    expect(f.events).toStrictEqual([]);
+    expect((await captured!.environment!.status()).target).toBe('linux');
     await captured!.environment!.start();
     for (
       let attempt = 0;
@@ -658,8 +659,8 @@ test('native-first startup defers Linux tools and bootstrap until explicit envir
       attempt++
     )
       await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.deepEqual(f.events, ['tools', 'bootstrap']);
-    assert.equal((await captured!.environment!.status()).required, false);
+    expect(f.events).toStrictEqual(['tools', 'bootstrap']);
+    expect((await captured!.environment!.status()).required).toBe(false);
   } finally {
     await owner.close();
     await rm(f.root, { recursive: true, force: true });

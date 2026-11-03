@@ -80,11 +80,16 @@ Claude 的 API 地址填写根地址（默认 `https://api.anthropic.com`），S
 ```sh
 npm run lint          # Biome 与源码约束
 npm run typecheck     # 严格类型检查
-npm test              # 客户端和仓库工具测试
+npm test              # 全部单元测试（Vitest，先构建宿主机与引擎）
+npm run test:watch    # 监听客户端与浏览器辅助模块测试
 npm run test:agent    # 宿主机后台测试
-npm run test:runtime  # 执行与领域服务测试
+npm run test:runtime  # Vitest 执行与领域单元测试，再运行 Linux 集成回归
 npm run build         # 构建全部工作区
 ```
+
+单元测试统一使用 Vitest。界面与 Electron 测试使用 `desktop` 项目的 `jsdom` 环境，宿主机、引擎与仓库工具使用 `node` 项目。宿主机和引擎测试运行编译产物，以覆盖实际部署使用的模块及其资源路径；修改测试后先运行 `npm run build:agent`。例如：`npx vitest run --project node packages/engine/dist/recovery.test.js`。`*.integration.ts` 保留 Node 测试运行器；真实浏览器回归位于 `packages/engine/src/browser.integration.ts`。
+
+Linux CI 先安装桌面运行依赖并构建全部工作区，完整执行一次 Vitest 后，保留 `node --experimental-strip-types tools/runtime.ts` 的独立运行包装配与锁文件校验，再使用 `node --experimental-strip-types tools/tests.ts runtime --integration-only` 运行各阶段的集成回归，避免重复构建与单元测试。本地单独验证仍使用 `npm run test:runtime`，该命令保留构建、单元测试和集成回归。
 
 界面文案通过 `apps/desktop/src/i18n/locale.ts` 的类型化翻译入口读取，英文语义 key 在 `apps/desktop/locales/en.ts` 与 `zh-CN.ts` 中成对维护；插值使用 `{0}`、`{1}` 等占位符，不使用中文原文作为 key。只翻译应用自身文案，保留用户内容、模型回复、稳定标识、枚举值和审批参数；历史样例迁移数据不可随文案修改。
 

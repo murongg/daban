@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:https';
 import { connect } from 'node:net';
@@ -10,10 +10,15 @@ import { promisify } from 'node:util';
 export async function tlsFixture(reply: (req: IncomingMessage, res: ServerResponse) => unknown) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-mcp-tls-'));
   const key = path.join(root, 'key.pem'),
-    cert = path.join(root, 'cert.pem');
+    cert = path.join(root, 'cert.pem'),
+    config = path.join(root, 'openssl.cnf');
   try {
+    // OpenSSL 1.1 appends -addext to default v3_ca settings, producing invalid duplicate extensions.
+    await writeFile(config, '[req]\ndistinguished_name=subject\n[subject]\n');
     await promisify(execFile)('openssl', [
       'req',
+      '-config',
+      config,
       '-x509',
       '-newkey',
       'ec',

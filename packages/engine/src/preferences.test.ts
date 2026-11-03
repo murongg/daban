@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { MemoryPage } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { BotProfiles, personaKey } from './profiles.js';
 
 const input = {
@@ -27,36 +26,35 @@ test('legacy preferences get one truthful baseline, distinct saved versions surv
     await writeFile(file, old);
     const profiles = new BotProfiles(root);
     const baseline: MemoryPage = await profiles.history(input.id, {});
-    assert.deepEqual(
+    expect(
       baseline.items.map((item) => ({
         revision: item.revision,
         content: item.content,
         source: item.source,
       })),
-      [{ revision: 5, content: input.memory, source: 'baseline' }],
-    );
-    assert.equal(
+    ).toStrictEqual([{ revision: 5, content: input.memory, source: 'baseline' }]);
+    expect(
       await readFile(file, 'utf8'),
-      old,
       'history reading must not migrate or rewrite a legacy file',
-    );
+    ).toBe(old);
     const saved = await profiles.update(input.id, 5, { memory: 'SYNTHETIC NEXT' });
     const renamed = await profiles.update(input.id, saved.revision, { name: '合成新名称' });
-    assert.equal(
+    expect(
       (await profiles.update(input.id, renamed.revision, { memory: 'SYNTHETIC NEXT' })).revision,
-      renamed.revision,
-    );
+    ).toBe(renamed.revision);
     const restored = new BotProfiles(root);
     const page: MemoryPage = await restored.history(input.id, {});
-    assert.equal(page.profileRevision, 7);
-    assert.equal(page.currentRevision, 6);
-    assert.deepEqual(
-      page.items.map((item) => item.content),
-      ['SYNTHETIC NEXT', 'SYNTHETIC ORIGINAL'],
-    );
-    assert.equal(personaKey(saved), personaKey(legacy));
-    assert.equal(JSON.parse(await readFile(file, 'utf8')).version, 2);
-    await assert.rejects(restored.update(input.id, 5, { memory: 'STALE SYNTHETIC EDIT' }), {
+    expect(page.profileRevision).toBe(7);
+    expect(page.currentRevision).toBe(6);
+    expect(page.items.map((item) => item.content)).toStrictEqual([
+      'SYNTHETIC NEXT',
+      'SYNTHETIC ORIGINAL',
+    ]);
+    expect(personaKey(saved)).toBe(personaKey(legacy));
+    expect(JSON.parse(await readFile(file, 'utf8')).version).toBe(2);
+    await expect(
+      restored.update(input.id, 5, { memory: 'STALE SYNTHETIC EDIT' }),
+    ).rejects.toMatchObject({
       code: 'BOT_PROFILE_CONFLICT',
     });
   } finally {
@@ -75,28 +73,30 @@ test('bounded complete memory pages isolate Bot ownership and retain the newest 
         memory: `SYNTHETIC-${revision}`,
       });
     const first: MemoryPage = await profiles.history(input.id, {});
-    assert.equal(first.items.length, 5);
-    assert.equal(first.limited, true);
-    assert.equal(first.items[0].content, 'SYNTHETIC-61');
-    assert.equal(first.items[1].content, 'SYNTHETIC-60');
+    expect(first.items.length).toBe(5);
+    expect(first.limited).toBe(true);
+    expect(first.items[0].content).toBe('SYNTHETIC-61');
+    expect(first.items[1].content).toBe('SYNTHETIC-60');
     const second: MemoryPage = await profiles.history(input.id, { before: first.nextBefore });
-    assert(second.items.every((item) => item.revision < first.items.at(-1)!.revision));
-    assert.equal((await profiles.history('mock-other', {})).items[0].content, 'SYNTHETIC OTHER');
+    expect.assert(second.items.every((item) => item.revision < first.items.at(-1)!.revision));
+    expect((await profiles.history('mock-other', {})).items[0].content).toBe('SYNTHETIC OTHER');
     const stored = JSON.parse(await readFile(path.join(root, `${input.id}.json`), 'utf8'));
-    assert(stored.memoryHistory.items.length <= 50);
-    assert(Buffer.byteLength(JSON.stringify(stored.memoryHistory)) <= 384 * 1024);
+    expect.assert(stored.memoryHistory.items.length <= 50);
+    expect.assert(Buffer.byteLength(JSON.stringify(stored.memoryHistory)) <= 384 * 1024);
     for (let revision = 0; revision < 15; revision++)
       current = await profiles.update(input.id, current.revision, {
         memory: `LARGE-SYNTHETIC-${revision}:${'中'.repeat(11960)}`,
       });
     const large = JSON.parse(await readFile(path.join(root, `${input.id}.json`), 'utf8'));
-    assert(Buffer.byteLength(JSON.stringify(large.memoryHistory)) <= 384 * 1024);
-    assert(large.memoryHistory.items.length >= 2);
-    assert.equal(large.profile.memory, current.memory);
-    await assert.rejects(profiles.history(input.id, { before: 0 }), {
+    expect.assert(Buffer.byteLength(JSON.stringify(large.memoryHistory)) <= 384 * 1024);
+    expect.assert(large.memoryHistory.items.length >= 2);
+    expect(large.profile.memory).toBe(current.memory);
+    await expect(profiles.history(input.id, { before: 0 })).rejects.toMatchObject({
       code: 'INVALID_MEMORY_QUERY',
     });
-    await assert.rejects(profiles.history('missing', {}), { code: 'BOT_PROFILE_NOT_FOUND' });
+    await expect(profiles.history('missing', {})).rejects.toMatchObject({
+      code: 'BOT_PROFILE_NOT_FOUND',
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -124,14 +124,15 @@ test('damaged history keeps current preferences readable but never silently rese
     const damaged = JSON.stringify(record);
     await writeFile(file, damaged);
     const loaded = new BotProfiles(root);
-    assert.equal((await loaded.get(input.id))!.memory, input.memory);
-    assert.deepEqual(await loaded.status(), { available: true, corrupt: 1 });
-    await assert.rejects(loaded.history(input.id, {}), { code: 'MEMORY_HISTORY_CORRUPT' });
-    await assert.rejects(
+    expect((await loaded.get(input.id))!.memory).toBe(input.memory);
+    expect(await loaded.status()).toStrictEqual({ available: true, corrupt: 1 });
+    await expect(loaded.history(input.id, {})).rejects.toMatchObject({
+      code: 'MEMORY_HISTORY_CORRUPT',
+    });
+    await expect(
       loaded.update(input.id, profile.revision, { memory: 'MUST NOT OVERWRITE' }),
-      { code: 'MEMORY_HISTORY_CORRUPT' },
-    );
-    assert.equal(await readFile(file, 'utf8'), damaged);
+    ).rejects.toMatchObject({ code: 'MEMORY_HISTORY_CORRUPT' });
+    expect(await readFile(file, 'utf8')).toBe(damaged);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

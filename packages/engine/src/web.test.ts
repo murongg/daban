@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { publicAddress } from './network.js';
 import { apply, createFetcher, fallbackLookup } from './web.js';
 
@@ -12,7 +11,7 @@ test('mixed public answers and known proxy IPv6 can be re-resolved, but private 
     return Response.json({ Status: 0, Answer: [{ type: 1, data: '1.1.1.1' }] });
   };
   const mixed = [{ address: '8.8.8.8', family: 4 }, fake];
-  assert.deepEqual(
+  expect(
     await Reflect.apply(fallbackLookup, undefined, [
       'mock-public.example.test',
       new AbortController().signal,
@@ -20,10 +19,9 @@ test('mixed public answers and known proxy IPv6 can be re-resolved, but private 
       query,
       publicAddress,
     ]),
-    [{ address: '1.1.1.1', family: 4 }],
-  );
+  ).toStrictEqual([{ address: '1.1.1.1', family: 4 }]);
   const privateMixed = [{ address: '192.168.1.9', family: 4 }, fake];
-  assert.deepEqual(
+  expect(
     await Reflect.apply(fallbackLookup, undefined, [
       'mock-private.example.test',
       new AbortController().signal,
@@ -31,9 +29,8 @@ test('mixed public answers and known proxy IPv6 can be re-resolved, but private 
       query,
       publicAddress,
     ]),
-    privateMixed,
-  );
-  assert.equal(calls, 1);
+  ).toStrictEqual(privateMixed);
+  expect(calls).toBe(1);
 });
 
 test('host web plugin registers its HTTP provider and retains private-address protection', async () => {
@@ -55,10 +52,10 @@ test('host web plugin registers its HTTP provider and retains private-address pr
     },
     limits,
   );
-  assert.ok(provider);
-  assert.equal(provider.id, 'http');
-  assert.equal(provider.available(), true);
-  await assert.rejects(provider.fetch({ url: 'http://127.0.0.1/' }), {
+  expect.assert(provider);
+  expect(provider.id).toBe('http');
+  expect(provider.available()).toBe(true);
+  await expect(provider.fetch({ url: 'http://127.0.0.1/' })).rejects.toMatchObject({
     code: 'WEB_BLOCKED_URL',
   });
 });
@@ -74,8 +71,8 @@ test('fake-IP DNS uses the fixed TLS resolver and returns its actual addresses f
       return new Response(JSON.stringify({ Status: 0, Answer: [{ type: 1, data: '1.1.1.1' }] }));
     },
   );
-  assert.deepEqual(result, [{ address: '1.1.1.1', family: 4 }]);
-  assert.deepEqual(requests, ['https://223.5.5.5/resolve?name=mock.example.test&type=A']);
+  expect(result).toStrictEqual([{ address: '1.1.1.1', family: 4 }]);
+  expect(requests).toStrictEqual(['https://223.5.5.5/resolve?name=mock.example.test&type=A']);
 });
 test('ordinary and private DNS answers are left to the native public-address policy with no fallback', async () => {
   for (const address of ['1.1.1.1', '127.0.0.1', '192.168.1.1']) {
@@ -87,7 +84,7 @@ test('ordinary and private DNS answers are left to the native public-address pol
         throw new Error('fallback must not run');
       },
     );
-    assert.deepEqual(result, [{ address, family: 4 }]);
+    expect(result).toStrictEqual([{ address, family: 4 }]);
   }
 });
 test('dual-stack proxy fake IPs are resolved again without treating private IPv6 as proxy DNS', async () => {
@@ -102,18 +99,17 @@ test('dual-stack proxy fake IPs are resolved again without treating private IPv6
         Answer: [{ type: 1, data: '1.1.1.1' }],
       }),
     );
-  assert.deepEqual(
+  expect(
     await fallbackLookup(
       'mock.example.test',
       new AbortController().signal,
       async () => fake,
       request,
     ),
-    [{ address: '1.1.1.1', family: 4 }],
-  );
+  ).toStrictEqual([{ address: '1.1.1.1', family: 4 }]);
   for (const address of ['::1', 'fd00::8', 'fe80::8', '2001:db8::8']) {
     const mixed = [fake[0], { address, family: 6 }];
-    assert.deepEqual(
+    expect(
       await fallbackLookup(
         'mock.example.test',
         new AbortController().signal,
@@ -122,8 +118,7 @@ test('dual-stack proxy fake IPs are resolved again without treating private IPv6
           throw new Error('private DNS must not use the fallback');
         },
       ),
-      mixed,
-    );
+    ).toStrictEqual(mixed);
   }
 });
 test('fallback DNS rejects bad status, malformed addresses, oversized responses and cancellation', async () => {
@@ -134,21 +129,21 @@ test('fallback DNS rejects bad status, malformed addresses, oversized responses 
     new Response('x'.repeat(17000)),
     new Response('{}', { status: 503 }),
   ])
-    await assert.rejects(
+    await expect(
       fallbackLookup(
         'mock.example.test',
         new AbortController().signal,
         lookup,
         async () => response,
       ),
-    );
+    ).rejects.toThrowError();
   const abort = new AbortController();
   abort.abort();
-  await assert.rejects(
+  await expect(
     fallbackLookup('mock.example.test', abort.signal, lookup, async () => {
       throw new Error('should not fetch');
     }),
-  );
+  ).rejects.toThrowError();
 });
 
 test('fallback fetch keeps the native transport, refuses private resolver answers and pins only the original host', async () => {
@@ -187,13 +182,15 @@ test('fallback fetch keeps the native transport, refuses private resolver answer
       resolver,
       async () => new Response(JSON.stringify({ Status: 0, Answer: [{ type: 1, data: address }] })),
     );
-  assert.deepEqual(await create('1.1.1.1').fetch({ url: 'https://mock.example.test/' }), [
+  expect(await create('1.1.1.1').fetch({ url: 'https://mock.example.test/' })).toStrictEqual([
     { address: '1.1.1.1', family: 4 },
   ]);
-  await assert.rejects(create('127.0.0.1').fetch({ url: 'https://mock.example.test/' }), {
+  await expect(
+    create('127.0.0.1').fetch({ url: 'https://mock.example.test/' }),
+  ).rejects.toMatchObject({
     code: 'WEB_BLOCKED_URL',
   });
-  await assert.rejects(create('1.1.1.1').fetch({ url: 'http://127.0.0.1/' }), {
+  await expect(create('1.1.1.1').fetch({ url: 'http://127.0.0.1/' })).rejects.toMatchObject({
     code: 'WEB_BLOCKED_URL',
   });
 });
@@ -212,5 +209,5 @@ test('cancellation stops waiting for a non-cancellable OS DNS lookup', async () 
     ),
     new Promise<string>((resolve) => setTimeout(() => resolve('still pending'), 15)),
   ]);
-  assert.equal(observed, 'AbortError');
+  expect(observed).toBe('AbortError');
 });

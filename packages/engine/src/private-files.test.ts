@@ -1,17 +1,16 @@
-import assert from 'node:assert/strict';
-import child from 'node:child_process';
+import child, { ChildProcess } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test, vi } from 'vitest';
 import { secureDirectory } from './private-files.js';
 
-test('Windows private directories accept the local administrator SID alias but refuse broad ACL grants', async (t) => {
+test('Windows private directories accept the local administrator SID alias but refuse broad ACL grants', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-acl-'));
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
   let descriptor = 'D:PAI(A;OICI;FA;;;LA)';
-  t.mock.method(child, 'execFile', (...input: unknown[]) => {
+  vi.spyOn(child, 'execFile').mockImplementation((...input: unknown[]) => {
     const args = input[1] as string[],
       callback = input.at(-1) as (error: Error | null, output: string) => unknown;
     const output = args.includes('/user') ? '"SYNTHETIC","S-1-5-21-101-202-303-500"' : '';
@@ -25,21 +24,23 @@ test('Windows private directories accept the local administrator SID alias but r
       () => callback(null, output),
       (error) => callback(error, ''),
     );
+    return new ChildProcess();
   });
   syncBuiltinESMExports();
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
     await secureDirectory(path.join(root, 'trusted'));
     descriptor = 'D:PAI(A;OICI;FA;;;WD)';
-    await assert.rejects(secureDirectory(path.join(root, 'untrusted')), /PRIVATE_DIRECTORY_UNSAFE/);
+    await expect(secureDirectory(path.join(root, 'untrusted'))).rejects.toThrowError(
+      /PRIVATE_DIRECTORY_UNSAFE/,
+    );
     descriptor = 'D:PAI(A;OICI;FA;;;LA)(XA;OICI;FA;;;WD;(1==1))';
-    await assert.rejects(
-      secureDirectory(path.join(root, 'conditional')),
+    await expect(secureDirectory(path.join(root, 'conditional'))).rejects.toThrowError(
       /PRIVATE_DIRECTORY_UNSAFE/,
     );
   } finally {
     Object.defineProperty(process, 'platform', platform);
-    t.mock.restoreAll();
+    vi.restoreAllMocks();
     syncBuiltinESMExports();
     await rm(root, { recursive: true, force: true });
   }

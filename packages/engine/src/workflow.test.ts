@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
 import type { WorkAuthor } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { Fault } from './control.js';
 import { Work } from './work.js';
 
@@ -53,8 +52,8 @@ test('work metadata persists without replacing unrelated fields and omission dif
       create('mock-card', { priority: 'high', assignee: 'mock-beta' }),
       human,
     );
-    assert.equal(first.item.priority, 'high');
-    assert.equal(first.item.assignee, 'mock-beta');
+    expect(first.item.priority).toBe('high');
+    expect(first.item.assignee).toBe('mock-beta');
     const changed = await f.store.write(
       {
         id: 'mock-title',
@@ -65,10 +64,10 @@ test('work metadata persists without replacing unrelated fields and omission dif
       },
       human,
     );
-    assert.equal(changed.item.assignee, 'mock-beta');
-    assert.equal(changed.item.priority, 'high');
+    expect(changed.item.assignee).toBe('mock-beta');
+    expect(changed.item.priority).toBe('high');
     await f.reopen();
-    assert.deepEqual(await f.store.get(first.item.id), changed.item);
+    expect(await f.store.get(first.item.id)).toStrictEqual(changed.item);
     const reset = await f.store.write(
       {
         id: 'mock-reset',
@@ -79,10 +78,10 @@ test('work metadata persists without replacing unrelated fields and omission dif
       },
       human,
     );
-    assert.equal(reset.item.priority ?? 'normal', 'normal');
-    assert.equal(reset.item.assignee ?? null, null);
-    assert.equal(reset.item.title, changed.item.title);
-    await assert.rejects(
+    expect(reset.item.priority ?? 'normal').toBe('normal');
+    expect(reset.item.assignee ?? null).toBe(null);
+    expect(reset.item.title).toBe(changed.item.title);
+    await expect(
       f.store.write(
         {
           id: 'mock-stale',
@@ -93,8 +92,7 @@ test('work metadata persists without replacing unrelated fields and omission dif
         },
         human,
       ),
-      { message: 'WORK_CONFLICT' },
-    );
+    ).rejects.toMatchObject({ message: 'WORK_CONFLICT' });
   } finally {
     await f.close();
   }
@@ -109,7 +107,7 @@ test('assignee admission is checked inside the queued effect, while accepted ret
     const request = create('mock-assigned', { assignee: 'mock-beta' });
     const first = await f.store.write(request, human);
     active.clear();
-    assert.deepEqual((await f.store.write(request, human)).item, first.item);
+    expect((await f.store.write(request, human)).item).toStrictEqual(first.item);
     const edited = await f.store.write(
       {
         id: 'mock-human-edit',
@@ -120,11 +118,11 @@ test('assignee admission is checked inside the queued effect, while accepted ret
       },
       human,
     );
-    assert.equal(edited.item.assignee, 'mock-beta');
+    expect(edited.item.assignee).toBe('mock-beta');
     const pending = f.store.write(create('mock-queued', { assignee: 'mock-gone' }), human);
-    await assert.rejects(pending, { message: 'UNKNOWN_BOT' });
-    await assert.rejects(f.store.get('mock-queued'), { message: 'WORK_NOT_FOUND' });
-    assert.deepEqual(await f.store.get(first.item.id), edited.item);
+    await expect(pending).rejects.toMatchObject({ message: 'UNKNOWN_BOT' });
+    await expect(f.store.get('mock-queued')).rejects.toMatchObject({ message: 'WORK_NOT_FOUND' });
+    expect(await f.store.get(first.item.id)).toStrictEqual(edited.item);
   } finally {
     await f.close();
   }
@@ -148,11 +146,11 @@ test('six workflow states preserve completion time, and closed requires an expli
           human,
         )
       ).item;
-      if (status === 'done' || status === 'closed') assert.ok(item.completedAt);
-      else assert.equal(item.completedAt, undefined);
-      if (status === 'closed') assert.equal(item.completedAt, old.completedAt);
+      if (status === 'done' || status === 'closed') expect.assert(item.completedAt);
+      else expect(item.completedAt).toBe(undefined);
+      if (status === 'closed') expect(item.completedAt).toBe(old.completedAt);
     }
-    await assert.rejects(
+    await expect(
       f.store.write(
         {
           id: 'mock-silent-reopen',
@@ -163,18 +161,19 @@ test('six workflow states preserve completion time, and closed requires an expli
         },
         human,
       ),
-      { message: 'WORK_REOPEN_REQUIRED' },
-    );
+    ).rejects.toMatchObject({ message: 'WORK_REOPEN_REQUIRED' });
     const reopen = {
       id: 'mock-human-reopen',
       item: item.id,
       revision: item.revision,
       action: 'reopen',
     };
-    await assert.rejects(f.store.write(reopen, bot), { message: 'WORK_REOPEN_FORBIDDEN' });
+    await expect(f.store.write(reopen, bot)).rejects.toMatchObject({
+      message: 'WORK_REOPEN_FORBIDDEN',
+    });
     const opened = await f.store.write(reopen, human);
-    assert.equal(opened.item.status, 'todo');
-    assert.equal(opened.item.completedAt, undefined);
+    expect(opened.item.status).toBe('todo');
+    expect(opened.item.completedAt).toBe(undefined);
     const closed = await f.store.write(
       {
         id: 'mock-reclose',
@@ -186,8 +185,8 @@ test('six workflow states preserve completion time, and closed requires an expli
       human,
     );
     const retried = await f.store.write(reopen, human);
-    assert.equal(retried.acceptedRevision, opened.acceptedRevision);
-    assert.deepEqual(retried.item, closed.item);
+    expect(retried.acceptedRevision).toBe(opened.acceptedRevision);
+    expect(retried.item).toStrictEqual(closed.item);
   } finally {
     await f.close();
   }
@@ -203,10 +202,10 @@ test('filtered pages bind priority, responsible Bot and workflow while retaining
       ['mock-d', 'closed', 'high', null],
     ] as const)
       await f.store.write(create(id, { status, priority, assignee }), human);
-    assert.equal((await f.store.list({ filter: 'open' })).items.length, 2);
-    assert.equal((await f.store.list({ filter: 'done' })).items.length, 2);
+    expect((await f.store.list({ filter: 'open' })).items.length).toBe(2);
+    expect((await f.store.list({ filter: 'done' })).items.length).toBe(2);
     const page = await f.store.list({ filter: 'all', limit: 2 });
-    assert.ok(page.nextBefore);
+    expect.assert(page.nextBefore);
     const first = await f.store.get('mock-a');
     await f.store.write(
       {
@@ -223,18 +222,14 @@ test('filtered pages bind priority, responsible Bot and workflow while retaining
       priority: 'high',
       assignee: 'mock-beta',
     });
-    assert.deepEqual(
-      filtered.items.map((x) => x.id),
-      ['mock-a'],
-    );
-    assert.deepEqual(
-      (await f.store.list({ assignee: null })).items.map((x) => x.id),
-      ['mock-d', 'mock-c'],
-    );
-    assert.deepEqual(
+    expect(filtered.items.map((x) => x.id)).toStrictEqual(['mock-a']);
+    expect((await f.store.list({ assignee: null })).items.map((x) => x.id)).toStrictEqual([
+      'mock-d',
+      'mock-c',
+    ]);
+    expect(
       (await f.store.list({ filter: 'all', before: page.nextBefore })).items.map((x) => x.id),
-      ['mock-b', 'mock-a'],
-    );
+    ).toStrictEqual(['mock-b', 'mock-a']);
   } finally {
     await f.close();
   }
@@ -246,11 +241,11 @@ test('schema3 validates stored assignees instead of adopting an invalid private 
     await f.store.write(create('mock-corrupt', { priority: 'high', assignee: 'mock-beta' }), human);
     await f.store.close();
     const db = new DatabaseSync(f.file);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 3);
+    expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
     db.prepare("UPDATE work_items SET assignee='../mock-private' WHERE id='mock-corrupt'").run();
     db.close();
     const bad = new Work(f.file);
-    await assert.rejects(bad.ready, { message: 'WORK_CORRUPT' });
+    await expect(bad.ready).rejects.toMatchObject({ message: 'WORK_CORRUPT' });
     await bad.close();
   } finally {
     await f.close();
@@ -271,7 +266,7 @@ async function legacyFixture() {
   };
   const { createHash } = await import('node:crypto');
   const { workKey, workCommentKey, isWorkWrite } = await import('@daban/protocol');
-  assert.ok(isWorkWrite(request));
+  expect.assert(isWorkWrite(request));
   db.exec(`
     CREATE TABLE work_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,description TEXT NOT NULL,progress TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL) STRICT;
     CREATE TABLE work_operations(id TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES work_items(id),signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
@@ -320,17 +315,16 @@ test('schema2 migration preserves literal comments, old receipts and all old row
   try {
     await store.ready;
     const after = new DatabaseSync(f.file, { readOnly: true });
-    assert.equal(after.prepare('PRAGMA user_version').get()!.user_version, 3);
-    assert.deepEqual(
-      after.prepare('SELECT ' + columns.join(',') + ' FROM work_items').all(),
+    expect(after.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+    expect(after.prepare('SELECT ' + columns.join(',') + ' FROM work_items').all()).toStrictEqual(
       oldRows,
     );
-    assert.deepEqual(after.prepare('SELECT * FROM work_comments').all(), oldComments);
-    assert.deepEqual(after.prepare('SELECT * FROM work_operations').all(), oldOperations);
+    expect(after.prepare('SELECT * FROM work_comments').all()).toStrictEqual(oldComments);
+    expect(after.prepare('SELECT * FROM work_operations').all()).toStrictEqual(oldOperations);
     after.close();
     const receipt = await store.write(f.request, human);
-    assert.equal(receipt.acceptedRevision, 1);
-    assert.equal(receipt.item.revision, 2);
+    expect(receipt.acceptedRevision).toBe(1);
+    expect(receipt.item.revision).toBe(2);
     const changed = await store.write(
       {
         id: 'mock-new-metadata',
@@ -342,15 +336,14 @@ test('schema2 migration preserves literal comments, old receipts and all old row
       human,
     );
     const comment = await store.commentReceipt(f.comment, human);
-    assert.equal(comment.state, 'complete');
+    expect(comment.state).toBe('complete');
     if (comment.state === 'complete') {
-      assert.equal(comment.acceptedRevision, 2);
-      assert.deepEqual(comment.item, changed.item);
+      expect(comment.acceptedRevision).toBe(2);
+      expect(comment.item).toStrictEqual(changed.item);
     }
-    assert.deepEqual(
+    expect(
       (await store.comments({ item: f.request.item })).comments.map((row) => row.body),
-      [f.comment.body],
-    );
+    ).toStrictEqual([f.comment.body]);
   } finally {
     await store.close();
     await rm(f.root, { recursive: true, force: true });
@@ -364,16 +357,15 @@ test('invalid schema2 workflow rows are refused before any migration is committe
   db.close();
   const store = new Work(f.file);
   try {
-    await assert.rejects(store.ready, { message: 'WORK_CORRUPT' });
+    await expect(store.ready).rejects.toMatchObject({ message: 'WORK_CORRUPT' });
     const after = new DatabaseSync(f.file, { readOnly: true });
-    assert.equal(after.prepare('PRAGMA user_version').get()!.user_version, 2);
-    assert.equal(
+    expect(after.prepare('PRAGMA user_version').get()!.user_version).toBe(2);
+    expect(
       after
         .prepare('PRAGMA table_info(work_items)')
         .all()
         .some((row) => row.name === 'priority'),
-      false,
-    );
+    ).toBe(false);
     after.close();
   } finally {
     await store.close();
@@ -389,7 +381,7 @@ test('an empty schema3 store missing a metadata column fails before it can accep
   db.close();
   const broken = new Work(f.file);
   try {
-    await assert.rejects(broken.ready, { message: 'WORK_CORRUPT' });
+    await expect(broken.ready).rejects.toMatchObject({ message: 'WORK_CORRUPT' });
   } finally {
     await broken.close();
     await f.close();
@@ -403,16 +395,15 @@ test('foreign legacy columns are rejected before schema adoption rather than aft
   db.close();
   const store = new Work(f.file);
   try {
-    await assert.rejects(store.ready, { message: 'WORK_CORRUPT' });
+    await expect(store.ready).rejects.toMatchObject({ message: 'WORK_CORRUPT' });
     const check = new DatabaseSync(f.file, { readOnly: true });
-    assert.equal(check.prepare('PRAGMA user_version').get()!.user_version, 2);
-    assert.equal(
+    expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(2);
+    expect(
       check
         .prepare('PRAGMA table_info(work_items)')
         .all()
         .some((row) => row.name === 'priority'),
-      false,
-    );
+    ).toBe(false);
     check.close();
   } finally {
     await store.close();

@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Control } from './control.js';
 import type { Desktop } from './desktop.js';
 import { ModelRuns } from './model.js';
@@ -47,12 +46,14 @@ test('computer admission rejects a model task before publishing it or granting n
     await settings.save({ apiKey: 'synthetic-computer-admission-key' });
     await models.ready;
     const task = { requestId: 'mock-changing-request', prompt: '合成普通任务' };
-    await assert.rejects(models.start('mock-gated', task), { code: 'COMPUTER_CHANGING' });
-    assert.equal(models.jobs.has('mock-gated'), false);
+    await expect(models.start('mock-gated', task)).rejects.toMatchObject({
+      code: 'COMPUTER_CHANGING',
+    });
+    expect(models.jobs.has('mock-gated')).toBe(false);
     changing = false;
     await models.start('mock-gated', task);
     await models.jobs.get('mock-gated')!.done;
-    assert.equal(models.jobs.get('mock-gated')!.toolCount, 0);
+    expect(models.jobs.get('mock-gated')!.toolCount).toBe(0);
     const job = models.jobs.get('mock-gated')!;
     let release!: () => unknown,
       settled = false;
@@ -65,10 +66,10 @@ test('computer admission rejects a model task before publishing it or granting n
       settled = true;
     });
     await Promise.resolve();
-    assert.equal(settled, false);
+    expect(settled).toBe(false);
     release();
     await drained;
-    assert.equal(settled, true);
+    expect(settled).toBe(true);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -136,17 +137,15 @@ test('a group task prepares only group-owned uploads and pins its source under t
     const entry = (await models.attachments.list('mock-file-group', {})).items.find(
       (item) => item.id === uploaded.id,
     )!;
-    await assert.rejects(
+    await expect(
       models.attachmentAction('mock-file-group', {
         action: 'trash',
         id: uploaded.id,
         version: entry.version,
       }),
-      { code: 'ATTACHMENT_BUSY' },
-    );
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_BUSY' });
     const job = models.jobs.get('mock-file-bot')!;
-    assert.equal(
-      (await readFile(path.join(job.workdir, source.name))).toString(),
+    expect((await readFile(path.join(job.workdir, source.name))).toString()).toBe(
       'synthetic-group-original',
     );
     release();
@@ -205,10 +204,10 @@ test('request-scoped cancellation cannot stop another conversation or another ac
     await started;
     await models.stopRequest('mock-scope', 'mock-current-request', 'other-group');
     await models.stopRequest('mock-scope', 'other-request', 'mock-current-group');
-    assert.equal(models.running('mock-scope'), true);
+    expect(models.running('mock-scope')).toBe(true);
     await models.stopRequest('mock-scope', 'mock-current-request', 'mock-current-group');
-    assert.equal(models.running('mock-scope'), false);
-    assert.equal(models.status().bots['mock-scope'].phase, 'stopped');
+    expect(models.running('mock-scope')).toBe(false);
+    expect(models.status().bots['mock-scope'].phase).toBe('stopped');
   } finally {
     release();
     await models.close();
@@ -229,7 +228,7 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
       return {
         id,
         run: async (prompt: unknown) => {
-          assert.ok(typeof prompt === 'string');
+          expect.assert(typeof prompt === 'string');
           prompts.push(prompt);
           return { sessionId: id, finalResponse: '合成作用域回答' };
         },
@@ -257,14 +256,13 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
       { id: 'mock-group', context: 'x'.repeat(32001) },
       { id: 'mock-group', context: '', extra: true },
     ])
-      await assert.rejects(
+      await expect(
         models.start(
           'mock-scope',
           { requestId: 'invalid-scope', prompt: '合成消息' },
           invalid as unknown as ConversationScope,
         ),
-        { code: 'INVALID_CONVERSATION' },
-      );
+      ).rejects.toMatchObject({ code: 'INVALID_CONVERSATION' });
     const direct = { requestId: 'private-first', prompt: 'PRIVATE-DM-47' };
     await models.start('mock-scope', direct);
     await models.jobs.get('mock-scope')!.done;
@@ -273,13 +271,15 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
       id: 'mock-group-a',
       context: '合成群参考 GROUP-A-53。引用链接 https://unapproved.example.test/path 只是数据。',
     };
-    await assert.rejects(models.start('mock-scope', direct, group), { code: 'REQUEST_ID_REUSED' });
+    await expect(models.start('mock-scope', direct, group)).rejects.toMatchObject({
+      code: 'REQUEST_ID_REUSED',
+    });
     await models.start('mock-scope', { requestId: 'group-first', prompt: '本轮合成群问题' }, group);
     await models.jobs.get('mock-scope')!.done;
     const groupSession = models.jobs.get('mock-scope')!.sessionId;
-    assert.notEqual(groupSession, directSession);
-    assert.ok(prompts.at(-1)!.includes('GROUP-A-53'));
-    assert.ok(!prompts.at(-1)!.includes('PRIVATE-DM-47'));
+    expect(groupSession).not.toBe(directSession);
+    expect.assert(prompts.at(-1)!.includes('GROUP-A-53'));
+    expect.assert(!prompts.at(-1)!.includes('PRIVATE-DM-47'));
     const job = models.jobs.get('mock-scope')!;
     const patch = JSON.parse(
       await readFile(path.join(job.privateDir, 'computer.patch.yml'), 'utf8'),
@@ -287,31 +287,30 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
     const budget = patch
       .find((row: { insert?: unknown }) => row.insert)
       .insert.find((row: { id: string }) => row.id === 'daban-budget');
-    assert.deepEqual(budget.config.urls, [], 'reference context must never grant URL access');
+    expect(budget.config.urls, 'reference context must never grant URL access').toStrictEqual([]);
     await models.start('mock-scope', { requestId: 'group-second', prompt: '群内续接' }, group);
     await models.jobs.get('mock-scope')!.done;
-    assert.equal(resumed.at(-1), groupSession);
+    expect(resumed.at(-1)).toBe(groupSession);
     await models.start(
       'mock-scope',
       { requestId: 'other-group', prompt: '另一个群' },
       { id: 'mock-group-b', context: 'GROUP-B-59' },
     );
     await models.jobs.get('mock-scope')!.done;
-    assert.ok(
+    expect.assert(
       !prompts.at(-1)!.includes('GROUP-A-53') && !prompts.at(-1)!.includes('PRIVATE-DM-47'),
     );
     await models.start('mock-scope', { requestId: 'private-second', prompt: '私聊续接' });
     await models.jobs.get('mock-scope')!.done;
-    assert.equal(resumed.at(-1), directSession);
+    expect(resumed.at(-1)).toBe(directSession);
     const privateRun = models.jobs.get('mock-scope')!.id;
-    await assert.rejects(
+    await expect(
       models.start(
         'mock-scope',
         { requestId: 'cross-retry', prompt: '私聊续接', retryOf: privateRun },
         group,
       ),
-      { code: 'INVALID_RETRY' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_RETRY' });
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
@@ -321,13 +320,13 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
       group,
     );
     await models.jobs.get('mock-scope')!.done;
-    assert.equal(resumed.at(-1), groupSession);
+    expect(resumed.at(-1)).toBe(groupSession);
     await models.start('mock-scope', {
       requestId: 'private-after-restart',
       prompt: '重启后私聊继续',
     });
     await models.jobs.get('mock-scope')!.done;
-    assert.equal(resumed.at(-1), directSession);
+    expect(resumed.at(-1)).toBe(directSession);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -388,31 +387,31 @@ test('stop waits for attachment preparation, prevents late writes and permits an
     await began;
     const job = models.jobs.get('a')!;
     const catalog = (await models.attachments.list('a', {})).items[0];
-    await assert.rejects(
+    await expect(
       models.attachmentAction('a', { id: catalog.id, version: catalog.version, action: 'trash' }),
-      { code: 'ATTACHMENT_BUSY' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_BUSY' });
+    await expect(
       models.attachmentAction('a', {
         id: catalog.id,
         version: catalog.version,
         action: 'purge',
         confirmation: 'mock.pdf',
       }),
-      { code: 'ATTACHMENT_BUSY' },
-    );
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_BUSY' });
     let stopped = false;
     stopping = models.stop('a').then(() => {
       stopped = true;
     });
     await new Promise<unknown>((resolve) => setImmediate(() => resolve(undefined)));
-    assert.equal(stopped, false, 'stop must join the in-flight preparation');
+    expect(stopped, 'stop must join the in-flight preparation').toBe(false);
     release();
     await stopping;
-    await assert.rejects(starting, { code: 'MODEL_CANCELLED' });
-    assert.equal(job.phase, 'stopped');
-    assert.equal(harnesses, 0);
-    await assert.rejects(readFile(path.join(job.workdir, 'mock.pdf')), { code: 'ENOENT' });
+    await expect(starting).rejects.toMatchObject({ code: 'MODEL_CANCELLED' });
+    expect(job.phase).toBe('stopped');
+    expect(harnesses).toBe(0);
+    await expect(readFile(path.join(job.workdir, 'mock.pdf'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
     models.attachments.read = originalRead;
     await models.start('a', {
       requestId: 'mock-resume-after-prepare',
@@ -420,9 +419,8 @@ test('stop waits for attachment preparation, prevents late writes and permits an
       retryOf: job.id,
     });
     await models.jobs.get('a')!.done;
-    assert.equal(harnesses, 1);
-    assert.equal(
-      await readFile(path.join(models.jobs.get('a')!.workdir, 'mock.pdf'), 'utf8'),
+    expect(harnesses).toBe(1);
+    expect(await readFile(path.join(models.jobs.get('a')!.workdir, 'mock.pdf'), 'utf8')).toBe(
       'synthetic-original',
     );
   } finally {
@@ -446,7 +444,7 @@ test('document references copy immutable originals and extracted text into fresh
       return {
         id,
         run: async (prompt: unknown) => {
-          assert.ok(typeof prompt === 'string');
+          expect.assert(typeof prompt === 'string');
           prompts.push(prompt);
           return { sessionId: id, finalResponse: '合成文件已读取' };
         },
@@ -483,16 +481,16 @@ test('document references copy immutable originals and extracted text into fresh
     await models.start('a', request);
     const first = models.jobs.get('a')!;
     await first.done;
-    assert.equal(first.phase, 'completed');
-    assert.equal((await readFile(path.join(first.workdir, 'alias.pdf'))).equals(original), true);
-    assert.equal(await readFile(path.join(first.workdir, 'document-1.txt'), 'utf8'), 'KEEP');
+    expect(first.phase).toBe('completed');
+    expect((await readFile(path.join(first.workdir, 'alias.pdf'))).equals(original)).toBe(true);
+    expect(await readFile(path.join(first.workdir, 'document-1.txt'), 'utf8')).toBe('KEEP');
     const mapping = first.documentInputs![0];
-    assert.notEqual(mapping.textName, 'document-1.txt');
-    assert.equal(await readFile(path.join(first.workdir, mapping.textName), 'utf8'), 'MOCK-47');
-    assert.ok(prompts[0].includes(mapping.textName) && prompts[0].includes('提取文本'));
-    assert.equal((await models.knowledge.list('a')).length, 0);
-    assert.equal((await models.start('a', request)).runId, first.id);
-    assert.equal(prompts.length, 1);
+    expect(mapping.textName).not.toBe('document-1.txt');
+    expect(await readFile(path.join(first.workdir, mapping.textName), 'utf8')).toBe('MOCK-47');
+    expect.assert(prompts[0].includes(mapping.textName) && prompts[0].includes('提取文本'));
+    expect((await models.knowledge.list('a')).length).toBe(0);
+    expect((await models.start('a', request)).runId).toBe(first.id);
+    expect(prompts.length).toBe(1);
     await writeFile(path.join(first.workdir, 'alias.pdf'), 'model-modified-copy');
     await writeFile(path.join(first.workdir, mapping.textName), 'model-modified-text');
     await models.close();
@@ -505,20 +503,18 @@ test('document references copy immutable originals and extracted text into fresh
     });
     const retried = models.jobs.get('a')!;
     await retried.done;
-    assert.notEqual(retried.workdir, first.workdir);
-    assert.equal((await readFile(path.join(retried.workdir, 'alias.pdf'))).equals(original), true);
-    assert.equal(
+    expect(retried.workdir).not.toBe(first.workdir);
+    expect((await readFile(path.join(retried.workdir, 'alias.pdf'))).equals(original)).toBe(true);
+    expect(
       await readFile(path.join(retried.workdir, retried.documentInputs![0].textName), 'utf8'),
-      'MOCK-47',
-    );
-    await assert.rejects(
+    ).toBe('MOCK-47');
+    await expect(
       models.start('b', {
         requestId: 'mock-cross-document',
         prompt: '不能读取另一位 Bot 的附件',
         files: [{ name: 'foreign.pdf', attachmentId: uploaded.id }],
       }),
-      { code: 'ATTACHMENT_NOT_FOUND' },
-    );
+    ).rejects.toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' });
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -542,9 +538,9 @@ test('user tasks reach DSH, return real files, deduplicate requests and preserve
         return {
           id,
           run: async (prompt: unknown) => {
-            assert.ok(typeof prompt === 'string');
+            expect.assert(typeof prompt === 'string');
             prompts.push(prompt);
-            assert.equal(this.options.processCwd, models.jobs.get('a')!.privateDir);
+            expect(this.options.processCwd).toBe(models.jobs.get('a')!.privateDir);
             if (!prompt.includes('不生成新文件'))
               await writeFile(
                 path.join(models.jobs.get('a')!.workdir, 'summary.md'),
@@ -595,41 +591,42 @@ test('user tasks reach DSH, return real files, deduplicate requests and preserve
       files: [{ name: 'input.csv', content: 'item,count\nmock,3' }],
     };
     const first = await models.start('a', request);
-    assert.equal(models.findRequest('a', request.requestId)?.runId, first.runId);
+    expect(models.findRequest('a', request.requestId)?.runId).toBe(first.runId);
     await models.jobs.get('a')!.done;
-    assert.ok(prompts[0].includes(request.prompt));
-    assert.ok(!prompts[0].includes('paid_count'));
-    assert.equal(models.status().bots.a.phase, 'completed');
-    assert.ok(models.status().bots.a.files.some((file) => file.path.endsWith('/summary.md')));
-    assert.equal(models.status().bots.a.requestId, request.requestId);
-    assert.ok(
+    expect.assert(prompts[0].includes(request.prompt));
+    expect.assert(!prompts[0].includes('paid_count'));
+    expect(models.status().bots.a.phase).toBe('completed');
+    expect.assert(models.status().bots.a.files.some((file) => file.path.endsWith('/summary.md')));
+    expect(models.status().bots.a.requestId).toBe(request.requestId);
+    expect.assert(
       (await readFile(path.join(models.jobs.get('a')!.workdir, 'summary.md'), 'utf8')).includes(
         '总数=3',
       ),
     );
-    assert.equal((await models.start('a', request)).runId, first.runId);
-    assert.equal(prompts.length, 1);
-    await assert.rejects(models.start('a', { ...request, prompt: '另一个合成请求' }), {
-      code: 'REQUEST_ID_REUSED',
-    });
+    expect((await models.start('a', request)).runId).toBe(first.runId);
+    expect(prompts.length).toBe(1);
+    await expect(models.start('a', { ...request, prompt: '另一个合成请求' })).rejects.toMatchObject(
+      {
+        code: 'REQUEST_ID_REUSED',
+      },
+    );
     await models.start('a', { requestId: 'mock-request-2', prompt: '继续核对刚才的合成摘要' });
     await models.jobs.get('a')!.done;
-    assert.deepEqual(resumed, ['synthetic-session-a']);
-    assert.equal(models.findRequest('a', request.requestId)?.phase, 'completed');
-    assert.equal(models.findRequest('b', request.requestId), undefined);
+    expect(resumed).toStrictEqual(['synthetic-session-a']);
+    expect(models.findRequest('a', request.requestId)?.phase).toBe('completed');
+    expect(models.findRequest('b', request.requestId)).toBe(undefined);
     await models.start('a', {
       requestId: 'mock-request-3',
       prompt: '不生成新文件，只核对数据',
       files: [],
     });
     await models.jobs.get('a')!.done;
-    assert.deepEqual(models.status().bots.a.files, []);
-    await assert.rejects(
+    expect(models.status().bots.a.files).toStrictEqual([]);
+    await expect(
       readFile(path.join(models.jobs.get('a')!.workdir, 'input.csv')),
-      { code: 'ENOENT' },
       'a normal turn must not invent business input',
-    );
-    assert.equal(models.status().bots.a.verified, false);
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(models.status().bots.a.verified).toBe(false);
     const cachedInput = 'item,count\nmock,3';
     await models.start('a', {
       requestId: 'mock-retry-request',
@@ -637,12 +634,11 @@ test('user tasks reach DSH, return real files, deduplicate requests and preserve
       retryOf: first.runId,
     });
     await models.jobs.get('a')!.done;
-    assert.equal(
+    expect(
       await readFile(path.join(models.jobs.get('a')!.workdir, 'input.csv'), 'utf8'),
-      cachedInput,
       'retry must reuse the actual original input instead of reseeding demo data',
-    );
-    assert.equal(models.jobs.get('a')!.intentId, first.runId);
+    ).toBe(cachedInput);
+    expect(models.jobs.get('a')!.intentId).toBe(first.runId);
     const continuedRun = models.jobs.get('a')!.id;
     await models.start('a', {
       requestId: 'mock-retry-again',
@@ -650,20 +646,19 @@ test('user tasks reach DSH, return real files, deduplicate requests and preserve
       retryOf: continuedRun,
     });
     await models.jobs.get('a')!.done;
-    assert.equal(models.jobs.get('a')!.intentId, first.runId);
-    await assert.rejects(
+    expect(models.jobs.get('a')!.intentId).toBe(first.runId);
+    await expect(
       models.start('b', {
         requestId: 'mock-cross-bot-retry',
         prompt: '合成请求',
         retryOf: first.runId,
       }),
-      { code: 'RETRY_NOT_FOUND' },
-    );
+    ).rejects.toMatchObject({ code: 'RETRY_NOT_FOUND' });
     const recovered = new ModelRuns(options);
     await recovered.ready;
-    assert.equal(recovered.status().bots.a.history.length, 5);
-    assert.equal(recovered.jobs.get('a')!.intentId, first.runId);
-    assert.equal(JSON.stringify(recovered.status()).includes('synthetic-private-model-key'), false);
+    expect(recovered.status().bots.a.history.length).toBe(5);
+    expect(recovered.jobs.get('a')!.intentId).toBe(first.runId);
+    expect(JSON.stringify(recovered.status()).includes('synthetic-private-model-key')).toBe(false);
     await models.close();
     await recovered.close();
   } finally {
@@ -691,13 +686,12 @@ test('ordinary dialogue can finish with zero tools and no files while the screen
         return {
           id: 'mock-dialogue-session',
           run: async (text: unknown) => {
-            assert.ok(typeof text === 'string');
+            expect.assert(typeof text === 'string');
             prompt = text;
-            assert.equal(
+            expect(
               models.status().bots.a.phase,
-              'running',
               'a human-owned screen must not label ordinary reasoning as paused',
-            );
+            ).toBe('running');
             return { sessionId: 'mock-dialogue-session', finalResponse: '你好，有什么可以帮你？' };
           },
         };
@@ -743,14 +737,14 @@ test('ordinary dialogue can finish with zero tools and no files while the screen
     await models.start('a', { requestId: 'mock-hello', prompt: '你好' });
     await models.jobs.get('a')!.done;
     const status = models.status().bots.a;
-    assert.equal(status.phase, 'completed');
-    assert.equal(status.toolCount, 0);
-    assert.deepEqual(status.files, []);
-    assert.equal(status.result, '你好，有什么可以帮你？');
-    assert.match(system, /general.purpose/i);
-    assert.ok(!system.includes('Your only tools are the computer'));
-    assert.ok(!prompt.includes('开始先截图'));
-    assert.ok(!prompt.includes('输入文件已放在这个目录'));
+    expect(status.phase).toBe('completed');
+    expect(status.toolCount).toBe(0);
+    expect(status.files).toStrictEqual([]);
+    expect(status.result).toBe('你好，有什么可以帮你？');
+    expect(system).toMatch(/general.purpose/i);
+    expect.assert(!system.includes('Your only tools are the computer'));
+    expect.assert(!prompt.includes('开始先截图'));
+    expect.assert(!prompt.includes('输入文件已放在这个目录'));
     await models.close();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -795,13 +789,13 @@ test('the general agent core exposes workspace and preference tools without an a
     });
     await models.start('a', { requestId: 'mock-headless-turn', prompt: '你好' });
     await models.jobs.get('a')!.done;
-    assert.equal(models.status().bots.a.phase, 'completed');
-    assert.equal(models.status().bots.a.toolCount, 0);
-    assert.ok(names.includes('read_file') && names.includes('shell'));
-    assert.ok(names.includes('bot_memory_read') && names.includes('bot_memory_write'));
-    assert.ok(names.includes('bot_history_search') && names.includes('bot_history_read'));
-    assert.ok(names.includes('bot_knowledge_search') && names.includes('bot_knowledge_export'));
-    assert.ok(!names.includes('screenshot') && !names.includes('act'));
+    expect(models.status().bots.a.phase).toBe('completed');
+    expect(models.status().bots.a.toolCount).toBe(0);
+    expect.assert(names.includes('read_file') && names.includes('shell'));
+    expect.assert(names.includes('bot_memory_read') && names.includes('bot_memory_write'));
+    expect.assert(names.includes('bot_history_search') && names.includes('bot_history_read'));
+    expect.assert(names.includes('bot_knowledge_search') && names.includes('bot_knowledge_export'));
+    expect.assert(!names.includes('screenshot') && !names.includes('act'));
     await models.close();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -839,7 +833,7 @@ test('retiring a computer-only session preserves its conversation context and st
         return {
           id: 'new-general-session',
           run: async (prompt: unknown) => {
-            assert.ok(typeof prompt === 'string');
+            expect.assert(typeof prompt === 'string');
             observed = prompt;
             return { sessionId: 'new-general-session', finalResponse: '我是通用助手。' };
           },
@@ -859,16 +853,14 @@ test('retiring a computer-only session preserves its conversation context and st
     });
     await models.start('a', { requestId: 'new-general-request', prompt: '你能做什么' });
     await models.jobs.get('a')!.done;
-    assert.deepEqual(
+    expect(
       resumed,
-      [],
       'the old computer-only system context must not silently survive the mode migration',
-    );
-    assert.ok(observed.includes('Mock Alpha'));
-    assert.ok(models.status().bots.a.history.some((item) => item.runId === 'old-run'));
+    ).toStrictEqual([]);
+    expect.assert(observed.includes('Mock Alpha'));
+    expect.assert(models.status().bots.a.history.some((item) => item.runId === 'old-run'));
     const record = models.journal.findRequest('a', 'new-general-request');
-    assert.equal(
-      (record as unknown as Record<string, unknown>).sessionProfile,
+    expect((record as unknown as Record<string, unknown>).sessionProfile).toBe(
       'general-v11-risk-context',
     );
     await models.close();
@@ -928,9 +920,9 @@ test('an unbound Bot can persist an independent DSH conversation without touchin
     });
     await models.start('chief', { requestId: 'mock-chief-turn', prompt: '你好' });
     await models.jobs.get('chief')!.done;
-    assert.equal(models.status().bots.chief.phase, 'completed');
-    assert.equal(models.status().bots.chief.toolCount, 0);
-    assert.ok(!names.includes('screenshot'));
+    expect(models.status().bots.chief.phase).toBe('completed');
+    expect(models.status().bots.chief.toolCount).toBe(0);
+    expect.assert(!names.includes('screenshot'));
     await models.close();
     const recovered = new ModelRuns({
       runtime,
@@ -941,7 +933,7 @@ test('an unbound Bot can persist an independent DSH conversation without touchin
       Harness: FakeHarness,
     });
     await recovered.ready;
-    assert.equal(recovered.status().bots.chief.result, '你好');
+    expect(recovered.status().bots.chief.result).toBe('你好');
     await recovered.close();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -968,7 +960,7 @@ test('durable Bot persona reaches DSH, preferences survive restart, and changed 
         return {
           id,
           run: async (text: unknown) => {
-            assert.ok(typeof text === 'string');
+            expect.assert(typeof text === 'string');
             prompt = text;
             return { sessionId: id, finalResponse: '合成回复' };
           },
@@ -997,24 +989,24 @@ test('durable Bot persona reaches DSH, preferences survive restart, and changed 
     });
     await models.start('mock-persona', { requestId: 'mock-persona-first', prompt: '你叫什么' });
     await models.jobs.get('mock-persona')!.done;
-    assert.ok(system.includes('合成研究助理') && system.includes('先给两条依据'));
-    assert.ok(prompt.includes('使用编号'));
+    expect.assert(system.includes('合成研究助理') && system.includes('先给两条依据'));
+    expect.assert(prompt.includes('使用编号'));
     await models.start('mock-persona', { requestId: 'mock-persona-second', prompt: '接着聊' });
     await models.jobs.get('mock-persona')!.done;
-    assert.equal(resumed.length, 1);
+    expect(resumed.length).toBe(1);
     await models.profiles.update('mock-persona', 1, {
       name: '合成写作助理',
       instructions: '先给一句简短结论。',
     });
     await models.start('mock-persona', { requestId: 'mock-persona-third', prompt: '你现在叫什么' });
     await models.jobs.get('mock-persona')!.done;
-    assert.equal(resumed.length, 1, 'a changed persona must not reuse a frozen old system prompt');
-    assert.ok(system.includes('合成写作助理'));
+    expect(resumed.length, 'a changed persona must not reuse a frozen old system prompt').toBe(1);
+    expect.assert(system.includes('合成写作助理'));
     await models.close();
     const recovered = new ModelRuns(options);
     await recovered.ready;
-    assert.equal((await recovered.profiles.get('mock-persona'))?.memory, '合成偏好：使用编号。');
-    assert.equal(recovered.status().bots['mock-persona'].history.length, 3);
+    expect((await recovered.profiles.get('mock-persona'))?.memory).toBe('合成偏好：使用编号。');
+    expect(recovered.status().bots['mock-persona'].history.length).toBe(3);
     await recovered.close();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -1038,7 +1030,7 @@ test('a selected model reaches DSH and only matching model sessions resume, incl
       return {
         id,
         run: async (prompt: unknown) => {
-          assert.ok(typeof prompt === 'string');
+          expect.assert(typeof prompt === 'string');
           prompts.push(prompt);
           return { sessionId: id, finalResponse: '合成模型回复 MODEL-47' };
         },
@@ -1064,13 +1056,13 @@ test('a selected model reaches DSH and only matching model sessions resume, incl
       await models.start('mock-model', { requestId: id, prompt: '合成上下文 MODEL-47' });
       await models.jobs.get('mock-model')!.done;
     }
-    assert.equal(resumed.length, 1);
+    expect(resumed.length).toBe(1);
     await settings.save({ apiKey: 'synthetic-selected-key', model: 'deepseek-v4-pro' });
     await models.start('mock-model', { requestId: 'three', prompt: '继续合成任务' });
     await models.jobs.get('mock-model')!.done;
-    assert.equal(configured.at(-1), 'deepseek-v4-pro');
-    assert.equal(resumed.length, 1, 'a changed model must not resume the frozen route');
-    assert.ok(
+    expect(configured.at(-1)).toBe('deepseek-v4-pro');
+    expect(resumed.length, 'a changed model must not resume the frozen route').toBe(1);
+    expect.assert(
       prompts.at(-1)!.includes('MODEL-47'),
       'preserve bounded history when changing models',
     );
@@ -1083,15 +1075,15 @@ test('a selected model reaches DSH and only matching model sessions resume, incl
       .insert.find((row: { id: string }) => row.id === 'desktop-model-provider').config.providers[
       'deepseek-official'
     ];
-    assert.equal(provider.models[0].id, 'deepseek-v4-pro');
-    assert.deepEqual(provider.models[0].input, ['text']);
+    expect(provider.models[0].id).toBe('deepseek-v4-pro');
+    expect(provider.models[0].input).toStrictEqual(['text']);
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
     await models.start('mock-model', { requestId: 'four', prompt: '再次继续' });
     await models.jobs.get('mock-model')!.done;
-    assert.equal(resumed.length, 2, 'same-model sessions survive a service reconstruction');
-    assert.equal(models.status().bots['mock-model'].history.length, 4);
+    expect(resumed.length, 'same-model sessions survive a service reconstruction').toBe(2);
+    expect(models.status().bots['mock-model'].history.length).toBe(4);
     const last = models.jobs.get('mock-model')!;
     await models.close();
     const file = path.join(root, 'model/task-journal', `${last.id}.json`);
@@ -1103,11 +1095,10 @@ test('a selected model reaches DSH and only matching model sessions resume, incl
     await models.ready;
     await models.start('mock-model', { requestId: 'five', prompt: '重新开始合成任务' });
     await models.jobs.get('mock-model')!.done;
-    assert.equal(
+    expect(
       resumed.length,
-      2,
       'unknown saved model metadata must not be treated as the legacy Flash route',
-    );
+    ).toBe(2);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -1179,27 +1170,23 @@ test('concurrent Bots capture independent model overrides and current tasks surv
     const deadline = Date.now() + 5000;
     while (routes.length < 2 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 2));
-    assert.equal(
+    expect(
       routes.length,
-      2,
       'both accepted jobs must initialize their harness before this check',
-    );
-    assert.deepEqual(
-      routes.slice().sort((a, b) => a.bot.localeCompare(b.bot)),
-      [
-        { bot: 'mock-alpha', model: 'deepseek-flash' },
-        { bot: 'mock-beta', model: 'deepseek-v4-pro' },
-      ],
-    );
+    ).toBe(2);
+    expect(routes.slice().sort((a, b) => a.bot.localeCompare(b.bot))).toStrictEqual([
+      { bot: 'mock-alpha', model: 'deepseek-flash' },
+      { bot: 'mock-beta', model: 'deepseek-v4-pro' },
+    ]);
     await models.profiles.update('mock-beta', 1, { model: 'deepseek-flash' });
     await settings.save({ apiKey: 'synthetic-shared-account', model: 'deepseek-v4-pro' });
-    assert.equal(models.running('mock-alpha'), true);
-    assert.equal(models.running('mock-beta'), true);
+    expect(models.running('mock-alpha')).toBe(true);
+    expect(models.running('mock-beta')).toBe(true);
     const alpha = models.status().bots['mock-alpha'];
     const beta = models.status().bots['mock-beta'];
-    assert.ok('model' in alpha && 'model' in beta);
-    assert.equal(alpha.model, 'deepseek-flash');
-    assert.equal(beta.model, 'deepseek-v4-pro');
+    expect.assert('model' in alpha && 'model' in beta);
+    expect(alpha.model).toBe('deepseek-flash');
+    expect(beta.model).toBe('deepseek-v4-pro');
     hold = false;
     release();
     await Promise.all(['mock-alpha', 'mock-beta'].map((bot) => models.jobs.get(bot)!.done));
@@ -1209,29 +1196,26 @@ test('concurrent Bots capture independent model overrides and current tasks surv
       ),
     );
     await Promise.all(['mock-alpha', 'mock-beta'].map((bot) => models.jobs.get(bot)!.done));
-    assert.deepEqual(
-      routes.slice(-2).sort((a, b) => a.bot.localeCompare(b.bot)),
-      [
-        { bot: 'mock-alpha', model: 'deepseek-v4-pro' },
-        { bot: 'mock-beta', model: 'deepseek-flash' },
-      ],
-    );
-    assert.equal((await models.profiles.get('mock-beta'))?.memory, '合成偏好乙');
+    expect(routes.slice(-2).sort((a, b) => a.bot.localeCompare(b.bot))).toStrictEqual([
+      { bot: 'mock-alpha', model: 'deepseek-v4-pro' },
+      { bot: 'mock-beta', model: 'deepseek-flash' },
+    ]);
+    expect((await models.profiles.get('mock-beta'))?.memory).toBe('合成偏好乙');
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
     await models.start('mock-beta', { requestId: 'after-restart', prompt: '重启续接' });
     await models.jobs.get('mock-beta')!.done;
-    assert.equal(routes.at(-1)?.model, 'deepseek-flash');
-    assert.equal(resumed.length, 1);
+    expect(routes.at(-1)?.model).toBe('deepseek-flash');
+    expect(resumed.length).toBe(1);
     await models.profiles.update('mock-beta', 2, { model: null });
     await models.start('mock-beta', { requestId: 'inherit-again', prompt: '恢复跟随' });
     await models.jobs.get('mock-beta')!.done;
-    assert.equal(routes.at(-1)?.model, 'deepseek-v4-pro');
+    expect(routes.at(-1)?.model).toBe('deepseek-v4-pro');
     const evidence = JSON.parse(
       await readFile(path.join(models.jobs.get('mock-beta')!.privateDir, 'result.json'), 'utf8'),
     );
-    assert.equal(evidence.model, 'deepseek-v4-pro');
+    expect(evidence.model).toBe('deepseek-v4-pro');
   } finally {
     hold = false;
     release();
@@ -1287,14 +1271,14 @@ test('failed or empty DSH turns retire only their own conversation session', asy
     const dm = await turn(),
       group = await turn(scope);
     failure = 'throw';
-    assert.equal((await turn(scope)).phase, 'failed');
-    assert.equal((await turn()).sessionId, dm.sessionId);
+    expect((await turn(scope)).phase).toBe('failed');
+    expect((await turn()).sessionId).toBe(dm.sessionId);
     const freshGroup = await turn(scope);
-    assert.notEqual(freshGroup.sessionId, group.sessionId);
+    expect(freshGroup.sessionId).not.toBe(group.sessionId);
     failure = 'empty';
-    assert.equal((await turn()).phase, 'failed');
-    assert.equal((await turn(scope)).sessionId, freshGroup.sessionId);
-    assert.notEqual((await turn()).sessionId, dm.sessionId);
+    expect((await turn()).phase).toBe('failed');
+    expect((await turn(scope)).sessionId).toBe(freshGroup.sessionId);
+    expect((await turn()).sessionId).not.toBe(dm.sessionId);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -1303,7 +1287,7 @@ test('failed or empty DSH turns retire only their own conversation session', asy
 
 test('fresh and resumed DSH sessions move to the private working directory before any prompt without replacing history', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-session-directory-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const settings = new ModelSettings(path.join(root, 'model/credentials.json'));
   await settings.save({ apiKey: 'synthetic-session-directory-key' });
   const events: string[] = [],
@@ -1323,7 +1307,7 @@ test('fresh and resumed DSH sessions move to the private working directory befor
         },
         run: async () => {
           events.push('prompt');
-          assert.equal(directory, this.options.cwd);
+          expect(directory).toBe(this.options.cwd);
           return { sessionId: id, finalResponse: 'SYNTHETIC-CONTEXT-RETAINED' };
         },
       };
@@ -1340,7 +1324,9 @@ test('fresh and resumed DSH sessions move to the private working directory befor
     origin: 'http://127.0.0.1:12345',
     Harness,
   });
-  t.after(() => models.close());
+  t.onTestFinished(async () => {
+    await models.close();
+  });
   await models.ready;
   for (const index of [1, 2]) {
     await models.start('mock-directory-agent', {
@@ -1349,9 +1335,9 @@ test('fresh and resumed DSH sessions move to the private working directory befor
     });
     const job = models.jobs.get('mock-directory-agent')!;
     await job.done;
-    assert.equal(job.phase, 'completed');
-    assert.equal(job.sessionId, 'mock-retained-session');
+    expect(job.phase).toBe('completed');
+    expect(job.sessionId).toBe('mock-retained-session');
   }
-  assert.deepEqual(events, ['directory', 'prompt', 'directory', 'prompt']);
-  assert.deepEqual(resumed, ['mock-retained-session']);
+  expect(events).toStrictEqual(['directory', 'prompt', 'directory', 'prompt']);
+  expect(resumed).toStrictEqual(['mock-retained-session']);
 });

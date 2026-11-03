@@ -1,5 +1,3 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import {
   isInteractionInput,
   isSoftwarePackages,
@@ -7,6 +5,7 @@ import {
   isSoftwareReceipt,
   isSoftwareState,
 } from '@daban/protocol';
+import { expect, test } from 'vitest';
 
 const plan = {
   id: 'mock-plan',
@@ -22,7 +21,7 @@ const plan = {
   digest: 'a'.repeat(64),
 };
 test('software wire contract rejects command syntax, duplicates, foreign plans and unbounded payloads', () => {
-  assert.equal(isSoftwarePackages(['mock-calculator']), true);
+  expect(isSoftwarePackages(['mock-calculator'])).toBe(true);
   for (const packages of [
     [],
     ['-y'],
@@ -35,8 +34,8 @@ test('software wire contract rejects command syntax, duplicates, foreign plans a
     ['mock-tool\nother'],
     Array.from({ length: 9 }, (_, i) => `mock-app${i}`),
   ])
-    assert.equal(isSoftwarePackages(packages), false);
-  assert.equal(isSoftwarePlan(plan), true);
+    expect(isSoftwarePackages(packages)).toBe(false);
+  expect(isSoftwarePlan(plan)).toBe(true);
   for (const patch of [
     { command: 'mock-command' },
     { source: 'other' },
@@ -47,12 +46,12 @@ test('software wire contract rejects command syntax, duplicates, foreign plans a
     { requested: ['other-package'] },
     { packages: [{ name: 'mock-tool', version: '1; echo mock' }] },
   ])
-    assert.equal(isSoftwarePlan({ ...plan, ...patch }), false);
+    expect(isSoftwarePlan({ ...plan, ...patch })).toBe(false);
   const receipt = { plan, phase: 'installed', updatedAt: plan.createdAt };
-  assert.equal(isSoftwareReceipt(receipt), true);
-  assert.equal(isSoftwareState({ available: true, items: [receipt] }), true);
-  assert.equal(isSoftwareState({ available: true, items: [receipt, receipt] }), false);
-  assert.equal(isSoftwareReceipt({ ...receipt, phase: 'approved' }), false);
+  expect(isSoftwareReceipt(receipt)).toBe(true);
+  expect(isSoftwareState({ available: true, items: [receipt] })).toBe(true);
+  expect(isSoftwareState({ available: true, items: [receipt, receipt] })).toBe(false);
+  expect(isSoftwareReceipt({ ...receipt, phase: 'approved' })).toBe(false);
 });
 test('software approval embeds the exact immutable plan and only a decision can authorize it', () => {
   const card = {
@@ -63,7 +62,7 @@ test('software approval embeds the exact immutable plan and only a decision can 
     plan,
     purpose: '合成用途',
   };
-  assert.equal(isInteractionInput(card), true);
-  assert.equal(isInteractionInput({ ...card, packages: ['other-package'] }), false);
-  assert.equal(isInteractionInput({ ...card, plan: { ...plan, digest: 'bad' } }), false);
+  expect(isInteractionInput(card)).toBe(true);
+  expect(isInteractionInput({ ...card, packages: ['other-package'] })).toBe(false);
+  expect(isInteractionInput({ ...card, plan: { ...plan, digest: 'bad' } })).toBe(false);
 });

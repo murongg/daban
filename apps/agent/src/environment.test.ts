@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import { expect, type TestContext, test } from 'vitest';
 import { writeSetupRecord } from './bootstrap.js';
 import { Environment } from './environment.js';
 
@@ -14,7 +13,7 @@ const vm = {
 };
 async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-optional-environment-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const dataRoot = path.join(root, 'private'),
     vmConfigFile = path.join(root, 'runtime.json');
   await mkdir(dataRoot, { mode: 0o700 });
@@ -37,19 +36,27 @@ test('ordinary Agent startup never provisions Linux and an explicit request runs
   };
   const owner = new Environment(options);
   await owner.resumePending();
-  assert.equal(calls, 0);
-  assert.deepEqual(await owner.status(), { required: true, target: 'linux', phase: 'available' });
+  expect(calls).toBe(0);
+  expect(await owner.status()).toStrictEqual({
+    required: true,
+    target: 'linux',
+    phase: 'available',
+  });
   await owner.start();
   await owner.start();
-  assert.equal(calls, 1);
-  assert.equal(owner.busy, true);
+  expect(calls).toBe(1);
+  expect(owner.busy).toBe(true);
   release();
   await owner.settled;
-  assert.deepEqual(await owner.status(), { required: false, target: 'linux', phase: 'complete' });
-  assert.equal(owner.busy, false);
+  expect(await owner.status()).toStrictEqual({
+    required: false,
+    target: 'linux',
+    phase: 'complete',
+  });
+  expect(owner.busy).toBe(false);
   const reopened = new Environment(options);
   await reopened.resumePending();
-  assert.equal(calls, 1);
+  expect(calls).toBe(1);
   await reopened.close();
   await owner.close();
 });
@@ -71,14 +78,14 @@ test('restoring progress alone never grants installation permission; interrupted
   };
   const observer = new Environment(options);
   await observer.resumePending();
-  assert.equal(calls, 0);
+  expect(calls).toBe(0);
   await observer.close();
   await writeSetupRecord(path.join(f.dataRoot, 'environment-request.json'), { requested: true });
   const restarted = new Environment(options);
   await restarted.resumePending();
   await restarted.settled;
-  assert.equal(calls, 1);
-  assert.equal((await restarted.status()).required, false);
+  expect(calls).toBe(1);
+  expect((await restarted.status()).required).toBe(false);
   await restarted.close();
 });
 test('pause retains user work and requires an explicit continuation across restart', async (t) => {
@@ -101,16 +108,16 @@ test('pause retains user work and requires an explicit continuation across resta
   await first.start();
   await first.cancel();
   await first.settled;
-  assert.equal((await first.status()).phase, 'cancelled');
-  assert.equal(await readFile(userFile, 'utf8'), 'SYNTHETIC USER WORK');
+  expect((await first.status()).phase).toBe('cancelled');
+  expect(await readFile(userFile, 'utf8')).toBe('SYNTHETIC USER WORK');
   await first.close();
   const reopened = new Environment(options);
   await reopened.resumePending();
-  assert.equal(calls, 1);
+  expect(calls).toBe(1);
   await reopened.start();
   await reopened.settled;
-  assert.equal(calls, 2);
-  assert.equal((await reopened.status()).phase, 'complete');
+  expect(calls).toBe(2);
+  expect((await reopened.status()).phase).toBe('complete');
   await reopened.close();
 });
 
@@ -127,12 +134,12 @@ test('a pause arriving during start is ordered after that start and survives res
   });
   try {
     await Promise.all([owner.start(), owner.cancel()]);
-    assert.ok(
+    expect.assert(
       ['cancelling', 'cancelled'].includes((await owner.status()).phase),
       'a newer pause must survive start',
     );
     await owner.settled;
-    assert.equal((await owner.status()).phase, 'cancelled');
+    expect((await owner.status()).phase).toBe('cancelled');
   } finally {
     await owner.close();
   }

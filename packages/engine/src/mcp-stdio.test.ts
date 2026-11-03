@@ -1,11 +1,10 @@
-import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { runMcpStdio } from './mcp-stdio.js';
 
 function capture() {
@@ -31,12 +30,12 @@ test('stdio MCP preserves RPC IDs, result blocks, error data and empty notificat
   const socketPath = join(root, 's');
   const received: unknown[] = [];
   const server = createServer(async (request, response) => {
-    assert.equal(request.url, '/mcp/mock-bot');
-    assert.equal(request.headers.authorization, 'Bearer mock-capability');
+    expect(request.url).toBe('/mcp/mock-bot');
+    expect(request.headers.authorization).toBe('Bearer mock-capability');
     let text = '';
     for await (const chunk of request) text += String(chunk);
-    assert.equal(text.includes('mock-capability'), false);
-    assert.equal(text.includes('mock-provider-secret'), false);
+    expect(text.includes('mock-capability')).toBe(false);
+    expect(text.includes('mock-provider-secret')).toBe(false);
     const rpc = JSON.parse(text);
     received.push(rpc);
     if (rpc.method === 'notifications/initialized') {
@@ -85,8 +84,8 @@ test('stdio MCP preserves RPC IDs, result blocks, error data and empty notificat
       input: Readable.from([serialized.slice(0, 25), serialized.slice(25)]),
       output: captured.output,
     });
-    assert.deepEqual(received, requests);
-    assert.deepEqual(captured.messages(), [
+    expect(received).toStrictEqual(requests);
+    expect(captured.messages()).toStrictEqual([
       {
         jsonrpc: '2.0',
         id: 'mock-image',
@@ -116,10 +115,12 @@ test('stdio MCP rejects invalid routing before IO and returns sanitized parse an
       DABAN_AGENT_CAPABILITY: 'mock-capability',
     },
   ]) {
-    await assert.rejects(
+    await expect(
       runMcpStdio({ env, input: Readable.from([]), output: capture().output }),
-      /^Error: MCP_STDIO_CONFIG_INVALID$/,
-    );
+    ).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MCP_STDIO_CONFIG_INVALID$/),
+    });
   }
   const captured = capture();
   await runMcpStdio({
@@ -134,7 +135,7 @@ test('stdio MCP rejects invalid routing before IO and returns sanitized parse an
     ]),
     output: captured.output,
   });
-  assert.deepEqual(captured.messages(), [
+  expect(captured.messages()).toStrictEqual([
     { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Invalid JSON' } },
     {
       jsonrpc: '2.0',
@@ -142,12 +143,12 @@ test('stdio MCP rejects invalid routing before IO and returns sanitized parse an
       error: { code: -32603, message: 'Private agent unavailable' },
     },
   ]);
-  assert.equal(JSON.stringify(captured.messages()).includes('mock-private-payload'), false);
+  expect(JSON.stringify(captured.messages()).includes('mock-private-payload')).toBe(false);
 });
 
 test('stdio MCP rejects oversized frames without forwarding private diagnostics', async () => {
   const captured = capture();
-  await assert.rejects(
+  await expect(
     runMcpStdio({
       env: {
         DABAN_AGENT_SOCKET: '/tmp/mock-missing-mcp.sock',
@@ -157,9 +158,11 @@ test('stdio MCP rejects oversized frames without forwarding private diagnostics'
       input: Readable.from(['x'.repeat(8 * 1024 * 1024 + 1)]),
       output: captured.output,
     }),
-    /^Error: MCP_STDIO_FRAME_TOO_LARGE$/,
-  );
-  assert.deepEqual(captured.messages(), []);
+  ).rejects.toMatchObject({
+    name: 'Error',
+    message: expect.stringMatching(/^MCP_STDIO_FRAME_TOO_LARGE$/),
+  });
+  expect(captured.messages()).toStrictEqual([]);
 });
 
 test('stdio MCP forwards cancellation while an earlier tool request is still pending', async () => {
@@ -209,7 +212,7 @@ test('stdio MCP forwards cancellation while an earlier tool request is still pen
       output: captured.output,
       signal: AbortSignal.timeout(500),
     });
-    assert.deepEqual(captured.messages(), [
+    expect(captured.messages()).toStrictEqual([
       { jsonrpc: '2.0', id: 'mock-pending', error: { code: -32800, message: 'Cancelled' } },
     ]);
   } finally {
@@ -248,7 +251,7 @@ test('stdio MCP refuses a response for another request ID', async () => {
       ]),
       output: captured.output,
     });
-    assert.deepEqual(captured.messages(), [
+    expect(captured.messages()).toStrictEqual([
       {
         jsonrpc: '2.0',
         id: 'mock-owned',

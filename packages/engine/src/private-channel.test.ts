@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { privateClientOptions, privateServer } from './private-channel.js';
 import { secureDirectory } from './private-files.js';
 
@@ -44,10 +43,10 @@ test('Windows private channels authenticate the pinned server before transmittin
         req.on('error', reject);
         req.end('SYNTHETIC PRIVATE PAYLOAD');
       });
-    await assert.rejects(call(impostor.server));
-    assert.equal(payloads, 0);
-    assert.equal(await call(trusted.server), 'MOCK OK');
-    assert.equal(payloads, 1);
+    await expect(call(impostor.server)).rejects.toThrowError();
+    expect(payloads).toBe(0);
+    expect(await call(trusted.server)).toBe('MOCK OK');
+    expect(payloads).toBe(1);
   } finally {
     for (const { server } of channels) {
       server.closeAllConnections();

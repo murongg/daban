@@ -1,12 +1,11 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { RequestListener, Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
+import { expect, test } from 'vitest';
 
 test('the bundled native channel uses Node cryptography when generating a Windows TLS certificate', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-native-bundle-'));
@@ -37,7 +36,7 @@ test('the bundled native channel uses Node cryptography when generating a Window
       path.join(directory, 'mock.pem'),
       'win32',
     );
-    assert.equal(channel.server.listening, false);
+    expect(channel.server.listening).toBe(false);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

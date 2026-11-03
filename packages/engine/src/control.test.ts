@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Control } from './control.js';
 
 type DynamicControl = Control & {
@@ -12,26 +11,23 @@ test('a logical computer lease stays monotonic across explicit attach and detach
   let now = 0;
   const control = new Control([], () => now) as DynamicControl;
   control.register('mock-dynamic');
-  await assert.rejects(
-    control.execute('mock-dynamic', 'agent', 0, () => assert.fail()),
-    { code: 'COMPUTER_NOT_CONNECTED' },
-  );
+  await expect(
+    control.execute('mock-dynamic', 'agent', 0, () => expect.unreachable()),
+  ).rejects.toMatchObject({ code: 'COMPUTER_NOT_CONNECTED' });
   now = 500;
   const first = control.activate('mock-dynamic');
   now = 530;
-  assert.equal(control.activeMilliseconds('mock-dynamic'), 30);
+  expect(control.activeMilliseconds('mock-dynamic')).toBe(30);
   await control.revoke('mock-dynamic');
   now = 900;
-  assert.equal(control.activeMilliseconds('mock-dynamic'), 30);
+  expect(control.activeMilliseconds('mock-dynamic')).toBe(30);
   control.register('mock-dynamic');
   const next = control.activate('mock-dynamic');
-  assert.ok(next.epoch > first.epoch);
-  await assert.rejects(
-    control.execute('mock-dynamic', 'agent', first.epoch, () => assert.fail()),
-    { code: 'STALE_CONTROL' },
-  );
-  assert.equal(
-    await control.execute('mock-dynamic', 'agent', next.epoch, () => 'SYNTHETIC-47'),
+  expect.assert(next.epoch > first.epoch);
+  await expect(
+    control.execute('mock-dynamic', 'agent', first.epoch, () => expect.unreachable()),
+  ).rejects.toMatchObject({ code: 'STALE_CONTROL' });
+  expect(await control.execute('mock-dynamic', 'agent', next.epoch, () => 'SYNTHETIC-47')).toBe(
     'SYNTHETIC-47',
   );
 });
@@ -50,12 +46,11 @@ test('revoking one computer fences queued effects before drain without blocking 
     return gate;
   });
   await started;
-  const rejected = assert.rejects(
-    control.execute('mock-a', 'agent', 0, () => assert.fail('retired input ran')),
-    { code: 'COMPUTER_NOT_CONNECTED' },
-  );
+  const rejected = expect(
+    control.execute('mock-a', 'agent', 0, () => expect.unreachable('retired input ran')),
+  ).rejects.toMatchObject({ code: 'COMPUTER_NOT_CONNECTED' });
   const revoking = control.revoke('mock-a');
-  assert.equal(await control.execute('mock-b', 'agent', 0, () => 'OTHER-BOT'), 'OTHER-BOT');
+  expect(await control.execute('mock-b', 'agent', 0, () => 'OTHER-BOT')).toBe('OTHER-BOT');
   release();
   await current;
   await rejected;
@@ -78,38 +73,38 @@ test('handoff drains in-flight work, rejects queued work, and does not block the
     return 'finished';
   });
   await ready;
-  const queued = control.execute('a', 'agent', 0, () => assert.fail('stale queued action ran'));
-  const rejected = assert.rejects(queued, { code: 'STALE_CONTROL' });
+  const queued = control.execute('a', 'agent', 0, () =>
+    expect.unreachable('stale queued action ran'),
+  );
+  const rejected = expect(queued).rejects.toMatchObject({ code: 'STALE_CONTROL' });
   const transfer = control.transfer('a', 0, 'human');
-  assert.equal(control.state('a').owner, 'handoff');
-  assert.equal(await control.execute('b', 'agent', 0, () => 'b progressed'), 'b progressed');
+  expect(control.state('a').owner).toBe('handoff');
+  expect(await control.execute('b', 'agent', 0, () => 'b progressed')).toBe('b progressed');
   finish();
-  assert.equal(await first, 'finished');
+  expect(await first).toBe('finished');
   await rejected;
-  assert.deepEqual(await transfer, { owner: 'human', epoch: 1 });
-  assert.equal(await control.execute('a', 'human', 1, () => 'manual'), 'manual');
+  expect(await transfer).toStrictEqual({ owner: 'human', epoch: 1 });
+  expect(await control.execute('a', 'human', 1, () => 'manual')).toBe('manual');
 });
 
 test('returning a Bot rejects late human packets and resumes only its Agent', async () => {
   const control = new Control(['a', 'b']);
   await control.transfer('a', 0, 'human');
-  assert.deepEqual(await control.transfer('a', 1, 'agent'), { owner: 'agent', epoch: 2 });
-  await assert.rejects(
-    control.execute('a', 'human', 1, () => assert.fail()),
-    { code: 'STALE_CONTROL' },
-  );
-  await assert.rejects(control.transfer('a', 1, 'human'), { code: 'STALE_CONTROL' });
-  assert.equal(await control.execute('a', 'agent', 2, () => 42), 42);
-  assert.deepEqual(control.state('b'), { owner: 'agent', epoch: 0 });
+  expect(await control.transfer('a', 1, 'agent')).toStrictEqual({ owner: 'agent', epoch: 2 });
+  await expect(control.execute('a', 'human', 1, () => expect.unreachable())).rejects.toMatchObject({
+    code: 'STALE_CONTROL',
+  });
+  await expect(control.transfer('a', 1, 'human')).rejects.toMatchObject({ code: 'STALE_CONTROL' });
+  expect(await control.execute('a', 'agent', 2, () => 42)).toBe(42);
+  expect(control.state('b')).toStrictEqual({ owner: 'agent', epoch: 0 });
 });
 
 test('unknown Bots and same-owner transfers cannot create implicit access', async () => {
   const control = new Control(['a']);
-  await assert.rejects(
-    control.execute('other', 'agent', 0, () => 1),
-    { code: 'UNKNOWN_BOT' },
-  );
-  await assert.rejects(control.transfer('a', 0, 'agent'), { code: 'STALE_CONTROL' });
+  await expect(control.execute('other', 'agent', 0, () => 1)).rejects.toMatchObject({
+    code: 'UNKNOWN_BOT',
+  });
+  await expect(control.transfer('a', 0, 'agent')).rejects.toMatchObject({ code: 'STALE_CONTROL' });
 });
 
 test('handoff settles native held input before granting the new owner', async () => {
@@ -124,25 +119,23 @@ test('handoff settles native held input before granting the new owner', async ()
     await gate;
   });
   await new Promise(setImmediate);
-  assert.equal(started, true, 'native cleanup must run');
-  assert.equal(control.state('a').owner, 'handoff');
-  await assert.rejects(
-    control.execute('a', 'human', 1, () => assert.fail()),
-    { code: 'STALE_CONTROL' },
-  );
+  expect(started, 'native cleanup must run').toBe(true);
+  expect(control.state('a').owner).toBe('handoff');
+  await expect(control.execute('a', 'human', 1, () => expect.unreachable())).rejects.toMatchObject({
+    code: 'STALE_CONTROL',
+  });
   release();
-  assert.deepEqual(await pending, { owner: 'human', epoch: 1 });
+  expect(await pending).toStrictEqual({ owner: 'human', epoch: 1 });
 });
 
 test('failed native cleanup keeps the previous owner under a new epoch', async () => {
   const control = new Control(['a']);
-  await assert.rejects(
+  await expect(
     control.transfer('a', 0, 'human', async () => {
       throw new Error('synthetic display failure');
     }),
-    /synthetic display failure/,
-  );
-  assert.deepEqual(control.state('a'), { owner: 'agent', epoch: 1 });
+  ).rejects.toThrowError(/synthetic display failure/);
+  expect(control.state('a')).toStrictEqual({ owner: 'agent', epoch: 1 });
 });
 
 test('execution time excludes human ownership and handoff independently for each Bot', async () => {
@@ -151,9 +144,9 @@ test('execution time excludes human ownership and handoff independently for each
   now = 60000;
   await control.transfer('a', 0, 'human');
   now += 30 * 60 * 1000;
-  assert.equal(control.activeMilliseconds('a'), 60000);
-  assert.equal(control.activeMilliseconds('b'), 31 * 60 * 1000);
+  expect(control.activeMilliseconds('a')).toBe(60000);
+  expect(control.activeMilliseconds('b')).toBe(31 * 60 * 1000);
   await control.transfer('a', 1, 'agent');
   now += 240000;
-  assert.equal(control.activeMilliseconds('a'), 300000);
+  expect(control.activeMilliseconds('a')).toBe(300000);
 });

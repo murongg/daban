@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { syncDirectory } from './durability.js';
 
 test('directory flush is skipped only on Windows; supported platforms retain flush errors', async () => {
@@ -14,10 +13,10 @@ test('directory flush is skipped only on Windows; supported platforms retain flu
   try {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     await syncDirectory(directory);
-    assert.equal(calls, 0);
+    expect(calls).toBe(0);
     Object.defineProperty(process, 'platform', { value: 'darwin' });
-    await assert.rejects(syncDirectory(directory), /MOCK_FLUSH_FAILURE/);
-    assert.equal(calls, 1);
+    await expect(syncDirectory(directory)).rejects.toThrowError(/MOCK_FLUSH_FAILURE/);
+    expect(calls).toBe(1);
   } finally {
     Object.defineProperty(process, 'platform', platform);
   }

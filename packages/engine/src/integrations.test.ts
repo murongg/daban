@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Integrations } from './integrations.js';
 
 const save = {
@@ -41,14 +40,14 @@ test('private MCP settings never echo endpoint parameters or credentials; exact 
   const f = await fixture();
   try {
     const first = await f.store.save(save);
-    assert.equal(first.current.origin, 'https://mcp.example.test');
-    assert.equal(first.current.credentialConfigured, true);
-    assert.equal(first.current.revision, 1);
-    assert.equal(JSON.stringify(first).includes('synthetic-query-secret'), false);
-    assert.equal(JSON.stringify(first).includes('synthetic-bearer-secret'), false);
-    assert.equal(JSON.stringify(first).includes('synthetic-path-token'), false);
-    assert.deepEqual(await f.store.save(save), first);
-    await assert.rejects(f.store.save({ ...save, name: 'changed same operation' }), {
+    expect(first.current.origin).toBe('https://mcp.example.test');
+    expect(first.current.credentialConfigured).toBe(true);
+    expect(first.current.revision).toBe(1);
+    expect(JSON.stringify(first).includes('synthetic-query-secret')).toBe(false);
+    expect(JSON.stringify(first).includes('synthetic-bearer-secret')).toBe(false);
+    expect(JSON.stringify(first).includes('synthetic-path-token')).toBe(false);
+    expect(await f.store.save(save)).toStrictEqual(first);
+    await expect(f.store.save({ ...save, name: 'changed same operation' })).rejects.toMatchObject({
       code: 'MCP_REQUEST_ID_REUSED',
     });
     const renamed = await f.store.save({
@@ -57,10 +56,10 @@ test('private MCP settings never echo endpoint parameters or credentials; exact 
       revision: 1,
       name: '新的合成名称',
     });
-    assert.equal(renamed.current.revision, 2);
-    assert.equal((await f.store.privateConfig(save.id)).bearer, save.bearer);
-    assert.equal((await f.store.privateConfig(save.id)).endpoint, save.endpoint);
-    await assert.rejects(
+    expect(renamed.current.revision).toBe(2);
+    expect((await f.store.privateConfig(save.id)).bearer).toBe(save.bearer);
+    expect((await f.store.privateConfig(save.id)).endpoint).toBe(save.endpoint);
+    await expect(
       f.store.save({
         requestId: 'mock-stale',
         id: save.id,
@@ -68,9 +67,8 @@ test('private MCP settings never echo endpoint parameters or credentials; exact 
         name: '过时名称',
         bearer: 'synthetic-stale-secret',
       }),
-      { code: 'MCP_CONFLICT' },
-    );
-    assert.equal((await f.store.privateConfig(save.id)).bearer, save.bearer);
+    ).rejects.toMatchObject({ code: 'MCP_CONFLICT' });
+    expect((await f.store.privateConfig(save.id)).bearer).toBe(save.bearer);
     await f.store.save({
       requestId: 'mock-clear',
       id: save.id,
@@ -78,8 +76,8 @@ test('private MCP settings never echo endpoint parameters or credentials; exact 
       name: '新的合成名称',
       bearer: null,
     });
-    assert.equal((await f.store.privateConfig(save.id)).bearer, undefined);
-    assert.equal((await stat(path.join(f.root, 'integrations.sqlite'))).mode & 0o777, 0o600);
+    expect((await f.store.privateConfig(save.id)).bearer).toBe(undefined);
+    expect((await stat(path.join(f.root, 'integrations.sqlite'))).mode & 0o777).toBe(0o600);
   } finally {
     await f.close();
   }
@@ -89,10 +87,10 @@ test('only reviewed catalogs can enable selected tools for a Bot, and catalog ch
   try {
     await f.store.save(save);
     const catalog = await f.store.catalog(save.id, 1, tools);
-    assert.equal(catalog.current.health, 'ready');
-    assert.equal(catalog.tools.length, 1);
-    assert.match(catalog.tools[0].alias, /^ext_[a-f0-9]{20}$/);
-    assert.equal((await f.store.capture('mock-a')).connections.length, 0);
+    expect(catalog.current.health).toBe('ready');
+    expect(catalog.tools.length).toBe(1);
+    expect(catalog.tools[0].alias).toMatch(/^ext_[a-f0-9]{20}$/);
+    expect((await f.store.capture('mock-a')).connections.length).toBe(0);
     const binding = {
       connection: save.id,
       configRevision: 1,
@@ -103,24 +101,26 @@ test('only reviewed catalogs can enable selected tools for a Bot, and catalog ch
     };
     await f.store.bind('mock-a', binding);
     const captured = await f.store.capture('mock-a');
-    assert.equal(captured.connections[0].tools[0].name, 'synthetic_echo');
-    assert.equal((await f.store.capture('mock-b')).connections.length, 0);
-    await assert.rejects(f.store.bind('mock-b', { ...binding, tools: ['not_reviewed'] }), {
+    expect(captured.connections[0].tools[0].name).toBe('synthetic_echo');
+    expect((await f.store.capture('mock-b')).connections.length).toBe(0);
+    await expect(
+      f.store.bind('mock-b', { ...binding, tools: ['not_reviewed'] }),
+    ).rejects.toMatchObject({
       code: 'MCP_TOOL_NOT_FOUND',
     });
-    await assert.rejects(f.store.bind('mock-a', { ...binding, enabled: false }), {
+    await expect(f.store.bind('mock-a', { ...binding, enabled: false })).rejects.toMatchObject({
       code: 'MCP_BINDING_CONFLICT',
     });
     await f.store.catalog(save.id, 1, [{ ...tools[0], description: '更新后的合成目录' }]);
-    assert.equal((await f.store.capture('mock-a')).connections.length, 0);
-    assert.equal((await f.store.capture('mock-a')).warnings.length, 1);
-    assert.equal(captured.connections[0].tools[0].description, '返回合成输入');
+    expect((await f.store.capture('mock-a')).connections.length).toBe(0);
+    expect((await f.store.capture('mock-a')).warnings.length).toBe(1);
+    expect(captured.connections[0].tools[0].description).toBe('返回合成输入');
     const archived = await f.store.archive(save.id, 1);
-    assert.equal(archived.deleted, true);
+    expect(archived.deleted).toBe(true);
     const restored = await f.store.restore(save.id, archived.revision);
-    assert.equal(restored.deleted, false);
-    assert.equal((await f.store.assignments('mock-a')).items[0].enabled, false);
-    assert.equal((await f.store.capture('mock-a')).connections.length, 0);
+    expect(restored.deleted).toBe(false);
+    expect((await f.store.assignments('mock-a')).items[0].enabled).toBe(false);
+    expect((await f.store.capture('mock-a')).connections.length).toBe(0);
   } finally {
     await f.close();
   }
@@ -129,7 +129,9 @@ test('schemas cannot echo a saved credential into the public tool catalog and in
   const f = await fixture();
   try {
     await f.store.save(save);
-    await assert.rejects(f.store.catalog(save.id, 1, [{ ...tools[0], description: save.bearer }]), {
+    await expect(
+      f.store.catalog(save.id, 1, [{ ...tools[0], description: save.bearer }]),
+    ).rejects.toMatchObject({
       code: 'MCP_SECRET_IN_CATALOG',
     });
     for (const endpoint of [
@@ -139,16 +141,15 @@ test('schemas cannot echo a saved credential into the public tool catalog and in
       'https://169.254.169.254/mcp',
       'https://mcp.example.test/#fragment',
     ])
-      await assert.rejects(
+      await expect(
         f.store.save({
           ...save,
           requestId: `mock-invalid-${Buffer.from(endpoint).toString('hex').slice(0, 30)}`,
           revision: 1,
           endpoint,
         }),
-        { code: 'INVALID_MCP_CONFIG' },
-      );
-    assert.equal((await f.store.privateConfig(save.id)).bearer, save.bearer);
+      ).rejects.toMatchObject({ code: 'INVALID_MCP_CONFIG' });
+    expect((await f.store.privateConfig(save.id)).bearer).toBe(save.bearer);
   } finally {
     await f.close();
   }
@@ -168,20 +169,22 @@ test('MCP effect claims are scoped and exact; unknown dispatch is never replayed
       arguments: { value: 'synthetic' },
       preview: '{"value":"synthetic"}',
     };
-    assert.equal((await f.store.claim(input)).fresh, true);
-    assert.equal((await f.store.claim(input)).fresh, false);
-    await assert.rejects(f.store.claim({ ...input, arguments: { value: 'changed' } }), {
+    expect((await f.store.claim(input)).fresh).toBe(true);
+    expect((await f.store.claim(input)).fresh).toBe(false);
+    await expect(
+      f.store.claim({ ...input, arguments: { value: 'changed' } }),
+    ).rejects.toMatchObject({
       code: 'MCP_REQUEST_ID_REUSED',
     });
     await f.store.dispatched(input.id);
     await f.store.finish(input.id, { phase: 'unknown', error: 'MCP_OUTCOME_UNKNOWN' });
-    await assert.rejects(f.store.claim({ ...input, id: 'mock-retry-new-id' }), {
+    await expect(f.store.claim({ ...input, id: 'mock-retry-new-id' })).rejects.toMatchObject({
       code: 'MCP_OUTCOME_UNKNOWN',
     });
-    assert.equal((await f.store.claim({ ...input, id: 'mock-b-call', bot: 'mock-b' })).fresh, true);
+    expect((await f.store.claim({ ...input, id: 'mock-b-call', bot: 'mock-b' })).fresh).toBe(true);
     const exact = await f.store.receipt('mock-a', 'mock-run', input.id);
-    assert.equal(exact.phase, 'unknown');
-    await assert.rejects(f.store.receipt('mock-b', 'mock-run', input.id), {
+    expect(exact.phase).toBe('unknown');
+    await expect(f.store.receipt('mock-b', 'mock-run', input.id)).rejects.toMatchObject({
       code: 'MCP_REQUEST_NOT_FOUND',
     });
   } finally {
@@ -207,14 +210,14 @@ test('restart retains uncertain MCP effects and a corrupt database is never re-c
     await store.dispatched('mock-interrupted');
     await store.close();
     store = new Integrations(path.join(f.root, 'integrations.sqlite'));
-    assert.equal((await store.receipt('mock-a', 'mock-run', 'mock-interrupted')).phase, 'unknown');
+    expect((await store.receipt('mock-a', 'mock-run', 'mock-interrupted')).phase).toBe('unknown');
     await store.close();
     const raw = Buffer.from('SYNTHETIC-CORRUPT-INTEGRATIONS');
     await writeFile(path.join(f.root, 'integrations.sqlite'), raw, { mode: 0o600 });
     store = new Integrations(path.join(f.root, 'integrations.sqlite'));
-    assert.equal((await store.status()).available, false);
-    assert.equal((await store.capture('mock-a')).available, false);
-    assert.deepEqual(await readFile(path.join(f.root, 'integrations.sqlite')), raw);
+    expect((await store.status()).available).toBe(false);
+    expect((await store.capture('mock-a')).available).toBe(false);
+    expect(await readFile(path.join(f.root, 'integrations.sqlite'))).toStrictEqual(raw);
   } finally {
     await store.close();
     await f.close();
@@ -226,11 +229,10 @@ test('catalog privacy checks include JSON-escaped secret values', async () => {
   try {
     const bearer = 'synthetic"quoted\\credential';
     await f.store.save({ ...save, bearer });
-    await assert.rejects(
+    await expect(
       f.store.catalog(save.id, 1, [{ ...tools[0], description: `echo ${bearer}` }]),
-      { code: 'MCP_SECRET_IN_CATALOG' },
-    );
-    assert.equal((await f.store.read(save.id)).toolCount, 0);
+    ).rejects.toMatchObject({ code: 'MCP_SECRET_IN_CATALOG' });
+    expect((await f.store.read(save.id)).toolCount).toBe(0);
   } finally {
     await f.close();
   }
@@ -257,9 +259,9 @@ test('changing connection configuration fences the captured tool session before 
       name: '合成修改连接',
     });
     const changed = await f.store.capture('mock-a');
-    assert.equal(changed.connections.length, 0);
-    assert.notEqual(changed.key, before.key);
-    assert.equal(before.connections.length, 1);
+    expect(changed.connections.length).toBe(0);
+    expect(changed.key).not.toBe(before.key);
+    expect(before.connections.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -277,7 +279,7 @@ test('a failed change observer cannot turn a committed configuration into a fail
       throw new Error('synthetic observer failure');
     };
     const first = await f.store.save(save);
-    assert.equal(first.receipt.revision, 1);
+    expect(first.receipt.revision).toBe(1);
     f.store.onChange = async () => {
       throw new Error('synthetic async failure');
     };
@@ -287,9 +289,9 @@ test('a failed change observer cannot turn a committed configuration into a fail
       revision: 1,
       name: '合成新名称',
     });
-    assert.equal(next.current.revision, 2);
-    assert.equal(notices.length, 2);
-    assert.equal(JSON.stringify(notices).includes(save.bearer), false);
+    expect(next.current.revision).toBe(2);
+    expect(notices.length).toBe(2);
+    expect(JSON.stringify(notices).includes(save.bearer)).toBe(false);
   } finally {
     console.error = original;
     await f.close();
@@ -316,16 +318,15 @@ test('call history stays bounded, omits result bodies and isolates each Bot and 
       await f.store.finish(id, { phase: 'settled', result: 'SYNTHETIC-RESULT-BODY' });
     }
     const history = await f.store.calls('mock-a', save.id);
-    assert.equal(history.bot, 'mock-a');
-    assert.equal(history.items.length, 20);
-    assert.equal(history.items[0].id, 'mock-history-24');
-    assert.ok(
+    expect(history.bot).toBe('mock-a');
+    expect(history.items.length).toBe(20);
+    expect(history.items[0].id).toBe('mock-history-24');
+    expect.assert(
       history.items.every((item) => item.preview.length <= 1400 && item.result === undefined),
     );
-    assert.equal((await f.store.calls('mock-b', save.id)).items.length, 0);
-    assert.equal((await f.store.calls('mock-a', 'mock-other-connection')).items.length, 0);
-    assert.equal(
-      (await f.store.receipt('mock-a', 'mock-history-run', 'mock-history-00')).result,
+    expect((await f.store.calls('mock-b', save.id)).items.length).toBe(0);
+    expect((await f.store.calls('mock-a', 'mock-other-connection')).items.length).toBe(0);
+    expect((await f.store.receipt('mock-a', 'mock-history-run', 'mock-history-00')).result).toBe(
       'SYNTHETIC-RESULT-BODY',
     );
   } finally {

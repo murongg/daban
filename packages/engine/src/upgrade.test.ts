@@ -1,32 +1,29 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { UpgradeGate } from './upgrade.js';
 
 test('an update cannot interrupt an in-flight request or a running job', () => {
   const gate = new UpgradeGate();
   const release = gate.enter();
-  assert.throws(() => gate.prepare(() => false), /AGENT_UPDATE_BUSY/);
-  assert.equal(gate.admit(), true);
+  expect(() => gate.prepare(() => false)).toThrowError(/AGENT_UPDATE_BUSY/);
+  expect(gate.admit()).toBe(true);
   release();
   release();
-  assert.throws(() => gate.prepare(() => true), /AGENT_UPDATE_BUSY/);
-  assert.equal(gate.admit(), true);
+  expect(() => gate.prepare(() => true)).toThrowError(/AGENT_UPDATE_BUSY/);
+  expect(gate.admit()).toBe(true);
   gate.prepare(() => false);
-  assert.equal(gate.admit(), false);
-  assert.throws(() => gate.enter(), /AGENT_UPDATING/);
+  expect(gate.admit()).toBe(false);
+  expect(() => gate.enter()).toThrowError(/AGENT_UPDATING/);
 });
 
 test('admission is fenced before inspecting idle state and rolled back on refusal', () => {
   const gate = new UpgradeGate();
-  assert.throws(
-    () =>
-      gate.prepare(() => {
-        assert.equal(gate.admit(), false);
-        throw Error('SYNTHETIC_UNAVAILABLE');
-      }),
-    /SYNTHETIC_UNAVAILABLE/,
-  );
-  assert.equal(gate.admit(), true);
+  expect(() =>
+    gate.prepare(() => {
+      expect(gate.admit()).toBe(false);
+      throw Error('SYNTHETIC_UNAVAILABLE');
+    }),
+  ).toThrowError(/SYNTHETIC_UNAVAILABLE/);
+  expect(gate.admit()).toBe(true);
   gate.prepare(() => false);
-  assert.throws(() => gate.prepare(() => false), /AGENT_UPDATING/);
+  expect(() => gate.prepare(() => false)).toThrowError(/AGENT_UPDATING/);
 });

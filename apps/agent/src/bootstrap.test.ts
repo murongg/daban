@@ -1,18 +1,24 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { bootstrapAgent, setupPhase } from './bootstrap.js';
 
 test('provisioning phases keep the visible installer moving toward connection', () => {
-  assert.deepEqual(
+  expect(
     ['assets', 'image', 'creating', 'created', 'starting', 'bootstrapping', 'ready'].map((stage) =>
       setupPhase(stage),
     ),
-    ['verifying', 'extracting', 'creating', 'creating', 'starting', 'connecting', 'connecting'],
-  );
+  ).toStrictEqual([
+    'verifying',
+    'extracting',
+    'creating',
+    'creating',
+    'starting',
+    'connecting',
+    'connecting',
+  ]);
 });
 
 const vm = {
@@ -38,7 +44,7 @@ test('fresh host setup provisions once and never publishes a guest provider cred
         const progress = JSON.parse(
           await readFile(path.join(options.dataRoot, 'progress.json'), 'utf8'),
         );
-        assert.equal(progress.phase, 'verifying');
+        expect(progress.phase).toBe('verifying');
         created++;
         return vm;
       },
@@ -46,11 +52,11 @@ test('fresh host setup provisions once and never publishes a guest provider cred
         throw Error('Fresh setup has no public source');
       },
     };
-    assert.deepEqual(await bootstrapAgent(options, dependencies), vm);
-    assert.equal(created, 1);
-    assert.deepEqual(JSON.parse(await readFile(options.vmConfigFile, 'utf8')), vm);
+    expect(await bootstrapAgent(options, dependencies)).toStrictEqual(vm);
+    expect(created).toBe(1);
+    expect(JSON.parse(await readFile(options.vmConfigFile, 'utf8'))).toStrictEqual(vm);
     await bootstrapAgent(options, dependencies);
-    assert.equal(created, 1);
+    expect(created).toBe(1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -62,7 +68,7 @@ test('a pause flag stops setup before source or VM work without destroying stage
       mode: 0o600,
     });
     let touched = 0;
-    await assert.rejects(
+    await expect(
       bootstrapAgent(
         {
           dataRoot: root,
@@ -79,13 +85,9 @@ test('a pause flag stops setup before source or VM work without destroying stage
           },
         },
       ),
-      /AGENT_SETUP_PAUSED/,
-    );
-    assert.equal(touched, 0);
-    assert.equal(
-      JSON.parse(await readFile(path.join(root, 'cancel.json'), 'utf8')).cancelled,
-      true,
-    );
+    ).rejects.toThrowError(/AGENT_SETUP_PAUSED/);
+    expect(touched).toBe(0);
+    expect(JSON.parse(await readFile(path.join(root, 'cancel.json'), 'utf8')).cancelled).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -119,14 +121,13 @@ test('ready setup compares VM identity by fields and repairs an interrupted conf
       JSON.stringify({ port: vm.port, vm: vm.vm, limaHome: vm.limaHome, limactl: vm.limactl }),
       { mode: 0o600 },
     );
-    assert.deepEqual(
+    expect(
       await bootstrapAgent(options, {
         provision: async () => {
           throw Error('Already ready');
         },
       }),
-      vm,
-    );
+    ).toStrictEqual(vm);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -160,7 +161,7 @@ test('legacy snapshots publish host-private state before fresh-VM provisioning a
     const config = await bootstrapAgent(options, {
       source: (_config, identity) => ({
         prepare: async () => {
-          assert.deepEqual(_config, old);
+          expect(_config).toStrictEqual(old);
           events.push('quiesce');
         },
         stopVm: async () => {
@@ -187,20 +188,22 @@ test('legacy snapshots publish host-private state before fresh-VM provisioning a
         }),
       }),
       provision: async (input) => {
-        assert.equal(input.limactl, options.limactl);
+        expect(input.limactl).toBe(options.limactl);
         events.push('new-vm');
-        assert.deepEqual(await readFile(path.join(dataRoot, 'model/credentials.json')), credential);
+        expect(await readFile(path.join(dataRoot, 'model/credentials.json'))).toStrictEqual(
+          credential,
+        );
         return vm;
       },
       restore: async (input) => {
         events.push('restore-public');
-        assert.equal(input.directory, path.join(dataRoot, 'public'));
-        assert.deepEqual(input.browser.files, []);
-        assert.deepEqual(input.shared.files, []);
+        expect(input.directory).toBe(path.join(dataRoot, 'public'));
+        expect(input.browser.files).toStrictEqual([]);
+        expect(input.shared.files).toStrictEqual([]);
       },
     });
-    assert.deepEqual(config, vm);
-    assert.deepEqual(events, ['quiesce', 'stop-old', 'new-vm', 'restore-public']);
+    expect(config).toStrictEqual(vm);
+    expect(events).toStrictEqual(['quiesce', 'stop-old', 'new-vm', 'restore-public']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -216,7 +219,7 @@ test('SIGTERM after frozen source copy does not stop the source VM or provision 
   const credential = Buffer.from('{"apiKey":"synthetic-abort-source-key"}');
   await writeFile(vmConfigFile, JSON.stringify(old), { mode: 0o600 });
   try {
-    await assert.rejects(
+    await expect(
       bootstrapAgent(
         {
           dataRoot,
@@ -262,11 +265,12 @@ test('SIGTERM after frozen source copy does not stop the source VM or provision 
           },
         },
       ),
-      { name: 'AbortError' },
-    );
-    assert.deepEqual(events, ['prepare']);
-    assert.deepEqual(JSON.parse(await readFile(vmConfigFile, 'utf8')), old);
-    await assert.rejects(readFile(path.join(dataRoot, 'cancel.json')), { code: 'ENOENT' });
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(events).toStrictEqual(['prepare']);
+    expect(JSON.parse(await readFile(vmConfigFile, 'utf8'))).toStrictEqual(old);
+    await expect(readFile(path.join(dataRoot, 'cancel.json'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -279,7 +283,7 @@ test('SIGTERM at provisioning completion retains its journal without activating 
   const controller = new AbortController();
   let restored = false;
   try {
-    await assert.rejects(
+    await expect(
       bootstrapAgent(
         {
           dataRoot,
@@ -300,15 +304,15 @@ test('SIGTERM at provisioning completion retains its journal without activating 
           },
         },
       ),
-      { name: 'AbortError' },
-    );
-    assert.equal(restored, false);
-    await assert.rejects(readFile(vmConfigFile), { code: 'ENOENT' });
-    assert.equal(
-      JSON.parse(await readFile(path.join(dataRoot, 'bootstrap.json'), 'utf8')).phase,
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(restored).toBe(false);
+    await expect(readFile(vmConfigFile)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(JSON.parse(await readFile(path.join(dataRoot, 'bootstrap.json'), 'utf8')).phase).toBe(
       'restore',
     );
-    await assert.rejects(readFile(path.join(dataRoot, 'cancel.json')), { code: 'ENOENT' });
+    await expect(readFile(path.join(dataRoot, 'cancel.json'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -322,7 +326,7 @@ test('SIGTERM after public restore cannot publish the new active VM configuratio
   const controller = new AbortController();
   await writeFile(vmConfigFile, JSON.stringify(old), { mode: 0o600 });
   try {
-    await assert.rejects(
+    await expect(
       bootstrapAgent(
         {
           dataRoot,
@@ -350,11 +354,9 @@ test('SIGTERM after public restore cannot publish the new active VM configuratio
           },
         },
       ),
-      { name: 'AbortError' },
-    );
-    assert.deepEqual(JSON.parse(await readFile(vmConfigFile, 'utf8')), old);
-    assert.equal(
-      JSON.parse(await readFile(path.join(dataRoot, 'bootstrap.json'), 'utf8')).phase,
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(JSON.parse(await readFile(vmConfigFile, 'utf8'))).toStrictEqual(old);
+    expect(JSON.parse(await readFile(path.join(dataRoot, 'bootstrap.json'), 'utf8')).phase).toBe(
       'restore',
     );
   } finally {
@@ -367,7 +369,7 @@ test('setup cannot replace a different connection published while provisioning w
   const vmConfigFile = path.join(root, 'runtime.json');
   const foreign = { ...vm, vm: 'changed-by-user' };
   try {
-    await assert.rejects(
+    await expect(
       bootstrapAgent(
         {
           dataRoot: path.join(root, 'agent'),
@@ -384,9 +386,8 @@ test('setup cannot replace a different connection published while provisioning w
           },
         },
       ),
-      /AGENT_VM_TARGET_CHANGED/,
-    );
-    assert.deepEqual(JSON.parse(await readFile(vmConfigFile, 'utf8')), foreign);
+    ).rejects.toThrowError(/AGENT_VM_TARGET_CHANGED/);
+    expect(JSON.parse(await readFile(vmConfigFile, 'utf8'))).toStrictEqual(foreign);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -421,11 +422,11 @@ test('legacy migration without a configured provider does not request a missing 
         provision: async () => vm,
         restore: async (input) => {
           restored = true;
-          assert.equal(input.credentialFile, undefined);
+          expect(input.credentialFile).toBe(undefined);
         },
       },
     );
-    assert.equal(restored, true);
+    expect(restored).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

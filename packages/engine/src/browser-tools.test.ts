@@ -1,12 +1,11 @@
-import assert from 'node:assert/strict';
 import { watch } from 'node:fs';
 import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import test from 'node:test';
 import { documentLimit } from '@daban/protocol';
 import type { Download } from 'playwright';
+import { expect, test, vi } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { Control } from './control.js';
 import { ModelRuns } from './model.js';
@@ -26,7 +25,7 @@ const observation = {
 function mockRuntime() {
   const calls: unknown[] = [];
   const forbidden = async (): Promise<never> => {
-    assert.fail('DOM tools must not take a screenshot or send native input');
+    expect.unreachable('DOM tools must not take a screenshot or send native input');
   };
   let bytes: Buffer = Buffer.from('SYNTHETIC-DOWNLOAD-71');
   let cancelled = 0;
@@ -92,9 +91,9 @@ function mockRuntime() {
   };
 }
 function data(result: Awaited<ReturnType<AgentTools['invoke']>>) {
-  assert.ok(!result.isError, JSON.stringify(result));
+  expect.assert(!result.isError, JSON.stringify(result));
   const part = result.content[0];
-  assert.equal(part.type, 'text');
+  expect(part.type).toBe('text');
   return JSON.parse(part.type === 'text' ? part.text : '') as Record<string, unknown>;
 }
 test('text models receive live DOM tools with exact Bot/run/lease routing through the shared budget and no images', async () => {
@@ -124,10 +123,9 @@ test('text models receive live DOM tools with exact Bot/run/lease routing throug
       'browser_upload',
       'browser_download',
     ])
-      assert.ok(names.includes(name), `Missing ${name}`);
-    assert.ok(!names.includes('screenshot'));
-    assert.equal(
-      data(await tools.invoke(run, 'browser_navigate', { url: observation.url })).id,
+      expect.assert(names.includes(name), `Missing ${name}`);
+    expect.assert(!names.includes('screenshot'));
+    expect(data(await tools.invoke(run, 'browser_navigate', { url: observation.url })).id).toBe(
       observation.id,
     );
     data(await tools.invoke(run, 'browser_snapshot', {}));
@@ -138,30 +136,29 @@ test('text models receive live DOM tools with exact Bot/run/lease routing throug
       }),
     );
     data(await tools.invoke(run, 'browser_tabs', { action: 'list' }));
-    assert.equal(run.toolCount, 4);
-    assert.ok(
+    expect(run.toolCount).toBe(4);
+    expect.assert(
       run.trace.every(
         (trace) => trace.surface === 'browser' && trace.phase === 'settled' && !trace.args,
       ),
     );
-    assert.deepEqual((fake.calls[0] as unknown[]).slice(0, 5), [
+    expect((fake.calls[0] as unknown[]).slice(0, 5)).toStrictEqual([
       'navigate',
       'a',
       'agent',
       0,
       observation.url,
     ]);
-    assert.equal((fake.calls[0] as unknown[]).at(-1), 'mock-run-a');
+    expect((fake.calls[0] as unknown[]).at(-1)).toBe('mock-run-a');
     const count = fake.calls.length;
-    assert.equal(
+    expect(
       (await tools.invoke(run, 'browser_navigate', { url: observation.url, bot: 'b' })).isError,
-      true,
-    );
-    assert.equal(fake.calls.length, count);
+    ).toBe(true);
+    expect(fake.calls.length).toBe(count);
     run.limit = run.toolCount;
-    assert.equal((await tools.invoke(run, 'browser_snapshot', {})).isError, true);
-    assert.equal(fake.calls.length, count);
-    assert.ok(
+    expect((await tools.invoke(run, 'browser_snapshot', {})).isError).toBe(true);
+    expect(fake.calls.length).toBe(count);
+    expect.assert(
       !tools
         .list('mock-unbound', 'deepseek-flash')
         .some((tool) => tool.name.startsWith('browser_')),
@@ -192,8 +189,8 @@ test('DOM calls wait only for their Bot, can cancel a human wait and reject anon
     await fake.value.control.transfer('a', 0, 'human');
     const pending = tools.invoke(run, 'browser_snapshot', {});
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(fake.calls.length, 0);
-    assert.equal(run.waitingForComputer, true);
+    expect(fake.calls.length).toBe(0);
+    expect(run.waitingForComputer).toBe(true);
     const other: AgentToolRun = {
       ...run,
       bot: 'b',
@@ -203,8 +200,8 @@ test('DOM calls wait only for their Bot, can cancel a human wait and reject anon
     };
     data(await tools.invoke(other, 'browser_snapshot', {}));
     run.abort.abort();
-    assert.equal((await pending).isError, true);
-    assert.equal(run.waitingForComputer, false);
+    expect((await pending).isError).toBe(true);
+    expect(run.waitingForComputer).toBe(false);
     const anonymous = {
       ...run,
       bot: 'b',
@@ -212,7 +209,7 @@ test('DOM calls wait only for their Bot, can cancel a human wait and reject anon
       task: undefined,
       trace: [],
     };
-    assert.equal((await tools.invoke(anonymous, 'browser_snapshot', {})).isError, true);
+    expect((await tools.invoke(anonymous, 'browser_snapshot', {})).isError).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -248,8 +245,8 @@ test('browser transfers reuse owned workspace bytes, preserve inputs and never o
     );
     const uploaded = fake.calls.find((call) => (call as unknown[])[0] === 'upload') as unknown[];
     const file = uploaded[6] as { name: string; buffer: Buffer };
-    assert.equal(file.name, 'source.csv');
-    assert.equal(file.buffer.toString(), 'item,count\nmock,47');
+    expect(file.name).toBe('source.csv');
+    expect(file.buffer.toString()).toBe('item,count\nmock,47');
     await writeFile(path.join(root, 'private.txt'), 'SYNTHETIC-PRIVATE-NOT-FOR-UPLOAD');
     await symlink(path.join(root, 'private.txt'), path.join(workdir, 'link.txt'));
     await link(path.join(root, 'private.txt'), path.join(workdir, 'hardlink.txt'));
@@ -260,7 +257,7 @@ test('browser transfers reuse owned workspace bytes, preserve inputs and never o
       'link.txt',
       'hardlink.txt',
     ])
-      assert.equal(
+      expect(
         (
           await tools.invoke(run, 'browser_upload', {
             observation: observation.id,
@@ -268,10 +265,9 @@ test('browser transfers reuse owned workspace bytes, preserve inputs and never o
             sourcePath,
           })
         ).isError,
-        true,
         sourcePath,
-      );
-    assert.equal(fake.calls.length, before);
+      ).toBe(true);
+    expect(fake.calls.length).toBe(before);
     const saved = data(
       await tools.invoke(run, 'browser_download', {
         observation: observation.id,
@@ -279,17 +275,17 @@ test('browser transfers reuse owned workspace bytes, preserve inputs and never o
         name: 'result.txt',
       }),
     );
-    assert.ok(saved.file);
-    assert.equal(await readFile(path.join(workdir, 'result.txt'), 'utf8'), 'SYNTHETIC-DOWNLOAD-71');
+    expect.assert(saved.file);
+    expect(await readFile(path.join(workdir, 'result.txt'), 'utf8')).toBe('SYNTHETIC-DOWNLOAD-71');
     const collision = await tools.invoke(run, 'browser_download', {
       observation: observation.id,
       ref: 'f1e2',
       name: 'source.csv',
     });
-    assert.equal(collision.isError, true);
-    assert.equal(await readFile(path.join(workdir, 'source.csv'), 'utf8'), 'item,count\nmock,47');
+    expect(collision.isError).toBe(true);
+    expect(await readFile(path.join(workdir, 'source.csv'), 'utf8')).toBe('item,count\nmock,47');
     fake.setDownload(Buffer.alloc(documentLimit + 1, 65));
-    assert.equal(
+    expect(
       (
         await tools.invoke(run, 'browser_download', {
           observation: observation.id,
@@ -297,11 +293,10 @@ test('browser transfers reuse owned workspace bytes, preserve inputs and never o
           name: 'oversized.txt',
         })
       ).isError,
-      true,
-    );
-    assert.ok(fake.cancelled() > 0);
-    await assert.rejects(readFile(path.join(workdir, 'oversized.txt')));
-    assert.equal(
+    ).toBe(true);
+    expect.assert(fake.cancelled() > 0);
+    await expect(readFile(path.join(workdir, 'oversized.txt'))).rejects.toThrowError();
+    expect(
       (
         await tools.invoke(run, 'browser_download', {
           observation: observation.id,
@@ -309,8 +304,7 @@ test('browser transfers reuse owned workspace bytes, preserve inputs and never o
           name: '../escape.txt',
         })
       ).isError,
-      true,
-    );
+    ).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -329,10 +323,10 @@ test('the normal DSH model core accepts browser computer capability without requ
   const models = new ModelRuns(options);
   try {
     await models.ready;
-    assert.ok(
+    expect.assert(
       models.tools.list('a', 'deepseek-v4-pro').some((tool) => tool.name === 'browser_navigate'),
     );
-    assert.equal(models.runtime, undefined);
+    expect(models.runtime).toBe(undefined);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -372,19 +366,19 @@ test('cancelling while download output is being created never leaves a partial v
       ref: 'f1e2',
       name: 'atomic-result.bin',
     });
-    assert.equal(observed, true);
-    assert.equal(result.isError, true);
-    await assert.rejects(readFile(path.join(root, 'atomic-result.bin')));
+    expect(observed).toBe(true);
+    expect(result.isError).toBe(true);
+    await expect(readFile(path.join(root, 'atomic-result.bin'))).rejects.toThrowError();
   } finally {
     watcher.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('human computer ownership does not suspend the budget of an ordinary DSH response that is not waiting for the computer', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+test('human computer ownership does not suspend the budget of an ordinary DSH response that is not waiting for the computer', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
   let now = 0;
-  t.mock.method(performance, 'now', () => now);
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-ordinary-budget-'));
   const fake = mockRuntime();
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
@@ -431,14 +425,13 @@ test('human computer ownership does not suspend the budget of an ordinary DSH re
       prompt: '合成普通对话，不使用电脑或工具。',
     });
     await ready;
-    assert.equal(models.jobs.get('a')!.waitingForComputer, undefined);
+    expect(models.jobs.get('a')!.waitingForComputer).toBe(undefined);
     now = 300001;
-    t.mock.timers.tick(1000);
-    assert.equal(
+    vi.advanceTimersByTime(1000);
+    expect(
       models.jobs.get('a')!.abort.signal.aborted,
-      true,
       'only an actual computer wait can pause the execution budget',
-    );
+    ).toBe(true);
   } finally {
     release();
     await models.close();
@@ -446,10 +439,10 @@ test('human computer ownership does not suspend the budget of an ordinary DSH re
   }
 });
 
-test('a text-model browser wait excludes human time from the DSH budget and completes after the exact lease is returned', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+test('a text-model browser wait excludes human time from the DSH budget and completes after the exact lease is returned', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
   let now = 0;
-  t.mock.method(performance, 'now', () => now);
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-budget-'));
   const fake = mockRuntime();
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
@@ -504,17 +497,17 @@ test('a text-model browser wait excludes human time from the DSH budget and comp
     await ready;
     for (let i = 0; i < 10 && !models.jobs.get('a')!.waitingForComputer; i++)
       await new Promise(setImmediate);
-    assert.equal(models.status().bots.a.phase, 'paused');
+    expect(models.status().bots.a.phase).toBe('paused');
     now = 600000;
-    t.mock.timers.tick(1000);
-    assert.equal(models.jobs.get('a')!.abort.signal.aborted, false);
+    vi.advanceTimersByTime(1000);
+    expect(models.jobs.get('a')!.abort.signal.aborted).toBe(false);
     await fake.value.control.transfer('a', held.epoch, 'agent');
-    t.mock.timers.tick(80);
+    vi.advanceTimersByTime(80);
     await models.jobs.get('a')!.done;
-    assert.equal(models.status().bots.a.phase, 'completed');
+    expect(models.status().bots.a.phase).toBe('completed');
   } finally {
     models.jobs.get('a')?.abort.abort();
-    t.mock.timers.tick(80);
+    vi.advanceTimersByTime(80);
     await models.close();
     await rm(root, { recursive: true, force: true });
   }
@@ -572,29 +565,29 @@ test('pending or rejected web permission cannot be bypassed with DOM or computer
       ['screenshot', { surface: 'desktop' }],
     ] as const) {
       const result = await models.tools.invoke(run, name, args);
-      assert.equal(result.isError, true);
-      assert.match(JSON.stringify(result), /WEB_APPROVAL_PENDING/);
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toMatch(/WEB_APPROVAL_PENDING/);
     }
-    assert.equal(nativeCalls, 0);
-    assert.equal(fake.calls.length, 0);
+    expect(nativeCalls).toBe(0);
+    expect(fake.calls.length).toBe(0);
     await models.interactions.reply('a', run.id!, request.id, { kind: 'decision', allow: false });
     for (const [name, args] of [
       ['browser_snapshot', {}],
       ['open_app', { app: 'browser' }],
     ] as const) {
       const result = await models.tools.invoke(run, name, args);
-      assert.equal(result.isError, true);
-      assert.match(JSON.stringify(result), /WEB_APPROVAL_REJECTED/);
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toMatch(/WEB_APPROVAL_REJECTED/);
     }
-    assert.equal(nativeCalls, 0);
-    assert.equal(fake.calls.length, 0);
+    expect(nativeCalls).toBe(0);
+    expect(fake.calls.length).toBe(0);
     for (const other of [
       { ...run, id: 'mock-next-run' },
       { ...run, bot: 'b' },
       { ...run, conversationId: 'mock-other-group' },
     ])
       data(await models.tools.invoke(other, 'browser_snapshot', {}));
-    assert.equal(fake.calls.length, 3);
+    expect(fake.calls.length).toBe(3);
     const held = await fake.value.control.transfer('a', 0, 'human');
     const late: AgentToolRun = { ...run, id: 'mock-late-permission', abort: new AbortController() };
     const waiting = models.tools.invoke(late, 'browser_snapshot', {});
@@ -611,12 +604,11 @@ test('pending or rejected web permission cannot be bypassed with DOM or computer
       allow: false,
     });
     await fake.value.control.transfer('a', held.epoch, 'agent');
-    assert.match(JSON.stringify(await waiting), /WEB_APPROVAL_REJECTED/);
-    assert.equal(
+    expect(JSON.stringify(await waiting)).toMatch(/WEB_APPROVAL_REJECTED/);
+    expect(
       fake.calls.length,
-      3,
       'returning the lease must not reuse an earlier permission check',
-    );
+    ).toBe(3);
     let entered!: () => unknown, release!: () => unknown;
     const started = new Promise<unknown>((resolve) => {
       entered = () => resolve(undefined);
@@ -651,9 +643,9 @@ test('pending or rejected web permission cannot be bypassed with DOM or computer
     });
     release();
     const withheld = await reading;
-    assert.equal(withheld.isError, true);
-    assert.match(JSON.stringify(withheld), /WEB_APPROVAL_REJECTED/);
-    assert.equal(JSON.stringify(withheld).includes('SYNTHETIC-WITHHELD-PAGE'), false);
+    expect(withheld.isError).toBe(true);
+    expect(JSON.stringify(withheld)).toMatch(/WEB_APPROVAL_REJECTED/);
+    expect(JSON.stringify(withheld).includes('SYNTHETIC-WITHHELD-PAGE')).toBe(false);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -673,7 +665,7 @@ test('DSH receives truthful DOM browser capabilities for both text and vision ro
       return {
         id,
         run: async (prompt: unknown) => {
-          assert.ok(typeof prompt === 'string');
+          expect.assert(typeof prompt === 'string');
           prompts.push(prompt);
           return { sessionId: id, finalResponse: 'SYNTHETIC-CAPABILITY' };
         },
@@ -708,11 +700,11 @@ test('DSH receives truthful DOM browser capabilities for both text and vision ro
       });
       await models.jobs.get(bot)!.done;
       const prompt = prompts.at(-1)!;
-      assert.match(prompt, /browser_navigate/);
-      assert.doesNotMatch(prompt, /仅支持本地演示站|没有桌面或浏览器工具/);
-      assert.equal(models.jobs.get(bot)!.toolCount, 0);
+      expect(prompt).toMatch(/browser_navigate/);
+      expect(prompt).not.toMatch(/仅支持本地演示站|没有桌面或浏览器工具/);
+      expect(models.jobs.get(bot)!.toolCount).toBe(0);
     }
-    assert.equal(fake.calls.length, 0);
+    expect(fake.calls.length).toBe(0);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });

@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { Recovery } from './recovery.js';
 import { ModelSettings } from './settings.js';
@@ -70,17 +69,16 @@ test('global recovery rejects active work without fencing its tools and prevents
       });
     await models.start('mock-a', { requestId: 'mock-running', prompt: '合成等待' });
     const busy = owner.review();
-    await assert.rejects(
+    await expect(
       owner.prepare({
         id: 'mock-busy-recovery',
         revision: busy.revision,
         review: busy.digest,
         confirmation: 'restart-all-apps',
       }),
-      { code: 'RECOVERY_TASKS_RUNNING' },
-    );
-    assert.equal(models.admit('mock-a'), true);
-    assert.equal(models.admit('mock-b'), true);
+    ).rejects.toMatchObject({ code: 'RECOVERY_TASKS_RUNNING' });
+    expect(models.admit('mock-a')).toBe(true);
+    expect(models.admit('mock-b')).toBe(true);
     release();
     await models.jobs.get('mock-a')!.done;
     const original = models.journal.read.bind(models.journal);
@@ -101,7 +99,7 @@ test('global recovery rejects active work without fencing its tools and prevents
       prompt: '合成不得启动',
       retryOf: models.jobs.get('mock-a')!.id,
     });
-    const rejected = assert.rejects(late, { code: 'RUNTIME_RECOVERY_PENDING' });
+    const rejected = expect(late).rejects.toMatchObject({ code: 'RUNTIME_RECOVERY_PENDING' });
     await enteredRead;
     const review = owner.review();
     const prepared = await owner.prepare({
@@ -113,12 +111,12 @@ test('global recovery rejects active work without fencing its tools and prevents
     continueRead();
     await rejected;
     models.journal.read = original;
-    assert.equal(models.findRequest('mock-a', 'mock-late-job'), undefined);
-    assert.equal(models.admit('mock-a'), false);
-    assert.equal(models.admit('mock-b'), false);
-    assert.equal(starts, 1);
+    expect(models.findRequest('mock-a', 'mock-late-job')).toBe(undefined);
+    expect(models.admit('mock-a')).toBe(false);
+    expect(models.admit('mock-b')).toBe(false);
+    expect(starts).toBe(1);
     await owner.cancel(prepared.id, prepared.revision);
-    assert.equal(models.admit('mock-b'), true);
+    expect(models.admit('mock-b')).toBe(true);
   } finally {
     continueRead();
     release();

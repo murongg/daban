@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { startNativeAgent } from '@daban/engine/agent';
+import { expect, test } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
 test('real host calendar recovers an accepted archive and preserves schedules and other Bots after restart', async (t) => {
@@ -21,13 +20,13 @@ test('real host calendar recovers an accepted archive and preserves schedules an
     sdkFile: resolveSdk(),
   };
   let agent: Awaited<ReturnType<typeof startNativeAgent>> | undefined;
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await agent?.close();
     await rm(root, { recursive: true, force: true });
   });
   agent = await startNativeAgent(options);
   const store = agent.models.tools.schedules?.store;
-  assert.ok(store, 'the real SDK calendar must be available on every host platform');
+  expect.assert(store, 'the real SDK calendar must be available on every host platform');
   for (const id of ['mock-alpha', 'mock-beta'])
     await agent.models.profiles.register({
       id,
@@ -57,11 +56,11 @@ test('real host calendar recovers an accepted archive and preserves schedules an
   agent = undefined;
   agent = await startNativeAgent(options);
   const recovered = await agent.models.profiles.get('mock-alpha');
-  assert.equal(recovered?.lifecycle?.id, 'mock-accepted-archive');
-  assert.equal(recovered?.lifecycle?.phase, 'complete');
-  assert.equal(recovered?.memory, 'SYNTHETIC MEMORY');
-  assert.deepEqual(await agent.models.profiles.get('mock-beta'), other);
+  expect(recovered?.lifecycle?.id).toBe('mock-accepted-archive');
+  expect(recovered?.lifecycle?.phase).toBe('complete');
+  expect(recovered?.memory).toBe('SYNTHETIC MEMORY');
+  expect(await agent.models.profiles.get('mock-beta')).toStrictEqual(other);
   const retained = await agent.models.tools.schedules!.store.list();
-  assert.equal(retained.length, 1);
-  assert.equal(retained[0].enabled, false);
+  expect(retained.length).toBe(1);
+  expect(retained[0].enabled).toBe(false);
 });

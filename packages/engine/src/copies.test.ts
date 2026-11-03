@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { isBotCopyReceipt, isBotCopyRequest } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { BotProfiles } from './profiles.js';
 
 const source = {
@@ -22,11 +21,11 @@ test('copies saved persona/model/preferences into an independent identity and cu
     const profiles = new BotProfiles(root);
     const original = await profiles.register(source);
     const before = await readFile(path.join(root, `${source.id}.json`));
-    assert.deepEqual(await profiles.copyReceipt(request), { request, state: 'unknown' });
+    expect(await profiles.copyReceipt(request)).toStrictEqual({ request, state: 'unknown' });
     const ack = await profiles.copy(request);
-    assert.equal(ack.state, 'complete');
-    assert.deepEqual(ack.request, request);
-    assert.deepEqual(ack.profile, {
+    expect(ack.state).toBe('complete');
+    expect(ack.request).toStrictEqual(request);
+    expect(ack.profile).toStrictEqual({
       ...original,
       id: request.id,
       name: request.name,
@@ -34,14 +33,14 @@ test('copies saved persona/model/preferences into an independent identity and cu
       createdAt: ack.profile.createdAt,
       updatedAt: ack.profile.updatedAt,
     });
-    assert.notEqual(ack.profile.id, original.id);
-    assert.equal(ack.profile.archived, undefined);
-    assert.equal(ack.profile.lifecycle, undefined);
-    assert.deepEqual(await readFile(path.join(root, `${source.id}.json`)), before);
+    expect(ack.profile.id).not.toBe(original.id);
+    expect(ack.profile.archived).toBe(undefined);
+    expect(ack.profile.lifecycle).toBe(undefined);
+    expect(await readFile(path.join(root, `${source.id}.json`))).toStrictEqual(before);
     const history = await profiles.history(request.id, {});
-    assert.equal(history.items.length, 1);
-    assert.equal(history.items[0].content, source.memory);
-    assert.equal((await profiles.list()).length, 2);
+    expect(history.items.length).toBe(1);
+    expect(history.items[0].content).toBe(source.memory);
+    expect((await profiles.list()).length).toBe(2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -61,15 +60,19 @@ test('exact copy replay survives reconstruction and preserves later target edits
     await profiles.update(source.id, 1, { instructions: 'MOCK-CHANGED-SOURCE' });
     profiles = new BotProfiles(root);
     const bytes = await readFile(path.join(root, `${request.id}.json`));
-    assert.deepEqual(await profiles.copyReceipt(request), {
+    expect(await profiles.copyReceipt(request)).toStrictEqual({
       request,
       state: 'complete',
       profile: edited,
     });
-    assert.deepEqual(await profiles.copy(request), { request, state: 'complete', profile: edited });
-    assert.deepEqual(await readFile(path.join(root, `${request.id}.json`)), bytes);
-    assert.equal((await profiles.list()).length, 2);
-    await assert.rejects(profiles.copy({ ...request, name: '合成不同请求' }), {
+    expect(await profiles.copy(request)).toStrictEqual({
+      request,
+      state: 'complete',
+      profile: edited,
+    });
+    expect(await readFile(path.join(root, `${request.id}.json`))).toStrictEqual(bytes);
+    expect((await profiles.list()).length).toBe(2);
+    await expect(profiles.copy({ ...request, name: '合成不同请求' })).rejects.toMatchObject({
       code: 'BOT_COPY_CONFLICT',
     });
   } finally {
@@ -83,19 +86,23 @@ test('rejects stale or changing source admission and occupied identities without
     const profiles = new BotProfiles(root);
     await profiles.register(source);
     await profiles.update(source.id, 1, { instructions: 'MOCK-NEW-ROLE' });
-    await assert.rejects(profiles.copy(request), { code: 'BOT_PROFILE_CONFLICT' });
-    assert.equal(await profiles.get(request.id), undefined);
+    await expect(profiles.copy(request)).rejects.toMatchObject({ code: 'BOT_PROFILE_CONFLICT' });
+    expect(await profiles.get(request.id)).toBe(undefined);
     const release = profiles.reserveLifecycle(source.id);
-    await assert.rejects(profiles.copy({ ...request, revision: 2 }), { code: 'BOT_CHANGING' });
+    await expect(profiles.copy({ ...request, revision: 2 })).rejects.toMatchObject({
+      code: 'BOT_CHANGING',
+    });
     release();
     await profiles.register({ ...source, id: request.id, name: '合成独立资料' });
     const before = await profiles.get(request.id);
-    await assert.rejects(profiles.copy({ ...request, revision: 2 }), { code: 'BOT_COPY_CONFLICT' });
-    await assert.rejects(profiles.copyReceipt({ ...request, revision: 2 }), {
+    await expect(profiles.copy({ ...request, revision: 2 })).rejects.toMatchObject({
       code: 'BOT_COPY_CONFLICT',
     });
-    assert.deepEqual(await profiles.get(request.id), before);
-    await assert.rejects(profiles.copy({ ...request, id: source.id, revision: 2 }), {
+    await expect(profiles.copyReceipt({ ...request, revision: 2 })).rejects.toMatchObject({
+      code: 'BOT_COPY_CONFLICT',
+    });
+    expect(await profiles.get(request.id)).toStrictEqual(before);
+    await expect(profiles.copy({ ...request, id: source.id, revision: 2 })).rejects.toMatchObject({
       code: 'INVALID_BOT_COPY',
     });
   } finally {
@@ -110,14 +117,11 @@ test('can omit preferences and preserves inherited model policy without copying 
     await profiles.register({ ...source, model: undefined });
     await profiles.update(source.id, 1, { memory: 'MOCK-SECOND-PREFERENCE' });
     const ack = await profiles.copy({ ...request, revision: 2, memory: false });
-    assert.equal(ack.profile.memory, '');
-    assert.equal(Object.hasOwn(ack.profile, 'model'), false);
+    expect(ack.profile.memory).toBe('');
+    expect(Object.hasOwn(ack.profile, 'model')).toBe(false);
     const history = await profiles.history(request.id, {});
-    assert.deepEqual(
-      history.items.map((item) => item.content),
-      [''],
-    );
-    assert.equal((await profiles.get(source.id))?.memory, 'MOCK-SECOND-PREFERENCE');
+    expect(history.items.map((item) => item.content)).toStrictEqual(['']);
+    expect((await profiles.get(source.id))?.memory).toBe('MOCK-SECOND-PREFERENCE');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -138,10 +142,10 @@ test('rejects malformed copy requests before changing any profile', async () => 
       { ...request, memory: 'yes' },
       { ...request, runImmediately: true },
     ]) {
-      await assert.rejects(profiles.copy(value), { code: 'INVALID_BOT_COPY' });
-      await assert.rejects(profiles.copyReceipt(value), { code: 'INVALID_BOT_COPY' });
+      await expect(profiles.copy(value)).rejects.toMatchObject({ code: 'INVALID_BOT_COPY' });
+      await expect(profiles.copyReceipt(value)).rejects.toMatchObject({ code: 'INVALID_BOT_COPY' });
     }
-    assert.deepEqual(await profiles.list(), [original]);
+    expect(await profiles.list()).toStrictEqual([original]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -157,13 +161,13 @@ test('concurrent exact retries create one target and public receipts reject fore
       profiles.copy(request),
       profiles.copy(request),
     ]);
-    assert.deepEqual(results[1], results[0]);
-    assert.deepEqual(results[2], results[0]);
-    assert.equal((await profiles.list()).length, 2);
+    expect(results[1]).toStrictEqual(results[0]);
+    expect(results[2]).toStrictEqual(results[0]);
+    expect((await profiles.list()).length).toBe(2);
     const receipt = results[0];
-    assert.equal(isBotCopyRequest(request), true);
-    assert.equal(isBotCopyReceipt(receipt), true);
-    assert.equal(isBotCopyReceipt({ request, state: 'unknown' }), true);
+    expect(isBotCopyRequest(request)).toBe(true);
+    expect(isBotCopyReceipt(receipt)).toBe(true);
+    expect(isBotCopyReceipt({ request, state: 'unknown' })).toBe(true);
     for (const invalid of [
       { ...receipt, profile: { ...receipt.profile, id: source.id } },
       { ...receipt, profile: { ...receipt.profile, token: 'MOCK-NOT-AUTHORITY' } },
@@ -171,7 +175,7 @@ test('concurrent exact retries create one target and public receipts reject fore
       { request, state: 'unknown', profile: receipt.profile },
       { ...receipt, request: { ...request, id: source.id } },
     ])
-      assert.equal(isBotCopyReceipt(invalid), false);
+      expect(isBotCopyReceipt(invalid)).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -196,13 +200,15 @@ test('a settled receipt survives source and target archive without restoring eit
     }
     profiles = new BotProfiles(root);
     const archived = await profiles.get(request.id);
-    assert.equal(archived?.archived, true);
-    assert.deepEqual((await profiles.copy(request)).profile, archived);
-    await assert.rejects(profiles.copy({ ...request, id: 'mock-not-created', revision: 3 }), {
+    expect(archived?.archived).toBe(true);
+    expect((await profiles.copy(request)).profile).toStrictEqual(archived);
+    await expect(
+      profiles.copy({ ...request, id: 'mock-not-created', revision: 3 }),
+    ).rejects.toMatchObject({
       code: 'BOT_ARCHIVED',
     });
-    assert.equal(await profiles.get('mock-not-created'), undefined);
-    assert.equal((await profiles.get(source.id))?.archived, true);
+    expect(await profiles.get('mock-not-created')).toBe(undefined);
+    expect((await profiles.get(source.id))?.archived).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

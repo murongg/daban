@@ -1,7 +1,6 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import { createMcpHandler, fromJsonSchema, McpServer } from '@modelcontextprotocol/server';
+import { expect, test } from 'vitest';
 import { McpRemote } from './mcp.js';
 import { tlsFixture } from './tls.fixture.js';
 
@@ -80,16 +79,16 @@ for (const sse of [false, true]) {
       const signal = new AbortController().signal;
       await remote.start(signal);
       const tools = await remote.tools(signal);
-      assert.equal(tools[0].name, 'synthetic_echo');
-      assert.equal(writes, 0);
-      assert.equal(dispatched, 0);
+      expect(tools[0].name).toBe('synthetic_echo');
+      expect(writes).toBe(0);
+      expect(dispatched).toBe(0);
       const result = await remote.call('synthetic_echo', { value: '47' }, signal);
-      assert.deepEqual(result.content, [{ type: 'text', text: 'SYNTHETIC:47' }]);
-      assert.equal(writes, 1);
-      assert.equal(dispatched, 1);
-      await assert.rejects(remote.call('synthetic_echo', { value: '47' }, signal));
-      assert.equal(writes, 1);
-      assert.ok(methods.includes('initialize') && methods.includes('tools/list'));
+      expect(result.content).toStrictEqual([{ type: 'text', text: 'SYNTHETIC:47' }]);
+      expect(writes).toBe(1);
+      expect(dispatched).toBe(1);
+      await expect(remote.call('synthetic_echo', { value: '47' }, signal)).rejects.toThrowError();
+      expect(writes).toBe(1);
+      expect.assert(methods.includes('initialize') && methods.includes('tools/list'));
     } finally {
       await remote.close();
       await fixture.close();
@@ -146,15 +145,15 @@ for (const responseMode of ['json', 'sse'] as const) {
     try {
       const signal = new AbortController().signal;
       await remote.start(signal);
-      assert.equal((await remote.tools(signal))[0].name, 'synthetic_echo');
-      assert.equal(writes, 0);
-      assert.equal(dispatched, 0);
+      expect((await remote.tools(signal))[0].name).toBe('synthetic_echo');
+      expect(writes).toBe(0);
+      expect(dispatched).toBe(0);
       const result = await remote.call('synthetic_echo', { value: '47' }, signal);
-      assert.deepEqual(result.content, [{ type: 'text', text: 'SYNTHETIC-CURRENT:47' }]);
-      assert.equal(writes, 1);
-      assert.equal(dispatched, 1);
-      assert.ok(versions.includes('2026-07-28'));
-      assert.deepEqual(failures, []);
+      expect(result.content).toStrictEqual([{ type: 'text', text: 'SYNTHETIC-CURRENT:47' }]);
+      expect(writes).toBe(1);
+      expect(dispatched).toBe(1);
+      expect.assert(versions.includes('2026-07-28'));
+      expect(failures).toStrictEqual([]);
     } finally {
       await remote.close();
       await fixture.close();

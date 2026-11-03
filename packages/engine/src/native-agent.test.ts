@@ -1,12 +1,11 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { expect, test } from 'vitest';
 import { startNativeAgent } from './host-server.js';
 import { privateClientOptions } from './private-channel.js';
 
@@ -51,17 +50,16 @@ test('native-only agent starts without a Linux executor or VM and reports its re
       call.on('error', reject);
       call.end();
     });
-    assert.deepEqual(raw.agent, {
+    expect(raw.agent).toStrictEqual({
       location: 'host',
       execution: 'local-workspace',
       privilege: 'workspace',
       approvals: 'host',
     });
-    assert.equal(
+    expect(
       (raw.knowledge as { documentParsing?: boolean }).documentParsing,
-      process.platform === 'linux',
       'document parser support must be reported separately from a working knowledge store',
-    );
+    ).toBe(process.platform === 'linux');
   } finally {
     await agent.close();
     await rm(temporary, { recursive: true, force: true });

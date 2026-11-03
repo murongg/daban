@@ -1,17 +1,16 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
 import { Knowledge } from './knowledge.js';
 import { KnowledgeTools } from './knowledge-tools.js';
 
 function value<T>(result: ToolResult): T {
-  assert.equal(result.isError, undefined, JSON.stringify(result));
+  expect(result.isError, JSON.stringify(result)).toBe(undefined);
   const item = result.content[0];
-  assert.equal(item.type, 'text');
+  expect(item.type).toBe('text');
   return JSON.parse(item.type === 'text' ? item.text : '') as T;
 }
 test('knowledge tools search and patch owned documents, export safe copies and retain restorable history', async () => {
@@ -48,13 +47,12 @@ test('knowledge tools search and patch owned documents, export safe copies and r
     const found = value<{ files: { id: string; preview: { content: string } }[] }>(
       await tools.invoke(run, 'bot_knowledge_search', { query: '报价' }),
     );
-    assert.equal(found.files[0].id, first.id);
-    assert.match(found.files[0].preview.content, /47/);
-    assert.equal(
+    expect(found.files[0].id).toBe(first.id);
+    expect(found.files[0].preview.content).toMatch(/47/);
+    expect(
       value<{ content: string }>(await tools.invoke(run, 'bot_knowledge_read', { id: first.id }))
         .content,
-      '保留的段落\n报价上限 47\n',
-    );
+    ).toBe('保留的段落\n报价上限 47\n');
     const edited = value<{ revision: number }>(
       await tools.invoke(run, 'bot_knowledge_edit', {
         id: first.id,
@@ -63,18 +61,15 @@ test('knowledge tools search and patch owned documents, export safe copies and r
         newText: '53',
       }),
     );
-    assert.equal((await store.read(run.bot, first.id)).content, '保留的段落\n报价上限 53\n');
+    expect((await store.read(run.bot, first.id)).content).toBe('保留的段落\n报价上限 53\n');
     await tools.invoke(run, 'bot_knowledge_export', {
       id: first.id,
       revision: edited.revision,
       target: 'copy.md',
     });
-    assert.equal(
-      await readFile(path.join(workdir, 'copy.md'), 'utf8'),
-      '保留的段落\n报价上限 53\n',
-    );
+    expect(await readFile(path.join(workdir, 'copy.md'), 'utf8')).toBe('保留的段落\n报价上限 53\n');
     await writeFile(path.join(workdir, 'protected.md'), 'existing synthetic input');
-    assert.equal(
+    expect(
       (
         await tools.invoke(run, 'bot_knowledge_export', {
           id: first.id,
@@ -82,14 +77,12 @@ test('knowledge tools search and patch owned documents, export safe copies and r
           target: 'protected.md',
         })
       ).isError,
-      true,
-    );
-    assert.equal(
-      await readFile(path.join(workdir, 'protected.md'), 'utf8'),
+    ).toBe(true);
+    expect(await readFile(path.join(workdir, 'protected.md'), 'utf8')).toBe(
       'existing synthetic input',
     );
     await symlink(path.join(root, 'outside.md'), path.join(workdir, 'escape.md'));
-    assert.equal(
+    expect(
       (
         await tools.invoke(run, 'bot_knowledge_export', {
           id: first.id,
@@ -97,21 +90,18 @@ test('knowledge tools search and patch owned documents, export safe copies and r
           target: 'escape.md',
         })
       ).isError,
-      true,
-    );
+    ).toBe(true);
     const deleted = value<{ revision: number }>(
       await tools.invoke(run, 'bot_knowledge_delete', { id: first.id, revision: edited.revision }),
     );
-    assert.equal(
+    expect(
       value<{ files: unknown[] }>(await tools.invoke(run, 'bot_knowledge_search')).files.length,
-      0,
-    );
-    assert.equal(
+    ).toBe(0);
+    expect(
       value<{ files: unknown[] }>(
         await tools.invoke(run, 'bot_knowledge_search', { includeDeleted: true }),
       ).files.length,
-      1,
-    );
+    ).toBe(1);
     const restored = value<{ revision: number }>(
       await tools.invoke(run, 'bot_knowledge_restore', {
         id: first.id,
@@ -119,30 +109,27 @@ test('knowledge tools search and patch owned documents, export safe copies and r
         targetRevision: 1,
       }),
     );
-    assert.equal((await store.read(run.bot, first.id)).content, '保留的段落\n报价上限 47\n');
-    assert.ok(restored.revision > deleted.revision);
-    assert.equal(
+    expect((await store.read(run.bot, first.id)).content).toBe('保留的段落\n报价上限 47\n');
+    expect.assert(restored.revision > deleted.revision);
+    expect(
       (await tools.invoke({ ...run, bot: 'mock-beta' }, 'bot_knowledge_read', { id: first.id }))
         .isError,
-      true,
-    );
-    assert.equal(
+    ).toBe(true);
+    expect(
       (await tools.invoke(run, 'bot_knowledge_read', { id: first.id, bot: 'mock-beta' })).isError,
-      true,
-    );
+    ).toBe(true);
     const limited = { ...run, toolCount: 0, limit: 1 };
     await tools.invoke(limited, 'bot_knowledge_search');
-    assert.match(
+    expect(
       JSON.stringify(
         await tools.invoke(limited, 'bot_knowledge_delete', {
           id: first.id,
           revision: restored.revision,
         }),
       ),
-      /TOOL_LIMIT/,
-    );
-    assert.ok(run.trace.every((item) => item.surface === 'knowledge'));
-    assert.equal(JSON.stringify(run.trace).includes('报价'), false);
+    ).toMatch(/TOOL_LIMIT/);
+    expect.assert(run.trace.every((item) => item.surface === 'knowledge'));
+    expect(JSON.stringify(run.trace).includes('报价')).toBe(false);
     await tools.drain(run);
   } finally {
     await store.close();

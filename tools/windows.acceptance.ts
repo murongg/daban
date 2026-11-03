@@ -67,7 +67,18 @@ for (const smoke of smokes)
 try {
   const sdk = await run(
     path.join(agent, 'node/node.exe'),
-    ['--experimental-sqlite', '--test', ...smokes],
+    [
+      '--experimental-sqlite',
+      fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url)),
+      'run',
+      '--config',
+      fileURLToPath(new URL('./testing/packaged.config.ts', import.meta.url)),
+      '--root',
+      agent,
+      '--reporter=verbose',
+      '--maxWorkers=1',
+      ...smokes,
+    ],
     { cwd: agent, timeout: 60000, maxBuffer: 2 * 1024 * 1024 },
   );
   assert.match(sdk.stdout, /real DSH dispatches/);
