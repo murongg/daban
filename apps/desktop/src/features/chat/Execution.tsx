@@ -312,6 +312,12 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
   const [open, setOpen] = useState(false);
   const ready = runtime.enabled && runtime.snapshot.phase === 'ready';
   const compatible = ready && runtime.snapshot.protocolVersion >= 33;
+  const active = runtime.snapshot.agents[scope.bot];
+  const planning =
+    active?.runId === scope.runId &&
+    active.conversationId === scope.conversationId &&
+    (scope.conversationId !== undefined || (active.chatRevision ?? 0) === scope.chatRevision) &&
+    active.planning;
   const preparing = compatible && phase === 'starting';
   const available = compatible && !preparing;
   return (
@@ -324,6 +330,7 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
       <summary>
         <ListChecks />
         <span>{t('execution.execution')}</span>
+        {planning && <span className="execution-phase">{t('execution.planningMode')}</span>}
         {phase && <span className="execution-phase">{taskPhase(phase)}</span>}
         <ChevronDown className="execution-chevron" />
       </summary>

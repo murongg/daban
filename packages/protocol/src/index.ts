@@ -1281,6 +1281,7 @@ export function isRunTurn(value: unknown): value is RunTurn {
   );
 }
 export interface RuntimeTask {
+  planning?: boolean;
   chatRevision?: number;
   conversationId?: string;
   model?: ModelId;

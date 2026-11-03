@@ -243,6 +243,7 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  planning?: boolean;
   checkpoint?: import('./checkpoint.js').ConversationCheckpoint;
   chatRevision?: number;
   conversationId?: string;
@@ -369,6 +370,7 @@ export class TaskJournal {
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
         if (task.intentId !== undefined && !validAgentId(task.intentId)) delete task.intentId;
         // A field this build cannot validate is dropped alone; the rest of the saved task stays queryable.
@@ -399,6 +401,8 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.planning !== undefined && typeof value.planning !== 'boolean')
+      throw new Fault('INVALID_PLAN_MODE', 400);
     if (value.checkpoint !== undefined && !isConversationCheckpoint(value.checkpoint))
       throw new Fault('INVALID_CONTEXT_CHECKPOINT', 400);
     if (
@@ -443,6 +447,7 @@ export class TaskJournal {
       'inserts',
       'turns',
       'checkpoint',
+      'planning',
     ];
     const task = Object.fromEntries(
       fields

@@ -87,6 +87,32 @@ function bridge(read: (command: RuntimeCommand) => unknown | Promise<unknown>, p
   };
 }
 
+it('shows plan mode only for the exact displayed conversation and run', async () => {
+  const backend = bridge(() => ({ ...scope, state: 'complete', items: [] }));
+  backend.snapshot.agents[scope.bot] = {
+    ...orderTask,
+    runId: scope.runId,
+    planning: true,
+    conversationId: 'mock-other-group',
+  };
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="completed" />
+    </RuntimeProvider>,
+  );
+  await userEvent.setup().click(await screen.findByText('执行过程'));
+  expect(screen.queryByText('计划模式')).not.toBeInTheDocument();
+  act(() =>
+    backend.publish({
+      ...backend.snapshot,
+      agents: {
+        [scope.bot]: { ...orderTask, runId: scope.runId, chatRevision: 0, planning: true },
+      },
+    }),
+  );
+  expect(await screen.findByText('计划模式')).toBeVisible();
+});
+
 it('loads metadata only after opening and pages full tool content and later events without invoking actions', async () => {
   const long = `${'x'.repeat(31999)}😀合成尾部`;
   const backend = bridge((command) => {

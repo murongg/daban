@@ -58,6 +58,7 @@ import { MemoryTools } from './memory.js';
 import { NativeWorkspace } from './native-workspace.js';
 import { Notes } from './notes.js';
 import { NotesTools } from './notes-tools.js';
+import { planningCommand, projectPlanning } from './planning.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
 import { promptCacheId } from './prompt-cache.js';
@@ -107,7 +108,7 @@ export function sdkPatch(
   origin: string,
   bot: string,
   capability: string,
-  task?: TaskRequest,
+  task?: TaskRequest & { planning?: boolean },
   limit = 60,
   selectedModel: ModelId = model,
   skills: SkillSnapshot = { available: true, key: '', skills: [] },
@@ -174,6 +175,23 @@ export function sdkPatch(
                 },
               },
               { id: 'daban-tool-skill', name: '@deepseek-ai/dsh-tool-skill' },
+            ] as const)
+          : []),
+        ...(task
+          ? ([
+              {
+                id: 'plan-mode',
+                name: '@deepseek-ai/dsh-plan-mode',
+                config: {
+                  section:
+                    'You are in plan mode. Investigate using offered read tools and draft a complete plan of at most 4000 characters. Call exit_plan_mode to present that exact plan for review. Writes, commands, installations and computer/browser actions are unavailable until the following step after approval. Plan approval never grants independent tool permissions.',
+                },
+              },
+              {
+                id: 'planning-policy',
+                name: new URL('./planning.js', import.meta.url).href,
+                config: { active: task.planning ?? planningCommand(task.prompt) ?? false },
+              },
             ] as const)
           : []),
         { id: 'approval', name: '@deepseek-ai/dsh-user-approval', config: { policy: 'ask' } },
@@ -439,6 +457,7 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  planning?: boolean;
   finalizing?: boolean;
   checkpoint?: ConversationCheckpoint;
   route?: ResolvedModel;
@@ -765,6 +784,7 @@ export class ModelRuns {
       if (!latest) continue;
       const job: ModelJob = {
         chatRevision: latest.chatRevision,
+        planning: latest.planning,
         conversationId: latest.conversationId,
         // Saved turns and accepted inserts are what "continue" resumes; replaying only the original prompt would redo finished work.
         inserts: latest.kind === 'chat' ? (latest.inserts ?? []) : [],
@@ -993,6 +1013,7 @@ export class ModelRuns {
       ...(job.model ? { model: job.model } : {}),
       response: job.phase === 'completed' ? undefined : job.response,
       plan: job.plan,
+      planning: job.planning,
       files: job.files,
       running: job.running || !!job.finalizing,
       phase: job.finalizing
@@ -1187,6 +1208,7 @@ export class ModelRuns {
         response: job.phase === 'completed' ? undefined : response || job.response,
         checkpoint: job.checkpoint,
         plan: job.plan,
+        planning: job.planning,
         bot: job.bot,
         runId: job.id,
         intentId: job.intentId,
@@ -1361,6 +1383,14 @@ export class ModelRuns {
       chatRevision,
       conversationId: scope?.id,
       conversationContext: scope?.context,
+      planning: task
+        ? (planningCommand(task.prompt) ??
+          this.journal
+            .history(bot, scope?.id, chatRevision)
+            .reverse()
+            .find((row) => typeof row.planning === 'boolean')?.planning ??
+          false)
+        : undefined,
       attachmentIds: (cachedInputs || task?.files || []).flatMap((file) =>
         file.attachmentId ? [file.attachmentId] : [],
       ),
@@ -1493,6 +1523,9 @@ export class ModelRuns {
             `${config.binding}:local-desktop:${this.tools.options.nativeOnly ? 'native' : 'vm'}`,
           )
           .digest('hex');
+      // Keep the mode across SDK catalog/persona replacements; old context must never silently re-enable writes.
+      if (task)
+        job.binding = createHash('sha256').update(`${job.binding}:planning-v1`).digest('hex');
       const patch = path.join(job.privateDir, 'computer.patch.yml');
       await writeFile(
         patch,
@@ -1501,7 +1534,7 @@ export class ModelRuns {
             this.origin,
             bot,
             job.token,
-            task,
+            task ? { ...task, planning: job.planning } : undefined,
             job.limit,
             config.model,
             job.skills,
@@ -1728,6 +1761,15 @@ export class ModelRuns {
       const checkpoints = new CheckpointTracker(session.id, job.redact!);
       const observe: HarnessObserver = {
         onNotification: (note) => {
+          const planning = projectPlanning(note, session.id);
+          if (planning !== undefined && !job.abort.signal.aborted) {
+            job.planning = planning;
+            this.persist(job)
+              .catch(() => this.stop(job.bot, 'plan-mode-save-failed'))
+              .catch(() => {
+                job.error = 'PLAN_MODE_SAVE_FAILED';
+              });
+          }
           const checkpoint = checkpoints.observe(note);
           if (checkpoint && !job.abort.signal.aborted) {
             job.checkpoint = checkpoint;

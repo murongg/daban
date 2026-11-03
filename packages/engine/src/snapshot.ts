@@ -20,6 +20,7 @@ export interface WindowInfo {
   title: string;
 }
 export interface RawModelTask {
+  planning?: boolean;
   chatRevision?: number;
   conversationId?: string;
   model?: ModelId;
