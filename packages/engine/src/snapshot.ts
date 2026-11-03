@@ -21,6 +21,7 @@ export interface WindowInfo {
 }
 export interface RawModelTask {
   planning?: boolean;
+  elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
   model?: ModelId;

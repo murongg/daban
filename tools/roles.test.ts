@@ -4,9 +4,29 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, test } from 'vitest';
 import * as roles from './roles.ts';
 import { hostPackageFile, materializeHost, moduleGraph, sealHostPackage } from './roles.ts';
+
+test('the standalone executor includes its database dependency without development workspace resolution', async () => {
+  const target = await mkdtemp(path.join(tmpdir(), 'mock-executor-orm-'));
+  try {
+    await roles.buildExecutor(target);
+    const database = pathToFileURL(
+      path.join(target, 'node_modules/@daban/engine/dist/database.js'),
+    ).href;
+    expect(() =>
+      execFileSync(
+        process.execPath,
+        ['--input-type=module', '-e', `await import(${JSON.stringify(database)})`],
+        { stdio: 'pipe' },
+      ),
+    ).not.toThrow();
+  } finally {
+    await rm(target, { recursive: true, force: true });
+  }
+});
 
 test('desktop executor overrides must match the current compiled role instead of silently shipping stale DNS code', async () => {
   const verify = Reflect.get(roles, 'verifyExecutorBuild') as

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  isRunStatistics,
   isTranscriptContent,
   isTranscriptPage,
   managedProtocol,
@@ -29,6 +30,16 @@ test('authenticated transcript reads bind exact run/Bot/private or group scope w
   const scope = { bot: 'mock-api-bot', runId: 'mock-private-run', chatRevision: 0 };
   const group = { bot: scope.bot, runId: 'mock-group-run', conversationId: 'mock-group' };
   const original = '合成完整输出😀\n'.repeat(10000);
+  const stats = {
+    turns: 1,
+    steps: 2,
+    llmMs: 50,
+    toolMs: 20,
+    ttftMs: 10,
+    ttftSteps: 1,
+    decodeMs: 40,
+    decodeTokens: 8,
+  };
   try {
     expect.assert(app.models);
     for (const target of [scope, group]) {
@@ -36,6 +47,7 @@ test('authenticated transcript reads bind exact run/Bot/private or group scope w
         ...target,
         kind: 'chat',
         prompt: '合成保存请求',
+        stats,
         phase: 'completed',
         running: false,
         result: '合成保存回复',
@@ -59,6 +71,11 @@ test('authenticated transcript reads bind exact run/Bot/private or group scope w
     expect(response.status).toBe(200);
     const first: unknown = await response.json();
     expect.assert(isTranscriptPage(first));
+    expect(first).not.toHaveProperty('stats');
+    expect((await post('statistics', { scope }, false)).status).toBe(403);
+    const metrics: unknown = await (await post('statistics', { scope })).json();
+    expect(isRunStatistics(metrics)).toBe(true);
+    expect(metrics).toStrictEqual({ ...scope, stats });
     expect(first.items.length).toBe(20);
     expect(first.nextAfter).toBe(20);
     expect(first.items[0].characters).toBe(original.length);
@@ -85,6 +102,7 @@ test('authenticated transcript reads bind exact run/Bot/private or group scope w
     ];
     for (const scope of foreign) {
       expect((await post('list', { scope })).status).toBe(404);
+      expect((await post('statistics', { scope })).status).toBe(404);
       expect((await post('content', { scope, seq: 1 })).status).toBe(404);
     }
     const grouped: unknown = await (await post('list', { scope: group })).json();

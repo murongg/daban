@@ -7,7 +7,12 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { redact } from './redaction.js';
-import { projectInteraction, projectTranscript, Transcripts } from './transcripts.js';
+import {
+  projectInteraction,
+  projectThinking,
+  projectTranscript,
+  Transcripts,
+} from './transcripts.js';
 import { transcriptRuns } from './transcripts-schema.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
@@ -21,6 +26,49 @@ const call = (seq = 1, text = '{"path":"/workspace/synthetic.txt"}') =>
     name: 'computer__read_file',
     arguments: text,
   });
+
+test('thinking is an owned, redacted record separate from assistant text and survives restart', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-thinking-'));
+  const file = path.join(root, 'transcripts.sqlite');
+  const event = note(7, 'assistant/message', {
+    turn: 1,
+    step: 2,
+    message: {
+      content: [
+        { type: 'reasoning', text: '合成思考 mock-provider-key' },
+        { type: 'text', text: '合成回复' },
+      ],
+    },
+    stream: ['SYNTHETIC PRIVATE RAW STREAM'],
+    internal: 'SYNTHETIC PRIVATE INTERNAL',
+  });
+  const safe = (text: string) => redact(text, ['mock-provider-key']);
+  expect(projectThinking(event, 'foreign-session', safe)).toBeUndefined();
+  expect(
+    projectThinking(note(8, 'assistant/attempt', { text: 'PRIVATE' }), 'mock-session', safe),
+  ).toBeUndefined();
+  const thinking = projectThinking(event, 'mock-session', safe)!;
+  expect(thinking).toMatchObject({ kind: 'thinking', thinkingId: '1:2' });
+  expect(thinking.source).not.toBe(projectTranscript(event, 'mock-session', safe)!.source);
+  expect(thinking.text).toContain('合成思考');
+  expect(thinking.text).not.toMatch(/mock-provider-key|PRIVATE|合成回复/);
+  let log = new Transcripts(file);
+  try {
+    await log.ready;
+    log.begin(scope);
+    log.append(scope, thinking);
+    log.append(scope, thinking);
+    log.finish(scope);
+    await log.close();
+    log = new Transcripts(file);
+    await log.ready;
+    expect(log.page(scope).items).toMatchObject([{ kind: 'thinking', thinkingId: '1:2' }]);
+    expect(log.content(scope, 1).text).toBe(thinking.text);
+  } finally {
+    await log.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('a pre-ORM transcript file keeps its events, interrupts open runs and keeps numbering', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-transcripts-legacy-'));
