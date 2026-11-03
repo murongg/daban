@@ -113,6 +113,8 @@ export class AgentSetup {
     }
     try {
       const info = await file.stat();
+      // An atomic progress replacement unlinks the old observation; discard it without trusting its contents.
+      if (name === 'progress.json' && info.nlink === 0) return undefined;
       if (
         !info.isFile() ||
         info.uid !== process.getuid?.() ||

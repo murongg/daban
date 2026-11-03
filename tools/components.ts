@@ -128,7 +128,8 @@ export async function withComponentStage(operation: (directory: string) => Promi
   try {
     return await operation(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    // Windows may briefly retain the just-executed Node image. Persistent cleanup failures still reject.
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
 }
 

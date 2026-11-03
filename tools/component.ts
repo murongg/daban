@@ -28,7 +28,13 @@ import {
   verifyComponent,
 } from '../apps/desktop/electron/component-install.ts';
 import { fetchComponent, publishComponent } from './component-release.ts';
-import { assembleComponent, assembleLinux, componentSourceId, verifyLinux, withComponentStage } from './components.ts';
+import {
+  assembleComponent,
+  assembleLinux,
+  componentSourceId,
+  verifyLinux,
+  withComponentStage,
+} from './components.ts';
 import { hashAsset } from './environment.ts';
 import { materializeHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
 import { signComponent, signLinux } from './sign.ts';

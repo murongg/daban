@@ -6,7 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { linuxFilename } from '@daban/engine/component';
 import { expect, test } from 'vitest';
-import { assembleComponent, assembleLinux, componentSourceId, verifyLinux, withComponentStage } from './components.ts';
+import {
+  assembleComponent,
+  assembleLinux,
+  componentSourceId,
+  verifyLinux,
+  withComponentStage,
+} from './components.ts';
 import { hashAsset } from './environment.ts';
 
 test.each([false, true])(

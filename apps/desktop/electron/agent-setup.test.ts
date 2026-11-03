@@ -35,6 +35,56 @@ function deferred() {
   return { promise, resolve };
 }
 
+it.each(['progress.json', 'cancel.json'])(
+  'discards only a superseded progress observation while retaining intent-file checks (%s)',
+  async (name) => {
+    const f = await fixture();
+    const setup = new AgentSetup({ config: f.config });
+    await setup.status();
+    const file = join(f.config.dataRoot, name);
+    const content =
+      name === 'progress.json'
+        ? JSON.stringify({ required: true, phase: 'verifying' })
+        : JSON.stringify({ cancelled: true });
+    await fs.writeFile(file, content, { mode: 0o600 });
+    const open = fs.open.bind(fs);
+    let replaced = false;
+    vi.spyOn(fs, 'open').mockImplementation(async (target, flags, mode) => {
+      const handle = await open(target, flags, mode);
+      if (target === file && !replaced) {
+        replaced = true;
+        await fs.writeFile(file + '.replacement', content, { mode: 0o600 });
+        await fs.rename(file + '.replacement', file);
+        expect((await handle.stat()).nlink).toBe(0);
+      }
+      return handle;
+    });
+    try {
+      const read = Reflect.get(setup, 'read') as (file: string) => Promise<unknown>;
+      const result = read.call(setup, name);
+      if (name === 'progress.json') await expect(result).resolves.toBeUndefined();
+      else await expect(result).rejects.toThrow('SETUP_STORE');
+    } finally {
+      await setup.close();
+    }
+  },
+);
+
+it('still rejects a live hard-linked progress file', async () => {
+  const f = await fixture();
+  const setup = new AgentSetup({ config: f.config });
+  await setup.status();
+  const file = join(f.config.dataRoot, 'progress.json');
+  await fs.writeFile(file, JSON.stringify({ required: true, phase: 'verifying' }), { mode: 0o600 });
+  await fs.link(file, file + '.linked');
+  try {
+    const read = Reflect.get(setup, 'read') as (file: string) => Promise<unknown>;
+    await expect(read.call(setup, 'progress.json')).rejects.toThrow('SETUP_STORE');
+  } finally {
+    await setup.close();
+  }
+});
+
 it('a progress read begun before readiness cannot revert completion or start another supervisor', async () => {
   const f = await fixture();
   const entered = deferred(),
