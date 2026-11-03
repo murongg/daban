@@ -89,6 +89,9 @@ export function runtimeService(
         })
       : undefined;
   function componentChanged(next: SetupStatus) {
+    // Log only bounded preparation enums/codes, never paths, URLs or model credentials.
+    if (setupState?.phase !== next.phase)
+      console.info('[agent-components]', next.phase, next.error ?? '');
     setupState = next;
     publish(state);
   }
