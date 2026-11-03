@@ -6,9 +6,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { projectTranscript, Transcripts } from './transcripts.js';
+import { projectThinking, projectTranscript, Transcripts } from './transcripts.js';
 
-const sdkFile = '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
+const sdkFile =
+  process.env.DABAN_TEST_SDK ||
+  '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
 interface NativeHarness {
   start: () => Promise<unknown>;
   close: () => Promise<unknown>;
@@ -57,6 +59,7 @@ test('the installed native SDK records its actual tool, plan and reply events us
             choices: [{ index: 0, delta, finish_reason }],
           })}\n\n`,
         );
+      emit({ role: 'assistant', reasoning_content: `合成原生思考 ${requests}` }, null);
       if (requests === 1) {
         emit(
           {
@@ -170,6 +173,10 @@ test('the installed native SDK records its actual tool, plan and reply events us
     const session = harness.session();
     const result = await session.run('执行合成计划后回复合成原生SDK完成。', {
       onNotification: (note) => {
+        const thinking = projectThinking(note, session.id, (text) =>
+          text.replaceAll('mock-local-provider-key', '[credential redacted]'),
+        );
+        if (thinking) log.append(scope, thinking);
         if (note && typeof note === 'object' && 'params' in note) {
           const params = note.params as { event?: { type: string }; status?: unknown };
           if (/error|failed|turn\/end/.test(params.event?.type ?? '') || params.status)
@@ -196,8 +203,13 @@ test('the installed native SDK records its actual tool, plan and reply events us
     );
     assert.ok(page.items.some((item) => item.kind === 'plan'));
     assert.ok(page.items.some((item) => item.kind === 'assistant'));
+    assert.equal(page.items.filter((item) => item.kind === 'thinking').length, 2);
+    assert.ok(
+      page.items.filter((item) => item.kind === 'thinking').every((item) => item.thinkingId),
+    );
     const content = page.items.map((item) => log.content(scope, item.seq).text).join('\n');
     assert.ok(content.includes('合成原生检查'));
+    assert.ok(content.includes('合成原生思考 1'));
     assert.equal(content.includes('mock-local-provider-key'), false);
   } finally {
     try {

@@ -116,14 +116,14 @@ export function ChatHistory({
       </p>
       {!runId && (
         <form
-          className="model-actions"
+          className="history-picker"
           onSubmit={(event) => {
             event.preventDefault();
             read().catch((error) => setError(runtimeError(error)));
           }}
         >
-          <div className="field-label">
-            {t('chathistory.conversationNumber')}{' '}
+          <div className="field-label">{t('chathistory.conversationNumber')}</div>
+          <div className="history-picker-controls">
             <NumberField
               label={t('chathistory.conversationNumber')}
               value={number}
@@ -132,10 +132,10 @@ export function ChatHistory({
               max={Math.max(1, revision)}
               disabled={busy}
             />
+            <button type="submit" className="secondary" disabled={busy || !available || !valid}>
+              {t('chathistory.loadRecords')}
+            </button>
           </div>
-          <button type="submit" className="secondary" disabled={busy || !available || !valid}>
-            {t('chathistory.loadRecords')}
-          </button>
         </form>
       )}
       {!available && (
@@ -247,6 +247,8 @@ export function ChatHistory({
                               chatRevision: page.revision,
                             }}
                             phase={item.phase}
+                            elapsedMs={item.elapsedMs}
+                            thinking={item.response?.thinking}
                           />
                         )}
                         <div className="bubble">

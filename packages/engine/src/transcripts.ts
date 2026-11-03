@@ -134,12 +134,7 @@ function visibleContent(value: unknown, redact: (value: string) => string) {
     .join('\n');
 }
 
-export function projectTranscript(
-  note: unknown,
-  session: string,
-  redact: (value: string) => string,
-  prunedResult = false,
-): TranscriptEvent | undefined {
+function nativeEvent(note: unknown, session: string) {
   if (
     !record(note) ||
     note.method !== 'session.event' ||
@@ -158,6 +153,46 @@ export function projectTranscript(
     !Number.isFinite(new Date(event.time).valueOf())
   )
     throw new Fault('INVALID_TRANSCRIPT_EVENT');
+  return { type: event.type, seq: event.seq, time: event.time, data: event.data };
+}
+
+export function projectThinking(
+  note: unknown,
+  session: string,
+  redact: (value: string) => string,
+): TranscriptEvent | undefined {
+  const event = nativeEvent(note, session);
+  if (event?.type !== 'assistant/message') return;
+  const { data } = event;
+  if (!record(data.message) || !Array.isArray(data.message.content))
+    throw new Fault('INVALID_TRANSCRIPT_EVENT');
+  // Only provider-returned text blocks are displayable; never copy the native stream or event envelope.
+  const text = data.message.content
+    .filter(
+      (block) => record(block) && block.type === 'reasoning' && typeof block.text === 'string',
+    )
+    .map((block) => block.text)
+    .join('\n');
+  if (!text) return;
+  return {
+    source: `native:${session}:${event.seq}:thinking`,
+    kind: 'thinking',
+    at: new Date(event.time).toISOString(),
+    text: redact(text),
+    ...(integer(data.turn) && integer(data.step)
+      ? { thinkingId: `${data.turn}:${data.step}` }
+      : {}),
+  };
+}
+
+export function projectTranscript(
+  note: unknown,
+  session: string,
+  redact: (value: string) => string,
+  prunedResult = false,
+): TranscriptEvent | undefined {
+  const event = nativeEvent(note, session);
+  if (!event) return;
   const data = event.data;
   const base = { source: `native:${session}:${event.seq}`, at: new Date(event.time).toISOString() };
   if (event.type === 'tool/call') {
