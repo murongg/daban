@@ -114,7 +114,7 @@ it('reads newly uncovered conversation results only after settings closes', asyn
 it('does not mark initial history unread, marks fresh private/group work and clears only the selected conversation', async () => {
   const fake = connect();
   render(<App />);
-  await waitFor(() => expect(fake.invoke).toHaveBeenCalled());
+  const nav = await screen.findByRole('navigation', { name: 'Bot 列表' });
   expect(screen.queryByRole('status', { name: '写作搭档有未读消息' })).not.toBeInTheDocument();
   const next: RuntimeSnapshot = {
     ...fake.snapshot(),
@@ -130,7 +130,6 @@ it('does not mark initial history unread, marks fresh private/group work and cle
   await act(() => fake.emit(next));
   expect(await screen.findByRole('status', { name: '写作搭档有未读消息' })).toBeVisible();
   expect(screen.getByRole('status', { name: '周报协作有未读消息' })).toBeVisible();
-  const nav = screen.getByRole('navigation', { name: 'Bot 列表' });
   await userEvent.click(within(nav).getByRole('button', { name: '写作搭档' }));
   await act(() => fake.emit({ ...next }));
   expect(screen.queryByRole('status', { name: '写作搭档有未读消息' })).not.toBeInTheDocument();
@@ -243,7 +242,11 @@ it('does not read a new result hidden behind an editor, and reads the visible co
 });
 
 it('searches genuine cached conversation text without presenting shipped demonstration previews as runtime history', async () => {
-  const fake = connect();
+  let release!: () => unknown;
+  const initialStatus = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const fake = connect(initialStatus);
   const state = restore(localStorage.getItem(storageKey));
   state.bots.find((bot) => bot.id === 'research')!.preview = 'MOCK-DEMO-PREVIEW';
   state.messages.research[0].text = 'MOCK-DEMO-BODY';
@@ -255,7 +258,12 @@ it('searches genuine cached conversation text without presenting shipped demonst
   localStorage.setItem(storageKey, serialize(state));
   render(<App />);
   await waitFor(() => expect(fake.invoke).toHaveBeenCalled());
-  const search = screen.getByRole('searchbox', { name: '搜索 Bot 和对话' });
+  // Starting a status request does not mean onboarding has committed the workspace yet.
+  const ready = screen.findByRole('searchbox', { name: '搜索 Bot 和对话' });
+  await act(() => {
+    release();
+  });
+  const search = await ready;
   await userEvent.type(search, 'MOCK-DEMO');
   const nav = screen.getByRole('navigation', { name: 'Bot 列表' });
   expect(within(nav).queryByRole('button', { name: '研究员' })).not.toBeInTheDocument();
