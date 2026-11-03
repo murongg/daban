@@ -1,10 +1,77 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { linuxFilename } from '@daban/engine/component';
 import { expect, test } from 'vitest';
-import { assembleComponent, assembleLinux, componentSourceId, verifyLinux } from './components.ts';
+import { assembleComponent, assembleLinux, componentSourceId, verifyLinux, withComponentStage } from './components.ts';
 import { hashAsset } from './environment.ts';
+
+test.each([false, true])(
+  'component validation discards its stage and preserves validation failure (%s)',
+  async (reject) => {
+    let directory = '';
+    const error = new Error('SYNTHETIC INTEGRITY FAILURE');
+    const validation = withComponentStage(async (stage) => {
+      directory = stage;
+      await writeFile(path.join(stage, 'payload'), 'SYNTHETIC VALIDATION DATA');
+      if (reject) throw error;
+      return 'SYNTHETIC VERIFIED';
+    });
+    if (reject) await expect(validation).rejects.toBe(error);
+    else await expect(validation).resolves.toBe('SYNTHETIC VERIFIED');
+    await expect(lstat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+  },
+);
+
+test.skipIf(process.platform !== 'win32')(
+  'component validation waits for a transient executable lock instead of failing cleanup',
+  async () => {
+    let directory = '';
+    let child: ChildProcessWithoutNullStreams | undefined;
+    let exited: Promise<unknown> | undefined;
+    let release: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await withComponentStage(async (stage) => {
+        directory = stage;
+        const executable = path.join(stage, 'locked-node.exe');
+        await copyFile(process.execPath, executable);
+        child = spawn(
+          executable,
+          [
+            '--experimental-strip-types',
+            fileURLToPath(new URL('./component-lock.fixture.ts', import.meta.url)),
+          ],
+          { stdio: 'pipe' },
+        );
+        const running = child;
+        exited = once(running, 'exit');
+        exited.catch(() => {});
+        await new Promise<undefined>((resolve, reject) => {
+          running.once('error', reject);
+          running.once('exit', () => reject(new Error('SYNTHETIC LOCK FIXTURE EXITED EARLY')));
+          running.stdout.once('data', (data: Buffer) =>
+            data.toString().includes('READY')
+              ? resolve(undefined)
+              : reject(new Error('SYNTHETIC LOCK FIXTURE NOT READY')),
+          );
+        });
+        release = setTimeout(() => running.stdin.end(), 400);
+      });
+      await exited;
+      expect(child?.exitCode).toBe(0);
+      await expect(lstat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      if (release) clearTimeout(release);
+      child?.stdin.end();
+      await exited?.catch(() => {});
+      if (directory)
+        await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    }
+  },
+);
 
 test('component identity follows runtime sources and dependencies, independently of renderer edits', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-component-source-'));
