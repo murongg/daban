@@ -1,6 +1,40 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'vm.advanced': '高级：手动连接 Hyper-V',
+  'vm.managed': '这台 Linux 电脑由搭伴自动管理，无需填写或修改连接参数。',
+  'setup.windowsResources': '运行时使用 {0} GB 内存 · {1} GB 虚拟磁盘，按实际使用增长',
+  'setup.windowsSpace': '至少需要 {0} GB 可用空间 · 当前可用 {1} GB',
+  'setup.windowsAuthorization': 'Windows 将请求管理员授权以启用硬件加速，首次可能需要重启一次。',
+  'setup.windowsRestartNeeded':
+    'Windows 需要重启才能完成加速配置。重启后打开搭伴，将自动继续安装。',
+  'setup.windowsRestart': '重启 Windows…',
+  'setup.windowsRestartTitle': '重启这台电脑？',
+  'setup.windowsRestartConfirm':
+    '请先保存其他应用中的工作。这会重启整台电脑，重启后打开搭伴即可继续安装。有任务运行时，需要先等待任务结束。',
+  'setup.windowsRestartNow': '重启 Windows',
+  'setup.windowsRestartLater': '暂不重启',
+  'setup.windowsAlternatives': '其他安装方式',
+  'setup.windowsCompatibility':
+    '兼容模式无需重启 Windows，但桌面和浏览器操作会更慢，CPU 占用也会更高。',
+  'setup.windowsUseCompatibility': '使用兼容模式（较慢）',
+  'setup.windowsFirmware': '这台电脑尚未在固件设置中开启硬件虚拟化。可以前往开启，或使用兼容模式。',
+  'setup.windowsUnsupported':
+    '此环境包支持 Intel 和 AMD 的 64 位 Windows 电脑。聊天和工作区文件仍可使用。',
+  'setup.windowsDiskSpace': '磁盘可用空间不足，请释放空间后继续安装。',
+  'setup.windowsVerifying': '正在检查环境文件和 Windows 配置…',
+  'setup.windowsExtracting': '正在解压已包含的 Linux 环境…',
+  'setup.windowsCreating': '正在准备你的 Linux 电脑…',
+  'setup.windowsStarting': '正在启动 Linux…',
+  'setup.windowsConnecting': '正在连接并检查执行服务…',
+  'setup.windowsCancelling': '正在暂停安装…',
+  'setup.windowsFailed': '安装未完成，现有文件已保留。请重新打开搭伴后重试。',
+  'setup.windowsBundleMissing': '当前应用包缺少 Linux 环境。请安装完整的 Windows 安装包后继续。',
+  'setup.windowsIntegrity': '环境文件未通过校验，请重新安装完整安装包后重试。',
+  'setup.windowsUncertain':
+    '暂时无法确认 Linux 电脑的状态，请重新打开搭伴以连接现有电脑。应用不会重复创建电脑。',
+  'setup.windowsEnableFailed':
+    'Windows 未能启用硬件加速。请重试并允许 Windows 授权提示，或选择兼容模式。',
   'agentUpgrade.title': '后台需要升级',
   'agentUpgrade.summary': '已连接到旧工作区，升级后台后可使用新版能力。',
   'agentUpgrade.confirm': '重启 Daban 后台以完成升级。Linux 电脑和数据会保留。',
@@ -16,6 +50,39 @@ export const chinese = {
   'agentUpgrade.required': '旧后台需要升级，请在运行环境设置中完成升级后重试。',
   'agentUpgrade.open': '查看后台升级',
 
+  'vm.title': 'Hyper-V Linux 电脑',
+  'vm.description':
+    '连接你已在 Hyper-V 中创建的 Debian x64 虚拟机。请先在 Linux 内安装 Daban 执行服务。',
+  'vm.isolation':
+    '保持 Windows 磁盘不共享。模型密钥和审批留在 Windows，文件、命令和桌面应用在 Linux 内运行。',
+  'vm.vmId': 'Hyper-V 虚拟机 ID',
+  'vm.host': '虚拟机地址',
+  'vm.user': 'SSH 用户名',
+  'vm.identityFile': 'SSH 私钥路径',
+  'vm.sshPort': 'SSH 端口',
+  'vm.hostKey': 'SSH 主机公钥',
+  'vm.hostKeyHelp':
+    '从虚拟机控制台复制 ssh-ed25519 主机公钥。登录私钥只填写本机文件路径，私钥内容不会发送到 Linux。',
+  'vm.idHelp':
+    '在 Hyper-V 中查询虚拟机 ID。Windows 账户须有管理该虚拟机的权限。更换虚拟机身份须使用独立工作区。',
+  'vm.connect': '保存并连接虚拟机',
+  'vm.native': '返回本机模式',
+  'vm.loading': '正在加载虚拟机设置…',
+  'vm.connecting': '正在连接…',
+  'vm.connected': '已连接 Linux 虚拟机。',
+  'vm.configured': '虚拟机设置已保存，连接尚未就绪；请检查地址、SSH 密钥和执行服务后重新连接。',
+  'vm.nativeMode': '当前使用本机模式，已填写的虚拟机设置会保留。',
+  'vm.invalid':
+    '请检查虚拟机 ID、IPv4 地址或主机名、SSH 端口、用户名、私钥绝对路径和 Ed25519 主机公钥。',
+  'vm.unsafe': '无法确认虚拟机配置或私钥位置的安全性，现有文件已保留。',
+  'vm.busy': '后台任务、恢复或连接操作尚未结束，请等待完成后再切换运行模式。',
+  'vm.unsupported': '手动连接 Hyper-V 虚拟机仅适用于 Windows。',
+  'vm.hypervUnavailable':
+    '无法访问所选 Hyper-V 虚拟机，请确认已启用 Hyper-V，且当前 Windows 账户有管理该虚拟机的权限。',
+  'vm.hostKeyChanged': 'SSH 拒绝了虚拟机主机公钥，请从 Hyper-V 控制台核对后再修改已保存的公钥。',
+  'vm.sshAuth': 'SSH 身份验证失败，请检查用户名、私钥权限和免密码登录配置。',
+  'vm.unavailable': 'Linux 虚拟机连接不可用，请检查虚拟机、SSH 连接和 Daban 执行服务。',
+  'vm.targetChanged': '所选虚拟机与工作区保存的执行端身份不一致，请恢复原连接，或使用独立工作区。',
   'setup.agentTitle': '准备 Daban',
   'setup.agentWorking': '正在准备 Daban',
   'setup.agentDescription':

@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdtemp, open, rename, rm, unlink } from 'node:fs/promises';
+import { copyFile, lstat, mkdtemp, open, rename, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type ComponentIndex,
@@ -20,6 +20,7 @@ export interface ComponentOptions {
   arch: string;
   publisher: string;
   fetcher?: typeof fetch;
+  bundledArchive?: string;
 }
 export interface PreparedAgentFiles {
   entry: string;
@@ -183,6 +184,38 @@ export class Components implements RuntimePreparation {
   }
   private async download(signal: AbortSignal) {
     this.publish({ required: true, phase: 'downloading', error: undefined, progress: undefined });
+    if (this.options.bundledArchive) {
+      const source = this.options.bundledArchive;
+      const info = await lstat(source);
+      if (
+        !info.isFile() ||
+        info.isSymbolicLink() ||
+        info.nlink !== 1 ||
+        info.size !== this.payload.bytes
+      )
+        throw Error('COMPONENT_INTEGRITY');
+      const handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const temporary = this.archive + '.' + randomUUID() + '.tmp';
+      try {
+        const current = await handle.stat();
+        if (current.ino !== info.ino || current.dev !== info.dev)
+          throw Error('COMPONENT_INTEGRITY');
+        const hash = createHash('sha256');
+        for await (const chunk of handle.createReadStream({ autoClose: false })) {
+          signal.throwIfAborted();
+          hash.update(chunk);
+        }
+        if (hash.digest('hex') !== this.payload.sha256) throw Error('COMPONENT_INTEGRITY');
+        await copyFile(source, temporary, constants.COPYFILE_EXCL);
+        // Verify the copied bytes through the existing downloader before any extraction or execution.
+        await rename(temporary, this.archive);
+      } finally {
+        await handle.close();
+        await unlink(temporary).catch((error) => {
+          if (!absent(error)) throw error;
+        });
+      }
+    }
     await downloadPayload(this.archive, this.payload, {
       fetcher: this.options.fetcher,
       signal,

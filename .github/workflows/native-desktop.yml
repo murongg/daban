@@ -29,6 +29,18 @@ jobs:
       - run: npm run build
       - name: Test desktop bindings and authority
         run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/electron/components.test.ts apps/desktop/electron/component-install.test.ts apps/desktop/electron/host-selection.test.ts apps/desktop/electron/environment-client.test.ts apps/desktop/src/features/computer/LocalComputer.test.tsx --maxWorkers=2
+      - name: Test manual Hyper-V settings and mode switching
+        run: npx vitest run apps/desktop/electron/vm-config.test.ts apps/desktop/electron/vm-settings.test.ts apps/desktop/electron/service-vm.test.ts apps/desktop/src/features/settings/VirtualMachine.test.tsx --maxWorkers=2
+      - name: Test VM host transport, SSH ownership and restart receipts
+        run: npx vitest run --project node dist-agent/ssh.test.js dist-agent/hyperv.test.js dist-agent/main-hyperv.test.js dist-agent/failure-private.test.js packages/engine/dist/host-vm.test.js packages/engine/dist/reboot-private.test.js packages/engine/dist/vm-config.test.js --maxWorkers=2
+      - name: Test managed QEMU installation, Windows preflight and ordinary-user setup
+        run: |
+          npx vitest run --project node dist-agent/qemu.test.js dist-agent/qemu-store.test.js dist-agent/qmp.test.js dist-agent/seed.test.js dist-agent/qemu-install.test.js dist-agent/qemu-setup.test.js dist-agent/windows.test.js packages/engine/dist/setup-status.test.js packages/engine/dist/environment-api.test.js --maxWorkers=2
+          npx vitest run --project desktop apps/desktop/src/features/onboarding/WindowsSetup.test.tsx apps/desktop/src/features/onboarding/LinuxSetup.test.tsx apps/desktop/electron/restart.test.ts --maxWorkers=2
+      - name: Test standalone Linux bundle
+        run: npx vitest run --project node tools/linux.test.ts tools/sdk.test.ts dist-agent/sdk.test.js --maxWorkers=2
+      - name: Verify Linux task paths from a Windows model host
+        run: npx vitest run --project node packages/engine/dist/model.test.js --testNamePattern="model preparation and output collection use guest workspace references" --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
         run: npx vitest run --project node packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/component-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js --maxWorkers=2
       - name: Test runtime component cleanup with a real Windows executable lock

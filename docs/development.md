@@ -5,7 +5,7 @@
 ## 环境要求
 
 - Node.js 22.15+（22.x）或 24+，以及 npm；建议使用 Node.js 24。
-- Linux 虚拟机模式和 macOS 打包需要 Apple 芯片 Mac；Windows x64 可构建无需 VM 的本机模式。
+- macOS Linux 环境和 Mac 打包需要 Apple 芯片 Mac；Windows x64 可构建本机客户端及 QEMU/WHPX Linux 完整环境包。
 - 执行模型任务需要所选供应商的 API Key，在客户端设置中填写。
 
 仓库不包含环境镜像、随包后台资源、虚拟机磁盘或用户凭据。仅克隆源码和安装依赖，不会得到完整的 Linux 运行环境。
@@ -117,14 +117,41 @@ npm run bundle:desktop -- /absolute/path/to/environment-pack /absolute/path/to/n
 
 ```sh
 npm ci
-npm run bundle:windows -- C:/build/Daban-win-x64 C:/tools/node-v24.22.1-win-x64
+npm run build
+node --experimental-strip-types tools/component.ts build C:/build/Daban-runtime-win-x64 C:/tools/node-v24.22.1-win-x64
+node --experimental-strip-types tools/component.ts reference C:/build/Daban-runtime-win-x64/Daban-runtime-windows-x64.zip C:/build/runtime-windows-x64.json
+node --experimental-strip-types tools/windows.ts C:/build/Daban-win-x64 C:/build/runtime-windows-x64.json
 ```
 
-输出目录必须尚不存在，运行其中的 `Daban.exe`。随包提供后台、DSH 和原生输入组件，无需 Lima、WSL 或 Docker。首次使用直接配置模型；在 Bot 的电脑面板授权本机桌面操作。当前仅控制主显示器和当前用户能操作的应用，不自动通过 UAC 或管理员界面。
+运行组件和客户端的输出目录必须尚不存在，运行客户端目录中的 `Daban.exe`。客户端包含原生输入组件，并通过清单下载独立的后台和 DSH 运行组件，无需 Lima、WSL 或 Docker。本地构建的运行组件须另行发布，或按清单中的 SHA256 命名为 `<sha256>.zip` 并放入 `%APPDATA%/daban-preview/components/downloads/` 缓存，才能验证未发布版本的首次启动。首次使用先准备运行组件，再配置模型；在 Bot 的电脑面板授权本机桌面操作。当前仅控制主显示器和当前用户能操作的应用，不自动通过 UAC 或管理员界面。
 
 本机权限只保存在客户端内存中，按 Bot、模型和连接修订绑定。返回 Daban、锁屏、休眠或按 Ctrl + Alt / Option + Esc 暂停；关闭客户端撤销桌面授权。Windows 命名管道使用校验服务端证书的 TLS，公开证书在成功监听后发布到受 ACL 保护的用户目录，密钥不发送给未验证的监听者。
 
-Windows 本机模式尚无 Linux 工作区的 shell、文件和进程工具，桌面 GUI 仍可操作真实应用与文件。`Native desktop` 工作流构建便携包并运行合成测试；签名和真实 Windows 桌面的手工验收仍需分别完成。
+Windows 本机模式尚无 Linux 工作区的 shell、文件和进程工具，桌面 GUI 仍可操作真实应用与文件。完整 Windows 环境包提供 QEMU/WHPX 自动安装；已有 Hyper-V 保留在高级设置。见 [Windows Linux 电脑](windows-vm.md)。`Native desktop` 工作流继续构建轻量便携包；完整 Linux 环境包需按下节准备，不能把不存在的发布地址当作可下载环境。
+
+## Windows 完整 Linux 环境包
+
+镜像构建只在专用构建 VM 中进行。校验官方 Debian 13 generic amd64 raw 镜像和官方链接的 QEMU Windows 安装器后，提取所需的 QEMU 程序、DLL、固件及许可证。运行 `tools/qemu-image.ts prepare <new-build-data> <verified-qemu-directory> <verified-debian-raw>` 创建并启动 TCG 构建 VM。按 Windows 接入指南，在该构建 VM 中安装 Node 24.22.1 和 Linux executor；不要引入模型凭据或真实工作内容。
+
+运行 `tools/qemu-image.ts seal <build-data> <new-environment-directory>` 清理测试用户状态、SSH 身份、executor token、浏览器缓存和 cloud-init 信息，执行 trim、正常关机和 qcow2 检查，再输出带双重 SHA256 的压缩镜像、固定工具清单及来源记录。此命令核对专用构建回执和实际 QEMU UUID，不能用于普通用户 VM。
+
+完整客户端构建命令：
+
+```powershell
+npm run build
+node --experimental-strip-types tools/component.ts build C:/build/runtime C:/tools/node-v24.22.1-win-x64
+node --experimental-strip-types tools/component.ts reference C:/build/runtime/Daban-runtime-windows-x64.zip C:/build/runtime/reference.json
+node --experimental-strip-types tools/windows.ts C:/build/Daban-complete C:/build/runtime/reference.json C:/build/qemu-environment C:/build/runtime/Daban-runtime-windows-x64.zip
+node --experimental-strip-types tools/installer.ts C:/build/Daban-complete C:/build/installer
+```
+
+完整包包含离线 runtime.zip 和 `resources/environment/qemu`，安装时仍执行相同的归档和文件完整性校验。无需先发布运行组件，也不依赖用户机器上的 QEMU、Node、WSL 或 Docker。NSIS 为每用户一键安装，应用数据在卸载时保留；启用 WHPX 的 UAC 授权与 Windows 必要重启由应用中的明确操作触发。
+
+`tools/qemu-install.acceptance.ts <bundle> <new-agent-data> tcg|whpx` 验证从空目录到执行服务连接。WHPX 验收必须在 Windows 已完成必要重启、真实探测为 ready 后进行，不能以 TCG 结果替代。`tools/qemu-verify.ts start|resume <agent-data> <report-directory> [vm-config-file]` 分两个独立 Windows 进程验证桌面、浏览器和后台任务续跑；测试桌面客户端的 profile 时传入其父目录内的 `runtime.json`。`tools/qemu-reuse.acceptance.ts <test-agent-data>` 验证旧应用包移除后仍能复用已安装 VM。
+
+`tools/qemu-client.acceptance.ts <Daban.exe> <new-profile> <reports> tcg|whpx` 使用全新私有 profile 验证实际打包客户端：安装时关窗仍继续、自动接入、桌面键盘/文件/浏览器，以及真实客户端退出后的后台任务。仅可对该工具创建的 marker 使用 `--resume` 接续，不能使用个人 profile。当前固定 BIOS 在 WHPX + host CPU 下需要 QEMU 处理中断；CPU 仍由 WHPX 加速。更新 QEMU/固件前须重跑真实 BIOS 启动及客户端验收，不能只验证 API 可用。
+
+可用 Electron 标准参数 `--user-data-dir=<absolute-test-directory>` 隔离测试资料。正常启动仍使用原有用户目录；不要在已有个人目录中运行新用户验收。
 
 ## 数据与本地产物
 

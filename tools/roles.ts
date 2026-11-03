@@ -20,6 +20,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAst } from 'rolldown/parseAst';
+import { patchSdk } from './sdk.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 export function hostPackageFile(directory: string, source: string) {
@@ -253,6 +254,11 @@ export async function packageHost(target: string, nodeDirectory: string) {
   );
   console.timeEnd('runtime:dependencies');
   console.time('runtime:host-helpers');
+  await patchSdk(path.join(target, 'package.json'));
+  await writeFile(
+    path.join(target, 'SDK-PATCHES.md'),
+    'DSH SDK 0.2.1-rc.3: the pinned client spawn sets windowsHide=true to prevent an interactive Windows console. Its process ownership, arguments, environment and stdio protocol are unchanged.\n',
+  );
   for (const name of ['source-reader', 'restore-worker']) {
     const { build } = await import('vite');
     await build({

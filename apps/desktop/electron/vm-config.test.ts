@@ -1,0 +1,66 @@
+import { isVmCommand, isVmConnection, isVmConnectionStatus } from '@daban/protocol';
+import { expect, it } from 'vitest';
+import { parseCommand } from './ipc';
+
+const connection = {
+  provider: 'hyperv',
+  enabled: true,
+  vmId: '11111111-2222-4333-8444-555555555555',
+  host: '192.0.2.10',
+  sshPort: 22,
+  user: 'mock-bot',
+  identityFile: 'C:/mock/id_ed25519',
+  hostKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+};
+
+it('accepts only a bounded explicit Hyper-V identity and SSH public-key configuration', () => {
+  expect(isVmConnection(connection)).toBe(true);
+  for (const patch of [
+    { vmId: "mock'; Stop-VM *" },
+    { host: '-oProxyCommand=mock' },
+    { host: 'mock.test\nHost *' },
+    { sshPort: 0 },
+    { sshPort: 65536 },
+    { user: '-root' },
+    { identityFile: 'mock\nkey' },
+    { hostKey: 'ssh-rsa SYNTHETIC' },
+    { token: 'SYNTHETIC SECRET' },
+  ])
+    expect(isVmConnection({ ...connection, ...patch })).toBe(false);
+});
+
+it('validates local VM commands before dispatch and never accepts credential contents', () => {
+  for (const command of [
+    { type: 'vm.status' },
+    { type: 'vm.native' },
+    { type: 'vm.configure', connection },
+  ]) {
+    expect(isVmCommand(command)).toBe(true);
+    expect(parseCommand(command)).toEqual(command);
+  }
+  expect(isVmCommand({ type: 'vm.native', force: true })).toBe(false);
+  expect(() =>
+    parseCommand({ type: 'vm.configure', connection: { ...connection, key: 'mock' } }),
+  ).toThrow('INVALID_COMMAND');
+  expect(isVmConnectionStatus({ supported: true, connection })).toBe(true);
+  expect(isVmConnectionStatus({ supported: false })).toBe(true);
+  expect(isVmConnectionStatus({ supported: true, token: 'mock' })).toBe(false);
+});
+
+it('requires explicit acceleration intent and keeps managed QEMU credentials out of renderer configuration commands', () => {
+  for (const command of [
+    { type: 'setup.start', mode: 'tcg' },
+    { type: 'setup.start', mode: 'whpx' },
+    { type: 'setup.enable', confirmed: true },
+    { type: 'setup.restart', confirmed: true },
+  ])
+    expect(parseCommand(command)).toStrictEqual(command);
+  for (const command of [
+    { type: 'setup.start', mode: 'untrusted' },
+    { type: 'setup.enable' },
+    { type: 'setup.restart', confirmed: false },
+    { type: 'setup.start', command: 'mock' },
+    { type: 'vm.configure', connection: { ...connection, provider: 'qemu', host: '127.0.0.1' } },
+  ])
+    expect(() => parseCommand(command)).toThrow('INVALID_COMMAND');
+});

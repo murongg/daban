@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { vmErrorKey } from '../../shared/vm';
 import { type MessageKey, t, useLocale } from '../i18n/locale';
 
 interface Connection {
@@ -122,6 +123,8 @@ export function useRuntime() {
 }
 export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
+  const vmKey = vmErrorKey(error);
+  if (vmKey) return t(vmKey);
   const messages: Record<string, string> = {
     AGENT_LEGACY_RESTART_REQUIRED: t('agentUpgrade.required'),
     AGENT_LEGACY_RESTART_UNAVAILABLE: t('agentUpgrade.manual'),

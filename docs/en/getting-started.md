@@ -11,6 +11,7 @@ Daban is a local AI workspace. Configure a model, then create a Bot. Ordinary co
 | Apple silicon Mac with a Linux VM | Independent Linux desktops, browser, files, and command tools | Multiple Bots working separately with shared files and browser sign-ins |
 | Native macOS desktop (current Mac packages target Apple silicon) | The current user's primary display | Real Mac applications |
 | Native Windows x64 desktop | The current user's primary display | Real Windows applications |
+| Windows x64 complete environment package + QEMU/WHPX | Independent Linux desktops, browser, files and command tools | Install from the computer panel; existing Hyper-V connections remain in advanced settings |
 
 Use a complete desktop package supplied by the maintainer and an API key from a model provider. The provider bills your API usage. Packaged clients include the background service and DSH; Docker, Node.js, and DSH do not need separate installation. A source checkout alone is not a complete desktop distribution.
 
@@ -38,4 +39,4 @@ Start with [Troubleshooting](troubleshooting.md) when something goes wrong. Pres
 
 ## Optional Linux computer
 
-The small client downloads and caches the background service, Node.js, and DSH on first use. Configure a model to start chatting; no VM is required. Add a Linux computer later from the computer panel or runtime settings. Lima tools, the Linux executor, and the system image download only when you choose to install Linux. Downloads support pause and resume, and verified caches and existing installations are reused. Reserve 40 GB of free disk space for the first Linux installation. Linux is currently available on Apple silicon Macs; Windows uses the local desktop.
+The client prepares and caches the core Agent components on first use. Configure a model to start chatting; no VM is required. On Apple silicon Macs, add Linux later from the computer panel or runtime settings. Lima tools, the Linux executor, and the system image download only when you choose to install Linux. Downloads support pause and resume, and verified caches and existing installations are reused. Reserve 40 GB of free disk space for the first Mac Linux installation. The complete Windows package bundles QEMU and Debian for one-click installation. Enabling hardware acceleration may require Windows authorization and a restart; explicitly choosing slower compatibility mode avoids that restart. See [Windows installation and advanced connections](../windows-vm.md).

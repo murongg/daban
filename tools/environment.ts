@@ -5,6 +5,7 @@ import { constants, createWriteStream } from 'node:fs';
 import {
   chmod,
   copyFile,
+  lstat,
   mkdir,
   mkdtemp,
   open,
@@ -22,7 +23,7 @@ export const environmentVersions = {
   node: '24.22.1',
   dsh: '0.2.1-rc.3',
   // The host test binds this to managedProtocol; this helper must also load in the bare guest.
-  protocol: 43,
+  protocol: 44,
 };
 export const environmentAssets = {
   lima: {
@@ -60,10 +61,19 @@ export async function verifyAsset(file: string, algorithm: 'sha256' | 'sha512', 
   return result.bytes;
 }
 export async function hashAsset(file: string, algorithm: 'sha256' | 'sha512') {
+  // Windows does not implement O_NOFOLLOW; reject links before opening and bind the handle to that file.
+  const identity = await lstat(file);
+  if (!identity.isFile() || identity.isSymbolicLink()) throw new Error('ASSET_NOT_REGULAR');
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.nlink !== 1) throw new Error('ASSET_NOT_REGULAR');
+    if (
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      before.dev !== identity.dev ||
+      before.ino !== identity.ino
+    )
+      throw new Error('ASSET_NOT_REGULAR');
     const hash = createHash(algorithm);
     for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
     const after = await handle.stat();

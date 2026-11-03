@@ -34,11 +34,24 @@ const phase =
     ] as const
   ).find((value) => value === query.get('phase')) ?? 'starting';
 const snapshot = disconnected('ready');
+const windows = query.get('platform') === 'win32';
 snapshot.protocolVersion = managedProtocol;
 snapshot.setup = {
-  required: phase !== 'waiting',
+  required: windows || phase !== 'waiting',
   target: query.get('target') === 'agent' ? 'agent' : 'linux',
   phase,
+  ...(windows
+    ? {
+        windows: {
+          acceleration: phase === 'waiting' ? ('restart' as const) : ('disabled' as const),
+          mode: 'whpx' as const,
+          memoryMiB: 6144,
+          diskGiB: 64,
+          requiredBytes: 8 * 1024 ** 3,
+          availableBytes: 40 * 1024 ** 3,
+        },
+      }
+    : {}),
   ...(query.has('progress') ? { progress: Number(query.get('progress')) } : {}),
   ...(phase === 'failed'
     ? { error: 'SETUP_CONNECT' }
@@ -52,14 +65,31 @@ const bridge: RuntimeBridge = {
     if (
       command.type !== 'status' &&
       command.type !== 'setup.start' &&
+      command.type !== 'setup.enable' &&
+      command.type !== 'setup.restart' &&
       command.type !== 'setup.cancel'
     )
       return { ok: false, error: 'PREVIEW_UNAVAILABLE' };
     if (command.type !== 'status') {
       snapshot.setup = {
+        ...snapshot.setup,
         required: true,
         target: snapshot.setup?.target,
-        phase: command.type === 'setup.start' ? 'verifying' : 'cancelled',
+        phase:
+          command.type === 'setup.start'
+            ? 'verifying'
+            : command.type === 'setup.enable' || command.type === 'setup.restart'
+              ? 'waiting'
+              : 'cancelled',
+        ...(snapshot.setup?.windows
+          ? {
+              windows: {
+                ...snapshot.setup.windows,
+                ...(command.type === 'setup.start' && command.mode ? { mode: command.mode } : {}),
+                ...(command.type === 'setup.enable' ? { acceleration: 'restart' as const } : {}),
+              },
+            }
+          : {}),
       };
       for (const listener of listeners) listener(structuredClone(snapshot));
     }
@@ -72,13 +102,15 @@ const bridge: RuntimeBridge = {
 };
 Object.defineProperty(window, 'daban', {
   configurable: true,
-  value: { platform: 'darwin', runtime: bridge },
+  value: { platform: windows ? 'win32' : 'darwin', runtime: bridge },
 });
 function Preview() {
   const runtime = useRuntime();
   return runtime.snapshot.setup ? (
     query.get('target') === 'linux' ? (
-      <LinuxSetup />
+      <main style={{ padding: 24, maxWidth: 680 }}>
+        <LinuxSetup />
+      </main>
     ) : (
       <Setup />
     )

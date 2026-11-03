@@ -47,6 +47,37 @@ test('host negotiates model capabilities before sending new execution fields to 
   expect(calls[1].vision).toBe(true);
 });
 
+test('host sends only the authorized task prompt to guests advertising browser task support', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const execution = {
+    snapshot: { capabilities: ['browser-task-v1'] },
+    call: async (_method: string, params: Record<string, unknown>) => {
+      calls.push(params);
+      return { tools: [] };
+    },
+  };
+  const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), { execution });
+  const run: AgentToolRun = {
+    id: 'mock-browser-task',
+    bot: 'mock-a',
+    workdir: '/mock/task',
+    canonicalRoot: '/mock/task',
+    abort: new AbortController(),
+    limit: 10,
+    toolCount: 0,
+    seen: {},
+    trace: [],
+    task: {
+      requestId: 'mock-request',
+      prompt: 'Operate the synthetic form',
+      memory: 'SYNTHETIC PRIVATE MEMORY',
+    },
+  };
+  await tools.open(run);
+  expect(calls[0].prompt).toBe('Operate the synthetic form');
+  expect(JSON.stringify(calls[0])).not.toContain('SYNTHETIC PRIVATE MEMORY');
+});
+
 test('model RPC identities retain Host deduplication and become stable bounded Guest wire IDs', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-remote-wire-'));
   const hostIds: (string | undefined)[] = [];

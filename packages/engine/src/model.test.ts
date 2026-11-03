@@ -5,6 +5,7 @@ import { turnLimit } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { editorShowsFile, ModelRuns, sdkPatch, verifyOutput, verifyTask } from './model.js';
+import { secureDirectory } from './private-files.js';
 import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
@@ -1112,7 +1113,8 @@ test('host model admission fences computer changes and RPC cannot forge VM comma
 });
 
 test('model preparation and output collection use guest workspace references while DSH evidence stays local', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-remote-model-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-remote-model-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   let configuredCwd = '';
@@ -1152,6 +1154,14 @@ test('model preparation and output collection use guest workspace references whi
         return [
           { path: 'mock-output.txt', name: 'mock-output.txt', size: 4, modified: 'mock-time' },
         ];
+      if (method === 'workspace.read')
+        return {
+          path: params.path,
+          name: 'mock-input.txt',
+          content: 'SYNTHETIC INPUT',
+          size: 15,
+          modified: 'mock-time',
+        };
       return { ok: true };
     },
   };
@@ -1180,9 +1190,31 @@ test('model preparation and output collection use guest workspace references whi
       /mock-remote-session/,
     );
     expect(job.files[0].name).toBe('mock-output.txt');
+    expect(job.files[0].path).toBe(
+      path.posix.relative('/mock-guest/shared', path.posix.join(job.workdir, 'mock-output.txt')),
+    );
     expect(calls.filter((call) => call.method === 'workspace.write').length).toBe(1);
     expect.assert(
       calls.some((call) => call.method === 'workspace.list' && call.params.root === job.workdir),
+    );
+    await models.start('mock-bot', {
+      requestId: 'mock-remote-retry',
+      prompt: 'Retry the synthetic task.',
+      retryOf: job.id,
+    });
+    const retry = models.jobs.get('mock-bot')!;
+    await retry.done;
+    expect(retry.phase, retry.error).toBe('completed');
+    expect.assert(
+      calls.some(
+        (call) =>
+          call.method === 'workspace.read' &&
+          call.params.path ===
+            path.posix.relative(
+              '/mock-guest/shared',
+              path.posix.join(job.workdir, 'mock-input.txt'),
+            ),
+      ),
     );
     failDrain = true;
     await models.start('mock-other-bot', {
@@ -1198,7 +1230,7 @@ test('model preparation and output collection use guest workspace references whi
     failDrain = false;
   } finally {
     await models.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 

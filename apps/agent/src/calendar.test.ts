@@ -7,7 +7,8 @@ import { expect, test } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
 test('real host calendar recovers an accepted archive and preserves schedules and other Bots after restart', async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-host-calendar-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-host-calendar-'));
+  const root = path.join(temporary, 'private');
   const scope = createHash('sha256').update(root).digest('hex');
   const options = {
     dataRoot: root,
@@ -22,7 +23,7 @@ test('real host calendar recovers an accepted archive and preserves schedules an
   let agent: Awaited<ReturnType<typeof startNativeAgent>> | undefined;
   t.onTestFinished(async () => {
     await agent?.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   });
   agent = await startNativeAgent(options);
   const store = agent.models.tools.schedules?.store;

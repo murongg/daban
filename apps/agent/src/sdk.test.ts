@@ -1,7 +1,10 @@
+import childProcess, { type SpawnOptions } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import path, { join } from 'node:path';
+import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
+import { expect, test, vi } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
 test('agent resolves its owned SDK entry only when both SDK and DSH match the pinned version', async () => {
@@ -63,5 +66,32 @@ test('agent reports unavailable SDK packages without exposing resolution diagnos
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('the installed SDK starts background runtimes without a Windows console and preserves stdio transport', () => {
+  let options: SpawnOptions | undefined;
+  const launch = vi.spyOn(childProcess, 'spawn').mockImplementation((_program, _args, value) => {
+    options = value;
+    throw Error('SYNTHETIC_PROCESS_CAPTURED');
+  });
+  syncBuiltinESMExports();
+  try {
+    const directory = path.resolve('mock-project');
+    const harness = new DeepSeekHarness({
+      profile: 'sdk-minimal',
+      processCwd: directory,
+      dshHome: path.join(directory, 'mock-dsh'),
+      env: { SYNTHETIC_ENV: 'mock-value' },
+    });
+    expect(() => harness.client.start()).toThrow('SYNTHETIC_PROCESS_CAPTURED');
+    expect(options?.windowsHide).toBe(true);
+    expect(options?.stdio).toEqual(['pipe', 'pipe', 'pipe']);
+    expect(options?.cwd).toBe(directory);
+    expect(options?.env?.SYNTHETIC_ENV).toBe('mock-value');
+    expect(options?.env?.DABAN_MODEL_KEY).toBeUndefined();
+  } finally {
+    launch.mockRestore();
+    syncBuiltinESMExports();
   }
 });

@@ -40,6 +40,7 @@ import {
   isTranscriptContentQuery,
   isTranscriptQuery,
   isUserReply,
+  isVmCommand,
   isWorkCommentCommand,
   isWorkQuery,
   isWorkWrite,
@@ -76,6 +77,7 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
   if (['work.comments', 'work.comment', 'work.comment-receipt'].includes(value.type))
@@ -177,8 +179,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'memory.history': ['type', 'bot', 'query'],
     status: ['type'],
     'setup.status': ['type'],
-    'setup.start': ['type'],
+    'setup.start': ['type', 'mode'],
     'setup.cancel': ['type'],
+    'setup.enable': ['type', 'confirmed'],
+    'setup.restart': ['type', 'confirmed'],
     'agent.upgrade': ['type', 'confirmed'],
     'runtime.inspect': ['type'],
     'recovery.status': ['type'],
@@ -200,6 +204,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
     app: ['type', 'bot', 'epoch', 'app', 'instance'],
   };
   if (!fields[v.type as string] || !keys(v, fields[v.type as string])) return fail();
+  if (v.type === 'setup.start' && v.mode !== undefined && v.mode !== 'whpx' && v.mode !== 'tcg')
+    return fail();
+  if ((v.type === 'setup.enable' || v.type === 'setup.restart') && v.confirmed !== true)
+    return fail();
   if (v.type === 'agent.upgrade' && v.confirmed !== true) return fail();
   if (String(v.type).startsWith('skill.')) {
     if (!validAgentId(v.bot)) return fail();

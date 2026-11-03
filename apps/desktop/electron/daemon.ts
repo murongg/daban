@@ -11,6 +11,7 @@ export interface DaemonConfig {
   vmConfig: string;
   executable: string;
   entry: string;
+  qemuBundle?: string;
 }
 export interface DaemonIdentity {
   role: 'agent';

@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import type { ExecutionRequest, ExecutionRun, ExecutionSnapshot } from '@daban/protocol';
 import {
+  browserTaskCapability,
   executionCapabilities,
   executionKeys,
   executionRecord,
@@ -497,7 +498,12 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         version: 1,
         boot,
         nonce,
-        capabilities: [...executionCapabilities, modelExecutionCapability, skillPackageCapability],
+        capabilities: [
+          ...executionCapabilities,
+          modelExecutionCapability,
+          skillPackageCapability,
+          browserTaskCapability,
+        ],
         computer: {
           mode: raw.mode,
           bots: raw.bots,
@@ -597,6 +603,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         if (!canonical.startsWith(base + path.sep)) throw new Fault('EXECUTION_WORKSPACE_SCOPE');
         const run: AgentToolRun = {
           ...fields,
+          ...(fields.prompt ? { task: { requestId: fields.id, prompt: fields.prompt } } : {}),
           abort: new AbortController(),
           toolCount: 0,
           seen: {},

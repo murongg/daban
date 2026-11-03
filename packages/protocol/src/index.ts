@@ -11,8 +11,12 @@ import {
 
 export * from './execution.js';
 export * from './local-computer.js';
+export * from './vm.js';
+export * from './windows.js';
 
 import { isSoftwarePlan, type SoftwarePlan, type SoftwareState } from './software.js';
+import type { VmCommand } from './vm.js';
+import { isWindowsSetup, type QemuMode, type WindowsSetup } from './windows.js';
 
 export * from './software.js';
 
@@ -31,7 +35,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 43;
+export const managedProtocol = 44;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1409,17 +1413,28 @@ export interface SetupStatus {
   downloaded?: number;
   total?: number;
   error?: string;
+  windows?: WindowsSetup;
 }
 export function isSetupStatus(value: unknown): value is SetupStatus {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const item = value as Record<string, unknown>;
   return (
     Object.keys(item).every((key) =>
-      ['required', 'phase', 'target', 'progress', 'downloaded', 'total', 'error'].includes(key),
+      [
+        'required',
+        'phase',
+        'target',
+        'progress',
+        'downloaded',
+        'total',
+        'error',
+        'windows',
+      ].includes(key),
     ) &&
     typeof item.required === 'boolean' &&
     setupPhases.includes(item.phase as SetupPhase) &&
     (item.target === undefined || item.target === 'agent' || item.target === 'linux') &&
+    (item.windows === undefined || (item.target === 'linux' && isWindowsSetup(item.windows))) &&
     (item.progress === undefined ||
       (typeof item.progress === 'number' &&
         Number.isFinite(item.progress) &&
@@ -3835,6 +3850,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | VmCommand
   | NoteCommand
   | WorkCommentCommand
   | { type: 'work.list'; query: WorkQuery }
@@ -3849,7 +3865,9 @@ export type RuntimeCommand =
   | { type: 'bot.import.begin' | 'bot.import.cancel'; header: BotImportHeader }
   | { type: 'bot.import.submit'; id: string; bundle: BotBundle }
   | { type: 'bot.import.status' | 'bot.import.retry'; id: string }
-  | { type: 'setup.status' | 'setup.start' | 'setup.cancel' }
+  | { type: 'setup.status' | 'setup.cancel' }
+  | { type: 'setup.start'; mode?: QemuMode }
+  | { type: 'setup.enable' | 'setup.restart'; confirmed: true }
   | { type: 'agent.upgrade'; confirmed: true }
   | { type: 'recovery.status' | 'recovery.review' }
   | { type: 'recovery.restart'; request: RecoveryRequest }

@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { componentIndex } from '@daban/engine/component';
+import { secureDirectory } from '@daban/engine/local-computer';
 import type { SetupStatus } from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 import { componentPaths } from './component-install';
@@ -25,8 +26,10 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 async function fixture() {
-  const directory = await mkdtemp(path.join(tmpdir(), 'mock-runtime-preparation-'));
-  roots.push(directory);
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-runtime-preparation-'));
+  roots.push(root);
+  // Fresh private children receive Windows ACLs; mkdtemp inherits the shared temp ACL.
+  const directory = await secureDirectory(path.join(root, 'private'));
   const bytes = Buffer.from('SYNTHETIC VERIFIED COMPONENT ARCHIVE'),
     id = 'a'.repeat(64);
   const options = {
@@ -83,6 +86,22 @@ it('prepares a component once and checks its cached installation again after res
   expect(f.options.fetcher).toHaveBeenCalledTimes(1);
   expect(f.extract).toHaveBeenCalledTimes(1);
   expect(f.verify).toHaveBeenCalledTimes(2);
+});
+
+it('prepares the bundled runtime offline and applies the same archive integrity and installation verification', async () => {
+  const f = await fixture();
+  const archive = path.join(f.options.directory, 'bundled.zip');
+  await writeFile(archive, f.bytes);
+  const source = new Components({ ...f.options, bundledArchive: archive }, f);
+  await source.prepare();
+  expect(f.options.fetcher).not.toHaveBeenCalled();
+  expect(f.verify).toHaveBeenCalledTimes(1);
+  const broken = await fixture();
+  await writeFile(archive, 'SYNTHETIC CORRUPTION');
+  await expect(
+    new Components({ ...broken.options, bundledArchive: archive }, broken).prepare(),
+  ).rejects.toThrow('COMPONENT_INTEGRITY');
+  expect(broken.extract).not.toHaveBeenCalled();
 });
 
 it('repairs a damaged cache into a new generation without rewriting the old executable', async () => {

@@ -89,9 +89,12 @@ export async function startAgent(options: AgentOptions) {
   )
     throw new Fault('AGENT_INVALID_CONFIG');
   const dataRoot = await privateDirectory(options.dataRoot);
-  const socketParent = await privateDirectory(path.dirname(options.socketPath));
-  const socketPath = path.join(socketParent, path.basename(options.socketPath));
-  if (Buffer.byteLength(socketPath) > 100) throw new Fault('AGENT_SOCKET_TOO_LONG');
+  let socketPath = options.socketPath;
+  if (process.platform !== 'win32') {
+    const socketParent = await privateDirectory(path.dirname(options.socketPath));
+    socketPath = path.join(socketParent, path.basename(options.socketPath));
+    if (Buffer.byteLength(socketPath) > 100) throw new Fault('AGENT_SOCKET_TOO_LONG');
+  }
   await prepareSocket(socketPath);
   const prototype = await startPrototype({
     host: {

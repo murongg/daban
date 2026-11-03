@@ -1,3 +1,4 @@
+import { isExecutionSnapshot } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { RemoteExecutor } from './execution.js';
 
@@ -17,6 +18,26 @@ const snapshot = {
   },
   status: { available: true, revision: 0, limit: 2, items: [] },
 };
+
+test('executor snapshots negotiate the bounded browser task capability without accepting arbitrary capabilities', () => {
+  expect(
+    isExecutionSnapshot({
+      ...snapshot,
+      capabilities: [
+        ...snapshot.capabilities,
+        'model-capabilities-v1',
+        'skill-packages-v1',
+        'browser-task-v1',
+      ],
+    }),
+  ).toBe(true);
+  expect(
+    isExecutionSnapshot({
+      ...snapshot,
+      capabilities: [...snapshot.capabilities, 'synthetic-unknown'],
+    }),
+  ).toBe(false);
+});
 
 test('remote executor rejects authority-shaped or mismatched role snapshots', async () => {
   for (const value of [

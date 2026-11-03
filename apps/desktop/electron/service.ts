@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readVmConnection } from '@daban/engine/host';
 import { secureDirectory } from '@daban/engine/local-computer';
 import {
   type DiagnosticReport,
@@ -19,8 +20,9 @@ import {
   recoveryReader,
   type SetupStatus,
 } from '@daban/protocol';
-import { BrowserWindow, clipboard, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron';
 import { agentUpgradeBlocked, legacyAgentError } from '../shared/agent';
+import { vmErrorKey } from '../shared/vm';
 import { AgentSetup } from './agent-setup';
 import type { PreparedAgentFiles, RuntimePreparation } from './components';
 import { Daemon, daemonScope } from './daemon';
@@ -30,12 +32,14 @@ import { reconcileAgent } from './host-selection';
 import { parseCommand, trustedSender } from './ipc';
 import type { LocalComputer } from './local-computer';
 import { NativeDaemon } from './native-daemon';
+import { restartWindows } from './restart';
 import { RuntimeClient } from './runtime';
 import { Setup } from './setup';
 import { pickSkill } from './skill-picker';
 import { controlSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
 import { prepareAgentUpdate } from './upgrade';
+import { VmSettings } from './vm-settings';
 
 interface AgentLocations {
   dataRoot?: string;
@@ -77,6 +81,7 @@ export function runtimeService(
         },
         dataRoot,
         vmConfig,
+        ...(process.platform === 'win32' ? { qemuBundle: join(resources, 'qemu') } : {}),
         socketPath: agent.socketPath ?? controlSocket(join(userData, 'agent.sock'), agentScope!),
       }
     : undefined;
@@ -84,7 +89,7 @@ export function runtimeService(
   let nativeMode = !!agentConfig && process.platform === 'win32';
   const nativeFirst = !!(component || agent?.nativeFirst);
   const environment =
-    agentConfig && process.platform === 'darwin' && nativeFirst
+    agentConfig && ['darwin', 'win32'].includes(process.platform) && nativeFirst
       ? new EnvironmentClient({
           ...{ dataRoot, socketPath: agentConfig.socketPath },
           scope: agentScope!,
@@ -133,6 +138,23 @@ export function runtimeService(
     published = 0,
     lastPoll = 0,
     lastSetupPoll = 0;
+  const vmSettings = new VmSettings({
+    file: vmConfig,
+    handoff: async () => {
+      if (closed || updating || connecting || recovering || !agentConfig || !files)
+        throw new Error('AGENT_UPDATE_BUSY');
+      await reconcileAgent({ ...agentConfig, scope: agentScope! }, nativeMode, { restart: true });
+      if (closed) throw new Error('RUNTIME_CLOSED');
+      await local?.revoke();
+      await daemon?.close();
+      daemon = undefined;
+      client = undefined;
+      reboot = undefined;
+      connection++;
+      published = ++requested;
+    },
+    reconnect: connect,
+  });
   async function managed() {
     if (closed) throw new Error('RUNTIME_CLOSED');
     if (agentConfig) throw new Error('AGENT_CONTROL_ONLY');
@@ -216,7 +238,9 @@ export function runtimeService(
         throw error;
       },
     );
-    const desiredNative = process.platform === 'win32' || (nativeFirst && !configured);
+    const windowsVm = process.platform === 'win32' ? await readVmConnection(vmConfig) : undefined;
+    const desiredNative =
+      process.platform === 'win32' ? !windowsVm?.enabled : nativeFirst && !configured;
     if (nativeFirst) {
       const changed = await reconcileAgent({ ...agentConfig, scope: agentScope! }, desiredNative);
       if (changed) {
@@ -228,13 +252,29 @@ export function runtimeService(
     }
     if (desiredNative) {
       await secureDirectory(agentConfig.dataRoot);
-      const native = daemon instanceof NativeDaemon ? daemon : new NativeDaemon(agentConfig);
+      const native =
+        daemon instanceof NativeDaemon && daemon.mode === 'native'
+          ? daemon
+          : new NativeDaemon(agentConfig);
       daemon = native;
       const connected = await native.ensure();
       nativeMode = true;
       setupState = environment
         ? await environment.invoke('status')
         : { required: false, phase: 'complete' };
+      return connected;
+    }
+    if (process.platform === 'win32') {
+      await secureDirectory(agentConfig.dataRoot);
+      nativeMode = false;
+      const windows =
+        daemon instanceof NativeDaemon && daemon.mode === 'vm'
+          ? daemon
+          : new NativeDaemon(agentConfig, 'vm');
+      daemon = windows;
+      const connected = await windows.ensure();
+      if (closed) throw new Error('RUNTIME_CLOSED');
+      setupState = { required: false, target: 'linux', phase: 'complete' };
       return connected;
     }
     // A partial configuration does not clear a user pause or authorize a legacy VM installation.
@@ -276,10 +316,12 @@ export function runtimeService(
     try {
       // Inspection attaches only to an existing private service; it must not start a daemon or VM.
       if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
-      const response = await unixFetch(agentConfig.socketPath, { maxBytes: 64 * 1024 })(
-        'http://127.0.0.1:8766/agent/identity',
-        { signal: AbortSignal.any([agentTransport.signal, AbortSignal.timeout(2000)]) },
-      );
+      const response = await unixFetch(agentConfig.socketPath, {
+        maxBytes: 64 * 1024,
+        certificateFile: join(agentConfig.dataRoot, 'model/control-certificate.pem'),
+      })('http://127.0.0.1:8766/agent/identity', {
+        signal: AbortSignal.any([agentTransport.signal, AbortSignal.timeout(2000)]),
+      });
       const identity: unknown = await response.json();
       if (
         !response.ok ||
@@ -442,6 +484,10 @@ export function runtimeService(
           publish(disconnected('offline', 'errors.runtimeConnectionUnavailable'));
           return state;
         }
+        if (process.platform === 'win32') {
+          publish(disconnected('offline', vmErrorKey(error) ?? 'vm.unavailable'));
+          return state;
+        }
         if (
           (error instanceof Error && error.message === 'SETUP_REQUIRED') ||
           (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
@@ -503,6 +549,30 @@ export function runtimeService(
       if (connected.phase !== 'ready' || legacyHost) throw Error('AGENT_UPDATE_UNAVAILABLE');
       return connected;
     }
+    if (command.type === 'vm.status') return vmSettings.status();
+    if (command.type === 'vm.configure') return vmSettings.configure(command.connection);
+    if (command.type === 'vm.native') return vmSettings.native();
+    if (command.type === 'setup.restart') {
+      if (!environment || !nativeMode || !agentConfig || state.protocolVersion < 44)
+        throw Error('QEMU_RESTART_UNAVAILABLE');
+      updating = true;
+      try {
+        await restartWindows({
+          status: () => environment.invoke('status'),
+          idle: async () => {
+            await prepareAgentUpdate({ ...agentConfig, scope: agentScope! });
+            await local?.revoke();
+            client = undefined;
+          },
+        });
+      } catch (error) {
+        updating = false;
+        await connect();
+        throw error;
+      }
+      app.quit();
+      return { restarting: true };
+    }
     if (command.type === 'skill.pick') {
       if (closed || !client || state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 40) throw new Error('RUNTIME_TOO_OLD');
@@ -556,6 +626,7 @@ export function runtimeService(
     if (
       command.type === 'setup.status' ||
       command.type === 'setup.start' ||
+      command.type === 'setup.enable' ||
       command.type === 'setup.cancel'
     ) {
       if (component && !files) {
@@ -569,12 +640,21 @@ export function runtimeService(
         return setupState;
       }
       if (environment && nativeMode) {
+        if (command.type === 'setup.enable' && state.protocolVersion < 44)
+          throw Error('RUNTIME_TOO_OLD');
         const value = await environment.invoke(
           command.type === 'setup.start'
             ? 'start'
-            : command.type === 'setup.cancel'
-              ? 'cancel'
-              : 'status',
+            : command.type === 'setup.enable'
+              ? 'enable'
+              : command.type === 'setup.cancel'
+                ? 'cancel'
+                : 'status',
+          command.type === 'setup.start' && command.mode
+            ? { mode: command.mode }
+            : command.type === 'setup.enable'
+              ? { confirmed: true }
+              : {},
         );
         setupState = value;
         publish(state);
@@ -789,7 +869,7 @@ export function runtimeService(
         throw new Error('AGENT_UPDATE_BUSY');
       updating = true;
       try {
-        if (!nativeMode) {
+        if (!nativeMode && process.platform !== 'win32') {
           const manager = daemon instanceof Daemon ? daemon : new Daemon(agentConfig);
           daemon = manager;
           if (await manager.inactive()) {

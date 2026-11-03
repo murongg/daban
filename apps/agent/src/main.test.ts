@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { startAgent, type startNativeAgent } from '@daban/engine/agent';
+import { secureDirectory } from '@daban/engine/local-computer';
 import {
   type ExecutionSnapshot,
   executionCapabilities,
@@ -53,6 +54,25 @@ const config = {
   vm: 'mock-execution',
   port: 18766,
 };
+
+test('Windows setup receives its bundled image through a host-only absolute argument', () => {
+  const options = parseAgentArguments([
+    '--data',
+    'mock-data',
+    '--socket',
+    'mock.sock',
+    '--vm-config',
+    'mock-vm.json',
+    '--mode',
+    'native',
+    '--qemu-bundle',
+    'mock-resources/qemu',
+  ]);
+  expect(options).toMatchObject({
+    mode: 'native',
+    qemuBundle: path.resolve('mock-resources/qemu'),
+  });
+});
 const review: RecoveryReview = {
   boot: 'mock-boot',
   instance: 'mock-instance',
@@ -243,6 +263,45 @@ test('CLI parsing is closed and daemon scope uses the requested normalized paths
     ['--data', '/a', '--data', '/b', '--socket', '/s', '--vm-config', '/v'],
   ])
     expect(() => parseAgentArguments(args)).toThrowError(/AGENT_ARGUMENTS_INVALID/);
+});
+
+test('Mac VM startup passes the separately downloaded and pinned Lima archive to tool preparation', async () => {
+  const f = await fixture();
+  const assets = {
+    packDirectory: path.join(f.root, 'mock-environment'),
+    executorArchive: path.join(f.root, 'mock-executor.tar.gz'),
+    sourceHelper: path.join(f.root, 'mock-source.mjs'),
+    restoreHelper: path.join(f.root, 'mock-restore.mjs'),
+    limaArchive: path.join(f.root, 'mock-lima.tar.gz'),
+    limaDigest: 'b'.repeat(64),
+  };
+  let prepared: Parameters<MainDependencies['tools']>[0] | undefined;
+  let app: Awaited<ReturnType<typeof startAgentProcess>> | undefined;
+  try {
+    app = await startAgentProcess(
+      {
+        ...f.options,
+        dataRoot: await secureDirectory(path.join(f.root, 'private')),
+      },
+      {
+        ...f.dependencies,
+        platform: 'darwin',
+        assets,
+        tools: async (options) => {
+          prepared = options;
+          return config.limactl;
+        },
+      },
+    );
+    expect(prepared).toMatchObject({
+      packDirectory: assets.packDirectory,
+      archive: assets.limaArchive,
+      digest: assets.limaDigest,
+    });
+  } finally {
+    await app?.close();
+    await f.cleanup();
+  }
 });
 
 test('production wiring binds real VM identity, lazy recovery revisions and explicit start order', async () => {
@@ -671,5 +730,34 @@ test('native-first startup defers Linux tools and bootstrap until explicit envir
   } finally {
     await owner.close();
     await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('Windows native startup offers QEMU setup without resolving the Mac Linux payload', async () => {
+  const f = await fixture();
+  const root = await secureDirectory(path.join(f.root, 'private'));
+  let offered = false;
+  const owner = await startAgentProcess(
+    {
+      dataRoot: path.join(root, 'agent'),
+      socketPath: path.join(root, 'mock.sock'),
+      vmConfigFile: path.join(root, 'runtime.json'),
+      mode: 'native',
+    },
+    {
+      ...f.dependencies,
+      platform: 'win32',
+      native: async (options) => {
+        offered = !!options.environment;
+        return { close: async () => {} };
+      },
+    },
+  );
+  try {
+    expect(offered).toBe(true);
+    expect(f.events).toEqual([]);
+  } finally {
+    await owner.close();
+    await f.cleanup();
   }
 });
