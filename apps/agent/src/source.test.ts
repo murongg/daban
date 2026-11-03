@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   chmod,
@@ -13,7 +12,7 @@ import {
 } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, type TestContext, test } from 'vitest';
 import { LegacySource } from './source.js';
 
 const identity = { vm: 'mock-old', imageFingerprint: 'a'.repeat(64) };
@@ -24,7 +23,7 @@ const config = {
   port: 18766,
 };
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-async function fixture(t: { after: (action: () => unknown) => unknown }) {
+async function fixture(t: TestContext) {
   const root = await mkdtemp('/tmp/mock-legacy-source-');
   let server: net.Server | undefined;
   let masterPid = 24001;
@@ -42,7 +41,7 @@ async function fixture(t: { after: (action: () => unknown) => unknown }) {
       if (stale) await rename(`${masterSocket}.stale`, masterSocket);
     }
   };
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await expireMaster();
     await rm(root, { recursive: true, force: true });
   });
@@ -180,30 +179,27 @@ async function fixture(t: { after: (action: () => unknown) => unknown }) {
 test('legacy source caches only metadata and streams bounded private bytes without leaking host environment', async (t) => {
   const f = await fixture(t);
   const source = new LegacySource(config, f.helper, f.cache, identity, f.dependencies);
-  await assert.rejects(source.control.manifest(), /SOURCE_NOT_PREPARED/);
+  await expect(source.control.manifest()).rejects.toThrowError(/SOURCE_NOT_PREPARED/);
   const prepared = await source.prepare();
-  assert.equal(prepared.serviceStopped, true);
-  assert.deepEqual((await source.control.manifest()).source, identity);
+  expect(prepared.serviceStopped).toBe(true);
+  expect((await source.control.manifest()).source).toStrictEqual(identity);
   const chunks: Buffer[] = [];
   for await (const chunk of source.control.read('credentials.json')) {
-    assert.ok(chunk.byteLength <= 65536);
+    expect.assert(chunk.byteLength <= 65536);
     chunks.push(Buffer.from(chunk));
   }
-  assert.deepEqual(Buffer.concat(chunks), f.privateBytes);
-  assert.equal((await source.shared.manifest()).files[0].mode, 0o755);
-  assert.ok(f.calls.every((call) => !call.env.DEEPSEEK_API_KEY && !call.env.SSH_AUTH_SOCK));
-  assert.ok(f.calls.every((call) => !JSON.stringify(call.args).includes('SYNTHETIC-SECRET')));
-  assert.equal((await lstat(f.cache)).mode & 0o777, 0o700);
+  expect(Buffer.concat(chunks)).toStrictEqual(f.privateBytes);
+  expect((await source.shared.manifest()).files[0].mode).toBe(0o755);
+  expect.assert(f.calls.every((call) => !call.env.DEEPSEEK_API_KEY && !call.env.SSH_AUTH_SOCK));
+  expect.assert(f.calls.every((call) => !JSON.stringify(call.args).includes('SYNTHETIC-SECRET')));
+  expect((await lstat(f.cache)).mode & 0o777).toBe(0o700);
   for (const name of await readdir(f.cache)) {
     const file = path.join(f.cache, name);
-    assert.equal((await lstat(file)).mode & 0o777, 0o600);
+    expect((await lstat(file)).mode & 0o777).toBe(0o600);
     if ((await lstat(file)).isSocket()) continue;
-    assert.equal((await readFile(file, 'utf8')).includes('SYNTHETIC-SECRET'), false);
+    expect((await readFile(file, 'utf8')).includes('SYNTHETIC-SECRET')).toBe(false);
   }
-  assert.equal(
-    f.calls.some((call) => call.args[0] === 'stop'),
-    false,
-  );
+  expect(f.calls.some((call) => call.args[0] === 'stop')).toBe(false);
 });
 
 test('stopped-source manifests resume from the private cache without restarting the old VM', async (t) => {
@@ -214,14 +210,14 @@ test('stopped-source manifests resume from the private cache without restarting 
   await source.stopVm();
   const before = f.calls.length;
   const restored = new LegacySource(config, f.helper, f.cache, identity, f.dependencies);
-  assert.deepEqual(await restored.browser.manifest(), manifest);
-  assert.equal(f.calls.length, before);
-  await assert.rejects(async () => {
+  expect(await restored.browser.manifest()).toStrictEqual(manifest);
+  expect(f.calls.length).toBe(before);
+  await expect(async () => {
     for await (const _chunk of restored.control.read('credentials.json')) {
       /* Never reached after stop. */
     }
-  }, /SOURCE_VM_STOPPED/);
-  assert.equal(f.calls.filter((call) => call.args[0] === 'start').length, 0);
+  }).rejects.toThrowError(/SOURCE_VM_STOPPED/);
+  expect(f.calls.filter((call) => call.args[0] === 'start').length).toBe(0);
 });
 
 test('identity changes, unsafe cache permissions and transport errors fail without exposing output bytes', async (t) => {
@@ -235,7 +231,7 @@ test('identity changes, unsafe cache permissions and transport errors fail witho
     { ...identity, imageFingerprint: 'c'.repeat(64) },
     f.dependencies,
   );
-  await assert.rejects(wrong.control.manifest(), /SOURCE_CACHE_CHANGED/);
+  await expect(wrong.control.manifest()).rejects.toThrowError(/SOURCE_CACHE_CHANGED/);
   const failing = new LegacySource(config, f.helper, f.cache, identity, {
     ...f.dependencies,
     stream: async function* () {
@@ -243,20 +239,18 @@ test('identity changes, unsafe cache permissions and transport errors fail witho
       throw Object.assign(new Error('SYNTHETIC-SECRET-ERROR'), { stdout: f.privateBytes });
     },
   });
-  await assert.rejects(
-    async () => {
-      for await (const _chunk of failing.control.read('credentials.json')) {
-        /* Receiver owns partial bytes. */
-      }
-    },
+  await expect(async () => {
+    for await (const _chunk of failing.control.read('credentials.json')) {
+      /* Receiver owns partial bytes. */
+    }
+  }).rejects.toSatisfy(
     (error: unknown) =>
       error instanceof Error && error.message === 'SOURCE_READ_FAILED' && !('stdout' in error),
   );
   await chmod(f.cache, 0o755);
-  await assert.rejects(
+  await expect(
     new LegacySource(config, f.helper, f.cache, identity, f.dependencies).control.manifest(),
-    /SOURCE_CACHE_UNSAFE/,
-  );
+  ).rejects.toThrowError(/SOURCE_CACHE_UNSAFE/);
 });
 
 test('an explicit rollback can inspect its prior uncertain acknowledgement without starting the VM twice', async (t) => {
@@ -287,10 +281,10 @@ test('an explicit rollback can inspect its prior uncertain acknowledgement witho
     },
   };
   const rollback = new LegacySource(config, f.helper, f.cache, identity, dependencies);
-  await assert.rejects(rollback.rollback(), /SOURCE_TRANSPORT_FAILED/);
-  assert.equal((await rollback.rollback()).phase, 'rolled-back');
-  assert.equal(f.calls.filter((call) => call.args[0] === 'start').length, 1);
-  await assert.rejects(rollback.control.manifest(), /SOURCE_NOT_PREPARED/);
+  await expect(rollback.rollback()).rejects.toThrowError(/SOURCE_TRANSPORT_FAILED/);
+  expect((await rollback.rollback()).phase).toBe('rolled-back');
+  expect(f.calls.filter((call) => call.args[0] === 'start').length).toBe(1);
+  await expect(rollback.control.manifest()).rejects.toThrowError(/SOURCE_NOT_PREPARED/);
 });
 
 test('source cache identity is stable when equivalent configuration keys are reordered', async (t) => {
@@ -303,7 +297,7 @@ test('source cache identity is stable when equivalent configuration keys are reo
     limaHome: config.limaHome,
     limactl: config.limactl,
   };
-  assert.deepEqual(
+  expect(
     await new LegacySource(
       reordered,
       f.helper,
@@ -311,8 +305,7 @@ test('source cache identity is stable when equivalent configuration keys are reo
       identity,
       f.dependencies,
     ).control.manifest(),
-    await source.control.manifest(),
-  );
+  ).toStrictEqual(await source.control.manifest());
 });
 
 test('an immutable read retries a zero-byte transport failure without preparing or rebinding its source', async (t) => {
@@ -343,10 +336,10 @@ test('an immutable read retries a zero-byte transport failure without preparing 
   const chunks: Buffer[] = [];
   for await (const chunk of source.control.read('credentials.json'))
     chunks.push(Buffer.from(chunk));
-  assert.deepEqual(Buffer.concat(chunks), f.privateBytes);
-  assert.equal(attempts, 2);
-  assert.equal(prepares, 1);
-  assert.deepEqual(await readFile(path.join(f.cache, 'source.json')), authority);
+  expect(Buffer.concat(chunks)).toStrictEqual(f.privateBytes);
+  expect(attempts).toBe(2);
+  expect(prepares).toBe(1);
+  expect(await readFile(path.join(f.cache, 'source.json'))).toStrictEqual(authority);
 });
 
 test('a partially yielded immutable read never retries or duplicates payload bytes', async (t) => {
@@ -364,11 +357,14 @@ test('a partially yielded immutable read never retries or duplicates payload byt
     },
   });
   await source.prepare();
-  await assert.rejects(async () => {
+  await expect(async () => {
     for await (const chunk of source.control.read('credentials.json')) bytes += chunk.byteLength;
-  }, /^Error: SOURCE_READ_FAILED$/);
-  assert.equal(attempts, 1);
-  assert.equal(bytes, 31);
+  }).rejects.toMatchObject({
+    name: 'Error',
+    message: expect.stringMatching(/^SOURCE_READ_FAILED$/),
+  });
+  expect(attempts).toBe(1);
+  expect(bytes).toBe(31);
 });
 
 test('zero-byte transport failures have exactly three bounded attempts', async (t) => {
@@ -384,12 +380,15 @@ test('zero-byte transport failures have exactly three bounded attempts', async (
     },
   });
   await source.prepare();
-  await assert.rejects(async () => {
+  await expect(async () => {
     for await (const _chunk of source.control.read('credentials.json')) {
       /* No payload is delivered. */
     }
-  }, /^Error: SOURCE_READ_FAILED$/);
-  assert.equal(attempts, 3);
+  }).rejects.toMatchObject({
+    name: 'Error',
+    message: expect.stringMatching(/^SOURCE_READ_FAILED$/),
+  });
+  expect(attempts).toBe(3);
 });
 
 test('semantic reader failures and size or digest mismatches never enter the transport retry path', async (t) => {
@@ -407,12 +406,15 @@ test('semantic reader failures and size or digest mismatches never enter the tra
       },
     });
     if (failure === 'semantic') await source.prepare();
-    await assert.rejects(async () => {
+    await expect(async () => {
       for await (const _chunk of source.control.read('credentials.json')) {
         /* Receiver owns any partial bytes. */
       }
-    }, /^Error: SOURCE_READ_FAILED$/);
-    assert.equal(attempts, 1);
+    }).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^SOURCE_READ_FAILED$/),
+    });
+    expect(attempts).toBe(1);
   }
 });
 
@@ -428,19 +430,19 @@ test('prepared immutable payloads reuse one private scoped master without a new 
       }
   }
   const launches = f.calls.filter((call) => call.args.includes('-M'));
-  assert.equal(launches.length, 1);
+  expect(launches.length).toBe(1);
   const socket = launches[0].args[launches[0].args.indexOf('-S') + 1];
-  assert.equal(socket, path.join(await realpath(f.cache), 's'));
-  assert.ok(Buffer.byteLength(socket) + 17 < 104);
-  assert.ok(launches[0].args.includes('ControlPersist=60'));
-  assert.ok(
+  expect(socket).toBe(path.join(await realpath(f.cache), 's'));
+  expect.assert(Buffer.byteLength(socket) + 17 < 104);
+  expect.assert(launches[0].args.includes('ControlPersist=60'));
+  expect.assert(
     f.streams.every(
       (args) =>
         args[args.indexOf('-S') + 1] === socket && args.includes('ProxyCommand=/usr/bin/false'),
     ),
   );
-  assert.equal((await lstat(socket)).mode & 0o777, 0o600);
-  assert.ok(f.calls.every((call) => !call.env.SSH_AUTH_SOCK));
+  expect((await lstat(socket)).mode & 0o777).toBe(0o600);
+  expect.assert(f.calls.every((call) => !call.env.SSH_AUTH_SOCK));
   const resumed = new LegacySource(
     config,
     f.helper,
@@ -454,7 +456,7 @@ test('prepared immutable payloads reuse one private scoped master without a new 
   for await (const _chunk of resumed.control.read('credentials.json')) {
     /* A restart verifies the same master scope. */
   }
-  assert.equal(f.calls.filter((call) => call.args.includes('-M')).length, 1);
+  expect(f.calls.filter((call) => call.args.includes('-M')).length).toBe(1);
 });
 
 test('foreign sockets and replaced master identities fail closed before payload transfer', async (t) => {
@@ -462,29 +464,28 @@ test('foreign sockets and replaced master identities fail closed before payload 
   const source = new LegacySource(config, f.helper, f.cache, identity, f.dependencies);
   await source.prepare();
   await f.foreignSocket();
-  await assert.rejects(async () => {
+  await expect(async () => {
     for await (const _chunk of source.control.read('credentials.json')) {
       /* No foreign transport is used. */
     }
-  }, /SOURCE_/);
-  assert.equal(f.streams.length, 0);
-  assert.equal(
+  }).rejects.toThrowError(/SOURCE_/);
+  expect(f.streams.length).toBe(0);
+  expect(
     f.calls.filter((call) => call.args.includes('-O') || call.args.includes('-M')).length,
-    0,
-  );
+  ).toBe(0);
   await f.expireMaster();
   for await (const _chunk of source.control.read('credentials.json')) {
     /* Establish our own scoped master. */
   }
   const before = f.streams.length;
   f.replacePid();
-  await assert.rejects(async () => {
+  await expect(async () => {
     for await (const _chunk of source.control.read('credentials.json')) {
       /* A replaced identity is never adopted. */
     }
-  }, /SOURCE_/);
-  assert.equal(f.streams.length, before);
-  assert.equal(f.calls.filter((call) => call.args.includes('-M')).length, 1);
+  }).rejects.toThrowError(/SOURCE_/);
+  expect(f.streams.length).toBe(before);
+  expect(f.calls.filter((call) => call.args.includes('-M')).length).toBe(1);
 });
 
 test('an expired owned master is rebuilt while close only detaches SSH and explicit power closes it first', async (t) => {
@@ -498,19 +499,17 @@ test('an expired owned master is rebuilt while close only detaches SSH and expli
   for await (const _chunk of source.control.read('credentials.json')) {
     /* Rebuilt after idle expiry. */
   }
-  assert.equal(f.calls.filter((call) => call.args.includes('-M')).length, 2);
+  expect(f.calls.filter((call) => call.args.includes('-M')).length).toBe(2);
   await f.expireMaster();
   for await (const _chunk of source.control.read('credentials.json')) {
     /* A removed expired socket also rebuilds. */
   }
-  assert.equal(f.calls.filter((call) => call.args.includes('-M')).length, 3);
+  expect(f.calls.filter((call) => call.args.includes('-M')).length).toBe(3);
   await source.close();
-  assert.equal(
-    f.calls.filter((call) => call.args[0] === 'stop' || call.args[0] === 'start').length,
+  expect(f.calls.filter((call) => call.args[0] === 'stop' || call.args[0] === 'start').length).toBe(
     0,
   );
-  assert.equal(
-    f.calls.filter((call) => call.args[call.args.indexOf('-O') + 1] === 'exit').length,
+  expect(f.calls.filter((call) => call.args[call.args.indexOf('-O') + 1] === 'exit').length).toBe(
     1,
   );
 
@@ -520,6 +519,6 @@ test('an expired owned master is rebuilt while close only detaches SSH and expli
   }
   await resumed.stopVm();
   const stop = f.calls.findIndex((call) => call.args[0] === 'stop');
-  assert.ok(stop > 0);
-  assert.equal(f.calls[stop - 1].args[f.calls[stop - 1].args.indexOf('-O') + 1], 'exit');
+  expect.assert(stop > 0);
+  expect(f.calls[stop - 1].args[f.calls[stop - 1].args.indexOf('-O') + 1]).toBe('exit');
 });

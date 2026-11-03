@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -14,9 +13,9 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { managedProtocol } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import {
   admitBuild,
   assertCleanImage,
@@ -31,16 +30,16 @@ test('a runtime-image build exclusively owns a new root and cannot adopt an exis
   try {
     const fresh = join(root, 'new-image');
     const build = await admitBuild(fresh);
-    assert.equal(build.versions.protocol, managedProtocol);
-    assert.equal(build.output, fresh);
-    assert.equal((await stat(fresh)).mode & 0o777, 0o700);
-    assert.ok(build.limaHome.startsWith('/tmp/daban-image-'));
+    expect(build.versions.protocol).toBe(managedProtocol);
+    expect(build.output).toBe(fresh);
+    expect((await stat(fresh)).mode & 0o777).toBe(0o700);
+    expect.assert(build.limaHome.startsWith('/tmp/daban-image-'));
     await rm(build.limaHome, { recursive: true, force: true });
     const old = join(root, 'existing-user');
     await mkdir(old);
     await writeFile(join(old, 'runtime.json'), 'SYNTHETIC EXISTING DATA');
-    await assert.rejects(admitBuild(old), { code: 'EEXIST' });
-    assert.equal(await readFile(join(old, 'runtime.json'), 'utf8'), 'SYNTHETIC EXISTING DATA');
+    await expect(admitBuild(old)).rejects.toMatchObject({ code: 'EEXIST' });
+    expect(await readFile(join(old, 'runtime.json'), 'utf8')).toBe('SYNTHETIC EXISTING DATA');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -84,11 +83,10 @@ test('a previous-version builder cannot be published under the current runtime v
       cloudInitEntries: 0,
       randomSeedBytes: 0,
     };
-    await assert.rejects(
-      publishImage(root, clean, join(root, 'mock-lima.tar.gz')),
+    await expect(publishImage(root, clean, join(root, 'mock-lima.tar.gz'))).rejects.toThrowError(
       /IMAGE_BUILD_VERSION/,
     );
-    assert.deepEqual(await readdir(root), ['build.json']);
+    expect(await readdir(root)).toStrictEqual(['build.json']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -101,12 +99,14 @@ test('vendor assets need matching hashes and regular unlinked files before execu
     const bytes = Buffer.from('SYNTHETIC PUBLIC ASSET');
     await writeFile(file, bytes);
     const digest = createHash('sha256').update(bytes).digest('hex');
-    assert.deepEqual(await hashAsset(file, 'sha256'), { bytes: bytes.length, digest });
-    assert.equal(await verifyAsset(file, 'sha256', digest), bytes.length);
-    await assert.rejects(verifyAsset(file, 'sha256', '0'.repeat(64)), /ASSET_INTEGRITY_FAILED/);
+    expect(await hashAsset(file, 'sha256')).toStrictEqual({ bytes: bytes.length, digest });
+    expect(await verifyAsset(file, 'sha256', digest)).toBe(bytes.length);
+    await expect(verifyAsset(file, 'sha256', '0'.repeat(64))).rejects.toThrowError(
+      /ASSET_INTEGRITY_FAILED/,
+    );
     const linked = join(root, 'linked');
     await symlink(file, linked);
-    await assert.rejects(verifyAsset(linked, 'sha256', digest));
+    await expect(verifyAsset(linked, 'sha256', digest)).rejects.toThrowError();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -123,12 +123,14 @@ test('a generic image cannot be released with builder access, machine identity, 
     cloudInitEntries: 0,
     randomSeedBytes: 0,
   };
-  assert.doesNotThrow(() => assertCleanImage(clean));
+  expect(() => assertCleanImage(clean)).not.toThrowError();
   for (const field of Object.keys(clean)) {
-    assert.throws(() => assertCleanImage({ ...clean, [field]: 1 }), /IMAGE_NOT_CLEAN/);
+    expect(() => assertCleanImage({ ...clean, [field]: 1 })).toThrowError(/IMAGE_NOT_CLEAN/);
     const incomplete: Record<string, unknown> = { ...clean };
     delete incomplete[field];
-    assert.throws(() => assertCleanImage(incomplete), /IMAGE_NOT_CLEAN/);
+    expect(() => assertCleanImage(incomplete)).toThrowError(/IMAGE_NOT_CLEAN/);
   }
-  assert.throws(() => assertCleanImage({ ...clean, authorizedKeyBytes: '0' }), /IMAGE_NOT_CLEAN/);
+  expect(() => assertCleanImage({ ...clean, authorizedKeyBytes: '0' })).toThrowError(
+    /IMAGE_NOT_CLEAN/,
+  );
 });

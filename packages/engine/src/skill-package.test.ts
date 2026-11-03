@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { zipSync } from 'fflate';
+import { expect, test } from 'vitest';
 
 const entry = new URL('./skill-package.js', import.meta.url).href;
 const content =
@@ -23,9 +22,8 @@ test('preserves namespaced OpenClaw metadata as inert package data', async () =>
     root: 'mock-package',
     files: [{ path: 'SKILL.md', data: Buffer.from(text).toString('base64') }],
   };
-  assert.equal(codec.inspectSkillPackage(value).name, 'mock-package');
-  assert.equal(
-    Buffer.from(codec.normalizeSkillPackage(value).files[0].data, 'base64').toString(),
+  expect(codec.inspectSkillPackage(value).name).toBe('mock-package');
+  expect(Buffer.from(codec.normalizeSkillPackage(value).files[0].data, 'base64').toString()).toBe(
     text,
   );
 });
@@ -37,18 +35,17 @@ test('imports and exports a standard directory archive without losing metadata o
     ),
   );
   const bundle = codec.readSkillZip(archive);
-  assert.equal(bundle.root, 'mock-package');
-  assert.equal(bundle.files.length, 5);
-  assert.equal(
+  expect(bundle.root).toBe('mock-package');
+  expect(bundle.files.length).toBe(5);
+  expect(
     Buffer.from(
       bundle.files.find((file: { path: string }) => file.path === 'SKILL.md').data,
       'base64',
     ).toString(),
-    content,
-  );
-  assert.deepEqual(codec.readSkillZip(codec.writeSkillZip(bundle)), bundle);
-  assert.equal(codec.inspectSkillPackage(bundle).name, 'mock-package');
-  assert.equal(codec.inspectSkillPackage(bundle).fileCount, 5);
+  ).toBe(content);
+  expect(codec.readSkillZip(codec.writeSkillZip(bundle))).toStrictEqual(bundle);
+  expect(codec.inspectSkillPackage(bundle).name).toBe('mock-package');
+  expect(codec.inspectSkillPackage(bundle).fileCount).toBe(5);
 });
 test('rejects traversal, duplicate paths, symlink entries, multiple roots, encryption and false decompressed sizes', async () => {
   const codec = await import(entry);
@@ -63,18 +60,26 @@ test('rejects traversal, duplicate paths, symlink entries, multiple roots, encry
     { 'first/SKILL.md': files['SKILL.md'], 'second/SKILL.md': files['SKILL.md'] },
   ];
   for (const names of cases)
-    assert.throws(() => codec.readSkillZip(zipSync(names)), { code: 'INVALID_SKILL_PACKAGE' });
+    expect(() => codec.readSkillZip(zipSync(names))).toThrowError(
+      expect.objectContaining({ code: 'INVALID_SKILL_PACKAGE' }),
+    );
   const base = Buffer.from(zipSync(files));
   const central = base.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
   const link = Buffer.from(base);
   link.writeUInt32LE(0xa1ff0000, central + 38);
-  assert.throws(() => codec.readSkillZip(link), { code: 'INVALID_SKILL_PACKAGE' });
+  expect(() => codec.readSkillZip(link)).toThrowError(
+    expect.objectContaining({ code: 'INVALID_SKILL_PACKAGE' }),
+  );
   const encrypted = Buffer.from(base);
   encrypted.writeUInt16LE(encrypted.readUInt16LE(central + 8) | 1, central + 8);
-  assert.throws(() => codec.readSkillZip(encrypted), { code: 'INVALID_SKILL_PACKAGE' });
+  expect(() => codec.readSkillZip(encrypted)).toThrowError(
+    expect.objectContaining({ code: 'INVALID_SKILL_PACKAGE' }),
+  );
   const bomb = Buffer.from(base);
   bomb.writeUInt32LE(0x7fffffff, central + 24);
-  assert.throws(() => codec.readSkillZip(bomb), { code: 'SKILL_PACKAGE_TOO_LARGE' });
+  expect(() => codec.readSkillZip(bomb)).toThrowError(
+    expect.objectContaining({ code: 'SKILL_PACKAGE_TOO_LARGE' }),
+  );
 });
 test('checks standard frontmatter and directory identity while permitting arbitrary resource subdirectories', async () => {
   const codec = await import(entry);
@@ -82,20 +87,23 @@ test('checks standard frontmatter and directory identity while permitting arbitr
     root,
     files: [{ path: 'SKILL.md', data: Buffer.from(text).toString('base64') }],
   });
-  assert.throws(() => codec.inspectSkillPackage(from(content, 'wrong-name')), {
-    code: 'INVALID_SKILL_PACKAGE',
-  });
+  expect(() => codec.inspectSkillPackage(from(content, 'wrong-name'))).toThrowError(
+    expect.objectContaining({
+      code: 'INVALID_SKILL_PACKAGE',
+    }),
+  );
   for (const text of [
     content.replace('author: synthetic', 'author: true'),
     content.replace('MIT', '[]'),
     content.replace('Requires Python', 'x'.repeat(501)),
   ])
-    assert.throws(() => codec.inspectSkillPackage(from(text)), { code: 'INVALID_SKILL_PACKAGE' });
-  assert.equal(
+    expect(() => codec.inspectSkillPackage(from(text))).toThrowError(
+      expect.objectContaining({ code: 'INVALID_SKILL_PACKAGE' }),
+    );
+  expect(
     codec.inspectSkillPackage(from('---\nname: mock-package\ndescription: Synthetic only\n---\n'))
       .name,
-    'mock-package',
-  );
+  ).toBe('mock-package');
 });
 test('reads only regular files from a selected directory and rejects symbolic links', async () => {
   const codec = await import(entry);
@@ -106,15 +114,17 @@ test('reads only regular files from a selected directory and rejects symbolic li
     await writeFile(path.join(folder, 'SKILL.md'), content);
     await writeFile(path.join(folder, 'references/guide.md'), 'SYNTHETIC GUIDE');
     const bundle = await codec.readSkillDirectory(folder);
-    assert.equal(bundle.files.length, 2);
-    assert.deepEqual(await readFile(path.join(folder, 'SKILL.md')), Buffer.from(content));
+    expect(bundle.files.length).toBe(2);
+    expect(await readFile(path.join(folder, 'SKILL.md'))).toStrictEqual(Buffer.from(content));
     // A junction needs no Windows symlink privilege and still exercises link rejection.
     await symlink(
       process.platform === 'win32' ? root : path.join(root, 'outside.txt'),
       path.join(folder, 'references/link.txt'),
       process.platform === 'win32' ? 'junction' : 'file',
     );
-    await assert.rejects(codec.readSkillDirectory(folder), { code: 'INVALID_SKILL_PACKAGE' });
+    await expect(codec.readSkillDirectory(folder)).rejects.toMatchObject({
+      code: 'INVALID_SKILL_PACKAGE',
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

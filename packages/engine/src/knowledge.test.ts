@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Knowledge } from './knowledge.js';
 
 test('a failed original insert rolls back its text revision and corrupted originals are never served', async () => {
@@ -18,9 +17,11 @@ test('a failed original insert rolls back its text revision and corrupted origin
       "CREATE TRIGGER reject_synthetic BEFORE INSERT ON sources WHEN new.name='fail.pdf' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;",
     );
     const upload = { name: 'fail.pdf', data: Buffer.from('synthetic original').toString('base64') };
-    await assert.rejects(store.importDocument('mock-alpha', upload, 'do not leave text behind'));
-    assert.equal((await store.list('mock-alpha')).length, 0);
-    assert.equal((await store.status()).revision, 0);
+    await expect(
+      store.importDocument('mock-alpha', upload, 'do not leave text behind'),
+    ).rejects.toThrowError();
+    expect((await store.list('mock-alpha')).length).toBe(0);
+    expect((await store.status()).revision).toBe(0);
     const saved = await store.importDocument(
       'mock-alpha',
       { ...upload, name: 'good.pdf' },
@@ -30,8 +31,10 @@ test('a failed original insert rolls back its text revision and corrupted origin
       Buffer.from('synthetic corruption'),
       saved.id,
     );
-    await assert.rejects(store.source('mock-alpha', saved.id), { code: 'KNOWLEDGE_CORRUPT' });
-    assert.equal((await store.read('mock-alpha', saved.id)).content, 'preserve text');
+    await expect(store.source('mock-alpha', saved.id)).rejects.toMatchObject({
+      code: 'KNOWLEDGE_CORRUPT',
+    });
+    expect((await store.read('mock-alpha', saved.id)).content).toBe('preserve text');
   } finally {
     db.close();
     await store.close();
@@ -46,55 +49,58 @@ test('imports retain immutable originals through edits, trash, restore and resta
   try {
     const input = { name: 'mock.pdf', data: data.toString('base64') };
     const first = await store.importDocument('mock-alpha', input, 'MOCK-PDF-47');
-    assert.equal(first.path, 'mock.pdf.txt');
-    assert.deepEqual(first.source, {
+    expect(first.path).toBe('mock.pdf.txt');
+    expect(first.source).toStrictEqual({
       name: input.name,
       size: data.length,
       sha256: createHash('sha256').update(data).digest('hex'),
     });
-    assert.deepEqual((await store.source('mock-alpha', first.id)).file, input);
-    await assert.rejects(store.source('mock-beta', first.id), { code: 'KNOWLEDGE_NOT_FOUND' });
+    expect((await store.source('mock-alpha', first.id)).file).toStrictEqual(input);
+    await expect(store.source('mock-beta', first.id)).rejects.toMatchObject({
+      code: 'KNOWLEDGE_NOT_FOUND',
+    });
     const edited = await store.write('mock-alpha', {
       id: first.id,
       path: 'renamed.txt',
       revision: 1,
       content: 'human edit',
     });
-    assert.deepEqual(
-      (await store.importDocument('mock-alpha', input, 're-extracted')).id,
+    expect((await store.importDocument('mock-alpha', input, 're-extracted')).id).toStrictEqual(
       first.id,
     );
-    assert.equal((await store.read('mock-alpha', first.id)).content, edited.content);
-    await assert.rejects(
+    expect((await store.read('mock-alpha', first.id)).content).toBe(edited.content);
+    await expect(
       store.importDocument(
         'mock-alpha',
         { ...input, data: Buffer.from('different').toString('base64') },
         'different',
       ),
-      { code: 'KNOWLEDGE_PATH_EXISTS' },
-    );
+    ).rejects.toMatchObject({ code: 'KNOWLEDGE_PATH_EXISTS' });
     await store.remove('mock-alpha', first.id, 2);
-    await assert.rejects(store.importDocument('mock-alpha', input, 'do not resurrect'), {
+    await expect(
+      store.importDocument('mock-alpha', input, 'do not resurrect'),
+    ).rejects.toMatchObject({
       code: 'KNOWLEDGE_PATH_EXISTS',
     });
     const restored = await store.restore('mock-alpha', first.id, 3, 1);
-    assert.equal(restored.content, first.content);
-    assert.deepEqual(restored.source, first.source);
+    expect(restored.content).toBe(first.content);
+    expect(restored.source).toStrictEqual(first.source);
     await store.close();
     store = new Knowledge(path.join(root, 'knowledge.sqlite'));
-    assert.deepEqual((await store.source('mock-alpha', first.id)).file, input);
+    expect((await store.source('mock-alpha', first.id)).file).toStrictEqual(input);
     const plain = await store.write('mock-alpha', {
       path: 'plain.txt',
       revision: 0,
       content: 'plain',
     });
-    await assert.rejects(store.source('mock-alpha', plain.id), { code: 'KNOWLEDGE_NOT_FOUND' });
-    assert.equal((await store.versions('mock-alpha', first.id)).length, 4);
-    await assert.rejects(
+    await expect(store.source('mock-alpha', plain.id)).rejects.toMatchObject({
+      code: 'KNOWLEDGE_NOT_FOUND',
+    });
+    expect((await store.versions('mock-alpha', first.id)).length).toBe(4);
+    await expect(
       store.importDocument('mock-alpha', { name: 'bad.pdf', data: 'AA==' }, ''),
-      { code: 'DOCUMENT_EMPTY' },
-    );
-    assert.equal((await store.list('mock-alpha')).length, 2);
+    ).rejects.toMatchObject({ code: 'DOCUMENT_EMPTY' });
+    expect((await store.list('mock-alpha')).length).toBe(2);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -105,37 +111,40 @@ test('knowledge commits owned content and history atomically, rejects stale edit
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-knowledge-'));
   let store = new Knowledge(path.join(root, 'knowledge.sqlite'));
   try {
-    assert.equal((await store.status()).revision, 0);
+    expect((await store.status()).revision).toBe(0);
     const first = await store.write('mock-alpha', {
       path: '项目/规范.md',
       revision: 0,
       content: '保留原文\n代号 MOCK-ORION\n',
     });
-    assert.equal(first.revision, 1);
-    assert.equal((await store.status()).revision, 1);
-    assert.deepEqual(
+    expect(first.revision).toBe(1);
+    expect((await store.status()).revision).toBe(1);
+    expect(
       await store.write('mock-alpha', { path: first.path, revision: 0, content: first.content }),
-      first,
-    );
+    ).toStrictEqual(first);
     const beta = await store.write('mock-beta', {
       path: first.path,
       revision: 0,
       content: '只属于乙的合成资料',
     });
-    assert.notEqual(beta.id, first.id);
-    assert.equal((await store.list('mock-alpha')).length, 1);
-    await assert.rejects(store.read('mock-beta', first.id), { code: 'KNOWLEDGE_NOT_FOUND' });
-    await assert.rejects(store.remove('mock-beta', first.id, 1), { code: 'KNOWLEDGE_NOT_FOUND' });
+    expect(beta.id).not.toBe(first.id);
+    expect((await store.list('mock-alpha')).length).toBe(1);
+    await expect(store.read('mock-beta', first.id)).rejects.toMatchObject({
+      code: 'KNOWLEDGE_NOT_FOUND',
+    });
+    await expect(store.remove('mock-beta', first.id, 1)).rejects.toMatchObject({
+      code: 'KNOWLEDGE_NOT_FOUND',
+    });
     const edited = await store.edit('mock-alpha', first.id, 1, 'MOCK-ORION', 'MOCK-VEGA', {
       kind: 'bot',
       runId: 'mock-run',
     });
-    assert.equal(edited.content, '保留原文\n代号 MOCK-VEGA\n');
-    assert.equal(edited.revision, 2);
-    await assert.rejects(store.edit('mock-alpha', first.id, 1, '保留', '不得覆盖'), {
+    expect(edited.content).toBe('保留原文\n代号 MOCK-VEGA\n');
+    expect(edited.revision).toBe(2);
+    await expect(store.edit('mock-alpha', first.id, 1, '保留', '不得覆盖')).rejects.toMatchObject({
       code: 'KNOWLEDGE_CONFLICT',
     });
-    await assert.rejects(store.edit('mock-alpha', first.id, 2, '不存在', '新内容'), {
+    await expect(store.edit('mock-alpha', first.id, 2, '不存在', '新内容')).rejects.toMatchObject({
       code: 'KNOWLEDGE_EDIT_MISMATCH',
     });
     const renamed = await store.write('mock-alpha', {
@@ -144,26 +153,26 @@ test('knowledge commits owned content and history atomically, rejects stale edit
       revision: 2,
       content: edited.content,
     });
-    assert.equal(renamed.revision, 3);
+    expect(renamed.revision).toBe(3);
     const removed = await store.remove('mock-alpha', first.id, 3);
-    assert.equal(removed.deleted, true);
-    assert.equal((await store.list('mock-alpha')).length, 0);
-    assert.equal((await store.list('mock-alpha', true)).length, 1);
-    assert.equal((await store.read('mock-alpha', first.id, 1)).content, first.content);
+    expect(removed.deleted).toBe(true);
+    expect((await store.list('mock-alpha')).length).toBe(0);
+    expect((await store.list('mock-alpha', true)).length).toBe(1);
+    expect((await store.read('mock-alpha', first.id, 1)).content).toBe(first.content);
     const restored = await store.restore('mock-alpha', first.id, removed.revision, 1);
-    assert.equal(restored.revision, 5);
-    assert.equal(restored.content, first.content);
-    assert.equal(restored.path, first.path);
+    expect(restored.revision).toBe(5);
+    expect(restored.content).toBe(first.content);
+    expect(restored.path).toBe(first.path);
     const versions = await store.versions('mock-alpha', first.id);
-    assert.equal(versions.length, 5);
-    assert.equal(versions.find((value) => value.revision === 2)!.actor, 'bot');
-    assert.equal(versions.find((value) => value.revision === 4)!.deleted, true);
-    assert.equal((await store.search('mock-alpha', 'MOCK-ORION')).length, 1);
-    assert.equal((await store.read('mock-beta', beta.id)).content, beta.content);
+    expect(versions.length).toBe(5);
+    expect(versions.find((value) => value.revision === 2)!.actor).toBe('bot');
+    expect(versions.find((value) => value.revision === 4)!.deleted).toBe(true);
+    expect((await store.search('mock-alpha', 'MOCK-ORION')).length).toBe(1);
+    expect((await store.read('mock-beta', beta.id)).content).toBe(beta.content);
     await store.close();
     store = new Knowledge(path.join(root, 'knowledge.sqlite'));
-    assert.deepEqual(await store.read('mock-alpha', first.id), restored);
-    assert.equal((await stat(path.join(root, 'knowledge.sqlite'))).mode & 0o777, 0o600);
+    expect(await store.read('mock-alpha', first.id)).toStrictEqual(restored);
+    expect((await stat(path.join(root, 'knowledge.sqlite'))).mode & 0o777).toBe(0o600);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -184,24 +193,23 @@ test('knowledge rejects unsafe paths, oversized data and cancelled mutations wit
       'a/../b.md',
       'a//b.md',
     ])
-      await assert.rejects(
+      await expect(
         store.write('mock-alpha', { path: name, revision: 0, content: '合成' }),
-        { code: 'INVALID_KNOWLEDGE' },
-      );
-    await assert.rejects(
+      ).rejects.toMatchObject({ code: 'INVALID_KNOWLEDGE' });
+    await expect(
       store.write('mock-alpha', { path: 'large.md', revision: 0, content: '甲'.repeat(70000) }),
-      { code: 'INVALID_KNOWLEDGE' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'INVALID_KNOWLEDGE' });
+    await expect(
       store.write('mock-alpha', { path: 'bad.md', revision: 0, content: 'bad\0text' }),
-      { code: 'INVALID_KNOWLEDGE' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_KNOWLEDGE' });
     const first = await store.write('mock-alpha', {
       path: 'note.md',
       revision: 0,
       content: '保留 保留',
     });
-    await assert.rejects(store.edit('mock-alpha', first.id, 1, '保留', '不能猜测哪一处'), {
+    await expect(
+      store.edit('mock-alpha', first.id, 1, '保留', '不能猜测哪一处'),
+    ).rejects.toMatchObject({
       code: 'KNOWLEDGE_EDIT_AMBIGUOUS',
     });
     const abort = new AbortController();
@@ -211,9 +219,9 @@ test('knowledge rejects unsafe paths, oversized data and cancelled mutations wit
       { kind: 'bot', runId: 'mock-run', signal: abort.signal },
     );
     abort.abort();
-    await assert.rejects(pending);
-    assert.equal((await store.read('mock-alpha', first.id)).content, first.content);
-    assert.equal((await store.versions('mock-alpha', first.id)).length, 1);
+    await expect(pending).rejects.toThrowError();
+    expect((await store.read('mock-alpha', first.id)).content).toBe(first.content);
+    expect((await store.versions('mock-alpha', first.id)).length).toBe(1);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -239,14 +247,13 @@ test('portable knowledge snapshots atomically copy current text and originals an
     db.exec(
       "CREATE TRIGGER mock_import_failure BEFORE INSERT ON sources BEGIN SELECT RAISE(ABORT,'SYNTHETIC FAIL'); END;",
     );
-    await assert.rejects(store.importBundle('mock-target', digest, documents));
-    assert.deepEqual(await store.list('mock-target'), []);
+    await expect(store.importBundle('mock-target', digest, documents)).rejects.toThrowError();
+    expect(await store.list('mock-target')).toStrictEqual([]);
     db.exec('DROP TRIGGER mock_import_failure');
     db.close();
     const copied = await store.importBundle('mock-target', digest, documents);
-    assert.equal(copied.length, 2);
-    assert.equal(
-      (await store.source('mock-target', copied[1].id)).file.data,
+    expect(copied.length).toBe(2);
+    expect((await store.source('mock-target', copied[1].id)).file.data).toBe(
       documents[1].original!.data,
     );
     const edited = await store.write('mock-target', {
@@ -258,8 +265,10 @@ test('portable knowledge snapshots atomically copy current text and originals an
     await store.close();
     store = new Knowledge(file);
     const retry = await store.importBundle('mock-target', digest, documents);
-    assert.equal(retry.find((item) => item.id === edited.id)?.content, edited.content);
-    await assert.rejects(store.importBundle('mock-target', 'b'.repeat(64), documents), {
+    expect(retry.find((item) => item.id === edited.id)?.content).toBe(edited.content);
+    await expect(
+      store.importBundle('mock-target', 'b'.repeat(64), documents),
+    ).rejects.toMatchObject({
       code: 'KNOWLEDGE_IMPORT_CONFLICT',
     });
   } finally {

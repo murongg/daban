@@ -15,6 +15,7 @@
       "!apps/runtime/standalone-lock.json",
       "!apps/agent/standalone-lock.json",
       "!**/dist",
+      "!!outputs",
       "!**/node_modules"
     ]
   },

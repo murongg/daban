@@ -1,11 +1,10 @@
-import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { mock } from 'node:test';
 import { isBotLifecycleRequest, isBotProfile, isBotProfileInput } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { BotProfiles, personaKey } from './profiles.js';
 
 test('read-only health reports retained corrupt records without exposing their identity or contents', async () => {
@@ -13,12 +12,11 @@ test('read-only health reports retained corrupt records without exposing their i
   try {
     await writeFile(path.join(dir, 'mock-corrupt.json'), 'SYNTHETIC-INVALID-RECORD');
     const profiles = new BotProfiles(dir);
-    assert.deepEqual(await profiles.status(), { available: true, corrupt: 1 });
-    assert.equal(
-      await readFile(path.join(dir, 'mock-corrupt.json'), 'utf8'),
+    expect(await profiles.status()).toStrictEqual({ available: true, corrupt: 1 });
+    expect(await readFile(path.join(dir, 'mock-corrupt.json'), 'utf8')).toBe(
       'SYNTHETIC-INVALID-RECORD',
     );
-    assert.deepEqual(await profiles.list(), []);
+    expect(await profiles.list()).toStrictEqual([]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -38,26 +36,28 @@ test('model overrides persist independently, clear back to inheritance, and shar
     await profiles.ready;
     const first = await profiles.register({ ...input, model: 'deepseek-v4-pro' });
     const other = await profiles.register({ ...input, id: 'mock-other' });
-    assert.ok('model' in first);
-    assert.equal(first.model, 'deepseek-v4-pro');
-    assert.equal(Object.hasOwn(other, 'model'), false);
-    assert.equal((await profiles.update(first.id, 1, { model: 'deepseek-v4-pro' })).revision, 1);
+    expect.assert('model' in first);
+    expect(first.model).toBe('deepseek-v4-pro');
+    expect(Object.hasOwn(other, 'model')).toBe(false);
+    expect((await profiles.update(first.id, 1, { model: 'deepseek-v4-pro' })).revision).toBe(1);
     const changed = await profiles.update(first.id, 1, { model: 'deepseek-flash' });
-    assert.equal(changed.revision, 2);
-    assert.equal(changed.memory, input.memory);
-    assert.equal((await profiles.get(other.id))?.revision, 1);
-    await assert.rejects(profiles.update(first.id, 1, { model: null }), {
+    expect(changed.revision).toBe(2);
+    expect(changed.memory).toBe(input.memory);
+    expect((await profiles.get(other.id))?.revision).toBe(1);
+    await expect(profiles.update(first.id, 1, { model: null })).rejects.toMatchObject({
       code: 'BOT_PROFILE_CONFLICT',
     });
     const cleared = await profiles.update(first.id, 2, { model: null });
-    assert.equal(Object.hasOwn(cleared, 'model'), false);
-    assert.equal(cleared.revision, 3);
-    assert.equal(cleared.instructions, input.instructions);
-    assert.deepEqual(await new BotProfiles(root).get(first.id), cleared);
-    await assert.rejects(profiles.update(first.id, 3, { model: 'unknown-model' }), {
+    expect(Object.hasOwn(cleared, 'model')).toBe(false);
+    expect(cleared.revision).toBe(3);
+    expect(cleared.instructions).toBe(input.instructions);
+    expect(await new BotProfiles(root).get(first.id)).toStrictEqual(cleared);
+    await expect(profiles.update(first.id, 3, { model: 'unknown-model' })).rejects.toMatchObject({
       code: 'INVALID_BOT_PROFILE',
     });
-    await assert.rejects(profiles.register({ ...input, id: 'mock-bad', model: null }), {
+    await expect(
+      profiles.register({ ...input, id: 'mock-bad', model: null }),
+    ).rejects.toMatchObject({
       code: 'INVALID_BOT_PROFILE',
     });
   } finally {
@@ -72,8 +72,8 @@ test('cancelled queued memory edits never replace the durable profile', async ()
     const abort = new AbortController();
     const pending = store.update(input.id, 1, { memory: '不得保存的合成偏好' }, abort.signal);
     abort.abort();
-    await assert.rejects(pending);
-    assert.deepEqual(await store.get(input.id), original);
+    await expect(pending).rejects.toThrowError();
+    expect(await store.get(input.id)).toStrictEqual(original);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -83,23 +83,24 @@ test('Bot profiles persist identity and memory, import missing records without o
   try {
     const store = new BotProfiles(root);
     const first = await store.register(input);
-    assert.equal(first.revision, 1);
+    expect(first.revision).toBe(1);
     const changed = await store.update(input.id, 1, { name: '新合成助手', memory: '新的合成偏好' });
-    assert.equal(changed.revision, 2);
-    assert.equal(
-      (await store.register({ ...input, memory: '过时的本地副本' })).memory,
+    expect(changed.revision).toBe(2);
+    expect((await store.register({ ...input, memory: '过时的本地副本' })).memory).toBe(
       '新的合成偏好',
     );
-    await assert.rejects(store.update(input.id, 1, { name: '过时修改' }), {
+    await expect(store.update(input.id, 1, { name: '过时修改' })).rejects.toMatchObject({
       code: 'BOT_PROFILE_CONFLICT',
     });
     const same = await store.update(input.id, 2, { memory: '新的合成偏好' });
-    assert.equal(same.revision, 2);
+    expect(same.revision).toBe(2);
     const recovered = new BotProfiles(root);
-    assert.deepEqual(await recovered.get(input.id), changed);
-    assert.equal((await recovered.list()).length, 1);
-    assert.equal((await stat(path.join(root, `${input.id}.json`))).mode & 0o777, 0o600);
-    assert.ok((await readFile(path.join(root, `${input.id}.json`), 'utf8')).includes('新合成助手'));
+    expect(await recovered.get(input.id)).toStrictEqual(changed);
+    expect((await recovered.list()).length).toBe(1);
+    expect((await stat(path.join(root, `${input.id}.json`))).mode & 0o777).toBe(0o600);
+    expect.assert(
+      (await readFile(path.join(root, `${input.id}.json`), 'utf8')).includes('新合成助手'),
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -115,18 +116,18 @@ test('profile boundary rejects unknown fields, invalid IDs and corrupt records w
       { ...input, instructions: 'x'.repeat(4001) },
       { ...input, apiKey: 'synthetic-never-accepted' },
     ])
-      await assert.rejects(store.register(bad), { code: 'INVALID_BOT_PROFILE' });
+      await expect(store.register(bad)).rejects.toMatchObject({ code: 'INVALID_BOT_PROFILE' });
     await store.register(input);
-    await assert.rejects(store.update(input.id, 1, { memory: 'x'.repeat(12001) }), {
+    await expect(store.update(input.id, 1, { memory: 'x'.repeat(12001) })).rejects.toMatchObject({
       code: 'INVALID_BOT_PROFILE',
     });
     const file = path.join(root, 'broken.json');
     await writeFile(file, '{ synthetic incomplete');
     const recovered = new BotProfiles(root);
-    await assert.rejects(recovered.register({ ...input, id: 'broken' }), {
+    await expect(recovered.register({ ...input, id: 'broken' })).rejects.toMatchObject({
       code: 'BOT_PROFILE_CORRUPT',
     });
-    assert.equal(await readFile(file, 'utf8'), '{ synthetic incomplete');
+    expect(await readFile(file, 'utf8')).toBe('{ synthetic incomplete');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -139,39 +140,45 @@ test('archive intent persists before cleanup, fences admission and preserves ide
     const original = await store.register(input);
     const other = await store.register({ ...input, id: 'constructor' });
     const request = { id: 'mock-archive', bot: input.id, action: 'archive' as const, revision: 1 };
-    assert.equal(store.admit('mock-legacy-without-profile'), true);
+    expect(store.admit('mock-legacy-without-profile')).toBe(true);
     const release = store.reserveLifecycle(input.id);
     try {
-      assert.throws(() => store.assertActive(input.id), { code: 'BOT_CHANGING' });
+      expect(() => store.assertActive(input.id)).toThrowError(
+        expect.objectContaining({ code: 'BOT_CHANGING' }),
+      );
       const pending = await store.beginLifecycle(request);
-      assert.equal(pending.archived, true);
-      assert.equal(pending.lifecycle?.phase, 'pending');
-      assert.equal(pending.revision, 2);
-      assert.equal(store.admit(input.id), false);
-      assert.equal(store.admit(other.id), true);
-      assert.deepEqual(await store.register(input), pending);
-      await assert.rejects(store.update(input.id, 2, { memory: '不可覆盖的合成偏好' }), {
+      expect(pending.archived).toBe(true);
+      expect(pending.lifecycle?.phase).toBe('pending');
+      expect(pending.revision).toBe(2);
+      expect(store.admit(input.id)).toBe(false);
+      expect(store.admit(other.id)).toBe(true);
+      expect(await store.register(input)).toStrictEqual(pending);
+      await expect(
+        store.update(input.id, 2, { memory: '不可覆盖的合成偏好' }),
+      ).rejects.toMatchObject({
         code: 'BOT_CHANGING',
       });
       const archived = await store.finishLifecycle(input.id, request.id);
-      assert.equal(archived.revision, 3);
-      assert.equal(archived.lifecycle?.phase, 'complete');
-      assert.deepEqual(await store.beginLifecycle(request), archived);
-      await assert.rejects(store.beginLifecycle({ ...request, action: 'restore' }), {
+      expect(archived.revision).toBe(3);
+      expect(archived.lifecycle?.phase).toBe('complete');
+      expect(await store.beginLifecycle(request)).toStrictEqual(archived);
+      await expect(store.beginLifecycle({ ...request, action: 'restore' })).rejects.toMatchObject({
         code: 'BOT_REQUEST_ID_REUSED',
       });
-      assert.equal(personaKey(archived), personaKey(original));
-      assert.equal(archived.memory, original.memory);
-      assert.equal(archived.createdAt, original.createdAt);
+      expect(personaKey(archived)).toBe(personaKey(original));
+      expect(archived.memory).toBe(original.memory);
+      expect(archived.createdAt).toBe(original.createdAt);
     } finally {
       release();
     }
-    assert.throws(() => store.assertActive(input.id), { code: 'BOT_ARCHIVED' });
+    expect(() => store.assertActive(input.id)).toThrowError(
+      expect.objectContaining({ code: 'BOT_ARCHIVED' }),
+    );
     store = new BotProfiles(root);
     await store.ready;
-    assert.equal(store.admit(input.id), false);
-    assert.equal((await store.list()).length, 2);
-    assert.equal((await store.get(input.id))?.memory, original.memory);
+    expect(store.admit(input.id)).toBe(false);
+    expect((await store.list()).length).toBe(2);
+    expect((await store.get(input.id))?.memory).toBe(original.memory);
     const unlock = store.reserveLifecycle(input.id);
     try {
       const restored = await store.beginLifecycle({
@@ -180,17 +187,19 @@ test('archive intent persists before cleanup, fences admission and preserves ide
         action: 'restore',
         revision: 3,
       });
-      assert.equal(restored.archived, false);
-      assert.equal(restored.revision, 4);
-      assert.equal(restored.lifecycle?.phase, 'complete');
-      assert.equal(restored.memory, original.memory);
-      assert.equal(personaKey(restored), personaKey(original));
-      await assert.rejects(store.beginLifecycle(request), { code: 'BOT_PROFILE_CONFLICT' });
+      expect(restored.archived).toBe(false);
+      expect(restored.revision).toBe(4);
+      expect(restored.lifecycle?.phase).toBe('complete');
+      expect(restored.memory).toBe(original.memory);
+      expect(personaKey(restored)).toBe(personaKey(original));
+      await expect(store.beginLifecycle(request)).rejects.toMatchObject({
+        code: 'BOT_PROFILE_CONFLICT',
+      });
     } finally {
       unlock();
     }
-    assert.equal(store.admit(input.id), true);
-    assert.deepEqual(await store.get(other.id), other);
+    expect(store.admit(input.id)).toBe(true);
+    expect(await store.get(other.id)).toStrictEqual(other);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -204,25 +213,24 @@ test('a profile edit queued first wins over stale archive, while later edits are
     const edit = store.update(input.id, 1, { memory: '合成已排队修改' });
     const release = store.reserveLifecycle(input.id);
     try {
-      assert.equal((await edit).revision, 2);
-      await assert.rejects(
+      expect((await edit).revision).toBe(2);
+      await expect(
         store.beginLifecycle({
           id: 'mock-stale-archive',
           bot: input.id,
           action: 'archive',
           revision: 1,
         }),
-        { code: 'BOT_PROFILE_CONFLICT' },
-      );
-      await assert.rejects(store.update(input.id, 2, { memory: '较晚的合成修改' }), {
+      ).rejects.toMatchObject({ code: 'BOT_PROFILE_CONFLICT' });
+      await expect(store.update(input.id, 2, { memory: '较晚的合成修改' })).rejects.toMatchObject({
         code: 'BOT_CHANGING',
       });
-      assert.equal((await store.get(input.id))?.memory, '合成已排队修改');
-      assert.equal((await store.get(input.id))?.archived, undefined);
+      expect((await store.get(input.id))?.memory).toBe('合成已排队修改');
+      expect((await store.get(input.id))?.archived).toBe(undefined);
     } finally {
       release();
     }
-    assert.equal(store.admit(input.id), true);
+    expect(store.admit(input.id)).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -239,18 +247,16 @@ test('lifecycle metadata is closed and read-only; corrupt transitions are retain
       archived: true,
       lifecycle: { id: 'mock-pending', action: 'archive', phase: 'pending', baseRevision: 1 },
     };
-    assert.equal(isBotProfile(pending), true);
-    assert.equal(isBotProfileInput(pending), false);
-    assert.equal(isBotProfile({ ...pending, archived: false }), false);
-    assert.equal(
+    expect(isBotProfile(pending)).toBe(true);
+    expect(isBotProfileInput(pending)).toBe(false);
+    expect(isBotProfile({ ...pending, archived: false })).toBe(false);
+    expect(
       isBotProfile({ ...pending, lifecycle: { ...pending.lifecycle, permissions: 'all' } }),
-      false,
-    );
-    assert.equal(
+    ).toBe(false);
+    expect(
       isBotLifecycleRequest({ id: 'mock-pending', bot: input.id, action: 'archive', revision: 1 }),
-      true,
-    );
-    assert.equal(
+    ).toBe(true);
+    expect(
       isBotLifecycleRequest({
         id: 'mock-pending',
         bot: input.id,
@@ -258,21 +264,18 @@ test('lifecycle metadata is closed and read-only; corrupt transitions are retain
         revision: 1,
         eraseFiles: true,
       }),
-      false,
-    );
-    assert.equal(
+    ).toBe(false);
+    expect(
       isBotLifecycleRequest({
         id: 'mock-max',
         bot: input.id,
         action: 'archive',
         revision: Number.MAX_SAFE_INTEGER,
       }),
-      false,
-    );
-    await assert.rejects(
+    ).toBe(false);
+    await expect(
       store.beginLifecycle({ id: 'mock-pending', bot: input.id, action: 'archive', revision: 1 }),
-      { code: 'BOT_LIFECYCLE_NOT_RESERVED' },
-    );
+    ).rejects.toMatchObject({ code: 'BOT_LIFECYCLE_NOT_RESERVED' });
     const file = path.join(root, 'mock-broken.json');
     const bytes = JSON.stringify({
       version: 1,
@@ -281,9 +284,9 @@ test('lifecycle metadata is closed and read-only; corrupt transitions are retain
     await writeFile(file, bytes);
     const recovered = new BotProfiles(root);
     await recovered.ready;
-    assert.equal(recovered.admit('mock-broken'), false);
-    assert.equal(recovered.admit(input.id), true);
-    assert.equal(await readFile(file, 'utf8'), bytes);
+    expect(recovered.admit('mock-broken')).toBe(false);
+    expect(recovered.admit(input.id)).toBe(true);
+    expect(await readFile(file, 'utf8')).toBe(bytes);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -298,9 +301,9 @@ test('a repeated reservation release cannot unlock a newer lifecycle operation',
     old();
     const current = store.reserveLifecycle(input.id);
     old();
-    assert.equal(store.admit(input.id), false);
+    expect(store.admit(input.id)).toBe(false);
     current();
-    assert.equal(store.admit(input.id), true);
+    expect(store.admit(input.id)).toBe(true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -312,20 +315,23 @@ test('portable creation retains an origin receipt across restart/edits, never re
   try {
     let profiles = new BotProfiles(root);
     const created = await profiles.registerImport(input, origin);
-    assert.equal(created.model, undefined);
+    expect(created.model).toBe(undefined);
     const edited = await profiles.update(created.id, created.revision, { name: '合成后续编辑' });
     profiles = new BotProfiles(root);
-    assert.deepEqual(await profiles.imported(created.id, origin), edited);
-    assert.deepEqual(await profiles.registerImport(input, origin), edited);
-    await assert.rejects(profiles.registerImport(input, { ...origin, sha256: 'b'.repeat(64) }), {
+    expect(await profiles.imported(created.id, origin)).toStrictEqual(edited);
+    expect(await profiles.registerImport(input, origin)).toStrictEqual(edited);
+    await expect(
+      profiles.registerImport(input, { ...origin, sha256: 'b'.repeat(64) }),
+    ).rejects.toMatchObject({
       code: 'BOT_IMPORT_CONFLICT',
     });
-    await assert.rejects(
+    await expect(
       profiles.registerImport({ ...input, id: 'mock-model', model: 'deepseek-v4-pro' }, origin),
-      { code: 'INVALID_BOT_IMPORT' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_BOT_IMPORT' });
     await profiles.register({ ...input, id: 'mock-existing' });
-    await assert.rejects(profiles.registerImport({ ...input, id: 'mock-existing' }, origin), {
+    await expect(
+      profiles.registerImport({ ...input, id: 'mock-existing' }, origin),
+    ).rejects.toMatchObject({
       code: 'BOT_IMPORT_CONFLICT',
     });
   } finally {
@@ -337,14 +343,16 @@ test('profile commits do not remove an unclaimed colliding temporary file', asyn
   const root = await mkdtemp(path.join(tmpdir(), 'mock-profile-collision-'));
   const file = path.join(root, `${input.id}.json.${'01'.repeat(8)}.tmp`);
   await writeFile(file, 'SYNTHETIC PROTECTED FILE');
-  const mocked = mock.method(crypto, 'randomBytes', (size: number) => Buffer.alloc(size, 1));
+  const mocked = vi
+    .spyOn(crypto, 'randomBytes')
+    .mockImplementation((size: number) => Buffer.alloc(size, 1));
   syncBuiltinESMExports();
   try {
     const profiles = new BotProfiles(root);
-    await assert.rejects(profiles.register(input), { code: 'EEXIST' });
-    assert.equal(await readFile(file, 'utf8'), 'SYNTHETIC PROTECTED FILE');
+    await expect(profiles.register(input)).rejects.toMatchObject({ code: 'EEXIST' });
+    expect(await readFile(file, 'utf8')).toBe('SYNTHETIC PROTECTED FILE');
   } finally {
-    mocked.mock.restore();
+    mocked.mockRestore();
     syncBuiltinESMExports();
     await rm(root, { recursive: true, force: true });
   }

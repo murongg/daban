@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Interactions } from './interactions.js';
 import { inspectSkillPackage } from './skill-package.js';
 import { Skills } from './skills.js';
@@ -60,7 +59,7 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
       (await tools.invoke(run, 'skill_search', { platform: 'skillsmp', query: 'mock' })).content[0]
         .text,
     );
-    assert.equal(search.items[0].name, 'mock-discovered');
+    expect(search.items[0].name).toBe('mock-discovered');
     const preview = JSON.parse(
       (await tools.invoke(run, 'skill_preview', { source })).content[0].text,
     );
@@ -74,14 +73,14 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
       throw new Error('NO_CONFIRMATION');
     };
     const first = await pending();
-    assert.equal((await store.list(run.bot)).items.length, 0);
+    expect((await store.list(run.bot)).items.length).toBe(0);
     await cards.reply(run.bot, run.id, first.id, {
       kind: 'answer',
       answers: [{ id: 'install', selected: ['Cancel'] }],
     });
-    assert.equal((await denied).isError, true);
-    assert.equal((await store.list(run.bot)).items.length, 0);
-    assert.equal((await tools.invoke(run, 'skill_preview', { source })).isError, true);
+    expect((await denied).isError).toBe(true);
+    expect((await store.list(run.bot)).items.length).toBe(0);
+    expect((await tools.invoke(run, 'skill_preview', { source })).isError).toBe(true);
     const initialSnapshot = await store.capture(run.bot);
     const nextRun = {
       ...run,
@@ -92,10 +91,9 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
     const next = JSON.parse(
       (await tools.invoke(nextRun, 'skill_preview', { source })).content[0].text,
     );
-    await assert.rejects(
+    await expect(
       tools.invoke({ ...run, bot: 'mock-b' }, 'skill_install', { previewId: next.previewId }),
-      { code: 'SKILL_PREVIEW_EXPIRED' },
-    );
+    ).rejects.toMatchObject({ code: 'SKILL_PREVIEW_EXPIRED' });
     const accepted = tools.invoke(nextRun, 'skill_install', { previewId: next.previewId });
     const second = await pending();
     bundle.files[1].data = Buffer.from('CHANGED AFTER REVIEW').toString('base64');
@@ -104,19 +102,18 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
       answers: [{ id: 'install', selected: ['Install and enable'] }],
     });
     const result = JSON.parse((await accepted).content[0].text);
-    assert.equal(result.installed, true);
-    assert.equal(result.enabled, true);
+    expect(result.installed).toBe(true);
+    expect(result.enabled).toBe(true);
     const installed = (await store.list(run.bot)).items[0];
-    assert.equal(installed.enabled, true);
-    assert.equal((await store.list('mock-b')).items.length, 0);
-    assert.equal(result.applies, 'current-task');
-    assert.equal(result.ownerBot, run.bot);
-    assert.equal(
+    expect(installed.enabled).toBe(true);
+    expect((await store.list('mock-b')).items.length).toBe(0);
+    expect(result.applies).toBe('current-task');
+    expect(result.ownerBot).toBe(run.bot);
+    expect(
       nextRun.skills,
-      initialSnapshot,
       'The native DSH session fingerprint must retain its original skill context',
-    );
-    assert.equal(initialSnapshot.skills.length, 0);
+    ).toBe(initialSnapshot);
+    expect(initialSnapshot.skills.length).toBe(0);
     const { SkillTools } = await import(new URL('./skill-tools.js', import.meta.url).href);
     const resources = new SkillTools(
       store,
@@ -127,19 +124,19 @@ test('skill discovery installs only a reviewed task-bound snapshot after confirm
       (await resources.invoke(nextRun, 'skill_read', { skill: installed.name, path: 'SKILL.md' }))
         .content[0].text,
     );
-    assert.ok(instructions.content.includes('Use assets/template.bin'));
-    assert.equal(
+    expect.assert(instructions.content.includes('Use assets/template.bin'));
+    expect(
       (await store.readResource(installed.id, installed.revision, 'assets/template.bin', run.bot))
         .data,
-      Buffer.from([0, 255, 1]).toString('base64'),
-    );
-    assert.deepEqual(
+    ).toBe(Buffer.from([0, 255, 1]).toString('base64'));
+    expect(
       await tools.invoke(nextRun, 'skill_install', { previewId: next.previewId }),
-      await accepted,
-    );
-    assert.equal((await cards.list()).length, 2);
+    ).toStrictEqual(await accepted);
+    expect((await cards.list()).length).toBe(2);
     Reflect.get(tools, 'release').call(tools, nextRun);
-    await assert.rejects(tools.invoke(nextRun, 'skill_install', { previewId: next.previewId }), {
+    await expect(
+      tools.invoke(nextRun, 'skill_install', { previewId: next.previewId }),
+    ).rejects.toMatchObject({
       code: 'SKILL_PREVIEW_EXPIRED',
     });
   } finally {
@@ -194,14 +191,14 @@ test('installing a manual-only skill does not claim automatic invocation authori
       if (question) break;
       await new Promise((resolve) => setTimeout(resolve, 2));
     }
-    assert.ok(question);
+    expect.assert(question);
     await cards.reply(run.bot, run.id!, question.id, {
       kind: 'answer',
       answers: [{ id: 'install', selected: ['Install and enable'] }],
     });
     const result = JSON.parse((await pending).content[0].text);
-    assert.equal(result.installed, true);
-    assert.equal(result.applies, 'manual-invocation');
+    expect(result.installed).toBe(true);
+    expect(result.applies).toBe('manual-invocation');
   } finally {
     run.abort.abort();
     tools.release(run);

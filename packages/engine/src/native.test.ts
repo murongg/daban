@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Control } from './control.js';
 import type { Screens } from './desktop.js';
 import { Native } from './native.js';
@@ -32,11 +31,10 @@ test('a native screen driver operates a logical Bot without owning a browser or 
     { type: 'key', key: 'Enter' },
     'mock-native-instance',
   );
-  assert.equal(
+  expect(
     (await native.frame('mock-native-bot', 'mock-native-instance', human.epoch)).toString(),
-    'SYNTHETIC-NATIVE-47',
-  );
-  assert.deepEqual(effects, ['mock-native-bot']);
+  ).toBe('SYNTHETIC-NATIVE-47');
+  expect(effects).toStrictEqual(['mock-native-bot']);
   await native.close();
-  assert.equal(closed, true);
+  expect(closed).toBe(true);
 });

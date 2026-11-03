@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import { expect, type TestContext, test } from 'vitest';
 import { downloadPayload, type Payload } from './payload.js';
 
 const bytes = Buffer.from('SYNTHETIC IMMUTABLE RUNTIME PAYLOAD');
@@ -16,7 +15,7 @@ const response = (data: Uint8Array = bytes) =>
   new Response(new Uint8Array(data), { headers: { 'content-length': String(data.length) } });
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-payload-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
   return { directory, file: path.join(directory, 'runtime.zip') };
 }
 
@@ -28,16 +27,16 @@ test('publishes only a verified payload and reuses a valid cache without a reque
     return response();
   };
   await downloadPayload(file, asset, { fetcher });
-  assert.deepEqual(await readFile(file), bytes);
+  expect(await readFile(file)).toStrictEqual(bytes);
   await downloadPayload(file, asset, { fetcher });
-  assert.equal(calls, 1);
-  if (process.platform !== 'win32') assert.equal((await lstat(file)).mode & 0o777, 0o600);
+  expect(calls).toBe(1);
+  if (process.platform !== 'win32') expect((await lstat(file)).mode & 0o777).toBe(0o600);
 });
 
 test('resumes an interrupted stream and verifies the complete file before publishing', async (t) => {
   const { file } = await fixture(t);
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
-  await assert.rejects(
+  await expect(
     downloadPayload(file, asset, {
       fetcher: async () =>
         new Response(
@@ -53,10 +52,10 @@ test('resumes an interrupted stream and verifies the complete file before publis
         if (value.received === 5) stream?.error(new Error('SYNTHETIC_CONNECTION_LOST'));
       },
     }),
-  );
-  assert.deepEqual(await readFile(file + '.part'), bytes.subarray(0, 5));
+  ).rejects.toThrowError();
+  expect(await readFile(file + '.part')).toStrictEqual(bytes.subarray(0, 5));
   const fetcher: typeof fetch = async (_url, init) => {
-    assert.equal(new Headers(init?.headers).get('range'), 'bytes=5-');
+    expect(new Headers(init?.headers).get('range')).toBe('bytes=5-');
     return new Response(bytes.subarray(5), {
       status: 206,
       headers: {
@@ -66,34 +65,33 @@ test('resumes an interrupted stream and verifies the complete file before publis
     });
   };
   await downloadPayload(file, asset, { fetcher });
-  assert.deepEqual(await readFile(file), bytes);
-  await assert.rejects(lstat(file + '.part'), { code: 'ENOENT' });
+  expect(await readFile(file)).toStrictEqual(bytes);
+  await expect(lstat(file + '.part')).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 test('restarts cleanly if a server ignores Range, without appending a second full archive', async (t) => {
   const { file } = await fixture(t);
   await writeFile(file + '.part', bytes.subarray(0, 5), { mode: 0o600 });
   await downloadPayload(file, asset, { fetcher: async () => response() });
-  assert.deepEqual(await readFile(file), bytes);
+  expect(await readFile(file)).toStrictEqual(bytes);
 });
 
 test('refuses wrong hashes, oversized bodies and inconsistent range metadata', async (t) => {
   const { file } = await fixture(t);
-  await assert.rejects(
+  await expect(
     downloadPayload(
       file,
       { ...asset, sha256: '0'.repeat(64) },
       { fetcher: async () => response() },
     ),
-    /PAYLOAD_INTEGRITY/,
-  );
-  await assert.rejects(lstat(file), { code: 'ENOENT' });
-  await assert.rejects(lstat(file + '.part'), { code: 'ENOENT' });
-  await assert.rejects(
+  ).rejects.toThrowError(/PAYLOAD_INTEGRITY/);
+  await expect(lstat(file)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(lstat(file + '.part')).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(
     downloadPayload(file, asset, { fetcher: async () => response(Buffer.alloc(bytes.length + 1)) }),
-  );
+  ).rejects.toThrowError();
   await writeFile(file + '.part', bytes.subarray(0, 5), { mode: 0o600 });
-  await assert.rejects(
+  await expect(
     downloadPayload(file, asset, {
       fetcher: async () =>
         new Response(bytes.subarray(5), {
@@ -101,9 +99,8 @@ test('refuses wrong hashes, oversized bodies and inconsistent range metadata', a
           headers: { 'content-range': 'bytes 1-2/3' },
         }),
     }),
-    /PAYLOAD_RANGE/,
-  );
-  await assert.rejects(lstat(file), { code: 'ENOENT' });
+  ).rejects.toThrowError(/PAYLOAD_RANGE/);
+  await expect(lstat(file)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 test('deduplicates concurrent requests and repairs a corrupt app-owned cache', async (t) => {
@@ -118,8 +115,8 @@ test('deduplicates concurrent requests and repairs a corrupt app-owned cache', a
     downloadPayload(file, asset, { fetcher }),
     downloadPayload(file, asset, { fetcher }),
   ]);
-  assert.equal(calls, 1);
-  assert.deepEqual(await readFile(file), bytes);
+  expect(calls).toBe(1);
+  expect(await readFile(file)).toStrictEqual(bytes);
 });
 
 test('cancellation retains a resumable partial file and never publishes incomplete data', async (t) => {
@@ -128,7 +125,7 @@ test('cancellation retains a resumable partial file and never publishes incomple
   abort.abort();
   await writeFile(file + '.part', bytes.subarray(0, 5), { mode: 0o600 });
   let requested = false;
-  await assert.rejects(
+  await expect(
     downloadPayload(file, asset, {
       signal: abort.signal,
       fetcher: async () => {
@@ -136,10 +133,10 @@ test('cancellation retains a resumable partial file and never publishes incomple
         return response();
       },
     }),
-  );
-  assert.equal(requested, false);
-  assert.deepEqual(await readFile(file + '.part'), bytes.subarray(0, 5));
-  await assert.rejects(lstat(file), { code: 'ENOENT' });
+  ).rejects.toThrowError();
+  expect(requested).toBe(false);
+  expect(await readFile(file + '.part')).toStrictEqual(bytes.subarray(0, 5));
+  await expect(lstat(file)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 test('does not follow a symlink or accept an insecure download descriptor', async (t) => {
@@ -148,22 +145,20 @@ test('does not follow a symlink or accept an insecure download descriptor', asyn
   await writeFile(other, 'SYNTHETIC UNRELATED FILE', { mode: 0o600 });
   if (process.platform !== 'win32') {
     await symlink(other, file + '.part');
-    await assert.rejects(
+    await expect(
       downloadPayload(file, asset, { fetcher: async () => response() }),
-      /PAYLOAD_UNSAFE/,
-    );
-    assert.equal(await readFile(other, 'utf8'), 'SYNTHETIC UNRELATED FILE');
+    ).rejects.toThrowError(/PAYLOAD_UNSAFE/);
+    expect(await readFile(other, 'utf8')).toBe('SYNTHETIC UNRELATED FILE');
   }
-  await assert.rejects(
+  await expect(
     downloadPayload(file, { ...asset, url: 'http://example.test/runtime.zip' }),
-    /PAYLOAD_DESCRIPTOR/,
-  );
+  ).rejects.toThrowError(/PAYLOAD_DESCRIPTOR/);
 });
 
 test('closes a rejected response body and refuses an HTTPS redirect downgrade', async (t) => {
   const { file } = await fixture(t);
   let cancelled = false;
-  await assert.rejects(
+  await expect(
     downloadPayload(file, asset, {
       fetcher: async () =>
         new Response(
@@ -177,10 +172,9 @@ test('closes a rejected response body and refuses an HTTPS redirect downgrade', 
           },
         ),
     }),
-    /PAYLOAD_LENGTH/,
-  );
-  assert.equal(cancelled, true);
-  await assert.rejects(
+  ).rejects.toThrowError(/PAYLOAD_LENGTH/);
+  expect(cancelled).toBe(true);
+  await expect(
     downloadPayload(file, asset, {
       fetcher: async () =>
         new Response(null, {
@@ -188,6 +182,5 @@ test('closes a rejected response body and refuses an HTTPS redirect downgrade', 
           headers: { location: 'http://example.test/unsafe.zip' },
         }),
     }),
-    /PAYLOAD_DESCRIPTOR/,
-  );
+  ).rejects.toThrowError(/PAYLOAD_DESCRIPTOR/);
 });

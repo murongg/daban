@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { Chats } from './chats.js';
 
 test('a fresh personal conversation commits its boundary and durable receipt together; replay cannot replace later state', async () => {
@@ -11,29 +10,31 @@ test('a fresh personal conversation commits its boundary and durable receipt tog
   const request = { id: 'mock-new-chat', bot: 'mock-alpha', revision: 0 };
   try {
     await chats.ready;
-    assert.equal(chats.current('mock-alpha').revision, 0);
+    expect(chats.current('mock-alpha').revision).toBe(0);
     const first = await chats.renew(request);
-    assert.equal(first.chat.revision, 1);
-    assert.equal(first.receipt.request.id, request.id);
-    assert.equal(chats.current('mock-beta').revision, 0);
-    await assert.rejects(chats.renew({ ...request, id: 'mock-stale' }), { code: 'CHAT_CONFLICT' });
+    expect(first.chat.revision).toBe(1);
+    expect(first.receipt.request.id).toBe(request.id);
+    expect(chats.current('mock-beta').revision).toBe(0);
+    await expect(chats.renew({ ...request, id: 'mock-stale' })).rejects.toMatchObject({
+      code: 'CHAT_CONFLICT',
+    });
     await chats.close();
     await chats.close();
     chats = new Chats(path.join(root, 'chats.sqlite'), () => {});
     await chats.ready;
-    assert.deepEqual(await chats.receipt(request.bot, request.id), first);
+    expect(await chats.receipt(request.bot, request.id)).toStrictEqual(first);
     const second = await chats.renew({ ...request, id: 'mock-next', revision: 1 });
     const replay = await chats.renew(request);
-    assert.equal(replay.chat.revision, 2);
-    assert.equal(replay.receipt.revision, 1);
-    assert.deepEqual(replay.chat, second.chat);
-    await assert.rejects(chats.receipt('mock-beta', request.id), {
+    expect(replay.chat.revision).toBe(2);
+    expect(replay.receipt.revision).toBe(1);
+    expect(replay.chat).toStrictEqual(second.chat);
+    await expect(chats.receipt('mock-beta', request.id)).rejects.toMatchObject({
       code: 'CHAT_RECEIPT_NOT_FOUND',
     });
-    await assert.rejects(chats.renew({ ...request, revision: 2 }), {
+    await expect(chats.renew({ ...request, revision: 2 })).rejects.toMatchObject({
       code: 'CHAT_REQUEST_ID_REUSED',
     });
-    assert.equal((await chats.status()).items.length, 1);
+    expect((await chats.status()).items.length).toBe(1);
   } finally {
     await chats.close();
     await rm(root, { recursive: true, force: true });
@@ -49,16 +50,16 @@ test('failed admission or a still-stopping private job cannot commit a new bound
   const request = { id: 'mock-fenced-chat', bot: 'mock-alpha', revision: 0 };
   try {
     await chats.ready;
-    await assert.rejects(chats.renew(request), { code: 'CHAT_BUSY' });
-    assert.equal(chats.current(request.bot).revision, 0);
-    await assert.rejects(chats.receipt(request.bot, request.id), {
+    await expect(chats.renew(request)).rejects.toMatchObject({ code: 'CHAT_BUSY' });
+    expect(chats.current(request.bot).revision).toBe(0);
+    await expect(chats.receipt(request.bot, request.id)).rejects.toMatchObject({
       code: 'CHAT_RECEIPT_NOT_FOUND',
     });
     blocked = false;
-    assert.equal((await chats.renew(request)).chat.revision, 1);
+    expect((await chats.renew(request)).chat.revision).toBe(1);
     blocked = true;
-    assert.equal((await chats.renew(request)).receipt.revision, 1);
-    await assert.rejects(chats.renew({ ...request, unknown: true }), {
+    expect((await chats.renew(request)).receipt.revision).toBe(1);
+    await expect(chats.renew({ ...request, unknown: true })).rejects.toMatchObject({
       code: 'INVALID_CHAT_REQUEST',
     });
   } finally {

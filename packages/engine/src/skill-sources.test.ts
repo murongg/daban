@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 
 const entry = new URL('./skill-sources.js', import.meta.url).href;
 const bytes = (value: unknown) => Buffer.from(JSON.stringify(value));
@@ -58,15 +57,15 @@ test('normalizes public registry search without credentials or executing install
   });
   const metric = (await sources.search('skills.sh', 'mock', new AbortController().signal))
     .items[0] as unknown as { usage?: { kind: string; count: number } };
-  assert.deepEqual(metric.usage, { kind: 'installs', count: 12 });
+  expect(metric.usage).toStrictEqual({ kind: 'installs', count: 12 });
   for (const platform of ['skills.sh', 'skillsmp', 'clawhub']) {
     const result = await sources.search(platform, 'mock', new AbortController().signal);
-    assert.equal(result.items.length, 1);
-    assert.ok(result.items[0].source);
-    assert.equal(result.platform, platform);
+    expect(result.items.length).toBe(1);
+    expect.assert(result.items[0].source);
+    expect(result.platform).toBe(platform);
   }
-  assert.equal(calls.length, 3);
-  assert.ok(calls.every((url) => new URL(url).protocol === 'https:'));
+  expect(calls.length).toBe(3);
+  expect.assert(calls.every((url) => new URL(url).protocol === 'https:'));
 });
 test('pins GitHub files to one commit and fetches every resource, never running repository code', async () => {
   const { SkillSources } = await import(entry);
@@ -104,10 +103,10 @@ test('pins GitHub files to one commit and fetches every resource, never running 
     { platform: 'github', url: 'https://github.com/synthetic-org/mock-repo', skill: 'mock-source' },
     new AbortController().signal,
   );
-  assert.equal(result.kind, 'package');
-  assert.equal(result.selection.preview.fileCount, 2);
-  assert.equal(result.origin.revision, sha);
-  assert.ok(
+  expect(result.kind).toBe('package');
+  expect(result.selection.preview.fileCount).toBe(2);
+  expect(result.origin.revision).toBe(sha);
+  expect.assert(
     calls
       .filter((url) => url.startsWith('https://raw.githubusercontent.com/'))
       .every((url) => url.includes(`/${sha}/`)),
@@ -122,20 +121,18 @@ test('rejects private/non-GitHub URLs, truncated catalogs and source symlinks ra
         ? bytes({ truncated: true, tree: [] })
         : bytes({ default_branch: 'main' }),
   );
-  await assert.rejects(
+  await expect(
     sources.preview(
       { platform: 'github', url: 'http://127.0.0.1/private' },
       new AbortController().signal,
     ),
-    { code: 'SKILL_SOURCE_INVALID' },
-  );
-  await assert.rejects(
+  ).rejects.toMatchObject({ code: 'SKILL_SOURCE_INVALID' });
+  await expect(
     sources.preview(
       { platform: 'github', url: 'https://github.com/synthetic-org/mock-repo' },
       new AbortController().signal,
     ),
-    { code: 'SKILL_SOURCE_TOO_LARGE' },
-  );
+  ).rejects.toMatchObject({ code: 'SKILL_SOURCE_TOO_LARGE' });
 });
 test('rejects same-size bytes that do not match the selected Git object', async () => {
   const { SkillSources } = await import(entry);
@@ -159,11 +156,10 @@ test('rejects same-size bytes that do not match the selected Git object', async 
       return Buffer.from(main.replace('Synthetic', 'SYNTHETIC'));
     return bytes({ default_branch: 'main' });
   });
-  await assert.rejects(
+  await expect(
     sources.preview(
       { platform: 'github', url: 'https://github.com/synthetic-org/mock-repo' },
       new AbortController().signal,
     ),
-    { code: 'SKILL_SOURCE_CHANGED' },
-  );
+  ).rejects.toMatchObject({ code: 'SKILL_SOURCE_CHANGED' });
 });

@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { startPrototype } from './server.js';
 
 async function fixture() {
@@ -45,7 +44,7 @@ async function fixture() {
       assignee: 'mock-beta',
     },
   };
-  assert.equal((await call(39, 'write', request)).status, 200);
+  expect((await call(39, 'write', request)).status).toBe(200);
   return {
     app,
     call,
@@ -61,13 +60,13 @@ test('legacy HTTP reads retain their closed shape and full-form edits preserve h
   const f = await fixture();
   try {
     const modern = (await f.call(39, 'read', { id: f.request.item })).value;
-    assert.equal(modern.status, 'blocked');
-    assert.equal(modern.priority, 'urgent');
-    assert.equal(modern.assignee, 'mock-beta');
+    expect(modern.status).toBe('blocked');
+    expect(modern.priority).toBe('urgent');
+    expect(modern.assignee).toBe('mock-beta');
     const legacy = (await f.call(38, 'read', { id: f.request.item })).value;
-    assert.equal(legacy.status, 'doing');
-    assert.equal(Object.hasOwn(legacy, 'priority'), false);
-    assert.equal(Object.hasOwn(legacy, 'assignee'), false);
+    expect(legacy.status).toBe('doing');
+    expect(Object.hasOwn(legacy, 'priority')).toBe(false);
+    expect(Object.hasOwn(legacy, 'assignee')).toBe(false);
     const update = {
       id: 'mock-legacy-edit',
       item: legacy.id,
@@ -81,13 +80,13 @@ test('legacy HTTP reads retain their closed shape and full-form edits preserve h
       },
     };
     const edited = await f.call(38, 'write', update);
-    assert.equal(edited.status, 200);
-    assert.deepEqual(edited.value.request, update);
+    expect(edited.status).toBe(200);
+    expect(edited.value.request).toStrictEqual(update);
     const after = (await f.call(39, 'read', { id: legacy.id })).value;
-    assert.equal(after.status, 'blocked');
-    assert.equal(after.assignee, 'mock-beta');
-    assert.equal(after.priority, 'urgent');
-    assert.equal(after.title, update.value.title);
+    expect(after.status).toBe('blocked');
+    expect(after.assignee).toBe('mock-beta');
+    expect(after.priority).toBe('urgent');
+    expect(after.title).toBe(update.value.title);
     await f.call(39, 'write', {
       id: 'mock-later',
       item: after.id,
@@ -96,14 +95,14 @@ test('legacy HTTP reads retain their closed shape and full-form edits preserve h
       value: { priority: 'low', progress: 'MOCK LATER HUMAN PROGRESS' },
     });
     const replay = await f.call(38, 'write', update);
-    assert.equal(replay.status, 200);
-    assert.equal(replay.value.acceptedRevision, 2);
-    assert.equal(replay.value.item.revision, 3);
-    assert.equal(replay.value.item.status, 'doing');
-    assert.equal(replay.value.item.progress, 'MOCK LATER HUMAN PROGRESS');
-    assert.equal((await f.call(39, 'read', { id: after.id })).value.priority, 'low');
-    assert.equal(f.app.models!.jobs.size, 0);
-    assert.deepEqual(f.app.runtime.status().items, []);
+    expect(replay.status).toBe(200);
+    expect(replay.value.acceptedRevision).toBe(2);
+    expect(replay.value.item.revision).toBe(3);
+    expect(replay.value.item.status).toBe('doing');
+    expect(replay.value.item.progress).toBe('MOCK LATER HUMAN PROGRESS');
+    expect((await f.call(39, 'read', { id: after.id })).value.priority).toBe('low');
+    expect(f.app.models!.jobs.size).toBe(0);
+    expect(f.app.runtime.status().items).toStrictEqual([]);
   } finally {
     await f.close();
   }
@@ -128,10 +127,10 @@ test('legacy closed projections cannot silently reopen a task, and comment recei
       action: 'update',
       value: { title: '合成已关闭任务注释', status: 'done' },
     };
-    assert.equal((await f.call(38, 'write', title)).status, 200);
+    expect((await f.call(38, 'write', title)).status).toBe(200);
     const latest = (await f.call(39, 'read', { id: closed.id })).value;
-    assert.equal(latest.status, 'closed');
-    assert.equal(latest.completedAt, closed.completedAt);
+    expect(latest.status).toBe('closed');
+    expect(latest.completedAt).toBe(closed.completedAt);
     const denied = await f.call(38, 'write', {
       id: 'mock-old-reopen',
       item: latest.id,
@@ -139,7 +138,7 @@ test('legacy closed projections cannot silently reopen a task, and comment recei
       action: 'update',
       value: { status: 'todo' },
     });
-    assert.equal(denied.value.error, 'WORK_CONFLICT');
+    expect(denied.value.error).toBe('WORK_CONFLICT');
     const request = {
       id: 'mock-comment',
       item: latest.id,
@@ -147,13 +146,13 @@ test('legacy closed projections cannot silently reopen a task, and comment recei
       body: 'MOCK LITERAL CLOSED DISCUSSION',
     };
     const comment = await f.call(39, 'comment', request);
-    assert.equal(comment.status, 200);
+    expect(comment.status).toBe(200);
     const receipt = await f.call(38, 'comment-receipt', request);
-    assert.equal(receipt.status, 200);
-    assert.deepEqual(receipt.value.request, request);
-    assert.equal(receipt.value.item.status, 'done');
-    assert.equal(Object.hasOwn(receipt.value.item, 'priority'), false);
-    assert.equal(
+    expect(receipt.status).toBe(200);
+    expect(receipt.value.request).toStrictEqual(request);
+    expect(receipt.value.item.status).toBe('done');
+    expect(Object.hasOwn(receipt.value.item, 'priority')).toBe(false);
+    expect(
       (
         await f.call(38, 'write', {
           id: 'mock-legacy-meta',
@@ -163,9 +162,8 @@ test('legacy closed projections cannot silently reopen a task, and comment recei
           value: { priority: 'high' },
         })
       ).status,
-      400,
-    );
-    assert.equal((await f.call(38, 'list', { priority: 'urgent' })).status, 400);
+    ).toBe(400);
+    expect((await f.call(38, 'list', { priority: 'urgent' })).status).toBe(400);
   } finally {
     await f.close();
   }

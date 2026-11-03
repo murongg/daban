@@ -1,20 +1,19 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test, vi } from 'vitest';
 import { Control } from './control.js';
 import type { Desktop } from './desktop.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
-test('human waiting does not cancel a model task, while the active execution budget still stops it', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+test('human waiting does not cancel a model task, while the active execution budget still stops it', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-model-budget-'));
   try {
     let now = 0,
       closed = 0;
-    t.mock.method(performance, 'now', () => now);
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
     const control = new Control(['a', 'b'], () => now);
     await control.transfer('a', 0, 'human');
     await mkdir(path.join(root, 'workspace'));
@@ -83,20 +82,20 @@ test('human waiting does not cancel a model task, while the active execution bud
     await ready;
     for (let i = 0; i < 10 && !models.jobs.get('a')!.waitingForComputer; i++)
       await new Promise(setImmediate);
-    assert.equal(models.status().bots.a.phase, 'paused');
+    expect(models.status().bots.a.phase).toBe('paused');
     now = 30 * 60 * 1000;
-    t.mock.timers.tick(30 * 60 * 1000);
+    vi.advanceTimersByTime(30 * 60 * 1000);
     await new Promise(setImmediate);
-    assert.equal(closed, 0, 'an actual computer wait must not spend execution budget');
-    assert.equal(models.running('a'), true);
+    expect(closed, 'an actual computer wait must not spend execution budget').toBe(0);
+    expect(models.running('a')).toBe(true);
     await control.transfer('a', 1, 'agent');
-    t.mock.timers.tick(80);
+    vi.advanceTimersByTime(80);
     await computerReturned;
     now += 300001;
-    t.mock.timers.tick(1000);
+    vi.advanceTimersByTime(1000);
     await models.jobs.get('a')!.done;
-    assert.equal(models.status().bots.a.phase, 'stopped');
-    assert.match(models.status().bots.a.error || '', /运行时长/);
+    expect(models.status().bots.a.phase).toBe('stopped');
+    expect(models.status().bots.a.error || '').toMatch(/运行时长/);
     await models.close();
   } finally {
     await rm(root, { recursive: true, force: true });

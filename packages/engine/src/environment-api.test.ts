@@ -1,13 +1,12 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { request as http } from 'node:http';
 import { request as https } from 'node:https';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { SetupStatus } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { startNativeAgent } from './host-server.js';
 import { privateClientOptions } from './private-channel.js';
 
@@ -94,16 +93,14 @@ test('optional environment setup is host-authenticated and blocks app replacemen
       request.end(JSON.stringify(body));
     });
   try {
-    assert.equal(started, 0);
-    assert.equal(
+    expect(started).toBe(0);
+    expect(
       (await call('/api/host/environment', { scope, action: 'start' }, 'synthetic-invalid')).status,
-      403,
-    );
-    assert.equal(
+    ).toBe(403);
+    expect(
       (await call('/api/host/environment', { scope: 'b'.repeat(64), action: 'start' })).status,
-      400,
-    );
-    assert.equal(
+    ).toBe(400);
+    expect(
       (
         await call('/api/host/environment', {
           scope,
@@ -111,27 +108,23 @@ test('optional environment setup is host-authenticated and blocks app replacemen
           url: 'https://example.test/untrusted',
         })
       ).status,
-      400,
-    );
-    assert.equal(
-      (await call('/api/host/environment', { scope, action: 'status' })).value.phase,
+    ).toBe(400);
+    expect((await call('/api/host/environment', { scope, action: 'status' })).value.phase).toBe(
       'available',
     );
-    assert.equal(started, 0);
-    assert.equal(
-      (await call('/api/host/environment', { scope, action: 'start' })).value.phase,
+    expect(started).toBe(0);
+    expect((await call('/api/host/environment', { scope, action: 'start' })).value.phase).toBe(
       'downloading',
     );
-    assert.equal(started, 1);
-    assert.equal((await call('/api/host/update', { scope })).status, 409);
-    assert.equal(
-      (await call('/api/host/environment', { scope, action: 'cancel' })).value.phase,
+    expect(started).toBe(1);
+    expect((await call('/api/host/update', { scope })).status).toBe(409);
+    expect((await call('/api/host/environment', { scope, action: 'cancel' })).value.phase).toBe(
       'cancelled',
     );
-    assert.equal((await call('/api/host/update', { scope })).status, 200);
+    expect((await call('/api/host/update', { scope })).status).toBe(200);
     await handoff;
-    assert.equal((await call('/api/host/environment', { scope, action: 'start' })).status, 503);
-    assert.equal(started, 1);
+    expect((await call('/api/host/environment', { scope, action: 'start' })).status).toBe(503);
+    expect(started).toBe(1);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

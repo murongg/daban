@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { turnLimit } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { editorShowsFile, ModelRuns, sdkPatch, verifyOutput, verifyTask } from './model.js';
 import { RemoteWorkspace } from './remote-workspace.js';
@@ -23,8 +22,8 @@ test('initialization failures preserve redacted startup diagnostics and reclaim 
     constructor(readonly options: { env: NodeJS.ProcessEnv }) {}
     async start() {
       snapshot = this.options.env.DABAN_DSH_STARTUP_FILE ?? '';
-      assert.ok(snapshot, 'SDK startup must receive a private diagnostic checkpoint');
-      assert.ok(this.options.env.NODE_OPTIONS?.includes('dsh-preload.js'));
+      expect.assert(snapshot, 'SDK startup must receive a private diagnostic checkpoint');
+      expect.assert(this.options.env.NODE_OPTIONS?.includes('dsh-preload.js'));
       await writeFile(
         snapshot,
         JSON.stringify({
@@ -80,20 +79,20 @@ test('initialization failures preserve redacted startup diagnostics and reclaim 
     });
     const job = models.jobs.get('mock-bot')!;
     await job.done;
-    assert.equal(job.phase, 'failed');
+    expect(job.phase).toBe('failed');
     const text = await readFile(path.join(root, 'model/dsh-startup.log'), 'utf8');
-    assert.equal(text.includes(secret), false);
-    assert.equal(text.includes('SYNTHETIC PRIVATE CHAT'), false);
+    expect(text.includes(secret)).toBe(false);
+    expect(text.includes('SYNTHETIC PRIVATE CHAT')).toBe(false);
     const records = text
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
-    assert.ok(records.some((record) => record.stage === 'sdk-loading'));
+    expect.assert(records.some((record) => record.stage === 'sdk-loading'));
     const failure = records.find((record) => record.stage === 'initialize-failed');
-    assert.ok(failure);
-    assert.equal(failure.runId, job.id);
-    assert.ok(failure.snapshot.stderr.includes('[credential redacted]'));
-    await assert.rejects(readFile(snapshot), { code: 'ENOENT' });
+    expect.assert(failure);
+    expect(failure.runId).toBe(job.id);
+    expect.assert(failure.snapshot.stderr.includes('[credential redacted]'));
+    await expect(readFile(snapshot)).rejects.toMatchObject({ code: 'ENOENT' });
     initializeFails = false;
     closeFails = true;
     await models.start('mock-bot', {
@@ -101,12 +100,11 @@ test('initialization failures preserve redacted startup diagnostics and reclaim 
       prompt: 'SYNTHETIC PRIVATE CHAT',
     });
     await models.jobs.get('mock-bot')!.done;
-    assert.equal(
+    expect(
       (await readFile(path.join(root, 'model/dsh-startup.log'), 'utf8')).includes(
         'SYNTHETIC SHUTDOWN CHAT',
       ),
-      false,
-    );
+    ).toBe(false);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -151,12 +149,12 @@ test('native model routes select their actual DSH wire protocol without changing
         config: { providers: Record<string, { api?: string; apiKeyEnv: string; baseURL: string }> };
       }
     ).config.providers;
-    assert.ok(profiles[key], api);
-    assert.equal(profiles[key].api, expectedApi, api);
-    assert.equal(profiles[key].apiKeyEnv, 'DABAN_MODEL_KEY');
-    assert.equal(profiles[key].baseURL, route.baseURL);
-    assert.equal(route.provider, 'mock-native');
-    assert.equal(JSON.stringify(patch).includes(route.apiKey), false);
+    expect.assert(profiles[key], api);
+    expect(profiles[key].api, api).toBe(expectedApi);
+    expect(profiles[key].apiKeyEnv).toBe('DABAN_MODEL_KEY');
+    expect(profiles[key].baseURL).toBe(route.baseURL);
+    expect(route.provider).toBe('mock-native');
+    expect(JSON.stringify(patch).includes(route.apiKey)).toBe(false);
   }
 });
 
@@ -200,9 +198,9 @@ test('a captured supplier route controls DSH endpoint, model capabilities and in
       };
     }
   ).config;
-  assert.equal(config.providers['mock-supplier']?.apiKeyEnv, 'DABAN_MODEL_KEY');
-  assert.equal(config.providers['mock-supplier']?.baseURL, route.baseURL);
-  assert.deepEqual(config.providers['mock-supplier']?.models, [
+  expect(config.providers['mock-supplier']?.apiKeyEnv).toBe('DABAN_MODEL_KEY');
+  expect(config.providers['mock-supplier']?.baseURL).toBe(route.baseURL);
+  expect(config.providers['mock-supplier']?.models).toStrictEqual([
     {
       id: 'mock-chat',
       input: ['text'],
@@ -211,13 +209,10 @@ test('a captured supplier route controls DSH endpoint, model capabilities and in
       reasoningEfforts: false,
     },
   ]);
-  assert.equal(
-    plugins.some((entry) => entry.id === 'web-deepseek-api'),
-    false,
-  );
+  expect(plugins.some((entry) => entry.id === 'web-deepseek-api')).toBe(false);
   const web = plugins.find((entry) => entry.id === 'tool-web')!;
-  assert.equal((web as unknown as { config: { search: boolean } }).config.search, false);
-  assert.equal(JSON.stringify(patch).includes(route.apiKey), false);
+  expect((web as unknown as { config: { search: boolean } }).config.search).toBe(false);
+  expect(JSON.stringify(patch).includes(route.apiKey)).toBe(false);
 });
 
 test('an inserted queued message runs as a follow-up turn in the same session', async () => {
@@ -308,39 +303,36 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
     await started;
     const runId = models.jobs.get('mock-insert')!.id;
     const target = { runId, chatRevision: 0 };
-    await assert.rejects(
+    await expect(
       models.insert('mock-insert', {
         id: 'mock-insert-stale',
         text: 'Synthetic stale message.',
         runId: 'mock-insert-other-run',
         chatRevision: 0,
       }),
-      { code: 'TASK_INSERT_STALE' },
-    );
-    assert.deepEqual(
+    ).rejects.toMatchObject({ code: 'TASK_INSERT_STALE' });
+    expect(
       await models.insert('mock-insert', {
         id: 'mock-insert-one',
         text: 'Synthetic inserted message.',
         ...target,
       }),
-      { ok: true, id: 'mock-insert-one' },
-    );
-    assert.deepEqual(
+    ).toStrictEqual({ ok: true, id: 'mock-insert-one' });
+    expect(
       await models.insert('mock-insert', {
         id: 'mock-insert-one',
         text: 'Synthetic ignored duplicate.',
         ...target,
       }),
-      { ok: true, id: 'mock-insert-one' },
-    );
+    ).toStrictEqual({ ok: true, id: 'mock-insert-one' });
     release();
     await models.jobs.get('mock-insert')!.done;
-    assert.equal(prompts.length, 2);
-    assert.match(prompts[0], /Synthetic original request\./);
-    assert.equal(prompts[1], 'Synthetic inserted message.');
-    assert.equal(models.jobs.get('mock-insert')!.result, 'Synthetic inserted reply.');
-    assert.equal(models.jobs.get('mock-insert')!.phase, 'completed');
-    assert.deepEqual(models.jobs.get('mock-insert')!.turns, [
+    expect(prompts.length).toBe(2);
+    expect(prompts[0]).toMatch(/Synthetic original request\./);
+    expect(prompts[1]).toBe('Synthetic inserted message.');
+    expect(models.jobs.get('mock-insert')!.result).toBe('Synthetic inserted reply.');
+    expect(models.jobs.get('mock-insert')!.phase).toBe('completed');
+    expect(models.jobs.get('mock-insert')!.turns).toStrictEqual([
       {
         id: 'mock-insert-first',
         prompt: 'Synthetic original request.',
@@ -353,22 +345,20 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
       },
     ]);
     // Losing the acknowledgement must not execute the same turn again after the task ends.
-    assert.deepEqual(
+    expect(
       await models.insert('mock-insert', {
         id: 'mock-insert-one',
         text: 'Synthetic ignored duplicate.',
         ...target,
       }),
-      { ok: true, id: 'mock-insert-one' },
-    );
-    await assert.rejects(
+    ).toStrictEqual({ ok: true, id: 'mock-insert-one' });
+    await expect(
       models.insert('mock-insert', {
         id: 'mock-insert-late',
         text: 'Synthetic late message.',
         ...target,
       }),
-      { code: 'MODEL_NOT_RUNNING' },
-    );
+    ).rejects.toMatchObject({ code: 'MODEL_NOT_RUNNING' });
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -506,7 +496,7 @@ test('a continuation durably owns all unstarted inserts independently of client 
     }
     gates.release();
     await original.done;
-    assert.equal(original.phase, 'failed');
+    expect(original.phase).toBe('failed');
     fail = false;
     const retry = {
       requestId: 'mock-handoff-retry',
@@ -520,27 +510,24 @@ test('a continuation durably owns all unstarted inserts independently of client 
     await models.jobs.get(bot)!.done;
     const count = prompts.length;
     const receipt = await models.start(bot, retry);
-    assert.equal(receipt.phase, 'completed');
-    assert.equal(prompts.length, count);
-    assert.deepEqual(
-      models.jobs.get(bot)!.turns?.map((turn) => turn.prompt),
-      [retry.prompt, 'SYNTHETIC WAITING INSERT'],
-    );
-    assert.equal(models.jobs.get(bot)!.inserts[0].done, true);
-    assert.deepEqual(
+    expect(receipt.phase).toBe('completed');
+    expect(prompts.length).toBe(count);
+    expect(models.jobs.get(bot)!.turns?.map((turn) => turn.prompt)).toStrictEqual([
+      retry.prompt,
+      'SYNTHETIC WAITING INSERT',
+    ]);
+    expect(models.jobs.get(bot)!.inserts[0].done).toBe(true);
+    expect(
       JSON.parse(await readFile(path.join(models.jobs.get(bot)!.privateDir, 'turn.json'), 'utf8')),
-      {
-        id: 'mock-handoff-waiting',
-      },
-    );
-    await assert.rejects(
+    ).toStrictEqual({
+      id: 'mock-handoff-waiting',
+    });
+    await expect(
       models.start(bot, { ...retry, requestId: 'mock-foreign-turn', retryTurn: 'mock-not-owned' }),
-      { code: 'INVALID_RETRY' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'INVALID_RETRY' });
+    await expect(
       models.start(bot, { ...retry, requestId: 'mock-altered-turn', prompt: 'SYNTHETIC ALTERED' }),
-      { code: 'INVALID_RETRY' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_RETRY' });
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -569,16 +556,16 @@ test('a retried insert shares the first durable write instead of reporting an un
     };
     const first = models.insert(bot, message);
     const retry = models.insert(bot, message);
-    await assert.rejects(first, { code: 'SYNTHETIC_WRITE_FAILED' });
-    await assert.rejects(retry, { code: 'SYNTHETIC_WRITE_FAILED' });
-    assert.deepEqual(models.jobs.get(bot)!.inserts, []);
+    await expect(first).rejects.toMatchObject({ code: 'SYNTHETIC_WRITE_FAILED' });
+    await expect(retry).rejects.toMatchObject({ code: 'SYNTHETIC_WRITE_FAILED' });
+    expect(models.jobs.get(bot)!.inserts).toStrictEqual([]);
     models.journal.put = realPut;
-    assert.deepEqual(await models.insert(bot, message), { ok: true, id: message.id });
+    expect(await models.insert(bot, message)).toStrictEqual({ ok: true, id: message.id });
     gates.release();
     await models.jobs.get(bot)!.done;
-    assert.equal(prompts.length, 2);
-    assert.equal(models.jobs.get(bot)!.phase, 'completed');
-    assert.deepEqual((await models.journal.read(bot, target.runId))?.inserts, [
+    expect(prompts.length).toBe(2);
+    expect(models.jobs.get(bot)!.phase).toBe('completed');
+    expect((await models.journal.read(bot, target.runId))?.inserts).toStrictEqual([
       { id: message.id, text: message.text, done: true, started: true },
     ]);
   } finally {
@@ -613,15 +600,15 @@ test('concurrent retries share one write so a transient failure cannot be half-a
     const first = models.insert(bot, message);
     const retry = models.insert(bot, message);
     // Both requests observe the same failed write; neither can answer from an intent the journal rejected.
-    await assert.rejects(first, { code: 'SYNTHETIC_WRITE_FAILED' });
-    await assert.rejects(retry, { code: 'SYNTHETIC_WRITE_FAILED' });
-    assert.deepEqual(models.jobs.get(bot)!.inserts, []);
+    await expect(first).rejects.toMatchObject({ code: 'SYNTHETIC_WRITE_FAILED' });
+    await expect(retry).rejects.toMatchObject({ code: 'SYNTHETIC_WRITE_FAILED' });
+    expect(models.jobs.get(bot)!.inserts).toStrictEqual([]);
     models.journal.put = realPut;
-    assert.deepEqual(await models.insert(bot, message), { ok: true, id: message.id });
+    expect(await models.insert(bot, message)).toStrictEqual({ ok: true, id: message.id });
     gates.release();
     await models.jobs.get(bot)!.done;
-    assert.equal(prompts.length, 2);
-    assert.deepEqual((await models.journal.read(bot, target.runId))?.inserts, [
+    expect(prompts.length).toBe(2);
+    expect((await models.journal.read(bot, target.runId))?.inserts).toStrictEqual([
       { id: message.id, text: message.text, done: true, started: true },
     ]);
   } finally {
@@ -644,7 +631,7 @@ test('a failed write removes only its own insert instead of a neighbouring queue
     await gates.started;
     const target = { runId: models.jobs.get(bot)!.id, chatRevision: 0 };
     const kept = { id: 'mock-rollback-kept', text: 'Synthetic kept message.', ...target };
-    assert.deepEqual(await models.insert(bot, kept), { ok: true, id: kept.id });
+    expect(await models.insert(bot, kept)).toStrictEqual({ ok: true, id: kept.id });
     const failing = { id: 'mock-rollback-failing', text: 'Synthetic failing message.', ...target };
     const realPut = models.journal.put.bind(models.journal);
     models.journal.put = async (value) => {
@@ -654,20 +641,17 @@ test('a failed write removes only its own insert instead of a neighbouring queue
     };
     const first = models.insert(bot, failing);
     const retry = models.insert(bot, failing);
-    await assert.rejects(first, { code: 'SYNTHETIC_WRITE_FAILED' });
-    await assert.rejects(retry, { code: 'SYNTHETIC_WRITE_FAILED' });
+    await expect(first).rejects.toMatchObject({ code: 'SYNTHETIC_WRITE_FAILED' });
+    await expect(retry).rejects.toMatchObject({ code: 'SYNTHETIC_WRITE_FAILED' });
     // A missing index must never make rollback pop the last accepted message.
-    assert.deepEqual(
-      models.jobs.get(bot)!.inserts.map((item) => item.id),
-      [kept.id],
-    );
+    expect(models.jobs.get(bot)!.inserts.map((item) => item.id)).toStrictEqual([kept.id]);
     models.journal.put = realPut;
     gates.release();
     await models.jobs.get(bot)!.done;
-    assert.deepEqual(
-      models.jobs.get(bot)!.turns?.map((turn) => turn.prompt),
-      ['Synthetic original request.', kept.text],
-    );
+    expect(models.jobs.get(bot)!.turns?.map((turn) => turn.prompt)).toStrictEqual([
+      'Synthetic original request.',
+      kept.text,
+    ]);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -692,7 +676,7 @@ test('an accepted insert keeps its text after a restart and is not reported as p
     });
     await gates.started;
     runId = before.jobs.get(bot)!.id;
-    assert.deepEqual(await before.insert(bot, { ...pending, runId, chatRevision: 0 }), {
+    expect(await before.insert(bot, { ...pending, runId, chatRevision: 0 })).toStrictEqual({
       ok: true,
       id: pending.id,
     });
@@ -702,15 +686,19 @@ test('an accepted insert keeps its text after a restart and is not reported as p
     gates.release();
     await stopping;
   }
-  assert.deepEqual((await before.journal.read(bot, runId))?.inserts, [{ ...pending, done: false }]);
+  expect((await before.journal.read(bot, runId))?.inserts).toStrictEqual([
+    { ...pending, done: false },
+  ]);
   await before.close();
   const restarted = await insertFixture(root, { bot, prompts, ...gates });
   try {
     // The saved text is what a requeue can rely on; an unprocessed insert is never an acceptance.
-    assert.deepEqual((await restarted.journal.read(bot, runId))?.inserts, [
+    expect((await restarted.journal.read(bot, runId))?.inserts).toStrictEqual([
       { ...pending, done: false },
     ]);
-    await assert.rejects(restarted.insert(bot, { ...pending, runId, chatRevision: 0 }), {
+    await expect(
+      restarted.insert(bot, { ...pending, runId, chatRevision: 0 }),
+    ).rejects.toMatchObject({
       code: 'MODEL_NOT_RUNNING',
     });
   } finally {
@@ -742,33 +730,30 @@ test('a restored task keeps its turns and unstarted inserts so continuing resume
     runId = before.jobs.get(bot)!.id;
     // Both inserts are accepted before the original turn returns, so the second is still unstarted when the first fails.
     for (const insert of [failed, waiting])
-      assert.deepEqual(await before.insert(bot, { ...insert, runId, chatRevision: 0 }), {
+      expect(await before.insert(bot, { ...insert, runId, chatRevision: 0 })).toStrictEqual({
         ok: true,
         id: insert.id,
       });
     gates.release();
     await before.jobs.get(bot)!.done;
-    assert.equal(before.jobs.get(bot)!.phase, 'failed');
+    expect(before.jobs.get(bot)!.phase).toBe('failed');
   } finally {
     await before.close();
   }
   const restarted = await insertFixture(root, { bot, prompts: [], ...insertGates() });
   try {
     const job = restarted.jobs.get(bot)!;
-    assert.deepEqual(
-      job.turns?.map((turn) => [turn.id, turn.prompt, turn.result]),
-      [
-        ['mock-continue-first', 'Synthetic original request.', 'Synthetic first reply.'],
-        [failed.id, failed.text, ''],
-      ],
-    );
-    assert.deepEqual(job.inserts, [
+    expect(job.turns?.map((turn) => [turn.id, turn.prompt, turn.result])).toStrictEqual([
+      ['mock-continue-first', 'Synthetic original request.', 'Synthetic first reply.'],
+      [failed.id, failed.text, ''],
+    ]);
+    expect(job.inserts).toStrictEqual([
       { ...failed, done: false, started: true },
       { ...waiting, done: false },
     ]);
     const exposed = restarted.status().bots[bot];
-    assert.deepEqual(exposed.turns, job.turns);
-    assert.deepEqual(exposed.inserts, job.inserts);
+    expect(exposed.turns).toStrictEqual(job.turns);
+    expect(exposed.inserts).toStrictEqual(job.inserts);
   } finally {
     await restarted.close();
     await rm(root, { recursive: true, force: true });
@@ -796,19 +781,19 @@ test('an insert that began before the model failed is never reported as unattemp
     });
     await gates.started;
     runId = before.jobs.get(bot)!.id;
-    assert.deepEqual(await before.insert(bot, { ...message, runId, chatRevision: 0 }), {
+    expect(await before.insert(bot, { ...message, runId, chatRevision: 0 })).toStrictEqual({
       ok: true,
       id: message.id,
     });
     gates.release();
     await gates.gateReached;
     await before.jobs.get(bot)!.done;
-    assert.equal(before.jobs.get(bot)!.phase, 'failed');
+    expect(before.jobs.get(bot)!.phase).toBe('failed');
     // The start marker is durable: a reconnect may have produced files or tool effects already.
-    assert.deepEqual((await before.journal.read(bot, runId))?.inserts, [
+    expect((await before.journal.read(bot, runId))?.inserts).toStrictEqual([
       { ...message, done: false, started: true },
     ]);
-    await assert.rejects(before.insert(bot, { ...message, runId, chatRevision: 0 }), {
+    await expect(before.insert(bot, { ...message, runId, chatRevision: 0 })).rejects.toMatchObject({
       code: 'MODEL_INSERT_UNCERTAIN',
     });
   } finally {
@@ -816,7 +801,9 @@ test('an insert that began before the model failed is never reported as unattemp
   }
   const restarted = await insertFixture(root, { bot, prompts: [], ...insertGates() });
   try {
-    await assert.rejects(restarted.insert(bot, { ...message, runId, chatRevision: 0 }), {
+    await expect(
+      restarted.insert(bot, { ...message, runId, chatRevision: 0 }),
+    ).rejects.toMatchObject({
       code: 'MODEL_INSERT_UNCERTAIN',
     });
   } finally {
@@ -847,19 +834,19 @@ test('insert acceptance counts every turn so stored history stays within the tur
     const send = (index: number) =>
       models.insert(bot, { id: id(index), text: `Synthetic insert ${index}.`, ...target });
     for (let index = 1; index < turnLimit; index++)
-      assert.deepEqual(await send(index), { ok: true, id: id(index) });
-    await assert.rejects(send(turnLimit), { code: 'MODEL_INSERT_FULL' });
+      expect(await send(index)).toStrictEqual({ ok: true, id: id(index) });
+    await expect(send(turnLimit)).rejects.toMatchObject({ code: 'MODEL_INSERT_FULL' });
     gates.release();
     await gates.gateReached;
     // Two turns are already stored while the second insert runs, so the bound still counts them.
-    assert.equal(models.jobs.get(bot)!.turns?.length, 3);
-    await assert.rejects(send(turnLimit), { code: 'MODEL_INSERT_FULL' });
+    expect(models.jobs.get(bot)!.turns?.length).toBe(3);
+    await expect(send(turnLimit)).rejects.toMatchObject({ code: 'MODEL_INSERT_FULL' });
     gates.gate();
     await models.jobs.get(bot)!.done;
-    assert.equal(models.jobs.get(bot)!.turns?.length, turnLimit);
+    expect(models.jobs.get(bot)!.turns?.length).toBe(turnLimit);
     const page = await models.chatHistory(bot, 0);
-    assert.equal(page.items.length, 1);
-    assert.equal(page.items[0].turns?.length, turnLimit);
+    expect(page.items.length).toBe(1);
+    expect(page.items[0].turns?.length).toBe(turnLimit);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -910,10 +897,10 @@ test('a rebuilt context keeps every saved turn instead of only the original requ
       prompt: 'Synthetic next request.',
     });
     await models.jobs.get(bot)!.done;
-    assert.equal(prompts.length, 1);
-    assert.match(prompts[0], /Synthetic inserted requirement\./);
-    assert.match(prompts[0], /Synthetic inserted reply\./);
-    assert.match(prompts[0], /Synthetic first reply\./);
+    expect(prompts.length).toBe(1);
+    expect(prompts[0]).toMatch(/Synthetic inserted requirement\./);
+    expect(prompts[0]).toMatch(/Synthetic inserted reply\./);
+    expect(prompts[0]).toMatch(/Synthetic first reply\./);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -981,24 +968,21 @@ test('two suppliers with the same API model keep separate keys, capabilities and
     const run = async (bot: string, requestId: string) => {
       await models.start(bot, { requestId, prompt: 'Synthetic request.' });
       await models.jobs.get(bot)!.done;
-      assert.equal(models.jobs.get(bot)!.phase, 'completed');
+      expect(models.jobs.get(bot)!.phase).toBe('completed');
     };
     await run('mock-a', 'mock-one-first');
     await run('mock-b', 'mock-two-first');
-    assert.deepEqual(
-      captured.map(({ provider, model }) => [provider, model]),
-      [
-        ['mock-one', 'mock-chat'],
-        ['mock-two', 'mock-chat'],
-      ],
-    );
-    assert.equal(captured[0].env.DABAN_MODEL_KEY, 'synthetic-key-mock-one');
-    assert.equal(captured[1].env.DABAN_MODEL_KEY, 'synthetic-key-mock-two');
-    assert.equal(captured[0].env.DEEPSEEK_API_KEY, undefined);
-    assert.equal(models.jobs.get('mock-a')!.vision, false);
-    assert.equal(models.jobs.get('mock-b')!.vision, true);
+    expect(captured.map(({ provider, model }) => [provider, model])).toStrictEqual([
+      ['mock-one', 'mock-chat'],
+      ['mock-two', 'mock-chat'],
+    ]);
+    expect(captured[0].env.DABAN_MODEL_KEY).toBe('synthetic-key-mock-one');
+    expect(captured[1].env.DABAN_MODEL_KEY).toBe('synthetic-key-mock-two');
+    expect(captured[0].env.DEEPSEEK_API_KEY).toBe(undefined);
+    expect(models.jobs.get('mock-a')!.vision).toBe(false);
+    expect(models.jobs.get('mock-b')!.vision).toBe(true);
     await run('mock-a', 'mock-one-same-route');
-    assert.equal(resumed.length, 1);
+    expect(resumed.length).toBe(1);
     await settings.configure({
       revision: 2,
       requestId: 'mock-one-edit',
@@ -1007,13 +991,11 @@ test('two suppliers with the same API model keep separate keys, capabilities and
       connection: { ...connection('mock-one', true), baseURL: 'https://new-route.example.test/v1' },
     });
     await run('mock-a', 'mock-one-changed-route');
-    assert.equal(
-      resumed.length,
+    expect(resumed.length, 'a changed endpoint or credential must retire the native session').toBe(
       1,
-      'a changed endpoint or credential must retire the native session',
     );
-    assert.equal(captured.at(-1)!.env.DABAN_MODEL_KEY, 'synthetic-rotated-key');
-    assert.equal(captured[0].env.DABAN_MODEL_KEY, 'synthetic-key-mock-one');
+    expect(captured.at(-1)!.env.DABAN_MODEL_KEY).toBe('synthetic-rotated-key');
+    expect(captured[0].env.DABAN_MODEL_KEY).toBe('synthetic-key-mock-one');
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -1034,8 +1016,7 @@ test('host DSH callbacks and MCP stdio use only the private agent socket', () =>
   const plugins = patch.flatMap((entry) => ('insert' in entry ? entry.insert : []));
   for (const id of ['human-bridge', 'response-stream']) {
     const plugin = plugins.find((entry) => entry.id === id)!;
-    assert.equal(
-      (plugin as unknown as { config: { socketPath: string } }).config.socketPath,
+    expect((plugin as unknown as { config: { socketPath: string } }).config.socketPath).toBe(
       '/mock/private/agent.sock',
     );
   }
@@ -1044,17 +1025,16 @@ test('host DSH callbacks and MCP stdio use only the private agent socket', () =>
       config: Record<string, unknown>;
     }
   ).config;
-  assert.equal(mcp.transport, 'stdio');
-  assert.equal(mcp.command, process.execPath);
-  assert.deepEqual(mcp.args, ['/mock/owned/mcp-stdio.js']);
-  assert.deepEqual(
+  expect(mcp.transport).toBe('stdio');
+  expect(mcp.command).toBe(process.execPath);
+  expect(mcp.args).toStrictEqual(['/mock/owned/mcp-stdio.js']);
+  expect(
     Object.keys(mcp.env as object)
       .filter((key) => key !== 'ELECTRON_RUN_AS_NODE')
       .sort(),
-    ['DABAN_AGENT_BOT', 'DABAN_AGENT_CAPABILITY', 'DABAN_AGENT_SOCKET'],
-  );
-  assert.equal('url' in mcp, false);
-  assert.equal('headers' in mcp, false);
+  ).toStrictEqual(['DABAN_AGENT_BOT', 'DABAN_AGENT_CAPABILITY', 'DABAN_AGENT_SOCKET']);
+  expect('url' in mcp).toBe(false);
+  expect('headers' in mcp).toBe(false);
 });
 
 test('host model admission fences computer changes and RPC cannot forge VM command approvals', async () => {
@@ -1099,13 +1079,15 @@ test('host model admission fences computer changes and RPC cannot forge VM comma
   try {
     await settings.save({ apiKey: 'synthetic-host-command-key' });
     const task = { requestId: 'mock-command-model', prompt: 'Mock command task' };
-    await assert.rejects(models.start('mock-bot', task), { code: 'COMPUTER_CHANGING' });
-    assert.equal(models.jobs.size, 0);
+    await expect(models.start('mock-bot', task)).rejects.toMatchObject({
+      code: 'COMPUTER_CHANGING',
+    });
+    expect(models.jobs.size).toBe(0);
     admitted = true;
     await models.start('mock-bot', task);
     await entered;
     const job = models.jobs.get('mock-bot')!;
-    await assert.rejects(
+    await expect(
       models.rpc('mock-bot', `Bearer ${job.token}`, {
         id: 1,
         method: 'interaction.open',
@@ -1120,9 +1102,8 @@ test('host model admission fences computer changes and RPC cannot forge VM comma
           target: 'linux-vm',
         },
       }),
-      { code: 'INVALID_INTERACTION' },
-    );
-    assert.deepEqual(await models.interactions.list(), []);
+    ).rejects.toMatchObject({ code: 'INVALID_INTERACTION' });
+    expect(await models.interactions.list()).toStrictEqual([]);
   } finally {
     release();
     await models.close();
@@ -1192,16 +1173,15 @@ test('model preparation and output collection use guest workspace references whi
     });
     const job = models.jobs.get('mock-bot')!;
     await job.done;
-    assert.equal(job.phase, 'completed');
-    assert.ok(job.workdir.startsWith('/mock-guest/shared/'));
-    assert.ok(configuredCwd.startsWith(path.join(root, 'model', 'runs')));
-    assert.match(
-      await readFile(path.join(configuredCwd, 'result.json'), 'utf8'),
+    expect(job.phase).toBe('completed');
+    expect.assert(job.workdir.startsWith('/mock-guest/shared/'));
+    expect.assert(configuredCwd.startsWith(path.join(root, 'model', 'runs')));
+    expect(await readFile(path.join(configuredCwd, 'result.json'), 'utf8')).toMatch(
       /mock-remote-session/,
     );
-    assert.equal(job.files[0].name, 'mock-output.txt');
-    assert.equal(calls.filter((call) => call.method === 'workspace.write').length, 1);
-    assert.ok(
+    expect(job.files[0].name).toBe('mock-output.txt');
+    expect(calls.filter((call) => call.method === 'workspace.write').length).toBe(1);
+    expect.assert(
       calls.some((call) => call.method === 'workspace.list' && call.params.root === job.workdir),
     );
     failDrain = true;
@@ -1211,10 +1191,10 @@ test('model preparation and output collection use guest workspace references whi
     });
     const failed = models.jobs.get('mock-other-bot')!;
     const outcome = await Promise.allSettled([failed.done]);
-    assert.equal(outcome[0].status, 'fulfilled');
-    assert.equal(failed.running, false);
-    assert.equal(failed.phase, 'failed');
-    assert.equal(failed.error, 'EXECUTOR_DRAIN_UNAVAILABLE');
+    expect(outcome[0].status).toBe('fulfilled');
+    expect(failed.running).toBe(false);
+    expect(failed.phase).toBe('failed');
+    expect(failed.error).toBe('EXECUTOR_DRAIN_UNAVAILABLE');
     failDrain = false;
   } finally {
     await models.close();
@@ -1318,10 +1298,9 @@ test('restarted task summaries retain durable counts and safe short traces witho
     models = new ModelRuns(options);
     await models.ready;
     const completed = models.status().bots[base.bot];
-    assert.equal(completed.executedCount, 55, 'the bounded trace is not the total count');
-    assert.equal(completed.toolCount, 60);
-    assert.deepEqual(
-      completed.trace,
+    expect(completed.executedCount, 'the bounded trace is not the total count').toBe(55);
+    expect(completed.toolCount).toBe(60);
+    expect(completed.trace).toStrictEqual(
       trace.slice(-8).map(({ name, surface, phase, at, code }) => ({
         name,
         surface,
@@ -1330,30 +1309,32 @@ test('restarted task summaries retain durable counts and safe short traces witho
         ...(code ? { code } : {}),
       })),
     );
-    assert.ok(!JSON.stringify(completed.trace).includes('MOCK-PRIVATE'));
+    expect.assert(!JSON.stringify(completed.trace).includes('MOCK-PRIVATE'));
     const originalTrace = structuredClone(completed.trace);
     models.status().bots[base.bot].trace![0].name = 'MOCK-CALLER-CHANGE';
-    assert.deepEqual(models.status().bots[base.bot].trace, originalTrace);
+    expect(models.status().bots[base.bot].trace).toStrictEqual(originalTrace);
     const interrupted = models.status().bots['mock-interrupted'];
-    assert.equal(interrupted.phase, 'interrupted');
-    assert.equal(interrupted.running, false);
-    assert.equal(interrupted.executedCount, 4);
-    assert.equal(interrupted.trace?.at(-1)?.phase, 'running');
-    assert.equal(models.status().bots['mock-legacy'].executedCount, 1);
-    assert.equal(models.status().bots['mock-legacy'].trace?.length, 2);
-    assert.equal(models.status().bots['mock-group-bot'].executedCount, 14);
-    assert.equal(models.status().bots['mock-group-bot'].conversationId, 'mock-group');
-    assert.equal(models.status().bots['mock-corrupt'].executedCount, 0);
-    assert.deepEqual(models.status().bots['mock-corrupt'].trace, []);
-    assert.equal(starts, 0, 'reading restored summaries must not start the harness');
+    expect(interrupted.phase).toBe('interrupted');
+    expect(interrupted.running).toBe(false);
+    expect(interrupted.executedCount).toBe(4);
+    expect(interrupted.trace?.at(-1)?.phase).toBe('running');
+    expect(models.status().bots['mock-legacy'].executedCount).toBe(1);
+    expect(models.status().bots['mock-legacy'].trace?.length).toBe(2);
+    expect(models.status().bots['mock-group-bot'].executedCount).toBe(14);
+    expect(models.status().bots['mock-group-bot'].conversationId).toBe('mock-group');
+    expect(models.status().bots['mock-corrupt'].executedCount).toBe(0);
+    expect(models.status().bots['mock-corrupt'].trace).toStrictEqual([]);
+    expect(starts, 'reading restored summaries must not start the harness').toBe(0);
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
-    assert.deepEqual(models.status().bots[base.bot], completed);
-    assert.deepEqual(await readFile(file), original, 'restoration must not rewrite the receipt');
+    expect(models.status().bots[base.bot]).toStrictEqual(completed);
+    expect(await readFile(file), 'restoration must not rewrite the receipt').toStrictEqual(
+      original,
+    );
     await models.chats.renew({ bot: base.bot, id: 'mock-fresh-context', revision: 0 });
-    assert.equal(models.status().bots[base.bot].executedCount, 0);
-    assert.equal(models.status().bots[base.bot].trace, undefined);
+    expect(models.status().bots[base.bot].executedCount).toBe(0);
+    expect(models.status().bots[base.bot].trace).toBe(undefined);
     await models.profiles.register({
       id: base.bot,
       name: '合成恢复 Bot',
@@ -1368,9 +1349,9 @@ test('restarted task summaries retain durable counts and safe short traces witho
       chatRevision: 1,
     });
     await models.jobs.get(base.bot)!.done;
-    assert.equal(models.status().bots[base.bot].executedCount, 0);
-    assert.deepEqual(models.status().bots[base.bot].trace, []);
-    assert.equal(starts, 1);
+    expect(models.status().bots[base.bot].executedCount).toBe(0);
+    expect(models.status().bots[base.bot].trace).toStrictEqual([]);
+    expect(starts).toBe(1);
   } finally {
     await models?.close();
     await rm(root, { recursive: true, force: true });
@@ -1380,32 +1361,31 @@ test('restarted task summaries retain durable counts and safe short traces witho
 test('DSH profile disables unscoped native tools and registers a scoped tool server', () => {
   const patch = sdkPatch('http://127.0.0.1:12345', 'a', 'synthetic-capability');
   const compaction = patch.find((row) => 'id' in row && row.id === 'compaction-basic');
-  assert.ok(compaction && 'config' in compaction);
-  assert.equal((compaction.config as { thresholdRatio: number }).thresholdRatio, 0.8);
+  expect.assert(compaction && 'config' in compaction);
+  expect((compaction.config as { thresholdRatio: number }).thresholdRatio).toBe(0.8);
   const disabled = patch.filter((row) => 'disabled' in row);
   for (const id of ['persistent-bash', 'persistent-pwsh', 'tool-fs', 'tool-working-directory'])
-    assert.equal(disabled.find((row) => row.id === id)!.disabled, true);
-  assert.equal(disabled.find((row) => row.id === 'llm-deepseek')!.disabled, true);
+    expect(disabled.find((row) => row.id === id)!.disabled).toBe(true);
+  expect(disabled.find((row) => row.id === 'llm-deepseek')!.disabled).toBe(true);
   const provider = patch
     .find((row) => 'insert' in row)!
     .insert.find((row) => row.id === 'desktop-model-provider')!;
-  assert.ok('config' in provider && 'providers' in provider.config);
-  assert.equal(provider.config.providers['deepseek-official'].api, 'openai-completions');
-  assert.equal(
-    provider.config.providers['deepseek-official'].baseURL,
+  expect.assert('config' in provider && 'providers' in provider.config);
+  expect(provider.config.providers['deepseek-official'].api).toBe('openai-completions');
+  expect(provider.config.providers['deepseek-official'].baseURL).toBe(
     'https://api.deepseek.com/v1',
   );
   const entry = patch
     .find((row) => 'insert' in row)!
     .insert.find((row) => row.id === 'computer-tools')!;
-  assert.ok('config' in entry && 'toolCallTimeoutMs' in entry.config && 'url' in entry.config);
-  assert.ok(
+  expect.assert('config' in entry && 'toolCallTimeoutMs' in entry.config && 'url' in entry.config);
+  expect.assert(
     entry.config.toolCallTimeoutMs >= 60 * 60 * 1000,
     'human takeover must not inherit a short tool timeout',
   );
-  assert.equal(entry.config.url, 'http://127.0.0.1:12345/mcp/a');
-  assert.equal(provider.config.providers['deepseek-official'].apiKeyEnv, 'DEEPSEEK_API_KEY');
-  assert.equal(Object.hasOwn(provider.config.providers['deepseek-official'], 'apiKey'), false);
+  expect(entry.config.url).toBe('http://127.0.0.1:12345/mcp/a');
+  expect(provider.config.providers['deepseek-official'].apiKeyEnv).toBe('DEEPSEEK_API_KEY');
+  expect(Object.hasOwn(provider.config.providers['deepseek-official'], 'apiKey')).toBe(false);
 });
 
 test('general DSH tasks enable the stock anonymous fetch provider and a shared tool budget', () => {
@@ -1414,65 +1394,65 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
     prompt: '读取 https://example.test/',
   });
   const plugins = patch.find((row) => 'insert' in row)!.insert;
-  assert.ok(plugins.some((row) => row.name === '@deepseek-ai/dsh-web'));
-  assert.ok(plugins.some((row) => row.id === 'web-fetch-http' && row.name.endsWith('/web.js')));
+  expect.assert(plugins.some((row) => row.name === '@deepseek-ai/dsh-web'));
+  expect.assert(plugins.some((row) => row.id === 'web-fetch-http' && row.name.endsWith('/web.js')));
   const web = plugins.find((row) => row.id === 'tool-web');
-  assert.ok(web && 'config' in web);
-  assert.deepEqual(web.config, {
+  expect.assert(web && 'config' in web);
+  expect(web.config).toStrictEqual({
     search: true,
     fetch: false,
     searchMaxResults: 5,
     searchMaxQueries: 4,
     searchTimeoutMs: 30000,
   });
-  assert.ok(plugins.some((row) => row.id === 'web-read' && row.name.endsWith('/web-read.js')));
+  expect.assert(plugins.some((row) => row.id === 'web-read' && row.name.endsWith('/web-read.js')));
   const search = plugins.find((row) => row.id === 'web-deepseek-api');
-  assert.ok(search && 'config' in search);
-  assert.deepEqual(search.config, {
+  expect.assert(search && 'config' in search);
+  expect(search.config).toStrictEqual({
     apiKeyEnv: 'DEEPSEEK_API_KEY',
     baseURL: 'https://api.deepseek.com/v1/tools',
     count: 5,
     sendOriginalQuestion: false,
   });
-  assert.ok(plugins.some((row) => row.name === '@deepseek-ai/dsh-tool-call-timeout-policy'));
+  expect.assert(plugins.some((row) => row.name === '@deepseek-ai/dsh-tool-call-timeout-policy'));
   const budget = plugins.find((row) => row.id === 'daban-budget');
-  assert.ok(budget && 'config' in budget);
-  assert.deepEqual(budget.config, {
+  expect.assert(budget && 'config' in budget);
+  expect(budget.config).toStrictEqual({
     limit: 60,
     urls: ['https://example.test/'],
   });
   const diagnostic = sdkPatch('http://127.0.0.1:12345', 'a', 'synthetic-capability');
-  assert.ok(diagnostic.find((row) => 'insert' in row)!.insert.some((row) => row.id === 'approval'));
-  assert.equal(
-    diagnostic.find((row) => 'insert' in row)!.insert.some((row) => row.id === 'tool-web'),
-    false,
+  expect.assert(
+    diagnostic.find((row) => 'insert' in row)!.insert.some((row) => row.id === 'approval'),
   );
+  expect(
+    diagnostic.find((row) => 'insert' in row)!.insert.some((row) => row.id === 'tool-web'),
+  ).toBe(false);
 });
 
 test('task verification requires actual correct files and rejects symlink escapes', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-model-result-'));
   try {
     const file = path.join(dir, 'report-a.txt');
-    await assert.rejects(verifyOutput('a', dir));
+    await expect(verifyOutput('a', dir)).rejects.toThrowError();
     await writeFile(file, 'paid_count=4\npaid_total=999\nshared_login=true\n');
-    assert.equal((await verifyOutput('a', dir)).passed, false);
+    expect((await verifyOutput('a', dir)).passed).toBe(false);
     await writeFile(file, 'paid_count=4\npaid_total=550\nshared_login=true\n');
-    assert.equal((await verifyOutput('a', dir)).passed, true);
+    expect((await verifyOutput('a', dir)).passed).toBe(true);
     const runtime = {
       screens: { windows: async (): Promise<{ class: string; title: string }[]> => [] },
     };
-    assert.equal(
+    expect(
       (await verifyTask('a', dir, runtime)).passed,
-      false,
       'a file alone does not prove the GUI task finished',
-    );
+    ).toBe(false);
     runtime.screens.windows = async () => [
       { class: 'mousepad.Mousepad', title: `${file} - Mousepad` },
     ];
-    assert.equal((await verifyTask('a', dir, runtime)).passed, true);
+    expect((await verifyTask('a', dir, runtime)).passed).toBe(true);
     await rm(file);
     await symlink('/etc/hosts', file);
-    await assert.rejects(verifyOutput('a', dir), { code: 'FILE_NOT_READABLE' });
+    await expect(verifyOutput('a', dir)).rejects.toMatchObject({ code: 'FILE_NOT_READABLE' });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1480,38 +1460,36 @@ test('task verification requires actual correct files and rejects symlink escape
 
 test('native editor title verification accepts home abbreviation for the same exact file', () => {
   const file = '/home/synthetic-user/tasks/run-123/report-a.txt';
-  assert.equal(
+  expect(
     editorShowsFile(
       [{ class: 'mousepad.Mousepad', title: '~/tasks/run-123/report-a.txt - Mousepad' }],
       file,
       '/home/synthetic-user',
     ),
-    true,
-  );
-  assert.equal(
+  ).toBe(true);
+  expect(
     editorShowsFile(
       [{ class: 'mousepad.Mousepad', title: '~/tasks/other-run/report-a.txt - Mousepad' }],
       file,
       '/home/synthetic-user',
     ),
-    false,
-  );
+  ).toBe(false);
 });
 
 test('report verification cannot return private bytes when a checked public file is replaced by a link', async (t) => {
   const fs = (await import('node:fs/promises')).default;
   const { syncBuiltinESMExports } = await import('node:module');
   const root = await mkdtemp(path.join(tmpdir(), 'mock-report-link-race-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const report = path.join(root, 'report-a.txt'),
     secret = path.join(tmpdir(), `mock-private-report-${path.basename(root)}.txt`);
-  t.after(() => rm(secret, { force: true }));
+  t.onTestFinished(() => rm(secret, { force: true }));
   await writeFile(report, 'paid_count=4\npaid_total=550\nshared_login=true');
   await writeFile(secret, 'SYNTHETIC-PRIVATE-47');
   const canonicalReport = await fs.realpath(report);
   const original = fs.realpath;
   let replaced = false;
-  t.mock.method(fs, 'realpath', async (file: Parameters<typeof original>[0]) => {
+  vi.spyOn(fs, 'realpath').mockImplementation(async (file: Parameters<typeof original>[0]) => {
     const result = await original(file);
     if ((file === report || result === canonicalReport) && !replaced) {
       replaced = true;
@@ -1521,12 +1499,12 @@ test('report verification cannot return private bytes when a checked public file
     return result;
   });
   syncBuiltinESMExports();
-  t.after(() => {
-    t.mock.restoreAll();
+  t.onTestFinished(() => {
+    vi.restoreAllMocks();
     syncBuiltinESMExports();
   });
-  await assert.rejects(verifyOutput('a', root));
-  assert.equal(replaced, true);
+  await expect(verifyOutput('a', root)).rejects.toThrowError();
+  expect(replaced).toBe(true);
 });
 
 test('enabling Linux retires a native-only SDK context while preserving saved conversation turns', async () => {
@@ -1584,14 +1562,14 @@ test('enabling Linux retires a native-only SDK context while preserving saved co
     });
     await models.start('mock-bot', { requestId: 'mock-first', prompt: 'Synthetic first turn.' });
     await models.jobs.get('mock-bot')!.done;
-    assert.equal(models.jobs.get('mock-bot')!.phase, 'completed');
+    expect(models.jobs.get('mock-bot')!.phase).toBe('completed');
     await models.close();
     models = new ModelRuns({ ...options, nativeOnly: false });
     await models.start('mock-bot', { requestId: 'mock-second', prompt: 'Synthetic second turn.' });
     await models.jobs.get('mock-bot')!.done;
-    assert.equal(models.jobs.get('mock-bot')!.phase, 'completed');
-    assert.deepEqual(resumed, []);
-    assert.ok(models.jobs.get('mock-bot')!.prompt?.includes('Synthetic first turn.'));
+    expect(models.jobs.get('mock-bot')!.phase).toBe('completed');
+    expect(resumed).toStrictEqual([]);
+    expect.assert(models.jobs.get('mock-bot')!.prompt?.includes('Synthetic first turn.'));
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });

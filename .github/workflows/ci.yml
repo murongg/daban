@@ -41,10 +41,9 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - run: npx vitest run --maxWorkers=2
-      - run: node --experimental-strip-types --test tools/*.test.ts tools/roles.integration.ts
-      - run: npm run test:agent
+      - run: node --experimental-strip-types --test tools/roles.integration.ts
       - name: Verify idle-only host update handoff
-        run: node --experimental-sqlite --test packages/engine/dist/upgrade.test.js packages/engine/dist/upgrade.integration.js
+        run: node --experimental-sqlite --test packages/engine/dist/upgrade.integration.js
       - name: Install Linux desktop runtime dependencies
         if: runner.os == 'Linux'
         run: |

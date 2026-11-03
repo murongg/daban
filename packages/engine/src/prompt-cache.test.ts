@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { apply, cacheFetch, promptCacheId } from './prompt-cache.js';
 
 const config = {
@@ -35,8 +34,8 @@ test('prompt identity survives task/process changes and isolates workspaces, Bot
     chatRevision: 0,
   };
   const key = promptCacheId(scope);
-  assert.match(key, /^daban-[a-f0-9]{48}$/);
-  assert.equal(key, promptCacheId(JSON.parse(JSON.stringify(scope))));
+  expect(key).toMatch(/^daban-[a-f0-9]{48}$/);
+  expect(key).toBe(promptCacheId(JSON.parse(JSON.stringify(scope))));
   for (const change of [
     { workspace: '/synthetic/other' },
     { bot: 'other-bot' },
@@ -45,12 +44,11 @@ test('prompt identity survives task/process changes and isolates workspaces, Bot
     { chatRevision: 1 },
     { conversationId: 'mock-group' },
   ])
-    assert.notEqual(key, promptCacheId({ ...scope, ...change }));
-  assert.equal(
+    expect(key).not.toBe(promptCacheId({ ...scope, ...change }));
+  expect(
     promptCacheId({ ...scope, conversationId: 'mock-group', chatRevision: 0 }),
-    promptCacheId({ ...scope, conversationId: 'mock-group', chatRevision: 2 }),
     'renewing a private chat must not change a separate group conversation',
-  );
+  ).toBe(promptCacheId({ ...scope, conversationId: 'mock-group', chatRevision: 2 }));
 });
 
 test('Chat requests carry one stable identity without changing messages, tools, auth or cancellation', async () => {
@@ -64,12 +62,12 @@ test('Chat requests carry one stable identity without changing messages, tools, 
   await transport(request({ ...body, prompt_cache_key: 'sdk-session-that-can-change' }));
   for (const sent of captures) {
     const payload = await sent.json();
-    assert.deepEqual(payload, { ...body, prompt_cache_key: config.key });
-    assert.equal(sent.headers.get('session_id'), config.key);
-    assert.equal(sent.headers.get('authorization'), 'Bearer synthetic-secret');
+    expect(payload).toStrictEqual({ ...body, prompt_cache_key: config.key });
+    expect(sent.headers.get('session_id')).toBe(config.key);
+    expect(sent.headers.get('authorization')).toBe('Bearer synthetic-secret');
   }
   controller.abort();
-  assert.equal(captures[0].signal.aborted, true);
+  expect(captures[0].signal.aborted).toBe(true);
 });
 
 test('Responses keeps its native options and uses the same header/body identity', async () => {
@@ -80,8 +78,8 @@ test('Responses keeps its native options and uses the same header/body identity'
   });
   const input = { model: config.model, input: 'SYNTHETIC INPUT', store: false, stream: true };
   await transport(request(input, `${config.baseURL}/responses`));
-  assert.deepEqual(await captured!.json(), { ...input, prompt_cache_key: config.key });
-  assert.equal(captured!.headers.get('session_id'), config.key);
+  expect(await captured!.json()).toStrictEqual({ ...input, prompt_cache_key: config.key });
+  expect(captured!.headers.get('session_id')).toBe(config.key);
 });
 
 test('rewriting a request removes its stale content length', async () => {
@@ -93,7 +91,7 @@ test('rewriting a request removes its stale content length', async () => {
   await transport(request(), {
     headers: { 'content-length': String(JSON.stringify(body).length) },
   });
-  assert.equal(length, null);
+  expect(length).toBe(null);
 });
 
 test('native Claude/Gemini and unrelated endpoints or models are not rewritten', async () => {
@@ -108,7 +106,7 @@ test('native Claude/Gemini and unrelated endpoints or models are not rewritten',
     return Response.json({ ok: true });
   };
   for (const api of ['anthropic-messages', 'google-generative-ai'] as const)
-    assert.equal(cacheFetch({ ...config, api }, upstream), upstream);
+    expect(cacheFetch({ ...config, api }, upstream)).toBe(upstream);
   const transport = cacheFetch(config, upstream);
   for (const [url, payload] of [
     ['https://other.example.test/v1/chat/completions', body],
@@ -116,8 +114,8 @@ test('native Claude/Gemini and unrelated endpoints or models are not rewritten',
     [`${config.baseURL}/chat/completions`, { ...body, model: 'other-model' }],
   ] as const) {
     await transport(request(payload, url));
-    assert.deepEqual(seen.at(-1)!.payload, payload);
-    assert.equal(seen.at(-1)!.session, null);
+    expect(seen.at(-1)!.payload).toStrictEqual(payload);
+    expect(seen.at(-1)!.session).toBe(null);
   }
 });
 
@@ -134,12 +132,12 @@ test('an explicit unsupported-cache-field rejection retries once and remembers c
         )
       : Response.json({ ok: true });
   });
-  assert.equal((await transport(request())).status, 200);
-  assert.equal((await transport(request())).status, 200);
-  assert.equal(payloads.length, 3);
-  assert.deepEqual(payloads[0], { ...body, prompt_cache_key: config.key });
-  assert.deepEqual(payloads[1], body);
-  assert.deepEqual(payloads[2], body);
+  expect((await transport(request())).status).toBe(200);
+  expect((await transport(request())).status).toBe(200);
+  expect(payloads.length).toBe(3);
+  expect(payloads[0]).toStrictEqual({ ...body, prompt_cache_key: config.key });
+  expect(payloads[1]).toStrictEqual(body);
+  expect(payloads[2]).toStrictEqual(body);
 });
 
 test('ordinary failures and successful streams are returned intact without an extra request', async () => {
@@ -165,9 +163,9 @@ test('ordinary failures and successful streams are returned intact without an ex
       return response;
     });
     const result = await transport(request());
-    assert.equal(result, response);
-    assert.equal(await result.text(), text);
-    assert.equal(calls, 1);
+    expect(result).toBe(response);
+    expect(await result.text()).toBe(text);
+    expect(calls).toBe(1);
   }
 });
 
@@ -183,9 +181,9 @@ test('the DSH transport extension restores fetch when disposed', () => {
       },
       config,
     );
-    assert.notEqual(globalThis.fetch, original);
+    expect(globalThis.fetch).not.toBe(original);
     dispose();
-    assert.equal(globalThis.fetch, original);
+    expect(globalThis.fetch).toBe(original);
   } finally {
     globalThis.fetch = original;
   }

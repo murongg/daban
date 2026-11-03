@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
 import { Interactions } from './interactions.js';
@@ -25,7 +24,7 @@ async function ready(check: () => Promise<boolean>) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
-  assert.fail('Synthetic integration did not reach expected state');
+  expect.unreachable('Synthetic integration did not reach expected state');
 }
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-integration-tools-'));
@@ -103,35 +102,36 @@ async function fixture() {
 test('external tools stay lazy and per-Bot; only a committed one-time decision permits dispatch, and exact retries read the receipt', async () => {
   const f = await fixture();
   try {
-    assert.equal(f.tools.list(f.run).length, 1);
-    assert.equal(f.counts().factories, 0);
+    expect(f.tools.list(f.run).length).toBe(1);
+    expect(f.counts().factories).toBe(0);
     const pending = f.tools.invoke(f.run, f.alias, { value: '47' }, 'mock-wire-1');
     await ready(async () =>
       (await f.interactions.list()).some((item) => item.status === 'pending'),
     );
     const request = (await f.interactions.list())[0];
-    assert.equal(request.kind, 'approval');
-    assert.equal(f.counts().effects, 0);
-    assert.equal(f.counts().factories, 0);
-    assert.equal(JSON.stringify(request).includes('synthetic-bearer-secret'), false);
+    expect(request.kind).toBe('approval');
+    expect(f.counts().effects).toBe(0);
+    expect(f.counts().factories).toBe(0);
+    expect(JSON.stringify(request).includes('synthetic-bearer-secret')).toBe(false);
     await f.interactions.reply(f.run.bot, f.run.id, request.id, { kind: 'decision', allow: true });
     const result = await pending;
-    assert.equal(result.isError, false);
-    assert.ok(JSON.stringify(result).includes('SYNTHETIC:47'));
-    assert.equal(f.counts().effects, 1);
-    assert.deepEqual(await f.tools.invoke(f.run, f.alias, { value: '47' }, 'mock-wire-1'), result);
-    assert.equal(f.counts().effects, 1);
+    expect(result.isError).toBe(false);
+    expect.assert(JSON.stringify(result).includes('SYNTHETIC:47'));
+    expect(f.counts().effects).toBe(1);
+    expect(await f.tools.invoke(f.run, f.alias, { value: '47' }, 'mock-wire-1')).toStrictEqual(
+      result,
+    );
+    expect(f.counts().effects).toBe(1);
     const other = {
       ...f.run,
       id: 'mock-other-run',
       bot: 'mock-b',
       integrations: await f.store.capture('mock-b'),
     };
-    assert.equal(
-      (await f.tools.invoke(other, f.alias, { value: '47' }, 'mock-other-wire')).isError,
+    expect((await f.tools.invoke(other, f.alias, { value: '47' }, 'mock-other-wire')).isError).toBe(
       true,
     );
-    assert.equal(f.counts().effects, 1);
+    expect(f.counts().effects).toBe(1);
   } finally {
     await f.close();
   }
@@ -146,8 +146,8 @@ test('refusal and disable revoke pending authority without connecting, while unc
     );
     const request = (await f.interactions.list()).find((item) => item.status === 'pending')!;
     await f.interactions.reply(f.run.bot, f.run.id, request.id, { kind: 'decision', allow: false });
-    assert.equal((await denied).isError, true);
-    assert.equal(f.counts().factories, 0);
+    expect((await denied).isError).toBe(true);
+    expect(f.counts().factories).toBe(0);
     f.setUnknown();
     const unknown = f.tools.invoke(f.run, f.alias, { value: 'unknown' }, 'mock-unknown');
     await ready(async () =>
@@ -155,13 +155,13 @@ test('refusal and disable revoke pending authority without connecting, while unc
     );
     const approval = (await f.interactions.list()).find((item) => item.status === 'pending')!;
     await f.interactions.reply(f.run.bot, f.run.id, approval.id, { kind: 'decision', allow: true });
-    assert.ok(JSON.stringify(await unknown).includes('MCP_OUTCOME_UNKNOWN'));
-    assert.ok(
+    expect.assert(JSON.stringify(await unknown).includes('MCP_OUTCOME_UNKNOWN'));
+    expect.assert(
       JSON.stringify(
         await f.tools.invoke(f.run, f.alias, { value: 'unknown' }, 'mock-retry-new-id'),
       ).includes('MCP_OUTCOME_UNKNOWN'),
     );
-    assert.equal(f.counts().effects, 1);
+    expect(f.counts().effects).toBe(1);
     const stopped = f.tools.invoke(f.run, f.alias, { value: 'stop' }, 'mock-stop');
     await ready(async () =>
       (await f.interactions.list()).some((item) => item.status === 'pending'),
@@ -173,12 +173,11 @@ test('refusal and disable revoke pending authority without connecting, while unc
       tools: [],
       enabled: false,
     });
-    assert.equal((await stopped).isError, true);
-    assert.equal(
-      (await f.interactions.list()).filter((item) => item.status === 'pending').length,
+    expect((await stopped).isError).toBe(true);
+    expect((await f.interactions.list()).filter((item) => item.status === 'pending').length).toBe(
       0,
     );
-    assert.equal(f.counts().effects, 1);
+    expect(f.counts().effects).toBe(1);
   } finally {
     await f.close();
   }
@@ -194,9 +193,9 @@ test('catalog drift after approval cannot execute the old reviewed tool definiti
     );
     const approval = (await f.interactions.list()).find((item) => item.status === 'pending')!;
     await f.interactions.reply(f.run.bot, f.run.id, approval.id, { kind: 'decision', allow: true });
-    assert.equal((await pending).isError, true);
-    assert.equal(f.counts().effects, 0);
-    assert.equal((await f.store.capture(f.run.bot)).connections.length, 0);
+    expect((await pending).isError).toBe(true);
+    expect(f.counts().effects).toBe(0);
+    expect((await f.store.capture(f.run.bot)).connections.length).toBe(0);
   } finally {
     await f.close();
   }
@@ -240,11 +239,11 @@ test('shutdown waits for an aborted catalog probe to close its transport before 
       closed = true;
     });
     await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.equal(closed, false);
+    expect(closed).toBe(false);
     finish();
     await closing;
     await probe;
-    assert.equal(closed, true);
+    expect(closed).toBe(true);
   } finally {
     finish();
     await tools.close();
@@ -299,8 +298,8 @@ test('stopping a dispatched external call records uncertainty and leaves another
     await f.interactions.reply(f.run.bot, f.run.id, approval.id, { kind: 'decision', allow: true });
     await ready(async () => effects === 1);
     f.run.abort.abort();
-    assert.ok(JSON.stringify(await first).includes('MCP_OUTCOME_UNKNOWN'));
-    assert.equal(closed, 1);
+    expect.assert(JSON.stringify(await first).includes('MCP_OUTCOME_UNKNOWN'));
+    expect(closed).toBe(1);
     const other = {
       ...f.run,
       id: 'mock-other-run',
@@ -315,9 +314,9 @@ test('stopping a dispatched external call records uncertainty and leaves another
     );
     const next = (await f.interactions.list()).find((item) => item.status === 'pending')!;
     await f.interactions.reply(other.bot, other.id, next.id, { kind: 'decision', allow: true });
-    assert.equal((await second).isError, false);
-    assert.equal(effects, 2);
-    assert.equal(closed, 2);
+    expect((await second).isError).toBe(false);
+    expect(effects).toBe(2);
+    expect(closed).toBe(2);
   } finally {
     f.run.abort.abort();
     await tools.close();

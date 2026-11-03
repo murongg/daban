@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { RemoteExecutor } from './execution.js';
 
 const snapshot = {
@@ -40,7 +39,7 @@ test('remote executor rejects authority-shaped or mismatched role snapshots', as
         });
       },
     });
-    await assert.rejects(remote.ready, { code: 'EXECUTION_INVALID_RESPONSE' });
+    await expect(remote.ready).rejects.toMatchObject({ code: 'EXECUTION_INVALID_RESPONSE' });
   }
 });
 
@@ -51,8 +50,8 @@ test('remote executor sends no host environment and never replays an uncertain m
     token: 'synthetic-token',
     fetcher: async (_url, options) => {
       const request = JSON.parse(String(options?.body));
-      assert.equal(request.role, 'executor');
-      assert.equal(new Headers(options?.headers).get('x-daban-execution-token'), 'synthetic-token');
+      expect(request.role).toBe('executor');
+      expect(new Headers(options?.headers).get('x-daban-execution-token')).toBe('synthetic-token');
       if (++calls === 1)
         return Response.json({
           role: 'executor',
@@ -66,15 +65,14 @@ test('remote executor sends no host environment and never replays an uncertain m
     },
   });
   await remote.ready;
-  await assert.rejects(
+  await expect(
     remote.call('process.start', {
       id: 'mock-command',
       command: 'printf synthetic',
       cwd: '/mock/workspace',
     }),
-    { code: 'EXECUTION_OUTCOME_UNKNOWN' },
-  );
-  assert.equal(calls, 2);
+  ).rejects.toMatchObject({ code: 'EXECUTION_OUTCOME_UNKNOWN' });
+  expect(calls).toBe(2);
 });
 
 test('a same-kernel service restart cannot silently replace the pinned execution owner', async () => {
@@ -95,8 +93,8 @@ test('a same-kernel service restart cannot silently replace the pinned execution
     },
   });
   await remote.ready;
-  await assert.rejects(remote.refresh(), { code: 'EXECUTION_GUEST_RESTARTED' });
-  assert.equal(remote.snapshot?.nonce, 'mock-nonce');
+  await expect(remote.refresh()).rejects.toMatchObject({ code: 'EXECUTION_GUEST_RESTARTED' });
+  expect(remote.snapshot?.nonce).toBe('mock-nonce');
 });
 
 test('ordinary status calls also reject guest-supplied control-plane fields', async () => {
@@ -124,7 +122,9 @@ test('ordinary status calls also reject guest-supplied control-plane fields', as
       },
     });
     await remote.ready;
-    await assert.rejects(remote.call(method, {}), { code: 'EXECUTION_INVALID_RESPONSE' });
+    await expect(remote.call(method, {})).rejects.toMatchObject({
+      code: 'EXECUTION_INVALID_RESPONSE',
+    });
   }
 });
 
@@ -148,12 +148,11 @@ test('document extraction transport failures stay read-only and are never retrie
     },
   });
   await remote.ready;
-  await assert.rejects(
+  await expect(
     remote.call('documents.extract', {
       name: 'synthetic.pdf',
       data: Buffer.from('%PDF-SYNTHETIC').toString('base64'),
     }),
-    { code: 'EXECUTION_UNAVAILABLE' },
-  );
-  assert.equal(calls, 2);
+  ).rejects.toMatchObject({ code: 'EXECUTION_UNAVAILABLE' });
+  expect(calls).toBe(2);
 });

@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { restoreWorker } from './restore-worker.js';
 
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -100,24 +99,24 @@ test('guest public restore verifies both roots, strips privileged mode bits and 
   const f = await fixture();
   try {
     const result = await restoreWorker(f.options);
-    assert.equal(result.files, 2);
-    assert.equal(result.browserFiles, 1);
-    assert.equal(result.sharedFiles, 1);
-    assert.equal(result.manifestHash, f.options.manifestHash);
-    assert.deepEqual(await fs.readFile(f.browserTarget), f.browser);
-    assert.deepEqual(await fs.readFile(f.sharedTarget), f.shared);
-    assert.equal((await fs.lstat(f.sharedTarget)).mode & 0o7777, 0o755);
-    assert.deepEqual(await fs.readFile(path.join(f.directory, 'provision.json')), f.provision);
+    expect(result.files).toBe(2);
+    expect(result.browserFiles).toBe(1);
+    expect(result.sharedFiles).toBe(1);
+    expect(result.manifestHash).toBe(f.options.manifestHash);
+    expect(await fs.readFile(f.browserTarget)).toStrictEqual(f.browser);
+    expect(await fs.readFile(f.sharedTarget)).toStrictEqual(f.shared);
+    expect((await fs.lstat(f.sharedTarget)).mode & 0o7777).toBe(0o755);
+    expect(await fs.readFile(path.join(f.directory, 'provision.json'))).toStrictEqual(f.provision);
     await fs.writeFile(f.browserTarget, 'SYNTHETIC LATER USER EDIT');
     await fs.chmod(f.sharedTarget, 0o644);
     await fs.unlink(f.archive);
-    assert.deepEqual(await restoreWorker(f.options), result);
-    assert.equal(await fs.readFile(f.browserTarget, 'utf8'), 'SYNTHETIC LATER USER EDIT');
-    assert.equal((await fs.lstat(f.sharedTarget)).mode & 0o777, 0o644);
-    await assert.rejects(
-      restoreWorker({ ...f.options, target: 'c'.repeat(64) }),
-      /^Error: MIGRATION_TARGET_CHANGED$/,
-    );
+    expect(await restoreWorker(f.options)).toStrictEqual(result);
+    expect(await fs.readFile(f.browserTarget, 'utf8')).toBe('SYNTHETIC LATER USER EDIT');
+    expect((await fs.lstat(f.sharedTarget)).mode & 0o777).toBe(0o644);
+    await expect(restoreWorker({ ...f.options, target: 'c'.repeat(64) })).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_TARGET_CHANGED$/),
+    });
   } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }
@@ -132,12 +131,16 @@ test('guest public restore rejects links, unknown archive paths and changed payl
     try {
       const archive = f.make(extra);
       await fs.writeFile(f.archive, archive, { mode: 0o600 });
-      await assert.rejects(
+      await expect(
         restoreWorker({ ...f.options, archiveHash: digest(archive) }),
-        /^Error: MIGRATION_UNSAFE_ARCHIVE$/,
+      ).rejects.toMatchObject({
+        name: 'Error',
+        message: expect.stringMatching(/^MIGRATION_UNSAFE_ARCHIVE$/),
+      });
+      await expect(fs.lstat(f.browserTarget)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await fs.readFile(path.join(f.directory, 'provision.json'))).toStrictEqual(
+        f.provision,
       );
-      await assert.rejects(fs.lstat(f.browserTarget), { code: 'ENOENT' });
-      assert.deepEqual(await fs.readFile(path.join(f.directory, 'provision.json')), f.provision);
     } finally {
       await fs.rm(f.root, { recursive: true, force: true });
     }
@@ -146,12 +149,12 @@ test('guest public restore rejects links, unknown archive paths and changed payl
   try {
     const bad = f.make([], true);
     await fs.writeFile(f.archive, bad, { mode: 0o600 });
-    await assert.rejects(
-      restoreWorker({ ...f.options, archiveHash: digest(bad) }),
-      /^Error: MIGRATION_INTEGRITY_FAILED$/,
-    );
+    await expect(restoreWorker({ ...f.options, archiveHash: digest(bad) })).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_INTEGRITY_FAILED$/),
+    });
     await fs.writeFile(f.archive, f.make(), { mode: 0o600 });
-    assert.equal((await restoreWorker(f.options)).phase, 'complete');
+    expect((await restoreWorker(f.options)).phase).toBe('complete');
   } finally {
     await fs.rm(f.root, { recursive: true, force: true });
   }
@@ -169,15 +172,20 @@ test('guest public restore resumes a same-manifest partial publication and refus
     return rename(from, to);
   };
   try {
-    await assert.rejects(restoreWorker(f.options), /^Error: MIGRATION_RESTORE_FAILED$/);
-    assert.deepEqual(await fs.readFile(f.browserTarget), f.browser);
-    await assert.rejects(
+    await expect(restoreWorker(f.options)).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_RESTORE_FAILED$/),
+    });
+    expect(await fs.readFile(f.browserTarget)).toStrictEqual(f.browser);
+    await expect(
       restoreWorker({ ...f.options, manifestHash: 'd'.repeat(64) }),
-      /^Error: MIGRATION_MANIFEST_CHANGED$/,
-    );
+    ).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_MANIFEST_CHANGED$/),
+    });
     fs.rename = rename;
-    assert.equal((await restoreWorker(f.options)).phase, 'complete');
-    assert.deepEqual(await fs.readFile(f.sharedTarget), f.shared);
+    expect((await restoreWorker(f.options)).phase).toBe('complete');
+    expect(await fs.readFile(f.sharedTarget)).toStrictEqual(f.shared);
   } finally {
     fs.rename = rename;
     await fs.rm(f.root, { recursive: true, force: true });
@@ -196,15 +204,21 @@ test('a verified partial restore rechecks staged bytes before publishing the rem
     return rename(from, to);
   };
   try {
-    await assert.rejects(restoreWorker(f.options), /^Error: MIGRATION_RESTORE_FAILED$/);
+    await expect(restoreWorker(f.options)).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_RESTORE_FAILED$/),
+    });
     fs.rename = rename;
     const staged = path.join(
       f.directory,
       `.public-import-${f.options.manifestHash.slice(0, 24)}/shared/bin/mock-tool.sh`,
     );
     await fs.writeFile(staged, Buffer.alloc(f.shared.length, 120));
-    await assert.rejects(restoreWorker(f.options), /^Error: MIGRATION_DESTINATION_CHANGED$/);
-    await assert.rejects(fs.lstat(f.sharedTarget), { code: 'ENOENT' });
+    await expect(restoreWorker(f.options)).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_DESTINATION_CHANGED$/),
+    });
+    await expect(fs.lstat(f.sharedTarget)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     fs.rename = rename;
     await fs.rm(f.root, { recursive: true, force: true });
@@ -223,15 +237,20 @@ test('partial replay still verifies archive file checksums even when the stage w
     return rename(from, to);
   };
   try {
-    await assert.rejects(restoreWorker(f.options), /^Error: MIGRATION_RESTORE_FAILED$/);
+    await expect(restoreWorker(f.options)).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_RESTORE_FAILED$/),
+    });
     fs.rename = rename;
     const changed = f.make([], true);
     await fs.writeFile(f.archive, changed, { mode: 0o600 });
-    await assert.rejects(
+    await expect(
       restoreWorker({ ...f.options, archiveHash: digest(changed) }),
-      /^Error: MIGRATION_INTEGRITY_FAILED$/,
-    );
-    await assert.rejects(fs.lstat(f.sharedTarget), { code: 'ENOENT' });
+    ).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^MIGRATION_INTEGRITY_FAILED$/),
+    });
+    await expect(fs.lstat(f.sharedTarget)).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     fs.rename = rename;
     await fs.rm(f.root, { recursive: true, force: true });
@@ -249,7 +268,7 @@ test('public data parents are assigned to the runtime account so the shared root
   try {
     await restoreWorker(f.options);
     for (const suffix of ['/var/lib/bot-prototype', '/var/lib/bot-prototype/desktops'])
-      assert.ok(
+      expect.assert(
         owners.some(
           (entry) =>
             entry.file.endsWith(suffix) &&

@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
 import type { NoteItem } from '@daban/protocol';
+import { expect, type TestContext, test, vi } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { CatalogTools } from './catalog.js';
 import type { ToolResult } from './computer-tools.js';
@@ -15,9 +14,9 @@ import { Work } from './work.js';
 import { WorkspaceFiles } from './workspace.js';
 
 function value<T>(result: ToolResult): T {
-  assert.equal(result.isError, undefined, JSON.stringify(result));
+  expect(result.isError, JSON.stringify(result)).toBe(undefined);
   const block = result.content[0];
-  assert.equal(block.type, 'text');
+  expect(block.type).toBe('text');
   return JSON.parse(block.type === 'text' ? block.text : '') as T;
 }
 const item = (result: ToolResult) => value<{ untrusted: boolean; item: NoteItem }>(result).item;
@@ -37,7 +36,7 @@ async function fixture(t: TestContext) {
     schedules: () => undefined,
     offered: (run) => tools.list(run.bot, run.model, run.conversationId, run),
   });
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await store.close();
     await work.close();
     await rm(root, { recursive: true, force: true });
@@ -60,44 +59,37 @@ test('notes tools expose only the current Bot records and never accept a caller 
   const { tools, run } = await fixture(t),
     a = run(),
     b = run('mock-beta');
-  assert.ok(
+  expect.assert(
     notesToolList.every((entry) => tools.list(a.bot).some((tool) => tool.name === entry.name)),
   );
-  assert.equal(
-    tools.list(a.bot).some((entry) => entry.name === 'screenshot'),
-    false,
-  );
+  expect(tools.list(a.bot).some((entry) => entry.name === 'screenshot')).toBe(false);
   const first = item(
     await tools.invoke(a, 'bot_notes_add', { title: ' 合成私有事项 ', body: 'MOCK ALPHA PRIVATE' }),
   );
-  assert.equal(first.bot, a.bot);
-  assert.equal(first.title, '合成私有事项');
-  assert.deepEqual(first.createdBy, { kind: 'bot', bot: a.bot });
-  assert.deepEqual(value<{ items: unknown[] }>(await tools.invoke(b, 'bot_notes_list')).items, []);
-  assert.match(
-    JSON.stringify(await tools.invoke(b, 'bot_notes_read', { id: first.id })),
+  expect(first.bot).toBe(a.bot);
+  expect(first.title).toBe('合成私有事项');
+  expect(first.createdBy).toStrictEqual({ kind: 'bot', bot: a.bot });
+  expect(value<{ items: unknown[] }>(await tools.invoke(b, 'bot_notes_list')).items).toStrictEqual(
+    [],
+  );
+  expect(JSON.stringify(await tools.invoke(b, 'bot_notes_read', { id: first.id }))).toMatch(
     /NOTE_NOT_FOUND/,
   );
-  assert.match(
-    JSON.stringify(await tools.invoke(b, 'bot_notes_list', { bot: a.bot })),
+  expect(JSON.stringify(await tools.invoke(b, 'bot_notes_list', { bot: a.bot }))).toMatch(
     /INVALID_TOOL_ARGS/,
   );
-  assert.match(
+  expect(
     JSON.stringify(await tools.invoke(b, 'bot_notes_add', { title: 'MOCK', bot: a.bot })),
-    /INVALID_TOOL_ARGS/,
-  );
+  ).toMatch(/INVALID_TOOL_ARGS/);
   const second = item(
     await tools.invoke(b, 'bot_notes_add', { title: '合成私有事项', body: 'MOCK BETA PRIVATE' }),
   );
-  assert.notEqual(first.id, second.id);
+  expect(first.id).not.toBe(second.id);
   const catalog = value<{ notes: { page: { items: { id: string }[] } } }>(
     await tools.invoke(b, 'task_catalog'),
   );
-  assert.deepEqual(
-    catalog.notes.page.items.map((row) => row.id),
-    [second.id],
-  );
-  assert.equal(JSON.stringify(catalog).includes('MOCK ALPHA PRIVATE'), false);
+  expect(catalog.notes.page.items.map((row) => row.id)).toStrictEqual([second.id]);
+  expect(JSON.stringify(catalog).includes('MOCK ALPHA PRIVATE')).toBe(false);
 });
 
 test('full reads fence edits, no-ops and CAS while preserving unedited fields and recoverable state', async (t) => {
@@ -108,7 +100,7 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
   );
   await tools.invoke(a, 'bot_notes_list');
   await tools.invoke(a, 'task_catalog');
-  assert.match(
+  expect(
     JSON.stringify(
       await tools.invoke(a, 'bot_notes_update', {
         id: first.id,
@@ -116,8 +108,7 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
         patch: { status: 'parked' },
       }),
     ),
-    /NOTE_READ_REQUIRED/,
-  );
+  ).toMatch(/NOTE_READ_REQUIRED/);
   await tools.invoke(a, 'bot_notes_read', { id: first.id });
   const noop = item(
     await tools.invoke(a, 'bot_notes_update', {
@@ -126,8 +117,8 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
       patch: { body: first.body },
     }),
   );
-  assert.equal(noop.revision, 1);
-  assert.match(
+  expect(noop.revision).toBe(1);
+  expect(
     JSON.stringify(
       await tools.invoke(a, 'bot_notes_update', {
         id: first.id,
@@ -135,8 +126,7 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
         patch: { status: 'parked' },
       }),
     ),
-    /NOTE_READ_REQUIRED/,
-  );
+  ).toMatch(/NOTE_READ_REQUIRED/);
   await tools.invoke(a, 'bot_notes_read', { id: first.id });
   await store.write(
     a.bot,
@@ -149,7 +139,7 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
     },
     { kind: 'human' },
   );
-  assert.match(
+  expect(
     JSON.stringify(
       await tools.invoke(a, 'bot_notes_update', {
         id: first.id,
@@ -157,8 +147,7 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
         patch: { status: 'parked' },
       }),
     ),
-    /NOTE_CONFLICT/,
-  );
+  ).toMatch(/NOTE_CONFLICT/);
   await tools.invoke(a, 'bot_notes_read', { id: first.id });
   const parked = item(
     await tools.invoke(a, 'bot_notes_update', {
@@ -167,8 +156,8 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
       patch: { status: 'parked' },
     }),
   );
-  assert.equal(parked.title, '合成人工新标题');
-  assert.equal(parked.body, first.body);
+  expect(parked.title).toBe('合成人工新标题');
+  expect(parked.body).toBe(first.body);
   await tools.invoke(a, 'bot_notes_read', { id: first.id });
   const done = item(
     await tools.invoke(a, 'bot_notes_update', {
@@ -177,16 +166,15 @@ test('full reads fence edits, no-ops and CAS while preserving unedited fields an
       patch: { status: 'done' },
     }),
   );
-  assert.ok(done.completedAt);
+  expect.assert(done.completedAt);
   await tools.invoke(a, 'bot_notes_read', { id: first.id });
-  assert.equal(
+  expect(
     item(await tools.invoke(a, 'bot_notes_trash', { id: first.id, revision: 4 })).deleted,
-    true,
-  );
+  ).toBe(true);
   await tools.invoke(a, 'bot_notes_read', { id: first.id });
   const restored = item(await tools.invoke(a, 'bot_notes_restore', { id: first.id, revision: 5 }));
-  assert.equal(restored.completedAt, done.completedAt);
-  assert.equal(restored.body, first.body);
+  expect(restored.completedAt).toBe(done.completedAt);
+  expect(restored.body).toBe(first.body);
 });
 
 test('stable intent recovers creation and edit receipts after continuation and reopening without overwriting Human changes', async (t) => {
@@ -213,7 +201,7 @@ test('stable intent recovers creation and edit receipts after continuation and r
   try {
     tools.notes = new NotesTools(reopened);
     const retry = { ...run(), id: 'mock-new-process-run', intentId: a.id };
-    assert.deepEqual(
+    expect(
       item(
         await tools.invoke(retry, 'bot_notes_add', {
           status: 'open',
@@ -221,10 +209,9 @@ test('stable intent recovers creation and edit receipts after continuation and r
           title: args.title,
         }),
       ),
-      later.item,
-    );
-    assert.deepEqual(item(await tools.invoke(retry, 'bot_notes_update', patch)), later.item);
-    assert.match(
+    ).toStrictEqual(later.item);
+    expect(item(await tools.invoke(retry, 'bot_notes_update', patch))).toStrictEqual(later.item);
+    expect(
       JSON.stringify(
         await tools.invoke(retry, 'bot_notes_update', {
           id: first.id,
@@ -232,12 +219,10 @@ test('stable intent recovers creation and edit receipts after continuation and r
           patch: { status: 'open' },
         }),
       ),
-      /NOTE_READ_REQUIRED/,
-    );
-    assert.notEqual(
+    ).toMatch(/NOTE_READ_REQUIRED/);
+    expect(
       item(await tools.invoke(run(a.bot, 'mock-distinct-user-request'), 'bot_notes_add', args)).id,
-      first.id,
-    );
+    ).not.toBe(first.id);
   } finally {
     await reopened.close();
   }
@@ -257,7 +242,7 @@ test('a late save acknowledgment consumes only its own full-read observation', a
   });
   const write = store.write.bind(store);
   let hold = true;
-  t.mock.method(store, 'write', async (...args: Parameters<typeof write>) => {
+  vi.spyOn(store, 'write').mockImplementation(async (...args: Parameters<typeof write>) => {
     const saved = await write(...args);
     if (hold) {
       hold = false;
@@ -276,7 +261,7 @@ test('a late save acknowledgment consumes only its own full-read observation', a
     await tools.invoke(a, 'bot_notes_read', { id: first.id });
     release();
     item(await pending);
-    assert.equal(
+    expect(
       item(
         await tools.invoke(a, 'bot_notes_update', {
           id: first.id,
@@ -284,8 +269,7 @@ test('a late save acknowledgment consumes only its own full-read observation', a
           patch: { status: 'done' },
         }),
       ).revision,
-      3,
-    );
+    ).toBe(3);
   } finally {
     release();
     await pending;
@@ -301,12 +285,11 @@ test('failed or changed-context reads cannot grant editing authority', async (t)
   a.redact = () => {
     throw new Fault('MOCK_REDACT_FAILURE');
   };
-  assert.match(
-    JSON.stringify(await tools.invoke(a, 'bot_notes_read', { id: first.id })),
+  expect(JSON.stringify(await tools.invoke(a, 'bot_notes_read', { id: first.id }))).toMatch(
     /MOCK_REDACT_FAILURE/,
   );
   a.redact = (value) => value;
-  assert.match(
+  expect(
     JSON.stringify(
       await tools.invoke(a, 'bot_notes_update', {
         id: first.id,
@@ -314,14 +297,13 @@ test('failed or changed-context reads cannot grant editing authority', async (t)
         patch: { status: 'parked' },
       }),
     ),
-    /NOTE_READ_REQUIRED/,
-  );
+  ).toMatch(/NOTE_READ_REQUIRED/);
   const get = store.get.bind(store);
   let release!: () => unknown;
   const gate = new Promise<undefined>((resolve) => {
     release = () => resolve(undefined);
   });
-  t.mock.method(store, 'get', async (...args: Parameters<typeof get>) => {
+  vi.spyOn(store, 'get').mockImplementation(async (...args: Parameters<typeof get>) => {
     const saved = await get(...args);
     await gate;
     return saved;
@@ -329,9 +311,9 @@ test('failed or changed-context reads cannot grant editing authority', async (t)
   const pending = tools.invoke(a, 'bot_notes_read', { id: first.id });
   a.bot = 'mock-beta';
   release();
-  assert.match(JSON.stringify(await pending), /NOTE_CONTEXT_CHANGED/);
+  expect(JSON.stringify(await pending)).toMatch(/NOTE_CONTEXT_CHANGED/);
   a.bot = 'mock-alpha';
-  assert.match(
+  expect(
     JSON.stringify(
       await tools.invoke(a, 'bot_notes_update', {
         id: first.id,
@@ -339,8 +321,7 @@ test('failed or changed-context reads cannot grant editing authority', async (t)
         patch: { status: 'done' },
       }),
     ),
-    /NOTE_READ_REQUIRED/,
-  );
+  ).toMatch(/NOTE_READ_REQUIRED/);
 });
 
 test('closed input shapes, budgets, cancellation and registration never create phantom notes', async (t) => {
@@ -354,25 +335,22 @@ test('closed input shapes, budgets, cancellation and registration never create p
     ['bot_notes_read', { id: '../mock-private' }],
     ['bot_notes_update', { id: 'mock-note', revision: 1, patch: {} }],
   ] as const) {
-    assert.equal((await tools.invoke(a, name, args)).isError, true);
+    expect((await tools.invoke(a, name, args)).isError).toBe(true);
   }
-  assert.match(
-    JSON.stringify(await tools.invoke(run('mock-unknown'), 'bot_notes_list')),
+  expect(JSON.stringify(await tools.invoke(run('mock-unknown'), 'bot_notes_list'))).toMatch(
     /BOT_PROFILE_NOT_FOUND/,
   );
   const limited = { ...run(), limit: 0 };
-  assert.match(
+  expect(
     JSON.stringify(await tools.invoke(limited, 'bot_notes_add', { title: 'MOCK LIMIT' })),
-    /TOOL_LIMIT/,
-  );
+  ).toMatch(/TOOL_LIMIT/);
   const stopped = run();
   stopped.abort.abort();
-  assert.match(
+  expect(
     JSON.stringify(await tools.invoke(stopped, 'bot_notes_add', { title: 'MOCK STOP' })),
-    /MODEL_CANCELLED/,
-  );
-  assert.equal((await store.list(a.bot, { filter: 'all' })).items.length, 0);
-  assert.ok(a.trace.every((row) => row.phase !== 'running'));
+  ).toMatch(/MODEL_CANCELLED/);
+  expect((await store.list(a.bot, { filter: 'all' })).items.length).toBe(0);
+  expect.assert(a.trace.every((row) => row.phase !== 'running'));
 });
 
 test('decoded and truncated credential data is withheld from tools, catalog and traces without changing stored text', async (t) => {
@@ -394,8 +372,7 @@ test('decoded and truncated credential data is withheld from tools, catalog and 
     redact: (text: string) => redact(text, [secret]),
     redactResponse: (text: string) => redactStream(text, [secret]),
   };
-  assert.equal(
-    item(await tools.invoke(a, 'bot_notes_read', { id: full.item.id })).body,
+  expect(item(await tools.invoke(a, 'bot_notes_read', { id: full.item.id })).body).toBe(
     '[credential redacted]',
   );
   const prefixSecret = 'mock-provider-key-with-a-long-private-suffix';
@@ -419,14 +396,14 @@ test('decoded and truncated credential data is withheld from tools, catalog and 
   const page = value<{ items: { id: string; body: string; bodyTruncated: boolean }[] }>(
     await tools.invoke(a, 'bot_notes_list'),
   );
-  assert.equal(page.items[0].body, 'x'.repeat(190));
-  assert.equal(page.items[0].bodyTruncated, true);
+  expect(page.items[0].body).toBe('x'.repeat(190));
+  expect(page.items[0].bodyTruncated).toBe(true);
   const catalog = value<{ notes: { page: { items: { body: string }[] } } }>(
     await tools.invoke(a, 'task_catalog'),
   );
-  assert.equal(catalog.notes.page.items[0].body, 'x'.repeat(190));
-  assert.equal(JSON.stringify([page, catalog, a.trace]).includes(secret), false);
-  assert.equal((await store.get(a.bot, full.item.id)).body, secret);
+  expect(catalog.notes.page.items[0].body).toBe('x'.repeat(190));
+  expect(JSON.stringify([page, catalog, a.trace]).includes(secret)).toBe(false);
+  expect((await store.get(a.bot, full.item.id)).body).toBe(secret);
 });
 
 test('a catalog cannot return private observations after its run changes identity', async (t) => {
@@ -440,7 +417,7 @@ test('a catalog cannot return private observations after its run changes identit
     release = () => resolve(undefined);
   });
   const list = work.list.bind(work);
-  t.mock.method(work, 'list', async (...args: Parameters<typeof list>) => {
+  vi.spyOn(work, 'list').mockImplementation(async (...args: Parameters<typeof list>) => {
     const page = await list(...args);
     await gate;
     return page;
@@ -448,5 +425,5 @@ test('a catalog cannot return private observations after its run changes identit
   const pending = tools.invoke(a, 'task_catalog');
   a.bot = 'mock-beta';
   release();
-  assert.match(JSON.stringify(await pending), /CATALOG_CONTEXT_CHANGED/);
+  expect(JSON.stringify(await pending)).toMatch(/CATALOG_CONTEXT_CHANGED/);
 });

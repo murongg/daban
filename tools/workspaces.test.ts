@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { boundary } from './workspaces.ts';
 
 const desktop = {
@@ -22,38 +21,33 @@ const protocol = {
 };
 const workspaces = [desktop, runtime, protocol];
 test('applications use declared public APIs and local relative imports', () => {
-  assert.equal(boundary('/mock/apps/desktop/src/app.ts', '@mock/protocol', workspaces), undefined);
-  assert.equal(boundary('/mock/apps/desktop/src/app.ts', './state', workspaces), undefined);
+  expect(boundary('/mock/apps/desktop/src/app.ts', '@mock/protocol', workspaces)).toBe(undefined);
+  expect(boundary('/mock/apps/desktop/src/app.ts', './state', workspaces)).toBe(undefined);
 });
 test('cross-workspace relative paths, private entry points and undeclared dependencies fail', () => {
-  assert.match(
+  expect(
     boundary('/mock/apps/desktop/src/app.ts', '../../../packages/protocol/src/index', workspaces)!,
-    /relative/,
-  );
-  assert.match(
+  ).toMatch(/relative/);
+  expect(
     boundary('/mock/apps/desktop/src/app.ts', '@mock/protocol/src/index', workspaces)!,
-    /export/,
-  );
-  assert.match(
-    boundary('/mock/apps/desktop/src/app.ts', '@mock/runtime', workspaces)!,
+  ).toMatch(/export/);
+  expect(boundary('/mock/apps/desktop/src/app.ts', '@mock/runtime', workspaces)!).toMatch(
     /application/,
   );
-  assert.match(
+  expect(
     boundary('/mock/apps/desktop/src/app.ts', '@mock/protocol', [
       { ...desktop, dependencies: {} },
       runtime,
       protocol,
     ])!,
-    /declared/,
-  );
+  ).toMatch(/declared/);
 });
 test('libraries cannot import applications even with a declared dependency', () => {
-  assert.match(
+  expect(
     boundary('/mock/packages/protocol/src/index.ts', '@mock/desktop', [
       desktop,
       runtime,
       { ...protocol, dependencies: { '@mock/desktop': '0.1.0' } },
     ])!,
-    /application/,
-  );
+  ).toMatch(/application/);
 });

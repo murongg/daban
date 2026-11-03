@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { promisify } from 'node:util';
+import { expect, test } from 'vitest';
 import { documentCommand } from './documents.js';
 
 test('the document worker arguments start a real Node ES module without a package manifest', async () => {
@@ -21,7 +20,7 @@ test('the document worker arguments start a real Node ES module without a packag
     );
     const command = args.slice(args.indexOf('/engine/bin/node') + 1);
     const index = command.findIndex((value) => value.startsWith('/app/runtime/extract.'));
-    assert.ok(index >= 0);
+    expect.assert(index >= 0);
     const entry = path.join(directory, path.posix.basename(command[index]));
     await writeFile(
       entry,
@@ -32,7 +31,7 @@ test('the document worker arguments start a real Node ES module without a packag
       cwd: directory,
       timeout: 5000,
     });
-    assert.deepEqual(JSON.parse(result.stdout), { format: 'pdf', esm: true });
+    expect(JSON.parse(result.stdout)).toStrictEqual({ format: 'pdf', esm: true });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -49,24 +48,22 @@ test('relocated document readers bind their own code and protocol plus only Linu
     },
     'pdf',
   );
-  assert.equal(command.program, 'bwrap');
-  assert.ok(command.args.includes('--unshare-all'));
-  assert.ok(command.args.includes('--clearenv'));
-  assert.deepEqual(
+  expect(command.program).toBe('bwrap');
+  expect.assert(command.args.includes('--unshare-all'));
+  expect.assert(command.args.includes('--clearenv'));
+  expect(
     command.args.slice(command.args.indexOf(sourceEntry), command.args.indexOf(sourceEntry) + 2),
-    [sourceEntry, '/app/runtime/extract.mjs'],
-  );
-  assert.deepEqual(
+  ).toStrictEqual([sourceEntry, '/app/runtime/extract.mjs']);
+  expect(
     command.args.slice(
       command.args.indexOf('/mock/new/node_modules'),
       command.args.indexOf('/mock/new/node_modules') + 2,
     ),
-    ['/mock/new/node_modules', '/app/runtime/node_modules'],
-  );
-  assert.ok(command.args.includes('/mock/seed/runtime/node_modules'));
-  assert.ok(command.args.includes('/app/runtime/extract.mjs'));
-  assert.equal(command.args.includes('--experimental-default-type=module'), false);
-  assert.ok(command.args.includes('--cpu=20'));
-  assert.ok(command.args.includes('--max-old-space-size=256'));
-  assert.equal(command.args.at(-1), 'pdf');
+  ).toStrictEqual(['/mock/new/node_modules', '/app/runtime/node_modules']);
+  expect.assert(command.args.includes('/mock/seed/runtime/node_modules'));
+  expect.assert(command.args.includes('/app/runtime/extract.mjs'));
+  expect(command.args.includes('--experimental-default-type=module')).toBe(false);
+  expect.assert(command.args.includes('--cpu=20'));
+  expect.assert(command.args.includes('--max-old-space-size=256'));
+  expect(command.args.at(-1)).toBe('pdf');
 });

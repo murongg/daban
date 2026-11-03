@@ -1,12 +1,11 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { startNativeAgent } from '@daban/engine/agent';
+import { expect, test } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
 test('real DSH preserves a reusable conversation below the model compaction budget', {
@@ -15,7 +14,7 @@ test('real DSH preserves a reusable conversation below the model compaction budg
   const root = await mkdtemp(path.join(tmpdir(), 'mock-compaction-'));
   let agent: Awaited<ReturnType<typeof startNativeAgent>> | undefined;
   let model: ReturnType<typeof createServer> | undefined;
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await agent?.close();
     model?.closeAllConnections();
     if (model?.listening) await new Promise((resolve) => model!.close(resolve));
@@ -153,20 +152,19 @@ test('real DSH preserves a reusable conversation below the model compaction budg
     await new Promise((resolve) => setTimeout(resolve, 50));
   const job = agent.models.jobs.get('mock-bot')!;
   await job.done;
-  assert.equal(summaries, 0, 'ample context must not cause extra summarization requests');
-  assert.equal(job.phase, 'completed', job.error);
-  assert.equal(calls, 2, 'one tool call and one answer must suffice');
-  assert.match(job.result, /SYNTHETIC TASK COMPLETE/);
-  assert.match(requests[0].key ?? '', /^daban-[a-f0-9]{48}$/);
-  assert.equal(requests[0].session, requests[0].key);
-  assert.equal(requests[1].key, requests[0].key);
-  assert.equal(requests[1].session, requests[0].session);
-  assert.deepEqual(requests[1].tools, requests[0].tools);
-  assert.deepEqual(
+  expect(summaries, 'ample context must not cause extra summarization requests').toBe(0);
+  expect(job.phase, job.error).toBe('completed');
+  expect(calls, 'one tool call and one answer must suffice').toBe(2);
+  expect(job.result).toMatch(/SYNTHETIC TASK COMPLETE/);
+  expect(requests[0].key ?? '').toMatch(/^daban-[a-f0-9]{48}$/);
+  expect(requests[0].session).toBe(requests[0].key);
+  expect(requests[1].key).toBe(requests[0].key);
+  expect(requests[1].session).toBe(requests[0].session);
+  expect(requests[1].tools).toStrictEqual(requests[0].tools);
+  expect(
     requests[1].messages.slice(0, requests[0].messages.length),
-    requests[0].messages,
     'a tool step must append to the previous prefix rather than rewrite it',
-  );
+  ).toStrictEqual(requests[0].messages);
 });
 
 for (const needsSummary of [false, true])
@@ -269,7 +267,7 @@ for (const needsSummary of [false, true])
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
-    t.after(async () => {
+    t.onTestFinished(async () => {
       await agent?.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
@@ -322,14 +320,15 @@ for (const needsSummary of [false, true])
     });
     const first = agent.models.jobs.get('mock-bot')!;
     await first.done;
-    assert.equal(first.phase, 'completed', first.error);
-    assert.ok(pruned, 'the normal continuation must see the pruned result');
-    assert.ok(recovered, 'the marker must remain readable from the original saved tool output');
-    assert.equal(summaries > 0, needsSummary);
-    assert.equal(normal, 4);
+    expect(first.phase, first.error).toBe('completed');
+    expect.assert(pruned, 'the normal continuation must see the pruned result');
+    expect.assert(recovered, 'the marker must remain readable from the original saved tool output');
+    expect(summaries > 0).toBe(needsSummary);
+    expect(normal).toBe(4);
     const saved = await agent.models.journal.read('mock-bot', first.id);
-    if (needsSummary) assert.match(saved?.checkpoint?.text ?? '', /SYNTHETIC PORTABLE CHECKPOINT/);
-    else assert.equal(saved?.checkpoint, undefined);
+    if (needsSummary)
+      expect(saved?.checkpoint?.text ?? '').toMatch(/SYNTHETIC PORTABLE CHECKPOINT/);
+    else expect(saved?.checkpoint).toBe(undefined);
     await agent.close();
     agent = undefined;
     agent = await startNativeAgent(options);
@@ -346,9 +345,8 @@ for (const needsSummary of [false, true])
     });
     const last = agent.models.jobs.get('mock-bot')!;
     await last.done;
-    assert.equal(last.phase, 'completed', last.error);
-    assert.match(
-      JSON.stringify(requests.at(-1)?.messages),
+    expect(last.phase, last.error).toBe('completed');
+    expect(JSON.stringify(requests.at(-1)?.messages)).toMatch(
       needsSummary ? /SYNTHETIC PORTABLE CHECKPOINT/ : /Read the synthetic memory/,
     );
   });

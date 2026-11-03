@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -34,7 +33,7 @@ async function fixture() {
       return {
         id: 'mock-stream-session',
         run: async (prompt: unknown, observer: { onNotification: (value: unknown) => unknown }) => {
-          assert.ok(typeof prompt === 'string');
+          expect.assert(typeof prompt === 'string');
           const gate = gates.get(this.bot)!;
           gate.observe = observer.onNotification;
           gate.prompt = prompt;
@@ -100,24 +99,22 @@ test('response snapshots commit before publication, reject stale/foreign data an
     const a = await f.start('mock-a');
     await f.start('mock-b');
     await f.update('mock-a', 1, '合成回答甲');
-    assert.equal(f.models.status().bots['mock-a'].response?.text, '合成回答甲');
+    expect(f.models.status().bots['mock-a'].response?.text).toBe('合成回答甲');
     // Every accepted stream is attributed to the turn that produced it, not inferred by the renderer.
-    assert.equal(f.models.status().bots['mock-a'].response?.turnId, 'mock-request-mock-a');
-    assert.equal(
-      f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.text,
+    expect(f.models.status().bots['mock-a'].response?.turnId).toBe('mock-request-mock-a');
+    expect(f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.text).toBe(
       '合成回答甲',
     );
-    assert.equal(
-      f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.turnId,
+    expect(f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.turnId).toBe(
       'mock-request-mock-a',
     );
     await f.update('mock-a', 3, '合成最新回答');
     await f.update('mock-a', 2, '过期内容');
-    assert.equal(f.models.status().bots['mock-a'].response?.revision, 3);
-    await assert.rejects(f.update('mock-a', 4, 'foreign', 'other-session'), {
+    expect(f.models.status().bots['mock-a'].response?.revision).toBe(3);
+    await expect(f.update('mock-a', 4, 'foreign', 'other-session')).rejects.toMatchObject({
       code: 'INVALID_RESPONSE',
     });
-    await assert.rejects(
+    await expect(
       f.models.rpc('mock-b', `Bearer ${a.token}`, {
         id: 1,
         method: 'response.update',
@@ -128,9 +125,8 @@ test('response snapshots commit before publication, reject stale/foreign data an
           state: 'streaming',
         },
       }),
-      { code: 'UNAUTHORIZED' },
-    );
-    assert.equal(f.models.status().bots['mock-b'].response, undefined);
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(f.models.status().bots['mock-b'].response).toBe(undefined);
   } finally {
     await f.close();
   }
@@ -140,7 +136,9 @@ test('an old turn snapshot cannot be relabelled or replace the current turn whil
   const f = await fixture();
   try {
     const job = await f.start('mock-a');
-    assert.deepEqual(JSON.parse(await readFile(path.join(job.privateDir, 'turn.json'), 'utf8')), {
+    expect(
+      JSON.parse(await readFile(path.join(job.privateDir, 'turn.json'), 'utf8')),
+    ).toStrictEqual({
       id: job.requestId,
     });
     job.turns![0].result = 'SYNTHETIC ORIGINAL ANSWER';
@@ -152,14 +150,14 @@ test('an old turn snapshot cannot be relabelled or replace the current turn whil
         params: { sessionId: job.sessionId, revision, turnId, text, state: 'settled' },
       });
     const stale = await update(1, job.requestId, 'SYNTHETIC OLD ANSWER');
-    assert.ok(stale);
-    assert.equal((stale.result as { accepted: boolean }).accepted, false);
-    assert.equal(job.response, undefined);
+    expect.assert(stale);
+    expect((stale.result as { accepted: boolean }).accepted).toBe(false);
+    expect(job.response).toBe(undefined);
     await update(2, 'mock-second-turn', 'SYNTHETIC SECOND PREFIX');
     await update(3, job.requestId, 'SYNTHETIC DELAYED OLD ANSWER');
     const response = f.models.status().bots['mock-a'].response;
-    assert.equal(response?.text, 'SYNTHETIC SECOND PREFIX');
-    assert.equal(response?.turnId, 'mock-second-turn');
+    expect(response?.text).toBe('SYNTHETIC SECOND PREFIX');
+    expect(response?.turnId).toBe('mock-second-turn');
     let release!: () => unknown;
     job.writing = new Promise((resolve) => {
       release = () => resolve(undefined);
@@ -168,9 +166,9 @@ test('an old turn snapshot cannot be relabelled or replace the current turn whil
     job.turns!.push({ id: 'mock-third-turn', prompt: 'SYNTHETIC THIRD REQUEST', result: '' });
     release();
     const dropped = await queued;
-    assert.ok(dropped);
-    assert.equal((dropped.result as { accepted: boolean }).accepted, false);
-    assert.equal(f.models.status().bots['mock-a'].response?.text, 'SYNTHETIC SECOND PREFIX');
+    expect.assert(dropped);
+    expect((dropped.result as { accepted: boolean }).accepted).toBe(false);
+    expect(f.models.status().bots['mock-a'].response?.text).toBe('SYNTHETIC SECOND PREFIX');
   } finally {
     await f.close();
   }
@@ -180,7 +178,7 @@ test('streamed credential prefixes stay private, and concurrent plan persistence
   try {
     await f.start('mock-a');
     await f.update('mock-a', 1, `答复：${f.key.slice(0, 16)}`);
-    assert.equal(f.models.status().bots['mock-a'].response?.text, '答复：');
+    expect(f.models.status().bots['mock-a'].response?.text).toBe('答复：');
     const output = f.update('mock-a', 2, '合成新内容');
     f.gates.get('mock-a')!.observe!({
       method: 'session.event',
@@ -194,15 +192,14 @@ test('streamed credential prefixes stay private, and concurrent plan persistence
     });
     await output;
     await f.models.journal.writing;
-    assert.equal(
-      f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.text,
+    expect(f.models.journal.findRequest('mock-a', 'mock-request-mock-a')?.response?.text).toBe(
       '合成新内容',
     );
     await f.models.stop('mock-a');
     const restored = new ModelRuns(f.options);
     await restored.ready;
-    assert.equal(restored.status().bots['mock-a'].response?.text, '合成新内容');
-    assert.equal(restored.status().bots['mock-a'].phase, 'stopped');
+    expect(restored.status().bots['mock-a'].response?.text).toBe('合成新内容');
+    expect(restored.status().bots['mock-a'].phase).toBe('stopped');
     await restored.close();
   } finally {
     await f.close();
@@ -214,9 +211,9 @@ test('completed answers are not silently truncated at the old preview limit', as
     const job = await f.start('mock-a');
     const text = 'synthetic response. '.repeat(1000);
     await f.finish('mock-a', text);
-    assert.equal(f.models.status().bots['mock-a'].result, text);
+    expect(f.models.status().bots['mock-a'].result).toBe(text);
     const saved = JSON.parse(await readFile(path.join(job.privateDir, 'result.json'), 'utf8'));
-    assert.equal(saved.result, text);
+    expect(saved.result).toBe(text);
   } finally {
     await f.close();
   }
@@ -231,8 +228,8 @@ test('an in-flight disk write is not exposed through history before the current 
       '合成尚未落盘的增量片段',
     );
     await update;
-    assert.equal(visibleBeforeCommit, false);
-    assert.equal(f.models.status().bots['mock-a'].response?.text, '合成尚未落盘的增量片段');
+    expect(visibleBeforeCommit).toBe(false);
+    expect(f.models.status().bots['mock-a'].response?.text).toBe('合成尚未落盘的增量片段');
   } finally {
     await f.close();
   }
@@ -244,10 +241,10 @@ test('an oversized final answer is an explicit incomplete failure rather than a 
     await f.update('mock-a', 1, '合成已提交的前缀');
     await f.finish('mock-a', 'x'.repeat(65537));
     const result = f.models.status().bots['mock-a'];
-    assert.equal(result.phase, 'failed');
-    assert.equal(result.result, '');
-    assert.equal(result.response?.text, '合成已提交的前缀');
-    assert.match(result.error || '', /长度限制/);
+    expect(result.phase).toBe('failed');
+    expect(result.result).toBe('');
+    expect(result.response?.text).toBe('合成已提交的前缀');
+    expect(result.error || '').toMatch(/长度限制/);
   } finally {
     await f.close();
   }

@@ -1,13 +1,12 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { startNativeAgent } from '@daban/engine/agent';
 import type { ModelApi } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
 test('real DSH keeps conversation cache identity across tasks/restarts and preserves all four provider protocols', {
@@ -145,7 +144,7 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
         .join('') + (req.url?.includes('/chat/completions') ? 'data: [DONE]\n\n' : ''),
     );
   });
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await agent?.close();
     model.closeAllConnections();
     if (model.listening) await new Promise((resolve) => model.close(resolve));
@@ -179,8 +178,8 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
     );
     const job = agent!.models.jobs.get(bot)!;
     await job.done;
-    assert.equal(job.phase, 'completed', `${bot}: ${job.error}; ${captures.at(-1)?.path}`);
-    assert.equal(job.result, 'SYNTHETIC COMPLETE');
+    expect(job.phase, `${bot}: ${job.error}; ${captures.at(-1)?.path}`).toBe('completed');
+    expect(job.result).toBe('SYNTHETIC COMPLETE');
     return captures.at(-1)!;
   };
   const apis: ModelApi[] = [
@@ -228,29 +227,29 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
       .filter(Boolean)
       .map((line) => JSON.parse(line));
     const usage = events.filter((event) => event.type === 'assistant/message').at(-1)?.data.usage;
-    assert.equal(usage?.cacheReadTokens, 23000, `${api} must preserve native cache usage`);
+    expect(usage?.cacheReadTokens, `${api} must preserve native cache usage`).toBe(23000);
     if (api.startsWith('openai-')) {
       const key = first.body.prompt_cache_key;
-      assert.match(String(key), /^daban-[a-f0-9]{48}$/);
-      assert.equal(first.session, key);
-      assert.equal(second.body.prompt_cache_key, key);
-      assert.equal(second.session, key);
-      assert.deepEqual(second.body.tools, first.body.tools);
+      expect(String(key)).toMatch(/^daban-[a-f0-9]{48}$/);
+      expect(first.session).toBe(key);
+      expect(second.body.prompt_cache_key).toBe(key);
+      expect(second.session).toBe(key);
+      expect(second.body.tools).toStrictEqual(first.body.tools);
       const field = api === 'openai-completions' ? 'messages' : 'input';
       const prefix = first.body[field] as unknown[];
-      assert.deepEqual((second.body[field] as unknown[]).slice(0, prefix.length), prefix);
+      expect((second.body[field] as unknown[]).slice(0, prefix.length)).toStrictEqual(prefix);
       await agent.close();
       agent = await startNativeAgent(options);
-      assert.equal((await run(bot)).body.prompt_cache_key, key);
-      assert.notEqual((await run(bot, 0, 'mock-group')).body.prompt_cache_key, key);
+      expect((await run(bot)).body.prompt_cache_key).toBe(key);
+      expect((await run(bot, 0, 'mock-group')).body.prompt_cache_key).not.toBe(key);
       await agent.models.chats.renew({ id: `mock-renew-${api}`, bot, revision: 0 });
-      assert.notEqual((await run(bot, 1)).body.prompt_cache_key, key);
+      expect((await run(bot, 1)).body.prompt_cache_key).not.toBe(key);
     } else {
-      assert.equal(first.body.prompt_cache_key, undefined);
-      assert.equal(first.session, undefined);
-      assert.equal(second.body.prompt_cache_key, undefined);
-      assert.equal(second.session, undefined);
-      assert.ok(api === 'anthropic-messages' ? first.body.messages : first.body.contents);
+      expect(first.body.prompt_cache_key).toBe(undefined);
+      expect(first.session).toBe(undefined);
+      expect(second.body.prompt_cache_key).toBe(undefined);
+      expect(second.session).toBe(undefined);
+      expect.assert(api === 'anthropic-messages' ? first.body.messages : first.body.contents);
     }
   }
 });

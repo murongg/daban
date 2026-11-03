@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
 import { isInteractionInput } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import type { CommandReview } from './commands.js';
 import { Commands } from './commands.js';
 import type { ToolResult } from './computer-tools.js';
@@ -24,12 +23,12 @@ test('VM approval records accept only exact bounded commands and absolute guest 
     purpose: 'Synthetic request',
     target: 'linux-vm',
   };
-  assert.equal(isInteractionInput(approval), true);
-  assert.equal(isInteractionInput({ ...approval, command: 'x'.repeat(12001) }), false);
-  assert.equal(isInteractionInput({ ...approval, cwd: 'relative/task' }), false);
-  assert.equal(isInteractionInput({ ...approval, cwd: '/mock-guest/../private' }), false);
-  assert.equal(isInteractionInput({ ...approval, target: 'host' }), false);
-  assert.equal(isInteractionInput({ ...approval, env: { MOCK_PRIVATE: 'synthetic' } }), false);
+  expect(isInteractionInput(approval)).toBe(true);
+  expect(isInteractionInput({ ...approval, command: 'x'.repeat(12001) })).toBe(false);
+  expect(isInteractionInput({ ...approval, cwd: 'relative/task' })).toBe(false);
+  expect(isInteractionInput({ ...approval, cwd: '/mock-guest/../private' })).toBe(false);
+  expect(isInteractionInput({ ...approval, target: 'host' })).toBe(false);
+  expect(isInteractionInput({ ...approval, env: { MOCK_PRIVATE: 'synthetic' } })).toBe(false);
 });
 const run = () => ({
   id: 'mock-run',
@@ -52,7 +51,7 @@ test('production risk policy auto-runs reads once but opens a human approval for
       return output;
     };
   try {
-    assert.deepEqual(
+    expect(
       await commands.invoke(
         current,
         'shell',
@@ -60,10 +59,9 @@ test('production risk policy auto-runs reads once but opens a human approval for
         'mock-read',
         dispatch,
       ),
-      output,
-    );
-    assert.equal((await context.interactions.list()).length, 0);
-    assert.deepEqual(
+    ).toStrictEqual(output);
+    expect((await context.interactions.list()).length).toBe(0);
+    expect(
       await commands.invoke(
         current,
         'shell',
@@ -71,9 +69,8 @@ test('production risk policy auto-runs reads once but opens a human approval for
         'mock-read',
         dispatch,
       ),
-      output,
-    );
-    assert.equal(dispatched, 1);
+    ).toStrictEqual(output);
+    expect(dispatched).toBe(1);
     const deletion = commands.invoke(
       current,
       'process_start',
@@ -86,8 +83,8 @@ test('production risk policy auto-runs reads once but opens a human approval for
       kind: 'decision',
       allow: false,
     });
-    assert.equal((await deletion).isError, true);
-    assert.equal(dispatched, 1);
+    expect((await deletion).isError).toBe(true);
+    expect(dispatched).toBe(1);
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });
@@ -125,16 +122,16 @@ test('raw commands ask by default and denial cannot dispatch', async () => {
       },
     );
     const approval = await pending(context.interactions);
-    assert.equal(approval.kind, 'approval');
-    assert.equal(approval.kind === 'approval' && approval.tool, 'vm_command');
-    assert.equal('command' in approval && approval.command, 'echo mock');
-    assert.equal('cwd' in approval && approval.cwd, current.workdir);
+    expect(approval.kind).toBe('approval');
+    expect(approval.kind === 'approval' && approval.tool).toBe('vm_command');
+    expect('command' in approval && approval.command).toBe('echo mock');
+    expect('cwd' in approval && approval.cwd).toBe(current.workdir);
     await context.interactions.reply(current.bot, current.id, approval.id, {
       kind: 'decision',
       allow: false,
     });
-    assert.equal((await result).isError, true);
-    assert.equal(dispatches, 0);
+    expect((await result).isError).toBe(true);
+    expect(dispatches).toBe(0);
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });
@@ -163,10 +160,10 @@ test('human approval executes only its exact one-off command and remains an insp
       kind: 'decision',
       allow: true,
     });
-    assert.deepEqual(await first, output);
+    expect(await first).toStrictEqual(output);
     await commands.close();
     commands = new Commands({ ...context });
-    assert.deepEqual(
+    expect(
       await commands.invoke(
         current,
         'shell',
@@ -174,9 +171,8 @@ test('human approval executes only its exact one-off command and remains an insp
         'mock-human-call',
         dispatch,
       ),
-      output,
-    );
-    assert.equal(dispatches, 1);
+    ).toStrictEqual(output);
+    expect(dispatches).toBe(1);
     const next = commands.invoke(
       current,
       'shell',
@@ -185,13 +181,13 @@ test('human approval executes only its exact one-off command and remains an insp
       dispatch,
     );
     const second = await pending(context.interactions);
-    assert.notEqual(second.id, approval.id);
+    expect(second.id).not.toBe(approval.id);
     await context.interactions.reply(current.bot, current.id, second.id, {
       kind: 'decision',
       allow: false,
     });
-    assert.equal((await next).isError, true);
-    assert.equal(dispatches, 1);
+    expect((await next).isError).toBe(true);
+    expect(dispatches).toBe(1);
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });
@@ -229,18 +225,17 @@ test('review sees exact context and one approved RPC identity dispatches once', 
       'mock-call',
       dispatch,
     );
-    assert.deepEqual(await first, output);
-    assert.deepEqual(await duplicate, output);
-    assert.deepEqual(
+    expect(await first).toStrictEqual(output);
+    expect(await duplicate).toStrictEqual(output);
+    expect(
       await commands.invoke(current, 'shell', { command: 'echo mock' }, 'mock-call', dispatch),
-      output,
-    );
-    assert.equal(dispatches, 1);
-    assert.equal(reviews.length, 1);
-    assert.equal(reviews[0].sessionId, current.sessionId);
-    assert.deepEqual(reviews[0].args, { command: 'echo mock' });
-    assert.equal(reviews[0].target, 'linux-vm');
-    assert.equal((await context.interactions.list()).length, 0);
+    ).toStrictEqual(output);
+    expect(dispatches).toBe(1);
+    expect(reviews.length).toBe(1);
+    expect(reviews[0].sessionId).toBe(current.sessionId);
+    expect(reviews[0].args).toStrictEqual({ command: 'echo mock' });
+    expect(reviews[0].target).toBe('linux-vm');
+    expect((await context.interactions.list()).length).toBe(0);
     const changed = await commands.invoke(
       current,
       'shell',
@@ -248,8 +243,8 @@ test('review sees exact context and one approved RPC identity dispatches once', 
       'mock-call',
       dispatch,
     );
-    assert.equal(changed.isError, true);
-    assert.equal(dispatches, 1);
+    expect(changed.isError).toBe(true);
+    expect(dispatches).toBe(1);
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });
@@ -278,9 +273,9 @@ test('a user grant applies to one exact command and stop after decision prevents
       allow: true,
     });
     current.abort.abort();
-    assert.equal((await result).isError, true);
-    assert.equal(dispatches, 0);
-    assert.equal(
+    expect((await result).isError).toBe(true);
+    expect(dispatches).toBe(0);
+    expect(
       (
         await commands.invoke(
           current,
@@ -293,9 +288,8 @@ test('a user grant applies to one exact command and stop after decision prevents
           },
         )
       ).isError,
-      true,
-    );
-    assert.equal(dispatches, 0);
+    ).toBe(true);
+    expect(dispatches).toBe(0);
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });
@@ -318,7 +312,7 @@ test('lost dispatch outcomes and restored grants cannot authorize another execut
         throw new Error('MOCK_ACK_LOST');
       },
     );
-    assert.equal(result.isError, true);
+    expect(result.isError).toBe(true);
     await commands.close();
     commands = new Commands({ ...context, review: async () => 'allow' });
     const restored = await commands.invoke(
@@ -331,8 +325,8 @@ test('lost dispatch outcomes and restored grants cannot authorize another execut
         return output;
       },
     );
-    assert.equal(restored.isError, true);
-    assert.equal(dispatches, 1);
+    expect(restored.isError).toBe(true);
+    expect(dispatches).toBe(1);
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });
@@ -349,7 +343,7 @@ test('review rejection and process input are bound to exact stdin bytes', async 
       dispatches++;
       return output;
     };
-    assert.equal(
+    expect(
       (
         await commands.invoke(
           current,
@@ -359,9 +353,8 @@ test('review rejection and process input are bound to exact stdin bytes', async 
           dispatch,
         )
       ).isError,
-      true,
-    );
-    assert.equal(
+    ).toBe(true);
+    expect(
       (
         await commands.invoke(
           current,
@@ -371,9 +364,8 @@ test('review rejection and process input are bound to exact stdin bytes', async 
           dispatch,
         )
       ).isError,
-      true,
-    );
-    assert.equal(dispatches, 0);
+    ).toBe(true);
+    expect(dispatches).toBe(0);
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });
@@ -415,8 +407,8 @@ test('a restored unfinished decision cannot be dispatched by its previous owner'
     replacement = new Commands({ ...context, review: async () => 'allow' });
     await replacement.ready;
     release('allow');
-    assert.equal((await result).isError, true);
-    assert.equal(dispatches, 0);
+    expect((await result).isError).toBe(true);
+    expect(dispatches).toBe(0);
   } finally {
     release('allow');
     await commands.close();
@@ -443,9 +435,9 @@ test('an unusable host command store cannot dispatch or expose a storage excepti
         return output;
       },
     );
-    assert.equal(result.isError, true);
-    assert.equal(dispatches, 0);
-    assert.ok(!JSON.stringify(result).includes('SELECT'));
+    expect(result.isError).toBe(true);
+    expect(dispatches).toBe(0);
+    expect.assert(!JSON.stringify(result).includes('SELECT'));
   } finally {
     await commands.close();
     await rm(context.root, { recursive: true, force: true });

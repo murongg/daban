@@ -1,11 +1,10 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import type { RuntimeBridge } from '@daban/protocol';
 import { build } from 'vite';
+import { expect, test } from 'vitest';
 
 test('the production preload exposes its validated bridge without requiring files outside the Electron sandbox', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'daban-preload-'));
@@ -23,11 +22,11 @@ test('the production preload exposes its validated bridge without requiring file
     runInNewContext(await readFile(join(directory, 'preload.cjs'), 'utf8'), {
       process: { platform: 'darwin' },
       require: (name: string) => {
-        assert.equal(name, 'electron', 'SANDBOX_CANNOT_REQUIRE_LOCAL_CHUNKS');
+        expect(name, 'SANDBOX_CANNOT_REQUIRE_LOCAL_CHUNKS').toBe('electron');
         return {
           contextBridge: {
             exposeInMainWorld(key: string, value: unknown) {
-              assert.equal(key, 'daban');
+              expect(key).toBe('daban');
               exposed = value;
             },
           },
@@ -40,11 +39,11 @@ test('the production preload exposes its validated bridge without requiring file
         };
       },
     });
-    assert.ok(exposed && typeof exposed === 'object' && 'runtime' in exposed);
+    expect.assert(exposed && typeof exposed === 'object' && 'runtime' in exposed);
     const bridge = exposed as { runtime: RuntimeBridge };
     const command = { type: 'status' } as const;
-    assert.equal((await bridge.runtime.invoke(command)).ok, true);
-    assert.deepEqual(calls, [['daban:runtime', command]]);
+    expect((await bridge.runtime.invoke(command)).ok).toBe(true);
+    expect(calls).toStrictEqual([['daban:runtime', command]]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

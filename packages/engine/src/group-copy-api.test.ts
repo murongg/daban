@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { isGroupCopyReceipt, managedProtocol } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { startPrototype } from './server.js';
 
@@ -14,7 +13,7 @@ const source = {
 };
 const request = { id: 'mock-api-copy-group', group: source.id, revision: 1, name: '合成群聊副本' };
 async function members(app: Awaited<ReturnType<typeof startPrototype>>) {
-  assert.ok(app.models && app.groups);
+  expect.assert(app.models && app.groups);
   for (const id of source.members)
     await app.models.profiles.register({
       id,
@@ -49,23 +48,23 @@ test('group copy HTTP binds the authenticated source and returns an empty indepe
   };
   try {
     await members(app);
-    assert.ok(app.models && app.groups);
-    assert.equal((await call('copy', request, source.id, 'mock-denied')).status, 403);
-    assert.deepEqual((await call('copy-receipt')).value, { request, state: 'unknown' });
-    assert.equal((await app.groups.status()).items.length, 1);
-    assert.equal((await call('copy', request, 'mock-foreign-source')).status, 400);
-    assert.equal((await call('copy', { ...request, members: source.members })).status, 400);
-    assert.equal((await call('copy', request, source.id, app.token, '?unexpected=1')).status, 400);
+    expect.assert(app.models && app.groups);
+    expect((await call('copy', request, source.id, 'mock-denied')).status).toBe(403);
+    expect((await call('copy-receipt')).value).toStrictEqual({ request, state: 'unknown' });
+    expect((await app.groups.status()).items.length).toBe(1);
+    expect((await call('copy', request, 'mock-foreign-source')).status).toBe(400);
+    expect((await call('copy', { ...request, members: source.members })).status).toBe(400);
+    expect((await call('copy', request, source.id, app.token, '?unexpected=1')).status).toBe(400);
     const copied = await call('copy');
-    assert.equal(copied.status, 200);
-    assert.ok(isGroupCopyReceipt(copied.value) && copied.value.state === 'complete');
-    assert.equal(copied.value.group.id, request.id);
-    assert.deepEqual(copied.value.group.members, source.members);
-    assert.deepEqual((await call('copy-receipt')).value, copied.value);
+    expect(copied.status).toBe(200);
+    expect.assert(isGroupCopyReceipt(copied.value) && copied.value.state === 'complete');
+    expect(copied.value.group.id).toBe(request.id);
+    expect(copied.value.group.members).toStrictEqual(source.members);
+    expect((await call('copy-receipt')).value).toStrictEqual(copied.value);
     const page = await app.groups.read(request.id);
-    assert.deepEqual(page.messages, []);
-    assert.deepEqual(page.deliveries, []);
-    assert.equal(app.models.jobs.size, 0);
+    expect(page.messages).toStrictEqual([]);
+    expect(page.deliveries).toStrictEqual([]);
+    expect(app.models.jobs.size).toBe(0);
     await app.groups.action({
       id: 'mock-copy-archive',
       group: request.id,
@@ -80,10 +79,9 @@ test('group copy HTTP binds the authenticated source and returns an empty indepe
         },
       })
     ).json();
-    assert.equal(state.clientProtocol, managedProtocol);
-    assert.ok(state.clientProtocol >= 35);
-    assert.equal(
-      state.groups.items.find((item: { id: string }) => item.id === request.id).archived,
+    expect(state.clientProtocol).toBe(managedProtocol);
+    expect.assert(state.clientProtocol >= 35);
+    expect(state.groups.items.find((item: { id: string }) => item.id === request.id).archived).toBe(
       true,
     );
     for (const version of [
@@ -99,20 +97,19 @@ test('group copy HTTP binds the authenticated source and returns an empty indepe
           headers: { 'x-prototype-token': app.token, 'x-daban-client-protocol': version },
         })
       ).json();
-      assert.equal(
-        response.groups.items.some((item: { id: string }) => item.id === request.id),
+      expect(response.groups.items.some((item: { id: string }) => item.id === request.id)).toBe(
         version === '28' || version === String(managedProtocol),
       );
     }
-    assert.deepEqual(state.bots, {});
-    assert.deepEqual(state.computers.items, []);
+    expect(state.bots).toStrictEqual({});
+    expect(state.computers.items).toStrictEqual([]);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('group copy receipt stays read-only during coordinated recovery while creation is fenced', async (t) => {
+test('group copy receipt stays read-only during coordinated recovery while creation is fenced', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-group-copy-recovery-'));
   const app = await startPrototype({
     profileDir: path.join(root, 'profile'),
@@ -121,9 +118,9 @@ test('group copy receipt stays read-only during coordinated recovery while creat
   });
   try {
     await members(app);
-    assert.ok(app.groups && app.recovery);
-    t.mock.method(app.recovery, 'admit', () => false);
-    const enter = t.mock.method(app.recovery, 'enter', () => {
+    expect.assert(app.groups && app.recovery);
+    vi.spyOn(app.recovery, 'admit').mockImplementation(() => false);
+    const enter = vi.spyOn(app.recovery, 'enter').mockImplementation(() => {
       throw new Fault('RUNTIME_RECOVERY_PENDING');
     });
     const call = async (action: string) => {
@@ -134,13 +131,13 @@ test('group copy receipt stays read-only during coordinated recovery while creat
       });
       return { status: response.status, value: await response.json() };
     };
-    assert.deepEqual(await call('copy-receipt'), {
+    expect(await call('copy-receipt')).toStrictEqual({
       status: 200,
       value: { request, state: 'unknown' },
     });
-    assert.equal(enter.mock.callCount(), 0);
-    assert.equal((await call('copy')).value.error, 'RUNTIME_RECOVERY_PENDING');
-    assert.equal((await app.groups.status()).items.length, 1);
+    expect(enter.mock.calls.length).toBe(0);
+    expect((await call('copy')).value.error).toBe('RUNTIME_RECOVERY_PENDING');
+    expect((await app.groups.status()).items.length).toBe(1);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -161,8 +158,8 @@ test('group HTTP copy replay after restart preserves later target membership/nam
   };
   try {
     await members(app);
-    assert.ok(app.groups);
-    assert.equal((await call('copy')).status, 200);
+    expect.assert(app.groups);
+    expect((await call('copy')).status).toBe(200);
     const edited = await app.groups.update(request.id, 1, {
       name: '合成后续编辑',
       members: [...source.members].reverse(),
@@ -182,12 +179,12 @@ test('group HTTP copy replay after restart preserves later target membership/nam
     await app.close();
     app = await startPrototype(options);
     for (const action of ['copy-receipt', 'copy'])
-      assert.deepEqual(await call(action), {
+      expect(await call(action)).toStrictEqual({
         status: 200,
         value: { request, state: 'complete', group: archived.group },
       });
-    assert.equal((await app.groups!.status()).items.length, 2);
-    assert.equal(app.models!.jobs.size, 0);
+    expect((await app.groups!.status()).items.length).toBe(2);
+    expect(app.models!.jobs.size).toBe(0);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import type { InteractionInput } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { apply, waitForReply } from './human.js';
 
 test('human bridge uses the per-run capability only in HTTP headers and validates the exact request response', async () => {
@@ -20,7 +19,7 @@ test('human bridge uses the per-run capability only in HTTP headers and validate
     updatedAt: '2026-01-01T00:00:00Z',
   };
   const fetcher = async (_url: string, options: RequestInit) => {
-    assert.equal(new Headers(options.headers).get('authorization'), 'Bearer mock-capability');
+    expect(new Headers(options.headers).get('authorization')).toBe('Bearer mock-capability');
     const rpc = JSON.parse(String(options.body));
     payloads.push(rpc);
     return Response.json({
@@ -43,17 +42,16 @@ test('human bridge uses the per-run capability only in HTTP headers and validate
     new AbortController().signal,
     fetcher,
   );
-  assert.equal(result.status, 'resolved');
-  assert.equal(JSON.stringify(payloads).includes('mock-capability'), false);
-  await assert.rejects(
+  expect(result.status).toBe('resolved');
+  expect(JSON.stringify(payloads).includes('mock-capability')).toBe(false);
+  await expect(
     waitForReply(
       { url: 'http://127.0.0.1:12345/mcp/mock-bot', capability: 'mock-capability' },
       input,
       new AbortController().signal,
       async () => Response.json({ result: { ...pending, id: 'foreign-request' } }),
     ),
-    /INVALID_INTERACTION/,
-  );
+  ).rejects.toThrowError(/INVALID_INTERACTION/);
 });
 test('approval bridge never grants unknown actions or missing agent identity', async () => {
   const handlers = new Map<string, (request: unknown) => Promise<unknown>>();
@@ -65,16 +63,14 @@ test('approval bridge never grants unknown actions or missing agent identity', a
     },
     { url: 'http://127.0.0.1:12345/mcp/mock-bot', capability: 'mock-capability' },
   );
-  assert.equal(
-    await handlers.get('approval/request')!({ toolName: 'shell', reason: '{}' }),
+  expect(await handlers.get('approval/request')!({ toolName: 'shell', reason: '{}' })).toBe(
     'unavailable',
   );
-  await assert.rejects(
+  await expect(
     handlers.get('user-questions/request')!({
       questions: [{ id: 'mock', question: '合成问题？' }],
     }),
-    /INVALID_INTERACTION/,
-  );
+  ).rejects.toThrowError(/INVALID_INTERACTION/);
 });
 
 test('human question and approval bridges retain a server-owned conversation scope and refuse scope changes while waiting', async () => {
@@ -108,7 +104,7 @@ test('human question and approval bridges retain a server-owned conversation sco
     };
     const fetcher = (changed: boolean) => async (_url: string, options: RequestInit) => {
       const rpc = JSON.parse(String(options.body));
-      assert.equal('conversationId' in rpc.params, false);
+      expect('conversationId' in rpc.params).toBe(false);
       return Response.json({
         result:
           rpc.method === 'interaction.open'
@@ -128,11 +124,10 @@ test('human question and approval bridges retain a server-owned conversation sco
       });
     };
     const result = await waitForReply(config, input, new AbortController().signal, fetcher(false));
-    assert.equal(result.conversationId, 'mock-group');
-    assert.equal(result.status, 'resolved');
-    await assert.rejects(
+    expect(result.conversationId).toBe('mock-group');
+    expect(result.status).toBe('resolved');
+    await expect(
       waitForReply(config, input, new AbortController().signal, fetcher(true)),
-      /INVALID_INTERACTION/,
-    );
+    ).rejects.toThrowError(/INVALID_INTERACTION/);
   }
 });

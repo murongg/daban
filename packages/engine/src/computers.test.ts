@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { BrowserState, ComputerRequest } from '@daban/protocol';
+import { expect, type TestContext, test } from 'vitest';
 import { type ComputerDriver, Computers } from './computers.js';
 import { Connections } from './connections.js';
 import { Fault } from './control.js';
@@ -11,7 +10,7 @@ import type { Screens } from './desktop.js';
 import { Native } from './native.js';
 import type { Browser } from './runtime.js';
 
-async function fixture(t: { after: (action: () => unknown) => unknown }, limit = 2) {
+async function fixture(t: TestContext, limit = 2) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-computers-'));
   const profiles = new Set(['mock-a', 'mock-b', 'mock-c']),
     running = new Set<string>();
@@ -64,7 +63,7 @@ async function fixture(t: { after: (action: () => unknown) => unknown }, limit =
     driver,
   };
   const computers = new Computers(options);
-  t.after(async () => {
+  t.onTestFinished(async () => {
     stopAllowed = true;
     try {
       await computers.close();
@@ -115,15 +114,15 @@ test('connection rechecks Bot admission after asynchronous registration, while c
   await ready;
   admitted = false;
   release();
-  await assert.rejects(connect, { code: 'COMPUTER_BOT_UNAVAILABLE' });
-  assert.equal(f.started.length, 0);
+  await expect(connect).rejects.toMatchObject({ code: 'COMPUTER_BOT_UNAVAILABLE' });
+  expect(f.started.length).toBe(0);
   const other = await f.computers.operate({
     id: 'mock-independent-connect',
     bot: 'mock-b',
     action: 'connect',
     revision: 0,
   });
-  assert.equal(other.state.phase, 'connected');
+  expect(other.state.phase).toBe('connected');
   Object.assign(f.options, { admit: () => false });
   const stopped = await f.computers.operate({
     id: 'mock-independent-stop',
@@ -133,26 +132,24 @@ test('connection rechecks Bot admission after asynchronous registration, while c
     instance: other.state.instance!,
     confirmation: 'close-apps',
   });
-  assert.equal(stopped.state.phase, 'disconnected');
+  expect(stopped.state.phase).toBe('disconnected');
 });
 
 test('only registered idle logical Bots can gain a computer and connection does not remap their identity', async (t) => {
   const { computers, started, profiles, running } = await fixture(t);
-  await assert.rejects(
+  await expect(
     computers.operate({
       id: 'mock-unregistered',
       bot: 'mock-not-registered',
       action: 'connect',
       revision: 0,
     }),
-    { code: 'COMPUTER_BOT_NOT_FOUND' },
-  );
+  ).rejects.toMatchObject({ code: 'COMPUTER_BOT_NOT_FOUND' });
   running.add('mock-a');
-  await assert.rejects(
+  await expect(
     computers.operate({ id: 'mock-busy', bot: 'mock-a', action: 'connect', revision: 0 }),
-    { code: 'COMPUTER_BUSY' },
-  );
-  assert.equal(started.length, 0);
+  ).rejects.toMatchObject({ code: 'COMPUTER_BUSY' });
+  expect(started.length).toBe(0);
   running.delete('mock-a');
   const before = [...profiles];
   const result = await computers.operate({
@@ -161,10 +158,10 @@ test('only registered idle logical Bots can gain a computer and connection does 
     action: 'connect',
     revision: 0,
   });
-  assert.equal(result.state.bot, 'mock-a');
-  assert.equal(result.state.phase, 'connected');
-  assert.deepEqual(started, [{ bot: 'mock-a', slot: 0 }]);
-  assert.deepEqual([...profiles], before);
+  expect(result.state.bot).toBe('mock-a');
+  expect(result.state.phase).toBe('connected');
+  expect(started).toStrictEqual([{ bot: 'mock-a', slot: 0 }]);
+  expect([...profiles]).toStrictEqual(before);
 });
 
 test('duplicate concurrent connection calls share one effect and reject a changed payload under the same ID', async (t) => {
@@ -191,13 +188,15 @@ test('duplicate concurrent connection calls share one effect and reject a change
   const first = computers.operate(request);
   await enteredStart;
   const duplicate = computers.operate({ ...request });
-  await assert.rejects(computers.operate({ ...request, bot: 'mock-b' }), {
+  await expect(computers.operate({ ...request, bot: 'mock-b' })).rejects.toMatchObject({
     code: 'COMPUTER_REQUEST_ID_REUSED',
   });
-  assert.throws(() => computers.assertStable('mock-a'), { code: 'COMPUTER_CHANGING' });
+  expect(() => computers.assertStable('mock-a')).toThrowError(
+    expect.objectContaining({ code: 'COMPUTER_CHANGING' }),
+  );
   release();
-  assert.equal((await first).state.instance, (await duplicate).state.instance);
-  assert.equal(started.length, 1);
+  expect((await first).state.instance).toBe((await duplicate).state.instance);
+  expect(started.length).toBe(1);
 });
 
 test('resource admission is published before draining task cleanup and before graphical effects', async (t) => {
@@ -220,9 +219,11 @@ test('resource admission is published before draining task cleanup and before gr
     revision: 0,
   });
   await draining;
-  assert.equal(computers.state('mock-a').phase, 'connecting');
-  assert.throws(() => computers.assertStable('mock-a'), { code: 'COMPUTER_CHANGING' });
-  assert.equal(started.length, 0);
+  expect(computers.state('mock-a').phase).toBe('connecting');
+  expect(() => computers.assertStable('mock-a')).toThrowError(
+    expect.objectContaining({ code: 'COMPUTER_CHANGING' }),
+  );
+  expect(started.length).toBe(0);
   release();
   await operation;
 });
@@ -250,17 +251,17 @@ test('separate resources keep the other Bot active while one stops, then reconne
     instance: a.state.instance,
     confirmation: 'close-apps',
   });
-  assert.equal(stopped.state.phase, 'disconnected');
-  assert.equal(computers.state('mock-b').instance, b.state.instance);
-  assert.equal(computers.resource('mock-b').bot, 'mock-b');
+  expect(stopped.state.phase).toBe('disconnected');
+  expect(computers.state('mock-b').instance).toBe(b.state.instance);
+  expect(computers.resource('mock-b').bot).toBe('mock-b');
   const reconnected = await computers.operate({
     id: 'mock-a-reconnect',
     bot: 'mock-a',
     action: 'connect',
     revision: stopped.state.revision,
   });
-  assert.notEqual(reconnected.state.instance, a.state.instance);
-  assert.ok(computers.control.state('mock-a').epoch > oldLease);
+  expect(reconnected.state.instance).not.toBe(a.state.instance);
+  expect.assert(computers.control.state('mock-a').epoch > oldLease);
 });
 
 test('failed stop reserves capacity and only a new explicit stop can retry cleanup', async (t) => {
@@ -282,23 +283,22 @@ test('failed stop reserves capacity and only a new explicit stop can retry clean
     confirmation: 'close-apps',
   };
   const failed = await computers.operate(request);
-  assert.equal(failed.state.phase, 'failed');
-  assert.equal(failed.state.reserved, true);
-  assert.equal(failed.state.recovery, 'stop');
+  expect(failed.state.phase).toBe('failed');
+  expect(failed.state.reserved).toBe(true);
+  expect(failed.state.recovery).toBe('stop');
   const attempts = state.stopped.length;
   await computers.operate(request);
-  assert.equal(state.stopped.length, attempts);
-  await assert.rejects(
+  expect(state.stopped.length).toBe(attempts);
+  await expect(
     computers.operate({ id: 'mock-b-blocked', bot: 'mock-b', action: 'connect', revision: 0 }),
-    { code: 'COMPUTER_CAPACITY' },
-  );
+  ).rejects.toMatchObject({ code: 'COMPUTER_CAPACITY' });
   state.setStopAllowed(true);
   await computers.operate({
     ...request,
     id: 'mock-stop-explicit-retry',
     revision: failed.state.revision,
   });
-  assert.equal(computers.state('mock-a').reserved, false);
+  expect(computers.state('mock-a').reserved).toBe(false);
 });
 
 test('a missing same-boot owner cannot release an abandoned reservation by pretending cleanup succeeded', async (t) => {
@@ -309,11 +309,13 @@ test('a missing same-boot owner cannot release an abandoned reservation by prete
   store.claim({ id: 'mock-crashed-claim', bot: 'mock-a', action: 'connect', revision: 0 });
   await store.close();
   const restored = new Computers(state.options);
-  t.after(() => restored.close());
+  t.onTestFinished(async () => {
+    await restored.close();
+  });
   await restored.ready;
   const current = restored.state('mock-a');
-  assert.equal(current.recovery, 'restart');
-  await assert.rejects(
+  expect(current.recovery).toBe('restart');
+  await expect(
     restored.operate({
       id: 'mock-no-owner-stop',
       bot: 'mock-a',
@@ -321,9 +323,8 @@ test('a missing same-boot owner cannot release an abandoned reservation by prete
       revision: current.revision,
       confirmation: 'close-apps',
     }),
-    { code: 'COMPUTER_RECOVERY_REQUIRED' },
-  );
-  assert.equal(restored.state('mock-a').reserved, true);
+  ).rejects.toMatchObject({ code: 'COMPUTER_RECOVERY_REQUIRED' });
+  expect(restored.state('mock-a').reserved).toBe(true);
 });
 
 test('failure before the graphical driver is called does not consume a physical reservation', async (t) => {
@@ -337,9 +338,9 @@ test('failure before the graphical driver is called does not consume a physical 
     action: 'connect',
     revision: 0,
   });
-  assert.equal(result.state.phase, 'failed');
-  assert.equal(result.state.reserved, false);
-  assert.equal(started.length, 0);
+  expect(result.state.phase).toBe('failed');
+  expect(result.state.reserved).toBe(false);
+  expect(started.length).toBe(0);
 });
 
 test('closing during profile admission cannot start a new resource behind the shutdown owner', async (t) => {
@@ -380,8 +381,8 @@ test('closing during profile admission cannot start a new resource behind the sh
   await closeEntered;
   try {
     releaseProfile();
-    await assert.rejects(operation, { code: 'COMPUTER_SERVICE_CLOSED' });
-    assert.equal(started.length, 0);
+    await expect(operation).rejects.toMatchObject({ code: 'COMPUTER_SERVICE_CLOSED' });
+    expect(started.length).toBe(0);
   } finally {
     releaseClose();
     await close;
@@ -390,20 +391,20 @@ test('closing during profile admission cannot start a new resource behind the sh
 
 test('the stable model facade withholds detached capabilities and snapshots never need graphical IO', async (t) => {
   const { computers } = await fixture(t);
-  assert.equal(computers.facade.available?.('mock-a'), false);
-  assert.equal((await computers.snapshot()).mode, 'agent');
+  expect(computers.facade.available?.('mock-a')).toBe(false);
+  expect((await computers.snapshot()).mode).toBe('agent');
   const connected = await computers.operate({
     id: 'mock-facade-connect',
     bot: 'mock-a',
     action: 'connect',
     revision: 0,
   });
-  assert.equal(computers.facade.available?.('mock-a'), true);
-  assert.equal(computers.facade.screens.instance?.('mock-a'), connected.state.instance);
+  expect(computers.facade.available?.('mock-a')).toBe(true);
+  expect(computers.facade.screens.instance?.('mock-a')).toBe(connected.state.instance);
   const snapshot = await computers.snapshot();
-  assert.equal(snapshot.bots['mock-a'].instance, connected.state.instance);
-  assert.equal(snapshot.mode, 'desktop');
-  assert.equal(computers.facade.browser.available?.('mock-a'), false);
+  expect(snapshot.bots['mock-a'].instance).toBe(connected.state.instance);
+  expect(snapshot.mode).toBe('desktop');
+  expect(computers.facade.browser.available?.('mock-a')).toBe(false);
 });
 
 test('managed snapshots publish live browser metadata and requests without starting graphics or awaiting page IO', async (t) => {
@@ -431,7 +432,7 @@ test('managed snapshots publish live browser metadata and requests without start
       tabs: {
         metadata: (bot: string) => {
           reads++;
-          assert.equal(bot, state.bot);
+          expect(bot).toBe(state.bot);
           return structuredClone(state);
         },
         state: async () => {
@@ -439,15 +440,15 @@ test('managed snapshots publish live browser metadata and requests without start
         },
       },
     }) as unknown as Browser;
-  assert.deepEqual((await computers.snapshot()).browsers ?? {}, {});
-  assert.equal(reads, 0);
+  expect((await computers.snapshot()).browsers ?? {}).toStrictEqual({});
+  expect(reads).toBe(0);
   await computers.operate({
     id: 'mock-metadata-connect',
     bot: 'mock-a',
     action: 'connect',
     revision: 0,
   });
-  assert.deepEqual((await computers.snapshot()).browsers?.['mock-a'], state);
+  expect((await computers.snapshot()).browsers?.['mock-a']).toStrictEqual(state);
   state.revision++;
   state.tabs[0].title = 'Synthetic current';
   state.pending = [
@@ -462,12 +463,12 @@ test('managed snapshots publish live browser metadata and requests without start
       truncated: false,
     },
   ];
-  assert.deepEqual((await computers.snapshot()).browsers?.['mock-a'], state);
+  expect((await computers.snapshot()).browsers?.['mock-a']).toStrictEqual(state);
   state.revision++;
   state.pending = [
     { id: 'mock-picker', kind: 'files', tab: state.active, generation: 1, multiple: false },
   ];
-  assert.deepEqual((await computers.snapshot()).browsers?.['mock-a']?.pending, state.pending);
+  expect((await computers.snapshot()).browsers?.['mock-a']?.pending).toStrictEqual(state.pending);
 });
 
 test('a failed optional browser metadata reader cannot hide connected native screens or ordinary Agent status', async (t) => {
@@ -483,9 +484,9 @@ test('a failed optional browser metadata reader cannot hide connected native scr
     throw new Fault('BROWSER_STATE_UNAVAILABLE', 503);
   };
   const value = await computers.snapshot();
-  assert.deepEqual(value.browsers ?? {}, {});
-  assert.equal(value.mode, 'desktop');
-  assert.equal(value.bots['mock-a'].owner, 'agent');
+  expect(value.browsers ?? {}).toStrictEqual({});
+  expect(value.mode).toBe('desktop');
+  expect(value.bots['mock-a'].owner).toBe('agent');
 });
 
 test('malformed or cross-Bot browser metadata is isolated before publishing the ordinary runtime snapshot', async (t) => {
@@ -515,7 +516,7 @@ test('malformed or cross-Bot browser metadata is isolated before publishing the 
   ]) {
     options.driver.browserFor = () => ({ tabs: { metadata: () => invalid } }) as unknown as Browser;
     const value = await computers.snapshot();
-    assert.deepEqual(value.browsers, {});
-    assert.equal(value.bots['mock-a'].owner, 'agent');
+    expect(value.browsers).toStrictEqual({});
+    expect(value.bots['mock-a'].owner).toBe('agent');
   }
 });

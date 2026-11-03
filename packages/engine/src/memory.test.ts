@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
 import { MemoryTools, memoryToolList } from './memory.js';
@@ -10,9 +9,9 @@ import { BotProfiles, personaKey } from './profiles.js';
 import { WorkspaceFiles } from './workspace.js';
 
 function value(result: ToolResult) {
-  assert.equal(result.isError, undefined, JSON.stringify(result));
+  expect(result.isError, JSON.stringify(result)).toBe(undefined);
   const block = result.content[0];
-  assert.equal(block.type, 'text');
+  expect(block.type).toBe('text');
   return JSON.parse(block.type === 'text' ? block.text : '') as {
     content: string;
     revision: number;
@@ -50,24 +49,23 @@ test('memory tools use the existing Bot profile, isolate ownership and reject st
       workdir: workspace,
       canonicalRoot: workspace,
     };
-    assert.ok(
+    expect.assert(
       memoryToolList.every((tool) => tools.list(run.bot).some((entry) => entry.name === tool.name)),
     );
-    assert.deepEqual(value(await tools.invoke(run, 'bot_memory_read')), {
+    expect(value(await tools.invoke(run, 'bot_memory_read'))).toStrictEqual({
       content: first.memory,
       revision: 1,
     });
     const content = `${first.memory}\n新增合成代号 MOCK-VEGA`;
     const saved = value(await tools.invoke(run, 'bot_memory_write', { revision: 1, content }));
-    assert.equal(saved.content, content);
-    assert.equal((await profiles.get(run.bot))!.memory, content);
-    assert.equal((await profiles.history(run.bot, {})).items[0].source, 'agent');
-    assert.equal(personaKey(await profiles.get(run.bot)), personaKey(first));
-    assert.deepEqual(
+    expect(saved.content).toBe(content);
+    expect((await profiles.get(run.bot))!.memory).toBe(content);
+    expect((await profiles.history(run.bot, {})).items[0].source).toBe('agent');
+    expect(personaKey(await profiles.get(run.bot))).toBe(personaKey(first));
+    expect(
       value(await tools.invoke(run, 'bot_memory_write', { revision: 1, content })),
-      saved,
       'an exact lost-response retry is a readback, not another mutation',
-    );
+    ).toStrictEqual(saved);
     for (const bad of [
       { revision: saved.revision, content, bot: other.id },
       { revision: saved.revision, content, name: '越权改名' },
@@ -75,67 +73,62 @@ test('memory tools use the existing Bot profile, isolate ownership and reject st
       { revision: saved.revision, content: 'x'.repeat(12001) },
       { revision: saved.revision, content: 'bad\0text' },
     ])
-      assert.equal((await tools.invoke(run, 'bot_memory_write', bad)).isError, true);
-    assert.equal((await tools.invoke(run, 'bot_memory_read', { bot: other.id })).isError, true);
+      expect((await tools.invoke(run, 'bot_memory_write', bad)).isError).toBe(true);
+    expect((await tools.invoke(run, 'bot_memory_read', { bot: other.id })).isError).toBe(true);
     const human = await profiles.update(run.bot, saved.revision, {
       memory: '人类新保存的合成偏好',
     });
-    assert.match(
+    expect(
       JSON.stringify(
         await tools.invoke(run, 'bot_memory_write', {
           revision: saved.revision,
           content: '过时的模型修改',
         }),
       ),
-      /BOT_PROFILE_CONFLICT/,
-    );
-    assert.equal((await profiles.get(run.bot))!.memory, human.memory);
-    assert.deepEqual(await profiles.get(other.id), other);
+    ).toMatch(/BOT_PROFILE_CONFLICT/);
+    expect((await profiles.get(run.bot))!.memory).toBe(human.memory);
+    expect(await profiles.get(other.id)).toStrictEqual(other);
     const forgotten = value(
       await tools.invoke(run, 'bot_memory_write', { revision: human.revision, content: '' }),
     );
-    assert.equal(forgotten.content, '');
-    assert.equal(value(await tools.invoke(run, 'bot_memory_read')).content, '');
-    assert.equal(
+    expect(forgotten.content).toBe('');
+    expect(value(await tools.invoke(run, 'bot_memory_read')).content).toBe('');
+    expect(
       JSON.stringify(value(await tools.invoke(run, 'bot_memory_read'))).includes('MOCK-VEGA'),
-      false,
-    );
-    assert.ok(
+    ).toBe(false);
+    expect.assert(
       (await profiles.history(run.bot, {})).items.some((item) =>
         item.content.includes('MOCK-VEGA'),
       ),
     );
     const restored = new BotProfiles(path.join(root, 'profiles'));
-    assert.equal((await restored.get(run.bot))!.memory, '');
-    assert.match(
+    expect((await restored.get(run.bot))!.memory).toBe('');
+    expect(
       JSON.stringify(await tools.invoke({ ...run, bot: 'missing' }, 'bot_memory_read')),
-      /BOT_PROFILE_NOT_FOUND/,
-    );
-    assert.ok(run.trace.every((entry) => entry.surface === 'memory'));
-    assert.equal(JSON.stringify(run.trace).includes('MOCK-VEGA'), false);
+    ).toMatch(/BOT_PROFILE_NOT_FOUND/);
+    expect.assert(run.trace.every((entry) => entry.surface === 'memory'));
+    expect(JSON.stringify(run.trace).includes('MOCK-VEGA')).toBe(false);
     const limited = { ...run, toolCount: 0, limit: 1, trace: [] };
     await tools.invoke(limited, 'bot_memory_read');
-    assert.match(
+    expect(
       JSON.stringify(
         await tools.invoke(limited, 'bot_memory_write', {
           revision: forgotten.revision,
           content: '不得写入',
         }),
       ),
-      /TOOL_LIMIT/,
-    );
+    ).toMatch(/TOOL_LIMIT/);
     const stopped = { ...run, abort: new AbortController() };
     stopped.abort.abort();
-    assert.match(
+    expect(
       JSON.stringify(
         await tools.invoke(stopped, 'bot_memory_write', {
           revision: forgotten.revision,
           content: '不得写入',
         }),
       ),
-      /MODEL_CANCELLED/,
-    );
-    assert.equal((await profiles.get(run.bot))!.memory, '');
+    ).toMatch(/MODEL_CANCELLED/);
+    expect((await profiles.get(run.bot))!.memory).toBe('');
     await tools.drain(run);
     profiles.get = async () => {
       throw Object.assign(new Error('EACCES: /private/mock-profile-store/mock-alpha.json'), {
@@ -143,8 +136,8 @@ test('memory tools use the existing Bot profile, isolate ownership and reject st
       });
     };
     const failure = JSON.stringify(await tools.invoke(run, 'bot_memory_read'));
-    assert.match(failure, /EACCES/);
-    assert.equal(failure.includes('/private/mock-profile-store'), false);
+    expect(failure).toMatch(/EACCES/);
+    expect(failure.includes('/private/mock-profile-store')).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

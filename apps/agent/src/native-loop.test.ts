@@ -1,13 +1,12 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { LocalComputerClient, localComputerPaths, startNativeAgent } from '@daban/engine/agent';
 import { privateServer, secureDirectory } from '@daban/engine/local-computer';
+import { expect, test } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
 test('real DSH dispatches vision tools to the selected native bridge without a VM or a real provider', {
@@ -23,7 +22,7 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
   let local: Awaited<ReturnType<typeof privateServer>>['server'] | undefined;
   let model: import('node:http').Server | undefined;
   let agent: Awaited<ReturnType<typeof startNativeAgent>> | undefined;
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await agent?.close();
     for (const server of [local, model]) {
       server?.closeAllConnections();
@@ -56,9 +55,9 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
         },
       };
     if (input.method === 'screenshot' || input.method === 'act') {
-      assert.equal(input.bot, 'mock-bot');
-      assert.equal(input.session, 'mock-native-session');
-      if (input.method === 'act') assert.equal(input.observation, observation);
+      expect(input.bot).toBe('mock-bot');
+      expect(input.session).toBe('mock-native-session');
+      if (input.method === 'act') expect(input.observation).toBe(observation);
       nativeCalls.push(String(input.method));
       observation = `mock-observation-${nativeCalls.length}`;
       value = {
@@ -178,9 +177,9 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
     await new Promise((resolve) => setTimeout(resolve, 50));
   const job = agent.models.jobs.get('mock-bot')!;
   await job.done;
-  assert.equal(job.phase, 'completed', job.error);
-  assert.deepEqual(nativeCalls, ['screenshot', 'act']);
-  assert.match(job.result, /SYNTHETIC NATIVE LOOP COMPLETE/);
+  expect(job.phase, job.error).toBe('completed');
+  expect(nativeCalls).toStrictEqual(['screenshot', 'act']);
+  expect(job.result).toMatch(/SYNTHETIC NATIVE LOOP COMPLETE/);
   const log = await readFile(path.join(agent.models.dir, 'dsh-startup.log'), 'utf8');
   const records = log
     .trim()
@@ -189,13 +188,12 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
   const ready = records.find(
     (record) => record.runId === job.id && record.stage === 'initialize-ready',
   );
-  assert.equal(ready?.snapshot?.stage, 'initialized');
-  assert.ok(ready.snapshot.entry.includes('@deepseek-ai/dsh/'));
-  assert.ok(Array.isArray(ready.snapshot.resources));
-  assert.equal(log.includes('synthetic-model-key'), false);
-  assert.equal(log.includes('SYNTHETIC NATIVE INPUT'), false);
-  await assert.rejects(
+  expect(ready?.snapshot?.stage).toBe('initialized');
+  expect.assert(ready.snapshot.entry.includes('@deepseek-ai/dsh/'));
+  expect.assert(Array.isArray(ready.snapshot.resources));
+  expect(log.includes('synthetic-model-key')).toBe(false);
+  expect(log.includes('SYNTHETIC NATIVE INPUT')).toBe(false);
+  await expect(
     readFile(path.join(agent.models.dir, 'runs', job.id, 'mock-bot', 'dsh-startup.json')),
-    { code: 'ENOENT' },
-  );
+  ).rejects.toMatchObject({ code: 'ENOENT' });
 });

@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { type FileHandle, lstat, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test, vi } from 'vitest';
 import { Interactions } from './interactions.js';
 
 test('health keeps corrupt interaction records private and retained', async () => {
@@ -10,9 +9,8 @@ test('health keeps corrupt interaction records private and retained', async () =
   try {
     await writeFile(path.join(dir, 'mock-corrupt.json'), 'SYNTHETIC-INVALID-INTERACTION');
     const store = new Interactions(dir);
-    assert.deepEqual(await store.status(), { available: true, corrupt: 1 });
-    assert.equal(
-      await readFile(path.join(dir, 'mock-corrupt.json'), 'utf8'),
+    expect(await store.status()).toStrictEqual({ available: true, corrupt: 1 });
+    expect(await readFile(path.join(dir, 'mock-corrupt.json'), 'utf8')).toBe(
       'SYNTHETIC-INVALID-INTERACTION',
     );
   } finally {
@@ -52,22 +50,20 @@ test('external MCP approval keeps exact Bot/run/session/connection/tool/argument
   };
   try {
     const opened = await store.open('mock-bot', 'mock-run', input, 'mock-group');
-    assert.equal(opened.status, 'pending');
-    await assert.rejects(
+    expect(opened.status).toBe('pending');
+    await expect(
       store.open('mock-bot', 'mock-run', { ...input, arguments: '{"value":48}' }, 'mock-group'),
-      { code: 'INTERACTION_CONFLICT' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'INTERACTION_CONFLICT' });
+    await expect(
       store.reply('mock-other', 'mock-run', input.id, { kind: 'decision', allow: true }),
-      { code: 'INTERACTION_NOT_FOUND' },
-    );
+    ).rejects.toMatchObject({ code: 'INTERACTION_NOT_FOUND' });
     const allowed = await store.reply('mock-bot', 'mock-run', input.id, {
       kind: 'decision',
       allow: true,
     });
-    assert.equal(allowed.reply?.kind, 'decision');
+    expect(allowed.reply?.kind).toBe('decision');
     const restored = new Interactions(directory);
-    assert.equal((await restored.list())[0].conversationId, 'mock-group');
+    expect((await restored.list())[0].conversationId).toBe('mock-group');
   } finally {
     await store.endRun('mock-bot', 'mock-run');
     await rm(directory, { recursive: true, force: true });
@@ -91,8 +87,8 @@ test('an aborted interaction waiter drains immediately without waiting for the l
     });
     abort.abort();
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(cancelled, true);
-    assert.equal((await store.list())[0].status, 'pending');
+    expect(cancelled).toBe(true);
+    expect((await store.list())[0].status).toBe('pending');
     await store.endRun('mock-bot', 'mock-run');
     await wait;
   } finally {
@@ -106,16 +102,18 @@ test('question records retain authoritative conversation provenance across resta
     const store = new Interactions(directory);
     await store.ready;
     const item = await store.open('mock-bot', 'mock-run', question, 'mock-group');
-    assert.ok('conversationId' in item);
-    assert.equal(item.conversationId, 'mock-group');
-    await assert.rejects(store.open('mock-bot', 'mock-run', question, 'other-group'), {
-      code: 'INTERACTION_CONFLICT',
-    });
+    expect.assert('conversationId' in item);
+    expect(item.conversationId).toBe('mock-group');
+    await expect(store.open('mock-bot', 'mock-run', question, 'other-group')).rejects.toMatchObject(
+      {
+        code: 'INTERACTION_CONFLICT',
+      },
+    );
     await store.reply('mock-bot', 'mock-run', question.id, answer);
     const recovered = new Interactions(directory);
     await recovered.ready;
-    assert.ok('conversationId' in (await recovered.list())[0]);
-    assert.equal((await recovered.list())[0].status, 'resolved');
+    expect.assert('conversationId' in (await recovered.list())[0]);
+    expect((await recovered.list())[0].status).toBe('resolved');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -126,47 +124,46 @@ test('questions persist before waiting, accept one exact answer and reject confl
     const store = new Interactions(directory);
     await store.ready;
     const opened = await store.open('mock-bot', 'mock-run', question);
-    assert.equal(opened.status, 'pending');
-    assert.equal((await lstat(path.join(directory, 'mock-question.json'))).mode & 0o777, 0o600);
-    assert.deepEqual(await store.open('mock-bot', 'mock-run', question), opened);
-    await assert.rejects(
+    expect(opened.status).toBe('pending');
+    expect((await lstat(path.join(directory, 'mock-question.json'))).mode & 0o777).toBe(0o600);
+    expect(await store.open('mock-bot', 'mock-run', question)).toStrictEqual(opened);
+    await expect(
       store.open('mock-bot', 'mock-run', {
         ...question,
         questions: [{ id: 'other', question: '另一项合成问题？' }],
       }),
-      { code: 'INTERACTION_CONFLICT' },
-    );
+    ).rejects.toMatchObject({ code: 'INTERACTION_CONFLICT' });
     const waiting = store.wait('mock-bot', 'mock-run', question.id);
-    await assert.rejects(store.reply('other-bot', 'mock-run', question.id, answer), {
+    await expect(store.reply('other-bot', 'mock-run', question.id, answer)).rejects.toMatchObject({
       code: 'INTERACTION_NOT_FOUND',
     });
-    await assert.rejects(store.reply('mock-bot', 'other-run', question.id, answer), {
+    await expect(store.reply('mock-bot', 'other-run', question.id, answer)).rejects.toMatchObject({
       code: 'INTERACTION_NOT_FOUND',
     });
-    await assert.rejects(
+    await expect(
       store.reply('mock-bot', 'mock-run', question.id, {
         kind: 'answer',
         answers: [{ id: 'format', selected: ['invented'] }],
       }),
-      { code: 'INVALID_INTERACTION_REPLY' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_INTERACTION_REPLY' });
     const saved = await store.reply('mock-bot', 'mock-run', question.id, answer);
-    assert.equal(saved.status, 'resolved');
-    assert.deepEqual((await waiting).reply, answer);
-    assert.deepEqual(await store.reply('mock-bot', 'mock-run', question.id, answer), saved);
-    await assert.rejects(
+    expect(saved.status).toBe('resolved');
+    expect((await waiting).reply).toStrictEqual(answer);
+    expect(await store.reply('mock-bot', 'mock-run', question.id, answer)).toStrictEqual(saved);
+    await expect(
       store.reply('mock-bot', 'mock-run', question.id, {
         kind: 'answer',
         answers: [{ id: 'format', selected: ['纯文本'] }],
       }),
-      { code: 'INTERACTION_CONFLICT' },
-    );
-    assert.deepEqual((await new Interactions(directory).list())[0].reply, answer);
+    ).rejects.toMatchObject({ code: 'INTERACTION_CONFLICT' });
+    expect((await new Interactions(directory).list())[0].reply).toStrictEqual(answer);
     await store.endRun('mock-bot', 'mock-run');
-    await assert.rejects(store.open('mock-bot', 'mock-run', question), {
+    await expect(store.open('mock-bot', 'mock-run', question)).rejects.toMatchObject({
       code: 'INTERACTION_CLOSED',
     });
-    await assert.rejects(new Interactions(directory).open('mock-bot', 'mock-run', question), {
+    await expect(
+      new Interactions(directory).open('mock-bot', 'mock-run', question),
+    ).rejects.toMatchObject({
       code: 'INTERACTION_CLOSED',
     });
   } finally {
@@ -187,31 +184,28 @@ test('one-shot approvals are interrupted on restart and cannot be granted by lat
     await store.open('mock-bot', 'mock-run', request);
     const restarted = new Interactions(directory);
     await restarted.ready;
-    assert.equal((await restarted.list())[0].status, 'interrupted');
-    await assert.rejects(
+    expect((await restarted.list())[0].status).toBe('interrupted');
+    await expect(
       restarted.reply('mock-bot', 'mock-run', request.id, { kind: 'decision', allow: true }),
-      { code: 'INTERACTION_CLOSED' },
-    );
+    ).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
     const another = { ...request, id: 'mock-reject' };
     await restarted.open('mock-bot', 'next-run', another);
-    assert.equal(
+    expect(
       (
         await restarted.reply('mock-bot', 'next-run', another.id, {
           kind: 'decision',
           allow: false,
         })
       ).reply?.kind,
-      'decision',
-    );
+    ).toBe('decision');
     const pending = { ...request, id: 'mock-stop' };
     await restarted.open('mock-bot', 'cancelled-run', pending);
     const waiting = restarted.wait('mock-bot', 'cancelled-run', pending.id);
     await restarted.endRun('mock-bot', 'cancelled-run');
-    assert.equal((await waiting).status, 'cancelled');
-    await assert.rejects(
+    expect((await waiting).status).toBe('cancelled');
+    await expect(
       restarted.open('mock-bot', 'cancelled-run', { ...pending, id: 'mock-late' }),
-      { code: 'INTERACTION_CLOSED' },
-    );
+    ).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -227,7 +221,7 @@ test('interaction boundaries reject unknown fields, corrupt records and bad answ
       { ...question, questions: [question.questions[0], question.questions[0]] },
       { ...question, kind: 'approval', tool: 'shell', url: 'https://example.test/' },
     ])
-      await assert.rejects(store.open('mock-bot', 'mock-run', input), {
+      await expect(store.open('mock-bot', 'mock-run', input)).rejects.toMatchObject({
         code: 'INVALID_INTERACTION',
       });
     await store.open('mock-bot', 'mock-run', question);
@@ -237,16 +231,15 @@ test('interaction boundaries reject unknown fields, corrupt records and bad answ
       { kind: 'answer', answers: [] },
       { kind: 'answer', answers: [{ id: 'format', selected: ['Markdown', '纯文本'] }] },
     ])
-      await assert.rejects(store.reply('mock-bot', 'mock-run', question.id, reply), {
+      await expect(store.reply('mock-bot', 'mock-run', question.id, reply)).rejects.toMatchObject({
         code: 'INVALID_INTERACTION_REPLY',
       });
     await writeFile(path.join(directory, 'mock-corrupt.json'), '{broken');
     const reloaded = new Interactions(directory);
-    await assert.rejects(
+    await expect(
       reloaded.open('mock-bot', 'mock-next', { ...question, id: 'mock-corrupt' }),
-      { code: 'INTERACTION_CORRUPT' },
-    );
-    assert.equal(await readFile(path.join(directory, 'mock-corrupt.json'), 'utf8'), '{broken');
+    ).rejects.toMatchObject({ code: 'INTERACTION_CORRUPT' });
+    expect(await readFile(path.join(directory, 'mock-corrupt.json'), 'utf8')).toBe('{broken');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -267,9 +260,9 @@ test('a stop racing an uncommitted reply closes the pending request without gran
       allow: true,
     });
     const stop = store.endRun('mock-bot', 'mock-run');
-    await assert.rejects(reply, { code: 'INTERACTION_CLOSED' });
+    await expect(reply).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
     await stop;
-    assert.equal((await store.list())[0].status, 'cancelled');
+    expect((await store.list())[0].status).toBe('cancelled');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -292,15 +285,15 @@ test('a stop during asynchronous decision persistence never publishes the permis
     // Enter the async commit without allowing filesystem callbacks to complete.
     for (let turn = 0; turn < 4; turn++) await Promise.resolve();
     const stopping = store.endRun('mock-bot', 'mock-run');
-    await assert.rejects(reply, { code: 'INTERACTION_CLOSED' });
+    await expect(reply).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
     await stopping;
-    assert.equal((await store.list())[0].status, 'cancelled');
+    expect((await store.list())[0].status).toBe('cancelled');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test('an approval syncs its temporary file and renamed parent directory before publishing or releasing a waiter', async (t) => {
+test('an approval syncs its temporary file and renamed parent directory before publishing or releasing a waiter', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-approval-sync-order-'));
   const events: string[] = [];
   const store = new Interactions(directory, (item) => {
@@ -320,16 +313,18 @@ test('an approval syncs its temporary file and renamed parent directory before p
     const prototype: FileHandle = Object.getPrototypeOf(probe);
     const sync = prototype.sync;
     await probe.close();
-    const mocked = t.mock.method(prototype, 'sync', async function (this: FileHandle) {
+    const mocked = vi.spyOn(prototype, 'sync').mockImplementation(async function (
+      this: FileHandle,
+    ) {
       const kind = (await this.stat()).isDirectory() ? 'directory' : 'file';
       const saved = JSON.parse(await readFile(path.join(directory, `${input.id}.json`), 'utf8'));
-      assert.equal(saved.request.status, kind === 'file' ? 'pending' : 'resolved');
-      assert.equal(store.pending('mock-bot', 'mock-run'), true);
+      expect(saved.request.status).toBe(kind === 'file' ? 'pending' : 'resolved');
+      expect(store.pending('mock-bot', 'mock-run')).toBe(true);
       await sync.call(this);
       events.push(`${kind}-synced`);
     });
     restore = () => {
-      mocked.mock.restore();
+      mocked.mockRestore();
       return undefined;
     };
     const waiting = store.wait('mock-bot', 'mock-run', input.id).then((item) => {
@@ -337,8 +332,8 @@ test('an approval syncs its temporary file and renamed parent directory before p
       return item;
     });
     await store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true });
-    assert.equal((await waiting).status, 'resolved');
-    assert.deepEqual(events, ['file-synced', 'directory-synced', 'published', 'waiter']);
+    expect((await waiting).status).toBe('resolved');
+    expect(events).toStrictEqual(['file-synced', 'directory-synced', 'published', 'waiter']);
   } finally {
     restore();
     await store.endRun('mock-bot', 'mock-run');
@@ -347,7 +342,7 @@ test('an approval syncs its temporary file and renamed parent directory before p
 });
 
 for (const failedKind of ['file', 'directory']) {
-  test(`a ${failedKind} sync failure cannot publish or release an approval grant`, async (t) => {
+  test(`a ${failedKind} sync failure cannot publish or release an approval grant`, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), `mock-${failedKind}-sync-failure-`));
     const published: string[] = [];
     const store = new Interactions(directory, (item) => {
@@ -370,13 +365,15 @@ for (const failedKind of ['file', 'directory']) {
       const prototype: FileHandle = Object.getPrototypeOf(probe);
       const sync = prototype.sync;
       await probe.close();
-      const mocked = t.mock.method(prototype, 'sync', async function (this: FileHandle) {
+      const mocked = vi.spyOn(prototype, 'sync').mockImplementation(async function (
+        this: FileHandle,
+      ) {
         const kind = (await this.stat()).isDirectory() ? 'directory' : 'file';
         if (kind === failedKind) throw new Error('MOCK_APPROVAL_SYNC_FAILED');
         return sync.call(this);
       });
       restore = () => {
-        mocked.mock.restore();
+        mocked.mockRestore();
         return undefined;
       };
       let released = false;
@@ -386,13 +383,12 @@ for (const failedKind of ['file', 'directory']) {
           released = true;
         })
         .catch(() => undefined);
-      await assert.rejects(
+      await expect(
         store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true }),
-        /MOCK_APPROVAL_SYNC_FAILED/,
-      );
-      assert.equal(released, false);
-      assert.deepEqual(published, []);
-      assert.equal((await store.list())[0].status, 'pending');
+      ).rejects.toThrowError(/MOCK_APPROVAL_SYNC_FAILED/);
+      expect(released).toBe(false);
+      expect(published).toStrictEqual([]);
+      expect((await store.list())[0].status).toBe('pending');
     } finally {
       restore();
       abort.abort();
@@ -405,7 +401,7 @@ for (const failedKind of ['file', 'directory']) {
 
 test('stopping during the final directory sync withdraws the decision before a waiter can receive authority', {
   timeout: 2000,
-}, async (t) => {
+}, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-stop-directory-sync-'));
   const store = new Interactions(directory);
   const input = {
@@ -431,7 +427,9 @@ test('stopping during the final directory sync withdraws the decision before a w
     const sync = prototype.sync;
     await probe.close();
     let intercepted = false;
-    const mocked = t.mock.method(prototype, 'sync', async function (this: FileHandle) {
+    const mocked = vi.spyOn(prototype, 'sync').mockImplementation(async function (
+      this: FileHandle,
+    ) {
       if ((await this.stat()).isDirectory() && !intercepted) {
         intercepted = true;
         entered();
@@ -440,21 +438,20 @@ test('stopping during the final directory sync withdraws the decision before a w
       return sync.call(this);
     });
     restore = () => {
-      mocked.mock.restore();
+      mocked.mockRestore();
       return undefined;
     };
     const waiting = store.wait('mock-bot', 'mock-run', input.id);
-    const responding = assert.rejects(
+    const responding = expect(
       store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true }),
-      { code: 'INTERACTION_CLOSED' },
-    );
+    ).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
     await started;
     const stopped = store.endRun('mock-bot', 'mock-run');
     release();
     await responding;
     await stopped;
-    assert.equal((await waiting).status, 'cancelled');
-    assert.equal((await store.list())[0].status, 'cancelled');
+    expect((await waiting).status).toBe('cancelled');
+    expect((await store.list())[0].status).toBe('cancelled');
   } finally {
     release();
     restore();

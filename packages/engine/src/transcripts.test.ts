@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
 import type { TranscriptScope } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { redact } from './redaction.js';
 import { projectInteraction, projectTranscript, Transcripts } from './transcripts.js';
 
@@ -30,8 +29,7 @@ test('visible JSON retains exact numeric spellings while escaped credentials are
     'mock-session',
     (value) => value.replaceAll('synthetic-private-key', '[redacted]'),
   );
-  assert.equal(
-    event?.text,
+  expect(event?.text).toBe(
     '{"syntheticId":90000000000000000001,"amount":12.3400,"secret":"[redacted]"}',
   );
 });
@@ -47,8 +45,7 @@ test('a non-compaction tool-result correction stays visible in execution records
     surfaceOp: { op: 'replace', startSeq: 1, endSeq: 1 },
     sourceEventSeqs: [1],
   });
-  assert.equal(
-    projectTranscript(value, 'mock-session', (text) => text)?.text,
+  expect(projectTranscript(value, 'mock-session', (text) => text)?.text).toBe(
     'SYNTHETIC CORRECTED OUTCOME',
   );
 });
@@ -73,7 +70,9 @@ test('tool result recovery requires its persisted transcript owner even if orpha
     } finally {
       database.close();
     }
-    assert.throws(() => log.result(scope, 1), { code: 'TRANSCRIPT_NOT_FOUND' });
+    expect(() => log.result(scope, 1)).toThrowError(
+      expect.objectContaining({ code: 'TRANSCRIPT_NOT_FOUND' }),
+    );
   } finally {
     await log.close();
     await rm(root, { recursive: true, force: true });
@@ -100,28 +99,27 @@ test('VM command approvals retain their exact guest context in redacted transcri
     (text) => text.replaceAll('mock-secret', '[redacted]'),
   );
   const body = JSON.parse(event.text);
-  assert.equal(body.command, 'echo [redacted]');
-  assert.equal(body.cwd, '/mock-guest/task');
-  assert.equal(body.target, 'linux-vm');
+  expect(body.command).toBe('echo [redacted]');
+  expect(body.cwd).toBe('/mock-guest/task');
+  expect(body.target).toBe('linux-vm');
 });
 
 test('transcript projection admits only owned visible events and excludes private streams and binary bodies', () => {
   const safe = (value: string) => redact(value, ['mock-provider-key', 'mock-capability']);
-  assert.equal(projectTranscript(call(), 'foreign-session', safe), undefined);
+  expect(projectTranscript(call(), 'foreign-session', safe)).toBe(undefined);
   for (const type of ['system/message', 'developer/message', 'request/header', 'assistant/attempt'])
-    assert.equal(
+    expect(
       projectTranscript(note(1, type, { text: 'SYNTHETIC PRIVATE' }), 'mock-session', safe),
-      undefined,
-    );
+    ).toBe(undefined);
   const entry = projectTranscript(
     call(1, '{"command":"mock-provider-key mock-capability"}'),
     'mock-session',
     safe,
   )!;
-  assert.equal(entry.kind, 'call');
-  assert.equal(entry.name, 'computer__read_file');
-  assert.equal(entry.text.includes('mock-provider-key'), false);
-  assert.equal(entry.text.includes('mock-capability'), false);
+  expect(entry.kind).toBe('call');
+  expect(entry.name).toBe('computer__read_file');
+  expect(entry.text.includes('mock-provider-key')).toBe(false);
+  expect(entry.text.includes('mock-capability')).toBe(false);
   const result = projectTranscript(
     note(2, 'tool/result', {
       message: {
@@ -138,12 +136,12 @@ test('transcript projection admits only owned visible events and excludes privat
     'mock-session',
     safe,
   )!;
-  assert.equal(result.kind, 'result');
-  assert.equal(result.isError, true);
-  assert.equal(result.code, 'MOCK_DENIED');
-  assert.ok(result.text.includes('合成结果'));
-  assert.ok(result.text.includes('image/png'));
-  assert.equal(result.text.includes('SYNTHETIC'), false);
+  expect(result.kind).toBe('result');
+  expect(result.isError).toBe(true);
+  expect(result.code).toBe('MOCK_DENIED');
+  expect.assert(result.text.includes('合成结果'));
+  expect.assert(result.text.includes('image/png'));
+  expect(result.text.includes('SYNTHETIC')).toBe(false);
   const assistant = projectTranscript(
     note(3, 'assistant/message', {
       message: {
@@ -157,8 +155,8 @@ test('transcript projection admits only owned visible events and excludes privat
     'mock-session',
     safe,
   )!;
-  assert.equal(assistant.text, '合成进度');
-  assert.equal(
+  expect(assistant.text).toBe('合成进度');
+  expect(
     projectTranscript(
       note(4, 'assistant/message', {
         message: { content: [{ type: 'reasoning', text: 'PRIVATE' }] },
@@ -166,15 +164,14 @@ test('transcript projection admits only owned visible events and excludes privat
       'mock-session',
       safe,
     ),
-    undefined,
-  );
+  ).toBe(undefined);
   const plan = projectTranscript(
     note(5, 'todo/write', { todos: [{ content: '合成步骤', status: 'in_progress' }] }),
     'mock-session',
     safe,
   )!;
-  assert.equal(plan.kind, 'plan');
-  assert.ok(plan.text.includes('合成步骤'));
+  expect(plan.kind).toBe('plan');
+  expect.assert(plan.text.includes('合成步骤'));
   const secretId = projectTranscript(
     note(6, 'tool/result', {
       message: { toolCallId: 'mock-capability', content: [{ type: 'text', text: '合成' }] },
@@ -182,25 +179,23 @@ test('transcript projection admits only owned visible events and excludes privat
     'mock-session',
     safe,
   )!;
-  assert.equal(JSON.stringify(secretId).includes('mock-capability'), false);
-  assert.throws(
-    () =>
-      projectTranscript(
-        {
-          method: 'session.event',
-          params: {
-            sessionId: 'mock-session',
-            event: {
-              type: 'tool/call',
-              data: { callId: 'mock-call', name: 'web_search', arguments: '{}' },
-            },
+  expect(JSON.stringify(secretId).includes('mock-capability')).toBe(false);
+  expect(() =>
+    projectTranscript(
+      {
+        method: 'session.event',
+        params: {
+          sessionId: 'mock-session',
+          event: {
+            type: 'tool/call',
+            data: { callId: 'mock-call', name: 'web_search', arguments: '{}' },
           },
         },
-        'mock-session',
-        safe,
-      ),
-    { code: 'INVALID_TRANSCRIPT_EVENT' },
-  );
+      },
+      'mock-session',
+      safe,
+    ),
+  ).toThrowError(expect.objectContaining({ code: 'INVALID_TRANSCRIPT_EVENT' }));
 });
 
 test('JSON-escaped credentials are removed from tool arguments, results and durable human cards', () => {
@@ -208,7 +203,7 @@ test('JSON-escaped credentials are removed from tool arguments, results and dura
   const safe = (value: string) => redact(value, [secret]);
   const args = JSON.stringify({ nested: { credential: secret } });
   const invocation = projectTranscript(call(1, args), 'mock-session', safe)!;
-  assert.equal(JSON.parse(invocation.text).nested.credential, '[credential redacted]');
+  expect(JSON.parse(invocation.text).nested.credential).toBe('[credential redacted]');
   const result = projectTranscript(
     note(2, 'tool/result', {
       message: { toolCallId: 'mock-call-1', content: [{ type: 'text', text: args }] },
@@ -216,7 +211,7 @@ test('JSON-escaped credentials are removed from tool arguments, results and dura
     'mock-session',
     safe,
   )!;
-  assert.equal(JSON.parse(result.text).nested.credential, '[credential redacted]');
+  expect(JSON.parse(result.text).nested.credential).toBe('[credential redacted]');
   const human = projectInteraction(
     {
       ...scope,
@@ -239,12 +234,10 @@ test('JSON-escaped credentials are removed from tool arguments, results and dura
     },
     safe,
   );
-  assert.equal(
-    JSON.parse(JSON.parse(human.text).arguments).nested.credential,
+  expect(JSON.parse(JSON.parse(human.text).arguments).nested.credential).toBe(
     '[credential redacted]',
   );
-  assert.equal(
-    /sessionId|configRevision|catalogDigest|inputHash|mock-connection/.test(human.text),
+  expect(/sessionId|configRevision|catalogDigest|inputHash|mock-connection/.test(human.text)).toBe(
     false,
   );
 });
@@ -276,28 +269,28 @@ test('durable transcript pages retain every event beyond the status window and p
     let after = 0;
     for (;;) {
       const page = log.page(scope, after);
-      assert.equal(page.state, 'complete');
-      assert.ok(page.items.length <= 20);
+      expect(page.state).toBe('complete');
+      expect.assert(page.items.length <= 20);
       entries.push(...page.items);
       if (!page.nextAfter) break;
       after = page.nextAfter;
     }
-    assert.equal(entries.length, 110);
-    assert.equal(entries[0].seq, 1);
-    assert.equal(entries[0].characters, text.length);
-    assert.equal(entries.at(-1)!.seq, 110);
-    assert.equal(JSON.stringify(entries).includes(text.slice(0, 100)), false);
+    expect(entries.length).toBe(110);
+    expect(entries[0].seq).toBe(1);
+    expect(entries[0].characters).toBe(text.length);
+    expect(entries.at(-1)!.seq).toBe(110);
+    expect(JSON.stringify(entries).includes(text.slice(0, 100))).toBe(false);
     let offset = 0,
       joined = '';
     for (;;) {
       const part = log.content(scope, 1, offset);
-      assert.equal(part.total, text.length);
-      assert.ok(part.text.length <= 32000);
+      expect(part.total).toBe(text.length);
+      expect.assert(part.text.length <= 32000);
       joined += part.text;
       if (part.nextOffset === undefined) break;
       offset = part.nextOffset;
     }
-    assert.equal(joined, text);
+    expect(joined).toBe(text);
   } finally {
     await log.close();
     await rm(root, { recursive: true, force: true });
@@ -318,25 +311,35 @@ test('transcript scope, append identity and close boundaries cannot be rebound o
       { bot: scope.bot, runId: scope.runId, conversationId: 'mock-group' },
     ];
     for (const other of foreign) {
-      assert.throws(() => log.page(other), { code: 'TRANSCRIPT_NOT_FOUND' });
-      assert.throws(() => log.content(other, 1), { code: 'TRANSCRIPT_NOT_FOUND' });
-      assert.throws(() => log.begin(other), { code: 'TRANSCRIPT_SCOPE_CONFLICT' });
+      expect(() => log.page(other)).toThrowError(
+        expect.objectContaining({ code: 'TRANSCRIPT_NOT_FOUND' }),
+      );
+      expect(() => log.content(other, 1)).toThrowError(
+        expect.objectContaining({ code: 'TRANSCRIPT_NOT_FOUND' }),
+      );
+      expect(() => log.begin(other)).toThrowError(
+        expect.objectContaining({ code: 'TRANSCRIPT_SCOPE_CONFLICT' }),
+      );
     }
-    assert.throws(() => log.append(scope, { ...entry, text: '合成篡改' }), {
-      code: 'TRANSCRIPT_EVENT_CONFLICT',
-    });
-    assert.throws(
-      () => log.page({ ...scope, conversationId: 'mock-group' } as unknown as TranscriptScope),
-      { code: 'INVALID_TRANSCRIPT_SCOPE' },
+    expect(() => log.append(scope, { ...entry, text: '合成篡改' })).toThrowError(
+      expect.objectContaining({
+        code: 'TRANSCRIPT_EVENT_CONFLICT',
+      }),
     );
-    assert.throws(() => log.page(scope, -1), { code: 'INVALID_TRANSCRIPT_QUERY' });
-    assert.throws(() => log.content(scope, 1, 999999), { code: 'INVALID_TRANSCRIPT_QUERY' });
+    expect(() =>
+      log.page({ ...scope, conversationId: 'mock-group' } as unknown as TranscriptScope),
+    ).toThrowError(expect.objectContaining({ code: 'INVALID_TRANSCRIPT_SCOPE' }));
+    expect(() => log.page(scope, -1)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_TRANSCRIPT_QUERY' }),
+    );
+    expect(() => log.content(scope, 1, 999999)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_TRANSCRIPT_QUERY' }),
+    );
     log.finish(scope);
-    assert.throws(
-      () => log.append(scope, projectTranscript(call(2), 'mock-session', (value) => value)!),
-      { code: 'TRANSCRIPT_CLOSED' },
-    );
-    assert.equal(log.page(scope).items.length, 1);
+    expect(() =>
+      log.append(scope, projectTranscript(call(2), 'mock-session', (value) => value)!),
+    ).toThrowError(expect.objectContaining({ code: 'TRANSCRIPT_CLOSED' }));
+    expect(log.page(scope).items.length).toBe(1);
   } finally {
     await log.close();
     await rm(root, { recursive: true, force: true });
@@ -349,21 +352,23 @@ test('legacy missing transcripts and crash prefixes stay distinguishable from a 
   let log = new Transcripts(file);
   try {
     await log.ready;
-    assert.equal(log.page(scope).state, 'unavailable');
+    expect(log.page(scope).state).toBe('unavailable');
     log.begin(scope);
-    assert.equal(log.page(scope).state, 'recording');
+    expect(log.page(scope).state).toBe('recording');
     log.append(scope, projectTranscript(call(), 'mock-session', (value) => value)!);
     await log.close();
     log = new Transcripts(file);
     await log.ready;
-    assert.equal(log.page(scope).state, 'interrupted');
-    assert.equal(log.page(scope).items.length, 1);
-    assert.throws(() => log.begin(scope), { code: 'TRANSCRIPT_CLOSED' });
+    expect(log.page(scope).state).toBe('interrupted');
+    expect(log.page(scope).items.length).toBe(1);
+    expect(() => log.begin(scope)).toThrowError(
+      expect.objectContaining({ code: 'TRANSCRIPT_CLOSED' }),
+    );
     const empty = { ...scope, runId: 'mock-empty' };
     log.begin(empty);
     log.finish(empty);
-    assert.equal(log.page(empty).state, 'complete');
-    assert.deepEqual(log.page(empty).items, []);
+    expect(log.page(empty).state).toBe('complete');
+    expect(log.page(empty).items).toStrictEqual([]);
   } finally {
     await log.close();
     await rm(root, { recursive: true, force: true });
@@ -380,8 +385,8 @@ test('transcript storage refuses a symlink without modifying its target', async 
   await symlink(original, path.join(root, 'linked.sqlite'));
   const linked = new Transcripts(path.join(root, 'linked.sqlite'));
   try {
-    await assert.rejects(linked.ready);
-    assert.deepEqual(await readFile(original), before);
+    await expect(linked.ready).rejects.toThrowError();
+    expect(await readFile(original)).toStrictEqual(before);
   } finally {
     await linked.close();
     await rm(root, { recursive: true, force: true });
@@ -415,7 +420,7 @@ test('software confirmation transcripts retain exact packages and never imply su
     },
     (x) => x,
   );
-  assert.match(event.text || '', /mock-calculator/);
-  assert.match(event.text || '', /1.0-1/);
-  assert.doesNotMatch(event.text || '', /installed/);
+  expect(event.text || '').toMatch(/mock-calculator/);
+  expect(event.text || '').toMatch(/1.0-1/);
+  expect(event.text || '').not.toMatch(/installed/);
 });

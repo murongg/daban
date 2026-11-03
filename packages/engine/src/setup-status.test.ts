@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import { isSetupStatus } from '@daban/protocol';
+import { expect, test } from 'vitest';
 
 test('validates legacy and optional-runtime preparation progress without accepting arbitrary fields', () => {
-  assert.equal(isSetupStatus({ required: true, phase: 'extracting', progress: 37 }), true);
-  assert.equal(
+  expect(isSetupStatus({ required: true, phase: 'extracting', progress: 37 })).toBe(true);
+  expect(
     isSetupStatus({
       required: true,
       target: 'agent',
@@ -13,9 +12,8 @@ test('validates legacy and optional-runtime preparation progress without accepti
       total: 100,
       progress: 37,
     }),
-    true,
-  );
-  assert.equal(isSetupStatus({ required: true, target: 'linux', phase: 'waiting' }), true);
+  ).toBe(true);
+  expect(isSetupStatus({ required: true, target: 'linux', phase: 'waiting' })).toBe(true);
   for (const status of [
     { required: true, phase: 'not-a-phase' },
     { required: true, phase: 'downloading', downloaded: 101, total: 100 },
@@ -24,5 +22,5 @@ test('validates legacy and optional-runtime preparation progress without accepti
     { required: true, phase: 'available', target: 'untrusted' },
     { required: true, phase: 'available', key: 'SYNTHETIC PRIVATE KEY' },
   ])
-    assert.equal(isSetupStatus(status), false);
+    expect(isSetupStatus(status)).toBe(false);
 });

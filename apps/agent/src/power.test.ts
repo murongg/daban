@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
 import type { RecoveryReceipt, RecoveryReview, RuntimeCommand } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { HostPower } from './power.js';
 
 const review: RecoveryReview = {
@@ -69,8 +68,8 @@ async function fixture() {
   };
   const beforeStop = async () => {
     const saved = JSON.parse(await readFile(file, 'utf8'));
-    assert.equal(saved.operation.stage, 'stop-issued');
-    assert.equal(saved.operation.backend.phase, 'claimed');
+    expect(saved.operation.stage).toBe('stop-issued');
+    expect(saved.operation.backend.phase).toBe('claimed');
     events.push('models-stop');
   };
   return { root, file, driver, beforeStop, events };
@@ -86,17 +85,17 @@ test('host power reviews without effects and stops host work only after a durabl
   });
   try {
     await power.ready;
-    assert.deepEqual(await power.handle({ type: 'recovery.review' }), review);
-    assert.deepEqual(f.events, []);
+    expect(await power.handle({ type: 'recovery.review' })).toStrictEqual(review);
+    expect(f.events).toStrictEqual([]);
     const [a, b] = await Promise.all([
       power.handle({ type: 'recovery.restart', request }),
       power.handle({ type: 'recovery.restart', request }),
     ]);
-    assert.deepEqual(a, b);
-    assert.ok('available' in a && a.available && a.operation?.stage === 'complete');
-    assert.deepEqual(f.events, ['prepare', 'claim', 'models-stop', 'stop', 'start']);
-    assert.deepEqual(await power.handle({ type: 'recovery.restart', request }), a);
-    assert.deepEqual(await power.handle({ type: 'recovery.status' }), power.status());
+    expect(a).toStrictEqual(b);
+    expect.assert('available' in a && a.available && a.operation?.stage === 'complete');
+    expect(f.events).toStrictEqual(['prepare', 'claim', 'models-stop', 'stop', 'start']);
+    expect(await power.handle({ type: 'recovery.restart', request })).toStrictEqual(a);
+    expect(await power.handle({ type: 'recovery.status' })).toStrictEqual(power.status());
   } finally {
     await power.close();
     await rm(f.root, { recursive: true, force: true });
@@ -115,11 +114,11 @@ test('host power rejects unowned command shapes and never accepts bare VM or gue
       { type: 'recovery.start', id: request.id, vm: 'mock-foreign' },
       { type: 'task.stop', bot: 'mock-bot' },
     ])
-      await assert.rejects(
-        power.handle(command as RuntimeCommand),
-        /^Error: INVALID_HOST_RECOVERY_COMMAND$/,
-      );
-    assert.deepEqual(f.events, []);
+      await expect(power.handle(command as RuntimeCommand)).rejects.toMatchObject({
+        name: 'Error',
+        message: expect.stringMatching(/^INVALID_HOST_RECOVERY_COMMAND$/),
+      });
+    expect(f.events).toStrictEqual([]);
   } finally {
     await power.close();
     await rm(f.root, { recursive: true, force: true });
@@ -138,15 +137,15 @@ test('failed host quiescence leaves an inspectable stop intent without issuing V
   });
   try {
     const result = await power.handle({ type: 'recovery.restart', request });
-    assert.ok(
+    expect.assert(
       'available' in result &&
         result.available &&
         result.operation?.stage === 'stop-issued' &&
         result.operation.error === 'RECOVERY_STOP_UNCONFIRMED',
     );
-    assert.deepEqual(f.events, ['prepare', 'claim']);
+    expect(f.events).toStrictEqual(['prepare', 'claim']);
     await power.handle({ type: 'recovery.restart', request });
-    assert.deepEqual(f.events, ['prepare', 'claim']);
+    expect(f.events).toStrictEqual(['prepare', 'claim']);
   } finally {
     await power.close();
     await rm(f.root, { recursive: true, force: true });
@@ -181,9 +180,12 @@ test('host process shutdown drains pending recovery without issuing a late stop 
     release();
     await restarting;
     await closing;
-    assert.equal(f.events.includes('stop'), false);
-    assert.equal(f.events.includes('models-stop'), false);
-    await assert.rejects(power.handle({ type: 'recovery.review' }), /^Error: RUNTIME_CLOSED$/);
+    expect(f.events.includes('stop')).toBe(false);
+    expect(f.events.includes('models-stop')).toBe(false);
+    await expect(power.handle({ type: 'recovery.review' })).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^RUNTIME_CLOSED$/),
+    });
   } finally {
     release();
     await power.close();

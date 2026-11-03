@@ -1,16 +1,15 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
+import { expect, type TestContext, test } from 'vitest';
 import { Connections } from './connections.js';
 
-async function fixture(t: { after: (action: () => unknown) => unknown }, limit = 2) {
+async function fixture(t: TestContext, limit = 2) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-connections-'));
   const options = { file: path.join(root, 'computers.sqlite'), limit, boot: 'mock-kernel-boot-a' };
   let store = new Connections(options);
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await store.close();
     await rm(root, { recursive: true, force: true });
   });
@@ -39,57 +38,54 @@ test('computer claims preserve logical IDs, reserve one slot and settle exact-ID
     revision: 0,
   };
   const claimed = store.claim(request);
-  assert.equal(claimed.fresh, true);
-  assert.equal(claimed.slot, 0);
-  assert.equal(claimed.state.bot, request.bot);
-  assert.equal(claimed.state.phase, 'connecting');
-  assert.equal(store.claim(request).fresh, false);
-  assert.equal(store.receipt(request.id, request.bot).phase, 'claimed');
-  assert.throws(() => store.claim({ ...request, bot: 'mock-other' }), {
-    code: 'COMPUTER_REQUEST_ID_REUSED',
-  });
+  expect(claimed.fresh).toBe(true);
+  expect(claimed.slot).toBe(0);
+  expect(claimed.state.bot).toBe(request.bot);
+  expect(claimed.state.phase).toBe('connecting');
+  expect(store.claim(request).fresh).toBe(false);
+  expect(store.receipt(request.id, request.bot).phase).toBe('claimed');
+  expect(() => store.claim({ ...request, bot: 'mock-other' })).toThrowError(
+    expect.objectContaining({
+      code: 'COMPUTER_REQUEST_ID_REUSED',
+    }),
+  );
   store.finish(request.id, { phase: 'connected', instance: 'mock-native-instance-a' });
-  assert.equal(store.get(request.bot).phase, 'connected');
-  assert.equal(store.get(request.bot).desired, true);
-  assert.equal(store.get(request.bot).reserved, true);
+  expect(store.get(request.bot).phase).toBe('connected');
+  expect(store.get(request.bot).desired).toBe(true);
+  expect(store.get(request.bot).reserved).toBe(true);
   const settled = store.claim(request);
-  assert.equal(settled.fresh, false);
-  assert.equal(settled.receipt.phase, 'settled');
-  assert.equal(store.snapshot().items.length, 1);
+  expect(settled.fresh).toBe(false);
+  expect(settled.receipt.phase).toBe('settled');
+  expect(store.snapshot().items.length).toBe(1);
 });
 
 test('capacity and revision checks happen before effects and stopped slots may be explicitly reallocated', async (t) => {
   const { store } = await fixture(t, 1);
   store.claim({ id: 'mock-connect-a', bot: 'mock-a', action: 'connect', revision: 0 });
   store.finish('mock-connect-a', { phase: 'connected', instance: 'mock-instance-a' });
-  assert.throws(
-    () => store.claim({ id: 'mock-connect-b', bot: 'mock-b', action: 'connect', revision: 0 }),
-    { code: 'COMPUTER_CAPACITY' },
-  );
+  expect(() =>
+    store.claim({ id: 'mock-connect-b', bot: 'mock-b', action: 'connect', revision: 0 }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_CAPACITY' }));
   const current = store.get('mock-a');
-  assert.throws(
-    () =>
-      store.claim({
-        id: 'mock-stale-stop',
-        bot: 'mock-a',
-        action: 'stop',
-        revision: 0,
-        instance: current.instance,
-        confirmation: 'close-apps',
-      }),
-    { code: 'COMPUTER_CONFLICT' },
-  );
-  assert.throws(
-    () =>
-      store.claim({
-        id: 'mock-unconfirmed-stop',
-        bot: 'mock-a',
-        action: 'stop',
-        revision: current.revision,
-        instance: current.instance,
-      }),
-    { code: 'COMPUTER_CONFIRM_REQUIRED' },
-  );
+  expect(() =>
+    store.claim({
+      id: 'mock-stale-stop',
+      bot: 'mock-a',
+      action: 'stop',
+      revision: 0,
+      instance: current.instance,
+      confirmation: 'close-apps',
+    }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_CONFLICT' }));
+  expect(() =>
+    store.claim({
+      id: 'mock-unconfirmed-stop',
+      bot: 'mock-a',
+      action: 'stop',
+      revision: current.revision,
+      instance: current.instance,
+    }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_CONFIRM_REQUIRED' }));
   store.claim({
     id: 'mock-stop-a',
     bot: 'mock-a',
@@ -99,11 +95,10 @@ test('capacity and revision checks happen before effects and stopped slots may b
     confirmation: 'close-apps',
   });
   store.finish('mock-stop-a', { phase: 'disconnected' });
-  assert.equal(store.get('mock-a').desired, false);
-  assert.equal(
+  expect(store.get('mock-a').desired).toBe(false);
+  expect(
     store.claim({ id: 'mock-connect-b', bot: 'mock-b', action: 'connect', revision: 0 }).slot,
-    0,
-  );
+  ).toBe(0);
 });
 
 test('failed cleanup keeps its reservation and a failed but confirmed-clean start releases it', async (t) => {
@@ -115,21 +110,18 @@ test('failed cleanup keeps its reservation and a failed but confirmed-clean star
     reserved: true,
     recovery: 'restart',
   });
-  assert.equal(store.get('mock-a').reserved, true);
-  assert.throws(
-    () => store.claim({ id: 'mock-start-b', bot: 'mock-b', action: 'connect', revision: 0 }),
-    { code: 'COMPUTER_CAPACITY' },
-  );
-  assert.throws(
-    () =>
-      store.claim({
-        id: 'mock-retry-a',
-        bot: 'mock-a',
-        action: 'connect',
-        revision: store.get('mock-a').revision,
-      }),
-    { code: 'COMPUTER_STOP_REQUIRED' },
-  );
+  expect(store.get('mock-a').reserved).toBe(true);
+  expect(() =>
+    store.claim({ id: 'mock-start-b', bot: 'mock-b', action: 'connect', revision: 0 }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_CAPACITY' }));
+  expect(() =>
+    store.claim({
+      id: 'mock-retry-a',
+      bot: 'mock-a',
+      action: 'connect',
+      revision: store.get('mock-a').revision,
+    }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_STOP_REQUIRED' }));
   store.claim({
     id: 'mock-stop-a',
     bot: 'mock-a',
@@ -144,11 +136,10 @@ test('failed cleanup keeps its reservation and a failed but confirmed-clean star
     error: 'COMPUTER_START_FAILED',
     reserved: false,
   });
-  assert.equal(store.get('mock-b').reserved, false);
-  assert.equal(
+  expect(store.get('mock-b').reserved).toBe(false);
+  expect(
     store.claim({ id: 'mock-start-c', bot: 'mock-c', action: 'connect', revision: 0 }).slot,
-    0,
-  );
+  ).toBe(0);
 });
 
 test('same-boot reconstruction reports interrupted claims and never treats a lost owner as confirmed stopped', async (t) => {
@@ -156,15 +147,14 @@ test('same-boot reconstruction reports interrupted claims and never treats a los
     request = { id: 'mock-lost-start', bot: 'mock-a', action: 'connect' as const, revision: 0 };
   state.store.claim(request);
   const restored = await state.reopen();
-  assert.equal(restored.get('mock-a').phase, 'interrupted');
-  assert.equal(restored.get('mock-a').reserved, true);
-  assert.equal(restored.get('mock-a').recovery, 'restart');
-  assert.equal(restored.claim(request).fresh, false);
-  assert.equal(restored.receipt(request.id, request.bot).phase, 'interrupted');
-  assert.throws(
-    () => restored.claim({ id: 'mock-new-b', bot: 'mock-b', action: 'connect', revision: 0 }),
-    { code: 'COMPUTER_CAPACITY' },
-  );
+  expect(restored.get('mock-a').phase).toBe('interrupted');
+  expect(restored.get('mock-a').reserved).toBe(true);
+  expect(restored.get('mock-a').recovery).toBe('restart');
+  expect(restored.claim(request).fresh).toBe(false);
+  expect(restored.receipt(request.id, request.bot).phase).toBe('interrupted');
+  expect(() =>
+    restored.claim({ id: 'mock-new-b', bot: 'mock-b', action: 'connect', revision: 0 }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_CAPACITY' }));
 });
 
 test('a changed kernel boot frees abandoned slots without replaying the original operation', async (t) => {
@@ -172,20 +162,19 @@ test('a changed kernel boot frees abandoned slots without replaying the original
     request = { id: 'mock-old-boot-start', bot: 'mock-a', action: 'connect' as const, revision: 0 };
   state.store.claim(request);
   const restored = await state.reopen('mock-kernel-boot-b');
-  assert.equal(restored.get('mock-a').reserved, false);
-  assert.equal(restored.get('mock-a').desired, true);
-  assert.equal(restored.get('mock-a').phase, 'suspended');
-  assert.equal(restored.claim(request).fresh, false);
-  assert.equal(restored.receipt(request.id, request.bot).phase, 'interrupted');
-  assert.equal(
+  expect(restored.get('mock-a').reserved).toBe(false);
+  expect(restored.get('mock-a').desired).toBe(true);
+  expect(restored.get('mock-a').phase).toBe('suspended');
+  expect(restored.claim(request).fresh).toBe(false);
+  expect(restored.receipt(request.id, request.bot).phase).toBe('interrupted');
+  expect(
     restored.claim({
       id: 'mock-new-start',
       bot: 'mock-a',
       action: 'connect',
       revision: restored.get('mock-a').revision,
     }).fresh,
-    true,
-  );
+  ).toBe(true);
 });
 
 test('graceful suspension retains intent and data identity while every reconnect receives a new native instance', async (t) => {
@@ -195,10 +184,10 @@ test('graceful suspension retains intent and data identity while every reconnect
   state.store.suspend('mock-stable');
   const restored = await state.reopen();
   const saved = restored.get('mock-stable');
-  assert.equal(saved.phase, 'suspended');
-  assert.equal(saved.desired, true);
-  assert.equal(saved.reserved, false);
-  assert.equal(saved.instance, undefined);
+  expect(saved.phase).toBe('suspended');
+  expect(saved.desired).toBe(true);
+  expect(saved.reserved).toBe(false);
+  expect(saved.instance).toBe(undefined);
   restored.claim({
     id: 'mock-reconnect',
     bot: saved.bot,
@@ -206,8 +195,8 @@ test('graceful suspension retains intent and data identity while every reconnect
     revision: saved.revision,
   });
   restored.finish('mock-reconnect', { phase: 'connected', instance: 'mock-instance-after' });
-  assert.equal(restored.get(saved.bot).bot, 'mock-stable');
-  assert.equal(restored.get(saved.bot).instance, 'mock-instance-after');
+  expect(restored.get(saved.bot).bot).toBe('mock-stable');
+  expect(restored.get(saved.bot).instance).toBe('mock-instance-after');
 });
 
 test('corrupt computer storage is retained and reports unavailable instead of resetting it', async (t) => {
@@ -216,17 +205,16 @@ test('corrupt computer storage is retained and reports unavailable instead of re
     contents = Buffer.from('SYNTHETIC-CORRUPT-STORE');
   await writeFile(file, contents);
   const store = new Connections({ file, limit: 2, boot: 'mock-boot' });
-  t.after(async () => {
+  t.onTestFinished(async () => {
     await store.close();
     await rm(root, { recursive: true, force: true });
   });
   await store.ready;
-  assert.equal(store.snapshot().available, false);
-  assert.throws(
-    () => store.claim({ id: 'mock-request', bot: 'mock-bot', action: 'connect', revision: 0 }),
-    { code: 'COMPUTER_STORE_UNAVAILABLE' },
-  );
-  assert.deepEqual(await readFile(file), contents);
+  expect(store.snapshot().available).toBe(false);
+  expect(() =>
+    store.claim({ id: 'mock-request', bot: 'mock-bot', action: 'connect', revision: 0 }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_STORE_UNAVAILABLE' }));
+  expect(await readFile(file)).toStrictEqual(contents);
 });
 
 test('a committed state that cannot be safely reconciled disables further computer mutations', async (t) => {
@@ -234,20 +222,16 @@ test('a committed state that cannot be safely reconciled disables further comput
   const database = new DatabaseSync(options.file);
   database.prepare('UPDATE computer_meta SET revision=? WHERE id=1').run(-2);
   database.close();
-  assert.throws(
-    () =>
-      store.claim({ id: 'mock-overflow-claim', bot: 'mock-bot', action: 'connect', revision: 0 }),
-    { code: 'COMPUTER_STORE_UNAVAILABLE' },
-  );
-  assert.equal(store.snapshot().available, false);
-  assert.throws(
-    () =>
-      store.claim({
-        id: 'mock-no-second-effect',
-        bot: 'mock-other',
-        action: 'connect',
-        revision: 0,
-      }),
-    { code: 'COMPUTER_STORE_UNAVAILABLE' },
-  );
+  expect(() =>
+    store.claim({ id: 'mock-overflow-claim', bot: 'mock-bot', action: 'connect', revision: 0 }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_STORE_UNAVAILABLE' }));
+  expect(store.snapshot().available).toBe(false);
+  expect(() =>
+    store.claim({
+      id: 'mock-no-second-effect',
+      bot: 'mock-other',
+      action: 'connect',
+      revision: 0,
+    }),
+  ).toThrowError(expect.objectContaining({ code: 'COMPUTER_STORE_UNAVAILABLE' }));
 });

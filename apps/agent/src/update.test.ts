@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -6,9 +5,9 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { privateClientOptions } from '@daban/engine/local-computer';
+import { expect, test } from 'vitest';
 
 test('the real host CLI exits cleanly after an authenticated idle update handoff', {
   timeout: 20000,
@@ -95,11 +94,11 @@ test('the real host CLI exits cleanly after an authenticated idle update handoff
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.ok(ready, output);
+    expect.assert(ready, output);
     const response = await call('/api/host/update', token, { scope });
-    assert.equal(response.status, 200);
-    assert.equal(response.value.pid, child.pid);
-    assert.equal(await exit, 0, output);
+    expect(response.status).toBe(200);
+    expect(response.value.pid).toBe(child.pid);
+    expect(await exit, output).toBe(0);
   } finally {
     if (child.exitCode === null && child.pid) {
       if (process.platform === 'win32')

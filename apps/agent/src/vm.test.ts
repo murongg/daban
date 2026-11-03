@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { chmod, lstat, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { type VmConfig, VmLink } from './vm.js';
 
 const config: VmConfig = {
@@ -39,29 +38,37 @@ test('VM link starts only the configured executor and returns its private token 
   });
   try {
     const [a, b] = await Promise.all([link.ensure(), link.ensure()]);
-    assert.deepEqual(a, { origin: 'http://127.0.0.1:19876', token });
-    assert.deepEqual(b, a);
-    assert.equal(
+    expect(a).toStrictEqual({ origin: 'http://127.0.0.1:19876', token });
+    expect(b).toStrictEqual(a);
+    expect(
       calls.filter((call) => call.program === config.limactl && call.args[0] === 'start').length,
-      1,
-    );
-    assert.deepEqual(
+    ).toBe(1);
+    expect(
       calls.find((call) => call.program === config.limactl && call.args[0] === 'shell')?.args,
-      ['shell', config.vm, 'sudo', '-n', 'systemctl', 'start', 'daban-executor.service'],
-    );
+    ).toStrictEqual([
+      'shell',
+      config.vm,
+      'sudo',
+      '-n',
+      'systemctl',
+      'start',
+      'daban-executor.service',
+    ]);
     const tunnel = calls.find((call) => call.args.includes('-fNT'))!;
-    assert.equal(tunnel.program, '/usr/bin/ssh');
-    assert.equal(tunnel.args[tunnel.args.indexOf('-L') + 1], '127.0.0.1:19876:127.0.0.1:8766');
-    assert.ok(tunnel.args.includes('ForwardAgent=no'));
-    assert.ok(tunnel.args.includes('ForwardX11=no'));
-    assert.ok(
+    expect(tunnel.program).toBe('/usr/bin/ssh');
+    expect(tunnel.args[tunnel.args.indexOf('-L') + 1]).toBe('127.0.0.1:19876:127.0.0.1:8766');
+    expect.assert(tunnel.args.includes('ForwardAgent=no'));
+    expect.assert(tunnel.args.includes('ForwardX11=no'));
+    expect.assert(
       calls.some((call) =>
         call.args.some((argument) => argument.includes('/var/lib/daban-executor/token')),
       ),
     );
-    assert.ok(calls.every((call) => !JSON.stringify(call.args).includes('/model/control-token')));
-    assert.ok(calls.every((call) => !JSON.stringify(call.args).includes(token)));
-    assert.ok(
+    expect.assert(
+      calls.every((call) => !JSON.stringify(call.args).includes('/model/control-token')),
+    );
+    expect.assert(calls.every((call) => !JSON.stringify(call.args).includes(token)));
+    expect.assert(
       calls.every(
         (call) =>
           call.env?.LIMA_HOME === config.limaHome &&
@@ -70,16 +77,17 @@ test('VM link starts only the configured executor and returns its private token 
       ),
     );
     for (const name of await readdir(dirname(link.socketPath))) {
-      assert.equal(
-        (await readFile(join(dirname(link.socketPath), name), 'utf8')).includes(token),
+      expect((await readFile(join(dirname(link.socketPath), name), 'utf8')).includes(token)).toBe(
         false,
       );
     }
-    assert.equal((await lstat(dirname(link.socketPath))).mode & 0o777, 0o700);
+    expect((await lstat(dirname(link.socketPath))).mode & 0o777).toBe(0o700);
     await link.close();
-    assert.equal(calls.filter((call) => call.args.includes('exit')).length, 1);
-    assert.ok(calls.every((call) => !(call.program === config.limactl && call.args[0] === 'stop')));
-    assert.ok(
+    expect(calls.filter((call) => call.args.includes('exit')).length).toBe(1);
+    expect.assert(
+      calls.every((call) => !(call.program === config.limactl && call.args[0] === 'stop')),
+    );
+    expect.assert(
       calls.every((call) => !call.args.includes('systemctl') || !call.args.includes('stop')),
     );
   } finally {
@@ -106,13 +114,16 @@ test('VM link adopts only a scoped verified master and retains uncertain live so
   try {
     await first.ensure();
     const second = new VmLink(config, socket, dependencies);
-    assert.deepEqual(await second.ensure(), { origin: 'http://127.0.0.1:19877', token });
-    assert.equal(calls.filter((args) => args.includes('-fNT')).length, 1);
+    expect(await second.ensure()).toStrictEqual({ origin: 'http://127.0.0.1:19877', token });
+    expect(calls.filter((args) => args.includes('-fNT')).length).toBe(1);
     live = false;
     const uncertain = new VmLink(config, socket, { ...dependencies, absent: async () => false });
-    await assert.rejects(uncertain.ensure(), /^Error: EXECUTOR_TUNNEL_UNVERIFIED$/);
-    assert.equal(calls.filter((args) => args.includes('-fNT')).length, 1);
-    assert.equal(calls.filter((args) => args.includes('exit')).length, 0);
+    await expect(uncertain.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_TUNNEL_UNVERIFIED$/),
+    });
+    expect(calls.filter((args) => args.includes('-fNT')).length).toBe(1);
+    expect(calls.filter((args) => args.includes('exit')).length).toBe(0);
   } finally {
     await first.close();
     await rm(root, { recursive: true, force: true });
@@ -128,7 +139,12 @@ test('VM link rejects unsafe configuration, foreign state and private socket rep
       { ...config, port: 22 },
       { ...config, limaHome: '../mock' },
     ])
-      assert.throws(() => new VmLink(invalid, socket), /^Error: INVALID_VM_CONFIG$/);
+      expect(() => new VmLink(invalid, socket)).toThrowError(
+        expect.objectContaining({
+          name: 'Error',
+          message: expect.stringMatching(/^INVALID_VM_CONFIG$/),
+        }),
+      );
     let commands = 0;
     const link = new VmLink(config, socket, {
       run: async () => {
@@ -137,14 +153,23 @@ test('VM link rejects unsafe configuration, foreign state and private socket rep
       probe: async () => ({ code: 255, stdout: '' }),
       absent: async () => false,
     });
-    await assert.rejects(link.ensure(), /^Error: EXECUTOR_TUNNEL_UNVERIFIED$/);
+    await expect(link.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_TUNNEL_UNVERIFIED$/),
+    });
     await writeFile(socket, 'MOCK FILE MUST REMAIN', { mode: 0o600 });
-    await assert.rejects(link.ensure(), /^Error: EXECUTOR_SOCKET_UNSAFE$/);
-    assert.equal(await readFile(socket, 'utf8'), 'MOCK FILE MUST REMAIN');
+    await expect(link.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_SOCKET_UNSAFE$/),
+    });
+    expect(await readFile(socket, 'utf8')).toBe('MOCK FILE MUST REMAIN');
     const before = commands;
     await chmod(dirname(socket), 0o755);
-    await assert.rejects(link.ensure(), /^Error: EXECUTOR_SOCKET_UNSAFE$/);
-    assert.equal(commands, before);
+    await expect(link.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_SOCKET_UNSAFE$/),
+    });
+    expect(commands).toBe(before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -167,10 +192,16 @@ test('VM link sanitizes token failures and cannot start more work after close', 
     port: async () => 19878,
   });
   try {
-    await assert.rejects(link.ensure(), /^Error: EXECUTOR_AUTH_UNAVAILABLE$/);
+    await expect(link.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_AUTH_UNAVAILABLE$/),
+    });
     await link.close();
-    await assert.rejects(link.ensure(), /^Error: EXECUTOR_LINK_CLOSED$/);
-    assert.equal(calls.filter((args) => args.includes('exit')).length, 1);
+    await expect(link.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_LINK_CLOSED$/),
+    });
+    expect(calls.filter((args) => args.includes('exit')).length).toBe(1);
   } finally {
     await link.close();
     await rm(root, { recursive: true, force: true });
@@ -196,8 +227,11 @@ test('VM link validates saved VM scope before starting a different executor', as
     await first.ensure();
     const before = commands;
     const foreign = new VmLink({ ...config, vm: 'mock-other' }, socket, dependencies);
-    await assert.rejects(foreign.ensure(), /^Error: EXECUTOR_TUNNEL_STATE_INVALID$/);
-    assert.equal(commands, before);
+    await expect(foreign.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_TUNNEL_STATE_INVALID$/),
+    });
+    expect(commands).toBe(before);
   } finally {
     await first.close();
     await rm(root, { recursive: true, force: true });
@@ -231,13 +265,13 @@ test('VM link closes a forked SSH master even if shutdown arrives before startup
     await waiting;
     const closing = link.close();
     release();
-    await assert.rejects(startup, /^Error: EXECUTOR_LINK_CLOSED$/);
+    await expect(startup).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_LINK_CLOSED$/),
+    });
     await closing;
-    assert.equal(calls.filter((args) => args.includes('exit')).length, 1);
-    assert.equal(
-      calls.some((args) => args[0] === 'stop'),
-      false,
-    );
+    expect(calls.filter((args) => args.includes('exit')).length).toBe(1);
+    expect(calls.some((args) => args[0] === 'stop')).toBe(false);
   } finally {
     await link.close();
     await rm(root, { recursive: true, force: true });
@@ -254,19 +288,22 @@ test('VM link never replaces a reachable private socket when SSH cannot identify
     probe: async () => ({ code: 255, stdout: '' }),
   };
   const preparation = new VmLink(config, socket, { ...dependencies, absent: async () => false });
-  await assert.rejects(preparation.ensure(), /^Error: EXECUTOR_TUNNEL_UNVERIFIED$/);
+  await expect(preparation.ensure()).rejects.toMatchObject({
+    name: 'Error',
+    message: expect.stringMatching(/^EXECUTOR_TUNNEL_UNVERIFIED$/),
+  });
   const listener = net.createServer((channel) => channel.destroy());
   listener.listen(socket);
   await once(listener, 'listening');
   await chmod(socket, 0o600);
   try {
     const link = new VmLink(config, socket, dependencies);
-    await assert.rejects(link.ensure(), /^Error: EXECUTOR_TUNNEL_UNVERIFIED$/);
-    assert.equal(listener.listening, true);
-    assert.equal(
-      calls.some((args) => args.includes('-fNT') || args.includes('exit')),
-      false,
-    );
+    await expect(link.ensure()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_TUNNEL_UNVERIFIED$/),
+    });
+    expect(listener.listening).toBe(true);
+    expect(calls.some((args) => args.includes('-fNT') || args.includes('exit'))).toBe(false);
   } finally {
     await new Promise<unknown>((done, reject) =>
       listener.close((error) => (error ? reject(error) : done(undefined))),
@@ -285,7 +322,7 @@ test('VM link probes a busy preferred port without sending credentials to its li
   listener.listen(0, '127.0.0.1');
   await once(listener, 'listening');
   const address = listener.address();
-  assert.ok(address && typeof address !== 'string');
+  expect.assert(address && typeof address !== 'string');
   let master = false;
   const link = new VmLink({ ...config, port: address.port }, socket, {
     run: async (_program, args) => {
@@ -297,8 +334,8 @@ test('VM link probes a busy preferred port without sending credentials to its li
   });
   try {
     const connection = await link.ensure();
-    assert.notEqual(new URL(connection.origin).port, String(address.port));
-    assert.equal(contacts, 0);
+    expect(new URL(connection.origin).port).not.toBe(String(address.port));
+    expect(contacts).toBe(0);
   } finally {
     await link.close();
     await new Promise<unknown>((done, reject) =>
@@ -317,19 +354,19 @@ test('VM power inspection is read-only and accepts only the exact configured VM 
       calls.push(args);
     },
     probe: async (program, args) => {
-      assert.equal(program, config.limactl);
-      assert.deepEqual(args, ['list', '--format=json', config.vm]);
+      expect(program).toBe(config.limactl);
+      expect(args).toStrictEqual(['list', '--format=json', config.vm]);
       return { code: 0, stdout: JSON.stringify(status) };
     },
   });
   try {
-    assert.equal(await link.state(), 'running');
+    expect(await link.state()).toBe('running');
     status = { name: config.vm, status: 'Stopped' };
-    assert.equal(await link.state(), 'stopped');
+    expect(await link.state()).toBe('stopped');
     status = { name: 'mock-foreign', status: 'Running' };
-    assert.equal(await link.state(), 'unknown');
-    assert.deepEqual(calls, []);
-    await assert.rejects(lstat(dirname(link.socketPath)), { code: 'ENOENT' });
+    expect(await link.state()).toBe('unknown');
+    expect(calls).toStrictEqual([]);
+    await expect(lstat(dirname(link.socketPath))).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     await link.close();
     await rm(root, { recursive: true, force: true });
@@ -375,16 +412,16 @@ test('explicit VM restart closes SSH before stopping and reacquires the executio
     port: async () => 19881,
   });
   try {
-    assert.equal((await link.ensure()).token, token);
+    expect((await link.ensure()).token).toBe(token);
     await link.stopVm();
-    assert.equal(await link.state(), 'stopped');
-    assert.ok(events.indexOf('ssh-close') < events.indexOf('vm-stop'));
-    assert.equal((await link.startVm()).token, 'b'.repeat(64));
-    assert.equal((await link.ensure()).token, 'b'.repeat(64));
-    assert.equal(starts, 2);
-    assert.equal(await link.state(), 'running');
+    expect(await link.state()).toBe('stopped');
+    expect.assert(events.indexOf('ssh-close') < events.indexOf('vm-stop'));
+    expect((await link.startVm()).token).toBe('b'.repeat(64));
+    expect((await link.ensure()).token).toBe('b'.repeat(64));
+    expect(starts).toBe(2);
+    expect(await link.state()).toBe('running');
     await link.close();
-    assert.equal(events.filter((event) => event === 'vm-stop').length, 1);
+    expect(events.filter((event) => event === 'vm-stop').length).toBe(1);
   } finally {
     await link.close();
     await rm(root, { recursive: true, force: true });
@@ -415,15 +452,18 @@ test('read-only reconnect refreshes a rotated execution token without starting V
     port: async () => 19882,
   });
   try {
-    assert.equal((await link.ensure()).token, token);
+    expect((await link.ensure()).token).toBe(token);
     const before = calls.length;
     current = 'b'.repeat(64);
-    assert.equal((await link.reconnect()).token, current);
-    assert.equal((await link.ensure()).token, current);
-    assert.deepEqual(calls.slice(before), []);
+    expect((await link.reconnect()).token).toBe(current);
+    expect((await link.ensure()).token).toBe(current);
+    expect(calls.slice(before)).toStrictEqual([]);
     running = false;
-    await assert.rejects(link.reconnect(), /^Error: EXECUTOR_OFFLINE$/);
-    assert.deepEqual(calls.slice(before), []);
+    await expect(link.reconnect()).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_OFFLINE$/),
+    });
+    expect(calls.slice(before)).toStrictEqual([]);
   } finally {
     await link.close();
     await rm(root, { recursive: true, force: true });
@@ -470,13 +510,13 @@ test('closing during reconnect state inspection prevents late SSH attachment', a
     await waiting;
     const closing = link.close();
     release();
-    await assert.rejects(reconnecting, /^Error: EXECUTOR_LINK_CLOSED$/);
+    await expect(reconnecting).rejects.toMatchObject({
+      name: 'Error',
+      message: expect.stringMatching(/^EXECUTOR_LINK_CLOSED$/),
+    });
     await closing;
-    assert.equal(calls.slice(before).filter((args) => args.includes('-fNT')).length, 0);
-    assert.equal(
-      calls.slice(before).every((args) => args.includes('exit')),
-      true,
-    );
+    expect(calls.slice(before).filter((args) => args.includes('-fNT')).length).toBe(0);
+    expect(calls.slice(before).every((args) => args.includes('exit'))).toBe(true);
   } finally {
     release();
     await link.close();

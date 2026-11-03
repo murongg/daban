@@ -1,11 +1,10 @@
-import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { expect, test } from 'vitest';
 import { DshLog, readDshStartup, startupLogLimit, startupSnapshotLimit } from './dsh.js';
 import { redact } from './redaction.js';
 
@@ -28,10 +27,10 @@ test('snapshot collection accepts startup fields only, never arbitrary configura
       }),
     );
     const snapshot = await readDshStartup(file);
-    assert.ok(snapshot);
-    assert.equal(JSON.stringify(snapshot).includes('SYNTHETIC PRIVATE'), false);
+    expect.assert(snapshot);
+    expect(JSON.stringify(snapshot).includes('SYNTHETIC PRIVATE')).toBe(false);
     await writeFile(file, JSON.stringify({ credentials: 'SYNTHETIC PRIVATE CONFIG' }));
-    assert.equal(await readDshStartup(file), undefined);
+    expect(await readDshStartup(file)).toBe(undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -57,21 +56,21 @@ test('startup diagnostics rotate within a fixed three-file budget and redact bef
       ),
     );
     const files = (await readdir(root)).filter((name) => name.startsWith('dsh-startup.log'));
-    assert.equal(files.length, 3);
+    expect(files.length).toBe(3);
     for (const name of files) {
       const info = await stat(path.join(root, name));
-      assert.ok(info.size <= startupLogLimit);
-      if (process.platform !== 'win32') assert.equal(info.mode & 0o777, 0o600);
+      expect.assert(info.size <= startupLogLimit);
+      if (process.platform !== 'win32') expect(info.mode & 0o777).toBe(0o600);
       const text = await readFile(path.join(root, name), 'utf8');
-      assert.equal(text.includes('synthetic-secret'), false);
-      assert.equal(text.includes('synthetic-authorization'), false);
-      for (const line of text.trim().split('\n')) assert.ok(JSON.parse(line).runId);
+      expect(text.includes('synthetic-secret')).toBe(false);
+      expect(text.includes('synthetic-authorization')).toBe(false);
+      for (const line of text.trim().split('\n')) expect.assert(JSON.parse(line).runId);
     }
     const current = (await readFile(file, 'utf8'))
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
-    assert.equal(current.at(-1).runId, 'mock-95');
+    expect(current.at(-1).runId).toBe('mock-95');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -81,7 +80,7 @@ test('an oversized event stays valid JSON within the file limit and logging fail
   const root = await mkdtemp(path.join(tmpdir(), 'mock-dsh-overflow-'));
   try {
     const file = path.join(root, 'dsh-startup.log');
-    assert.equal(
+    expect(
       await new DshLog(file).write(
         {
           stage: 'initialize-failed',
@@ -90,18 +89,16 @@ test('an oversized event stays valid JSON within the file limit and logging fail
         },
         clean,
       ),
-      true,
-    );
+    ).toBe(true);
     const text = await readFile(file, 'utf8');
-    assert.ok(Buffer.byteLength(text) <= startupLogLimit);
-    assert.equal(JSON.parse(text).truncated, true);
-    assert.equal(
+    expect.assert(Buffer.byteLength(text) <= startupLogLimit);
+    expect(JSON.parse(text).truncated).toBe(true);
+    expect(
       await new DshLog(path.join(root, 'missing/log')).write(
         { stage: 'sdk-loading', runId: 'mock' },
         clean,
       ),
-      false,
-    );
+    ).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -116,11 +113,10 @@ test('startup logging never follows an existing symlink', {
     await writeFile(target, 'SYNTHETIC UNRELATED CONTENT');
     const file = path.join(root, 'dsh-startup.log');
     await symlink(target, file);
-    assert.equal(
-      await new DshLog(file).write({ stage: 'sdk-loading', runId: 'mock' }, clean),
+    expect(await new DshLog(file).write({ stage: 'sdk-loading', runId: 'mock' }, clean)).toBe(
       false,
     );
-    assert.equal(await readFile(target, 'utf8'), 'SYNTHETIC UNRELATED CONTENT');
+    expect(await readFile(target, 'utf8')).toBe('SYNTHETIC UNRELATED CONTENT');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -177,8 +173,8 @@ test('a checkpoint I/O failure cannot turn an otherwise healthy runtime into a s
       { cwd: root, env: childEnvironment(path.join(root, 'snapshot.json')), timeout: 10000 },
     );
     const resultValue = JSON.parse(result.stdout);
-    assert.equal(resultValue.running, true);
-    assert.ok(resultValue.failures > 0, 'the checkpoint fault must actually be exercised');
+    expect(resultValue.running).toBe(true);
+    expect.assert(resultValue.failures > 0, 'the checkpoint fault must actually be exercised');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -210,14 +206,14 @@ test('the preload captures partial startup stderr, preserves RPC output, and sto
       ],
       { env: childEnvironment(file), cwd: root, timeout: 10000 },
     );
-    assert.equal(result.stdout, JSON.stringify(reply) + '\n');
-    assert.ok(result.stderr.includes(secret));
+    expect(result.stdout).toBe(JSON.stringify(reply) + '\n');
+    expect.assert(result.stderr.includes(secret));
     const text = await readFile(file, 'utf8');
     const snapshot = JSON.parse(text);
-    assert.equal(snapshot.stage, 'initialized');
-    assert.ok(snapshot.stderr.includes('[credential redacted]'));
-    assert.equal(text.includes('synthetic-secret'), false);
-    assert.equal(text.includes('SYNTHETIC CHAT'), false);
+    expect(snapshot.stage).toBe('initialized');
+    expect.assert(snapshot.stderr.includes('[credential redacted]'));
+    expect(text.includes('synthetic-secret')).toBe(false);
+    expect(text.includes('SYNTHETIC CHAT')).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -227,7 +223,7 @@ test('the preload bounds noisy stderr and does not swallow a startup crash', asy
   const root = await mkdtemp(path.join(tmpdir(), 'mock-dsh-crash-'));
   const file = path.join(root, 'startup.json');
   try {
-    await assert.rejects(
+    await expect(
       run(
         process.execPath,
         [
@@ -242,16 +238,15 @@ test('the preload bounds noisy stderr and does not swallow a startup crash', asy
         ],
         { env: childEnvironment(file), cwd: root, timeout: 10000, maxBuffer: 1024 * 1024 },
       ),
-      { code: 1 },
-    );
+    ).rejects.toMatchObject({ code: 1 });
     const text = await readFile(file, 'utf8');
-    assert.ok(Buffer.byteLength(text) <= startupSnapshotLimit);
+    expect.assert(Buffer.byteLength(text) <= startupSnapshotLimit);
     const snapshot = JSON.parse(text);
-    assert.equal(snapshot.truncated, true);
-    assert.ok(snapshot.exception.message.includes('mock startup crash'));
-    assert.equal(text.includes('synthetic-secret'), false);
-    assert.equal(snapshot.exitCode, 1);
-    assert.deepEqual(await readdir(root), ['startup.json']);
+    expect(snapshot.truncated).toBe(true);
+    expect.assert(snapshot.exception.message.includes('mock startup crash'));
+    expect(text.includes('synthetic-secret')).toBe(false);
+    expect(snapshot.exitCode).toBe(1);
+    expect(await readdir(root)).toStrictEqual(['startup.json']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

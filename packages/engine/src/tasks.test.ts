@@ -1,22 +1,20 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { agentInstructionsFor } from './tasks.js';
 
 test('full guest instructions describe VM sudo and host approval without exposing host execution', () => {
   const prompt = agentInstructionsFor(true);
-  assert.match(prompt, /passwordless sudo/);
-  assert.match(prompt, /npm/);
-  assert.match(prompt, /process_start/);
-  assert.match(prompt, /approval.*outside the VM/);
-  assert.doesNotMatch(
-    prompt,
+  expect(prompt).toMatch(/passwordless sudo/);
+  expect(prompt).toMatch(/npm/);
+  expect(prompt).toMatch(/process_start/);
+  expect(prompt).toMatch(/approval.*outside the VM/);
+  expect(prompt).not.toMatch(
     /installation requires software_install|without credentials or network/,
   );
-  assert.match(agentInstructionsFor(false), /installation requires software_install/);
+  expect(agentInstructionsFor(false)).toMatch(/installation requires software_install/);
 });
 
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
@@ -29,12 +27,14 @@ test('a continuation turn requires a bounded retry reference', () => {
     retryOf: 'mock-run',
     retryTurn: 'mock-turn',
   };
-  assert.deepEqual(validateTask(input), input);
+  expect(validateTask(input)).toStrictEqual(input);
   for (const invalid of [
     { ...input, retryOf: undefined },
     { ...input, retryTurn: '../foreign' },
   ]) {
-    assert.throws(() => validateTask(invalid), { code: 'INVALID_TASK' });
+    expect(() => validateTask(invalid)).toThrowError(
+      expect.objectContaining({ code: 'INVALID_TASK' }),
+    );
   }
 });
 
@@ -45,13 +45,13 @@ test('workspace downloads preserve binary bytes, reject escapes and refuse inval
     const bytes = Buffer.from([37, 80, 68, 70, 45, 255, 0, 128]);
     await writeFile(path.join(root, 'mock.pdf'), bytes);
     const downloaded = await files.download('mock.pdf');
-    assert.equal(Buffer.from(downloaded.data, 'base64').equals(bytes), true);
-    assert.equal(downloaded.sha256, createHash('sha256').update(bytes).digest('hex'));
-    await assert.rejects(files.download('../escape.pdf'), { code: 'INVALID_FILE' });
+    expect(Buffer.from(downloaded.data, 'base64').equals(bytes)).toBe(true);
+    expect(downloaded.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+    await expect(files.download('../escape.pdf')).rejects.toMatchObject({ code: 'INVALID_FILE' });
     await symlink('/etc/passwd', path.join(root, 'link.pdf'));
-    await assert.rejects(files.download('link.pdf'), { code: 'FILE_NOT_READABLE' });
+    await expect(files.download('link.pdf')).rejects.toMatchObject({ code: 'FILE_NOT_READABLE' });
     await writeFile(path.join(root, 'bad.txt'), Buffer.from([255, 128]));
-    await assert.rejects(files.read('bad.txt'), { code: 'FILE_NOT_TEXT' });
+    await expect(files.read('bad.txt')).rejects.toMatchObject({ code: 'FILE_NOT_TEXT' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -74,9 +74,9 @@ test('request deduplication reaches records older than the bounded UI history', 
         error: '',
         trace: [],
       });
-    assert.equal(store.history('a').length, 100);
-    assert.equal(store.findRequest('a', 'mock-request-0')?.runId, 'mock-history-0000');
-    assert.equal(store.findRequest('b', 'mock-request-0'), undefined);
+    expect(store.history('a').length).toBe(100);
+    expect(store.findRequest('a', 'mock-request-0')?.runId).toBe('mock-history-0000');
+    expect(store.findRequest('b', 'mock-request-0')).toBe(undefined);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -88,7 +88,7 @@ test('a failed journal write is never published as durable history', async () =>
     const store = new TaskJournal(dir);
     await store.load();
     await mkdir(path.join(dir, 'mock-failed.json.tmp'));
-    await assert.rejects(
+    await expect(
       store.put({
         bot: 'a',
         runId: 'mock-failed',
@@ -100,9 +100,9 @@ test('a failed journal write is never published as durable history', async () =>
         error: '',
         trace: [],
       }),
-    );
-    assert.equal(store.history('a').length, 0);
-    assert.equal(store.findRequest('a', 'mock-uncommitted'), undefined);
+    ).rejects.toThrowError();
+    expect(store.history('a').length).toBe(0);
+    expect(store.findRequest('a', 'mock-uncommitted')).toBe(undefined);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -115,11 +115,11 @@ test('freeform requests preserve actual user instructions and reject unsafe or o
     memory: '先给结论',
     files: [{ name: 'synthetic.csv', content: 'kind,value\nmock,3' }],
   };
-  assert.deepEqual(validateTask(input), input);
+  expect(validateTask(input)).toStrictEqual(input);
   const prompt = taskPrompt('a', '/synthetic/run-1', input);
-  assert.ok(prompt.includes(input.prompt));
-  assert.ok(prompt.includes(input.memory));
-  assert.ok(!prompt.includes('paid_count'));
+  expect.assert(prompt.includes(input.prompt));
+  expect.assert(prompt.includes(input.memory));
+  expect.assert(!prompt.includes('paid_count'));
   for (const bad of [
     { ...input, prompt: '' },
     { ...input, requestId: '../escape' },
@@ -132,7 +132,7 @@ test('freeform requests preserve actual user instructions and reject unsafe or o
       ],
     },
   ])
-    assert.throws(() => validateTask(bad));
+    expect(() => validateTask(bad)).toThrowError();
 });
 
 test('durable task history recovers interrupted work and never stores capability fields', async () => {
@@ -157,13 +157,13 @@ test('durable task history recovers interrupted work and never stores capability
     const recovered = new TaskJournal(dir);
     await recovered.load();
     const task = recovered.history('a')[0];
-    assert.equal(task.phase, 'interrupted');
-    assert.equal(task.running, false);
-    assert.equal(task.sessionId, 'mock-session');
-    assert.equal(task.response?.text, '合成崩溃前已提交的回复');
-    assert.equal('token' in task, false);
-    assert.equal(recovered.findRequest('a', 'request-1')?.runId, 'run-1');
-    assert.equal(recovered.findRequest('b', 'request-1'), undefined);
+    expect(task.phase).toBe('interrupted');
+    expect(task.running).toBe(false);
+    expect(task.sessionId).toBe('mock-session');
+    expect(task.response?.text).toBe('合成崩溃前已提交的回复');
+    expect('token' in task).toBe(false);
+    expect(recovered.findRequest('a', 'request-1')?.runId).toBe('run-1');
+    expect(recovered.findRequest('b', 'request-1')).toBe(undefined);
     await store.put({
       ...task,
       runId: 'run-waiting',
@@ -174,8 +174,8 @@ test('durable task history recovers interrupted work and never stores capability
     });
     const waiting = new TaskJournal(dir);
     await waiting.load();
-    assert.equal(waiting.findRequest('a', 'request-waiting')?.phase, 'interrupted');
-    assert.equal(waiting.findRequest('a', 'request-waiting')?.plan?.[0].content, '等待合成回答');
+    expect(waiting.findRequest('a', 'request-waiting')?.phase).toBe('interrupted');
+    expect(waiting.findRequest('a', 'request-waiting')?.plan?.[0].content).toBe('等待合成回答');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -189,19 +189,19 @@ test('workspace reads actual nested files while rejecting traversal, symlink esc
     await symlink('/etc/hosts', path.join(root, 'escape.txt'));
     const files = new WorkspaceFiles(root);
     const listed = await files.list();
-    assert.ok(listed.some((f) => f.path === 'run-1/summary.md'));
-    assert.ok(!listed.some((f) => f.path === 'escape.txt'));
-    assert.equal((await files.read('run-1/summary.md')).content, '# 合成结果\n数量=3');
-    await assert.rejects(files.read('../credentials.json'));
-    await assert.rejects(files.read('escape.txt'));
+    expect.assert(listed.some((f) => f.path === 'run-1/summary.md'));
+    expect.assert(!listed.some((f) => f.path === 'escape.txt'));
+    expect((await files.read('run-1/summary.md')).content).toBe('# 合成结果\n数量=3');
+    await expect(files.read('../credentials.json')).rejects.toThrowError();
+    await expect(files.read('escape.txt')).rejects.toThrowError();
     await writeFile(path.join(root, 'large.txt'), 'x'.repeat(1024 * 1024 + 1));
-    await assert.rejects(files.read('large.txt'));
+    await expect(files.read('large.txt')).rejects.toThrowError();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 test('the turn carries current computer availability rather than advertising unavailable tools', () => {
   const input = { requestId: 'mock-capabilities', prompt: '你有什么功能' };
-  assert.match(taskPrompt('chief', '/synthetic/run', input), /当前未连接电脑/);
-  assert.match(taskPrompt('a', '/synthetic/run', input, [], true), /当前已连接电脑/);
+  expect(taskPrompt('chief', '/synthetic/run', input)).toMatch(/当前未连接电脑/);
+  expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/当前已连接电脑/);
 });

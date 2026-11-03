@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { apply, invokedSkills } from './skill-provider.js';
 import type { SkillRecipe } from './skills.js';
 
@@ -10,20 +9,18 @@ const recipe: SkillRecipe = {
   invocation: { modelInvocable: false, userInvocable: true },
 };
 test('only native slash gestures in the actual accepted human prompt enable explicit invocation', () => {
-  assert.deepEqual(invokedSkills('请按 /mock-summary 整理，/not-enabled 不在目录里。', [recipe]), [
-    'mock-summary',
-  ]);
-  assert.deepEqual(
+  expect(
+    invokedSkills('请按 /mock-summary 整理，/not-enabled 不在目录里。', [recipe]),
+  ).toStrictEqual(['mock-summary']);
+  expect(
     invokedSkills('Read /mock-summary/reference.txt and 5/8; do not invoke.', [recipe]),
-    [],
-  );
-  assert.deepEqual(invokedSkills('/mock-summary\n/mock-summary', [recipe]), ['mock-summary']);
-  assert.deepEqual(
+  ).toStrictEqual([]);
+  expect(invokedSkills('/mock-summary\n/mock-summary', [recipe])).toStrictEqual(['mock-summary']);
+  expect(
     invokedSkills('/mock-summary', [
       { ...recipe, invocation: { modelInvocable: true, userInvocable: false } },
     ]),
-    [],
-  );
+  ).toStrictEqual([]);
 });
 test('the native registry receives only captured recipes; other wrapped text cannot grant manual invocation', () => {
   const registered: SkillRecipe[] = [];
@@ -37,17 +34,16 @@ test('the native registry receives only captured recipes; other wrapped text can
   };
   const config = { skills: [structuredClone(recipe)], invoked: [] as string[] };
   apply(ctx, config);
-  assert.equal(registered[0].invocation.userInvocable, false);
-  assert.equal(registered[0].invocation.modelInvocable, false);
-  assert.equal(registered[0].content, recipe.content);
+  expect(registered[0].invocation.userInvocable).toBe(false);
+  expect(registered[0].invocation.modelInvocable).toBe(false);
+  expect(registered[0].content).toBe(recipe.content);
   config.skills[0].content = 'MUTATED-AFTER-REGISTRATION';
-  assert.equal(registered[0].content, recipe.content);
+  expect(registered[0].content).toBe(recipe.content);
   registered.length = 0;
   apply(ctx, { skills: [recipe], invoked: ['mock-summary'] });
-  assert.equal(registered[0].invocation.userInvocable, true);
-  assert.equal('tools' in registered[0], false);
-  assert.throws(
-    () => apply(ctx, { skills: [recipe, recipe], invoked: [] }),
+  expect(registered[0].invocation.userInvocable).toBe(true);
+  expect('tools' in registered[0]).toBe(false);
+  expect(() => apply(ctx, { skills: [recipe, recipe], invoked: [] })).toThrowError(
     /INVALID_SKILL_SNAPSHOT/,
   );
 });
@@ -69,8 +65,8 @@ test('standard package loading retains metadata and explains scoped resource too
       invoked: ['mock-summary'],
     },
   );
-  assert.equal(registered[0].metadata?.license, 'MIT');
-  assert.match(registered[0].resourceBase!.description, /skill_read/);
-  assert.match(registered[0].resourceBase!.description, /skill_prepare/);
-  assert.equal('allowedTools' in registered[0], false);
+  expect(registered[0].metadata?.license).toBe('MIT');
+  expect(registered[0].resourceBase!.description).toMatch(/skill_read/);
+  expect(registered[0].resourceBase!.description).toMatch(/skill_prepare/);
+  expect('allowedTools' in registered[0]).toBe(false);
 });

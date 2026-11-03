@@ -1,18 +1,17 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import type { ToolResult } from './computer-tools.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
 function result(value: unknown) {
-  assert.ok(value && typeof value === 'object' && 'result' in value);
+  expect.assert(value && typeof value === 'object' && 'result' in value);
   const rpc = value.result as ToolResult;
-  assert.equal(rpc.isError, undefined, JSON.stringify(rpc));
+  expect(rpc.isError, JSON.stringify(rpc)).toBe(undefined);
   const block = rpc.content[0];
-  assert.equal(block.type, 'text');
+  expect(block.type).toBe('text');
   return JSON.parse(block.type === 'text' ? block.text : '');
 }
 
@@ -43,7 +42,7 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
         params: { name, arguments: args },
       })
       .then((reply) => {
-        assert.ok(reply && 'result' in reply);
+        expect.assert(reply && 'result' in reply);
         emit('tool/result', { message: { toolCallId: callId, ...(reply.result as ToolResult) } });
         return reply;
       });
@@ -62,13 +61,13 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
             (item) => item.sessionId === id && item.running,
           )!;
           observers.set(job.bot, observer.onNotification);
-          assert.ok(job.prompt?.includes('work_read'));
-          assert.ok(job.prompt?.includes('work_comment'));
+          expect.assert(job.prompt?.includes('work_read'));
+          expect.assert(job.prompt?.includes('work_comment'));
           const catalog = await models.rpc(job.bot, `Bearer ${job.token}`, {
             id: 'mock-list',
             method: 'tools/list',
           });
-          assert.ok(catalog && 'result' in catalog);
+          expect.assert(catalog && 'result' in catalog);
           const tools = catalog.result as { tools: { name: string }[] };
           for (const name of [
             'work_list',
@@ -81,7 +80,7 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
             'work_restore',
             'task_catalog',
           ])
-            assert.ok(
+            expect.assert(
               tools.tools.some((tool) => tool.name === name),
               name,
             );
@@ -109,8 +108,8 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
     });
     const job = models.jobs.get(bot)!;
     await job.done;
-    assert.equal(job.phase, 'completed', job.error);
-    assert.equal(job.files.length, 0);
+    expect(job.phase, job.error).toBe('completed');
+    expect(job.files.length).toBe(0);
     return job;
   }
   try {
@@ -125,7 +124,7 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
         color: 'mint',
       });
     const greeting = await turn('mock-alpha', 'mock-greeting');
-    assert.equal(greeting.toolCount, 0);
+    expect(greeting.toolCount).toBe(0);
     let itemId = '';
     act = async (bot) => {
       const created = result(
@@ -135,31 +134,29 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
         }),
       );
       itemId = created.item.id;
-      assert.deepEqual(created.item.createdBy, { kind: 'bot', bot });
-      assert.equal(result(await call(bot, 'work_read', { id: itemId })).item.revision, 1);
+      expect(created.item.createdBy).toStrictEqual({ kind: 'bot', bot });
+      expect(result(await call(bot, 'work_read', { id: itemId })).item.revision).toBe(1);
       const comment = result(
         await call(bot, 'work_comment', { id: itemId, revision: 1, body: '合成模型讨论甲' }),
       );
-      assert.deepEqual(comment.comment.createdBy, { kind: 'bot', bot });
-      assert.equal(comment.item.revision, 2);
+      expect(comment.comment.createdBy).toStrictEqual({ kind: 'bot', bot });
+      expect(comment.item.revision).toBe(2);
     };
     const first = await turn('mock-alpha', 'mock-create');
-    assert.equal(first.sessionId, greeting.sessionId);
+    expect(first.sessionId).toBe(greeting.sessionId);
     act = async (bot) => {
       const catalog = result(await call(bot, 'task_catalog'));
-      assert.equal(catalog.work.page.items[0].id, itemId);
-      assert.equal(
-        catalog.tools.some((tool: { name: string }) => tool.name === 'screenshot'),
+      expect(catalog.work.page.items[0].id).toBe(itemId);
+      expect(catalog.tools.some((tool: { name: string }) => tool.name === 'screenshot')).toBe(
         false,
       );
-      assert.equal(result(await call(bot, 'work_read', { id: itemId })).item.revision, 2);
+      expect(result(await call(bot, 'work_read', { id: itemId })).item.revision).toBe(2);
       const discussion = result(await call(bot, 'work_comments', { id: itemId }));
-      assert.equal(discussion.comments[0].body, '合成模型讨论甲');
-      assert.equal(
+      expect(discussion.comments[0].body).toBe('合成模型讨论甲');
+      expect(
         result(await call(bot, 'work_comment', { id: itemId, revision: 2, body: '合成模型讨论乙' }))
           .item.revision,
-        3,
-      );
+      ).toBe(3);
       await call(bot, 'work_read', { id: itemId });
       const changed = result(
         await call(bot, 'work_update', {
@@ -168,21 +165,25 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
           patch: { status: 'doing', progress: 'MOCK VERIFIED STEP' },
         }),
       );
-      assert.equal(changed.item.status, 'doing');
-      assert.deepEqual(changed.item.updatedBy, { kind: 'bot', bot });
+      expect(changed.item.status).toBe('doing');
+      expect(changed.item.updatedBy).toStrictEqual({ kind: 'bot', bot });
     };
     const second = await turn('mock-beta', 'mock-update');
-    assert.notEqual(second.sessionId, first.sessionId);
-    assert.ok(second.trace.every((row) => ['work', 'catalog'].includes(row.surface)));
-    assert.equal(second.trace.filter((row) => row.phase === 'settled').length, 6);
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect.assert(second.trace.every((row) => ['work', 'catalog'].includes(row.surface)));
+    expect(second.trace.filter((row) => row.phase === 'settled').length).toBe(6);
     const transcript = await models.transcript({
       bot: 'mock-beta',
       runId: second.id,
       chatRevision: 0,
     });
-    assert.ok(transcript.items.some((row) => row.kind === 'call' && row.name === 'work_update'));
-    assert.ok(transcript.items.some((row) => row.kind === 'call' && row.name === 'work_comment'));
-    assert.equal((await models.work.list()).items.length, 1);
+    expect.assert(
+      transcript.items.some((row) => row.kind === 'call' && row.name === 'work_update'),
+    );
+    expect.assert(
+      transcript.items.some((row) => row.kind === 'call' && row.name === 'work_comment'),
+    );
+    expect((await models.work.list()).items.length).toBe(1);
     await models.work.write(
       {
         id: 'mock-newer-human',
@@ -197,12 +198,12 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
       const replay = result(
         await call(bot, 'work_comment', { id: itemId, revision: 1, body: '合成模型讨论甲' }),
       );
-      assert.equal(replay.acceptedRevision, 2);
-      assert.equal(replay.item.description, 'MOCK CURRENT HUMAN DETAIL');
-      assert.equal(replay.item.revision, 5);
+      expect(replay.acceptedRevision).toBe(2);
+      expect(replay.item.description).toBe('MOCK CURRENT HUMAN DETAIL');
+      expect(replay.item.revision).toBe(5);
     };
     await turn('mock-alpha', 'mock-comment-retry', first.id);
-    assert.equal((await models.work.comments({ item: itemId })).comments.length, 2);
+    expect((await models.work.comments({ item: itemId })).comments.length).toBe(2);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -238,22 +239,22 @@ test('new Work capabilities retire an old native tool context while preserving p
     await models.start('mock-alpha', { requestId: 'mock-old', prompt: 'MOCK OLD HUMAN MESSAGE' });
     const old = models.jobs.get('mock-alpha')!;
     await old.done;
-    assert.equal(old.phase, 'completed');
+    expect(old.phase).toBe('completed');
     await models.close();
     const file = path.join(root, 'model/task-journal', `${old.id}.json`);
     const journal = JSON.parse(await readFile(file, 'utf8'));
-    assert.equal(journal.version, 1);
+    expect(journal.version).toBe(1);
     journal.task.sessionProfile = 'general-v7';
     await writeFile(file, JSON.stringify(journal), { mode: 0o600 });
     models = new ModelRuns(options);
     await models.start('mock-alpha', { requestId: 'mock-new', prompt: 'MOCK NEW GREETING' });
     const current = models.jobs.get('mock-alpha')!;
     await current.done;
-    assert.equal(current.phase, 'completed');
-    assert.notEqual(current.sessionId, old.sessionId);
-    assert.deepEqual(resumed, []);
-    assert.equal(current.toolCount, 0);
-    assert.ok(
+    expect(current.phase).toBe('completed');
+    expect(current.sessionId).not.toBe(old.sessionId);
+    expect(resumed).toStrictEqual([]);
+    expect(current.toolCount).toBe(0);
+    expect.assert(
       models.journal.history('mock-alpha').some((row) => row.prompt === 'MOCK OLD HUMAN MESSAGE'),
     );
   } finally {

@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { link, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
+import { expect, test, vi } from 'vitest';
 import { Work } from './work.js';
 
 const human = { kind: 'human' as const };
@@ -51,12 +50,12 @@ test('shared work preserves immutable creation provenance and current progress w
       { ...create(), value: { ...fields, title: '  合成共享待办  ' } },
       human,
     );
-    assert.equal(first.state, 'complete');
-    assert.equal(first.item.title, fields.title);
-    assert.equal(first.item.status, 'todo');
-    assert.equal(first.item.completedAt, undefined);
-    assert.deepEqual(first.item.createdBy, human);
-    assert.deepEqual(first.item.updatedBy, human);
+    expect(first.state).toBe('complete');
+    expect(first.item.title).toBe(fields.title);
+    expect(first.item.status).toBe('todo');
+    expect(first.item.completedAt).toBe(undefined);
+    expect(first.item.createdBy).toStrictEqual(human);
+    expect(first.item.updatedBy).toStrictEqual(human);
     const edited = await f.store.write(
       {
         id: 'mock-update',
@@ -67,16 +66,16 @@ test('shared work preserves immutable creation provenance and current progress w
       },
       bot,
     );
-    assert.equal(edited.item.revision, 2);
-    assert.equal(edited.item.progress, 'MOCK VERIFIED PROGRESS');
-    assert.deepEqual(edited.item.createdBy, human);
-    assert.deepEqual(edited.item.updatedBy, bot);
-    assert.equal(edited.item.description, fields.description);
-    assert.equal((await f.store.list({ filter: 'open' })).items.length, 1);
-    assert.equal((await f.store.status()).revision, 2);
+    expect(edited.item.revision).toBe(2);
+    expect(edited.item.progress).toBe('MOCK VERIFIED PROGRESS');
+    expect(edited.item.createdBy).toStrictEqual(human);
+    expect(edited.item.updatedBy).toStrictEqual(bot);
+    expect(edited.item.description).toBe(fields.description);
+    expect((await f.store.list({ filter: 'open' })).items.length).toBe(1);
+    expect((await f.store.status()).revision).toBe(2);
     edited.item.title = 'MOCK MUTATED REPLY';
-    assert.equal((await f.store.get(first.item.id)).title, fields.title);
-    assert.equal(Object.hasOwn(await f.store.get(first.item.id), 'runId'), false);
+    expect((await f.store.get(first.item.id)).title).toBe(fields.title);
+    expect(Object.hasOwn(await f.store.get(first.item.id), 'runId')).toBe(false);
   } finally {
     await f.close();
   }
@@ -86,7 +85,7 @@ test('completion and reopening have stable timestamps, and soft trash keeps exac
   const f = await fixture();
   try {
     const first = await f.store.write({ ...create(), value: { ...fields, status: 'done' } }, bot);
-    assert.equal(first.item.completedAt, first.item.createdAt);
+    expect(first.item.completedAt).toBe(first.item.createdAt);
     const changed = await f.store.write(
       {
         id: 'mock-done-edit',
@@ -97,7 +96,7 @@ test('completion and reopening have stable timestamps, and soft trash keeps exac
       },
       human,
     );
-    assert.equal(changed.item.completedAt, first.item.completedAt);
+    expect(changed.item.completedAt).toBe(first.item.completedAt);
     const reopened = await f.store.write(
       {
         id: 'mock-reopen',
@@ -108,7 +107,7 @@ test('completion and reopening have stable timestamps, and soft trash keeps exac
       },
       human,
     );
-    assert.equal(reopened.item.completedAt, undefined);
+    expect(reopened.item.completedAt).toBe(undefined);
     const done = await f.store.write(
       {
         id: 'mock-done',
@@ -119,7 +118,7 @@ test('completion and reopening have stable timestamps, and soft trash keeps exac
       },
       bot,
     );
-    assert.equal(done.item.completedAt, done.item.updatedAt);
+    expect(done.item.completedAt).toBe(done.item.updatedAt);
     const trashRequest = {
       id: 'mock-trash',
       item: first.item.id,
@@ -127,11 +126,11 @@ test('completion and reopening have stable timestamps, and soft trash keeps exac
       action: 'trash' as const,
     };
     const trashed = await f.store.write(trashRequest, human);
-    assert.equal(trashed.item.deleted, true);
-    assert.equal(trashed.item.description, 'MOCK EDITED DESCRIPTION');
-    assert.equal((await f.store.list()).items.length, 0);
-    assert.equal((await f.store.list({ filter: 'trash' })).items.length, 1);
-    await assert.rejects(
+    expect(trashed.item.deleted).toBe(true);
+    expect(trashed.item.description).toBe('MOCK EDITED DESCRIPTION');
+    expect((await f.store.list()).items.length).toBe(0);
+    expect((await f.store.list({ filter: 'trash' })).items.length).toBe(1);
+    await expect(
       f.store.write(
         {
           id: 'mock-trash-edit',
@@ -142,16 +141,15 @@ test('completion and reopening have stable timestamps, and soft trash keeps exac
         },
         bot,
       ),
-      /WORK_TRASHED/,
-    );
+    ).rejects.toThrowError(/WORK_TRASHED/);
     const restored = await f.store.write(
       { id: 'mock-restore', item: first.item.id, revision: 5, action: 'restore' },
       human,
     );
-    assert.equal(restored.item.deleted, false);
-    assert.equal(restored.item.status, 'done');
-    assert.equal(restored.item.completedAt, done.item.completedAt);
-    assert.deepEqual((await f.store.write(trashRequest, human)).item, restored.item);
+    expect(restored.item.deleted).toBe(false);
+    expect(restored.item.status).toBe('done');
+    expect(restored.item.completedAt).toBe(done.item.completedAt);
+    expect((await f.store.write(trashRequest, human)).item).toStrictEqual(restored.item);
   } finally {
     await f.close();
   }
@@ -161,7 +159,7 @@ test('accepted operations survive restart and return later state without overwri
   const f = await fixture();
   const input = create();
   try {
-    assert.deepEqual(await f.store.receipt(input, bot), {
+    expect(await f.store.receipt(input, bot)).toStrictEqual({
       state: 'unknown',
       request: input,
       actor: bot,
@@ -179,12 +177,12 @@ test('accepted operations survive restart and return later state without overwri
     );
     await f.reopen();
     for (const read of [await f.store.receipt(input, bot), await f.store.write(input, bot)]) {
-      assert.ok(read.state === 'complete');
-      assert.equal(read.acceptedRevision, 1);
-      assert.equal(read.acceptedAt, first.acceptedAt);
-      assert.deepEqual(read.item, edited.item);
+      expect.assert(read.state === 'complete');
+      expect(read.acceptedRevision).toBe(1);
+      expect(read.acceptedAt).toBe(first.acceptedAt);
+      expect(read.item).toStrictEqual(edited.item);
     }
-    assert.equal((await f.store.list({ filter: 'all' })).items.length, 1);
+    expect((await f.store.list({ filter: 'all' })).items.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -199,8 +197,8 @@ test('CAS writes serialize and caller mutations cannot alter a queued operation 
     input.value.title = 'MOCK LATE INPUT';
     by.bot = 'mock-other';
     const first = await pending;
-    assert.equal(first.item.title, fields.title);
-    assert.deepEqual(first.item.createdBy, bot);
+    expect(first.item.title).toBe(fields.title);
+    expect(first.item.createdBy).toStrictEqual(bot);
     const writes = await Promise.allSettled([
       f.store.write(
         {
@@ -223,18 +221,18 @@ test('CAS writes serialize and caller mutations cannot alter a queued operation 
         bot,
       ),
     ]);
-    assert.equal(writes.filter((row) => row.status === 'fulfilled').length, 1);
+    expect(writes.filter((row) => row.status === 'fulfilled').length).toBe(1);
     const rejected = writes.find((row) => row.status === 'rejected');
-    assert.ok(rejected?.status === 'rejected');
-    assert.match(String(rejected.reason), /WORK_CONFLICT/);
-    assert.equal((await f.store.get(input.item)).revision, 2);
+    expect.assert(rejected?.status === 'rejected');
+    expect(String(rejected.reason)).toMatch(/WORK_CONFLICT/);
+    expect((await f.store.get(input.item)).revision).toBe(2);
     const original = create();
     const read = f.store.receipt(original, { ...bot });
     original.value.title = 'MOCK LATE READ';
     const receipt = await read;
-    assert.ok(receipt.state === 'complete');
-    assert.ok(receipt.request.action === 'create');
-    assert.equal(receipt.request.value.title, fields.title);
+    expect.assert(receipt.state === 'complete');
+    expect.assert(receipt.request.action === 'create');
+    expect(receipt.request.value.title).toBe(fields.title);
   } finally {
     await f.close();
   }
@@ -245,15 +243,13 @@ test('operation identity binds actor and exact fields while equivalent patch key
   try {
     const input = create();
     await f.store.write(input, bot);
-    await assert.rejects(
+    await expect(
       f.store.write({ ...input, value: { ...fields, title: '合成不同请求' } }, bot),
-      /WORK_REQUEST_CONFLICT/,
-    );
-    await assert.rejects(f.store.receipt(input, human), /WORK_REQUEST_CONFLICT/);
-    await assert.rejects(
+    ).rejects.toThrowError(/WORK_REQUEST_CONFLICT/);
+    await expect(f.store.receipt(input, human)).rejects.toThrowError(/WORK_REQUEST_CONFLICT/);
+    await expect(
       f.store.write({ ...create(input.item, 'mock-occupied') }, human),
-      /WORK_ID_CONFLICT/,
-    );
+    ).rejects.toThrowError(/WORK_ID_CONFLICT/);
     const edit = {
       id: 'mock-ordered-patch',
       item: input.item,
@@ -266,8 +262,10 @@ test('operation identity binds actor and exact fields while equivalent patch key
       { ...edit, value: { description: '', title: '合成稳定补丁' } },
       human,
     );
-    assert.deepEqual(again, first);
-    assert.deepEqual(await f.store.receipt({ ...create('mock-missing', 'mock-unknown') }, human), {
+    expect(again).toStrictEqual(first);
+    expect(
+      await f.store.receipt({ ...create('mock-missing', 'mock-unknown') }, human),
+    ).toStrictEqual({
       state: 'unknown',
       request: create('mock-missing', 'mock-unknown'),
       actor: human,
@@ -292,14 +290,14 @@ test('no-op updates create an operation receipt without inventing edits, authors
       },
       bot,
     );
-    assert.deepEqual(noop.item, first.item);
-    assert.equal(noop.acceptedRevision, 1);
-    assert.equal((await f.store.status()).revision, current.revision);
+    expect(noop.item).toStrictEqual(first.item);
+    expect(noop.acceptedRevision).toBe(1);
+    expect((await f.store.status()).revision).toBe(current.revision);
     const restored = await f.store.write(
       { id: 'mock-already-restored', item: first.item.id, revision: 1, action: 'restore' },
       human,
     );
-    assert.deepEqual(restored.item, first.item);
+    expect(restored.item).toStrictEqual(first.item);
   } finally {
     await f.close();
   }
@@ -312,18 +310,18 @@ test('item, operation receipt and global revision commit atomically and cancella
     const controller = new AbortController();
     const cancelled = f.store.write(create(), human, controller.signal);
     controller.abort();
-    await assert.rejects(cancelled, /abort/i);
-    assert.equal((await f.store.status()).count, 0);
+    await expect(cancelled).rejects.toThrowError(/abort/i);
+    expect((await f.store.status()).count).toBe(0);
     db.exec(
       "CREATE TRIGGER mock_abort_work BEFORE INSERT ON work_operations BEGIN SELECT RAISE(ABORT,'MOCK_COMMIT_FAILURE'); END",
     );
-    await assert.rejects(f.store.write(create(), human), /MOCK_COMMIT_FAILURE/);
-    assert.equal((await f.store.status()).count, 0);
-    assert.equal((await f.store.status()).revision, 0);
-    assert.equal((await f.store.receipt(create(), human)).state, 'unknown');
+    await expect(f.store.write(create(), human)).rejects.toThrowError(/MOCK_COMMIT_FAILURE/);
+    expect((await f.store.status()).count).toBe(0);
+    expect((await f.store.status()).revision).toBe(0);
+    expect((await f.store.receipt(create(), human)).state).toBe('unknown');
     db.exec('DROP TRIGGER mock_abort_work');
     await f.store.write(create(), human);
-    assert.equal((await f.store.status()).count, 1);
+    expect((await f.store.status()).count).toBe(1);
   } finally {
     db.close();
     await f.close();
@@ -346,11 +344,11 @@ test('stable bounded pages retain old items through edits, literal search and th
         human,
       );
     const first = await f.store.list({ filter: 'all', limit: 50 });
-    assert.equal(first.items.length, 50);
-    assert.ok(first.nextBefore);
-    assert.equal(first.items[0].progress.length, 200);
-    assert.equal(first.items[0].progressTruncated, true);
-    assert.equal(Object.hasOwn(first.items[0], 'description'), false);
+    expect(first.items.length).toBe(50);
+    expect.assert(first.nextBefore);
+    expect(first.items[0].progress.length).toBe(200);
+    expect(first.items[0].progressTruncated).toBe(true);
+    expect(Object.hasOwn(first.items[0], 'description')).toBe(false);
     await f.store.write(
       {
         id: 'mock-edit-oldest',
@@ -368,21 +366,18 @@ test('stable bounded pages retain old items through edits, literal search and th
       ids.push(...next.items.map((row) => row.id));
       before = next.nextBefore;
     }
-    assert.equal(ids.length, 1000);
-    assert.equal(new Set(ids).size, 1000);
-    assert.ok(ids.includes('mock-item-0'));
-    assert.deepEqual(
-      (await f.store.list({ text: '_100%' })).items.map((row) => row.id),
-      ['mock-item-0'],
-    );
-    await assert.rejects(
+    expect(ids.length).toBe(1000);
+    expect(new Set(ids).size).toBe(1000);
+    expect.assert(ids.includes('mock-item-0'));
+    expect((await f.store.list({ text: '_100%' })).items.map((row) => row.id)).toStrictEqual([
+      'mock-item-0',
+    ]);
+    await expect(
       f.store.write(create('mock-over-limit', 'mock-over-operation'), human),
-      /WORK_LIMIT/,
-    );
-    assert.equal(
+    ).rejects.toThrowError(/WORK_LIMIT/);
+    expect(
       (await f.store.receipt(create('mock-over-limit', 'mock-over-operation'), human)).state,
-      'unknown',
-    );
+    ).toBe('unknown');
   } finally {
     await f.close();
   }
@@ -408,15 +403,13 @@ test('closed input validation refuses forged provenance, malformed queries and a
         value: { title: '合成名称' },
       },
     ])
-      await assert.rejects(f.store.write(input, human), /INVALID_WORK_WRITE/);
-    await assert.rejects(
-      f.store.write(create(), { kind: 'bot', bot: '../mock' }),
+      await expect(f.store.write(input, human)).rejects.toThrowError(/INVALID_WORK_WRITE/);
+    await expect(f.store.write(create(), { kind: 'bot', bot: '../mock' })).rejects.toThrowError(
       /INVALID_WORK_ACTOR/,
     );
-    await assert.rejects(
+    await expect(
       f.store.write(create(), { kind: 'human', bot: 'mock-forged' }),
-      /INVALID_WORK_ACTOR/,
-    );
+    ).rejects.toThrowError(/INVALID_WORK_ACTOR/);
     for (const query of [
       { limit: 0 },
       { limit: 51 },
@@ -425,8 +418,8 @@ test('closed input validation refuses forged provenance, malformed queries and a
       { filter: 'unknown' },
       { bot: 'mock-other' },
     ])
-      await assert.rejects(f.store.list(query), /INVALID_WORK_QUERY/);
-    await assert.rejects(
+      await expect(f.store.list(query)).rejects.toThrowError(/INVALID_WORK_QUERY/);
+    await expect(
       f.store.write(
         {
           id: 'mock-update',
@@ -437,9 +430,8 @@ test('closed input validation refuses forged provenance, malformed queries and a
         },
         human,
       ),
-      /WORK_NOT_FOUND/,
-    );
-    assert.equal((await f.store.status()).count, 0);
+    ).rejects.toThrowError(/WORK_NOT_FOUND/);
+    expect((await f.store.status()).count).toBe(0);
   } finally {
     await f.close();
   }
@@ -452,12 +444,12 @@ test('corrupt or linked storage is preserved and closed stores cannot admit new 
     const db = new DatabaseSync(f.file);
     db.prepare('UPDATE work_items SET status=? WHERE id=?').run('MOCK CORRUPT STATUS', 'mock-item');
     db.close();
-    await assert.rejects(f.store.get('mock-item'), /WORK_CORRUPT/);
+    await expect(f.store.get('mock-item')).rejects.toThrowError(/WORK_CORRUPT/);
     await f.reopen().then(
-      () => assert.fail('corrupt store admitted'),
+      () => expect.unreachable('corrupt store admitted'),
       () => {},
     );
-    assert.equal((await f.store.status()).available, false);
+    expect((await f.store.status()).available).toBe(false);
   } finally {
     await f.close();
   }
@@ -469,15 +461,15 @@ test('corrupt or linked storage is preserved and closed stores cannot admit new 
     await link(original, path.join(root, 'hard'));
     for (const name of ['link', 'hard']) {
       const store = new Work(path.join(root, name));
-      await assert.rejects(store.ready, /WORK_CORRUPT/);
+      await expect(store.ready).rejects.toThrowError(/WORK_CORRUPT/);
       await store.close();
     }
-    assert.equal(await readFile(original, 'utf8'), 'MOCK ORIGINAL BYTES');
-    assert.equal((await lstat(original)).nlink, 2);
+    expect(await readFile(original, 'utf8')).toBe('MOCK ORIGINAL BYTES');
+    expect((await lstat(original)).nlink).toBe(2);
     const closed = new Work(path.join(root, 'closed.sqlite'));
     await closed.ready;
     await closed.close();
-    await assert.rejects(closed.write(create(), human), /WORK_CLOSED/);
+    await expect(closed.write(create(), human)).rejects.toThrowError(/WORK_CLOSED/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -487,10 +479,14 @@ test('query filters and author/request shapes cannot be forged through arrays or
   const f = await fixture();
   try {
     for (const filter of [['all'], { toString: () => 'all' }])
-      await assert.rejects(f.store.list({ filter }), /INVALID_WORK_QUERY/);
-    await assert.rejects(f.store.write(Object.create(create()), human), /INVALID_WORK_WRITE/);
-    await assert.rejects(f.store.write(create(), Object.create(human)), /INVALID_WORK_ACTOR/);
-    assert.equal((await f.store.status()).count, 0);
+      await expect(f.store.list({ filter })).rejects.toThrowError(/INVALID_WORK_QUERY/);
+    await expect(f.store.write(Object.create(create()), human)).rejects.toThrowError(
+      /INVALID_WORK_WRITE/,
+    );
+    await expect(f.store.write(create(), Object.create(human))).rejects.toThrowError(
+      /INVALID_WORK_ACTOR/,
+    );
+    expect((await f.store.status()).count).toBe(0);
   } finally {
     await f.close();
   }
@@ -506,9 +502,9 @@ test('a malformed private receipt is corruption rather than a different user req
       'mock-create',
     );
     db.close();
-    await assert.rejects(f.store.receipt(create(), human), /WORK_CORRUPT/);
-    await assert.rejects(f.reopen(), /WORK_CORRUPT/);
-    assert.equal((await f.store.status()).available, false);
+    await expect(f.store.receipt(create(), human)).rejects.toThrowError(/WORK_CORRUPT/);
+    await expect(f.reopen()).rejects.toThrowError(/WORK_CORRUPT/);
+    expect((await f.store.status()).available).toBe(false);
   } finally {
     await f.close();
   }
@@ -521,11 +517,11 @@ test('an existing database cannot silently reset a missing global revision autho
     const db = new DatabaseSync(f.file);
     db.exec('DELETE FROM work_meta');
     db.close();
-    await assert.rejects(f.reopen(), /WORK_CORRUPT/);
+    await expect(f.reopen()).rejects.toThrowError(/WORK_CORRUPT/);
     const inspect = new DatabaseSync(f.file, { readOnly: true });
     try {
-      assert.equal(inspect.prepare('SELECT COUNT(*) AS count FROM work_items').get()!.count, 1);
-      assert.equal(inspect.prepare('SELECT COUNT(*) AS count FROM work_meta').get()!.count, 0);
+      expect(inspect.prepare('SELECT COUNT(*) AS count FROM work_items').get()!.count).toBe(1);
+      expect(inspect.prepare('SELECT COUNT(*) AS count FROM work_meta').get()!.count).toBe(0);
     } finally {
       inspect.close();
     }
@@ -540,7 +536,7 @@ test('loss of revision authority during service life cannot publish an untracked
   try {
     await f.store.write(create(), human);
     db.exec('DELETE FROM work_meta');
-    await assert.rejects(
+    await expect(
       f.store.write(
         {
           id: 'mock-untracked',
@@ -551,25 +547,26 @@ test('loss of revision authority during service life cannot publish an untracked
         },
         bot,
       ),
-      /WORK_CORRUPT/,
-    );
-    assert.equal(
-      db.prepare('SELECT status FROM work_items WHERE id=?').get('mock-item')!.status,
+    ).rejects.toThrowError(/WORK_CORRUPT/);
+    expect(db.prepare('SELECT status FROM work_items WHERE id=?').get('mock-item')!.status).toBe(
       'todo',
     );
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM work_operations').get()!.count, 1);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM work_operations').get()!.count).toBe(1);
   } finally {
     db.close();
     await f.close();
   }
 });
 
-test('a storage failure during initial schema creation leaves no partially published authority', async (t) => {
+test('a storage failure during initial schema creation leaves no partially published authority', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-work-init-'));
   const file = path.join(root, 'work.sqlite');
   const execute = DatabaseSync.prototype.exec;
   let injected = false;
-  t.mock.method(DatabaseSync.prototype, 'exec', function (this: DatabaseSync, sql: string) {
+  vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (
+    this: DatabaseSync,
+    sql: string,
+  ) {
     if (!injected && /CREATE TABLE(?: IF NOT EXISTS)? work_operations/.test(sql)) {
       injected = true;
       return execute.call(
@@ -584,28 +581,27 @@ test('a storage failure during initial schema creation leaves no partially publi
   });
   const failed = new Work(file);
   try {
-    await assert.rejects(failed.ready, /WORK_CORRUPT/);
+    await expect(failed.ready).rejects.toThrowError(/WORK_CORRUPT/);
     await failed.close();
-    assert.equal(injected, true);
+    expect(injected).toBe(true);
     const db = new DatabaseSync(file, { readOnly: true });
     try {
-      assert.deepEqual(
+      expect(
         db
           .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
           .all(),
-        [],
-      );
-      assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 0);
+      ).toStrictEqual([]);
+      expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(0);
     } finally {
       db.close();
     }
-    t.mock.restoreAll();
+    vi.restoreAllMocks();
     const recovered = new Work(file);
     await recovered.ready;
-    assert.equal((await recovered.status()).count, 0);
+    expect((await recovered.status()).count).toBe(0);
     await recovered.close();
   } finally {
-    t.mock.restoreAll();
+    vi.restoreAllMocks();
     await failed.close();
     await rm(root, { recursive: true, force: true });
   }

@@ -1,15 +1,14 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { EnvironmentImage } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { imageFile } from './image.js';
 
 test('fetches and caches only the requested Linux image without creating a VM', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-optional-image-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const packDirectory = path.join(root, 'pack'),
     dataRoot = path.join(root, 'private');
   await mkdir(packDirectory);
@@ -29,14 +28,13 @@ test('fetches and caches only the requested Linux image without creating a VM', 
     return new Response(bytes, { headers: { 'content-length': String(bytes.length) } });
   };
   const first = await imageFile({ packDirectory, dataRoot }, { image, fetcher });
-  assert.deepEqual(await readFile(first), bytes);
-  assert.equal(await imageFile({ packDirectory, dataRoot }, { image, fetcher }), first);
-  assert.equal(requests, 1);
-  await assert.rejects(lstat(path.join(dataRoot, 'execution')), { code: 'ENOENT' });
+  expect(await readFile(first)).toStrictEqual(bytes);
+  expect(await imageFile({ packDirectory, dataRoot }, { image, fetcher })).toBe(first);
+  expect(requests).toBe(1);
+  await expect(lstat(path.join(dataRoot, 'execution'))).rejects.toMatchObject({ code: 'ENOENT' });
   await writeFile(path.join(packDirectory, image.file), 'SYNTHETIC LEGACY BUNDLED IMAGE');
-  assert.equal(
-    await imageFile({ packDirectory, dataRoot }, { image, fetcher }),
+  expect(await imageFile({ packDirectory, dataRoot }, { image, fetcher })).toBe(
     path.join(packDirectory, image.file),
   );
-  assert.equal(requests, 1);
+  expect(requests).toBe(1);
 });

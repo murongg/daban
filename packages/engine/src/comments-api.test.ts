@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { isWorkCommentReceipt, managedProtocol } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { startPrototype } from './server.js';
 
@@ -57,10 +56,10 @@ test('Human comment HTTP closes routes and authorship without starting a model o
   const call = channel(f);
   try {
     await call('write', create);
-    assert.equal((await call('comment', request, { token: 'mock-denied' })).status, 403);
+    expect((await call('comment', request, { token: 'mock-denied' })).status).toBe(403);
     for (const action of ['comments', 'comment', 'comment-receipt']) {
-      assert.equal((await call(action, {}, { method: 'GET' })).status, 405);
-      assert.equal((await call(action, {}, { query: '?extra=1' })).status, 400);
+      expect((await call(action, {}, { method: 'GET' })).status).toBe(405);
+      expect((await call(action, {}, { query: '?extra=1' })).status).toBe(400);
     }
     for (const input of [
       { ...request, actor: { kind: 'bot', bot: 'mock-spoof' } },
@@ -68,26 +67,26 @@ test('Human comment HTTP closes routes and authorship without starting a model o
       { ...request, body: '  ' },
       { ...request, revision: 0 },
     ])
-      assert.equal((await call('comment', input)).status, 400);
-    assert.equal((await call('comments', { item: create.item, limit: 51 })).status, 400);
-    assert.equal((await call('comment-receipt', request)).value.state, 'unknown');
+      expect((await call('comment', input)).status).toBe(400);
+    expect((await call('comments', { item: create.item, limit: 51 })).status).toBe(400);
+    expect((await call('comment-receipt', request)).value.state).toBe('unknown');
     const reply = await call('comment', request);
-    assert.equal(reply.status, 200);
-    assert.ok(isWorkCommentReceipt(reply.value) && reply.value.state === 'complete');
-    assert.deepEqual(reply.value.actor, { kind: 'human' });
-    assert.equal(reply.value.comment.body, request.body);
+    expect(reply.status).toBe(200);
+    expect.assert(isWorkCommentReceipt(reply.value) && reply.value.state === 'complete');
+    expect(reply.value.actor).toStrictEqual({ kind: 'human' });
+    expect(reply.value.comment.body).toBe(request.body);
     const query = { item: create.item, limit: 1 };
     const list = await call('comments', query);
-    assert.equal(list.status, 200);
-    assert.deepEqual(list.value.query, query);
-    assert.equal(list.value.page.comments[0].id, request.id);
+    expect(list.status).toBe(200);
+    expect(list.value.query).toStrictEqual(query);
+    expect(list.value.page.comments[0].id).toBe(request.id);
     const state = await fetch(`${f.app.url}/api/state`, {
       headers: { 'x-prototype-token': f.app.token },
     }).then((r) => r.json());
-    assert.equal(state.clientProtocol, managedProtocol);
-    assert.ok(managedProtocol >= 38);
-    assert.equal(f.app.models?.jobs.size, 0);
-    assert.equal(state.computers.items.length, 0);
+    expect(state.clientProtocol).toBe(managedProtocol);
+    expect.assert(managedProtocol >= 38);
+    expect(f.app.models?.jobs.size).toBe(0);
+    expect(state.computers.items.length).toBe(0);
   } finally {
     await f.close();
   }
@@ -109,45 +108,42 @@ test('discussion HTTP receipt/retry keeps newer edits and trash after restart', 
     await f.reopen();
     for (const action of ['comment', 'comment-receipt']) {
       const result = (await call(action, request)).value;
-      assert.ok(isWorkCommentReceipt(result) && result.state === 'complete');
-      assert.equal(result.acceptedRevision, 2);
-      assert.equal(result.item.revision, 4);
-      assert.equal(result.item.description, 'MOCK NEWER');
-      assert.equal(result.item.deleted, true);
+      expect.assert(isWorkCommentReceipt(result) && result.state === 'complete');
+      expect(result.acceptedRevision).toBe(2);
+      expect(result.item.revision).toBe(4);
+      expect(result.item.description).toBe('MOCK NEWER');
+      expect(result.item.deleted).toBe(true);
     }
-    assert.equal((await call('comments', { item: create.item })).value.page.comments.length, 1);
-    assert.equal(
-      (await call('comment', { ...request, id: 'mock-new', revision: 4 })).value.error,
+    expect((await call('comments', { item: create.item })).value.page.comments.length).toBe(1);
+    expect((await call('comment', { ...request, id: 'mock-new', revision: 4 })).value.error).toBe(
       'WORK_TRASHED',
     );
   } finally {
     await f.close();
   }
 });
-test('recovery permits comment readers/receipts but fences writes at the actual queue effect', async (t) => {
+test('recovery permits comment readers/receipts but fences writes at the actual queue effect', async () => {
   const f = await fixture();
   const call = channel(f);
   try {
     await call('write', create);
     await call('comment', request);
-    assert.ok(f.app.recovery);
-    const admit = t.mock.method(f.app.recovery, 'admit', () => false);
-    const enter = t.mock.method(f.app.recovery, 'enter', () => {
+    expect.assert(f.app.recovery);
+    const admit = vi.spyOn(f.app.recovery, 'admit').mockImplementation(() => false);
+    const enter = vi.spyOn(f.app.recovery, 'enter').mockImplementation(() => {
       throw new Fault('RUNTIME_RECOVERY_PENDING');
     });
-    assert.equal((await call('comments', { item: create.item })).status, 200);
-    assert.equal((await call('comment-receipt', request)).value.state, 'complete');
-    assert.equal(enter.mock.callCount(), 0);
-    assert.equal(
+    expect((await call('comments', { item: create.item })).status).toBe(200);
+    expect((await call('comment-receipt', request)).value.state).toBe('complete');
+    expect(enter.mock.calls.length).toBe(0);
+    expect(
       (await call('comment', { ...request, id: 'mock-blocked', revision: 2 })).value.error,
-      'RUNTIME_RECOVERY_PENDING',
-    );
-    await assert.rejects(
+    ).toBe('RUNTIME_RECOVERY_PENDING');
+    await expect(
       f.app.models!.work.comment({ ...request, id: 'mock-direct', revision: 2 }, { kind: 'human' }),
-      /RUNTIME_RECOVERY_PENDING/,
-    );
-    admit.mock.restore();
-    enter.mock.restore();
+    ).rejects.toThrowError(/RUNTIME_RECOVERY_PENDING/);
+    admit.mockRestore();
+    enter.mockRestore();
     const pending = f.app.models!.work.comment(
       { ...request, id: 'mock-race', revision: 2 },
       { kind: 'human' },
@@ -162,14 +158,14 @@ test('recovery permits comment readers/receipts but fences writes at the actual 
       },
       { kind: 'human' },
     );
-    const fence = t.mock.method(f.app.recovery, 'admit', () => false);
+    const fence = vi.spyOn(f.app.recovery, 'admit').mockImplementation(() => false);
     await Promise.all([
-      assert.rejects(pending, /RUNTIME_RECOVERY_PENDING/),
-      assert.rejects(edit, /RUNTIME_RECOVERY_PENDING/),
+      expect(pending).rejects.toThrowError(/RUNTIME_RECOVERY_PENDING/),
+      expect(edit).rejects.toThrowError(/RUNTIME_RECOVERY_PENDING/),
     ]);
-    assert.equal((await f.app.models!.work.comment(request, { kind: 'human' })).state, 'complete');
-    fence.mock.restore();
-    assert.equal((await call('comments', { item: create.item })).value.page.comments.length, 1);
+    expect((await f.app.models!.work.comment(request, { kind: 'human' })).state).toBe('complete');
+    fence.mockRestore();
+    expect((await call('comments', { item: create.item })).value.page.comments.length).toBe(1);
   } finally {
     await f.close();
   }
@@ -181,17 +177,15 @@ test('queued Bot authorship checks existing active profile while Human readers a
   try {
     await call('write', create);
     const models = f.app.models!;
-    await assert.rejects(
-      models.work.comment(request, { kind: 'bot', bot }),
+    await expect(models.work.comment(request, { kind: 'bot', bot })).rejects.toThrowError(
       /BOT_PROFILE_NOT_FOUND/,
     );
-    await assert.rejects(
+    await expect(
       models.work.write(
         { ...create, id: 'mock-bot-create', item: 'mock-bot-work' },
         { kind: 'bot', bot },
       ),
-      /BOT_PROFILE_NOT_FOUND/,
-    );
+    ).rejects.toThrowError(/BOT_PROFILE_NOT_FOUND/);
     await models.profiles.register({
       id: bot,
       name: '合成评论作者',
@@ -201,12 +195,12 @@ test('queued Bot authorship checks existing active profile while Human readers a
     });
     const pending = models.work.comment(request, { kind: 'bot', bot });
     const release = models.profiles.reserveLifecycle(bot);
-    await assert.rejects(pending, /BOT_CHANGING/);
+    await expect(pending).rejects.toThrowError(/BOT_CHANGING/);
     release();
     const saved = await models.work.comment(request, { kind: 'bot', bot });
-    assert.equal(saved.comment.createdBy.kind, 'bot');
+    expect(saved.comment.createdBy.kind).toBe('bot');
     const profile = await models.profiles.get(bot);
-    assert.ok(profile);
+    expect.assert(profile);
     const lease = models.profiles.reserveLifecycle(bot);
     await models.profiles.beginLifecycle({
       id: 'mock-archive-author',
@@ -216,16 +210,14 @@ test('queued Bot authorship checks existing active profile while Human readers a
     });
     await models.profiles.finishLifecycle(bot, 'mock-archive-author');
     lease();
-    await assert.rejects(
+    await expect(
       models.work.comment({ ...request, id: 'mock-archived', revision: 2 }, { kind: 'bot', bot }),
-      /BOT_ARCHIVED/,
-    );
-    assert.equal(
-      (await models.work.commentReceipt(request, { kind: 'bot', bot })).state,
+    ).rejects.toThrowError(/BOT_ARCHIVED/);
+    expect((await models.work.commentReceipt(request, { kind: 'bot', bot })).state).toBe(
       'complete',
     );
-    assert.equal((await models.work.comment(request, { kind: 'bot', bot })).state, 'complete');
-    assert.equal((await call('comments', { item: create.item })).status, 200);
+    expect((await models.work.comment(request, { kind: 'bot', bot })).state).toBe('complete');
+    expect((await call('comments', { item: create.item })).status).toBe(200);
   } finally {
     await f.close();
   }
@@ -243,10 +235,10 @@ test('unavailable shared Work store retains ordinary Agent startup', async () =>
     const state = await fetch(`${app.url}/api/state`, {
       headers: { 'x-prototype-token': app.token },
     }).then((r) => r.json());
-    assert.equal(state.mode, 'agent');
-    assert.equal(state.work.available, false);
-    assert.equal(state.notes.available, true);
-    assert.ok(app.models);
+    expect(state.mode).toBe('agent');
+    expect(state.work.available).toBe(false);
+    expect(state.notes.available).toBe(true);
+    expect.assert(app.models);
     await app.models.profiles.register({
       id: 'mock-corrupt-work-bot',
       name: '合成独立 Agent',
@@ -254,15 +246,15 @@ test('unavailable shared Work store retains ordinary Agent startup', async () =>
       memory: '',
       color: 'mint',
     });
-    assert.equal((await app.models.profiles.list()).length, 1);
+    expect((await app.models.profiles.list()).length).toBe(1);
     const response = await fetch(`${app.url}/api/work/comments`, {
       method: 'POST',
       headers: { 'x-prototype-token': app.token, 'content-type': 'application/json' },
       body: JSON.stringify({ item: create.item }),
     });
-    assert.equal(response.status, 409);
-    assert.equal(await readFile(path.join(root, 'model/work.sqlite'), 'utf8'), 'MOCK CORRUPT DATA');
-    assert.equal(app.models.jobs.size, 0);
+    expect(response.status).toBe(409);
+    expect(await readFile(path.join(root, 'model/work.sqlite'), 'utf8')).toBe('MOCK CORRUPT DATA');
+    expect(app.models.jobs.size).toBe(0);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

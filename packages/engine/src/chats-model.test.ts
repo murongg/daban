@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -54,7 +53,7 @@ test('new private context fences stale sends/retries, retains records, and neith
     const old = models.status().bots.a.runId!;
     await models.start('a', { requestId: 'mock-before-2', prompt: 'SYNTHETIC CONTINUE' });
     await models.jobs.get('a')!.done;
-    assert.deepEqual(resumed, ['mock-session-1']);
+    expect(resumed).toStrictEqual(['mock-session-1']);
     await models.start(
       'a',
       { requestId: 'mock-group-before', prompt: 'SYNTHETIC GROUP' },
@@ -62,60 +61,62 @@ test('new private context fences stale sends/retries, retains records, and neith
     );
     await models.jobs.get('a')!.done;
     await models.chats.renew({ id: 'mock-new-context', bot: 'a', revision: 0 });
-    assert.equal(models.status().bots.a.history.length, 0);
+    expect(models.status().bots.a.history.length).toBe(0);
     const oldPage = await models.chatHistory('a', 0);
-    assert.equal(oldPage.items.length, 2);
-    assert.equal(oldPage.items[0].prompt, original.prompt);
-    await assert.rejects(models.start('a', { requestId: 'mock-late', prompt: 'SYNTHETIC LATE' }), {
+    expect(oldPage.items.length).toBe(2);
+    expect(oldPage.items[0].prompt).toBe(original.prompt);
+    await expect(
+      models.start('a', { requestId: 'mock-late', prompt: 'SYNTHETIC LATE' }),
+    ).rejects.toMatchObject({
       code: 'CHAT_REVISION_REQUIRED',
     });
-    await assert.rejects(
+    await expect(
       models.start('a', { requestId: 'mock-late-0', prompt: 'SYNTHETIC LATE', chatRevision: 0 }),
-      { code: 'CHAT_CONFLICT' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'CHAT_CONFLICT' });
+    await expect(
       models.start('a', {
         requestId: 'mock-old-retry',
         prompt: 'SYNTHETIC RETRY',
         retryOf: old,
         chatRevision: 1,
       }),
-      { code: 'INVALID_RETRY' },
-    );
-    assert.equal((await models.start('a', original)).runId, old);
+    ).rejects.toMatchObject({ code: 'INVALID_RETRY' });
+    expect((await models.start('a', original)).runId).toBe(old);
     await models.start('a', {
       requestId: 'mock-after',
       prompt: 'SYNTHETIC FRESH',
       chatRevision: 1,
     });
     await models.jobs.get('a')!.done;
-    assert.equal(resumed.length, 1);
-    assert.ok(!prompts.at(-1)!.includes(original.prompt));
-    assert.equal(models.status().bots.a.history.length, 1);
-    assert.equal((await models.journal.all('a')).filter((row) => !row.conversationId).length, 3);
+    expect(resumed.length).toBe(1);
+    expect.assert(!prompts.at(-1)!.includes(original.prompt));
+    expect(models.status().bots.a.history.length).toBe(1);
+    expect((await models.journal.all('a')).filter((row) => !row.conversationId).length).toBe(3);
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
-    assert.equal(models.status().bots.a.phase, 'completed');
-    assert.equal(models.status().bots.a.chatRevision, 1);
+    expect(models.status().bots.a.phase).toBe('completed');
+    expect(models.status().bots.a.chatRevision).toBe(1);
     await models.start('a', {
       requestId: 'mock-after-restart',
       prompt: 'SYNTHETIC FRESH CONTINUE',
       chatRevision: 1,
     });
     await models.jobs.get('a')!.done;
-    assert.deepEqual(resumed, ['mock-session-1', 'mock-session-3']);
+    expect(resumed).toStrictEqual(['mock-session-1', 'mock-session-3']);
     await models.start(
       'a',
       { requestId: 'mock-group-after', prompt: 'SYNTHETIC GROUP CONTINUE' },
       { id: 'mock-group', context: 'SYNTHETIC GROUP CONTEXT' },
     );
     await models.jobs.get('a')!.done;
-    assert.equal(resumed.at(-1), 'mock-session-2');
-    assert.equal(models.chats.current('b').revision, 0);
+    expect(resumed.at(-1)).toBe('mock-session-2');
+    expect(models.chats.current('b').revision).toBe(0);
     hold();
     await models.start('b', { requestId: 'mock-busy-private', prompt: 'SYNTHETIC-HOLD-47' });
-    await assert.rejects(models.chats.renew({ id: 'mock-busy-boundary', bot: 'b', revision: 0 }), {
+    await expect(
+      models.chats.renew({ id: 'mock-busy-boundary', bot: 'b', revision: 0 }),
+    ).rejects.toMatchObject({
       code: 'CHAT_BUSY',
     });
     release();
@@ -137,29 +138,28 @@ test('new private context fences stale sends/retries, retains records, and neith
     let before: string | undefined;
     for (let pages = 0; pages < 24; pages++) {
       const page = await models.chatHistory('mock-reader', 0, before);
-      assert.ok(Buffer.byteLength(JSON.stringify(page)) < 1024 * 1024 + 1024);
+      expect.assert(Buffer.byteLength(JSON.stringify(page)) < 1024 * 1024 + 1024);
       for (const item of page.items) {
-        assert.ok(!seen.has(item.runId));
+        expect.assert(!seen.has(item.runId));
         seen.add(item.runId);
-        assert.equal(item.result, '合成'.repeat(32000));
+        expect(item.result).toBe('合成'.repeat(32000));
       }
       if (!page.nextBefore) break;
-      assert.notEqual(page.nextBefore, before);
+      expect(page.nextBefore).not.toBe(before);
       before = page.nextBefore;
     }
-    assert.equal(seen.size, 23);
+    expect(seen.size).toBe(23);
     hold();
     await models.start(
       'b',
       { requestId: 'mock-busy-group', prompt: 'SYNTHETIC-HOLD-47' },
       { id: 'mock-other-group', context: 'SYNTHETIC GROUP' },
     );
-    assert.equal(
+    expect(
       (await models.chats.renew({ id: 'mock-group-independent', bot: 'b', revision: 0 })).chat
         .revision,
-      1,
-    );
-    assert.equal(models.jobs.get('b')!.running, true);
+    ).toBe(1);
+    expect(models.jobs.get('b')!.running).toBe(true);
     release();
     await models.jobs.get('b')!.done;
   } finally {

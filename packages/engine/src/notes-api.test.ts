@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { isNoteItem, isNoteReceipt, managedProtocol } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { startPrototype } from './server.js';
 
@@ -71,15 +70,14 @@ test('notes HTTP closes routes, owns human authorship and keeps Bot data and rec
     const advertised = await (
       await fetch(`${f.app.url}/api/state`, { headers: { 'x-prototype-token': f.app.token } })
     ).json();
-    assert.equal(advertised.clientProtocol, managedProtocol);
-    assert.deepEqual(advertised.notes, { available: true });
-    assert.equal(
-      (await call('write', { bot: alpha, request }, { token: 'mock-denied' })).status,
+    expect(advertised.clientProtocol).toBe(managedProtocol);
+    expect(advertised.notes).toStrictEqual({ available: true });
+    expect((await call('write', { bot: alpha, request }, { token: 'mock-denied' })).status).toBe(
       403,
     );
     for (const action of ['status', 'list', 'read', 'write', 'receipt']) {
-      assert.equal((await call(action, {}, { method: 'GET' })).status, 405);
-      assert.equal((await call(action, {}, { query: '?extra=1' })).status, 400);
+      expect((await call(action, {}, { method: 'GET' })).status).toBe(405);
+      expect((await call(action, {}, { query: '?extra=1' })).status).toBe(400);
     }
     for (const input of [
       { bot: alpha, request, actor: { kind: 'bot', bot: beta } },
@@ -87,41 +85,39 @@ test('notes HTTP closes routes, owns human authorship and keeps Bot data and rec
       { bot: alpha, request: { ...request, bot: beta } },
       { bot: alpha, request: { ...request, value: { ...request.value, createdBy: human } } },
     ])
-      assert.equal((await call('write', input)).status, 400);
-    assert.equal((await call('list', { bot: alpha, query: { filter: ['active'] } })).status, 400);
-    assert.equal((await call('status', { bot: 'mock-unknown' })).status, 404);
+      expect((await call('write', input)).status).toBe(400);
+    expect((await call('list', { bot: alpha, query: { filter: ['active'] } })).status).toBe(400);
+    expect((await call('status', { bot: 'mock-unknown' })).status).toBe(404);
     const saved = await call('write', { bot: alpha, request });
-    assert.equal(saved.status, 200);
-    assert.ok(isNoteReceipt(saved.value) && saved.value.state === 'complete');
-    assert.equal(saved.value.bot, alpha);
-    assert.deepEqual(saved.value.item.createdBy, human);
-    assert.deepEqual(
-      (await call('read', { bot: alpha, id: request.note })).value,
+    expect(saved.status).toBe(200);
+    expect.assert(isNoteReceipt(saved.value) && saved.value.state === 'complete');
+    expect(saved.value.bot).toBe(alpha);
+    expect(saved.value.item.createdBy).toStrictEqual(human);
+    expect((await call('read', { bot: alpha, id: request.note })).value).toStrictEqual(
       saved.value.item,
     );
-    assert.equal(
-      (await call('read', { bot: beta, id: request.note })).value.error,
+    expect((await call('read', { bot: beta, id: request.note })).value.error).toBe(
       'NOTE_NOT_FOUND',
     );
-    assert.deepEqual((await call('list', { bot: beta, query: {} })).value.page.items, []);
-    assert.deepEqual((await call('receipt', { bot: beta, request })).value, {
+    expect((await call('list', { bot: beta, query: {} })).value.page.items).toStrictEqual([]);
+    expect((await call('receipt', { bot: beta, request })).value).toStrictEqual({
       state: 'unknown',
       bot: beta,
       request,
       actor: human,
     });
     const query = { filter: 'active', limit: 1 };
-    assert.deepEqual((await call('list', { bot: alpha, query })).value, {
+    expect((await call('list', { bot: alpha, query })).value).toStrictEqual({
       bot: alpha,
       query,
       page: { bot: alpha, revision: 1, items: [{ ...saved.value.item, bodyTruncated: false }] },
     });
-    assert.deepEqual((await call('status', { bot: alpha })).value, {
+    expect((await call('status', { bot: alpha })).value).toStrictEqual({
       bot: alpha,
       status: { available: true, revision: 1, count: 1 },
     });
-    assert.equal(f.app.models!.jobs.size, 0);
-    assert.deepEqual(f.app.runtime.status().items, []);
+    expect(f.app.models!.jobs.size).toBe(0);
+    expect(f.app.runtime.status().items).toStrictEqual([]);
   } finally {
     await f.close();
   }
@@ -139,12 +135,11 @@ test('HTTP note retries survive restart, conflict and later trash/restore withou
       revision: 1,
       value: { body: 'MOCK LATER', status: 'parked' },
     };
-    assert.equal((await call('write', { bot: alpha, request: update })).status, 200);
-    assert.equal(
+    expect((await call('write', { bot: alpha, request: update })).status).toBe(200);
+    expect(
       (await call('write', { bot: alpha, request: { ...update, id: 'mock-conflict' } })).value
         .error,
-      'NOTE_CONFLICT',
-    );
+    ).toBe('NOTE_CONFLICT');
     const trashed = (
       await call('write', {
         bot: alpha,
@@ -155,9 +150,9 @@ test('HTTP note retries survive restart, conflict and later trash/restore withou
     call = channel(f.app);
     for (const action of ['write', 'receipt']) {
       const replay = (await call(action, { bot: alpha, request })).value;
-      assert.ok(isNoteReceipt(replay) && replay.state === 'complete');
-      assert.equal(replay.acceptedRevision, 1);
-      assert.deepEqual(replay.item, trashed.item);
+      expect.assert(isNoteReceipt(replay) && replay.state === 'complete');
+      expect(replay.acceptedRevision).toBe(1);
+      expect(replay.item).toStrictEqual(trashed.item);
     }
     const restored = (
       await call('write', {
@@ -165,49 +160,47 @@ test('HTTP note retries survive restart, conflict and later trash/restore withou
         request: { id: 'mock-restore', note: request.note, action: 'restore', revision: 3 },
       })
     ).value;
-    assert.equal(restored.item.body, 'MOCK LATER');
-    assert.equal(restored.item.status, 'parked');
-    assert.equal(restored.item.deleted, false);
+    expect(restored.item.body).toBe('MOCK LATER');
+    expect(restored.item.status).toBe('parked');
+    expect(restored.item.deleted).toBe(false);
   } finally {
     await f.close();
   }
 });
 
-test('recovery and archive allow note readers and receipts but fence queued writes at the owner', async (t) => {
+test('recovery and archive allow note readers and receipts but fence queued writes at the owner', async () => {
   const f = await fixture();
   try {
     const call = channel(f.app),
       models = f.app.models!;
     await call('write', { bot: alpha, request });
-    assert.ok(f.app.recovery);
-    const admission = t.mock.method(f.app.recovery, 'admit', () => false);
-    const enter = t.mock.method(f.app.recovery, 'enter', () => {
+    expect.assert(f.app.recovery);
+    const admission = vi.spyOn(f.app.recovery, 'admit').mockImplementation(() => false);
+    const enter = vi.spyOn(f.app.recovery, 'enter').mockImplementation(() => {
       throw new Fault('RUNTIME_RECOVERY_PENDING');
     });
-    assert.equal((await call('status', { bot: alpha })).status, 200);
-    assert.equal((await call('list', { bot: alpha, query: {} })).status, 200);
-    assert.ok(isNoteItem((await call('read', { bot: alpha, id: request.note })).value));
-    assert.equal((await call('receipt', { bot: alpha, request })).value.state, 'complete');
-    assert.equal(enter.mock.callCount(), 0);
-    assert.equal(
+    expect((await call('status', { bot: alpha })).status).toBe(200);
+    expect((await call('list', { bot: alpha, query: {} })).status).toBe(200);
+    expect.assert(isNoteItem((await call('read', { bot: alpha, id: request.note })).value));
+    expect((await call('receipt', { bot: alpha, request })).value.state).toBe('complete');
+    expect(enter.mock.calls.length).toBe(0);
+    expect(
       (
         await call('write', {
           bot: alpha,
           request: { ...request, id: 'mock-blocked', note: 'mock-blocked' },
         })
       ).value.error,
-      'RUNTIME_RECOVERY_PENDING',
-    );
-    await assert.rejects(
+    ).toBe('RUNTIME_RECOVERY_PENDING');
+    await expect(
       models.notes.write(
         alpha,
         { ...request, id: 'mock-queued-recovery', note: 'mock-queued-recovery' },
         human,
       ),
-      /RUNTIME_RECOVERY_PENDING/,
-    );
-    admission.mock.restore();
-    enter.mock.restore();
+    ).rejects.toThrowError(/RUNTIME_RECOVERY_PENDING/);
+    admission.mockRestore();
+    enter.mockRestore();
     const pending = models.notes.write(
       alpha,
       {
@@ -220,10 +213,10 @@ test('recovery and archive allow note readers and receipts but fence queued writ
       human,
     );
     const release = models.profiles.reserveLifecycle(alpha);
-    await assert.rejects(pending, /BOT_CHANGING/);
+    await expect(pending).rejects.toThrowError(/BOT_CHANGING/);
     release();
     const profile = await models.profiles.get(alpha);
-    assert.ok(profile);
+    expect.assert(profile);
     const archivedLease = models.profiles.reserveLifecycle(alpha);
     await models.profiles.beginLifecycle({
       id: 'mock-archive',
@@ -231,31 +224,28 @@ test('recovery and archive allow note readers and receipts but fence queued writ
       revision: profile.revision,
       action: 'archive',
     });
-    assert.equal((await call('read', { bot: alpha, id: request.note })).status, 200);
-    assert.equal((await call('receipt', { bot: alpha, request })).value.state, 'complete');
-    assert.equal(
+    expect((await call('read', { bot: alpha, id: request.note })).status).toBe(200);
+    expect((await call('receipt', { bot: alpha, request })).value.state).toBe('complete');
+    expect(
       (
         await call('write', {
           bot: alpha,
           request: { ...request, id: 'mock-archive-blocked', note: 'mock-archive-blocked' },
         })
       ).value.error,
-      'BOT_CHANGING',
-    );
+    ).toBe('BOT_CHANGING');
     await models.profiles.finishLifecycle(alpha, 'mock-archive');
     archivedLease();
-    assert.equal(
+    expect(
       (
         await call('write', {
           bot: alpha,
           request: { ...request, id: 'mock-after-archive', note: 'mock-after-archive' },
         })
       ).value.error,
-      'BOT_ARCHIVED',
-    );
-    assert.equal((await call('status', { bot: beta })).value.status.count, 0);
-    await assert.rejects(
-      models.notes.write('mock-unknown', request, human),
+    ).toBe('BOT_ARCHIVED');
+    expect((await call('status', { bot: beta })).value.status.count).toBe(0);
+    await expect(models.notes.write('mock-unknown', request, human)).rejects.toThrowError(
       /BOT_PROFILE_NOT_FOUND/,
     );
   } finally {
@@ -278,9 +268,9 @@ test('a corrupt optional notes store leaves ordinary Agent and existing storage 
     const state = await (
       await fetch(`${app.url}/api/state`, { headers: { 'x-prototype-token': app.token } })
     ).json();
-    assert.deepEqual(state.notes, { available: false, error: 'NOTES_CORRUPT' });
-    assert.equal(state.mode, 'agent');
-    assert.equal(state.work.available, true);
+    expect(state.notes).toStrictEqual({ available: false, error: 'NOTES_CORRUPT' });
+    expect(state.mode).toBe('agent');
+    expect(state.work.available).toBe(true);
     await app.models!.profiles.register({
       id: alpha,
       name: 'MOCK',
@@ -288,29 +278,28 @@ test('a corrupt optional notes store leaves ordinary Agent and existing storage 
       memory: '',
       color: 'mint',
     });
-    assert.equal(
-      (await channel(app)('list', { bot: alpha, query: {} })).value.error,
+    expect((await channel(app)('list', { bot: alpha, query: {} })).value.error).toBe(
       'NOTES_CORRUPT',
     );
-    assert.deepEqual(await readFile(file), bytes);
+    expect(await readFile(file)).toStrictEqual(bytes);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('shutdown closes notes even when another resource owner fails', async (t) => {
+test('shutdown closes notes even when another resource owner fails', async () => {
   const f = await fixture(),
     models = f.app.models!;
   const close = models.work.close.bind(models.work);
-  t.mock.method(models.work, 'close', async () => {
+  vi.spyOn(models.work, 'close').mockImplementation(async () => {
     await close();
     throw new Fault('MOCK_CLOSE_FAILURE');
   });
   try {
-    assert.deepEqual(await models.notes.availability(), { available: true });
-    await assert.rejects(f.app.close(), /MOCK_CLOSE_FAILURE/);
-    assert.deepEqual(await models.notes.availability(), {
+    expect(await models.notes.availability()).toStrictEqual({ available: true });
+    await expect(f.app.close()).rejects.toThrowError(/MOCK_CLOSE_FAILURE/);
+    expect(await models.notes.availability()).toStrictEqual({
       available: false,
       error: 'NOTES_CLOSED',
     });

@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
 import { HistoryTools } from './history.js';
@@ -41,9 +40,9 @@ interface Read {
   inputNames?: string[];
 }
 function value<T>(result: ToolResult): T {
-  assert.equal(result.isError, undefined, JSON.stringify(result));
+  expect(result.isError, JSON.stringify(result)).toBe(undefined);
   const item = result.content[0];
-  assert.equal(item.type, 'text');
+  expect(item.type).toBe('text');
   return JSON.parse(item.type === 'text' ? item.text : '') as T;
 }
 const record = (i: number): TaskRecord => ({
@@ -104,19 +103,13 @@ test('tool-output read-back is discoverable, Unicode-paged and redacted before s
       runId: task.runId,
       limit: 1,
     })) as { results: { seq: number }[]; nextAfter: number };
-    assert.deepEqual(
-      first.results.map((item) => item.seq),
-      [1],
-    );
-    assert.equal(first.nextAfter, 1);
+    expect(first.results.map((item) => item.seq)).toStrictEqual([1]);
+    expect(first.nextAfter).toBe(1);
     const second = (await history.invoke(run, 'bot_tool_result_read', {
       runId: task.runId,
       after: first.nextAfter,
     })) as { results: { seq: number }[] };
-    assert.deepEqual(
-      second.results.map((item) => item.seq),
-      [2],
-    );
+    expect(second.results.map((item) => item.seq)).toStrictEqual([2]);
     let offset = 0,
       joined = '';
     for (let count = 0; count < 30; count++) {
@@ -126,31 +119,29 @@ test('tool-output read-back is discoverable, Unicode-paged and redacted before s
         offset,
         limit: 2000,
       })) as { content: string; nextOffset?: number };
-      assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 6000);
+      expect.assert(Buffer.byteLength(JSON.stringify(page)) <= 6000);
       joined += page.content;
       if (page.nextOffset === undefined) break;
-      assert.ok(page.nextOffset > offset);
+      expect.assert(page.nextOffset > offset);
       offset = page.nextOffset;
     }
-    assert.equal(joined, body.replaceAll(secret, '[redacted]'));
+    expect(joined).toBe(body.replaceAll(secret, '[redacted]'));
     const found = (await history.invoke(run, 'bot_tool_result_read', {
       runId: task.runId,
       seq: 1,
       query: 'needle[7].*',
       limit: 200,
     })) as { found: boolean; content: string };
-    assert.equal(found.found, true);
-    assert.match(found.content, /needle\[7\]\.\*/);
-    await assert.rejects(
+    expect(found.found).toBe(true);
+    expect(found.content).toMatch(/needle\[7\]\.\*/);
+    await expect(
       history.invoke({ ...run, conversationId: 'mock-group' }, 'bot_tool_result_read', {
         runId: task.runId,
       }),
-      { code: 'HISTORY_NOT_FOUND' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'HISTORY_NOT_FOUND' });
+    await expect(
       history.invoke(run, 'bot_tool_result_read', { runId: task.runId, seq: 3 }),
-      { code: 'HISTORY_NOT_FOUND' },
-    );
+    ).rejects.toMatchObject({ code: 'HISTORY_NOT_FOUND' });
     const projected = projectTranscript(
       {
         method: 'session.event',
@@ -174,7 +165,7 @@ test('tool-output read-back is discoverable, Unicode-paged and redacted before s
       (value) => value,
       true,
     );
-    assert.equal(projected, undefined);
+    expect(projected).toBe(undefined);
   } finally {
     await transcripts.close();
     await rm(root, { recursive: true, force: true });
@@ -206,7 +197,7 @@ test('tool-output cursors can reach the end of an already supported multi-megaby
       'bot_tool_result_read',
       { runId: task.runId, seq: 1, offset: 2100000, limit: 100 },
     )) as { content: string };
-    assert.equal(page.content, 'SYNTHETIC EXACT LARGE END');
+    expect(page.content).toBe('SYNTHETIC EXACT LARGE END');
   } finally {
     await transcripts.close();
     await rm(root, { recursive: true, force: true });
@@ -231,14 +222,15 @@ test('history search and exact reads stay inside the executing conversation, inc
       abort: new AbortController(),
     };
     const found = await history.invoke(run, 'bot_history_search', {});
-    assert.deepEqual(
-      (found as Search).matches.map((item) => item.runId),
-      [record(2).runId],
-    );
-    await assert.rejects(history.invoke(run, 'bot_history_read', { runId: record(1).runId }), {
+    expect((found as Search).matches.map((item) => item.runId)).toStrictEqual([record(2).runId]);
+    await expect(
+      history.invoke(run, 'bot_history_read', { runId: record(1).runId }),
+    ).rejects.toMatchObject({
       code: 'HISTORY_NOT_FOUND',
     });
-    await assert.rejects(history.invoke(run, 'bot_history_read', { runId: record(3).runId }), {
+    await expect(
+      history.invoke(run, 'bot_history_read', { runId: record(3).runId }),
+    ).rejects.toMatchObject({
       code: 'HISTORY_NOT_FOUND',
     });
     const direct = await history.invoke(
@@ -246,10 +238,7 @@ test('history search and exact reads stay inside the executing conversation, inc
       'bot_history_search',
       {},
     );
-    assert.deepEqual(
-      (direct as Search).matches.map((item) => item.runId),
-      [record(1).runId],
-    );
+    expect((direct as Search).matches.map((item) => item.runId)).toStrictEqual([record(1).runId]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -322,13 +311,13 @@ test('history tools retrieve older committed records with scoped cursors, time f
       redact: (text) => text.replaceAll('synthetic-private-key', '[redacted]'),
     };
     const found = value<Search>(await tools.invoke(run, 'bot_history_search', { query: 'needle' }));
-    assert.equal(found.untrusted, true);
-    assert.equal(found.matches.length, 1);
-    assert.equal(found.matches[0].runId, 'mock-history-0000');
-    assert.equal(found.matches[0].preview.field, 'result');
-    assert.equal(found.matches[0].preview.truncated, true);
-    assert.equal(found.matches[0].fileCount, 1);
-    assert.ok(found.unreadable > 0);
+    expect(found.untrusted).toBe(true);
+    expect(found.matches.length).toBe(1);
+    expect(found.matches[0].runId).toBe('mock-history-0000');
+    expect(found.matches[0].preview.field).toBe('result');
+    expect(found.matches[0].preview.truncated).toBe(true);
+    expect(found.matches[0].fileCount).toBe(1);
+    expect.assert(found.unreadable > 0);
     const body = value<Read>(
       await tools.invoke(run, 'bot_history_read', {
         runId: found.matches[0].runId,
@@ -337,8 +326,8 @@ test('history tools retrieve older committed records with scoped cursors, time f
         limit: 200,
       }),
     );
-    assert.match(body.content, /NEEDLE/);
-    assert.equal(body.content.includes('synthetic-private-key'), false);
+    expect(body.content).toMatch(/NEEDLE/);
+    expect(body.content.includes('synthetic-private-key')).toBe(false);
     const serialized = JSON.stringify(found) + JSON.stringify(body);
     for (const privateValue of [
       'private-session',
@@ -346,27 +335,22 @@ test('history tools retrieve older committed records with scoped cursors, time f
       '/private/secret-store',
       'private-reasoning',
     ])
-      assert.equal(serialized.includes(privateValue), false);
-    assert.equal(
+      expect(serialized.includes(privateValue)).toBe(false);
+    expect(
       value<Search>(await tools.invoke(run, 'bot_history_search', { query: 'private-reasoning' }))
         .matches.length,
-      0,
-    );
-    assert.equal(
+    ).toBe(0);
+    expect(
       value<Search>(await tools.invoke(run, 'bot_history_search', { query: '[.*]' })).matches
         .length,
-      0,
       'query text is literal, not an executable regular expression',
-    );
+    ).toBe(0);
     const files = value<Read>(
       await tools.invoke(run, 'bot_history_read', { runId: 'mock-history-0000', field: 'files' }),
     );
-    assert.deepEqual(
-      files.files?.map((file) => file.path),
-      ['old/mock-result.txt'],
-    );
-    assert.deepEqual(files.inputNames, ['mock-input.csv']);
-    assert.equal(JSON.stringify(files).includes('not-for-listing'), false);
+    expect(files.files?.map((file) => file.path)).toStrictEqual(['old/mock-result.txt']);
+    expect(files.inputNames).toStrictEqual(['mock-input.csv']);
+    expect(JSON.stringify(files).includes('not-for-listing')).toBe(false);
     await journal.put({
       ...record(205),
       runId: 'mock-files-page',
@@ -385,8 +369,8 @@ test('history tools retrieve older committed records with scoped cursors, time f
         limit: 2000,
       }),
     );
-    assert.equal(boundedFiles.files!.length, 20);
-    assert.equal(boundedFiles.nextOffset, 20);
+    expect(boundedFiles.files!.length).toBe(20);
+    expect(boundedFiles.nextOffset).toBe(20);
     const remainingFiles = value<Read>(
       await tools.invoke(run, 'bot_history_read', {
         runId: 'mock-files-page',
@@ -395,28 +379,25 @@ test('history tools retrieve older committed records with scoped cursors, time f
         limit: 2000,
       }),
     );
-    assert.equal(remainingFiles.files!.length, 5);
-    assert.equal(remainingFiles.nextOffset, undefined);
-    assert.match(
+    expect(remainingFiles.files!.length).toBe(5);
+    expect(remainingFiles.nextOffset).toBe(undefined);
+    expect(
       JSON.stringify(
         await tools.invoke({ ...run, bot: 'b' }, 'bot_history_read', {
           runId: 'mock-history-0000',
         }),
       ),
-      /HISTORY_NOT_FOUND/,
-    );
-    assert.match(
+    ).toMatch(/HISTORY_NOT_FOUND/);
+    expect(
       JSON.stringify(await tools.invoke(run, 'bot_history_read', { runId: 'mock-current' })),
-      /HISTORY_NOT_FOUND/,
-    );
-    assert.match(
+    ).toMatch(/HISTORY_NOT_FOUND/);
+    expect(
       JSON.stringify(await tools.invoke(run, 'bot_history_search', { query: 'NEEDLE', bot: 'b' })),
-      /INVALID_TOOL_ARGS/,
-    );
+    ).toMatch(/INVALID_TOOL_ARGS/);
     const first = value<Search>(
       await tools.invoke(run, 'bot_history_search', { query: '合成回答', limit: 2 }),
     );
-    assert.ok(first.nextBefore);
+    expect.assert(first.nextBefore);
     const second = value<Search>(
       await tools.invoke(run, 'bot_history_search', {
         query: '合成回答',
@@ -424,54 +405,50 @@ test('history tools retrieve older committed records with scoped cursors, time f
         before: first.nextBefore,
       }),
     );
-    assert.equal(
+    expect(
       first.matches.some((item) => second.matches.some((other) => other.runId === item.runId)),
-      false,
-    );
+    ).toBe(false);
     const ranged = value<Search>(
       await tools.invoke(run, 'bot_history_search', {
         from: '2026-01-01T00:01:00Z',
         to: '2026-01-01T00:02:00Z',
       }),
     );
-    assert.deepEqual(
-      ranged.matches.map((item) => item.runId),
-      ['mock-history-0002', 'mock-history-0001'],
-    );
+    expect(ranged.matches.map((item) => item.runId)).toStrictEqual([
+      'mock-history-0002',
+      'mock-history-0001',
+    ]);
     for (const from of ['2026-02-30T00:00:00Z', '2026-01-01T24:00:00Z'])
-      assert.equal((await tools.invoke(run, 'bot_history_search', { from })).isError, true);
+      expect((await tools.invoke(run, 'bot_history_search', { from })).isError).toBe(true);
     const partial = value<Search>(
       await tools.invoke(run, 'bot_history_search', { query: 'PARTIAL' }),
     );
-    assert.equal(partial.matches[0].incomplete, true);
-    assert.equal(partial.matches[0].preview.field, 'partial');
-    assert.equal(
+    expect(partial.matches[0].incomplete).toBe(true);
+    expect(partial.matches[0].preview.field).toBe('partial');
+    expect(
       value<Read>(
         await tools.invoke(run, 'bot_history_read', { runId: 'mock-stopped', field: 'partial' }),
       ).incomplete,
-      true,
-    );
+    ).toBe(true);
     for (const args of [
       { runId: 'mock-history-0000', field: 'trace' },
       { runId: '../secret' },
       { runId: 'mock-history-0000', offset: -1 },
     ])
-      assert.equal((await tools.invoke(run, 'bot_history_read', args)).isError, true);
-    assert.equal(
+      expect((await tools.invoke(run, 'bot_history_read', args)).isError).toBe(true);
+    expect(
       (await tools.invoke(run, 'bot_history_search', { query: '[.*]', limit: 0 })).isError,
-      true,
-    );
-    assert.ok(run.trace.every((item) => item.surface === 'history'));
-    assert.equal(JSON.stringify(run.trace).includes('NEEDLE'), false);
+    ).toBe(true);
+    expect.assert(run.trace.every((item) => item.surface === 'history'));
+    expect(JSON.stringify(run.trace).includes('NEEDLE')).toBe(false);
     const restored = new TaskJournal(journal.dir);
     await restored.load();
     tools.history = new HistoryTools(restored);
-    assert.equal(
+    expect(
       value<Search>(await tools.invoke(run, 'bot_history_search', { query: 'NEEDLE' })).matches[0]
         .runId,
-      'mock-active',
       'a restarted running task is retained as interrupted evidence',
-    );
+    ).toBe('mock-active');
     await tools.drain(run);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -508,39 +485,35 @@ test('history pages preserve Unicode and redact before chunking, with complete J
           limit: 700,
         }),
       );
-      assert.equal(chunk.offset, offset);
-      assert.ok(Buffer.byteLength(JSON.stringify(chunk)) <= 11000);
+      expect(chunk.offset).toBe(offset);
+      expect.assert(Buffer.byteLength(JSON.stringify(chunk)) <= 11000);
       result += chunk.content;
       if (chunk.nextOffset === undefined) break;
-      assert.ok(chunk.nextOffset > offset);
+      expect.assert(chunk.nextOffset > offset);
       offset = chunk.nextOffset;
     }
-    assert.equal(result, `${'甲📄'.repeat(2000)}[redacted]`);
+    expect(result).toBe(`${'甲📄'.repeat(2000)}[redacted]`);
     await journal.put({ ...record(2), result: '\u0001'.repeat(3000) });
-    assert.match(
+    expect(
       JSON.stringify(
         await tools.invoke(run, 'bot_history_read', { runId: 'mock-history-0002', limit: 2000 }),
       ),
-      /HISTORY_RESPONSE_TOO_LARGE/,
-    );
-    assert.equal(
+    ).toMatch(/HISTORY_RESPONSE_TOO_LARGE/);
+    expect(
       value<Read>(
         await tools.invoke(run, 'bot_history_read', { runId: 'mock-history-0002', limit: 500 }),
       ).content.length,
-      500,
-    );
+    ).toBe(500);
     const limited = { ...run, toolCount: 0, limit: 1 };
     await tools.invoke(limited, 'bot_history_search');
-    assert.match(
+    expect(
       JSON.stringify(
         await tools.invoke(limited, 'bot_history_read', { runId: 'mock-history-0001' }),
       ),
-      /TOOL_LIMIT/,
-    );
+    ).toMatch(/TOOL_LIMIT/);
     const aborted = { ...run, abort: new AbortController() };
     aborted.abort.abort();
-    assert.match(
-      JSON.stringify(await tools.invoke(aborted, 'bot_history_search')),
+    expect(JSON.stringify(await tools.invoke(aborted, 'bot_history_search'))).toMatch(
       /MODEL_CANCELLED/,
     );
   } finally {
@@ -552,7 +525,7 @@ test('multi-turn records with long replies survive a journal reload', async () =
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-journal-turns-'));
   try {
     const reply = '合'.repeat(65000);
-    assert.equal(reply.length, 65000);
+    expect(reply.length).toBe(65000);
     const turns = Array.from({ length: 6 }, (_, index) => ({
       id: `mock-long-turn-${index}`,
       prompt: `合成插话 ${index}`,
@@ -563,16 +536,16 @@ test('multi-turn records with long replies survive a journal reload', async () =
     const saved: TaskRecord = { ...record(1), turns, result: reply };
     await journal.put(saved);
     // Written records stay readable: the load cap must match the write cap.
-    assert.ok(
+    expect.assert(
       Buffer.byteLength(JSON.stringify({ version: 1, task: saved })) > 1024 * 1024,
       'synthetic record must exceed the old one-megabyte limit',
     );
     const recovered = new TaskJournal(root);
     await recovered.load();
     const loaded = await recovered.read('a', record(1).runId);
-    assert.equal(loaded?.turns?.length, 6);
-    assert.equal(loaded?.turns?.[5].result, reply);
-    assert.equal(loaded?.result, reply);
+    expect(loaded?.turns?.length).toBe(6);
+    expect(loaded?.turns?.[5].result).toBe(reply);
+    expect(loaded?.result).toBe(reply);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -583,12 +556,14 @@ test('a record above the journal write cap is refused instead of saved unreadabl
   try {
     const journal = new TaskJournal(root);
     await journal.load();
-    await assert.rejects(journal.put({ ...record(1), result: 'x'.repeat(recordLimit) }), {
+    await expect(
+      journal.put({ ...record(1), result: 'x'.repeat(recordLimit) }),
+    ).rejects.toMatchObject({
       code: 'TASK_RECORD_TOO_LARGE',
     });
     const recovered = new TaskJournal(root);
     await recovered.load();
-    assert.equal(recovered.records.size, 0);
+    expect(recovered.records.size).toBe(0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -610,9 +585,9 @@ test('a legacy insert list is dropped alone so the saved task stays readable', a
     const journal = new TaskJournal(root);
     await journal.load();
     const loaded = await journal.read('a', record(1).runId);
-    assert.equal(loaded?.result, record(1).result);
-    assert.equal(loaded?.inserts, undefined);
-    assert.equal(loaded?.turns?.length, 1);
+    expect(loaded?.result).toBe(record(1).result);
+    expect(loaded?.inserts).toBe(undefined);
+    expect(loaded?.turns?.length).toBe(1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -637,43 +612,41 @@ test('history search and reads cover every turn of a multi-turn record', async (
     const inserted = (await history.invoke(run, 'bot_history_search', {
       query: '插话内容',
     })) as Search;
-    assert.equal(inserted.matches.length, 1);
-    assert.equal(inserted.matches[0].preview.field, 'prompt');
-    assert.equal(inserted.matches[0].preview.turn, 1);
+    expect(inserted.matches.length).toBe(1);
+    expect(inserted.matches[0].preview.field).toBe('prompt');
+    expect(inserted.matches[0].preview.turn).toBe(1);
     // The original reply is stored on its own turn, not only as the final answer.
     const original = (await history.invoke(run, 'bot_history_search', {
       query: '原始回答',
     })) as Search;
-    assert.equal(original.matches.length, 1);
-    assert.equal(original.matches[0].preview.field, 'result');
-    assert.equal(original.matches[0].preview.turn, 0);
+    expect(original.matches.length).toBe(1);
+    expect(original.matches[0].preview.field).toBe('result');
+    expect(original.matches[0].preview.turn).toBe(0);
     const last = (await history.invoke(run, 'bot_history_read', {
       runId: record(7).runId,
     })) as Read;
-    assert.equal(last.content, '合成最终回答');
-    assert.equal(last.turns, 2);
+    expect(last.content).toBe('合成最终回答');
+    expect(last.turns).toBe(2);
     const first = (await history.invoke(run, 'bot_history_read', {
       runId: record(7).runId,
       field: 'result',
       turn: 0,
     })) as Read;
-    assert.equal(first.content, '合成原始回答');
-    assert.equal(first.turn, 0);
+    expect(first.content).toBe('合成原始回答');
+    expect(first.turn).toBe(0);
     const prompt = (await history.invoke(run, 'bot_history_read', {
       runId: record(7).runId,
       field: 'prompt',
       turn: 1,
     })) as Read;
-    assert.equal(prompt.content, '合成插话内容');
-    await assert.rejects(
+    expect(prompt.content).toBe('合成插话内容');
+    await expect(
       history.invoke(run, 'bot_history_read', { runId: record(7).runId, turn: 2 }),
-      { code: 'INVALID_HISTORY_QUERY' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_HISTORY_QUERY' });
     await journal.put(record(8));
-    await assert.rejects(
+    await expect(
       history.invoke(run, 'bot_history_read', { runId: record(8).runId, turn: 0 }),
-      { code: 'INVALID_HISTORY_QUERY' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_HISTORY_QUERY' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

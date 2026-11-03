@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { isExecutionParams } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
 import { type AgentToolRun, AgentTools, agentToolList } from './agent-tools.js';
 import { Commands } from './commands.js';
 import type { ComputerFacade, ToolResult } from './computer-tools.js';
@@ -36,18 +35,16 @@ test('host negotiates model capabilities before sending new execution fields to 
     trace: [],
   };
   await tools.open(run);
-  assert.equal(
-    'vision' in calls[0],
+  expect('vision' in calls[0], 'legacy exact validators must receive only known fields').toBe(
     false,
-    'legacy exact validators must receive only known fields',
   );
-  assert.equal(calls[0].model, 'deepseek-flash');
+  expect(calls[0].model).toBe('deepseek-flash');
   const custom = { ...run, id: 'mock-custom-run', model: 'provider:mock-provider:mock-chat' };
-  await assert.rejects(tools.open(custom), { code: 'EXECUTION_UPGRADE_REQUIRED' });
-  assert.equal(calls.length, 1);
+  await expect(tools.open(custom)).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
+  expect(calls.length).toBe(1);
   execution.snapshot.capabilities.push('model-capabilities-v1');
   await tools.open(custom);
-  assert.equal(calls[1].vision, true);
+  expect(calls[1].vision).toBe(true);
 });
 
 test('model RPC identities retain Host deduplication and become stable bounded Guest wire IDs', async () => {
@@ -66,8 +63,7 @@ test('model RPC identities retain Host deduplication and become stable bounded G
   const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused-host'), {
     execution: {
       async call(method, params) {
-        assert.equal(
-          isExecutionParams(method as Parameters<typeof isExecutionParams>[0], params),
+        expect(isExecutionParams(method as Parameters<typeof isExecutionParams>[0], params)).toBe(
           true,
         );
         if (method === 'tools.open')
@@ -105,15 +101,14 @@ test('model RPC identities retain Host deduplication and become stable bounded G
   try {
     for (const wireId of [numberId, stringId, numberId]) {
       const result = await tools.invoke(run, 'shell', { command: 'echo mock' }, wireId);
-      assert.equal(result.isError, undefined);
+      expect(result.isError).toBe(undefined);
     }
-    assert.deepEqual(hostIds, [numberId, stringId, numberId]);
-    assert.deepEqual(
-      guestIds,
+    expect(hostIds).toStrictEqual([numberId, stringId, numberId]);
+    expect(guestIds).toStrictEqual(
       [numberId, stringId].map((value) => createHash('sha256').update(value).digest('hex')),
     );
-    assert.notEqual(guestIds[0], guestIds[1]);
-    assert.equal(reviews, 2);
+    expect(guestIds[0]).not.toBe(guestIds[1]);
+    expect(reviews).toBe(2);
     await tools.drain(run);
   } finally {
     await commands.close();
@@ -165,22 +160,22 @@ test('remote tools send only execution context and preserve host budgets and wai
   };
   await tools.open(run);
   const result = await tools.invoke(run, 'shell', { command: 'mock command' });
-  assert.equal(result.content[0].type, 'text');
-  assert.equal(polls, 1);
-  assert.deepEqual(waits, [true, false]);
-  assert.deepEqual(calls[0].params, {
+  expect(result.content[0].type).toBe('text');
+  expect(polls).toBe(1);
+  expect(waits).toStrictEqual([true, false]);
+  expect(calls[0].params).toStrictEqual({
     id: run.id,
     bot: run.bot,
     workdir: run.workdir,
     canonicalRoot: run.canonicalRoot,
     limit: 1,
   });
-  assert.ok(!JSON.stringify(calls).includes(run.token));
-  assert.ok(!JSON.stringify(calls).includes(run.privateDir));
-  assert.equal((await tools.invoke(run, 'shell', { command: 'too many' })).isError, true);
-  assert.equal(calls.filter((call) => call.method === 'tools.invoke').length, 1);
+  expect.assert(!JSON.stringify(calls).includes(run.token));
+  expect.assert(!JSON.stringify(calls).includes(run.privateDir));
+  expect((await tools.invoke(run, 'shell', { command: 'too many' })).isError).toBe(true);
+  expect(calls.filter((call) => call.method === 'tools.invoke').length).toBe(1);
   await tools.drain(run);
-  assert.equal(calls.at(-1)?.method, 'tools.drain');
+  expect(calls.at(-1)?.method).toBe('tools.drain');
 });
 
 test('raw remote execution requires a host gate and rechecks refused network authority before dispatch', async () => {
@@ -205,8 +200,8 @@ test('raw remote execution requires a host gate and rechecks refused network aut
     workdir: '/mock-guest/task',
     canonicalRoot: '/mock-guest/task',
   };
-  assert.equal((await tools.invoke(run, 'shell', { command: 'mock command' })).isError, true);
-  assert.equal(calls.filter((method) => method === 'tools.invoke').length, 0);
+  expect((await tools.invoke(run, 'shell', { command: 'mock command' })).isError).toBe(true);
+  expect(calls.filter((method) => method === 'tools.invoke').length).toBe(0);
   let denied = false;
   tools.authorizeComputer = async () => {
     if (denied) throw new Error('MOCK_REFUSED_WEB');
@@ -215,11 +210,8 @@ test('raw remote execution requires a host gate and rechecks refused network aut
     denied = true;
     return dispatch();
   };
-  assert.equal(
-    (await tools.invoke(run, 'process_start', { command: 'mock server' })).isError,
-    true,
-  );
-  assert.equal(calls.filter((method) => method === 'tools.invoke').length, 0);
+  expect((await tools.invoke(run, 'process_start', { command: 'mock server' })).isError).toBe(true);
+  expect(calls.filter((method) => method === 'tools.invoke').length).toBe(0);
 });
 
 test('remote dispatch failures and rejected host computer authority never use local execution', async () => {
@@ -249,16 +241,16 @@ test('remote dispatch failures and rejected host computer authority never use lo
   tools.authorizeComputer = async () => {
     throw new Error('MOCK_HOST_AUTHORITY_REJECTED');
   };
-  assert.equal((await tools.invoke(run, 'screenshot', { surface: 'desktop' })).isError, true);
-  assert.equal(calls.filter((method) => method === 'tools.invoke').length, 0);
+  expect((await tools.invoke(run, 'screenshot', { surface: 'desktop' })).isError).toBe(true);
+  expect(calls.filter((method) => method === 'tools.invoke').length).toBe(0);
   const result = await tools.invoke(run, 'read_file', {
     path: '/mock-private-host-directory/secret',
   });
-  assert.deepEqual(result, {
+  expect(result).toStrictEqual({
     isError: true,
     content: [{ type: 'text', text: 'EXECUTOR_TOOL_FAILED' }],
   });
-  assert.equal(calls.filter((method) => method === 'tools.invoke').length, 1);
+  expect(calls.filter((method) => method === 'tools.invoke').length).toBe(1);
 });
 
 test('remote text exports use guest create-only writes and cancellation retires the guest run', async () => {
@@ -285,20 +277,20 @@ test('remote text exports use guest create-only writes and cancellation retires 
     canonicalRoot: '/mock-guest/task',
   };
   await tools.writeText(run, 'mock.txt', 'mock', true);
-  assert.deepEqual(calls[1], {
+  expect(calls[1]).toStrictEqual({
     method: 'tools.write',
     params: { runId: run.id, path: 'mock.txt', content: 'mock', createOnly: true },
   });
-  assert.equal(run.toolCount, 0);
+  expect(run.toolCount).toBe(0);
   run.abort.abort();
   await tools.cancel(run);
-  assert.deepEqual(calls.at(-1), { method: 'tools.cancel', params: { runId: run.id } });
+  expect(calls.at(-1)).toStrictEqual({ method: 'tools.cancel', params: { runId: run.id } });
 });
 
 function payload(result: ToolResult) {
-  assert.ok(!result.isError, JSON.stringify(result));
+  expect.assert(!result.isError, JSON.stringify(result));
   const part = result.content[0];
-  assert.equal(part.type, 'text');
+  expect(part.type).toBe('text');
   return JSON.parse(part.type === 'text' ? part.text : '') as Record<string, unknown>;
 }
 test('registration of a lease alone does not advertise a detached computer capability', () => {
@@ -315,8 +307,8 @@ test('registration of a lease alone does not advertise a detached computer capab
     { available: () => false },
   );
   const tools = new AgentTools(facade, new WorkspaceFiles('/synthetic/no-io'));
-  assert.equal(tools.hasComputer('mock-detached', 'deepseek-flash'), false);
-  assert.ok(
+  expect(tools.hasComputer('mock-detached', 'deepseek-flash')).toBe(false);
+  expect.assert(
     !tools.list('mock-detached', 'deepseek-flash').some((tool) => tool.name === 'screenshot'),
   );
 });
@@ -349,12 +341,11 @@ test('a text-only model cannot use computer tools even when its Bot has a screen
       canonicalRoot: await realpath(root),
     };
     const result = await tools.invoke(run, 'screenshot', { surface: 'desktop' });
-    assert.equal(result.isError, true);
-    assert.ok(JSON.stringify(result).includes('MODEL_COMPUTER_UNSUPPORTED'));
-    assert.equal(observed, 0);
+    expect(result.isError).toBe(true);
+    expect.assert(JSON.stringify(result).includes('MODEL_COMPUTER_UNSUPPORTED'));
+    expect(observed).toBe(0);
     payload(await tools.invoke(run, 'list_files', {}));
-    assert.equal(
-      tools.list('a', 'deepseek-v4-pro').some((tool) => tool.name === 'screenshot'),
+    expect(tools.list('a', 'deepseek-v4-pro').some((tool) => tool.name === 'screenshot')).toBe(
       false,
     );
   } finally {
@@ -390,7 +381,7 @@ test('workspace tools work without a screen, enforce paths and preserve unrelate
       workdir,
       canonicalRoot: await realpath(workdir),
     };
-    assert.ok(
+    expect.assert(
       ['read_file', 'write_file', 'list_files', 'shell', 'screenshot', 'act', 'open_app'].every(
         (name) => agentToolList.some((tool) => tool.name === name),
       ),
@@ -399,18 +390,17 @@ test('workspace tools work without a screen, enforce paths and preserve unrelate
       await tools.invoke(run, 'write_file', { path: 'summary.md', content: '# 合成结果\n数量=3' }),
     );
     const read = payload(await tools.invoke(run, 'read_file', { path: 'summary.md', limit: 5 }));
-    assert.equal(read.content, '# 合成结');
-    assert.equal(read.nextOffset, 5);
-    assert.ok(
+    expect(read.content).toBe('# 合成结');
+    expect(read.nextOffset).toBe(5);
+    expect.assert(
       JSON.stringify(payload(await tools.invoke(run, 'list_files', {}))).includes('summary.md'),
     );
-    assert.equal((await tools.invoke(run, 'list_files', { path: false })).isError, true);
+    expect((await tools.invoke(run, 'list_files', { path: false })).isError).toBe(true);
     await writeFile(path.join(shared, 'previous.md'), 'synthetic previous report');
-    assert.equal(
+    expect(
       payload(await tools.invoke(run, 'read_file', { path: '/shared/previous.md' })).content,
-      'synthetic previous report',
-    );
-    assert.ok(
+    ).toBe('synthetic previous report');
+    expect.assert(
       JSON.stringify(payload(await tools.invoke(run, 'list_files', { path: '/shared' }))).includes(
         'previous.md',
       ),
@@ -421,54 +411,48 @@ test('workspace tools work without a screen, enforce paths and preserve unrelate
         content: '合成当前输出',
       }),
     );
-    assert.equal(await readFile(path.join(workdir, 'alias.md'), 'utf8'), '合成当前输出');
-    assert.equal(
+    expect(await readFile(path.join(workdir, 'alias.md'), 'utf8')).toBe('合成当前输出');
+    expect(
       (await tools.invoke(run, 'write_file', { path: '/shared/previous.md', content: 'changed' }))
         .isError,
-      true,
-    );
-    assert.equal(
+    ).toBe(true);
+    expect(
       payload(await tools.invoke(run, 'read_file', { path: path.join(shared, 'previous.md') }))
         .content,
-      'synthetic previous report',
-    );
+    ).toBe('synthetic previous report');
     for (const args of [
       { path: '../private.txt' },
       { path: path.join(root, 'private.txt') },
       { path: 'summary.md', extra: true },
     ])
-      assert.equal((await tools.invoke(run, 'read_file', args)).isError, true);
+      expect((await tools.invoke(run, 'read_file', args)).isError).toBe(true);
     await symlink(path.join(root, 'private.txt'), path.join(workdir, 'escape'));
     await link(path.join(root, 'private.txt'), path.join(workdir, 'hardlink'));
     for (const file of ['escape', 'hardlink']) {
-      assert.equal((await tools.invoke(run, 'read_file', { path: file })).isError, true);
-      assert.equal(
+      expect((await tools.invoke(run, 'read_file', { path: file })).isError).toBe(true);
+      expect(
         (await tools.invoke(run, 'write_file', { path: file, content: 'changed' })).isError,
-        true,
-      );
+      ).toBe(true);
     }
-    assert.equal(
+    expect(
       (
         await tools.invoke(run, 'write_file', {
           path: path.join(shared, 'previous.md'),
           content: 'changed',
         })
       ).isError,
-      true,
-    );
-    assert.equal(await readFile(path.join(root, 'private.txt'), 'utf8'), 'synthetic-private');
-    assert.equal(
-      await readFile(path.join(shared, 'previous.md'), 'utf8'),
+    ).toBe(true);
+    expect(await readFile(path.join(root, 'private.txt'), 'utf8')).toBe('synthetic-private');
+    expect(await readFile(path.join(shared, 'previous.md'), 'utf8')).toBe(
       'synthetic previous report',
     );
-    assert.ok(run.trace.every((item) => item.surface === 'workspace'));
-    assert.equal(control.state('a').owner, 'human');
+    expect.assert(run.trace.every((item) => item.surface === 'workspace'));
+    expect(control.state('a').owner).toBe('human');
     run.abort.abort();
-    assert.equal(
+    expect(
       (await tools.invoke(run, 'write_file', { path: 'stopped.md', content: 'no' })).isError,
-      true,
-    );
-    await assert.rejects(readFile(path.join(workdir, 'stopped.md')));
+    ).toBe(true);
+    await expect(readFile(path.join(workdir, 'stopped.md'))).rejects.toThrowError();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -496,13 +480,13 @@ test('workspace tools share the model tool budget and fail closed without a Linu
     workdir: '/synthetic',
     canonicalRoot: '/synthetic',
   };
-  assert.equal((await tools.invoke(run, 'list_files', {})).isError, true);
-  assert.equal(run.trace.at(-1)?.code, 'TOOL_LIMIT');
+  expect((await tools.invoke(run, 'list_files', {})).isError).toBe(true);
+  expect(run.trace.at(-1)?.code).toBe('TOOL_LIMIT');
   if (process.platform !== 'linux') {
     run.limit = 3;
     const result = await tools.invoke(run, 'shell', { command: 'printf forbidden' });
-    assert.equal(result.isError, true);
-    assert.ok(JSON.stringify(result).includes('SHELL_SANDBOX_UNAVAILABLE'));
+    expect(result.isError).toBe(true);
+    expect.assert(JSON.stringify(result).includes('SHELL_SANDBOX_UNAVAILABLE'));
   }
 });
 test('draining a run waits for its in-flight tool before lifecycle cleanup', async () => {
@@ -534,18 +518,18 @@ test('draining a run waits for its in-flight tool before lifecycle cleanup', asy
     settled = true;
   });
   await new Promise(setImmediate);
-  assert.equal(settled, false);
+  expect(settled).toBe(false);
   finish(Buffer.from('synthetic-frame'));
   await pending;
   await drained;
-  assert.equal(settled, true);
+  expect(settled).toBe(true);
 });
 
 test('a parent replaced after validation cannot make a tool create even an empty file in a private directory', async (t) => {
   const fs = (await import('node:fs/promises')).default;
   const { syncBuiltinESMExports } = await import('node:module');
   const root = await mkdtemp(path.join(tmpdir(), 'mock-write-parent-race-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const shared = path.join(root, 'shared'),
     workdir = path.join(shared, 'task'),
     parent = path.join(workdir, 'nested'),
@@ -569,7 +553,7 @@ test('a parent replaced after validation cannot make a tool create even an empty
   };
   const original = fs.realpath;
   let redirected = false;
-  t.mock.method(fs, 'realpath', async (file: Parameters<typeof original>[0]) => {
+  vi.spyOn(fs, 'realpath').mockImplementation(async (file: Parameters<typeof original>[0]) => {
     const result = await original(file);
     if (file === target && !redirected) {
       redirected = true;
@@ -579,13 +563,13 @@ test('a parent replaced after validation cannot make a tool create even an empty
     return result;
   });
   syncBuiltinESMExports();
-  t.after(() => {
-    t.mock.restoreAll();
+  t.onTestFinished(() => {
+    vi.restoreAllMocks();
     syncBuiltinESMExports();
   });
-  await assert.rejects(tools.writeText(run, 'nested/new.txt', 'SYNTHETIC-ATTACK'));
-  assert.equal(redirected, true);
-  await assert.rejects(fs.access(path.join(privateRoot, 'new.txt')));
+  await expect(tools.writeText(run, 'nested/new.txt', 'SYNTHETIC-ATTACK')).rejects.toThrowError();
+  expect(redirected).toBe(true);
+  await expect(fs.access(path.join(privateRoot, 'new.txt'))).rejects.toThrowError();
 });
 
 test('an explicitly selected host computer is pinned to the run and never falls back to VM inputs', async () => {
@@ -635,24 +619,23 @@ test('an explicitly selected host computer is pinned to the run and never falls 
   await tools.open(run);
   selected = false;
   const result = await tools.invoke(run, 'screenshot', { surface: 'desktop' }, 'mock-wire-1');
-  assert.deepEqual(result.content, [{ type: 'text', text: 'MOCK HOST SCREEN' }]);
+  expect(result.content).toStrictEqual([{ type: 'text', text: 'MOCK HOST SCREEN' }]);
   const repeated = await tools.invoke(
     run,
     'act',
     { surface: 'desktop', actions: [{ type: 'text', text: 'SYNTHETIC INPUT' }] },
     'mock-wire-1',
   );
-  assert.equal(repeated.isError, true);
-  assert.equal(hostCalls, 1);
-  assert.equal(remoteCalls.includes('tools.invoke'), false);
+  expect(repeated.isError).toBe(true);
+  expect(hostCalls).toBe(1);
+  expect(remoteCalls.includes('tools.invoke')).toBe(false);
   tools.localComputer.invoke = async () => {
     throw new Error('MOCK_HOST_DISCONNECTED');
   };
-  await assert.rejects(
-    tools.invoke(run, 'screenshot', { surface: 'desktop' }),
+  await expect(tools.invoke(run, 'screenshot', { surface: 'desktop' })).rejects.toThrowError(
     /MOCK_HOST_DISCONNECTED/,
   );
-  assert.equal(remoteCalls.includes('tools.invoke'), false);
+  expect(remoteCalls.includes('tools.invoke')).toBe(false);
 });
 
 test('unavailable native-only tools still consume the run budget and report its limit', async () => {
@@ -669,8 +652,8 @@ test('unavailable native-only tools still consume the run budget and report its 
     canonicalRoot: '/synthetic',
   };
   const first = await tools.invoke(run, 'shell', { command: 'synthetic' });
-  assert.match(JSON.stringify(first), /NATIVE_WORKSPACE_TOOL_UNAVAILABLE/);
-  assert.equal(run.toolCount, 1);
+  expect(JSON.stringify(first)).toMatch(/NATIVE_WORKSPACE_TOOL_UNAVAILABLE/);
+  expect(run.toolCount).toBe(1);
   const second = await tools.invoke(run, 'read_file', { path: 'synthetic.txt' });
-  assert.match(JSON.stringify(second), /TOOL_LIMIT/);
+  expect(JSON.stringify(second)).toMatch(/TOOL_LIMIT/);
 });

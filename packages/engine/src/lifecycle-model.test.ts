@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -49,12 +48,11 @@ test('archiving fences model publication and automatic admission while another B
     await before.done;
     const release = models.profiles.reserveLifecycle('mock-a');
     try {
-      assert.equal(models.admit('mock-a'), false);
-      await assert.rejects(
+      expect(models.admit('mock-a')).toBe(false);
+      await expect(
         models.start('mock-a', { requestId: 'mock-during-archive', prompt: '合成不得开始' }),
-        { code: 'BOT_CHANGING' },
-      );
-      assert.equal(models.jobs.get('mock-a')?.id, before.id);
+      ).rejects.toMatchObject({ code: 'BOT_CHANGING' });
+      expect(models.jobs.get('mock-a')?.id).toBe(before.id);
       await models.profiles.beginLifecycle({
         id: 'mock-archive-op',
         bot: 'mock-a',
@@ -66,13 +64,12 @@ test('archiving fences model publication and automatic admission while another B
       release();
     }
     const count = started;
-    await assert.rejects(
+    await expect(
       models.start('mock-a', { requestId: 'mock-after-archive', prompt: '合成不得开始' }),
-      { code: 'BOT_ARCHIVED' },
-    );
-    assert.equal(started, count);
-    assert.equal(models.findRequest('mock-a', 'mock-after-archive'), undefined);
-    assert.equal(models.admit('mock-b'), true);
+    ).rejects.toMatchObject({ code: 'BOT_ARCHIVED' });
+    expect(started).toBe(count);
+    expect(models.findRequest('mock-a', 'mock-after-archive')).toBe(undefined);
+    expect(models.admit('mock-b')).toBe(true);
     await models.start('mock-b', { requestId: 'mock-other-turn', prompt: '合成其他 Bot 问候' });
     await models.jobs.get('mock-b')!.done;
     const unlock = models.profiles.reserveLifecycle('mock-a');
@@ -86,14 +83,14 @@ test('archiving fences model publication and automatic admission while another B
     } finally {
       unlock();
     }
-    assert.equal(started, count + 1);
-    assert.equal(models.admit('mock-a'), true);
+    expect(started).toBe(count + 1);
+    expect(models.admit('mock-a')).toBe(true);
     await models.start('mock-a', { requestId: 'mock-restored-turn', prompt: '合成恢复后的新请求' });
     const restored = models.jobs.get('mock-a')!;
     await restored.done;
-    assert.equal(restored.sessionId, before.sessionId);
-    assert.equal(models.journal.history('mock-a').length, 2);
-    assert.equal((await models.profiles.get('mock-a'))?.memory, 'SYNTHETIC-RETAINED-MEMORY');
+    expect(restored.sessionId).toBe(before.sessionId);
+    expect(models.journal.history('mock-a').length).toBe(2);
+    expect((await models.profiles.get('mock-a'))?.memory).toBe('SYNTHETIC-RETAINED-MEMORY');
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });

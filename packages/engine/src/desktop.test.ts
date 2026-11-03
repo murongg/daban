@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test, vi } from 'vitest';
 import { Control } from './control.js';
 import { Desktop, nativeInput, Screens } from './desktop.js';
 import { DesktopSandbox } from './desktop-sandbox.js';
@@ -51,26 +50,23 @@ test('native instance changes reject input, apps and handoffs even when the cont
   const { desktop, control, instances, effects } = syntheticDesktop();
   const human = await control.transfer('a', 0, 'human');
   instances.set('a', 'mock-replacement-a');
-  await assert.rejects(
+  await expect(
     Reflect.apply(desktop.input, desktop, [
       'a',
       human.epoch,
       { type: 'key', key: 'Enter' },
       'mock-screen-a',
     ]),
-    { code: 'DESKTOP_VIEW_STALE' },
-  );
-  await assert.rejects(
+  ).rejects.toMatchObject({ code: 'DESKTOP_VIEW_STALE' });
+  await expect(
     Reflect.apply(desktop.openApp, desktop, ['a', human.epoch, 'terminal', 'mock-screen-a']),
-    { code: 'DESKTOP_VIEW_STALE' },
-  );
-  await assert.rejects(
+  ).rejects.toMatchObject({ code: 'DESKTOP_VIEW_STALE' });
+  await expect(
     Reflect.apply(desktop.transfer, desktop, ['a', human.epoch, 'agent', 'mock-screen-a']),
-    { code: 'DESKTOP_VIEW_STALE' },
-  );
-  assert.deepEqual(effects, []);
-  assert.equal(control.state('a').owner, 'human');
-  assert.equal(control.state('b').epoch, 0);
+  ).rejects.toMatchObject({ code: 'DESKTOP_VIEW_STALE' });
+  expect(effects).toStrictEqual([]);
+  expect(control.state('a').owner).toBe('human');
+  expect(control.state('b').epoch).toBe(0);
 });
 
 test('native instance validation runs inside the input queue, before any replacement-screen effect', async () => {
@@ -88,20 +84,19 @@ test('native instance validation runs inside the input queue, before any replace
     return gate;
   });
   await started;
-  const rejected = assert.rejects(
+  const rejected = expect(
     Reflect.apply(desktop.input, desktop, [
       'a',
       human.epoch,
       { type: 'text', text: 'NEVER-TYPE' },
       'mock-screen-a',
     ]),
-    { code: 'DESKTOP_VIEW_STALE' },
-  );
+  ).rejects.toMatchObject({ code: 'DESKTOP_VIEW_STALE' });
   instances.set('a', 'mock-replacement-a');
   release();
   await busy;
   await rejected;
-  assert.deepEqual(effects, []);
+  expect(effects).toStrictEqual([]);
 });
 
 test('a native frame captured before screen replacement is discarded instead of returned as the new screen', async () => {
@@ -112,7 +107,7 @@ test('a native frame captured before screen replacement is discarded instead of 
       release = resolve;
     });
   const pending = Reflect.apply(desktop.frame, desktop, ['a', 'mock-screen-a', 0]);
-  const rejected = assert.rejects(pending, { code: 'DESKTOP_VIEW_STALE' });
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'DESKTOP_VIEW_STALE' });
   instances.set('a', 'mock-replacement-a');
   release(Buffer.from('SYNTHETIC-OLD-FRAME'));
   await rejected;
@@ -135,12 +130,12 @@ test('native frame requests never share a pending capture with a replacement ins
   instances.set('a', 'mock-replacement-a');
   const fresh = Reflect.apply(desktop.frame, desktop, ['a', 'mock-replacement-a', 0]);
   try {
-    assert.equal(reads, 2);
+    expect(reads).toBe(2);
   } finally {
     release(Buffer.from('SYNTHETIC-OLD-FRAME'));
   }
-  await assert.rejects(old, { code: 'DESKTOP_VIEW_STALE' });
-  assert.equal((await fresh).toString(), 'SYNTHETIC-NEW-FRAME');
+  await expect(old).rejects.toMatchObject({ code: 'DESKTOP_VIEW_STALE' });
+  expect((await fresh).toString()).toBe('SYNTHETIC-NEW-FRAME');
 });
 
 test('a post-action native observation cannot reuse a capture that began before the action', async () => {
@@ -160,12 +155,12 @@ test('a post-action native observation cannot reuse a capture that began before 
   await desktop.input('a', human.epoch, { type: 'key', key: 'Enter' }, 'mock-screen-a');
   const after = desktop.frame('a', 'mock-screen-a', human.epoch);
   try {
-    assert.equal(reads, 2);
+    expect(reads).toBe(2);
   } finally {
     release(Buffer.from('SYNTHETIC-BEFORE-ACTION'));
   }
   await before;
-  assert.equal((await after).toString(), 'SYNTHETIC-AFTER-ACTION');
+  expect((await after).toString()).toBe('SYNTHETIC-AFTER-ACTION');
 });
 
 test('retired native screens no longer resolve a display or instance that a successor could reuse', async () => {
@@ -187,47 +182,53 @@ test('retired native screens no longer resolve a display or instance that a succ
     file: 'mock-file',
   });
   await screens.close();
-  assert.throws(() => screens.instance('a'), { code: 'COMPUTER_NOT_CONNECTED' });
-  assert.throws(() => screens.screen('a'), { code: 'COMPUTER_NOT_CONNECTED' });
+  expect(() => screens.instance('a')).toThrowError(
+    expect.objectContaining({ code: 'COMPUTER_NOT_CONNECTED' }),
+  );
+  expect(() => screens.screen('a')).toThrowError(
+    expect.objectContaining({ code: 'COMPUTER_NOT_CONNECTED' }),
+  );
 });
 
-test('starting a retired native driver fails before rewriting any successor configuration', async (t) => {
+test('starting a retired native driver fails before rewriting any successor configuration', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-retired-boot-'));
   const screens = new Screens({
     dir: root,
     origin: 'http://127.0.0.1:12345',
     displayBase: 41,
   });
-  t.mock.method(screens, 'run', async () => {
+  vi.spyOn(screens, 'run').mockImplementation(async () => {
     throw new Error('synthetic unexpected GUI boot');
   });
   try {
     await screens.close();
-    await assert.rejects(screens.start(), { code: 'COMPUTER_NOT_CONNECTED' });
+    await expect(screens.start()).rejects.toMatchObject({ code: 'COMPUTER_NOT_CONNECTED' });
   } finally {
     await screens.log?.close();
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('a scoped native stack uses its logical Bot ID rather than allocating the legacy pair', async (t) => {
+test('a scoped native stack uses its logical Bot ID rather than allocating the legacy pair', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-single-screen-'));
-  t.mock.method(DesktopSandbox.prototype, 'start', async () => {});
-  t.mock.method(DesktopSandbox.prototype, 'io', async () => '');
+  vi.spyOn(DesktopSandbox.prototype, 'start').mockImplementation(async () => {});
+  vi.spyOn(DesktopSandbox.prototype, 'io').mockImplementation(async () => '');
   const screens = new Screens({
     dir: root,
     origin: 'http://127.0.0.1:12345',
     displayBase: 61,
   });
-  t.mock.method(screens, 'run', async () => {
+  vi.spyOn(screens, 'run').mockImplementation(async () => {
     throw Object.assign(new Error('synthetic boundary'), { code: 'SYNTHETIC_BOUNDARY' });
   });
   try {
-    await assert.rejects(Reflect.apply(screens.start, screens, [['mock-custom-bot']]), {
+    await expect(
+      Reflect.apply(screens.start, screens, [['mock-custom-bot']]),
+    ).rejects.toMatchObject({
       code: 'SYNTHETIC_BOUNDARY',
     });
-    assert.deepEqual([...screens.bots.keys()], ['mock-custom-bot']);
-    assert.equal(screens.screen('mock-custom-bot').display, ':61');
+    expect([...screens.bots.keys()]).toStrictEqual(['mock-custom-bot']);
+    expect(screens.screen('mock-custom-bot').display).toBe(':61');
   } finally {
     await screens.close();
     await rm(root, { recursive: true, force: true });
@@ -236,7 +237,7 @@ test('a scoped native stack uses its logical Bot ID rather than allocating the l
 
 test('unconfirmed native teardown fails closed and may retry cleanup without re-enabling the driver', {
   timeout: 10000,
-}, async (t) => {
+}, async () => {
   const screens = new Screens({
     dir: '/synthetic/teardown',
     origin: 'http://127.0.0.1:12345',
@@ -250,8 +251,8 @@ test('unconfirmed native teardown fails closed and may retry cleanup without re-
   const child = processState as unknown as ChildProcess;
   screens.children.push(child);
   let allowExit = false;
-  const signals: (number | NodeJS.Signals | undefined)[] = [];
-  t.mock.method(process, 'kill', (_pid: number, signal?: number | NodeJS.Signals) => {
+  const signals: (number | string | undefined)[] = [];
+  vi.spyOn(process, 'kill').mockImplementation((_pid: number, signal?: number | string) => {
     signals.push(signal);
     if (allowExit) {
       processState.signalCode = 'SIGTERM';
@@ -259,17 +260,19 @@ test('unconfirmed native teardown fails closed and may retry cleanup without re-
     }
     return true;
   });
-  await assert.rejects(screens.close(), { code: 'COMPUTER_STOP_UNCONFIRMED' });
-  assert.equal(screens.closed, true);
-  assert.ok(signals.includes('SIGKILL'));
+  await expect(screens.close()).rejects.toMatchObject({ code: 'COMPUTER_STOP_UNCONFIRMED' });
+  expect(screens.closed).toBe(true);
+  expect.assert(signals.includes('SIGKILL'));
   allowExit = true;
   await screens.close();
-  assert.ok(child.signalCode);
-  assert.throws(() => screens.screen('mock-custom-bot'), { code: 'COMPUTER_NOT_CONNECTED' });
+  expect.assert(child.signalCode);
+  expect(() => screens.screen('mock-custom-bot')).toThrowError(
+    expect.objectContaining({ code: 'COMPUTER_NOT_CONNECTED' }),
+  );
 });
 
 test('native input preserves target display routing and validates coordinates and keys', () => {
-  assert.deepEqual(nativeInput({ type: 'release' }), [
+  expect(nativeInput({ type: 'release' })).toStrictEqual([
     'mouseup',
     '1',
     'mouseup',
@@ -285,35 +288,41 @@ test('native input preserves target display routing and validates coordinates an
     'keyup',
     'Super_L',
   ]);
-  assert.deepEqual(nativeInput({ type: 'click', x: 123, y: 45, button: 3 }), [
+  expect(nativeInput({ type: 'click', x: 123, y: 45, button: 3 })).toStrictEqual([
     'mousemove',
     '123',
     '45',
     'click',
     '3',
   ]);
-  assert.deepEqual(nativeInput({ type: 'pointer', phase: 'down', x: 2, y: 4, button: 1 }), [
+  expect(nativeInput({ type: 'pointer', phase: 'down', x: 2, y: 4, button: 1 })).toStrictEqual([
     'mousemove',
     '2',
     '4',
     'mousedown',
     '1',
   ]);
-  assert.deepEqual(nativeInput({ type: 'pointer', phase: 'up', x: 2, y: 4, button: 1 }), [
+  expect(nativeInput({ type: 'pointer', phase: 'up', x: 2, y: 4, button: 1 })).toStrictEqual([
     'mousemove',
     '2',
     '4',
     'mouseup',
     '1',
   ]);
-  assert.deepEqual(nativeInput({ type: 'key', key: 'ControlOrMeta+A' }), [
+  expect(nativeInput({ type: 'key', key: 'ControlOrMeta+A' })).toStrictEqual([
     'key',
     '--clearmodifiers',
     'ctrl+a',
   ]);
-  assert.throws(() => nativeInput({ type: 'click', x: 1280, y: 0 }), { code: 'INVALID_INPUT' });
-  assert.throws(() => nativeInput({ type: 'key', key: 'Return; touch /tmp/unsafe' }), {
-    code: 'INVALID_INPUT',
-  });
-  assert.throws(() => nativeInput({ type: 'text', text: '\0' }), { code: 'INVALID_INPUT' });
+  expect(() => nativeInput({ type: 'click', x: 1280, y: 0 })).toThrowError(
+    expect.objectContaining({ code: 'INVALID_INPUT' }),
+  );
+  expect(() => nativeInput({ type: 'key', key: 'Return; touch /tmp/unsafe' })).toThrowError(
+    expect.objectContaining({
+      code: 'INVALID_INPUT',
+    }),
+  );
+  expect(() => nativeInput({ type: 'text', text: '\0' })).toThrowError(
+    expect.objectContaining({ code: 'INVALID_INPUT' }),
+  );
 });

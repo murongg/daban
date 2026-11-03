@@ -1,24 +1,23 @@
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { expect, test } from 'vitest';
 import { macVersion, releaseVersion } from './release.ts';
 
 test('accepts stable and prerelease tags only when all workspace versions agree', () => {
-  assert.equal(releaseVersion('v1.2.3', ['1.2.3', '1.2.3']), '1.2.3');
-  assert.equal(releaseVersion('v1.2.3-beta.1', ['1.2.3-beta.1']), '1.2.3-beta.1');
+  expect(releaseVersion('v1.2.3', ['1.2.3', '1.2.3'])).toBe('1.2.3');
+  expect(releaseVersion('v1.2.3-beta.1', ['1.2.3-beta.1'])).toBe('1.2.3-beta.1');
   for (const tag of ['main', 'v01.2.3', 'v1.2', 'v1.2.3;echo injected', 'v1.2.3\n'])
-    assert.throws(() => releaseVersion(tag, ['1.2.3']), /RELEASE_TAG/);
-  assert.throws(() => releaseVersion('v1.2.3', ['1.2.3', '1.2.2']), /RELEASE_VERSION/);
+    expect(() => releaseVersion(tag, ['1.2.3'])).toThrowError(/RELEASE_TAG/);
+  expect(() => releaseVersion('v1.2.3', ['1.2.3', '1.2.2'])).toThrowError(/RELEASE_VERSION/);
 });
 
 test('keeps prerelease identifiers out of Apple numeric bundle version fields', () => {
-  assert.equal(macVersion('1.2.3'), '1.2.3');
-  assert.equal(macVersion('1.2.3-beta.1'), '1.2.3');
-  assert.throws(() => macVersion('synthetic-invalid-version'));
+  expect(macVersion('1.2.3')).toBe('1.2.3');
+  expect(macVersion('1.2.3-beta.1')).toBe('1.2.3');
+  expect(() => macVersion('synthetic-invalid-version')).toThrowError();
 });
 
 test('the CLI emits release outputs only for a matching tag whose commit belongs to main', async () => {
@@ -72,13 +71,13 @@ test('the CLI emits release outputs only for a matching tag whose commit belongs
     git('update-ref', 'refs/remotes/origin/main', 'HEAD');
     git('tag', 'v1.2.3');
     run('v1.2.3');
-    assert.match(await readFile(output, 'utf8'), /tag=v1.2.3\nversion=1.2.3\ncommit=/);
+    expect(await readFile(output, 'utf8')).toMatch(/tag=v1.2.3\nversion=1.2.3\ncommit=/);
     await writeFile(output, '');
     await version('1.2.3-beta.1');
     commit();
     git('tag', 'v1.2.3-beta.1');
-    assert.throws(() => run('v1.2.3-beta.1'));
-    assert.equal(await readFile(output, 'utf8'), '');
+    expect(() => run('v1.2.3-beta.1')).toThrowError();
+    expect(await readFile(output, 'utf8')).toBe('');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

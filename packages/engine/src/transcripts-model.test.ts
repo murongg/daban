@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -79,7 +78,7 @@ test('model runs retain scoped native execution and durable human decisions acro
   const entered = async (count: number) => {
     for (let attempt = 0; gates.length < count && attempt < 100; attempt++)
       await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.equal(gates.length, count);
+    expect(gates.length).toBe(count);
   };
   try {
     await settings.save({ apiKey: 'mock-provider-secret' });
@@ -103,32 +102,34 @@ test('model runs retain scoped native execution and durable human decisions acro
         ],
       },
     });
-    assert.ok(question);
+    expect.assert(question);
     await models.interactions.reply('a', job.id, 'mock-human-question', {
       kind: 'answer',
       answers: [{ id: 'mock-choice', selected: ['甲'] }],
     });
     const before = await models.transcript(scope);
-    assert.equal(before.state, 'recording');
-    assert.deepEqual(
-      before.items.map((item) => item.kind),
-      ['call', 'result', 'interaction', 'interaction'],
-    );
+    expect(before.state).toBe('recording');
+    expect(before.items.map((item) => item.kind)).toStrictEqual([
+      'call',
+      'result',
+      'interaction',
+      'interaction',
+    ]);
     await settle('a');
     const complete = await models.transcript(scope);
-    assert.equal(complete.state, 'complete');
-    assert.equal(complete.items.length, 5);
+    expect(complete.state).toBe('complete');
+    expect(complete.items.length).toBe(5);
     let combined = '';
     for (const item of complete.items)
       combined += (await models.transcriptContent(scope, item.seq)).text;
-    assert.ok(combined.includes('合成选择'));
-    assert.ok(combined.includes('"甲"'));
-    assert.equal(/PRIVATE|mock-provider-secret|sessionId/.test(combined), false);
+    expect.assert(combined.includes('合成选择'));
+    expect.assert(combined.includes('"甲"'));
+    expect(/PRIVATE|mock-provider-secret|sessionId/.test(combined)).toBe(false);
     await models.start('a', { requestId: 'mock-private-second', prompt: '合成后续任务' });
     await entered(2);
     await settle('a');
-    assert.equal(sessions[0], sessions[1]);
-    assert.equal((await models.transcript(scope)).items.length, 5);
+    expect(sessions[0]).toBe(sessions[1]);
+    expect((await models.transcript(scope)).items.length).toBe(5);
     await models.start(
       'a',
       { requestId: 'mock-group-first', prompt: '合成群聊任务' },
@@ -137,21 +138,19 @@ test('model runs retain scoped native execution and durable human decisions acro
     await entered(3);
     const groupScope = { bot: 'a', runId: models.jobs.get('a')!.id, conversationId: 'mock-group' };
     await settle('a');
-    await assert.rejects(models.transcript({ ...scope, bot: 'b' }), {
+    await expect(models.transcript({ ...scope, bot: 'b' })).rejects.toMatchObject({
       code: 'TRANSCRIPT_NOT_FOUND',
     });
-    await assert.rejects(models.transcript({ ...scope, chatRevision: 1 }), {
+    await expect(models.transcript({ ...scope, chatRevision: 1 })).rejects.toMatchObject({
       code: 'TRANSCRIPT_NOT_FOUND',
     });
-    await assert.rejects(
+    await expect(
       models.transcript({ bot: 'a', runId: scope.runId, conversationId: 'mock-group' }),
-      { code: 'TRANSCRIPT_NOT_FOUND' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'TRANSCRIPT_NOT_FOUND' });
+    await expect(
       models.transcript({ bot: 'a', runId: groupScope.runId, chatRevision: 0 }),
-      { code: 'TRANSCRIPT_NOT_FOUND' },
-    );
-    assert.equal((await models.transcript(groupScope)).items.length, 3);
+    ).rejects.toMatchObject({ code: 'TRANSCRIPT_NOT_FOUND' });
+    expect((await models.transcript(groupScope)).items.length).toBe(3);
     const legacy = { bot: 'a', runId: 'mock-legacy-run', chatRevision: 0 };
     await models.journal.put({
       ...legacy,
@@ -163,7 +162,7 @@ test('model runs retain scoped native execution and durable human decisions acro
       error: '',
       trace: [],
     });
-    assert.equal((await models.transcript(legacy)).state, 'unavailable');
+    expect((await models.transcript(legacy)).state).toBe('unavailable');
     const append = models.transcripts.append;
     models.transcripts.append = () => {
       throw new Error('SYNTHETIC STORAGE FAILURE');
@@ -173,9 +172,9 @@ test('model runs retain scoped native execution and durable human decisions acro
     const failedScope = { bot: 'b', runId: models.jobs.get('b')!.id, chatRevision: 0 };
     await settle('b');
     models.transcripts.append = append;
-    assert.equal(models.status().bots.b.phase, 'completed');
-    assert.equal((await models.transcript(failedScope)).state, 'interrupted');
-    assert.equal((await models.transcript(scope)).state, 'complete');
+    expect(models.status().bots.b.phase).toBe('completed');
+    expect((await models.transcript(failedScope)).state).toBe('interrupted');
+    expect((await models.transcript(scope)).state).toBe('complete');
     await models.start('b', { requestId: 'mock-stop-prefix', prompt: '合成停止请求' });
     await entered(5);
     const stoppedScope = { bot: 'b', runId: models.jobs.get('b')!.id, chatRevision: 0 };
@@ -191,16 +190,15 @@ test('model runs retain scoped native execution and durable human decisions acro
       },
     });
     await models.stop('b');
-    assert.equal(models.status().bots.b.phase, 'stopped');
-    assert.equal((await models.transcript(stoppedScope)).state, 'complete');
+    expect(models.status().bots.b.phase).toBe('stopped');
+    expect((await models.transcript(stoppedScope)).state).toBe('complete');
     const cards = (await models.transcript(stoppedScope)).items.filter(
       (item) => item.kind === 'interaction',
     );
-    assert.equal(cards.length, 2);
-    assert.equal(
+    expect(cards.length).toBe(2);
+    expect(
       JSON.parse((await models.transcriptContent(stoppedScope, cards[1].seq)).text).status,
-      'cancelled',
-    );
+    ).toBe('cancelled');
     const finishLog = models.transcripts.finish;
     models.transcripts.finish = () => {
       throw new Error('SYNTHETIC CLOSE FAILURE');
@@ -210,15 +208,15 @@ test('model runs retain scoped native execution and durable human decisions acro
     const unfinishedScope = { bot: 'b', runId: models.jobs.get('b')!.id, chatRevision: 0 };
     await settle('b');
     models.transcripts.finish = finishLog;
-    assert.equal((await models.transcript(unfinishedScope)).state, 'interrupted');
+    expect((await models.transcript(unfinishedScope)).state).toBe('interrupted');
     await models.chats.renew({ bot: 'a', id: 'mock-fresh-chat', revision: 0 });
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
-    assert.deepEqual(await models.transcript(scope), complete);
-    assert.equal((await models.transcript(groupScope)).items.length, 3);
-    assert.equal((await models.transcript(failedScope)).state, 'interrupted');
-    assert.equal((await models.transcript(legacy)).state, 'unavailable');
+    expect(await models.transcript(scope)).toStrictEqual(complete);
+    expect((await models.transcript(groupScope)).items.length).toBe(3);
+    expect((await models.transcript(failedScope)).state).toBe('interrupted');
+    expect((await models.transcript(legacy)).state).toBe('unavailable');
   } finally {
     gates.at(-1)?.();
     await models.close();

@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { changelogBase, translateChangelog } from './changelog.ts';
 
 const config = {
@@ -10,12 +9,12 @@ const config = {
 test('creates both languages using public release records only', async () => {
   const records = 'feat: add synthetic task export (#42)';
   const result = await translateChangelog(records, config, async (url, init) => {
-    assert.equal(String(url), 'https://models.example.test/v1/chat/completions');
-    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer synthetic-key');
+    expect(String(url)).toBe('https://models.example.test/v1/chat/completions');
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer synthetic-key');
     const body = JSON.parse(String(init?.body));
-    assert.equal(body.model, 'synthetic-model');
-    assert.equal(body.messages[1].content, records);
-    assert.equal(body.messages[0].content.includes('synthetic-key'), false);
+    expect(body.model).toBe('synthetic-model');
+    expect(body.messages[1].content).toBe(records);
+    expect(body.messages[0].content.includes('synthetic-key')).toBe(false);
     return Response.json({
       choices: [
         {
@@ -30,8 +29,8 @@ test('creates both languages using public release records only', async () => {
       ],
     });
   });
-  assert.match(result.zh, /合成任务导出/);
-  assert.match(result.en, /synthetic task export/);
+  expect(result.zh).toMatch(/合成任务导出/);
+  expect(result.en).toMatch(/synthetic task export/);
 });
 test('does not publish partial translations or hide provider failures', async () => {
   for (const response of [
@@ -41,24 +40,22 @@ test('does not publish partial translations or hide provider failures', async ()
     }),
     Response.json({ choices: [{ message: { content: '{}' }, finish_reason: 'length' }] }),
   ])
-    await assert.rejects(translateChangelog('synthetic records', config, async () => response));
+    await expect(
+      translateChangelog('synthetic records', config, async () => response),
+    ).rejects.toThrowError();
 });
 
 test('changelog comparison uses the previous published version, never an unfinished Git tag or runtime release', () => {
-  assert.equal(
-    changelogBase({ tag_name: 'v1.0.0', draft: false, prerelease: false }, 'v1.0.2'),
+  expect(changelogBase({ tag_name: 'v1.0.0', draft: false, prerelease: false }, 'v1.0.2')).toBe(
     'v1.0.0',
   );
-  assert.throws(
-    () =>
-      changelogBase(
-        { tag_name: 'runtime-' + 'a'.repeat(24), draft: false, prerelease: true },
-        'v1.0.2',
-      ),
-    /CHANGELOG_BASE_INVALID/,
-  );
-  assert.throws(
-    () => changelogBase({ tag_name: 'v1.0.2', draft: false, prerelease: false }, 'v1.0.2'),
-    /CHANGELOG_ALREADY_PUBLISHED/,
-  );
+  expect(() =>
+    changelogBase(
+      { tag_name: 'runtime-' + 'a'.repeat(24), draft: false, prerelease: true },
+      'v1.0.2',
+    ),
+  ).toThrowError(/CHANGELOG_BASE_INVALID/);
+  expect(() =>
+    changelogBase({ tag_name: 'v1.0.2', draft: false, prerelease: false }, 'v1.0.2'),
+  ).toThrowError(/CHANGELOG_ALREADY_PUBLISHED/);
 });

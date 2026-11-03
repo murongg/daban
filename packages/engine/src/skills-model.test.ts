@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -61,7 +60,7 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     await models.start(bot, { requestId, prompt });
     const job = models.jobs.get(bot)!;
     await job.done;
-    assert.equal(job.phase, 'completed');
+    expect(job.phase).toBe('completed');
     return job.sessionId;
   }
   const document = (body: string) =>
@@ -78,7 +77,7 @@ test('captured Bot skills use native plugins, change only the next task, and fen
         return Reflect.apply(originalRelease, tools, [run]);
     });
     const plain = await turn('mock-a', 'mock-no-skills', '合成普通问候');
-    assert.equal(released.length, 1, 'Completed jobs must release task-owned package buffers');
+    expect(released.length, 'Completed jobs must release task-owned package buffers').toBe(1);
     const skill = await models.skills.import(document('SYNTHETIC-ORIGINAL'));
     await models.skills.bind('mock-a', {
       id: skill.id,
@@ -99,50 +98,46 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     });
     await ready;
     const held = models.jobs.get('mock-a')!;
-    assert.notEqual(held.sessionId, plain);
+    expect(held.sessionId).not.toBe(plain);
     const row = patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!;
-    assert.ok(row);
+    expect.assert(row);
     const config = row.config as { invoked: string[]; skills: { name: string; content: string }[] };
-    assert.deepEqual(config.invoked, ['mock-summary']);
-    assert.equal(
-      config.skills.find((item) => item.name === 'mock-summary')?.content,
+    expect(config.invoked).toStrictEqual(['mock-summary']);
+    expect(config.skills.find((item) => item.name === 'mock-summary')?.content).toBe(
       'SYNTHETIC-ORIGINAL',
     );
-    assert.ok(patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-skill'));
-    assert.ok(patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-tool-skill'));
-    assert.equal(
+    expect.assert(patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-skill'));
+    expect.assert(patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-tool-skill'));
+    expect(
       patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-skill-filesystem'),
-      false,
-    );
+    ).toBe(false);
     const edited = await models.skills.update(
       skill.id,
       skill.revision,
       document('SYNTHETIC-UPDATED'),
     );
-    assert.equal(
-      config.skills.find((item) => item.name === 'mock-summary')?.content,
+    expect(config.skills.find((item) => item.name === 'mock-summary')?.content).toBe(
       'SYNTHETIC-ORIGINAL',
     );
     hold = false;
     release();
     await held.done;
     await turn('mock-b', 'mock-other-no-skills', '合成其他 Bot 问候');
-    assert.deepEqual(
+    expect(
       (
         patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!.config as {
           skills: { name: string }[];
         }
       ).skills.map((item) => item.name),
-      ['find-skills'],
-    );
+    ).toStrictEqual(['find-skills']);
     const changed = await turn('mock-a', 'mock-skill-updated', '按启用技能处理合成记录');
-    assert.notEqual(changed, held.sessionId);
-    assert.equal(resumed.includes(held.sessionId!), false);
+    expect(changed).not.toBe(held.sessionId);
+    expect(resumed.includes(held.sessionId!)).toBe(false);
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
-    assert.equal(await turn('mock-a', 'mock-skill-restart', '合成后续任务'), changed);
-    assert.ok(resumed.includes(changed!));
+    expect(await turn('mock-a', 'mock-skill-restart', '合成后续任务')).toBe(changed);
+    expect.assert(resumed.includes(changed!));
     await models.skills.bind('mock-a', {
       id: skill.id,
       revision: edited.revision,
@@ -150,16 +145,15 @@ test('captured Bot skills use native plugins, change only the next task, and fen
       enabled: false,
     });
     const disabled = await turn('mock-a', 'mock-skill-disabled', '合成普通任务');
-    assert.notEqual(disabled, changed);
-    assert.deepEqual(
+    expect(disabled).not.toBe(changed);
+    expect(
       (
         patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!.config as {
           skills: { name: string }[];
         }
       ).skills.map((item) => item.name),
-      ['find-skills'],
-    );
-    assert.equal(models.journal.history('mock-a').length, 5);
+    ).toStrictEqual(['find-skills']);
+    expect(models.journal.history('mock-a').length).toBe(5);
   } finally {
     hold = false;
     release?.();
@@ -180,7 +174,7 @@ test('unreadable skills leave ordinary conversation available and never resume t
       return {
         id,
         run: async (text: unknown) => {
-          assert.ok(typeof text === 'string');
+          expect.assert(typeof text === 'string');
           prompt = text;
           return { sessionId: id, finalResponse: 'SYNTHETIC-ORDINARY' };
         },
@@ -226,16 +220,16 @@ test('unreadable skills leave ordinary conversation available and never resume t
     await writeFile(file, corrupt, { mode: 0o600 });
     models = new ModelRuns(options);
     await models.ready;
-    assert.equal((await models.skills.status()).available, false);
+    expect((await models.skills.status()).available).toBe(false);
     await models.start('mock-bot', { requestId: 'mock-after-corrupt', prompt: '合成普通问候' });
     const job = models.jobs.get('mock-bot')!;
     await job.done;
-    assert.equal(job.phase, 'completed');
-    assert.notEqual(job.sessionId, previous);
-    assert.ok(prompt.includes('本轮技能服务暂不可用'));
-    assert.equal(models.journal.history('mock-bot').length, 2);
-    assert.equal((await models.profiles.get('mock-bot'))?.memory, 'SYNTHETIC-RETAINED-MEMORY');
-    assert.deepEqual(await readFile(file), corrupt);
+    expect(job.phase).toBe('completed');
+    expect(job.sessionId).not.toBe(previous);
+    expect.assert(prompt.includes('本轮技能服务暂不可用'));
+    expect(models.journal.history('mock-bot').length).toBe(2);
+    expect((await models.profiles.get('mock-bot'))?.memory).toBe('SYNTHETIC-RETAINED-MEMORY');
+    expect(await readFile(file)).toStrictEqual(corrupt);
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });

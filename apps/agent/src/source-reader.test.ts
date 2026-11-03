@@ -1,33 +1,29 @@
-import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { expect, type TestContext, test } from 'vitest';
 import { isSourceReaderEntry, SourceReader } from './source-reader.js';
 
 const source = { vm: 'mock-old', imageFingerprint: 'a'.repeat(64) };
 const digest = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 test('importing reader validators into a host entry cannot activate the guest reader role', () => {
-  assert.equal(
-    isSourceReaderEntry(['/mock/node', '/mock/host.mjs'], 'file:///mock/host.mjs'),
+  expect(isSourceReaderEntry(['/mock/node', '/mock/host.mjs'], 'file:///mock/host.mjs')).toBe(
     false,
   );
-  assert.equal(
+  expect(
     isSourceReaderEntry(
       ['/mock/node', '/mock/reader.mjs', '--source-reader'],
       'file:///mock/reader.mjs',
     ),
-    true,
-  );
-  assert.equal(
+  ).toBe(true);
+  expect(
     isSourceReaderEntry(
       ['/mock/node', '/mock/host.mjs', '--source-reader'],
       'file:///mock/reader.mjs',
     ),
-    false,
-  );
+  ).toBe(false);
 });
 test('the standalone helper rejects malformed metadata without printing its bytes', () => {
   const result = spawnSync(
@@ -35,13 +31,13 @@ test('the standalone helper rejects malformed metadata without printing its byte
     [fileURLToPath(new URL('./source-reader.js', import.meta.url)), '--source-reader'],
     { input: '{"apiKey":"SYNTHETIC-PRIVATE-INPUT"}', encoding: 'utf8' },
   );
-  assert.equal(result.status, 1);
-  assert.equal(result.stdout, '');
-  assert.equal(result.stderr, 'SOURCE_READER_FAILED\n');
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe('SOURCE_READER_FAILED\n');
 });
-async function fixture(t: { after: (action: () => unknown) => unknown }) {
+async function fixture(t: TestContext) {
   const root = await mkdtemp('/tmp/mock-source-reader-');
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const roots = {
     control: path.join(root, 'model'),
     browser: path.join(root, 'profile'),
@@ -92,7 +88,7 @@ async function fixture(t: { after: (action: () => unknown) => unknown }) {
       return operation;
     }
     if (target === '/api/recovery/cancel') {
-      assert.equal(data?.id, operation?.id);
+      expect(data?.id).toBe(operation?.id);
       operation = { ...operation, phase: 'cancelled', revision: 2 };
       return operation;
     }
@@ -128,36 +124,36 @@ async function fixture(t: { after: (action: () => unknown) => unknown }) {
 test('reader fences only an idle workspace, stops the service and preserves unrelated approvals on rollback', async (t) => {
   const f = await fixture(t);
   f.setBusy(true);
-  await assert.rejects(f.reader.quiesce(source, 'mock-migration'), /SOURCE_BUSY/);
-  assert.equal(f.actions.includes('service stop'), false);
+  await expect(f.reader.quiesce(source, 'mock-migration')).rejects.toThrowError(/SOURCE_BUSY/);
+  expect(f.actions.includes('service stop')).toBe(false);
   f.setBusy(false);
   const prepared = await f.reader.quiesce(source, 'mock-migration');
-  assert.equal(prepared.serviceStopped, true);
-  assert.equal(prepared.runningModels, 0);
-  assert.equal(prepared.runningGroups, 0);
-  assert.ok(f.actions.indexOf('POST /api/recovery/prepare') < f.actions.indexOf('service stop'));
-  assert.deepEqual(await f.reader.quiesce(source, 'mock-migration'), prepared);
-  assert.equal(f.actions.filter((value) => value === 'POST /api/recovery/prepare').length, 1);
-  const result = await f.reader.rollback(source, 'mock-migration', prepared);
-  assert.equal(result.phase, 'rolled-back');
-  await f.reader.dependencies.service!('stop');
-  await assert.rejects(f.reader.manifest('control', source, 'mock-migration'), /SOURCE_NOT_FROZEN/);
-  assert.equal(f.actions.filter((value) => value.includes('/api/recovery/cancel')).length, 1);
-  assert.equal(
-    f.actions.some((value) => /interaction|reply|model\/configure/.test(value)),
-    false,
+  expect(prepared.serviceStopped).toBe(true);
+  expect(prepared.runningModels).toBe(0);
+  expect(prepared.runningGroups).toBe(0);
+  expect.assert(
+    f.actions.indexOf('POST /api/recovery/prepare') < f.actions.indexOf('service stop'),
   );
+  expect(await f.reader.quiesce(source, 'mock-migration')).toStrictEqual(prepared);
+  expect(f.actions.filter((value) => value === 'POST /api/recovery/prepare').length).toBe(1);
+  const result = await f.reader.rollback(source, 'mock-migration', prepared);
+  expect(result.phase).toBe('rolled-back');
+  await f.reader.dependencies.service!('stop');
+  await expect(f.reader.manifest('control', source, 'mock-migration')).rejects.toThrowError(
+    /SOURCE_NOT_FROZEN/,
+  );
+  expect(f.actions.filter((value) => value.includes('/api/recovery/cancel')).length).toBe(1);
+  expect(f.actions.some((value) => /interaction|reply|model\/configure/.test(value))).toBe(false);
 });
 
 test('another recovery intent cannot be replaced or cancelled by the migration reader', async (t) => {
   const f = await fixture(t);
   f.setOperation({ id: 'mock-unrelated-intent', phase: 'prepared', revision: 1 });
-  await assert.rejects(f.reader.quiesce(source, 'mock-migration'), /SOURCE_RECOVERY_CHANGED/);
-  assert.equal(f.actions.includes('service stop'), false);
-  assert.equal(
-    f.actions.some((value) => value.startsWith('POST ')),
-    false,
+  await expect(f.reader.quiesce(source, 'mock-migration')).rejects.toThrowError(
+    /SOURCE_RECOVERY_CHANGED/,
   );
+  expect(f.actions.includes('service stop')).toBe(false);
+  expect(f.actions.some((value) => value.startsWith('POST '))).toBe(false);
 });
 
 test('control snapshots exclude execution/session authority and stream credentials as bytes only after close', async (t) => {
@@ -172,23 +168,25 @@ test('control snapshots exclude execution/session authority and stream credentia
     await mkdir(path.join(f.roots.control, name));
     await writeFile(path.join(f.roots.control, name, 'private.json'), 'SYNTHETIC-EXCLUDED');
   }
-  await assert.rejects(f.reader.manifest('control', source, 'mock-copy'), /SOURCE_NOT_FROZEN/);
+  await expect(f.reader.manifest('control', source, 'mock-copy')).rejects.toThrowError(
+    /SOURCE_NOT_FROZEN/,
+  );
   await f.reader.quiesce(source, 'mock-copy');
   const manifest = await f.reader.manifest('control', source, 'mock-copy');
-  assert.deepEqual(
-    manifest.files.map((file) => file.path),
-    ['credentials.json', 'profiles.sqlite', 'profiles.sqlite-wal'],
-  );
+  expect(manifest.files.map((file) => file.path)).toStrictEqual([
+    'credentials.json',
+    'profiles.sqlite',
+    'profiles.sqlite-wal',
+  ]);
   const entry = manifest.files[0];
-  assert.equal(entry.sha256, digest(credential));
+  expect(entry.sha256).toBe(digest(credential));
   const output: Buffer[] = [];
   for await (const chunk of f.reader.read('control', source, 'mock-copy', entry))
     output.push(Buffer.from(chunk));
-  assert.deepEqual(Buffer.concat(output), credential);
-  assert.equal(
+  expect(Buffer.concat(output)).toStrictEqual(credential);
+  expect(
     (await readFile(path.join(f.root, 'receipt.json'), 'utf8')).includes('SYNTHETIC-TOKEN'),
-    false,
-  );
+  ).toBe(false);
 });
 
 test('public snapshots keep hidden regular tools, skip only Chrome transient links and reject moved files', async (t) => {
@@ -201,13 +199,10 @@ test('public snapshots keep hidden regular tools, skip only Chrome transient lin
   await symlink('/mock/transient-socket', path.join(f.roots.browser, 'SingletonSocket'));
   await f.reader.quiesce(source, 'mock-public');
   const shared = await f.reader.manifest('shared', source, 'mock-public');
-  assert.equal(shared.files[0].path, '.local/bin/mock-tool');
-  assert.equal(shared.files[0].mode, 0o755);
+  expect(shared.files[0].path).toBe('.local/bin/mock-tool');
+  expect(shared.files[0].mode).toBe(0o755);
   const browser = await f.reader.manifest('browser', source, 'mock-public');
-  assert.deepEqual(
-    browser.files.map((file) => file.path),
-    ['Cookies'],
-  );
+  expect(browser.files.map((file) => file.path)).toStrictEqual(['Cookies']);
   await rename(
     path.join(f.roots.browser, 'Cookies'),
     path.join(f.roots.browser, 'Cookies-retained'),
@@ -216,10 +211,10 @@ test('public snapshots keep hidden regular tools, skip only Chrome transient lin
     path.join(f.roots.browser, 'Cookies-retained'),
     path.join(f.roots.browser, 'Cookies'),
   );
-  await assert.rejects(async () => {
+  await expect(async () => {
     for await (const _chunk of f.reader.read('browser', source, 'mock-public', browser.files[0])) {
       /* Consume the guarded stream. */
     }
-  }, /SOURCE_/);
-  await assert.rejects(f.reader.manifest('browser', source, 'mock-public'), /SOURCE_/);
+  }).rejects.toThrowError(/SOURCE_/);
+  await expect(f.reader.manifest('browser', source, 'mock-public')).rejects.toThrowError(/SOURCE_/);
 });

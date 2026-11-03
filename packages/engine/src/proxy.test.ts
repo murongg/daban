@@ -1,15 +1,14 @@
-import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import { connect, createServer as createTcpServer, type Server, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 
 import { createProxy, publicAddress } from './proxy.js';
 
 async function listen(server: Server) {
   await new Promise<unknown>((resolve) => server.listen(0, '127.0.0.1', () => resolve(undefined)));
   const address = server.address();
-  assert.ok(address && typeof address !== 'string');
+  expect.assert(address && typeof address !== 'string');
   return `http://127.0.0.1:${address.port}`;
 }
 async function get(proxy: string, target: string, headers: Record<string, string> = {}) {
@@ -43,7 +42,7 @@ const close = (server: Server) =>
 
 test('browser proxy recognizes public addresses without accepting private, mapped or transition destinations', async () => {
   for (const value of ['93.184.216.34', '1.1.1.1', '2606:4700:4700::1111', '2400:3200::1'])
-    assert.equal(publicAddress(value), true, value);
+    expect(publicAddress(value), value).toBe(true);
   for (const value of [
     'not-an-ip',
     '0.0.0.0',
@@ -70,7 +69,7 @@ test('browser proxy recognizes public addresses without accepting private, mappe
     '2001::1',
     '3fff::1',
   ])
-    assert.equal(publicAddress(value), false, value);
+    expect(publicAddress(value), value).toBe(false);
 });
 
 test('browser proxy pins a validated public IP and keeps only the exact fixture-origin path exception', async () => {
@@ -99,19 +98,18 @@ test('browser proxy pins a validated public IP and keeps only the exact fixture-
     },
   });
   try {
-    assert.deepEqual(
+    expect(
       await get(proxy.url, 'http://public.example.test/mock?item=47', {
         'proxy-authorization': 'Bearer synthetic-not-for-origin',
       }),
-      { status: 200, text: 'SYNTHETIC-PROXY-47' },
-    );
-    assert.equal(dialled[0], '93.184.216.34:80');
-    assert.deepEqual(received[0], {
+    ).toStrictEqual({ status: 200, text: 'SYNTHETIC-PROXY-47' });
+    expect(dialled[0]).toBe('93.184.216.34:80');
+    expect(received[0]).toStrictEqual({
       path: '/mock?item=47',
       host: 'public.example.test',
       proxyAuth: undefined,
     });
-    assert.equal((await get(proxy.url, `${origin}/fixture/mock`)).status, 200);
+    expect((await get(proxy.url, `${origin}/fixture/mock`)).status).toBe(200);
     const calls = dialled.length;
     for (const url of [
       `${origin}/api/state`,
@@ -123,16 +121,14 @@ test('browser proxy pins a validated public IP and keeps only the exact fixture-
       'file:///etc/passwd',
       'https://public.example.test/',
     ])
-      assert.equal((await get(proxy.url, url)).status, 403, url);
+      expect((await get(proxy.url, url)).status, url).toBe(403);
     addresses = [
       { address: '93.184.216.34', family: 4 },
       { address: '127.0.0.1', family: 4 },
     ];
-    assert.equal((await get(proxy.url, 'http://mixed.example.test/')).status, 403);
-    assert.equal(
-      dialled.length,
+    expect((await get(proxy.url, 'http://mixed.example.test/')).status).toBe(403);
+    expect(dialled.length, 'private and mixed answers must fail before a socket is opened').toBe(
       calls,
-      'private and mixed answers must fail before a socket is opened',
     );
   } finally {
     await proxy.close();
@@ -163,13 +159,13 @@ test('browser CONNECT transport uses a pinned address and closes live tunnels wh
   });
   try {
     const established = await tunnel(proxy.url, 'public.example.test:443');
-    assert.equal(established.status, 200);
-    assert.deepEqual(dialled, ['93.184.216.34:443']);
+    expect(established.status).toBe(200);
+    expect(dialled).toStrictEqual(['93.184.216.34:443']);
     const reply = new Promise<string>((resolve) =>
       established.socket.once('data', (data) => resolve(data.toString('utf8'))),
     );
     established.socket.write('MOCK-TUNNEL-53');
-    assert.equal(await reply, 'ACK:MOCK-TUNNEL-53');
+    expect(await reply).toBe('ACK:MOCK-TUNNEL-53');
     const disconnected = new Promise<unknown>((resolve) =>
       established.socket.once('close', resolve),
     );
@@ -208,18 +204,17 @@ test('configured upstream receives only a pinned public CONNECT destination and 
     resolve: async () => [{ address: '93.184.216.34', family: 4 }],
   });
   try {
-    assert.equal(
-      (await get(proxy.url, 'http://public.example.test/mock')).text,
+    expect((await get(proxy.url, 'http://public.example.test/mock')).text).toBe(
       'SYNTHETIC-UPSTREAM-59',
     );
-    assert.deepEqual(hops, [
+    expect(hops).toStrictEqual([
       {
         authority: '93.184.216.34:80',
         auth: `Basic ${Buffer.from('mock-user:mock-password').toString('base64')}`,
       },
     ]);
-    assert.equal((await get(proxy.url, 'http://10.0.0.1/private')).status, 403);
-    assert.equal(hops.length, 1);
+    expect((await get(proxy.url, 'http://10.0.0.1/private')).status).toBe(403);
+    expect(hops.length).toBe(1);
   } finally {
     await proxy.close();
     for (const socket of sockets) socket.destroy();

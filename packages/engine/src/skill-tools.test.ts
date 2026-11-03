@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { NativeWorkspace } from './native-workspace.js';
 import { Skills } from './skills.js';
 
@@ -55,8 +54,8 @@ test('reads resources progressively and materializes relative paths without runn
       (await tools.invoke(run, 'skill_read', { skill: 'mock-tools', path: 'references/guide.txt' }))
         .content[0].text,
     );
-    assert.equal(first.content.length, 16000);
-    assert.equal(first.nextOffset, 16000);
+    expect(first.content.length).toBe(16000);
+    expect(first.nextOffset).toBe(16000);
     const emoji = JSON.parse(
       (
         await tools.invoke(run, 'skill_read', {
@@ -66,33 +65,29 @@ test('reads resources progressively and materializes relative paths without runn
         })
       ).content[0].text,
     );
-    assert.equal(emoji.content, '😀');
-    assert.equal(emoji.nextOffset, 2);
+    expect(emoji.content).toBe('😀');
+    expect(emoji.nextOffset).toBe(2);
     const prepared = JSON.parse(
       (await tools.invoke(run, 'skill_prepare', { skill: 'mock-tools' })).content[0].text,
     );
-    assert.equal(prepared.execution, 'native-gui');
-    assert.equal(
-      (await readFile(path.join(prepared.directory, 'scripts/run.py'))).toString(),
+    expect(prepared.execution).toBe('native-gui');
+    expect((await readFile(path.join(prepared.directory, 'scripts/run.py'))).toString()).toBe(
       'raise SystemExit("MUST NOT AUTO RUN")',
     );
-    assert.equal(
+    expect(
       JSON.parse(
         (await tools.invoke(run, 'skill_prepare', { skill: 'mock-tools' })).content[0].text,
       ).directory,
-      prepared.directory,
-    );
-    await assert.rejects(
+    ).toBe(prepared.directory);
+    await expect(
       tools.invoke({ ...run, skills: await store.capture('mock-b') }, 'skill_read', {
         skill: 'mock-tools',
         path: 'SKILL.md',
       }),
-      { code: 'SKILL_NOT_AVAILABLE' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'SKILL_NOT_AVAILABLE' });
+    await expect(
       tools.invoke(run, 'skill_read', { skill: 'mock-tools', path: '../outside.txt' }),
-      { code: 'INVALID_SKILL_PATH' },
-    );
+    ).rejects.toMatchObject({ code: 'INVALID_SKILL_PATH' });
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });
@@ -117,16 +112,15 @@ test('manual-only resource access requires a slash invocation in the accepted hu
       skills: await store.capture('mock-a'),
       task: { prompt: 'Synthetic request' },
     };
-    await assert.rejects(
+    await expect(
       tools.invoke(run, 'skill_read', { skill: 'mock-manual', path: 'SKILL.md' }),
-      { code: 'SKILL_NOT_AVAILABLE' },
-    );
+    ).rejects.toMatchObject({ code: 'SKILL_NOT_AVAILABLE' });
     const result = await tools.invoke(
       { ...run, task: { prompt: '/mock-manual Synthetic request' } },
       'skill_read',
       { skill: 'mock-manual', path: 'SKILL.md' },
     );
-    assert.equal(JSON.parse(result.content[0].text).content, content);
+    expect(JSON.parse(result.content[0].text).content).toBe(content);
   } finally {
     await store.close();
     await rm(root, { recursive: true, force: true });

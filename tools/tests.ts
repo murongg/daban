@@ -143,19 +143,35 @@ export function runTests(
   execute: Run = (args) => spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit' }),
 ) {
   if (!Object.hasOwn(suites, suite)) throw new Error(`Unknown test suite: ${suite}`);
-  // Explicit groups preserve platform coverage and the original sequential failure boundary.
+  // Keep the original stage order and stop before starting later stages after a failure.
   const selected =
     suite === 'runtime' ? Object.values(suites) : [suites[suite as keyof typeof suites]];
   for (const files of selected) {
-    const result = execute([
-      '--experimental-sqlite',
-      '--test',
-      // Node stops parsing runner options at the first test path.
-      ...extra,
-      ...files.map((file) => `packages/engine/dist/${file}.js`),
-    ]);
-    if (result.error) throw result.error;
-    if (result.status !== 0) return result.status ?? 1;
+    const commands = [
+      [
+        'node_modules/vitest/vitest.mjs',
+        'run',
+        '--project',
+        'node',
+        ...extra.map((arg) => arg.replace('--test-name-pattern', '--testNamePattern')),
+        ...files
+          .filter((file) => file.endsWith('.test'))
+          .map((file) => `packages/engine/dist/${file}.js`),
+      ],
+      [
+        '--experimental-sqlite',
+        '--test',
+        ...extra,
+        ...files
+          .filter((file) => file.endsWith('.integration'))
+          .map((file) => `packages/engine/dist/${file}.js`),
+      ],
+    ];
+    for (const args of commands) {
+      const result = execute(args);
+      if (result.error) throw result.error;
+      if (result.status !== 0) return result.status ?? 1;
+    }
   }
   return 0;
 }

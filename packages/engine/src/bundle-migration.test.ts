@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
   cp,
@@ -14,8 +13,8 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { type BotBundle, botBundleText } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { migrateBundlePayloads } from './bundle-migration.js';
 import { BotBundles } from './bundles.js';
 import { Knowledge } from './knowledge.js';
@@ -86,16 +85,18 @@ test('verified copied payloads get only new filesystem identity and pending impo
     knowledge,
   });
   try {
-    await assert.rejects(transfers.retry(f.record.header.id), { code: 'BOT_IMPORT_STORE' });
+    await expect(transfers.retry(f.record.header.id)).rejects.toMatchObject({
+      code: 'BOT_IMPORT_STORE',
+    });
     await transfers.close();
     const receipt = await migrateBundlePayloads(f.options);
-    assert.equal(receipt.phase, 'complete');
-    assert.equal(receipt.files, 1);
+    expect(receipt.phase).toBe('complete');
+    expect(receipt.files).toBe(1);
     const record = JSON.parse(await readFile(f.recordPath, 'utf8'));
     const info = await lstat(f.payloadPath);
-    assert.deepEqual(record, { ...f.record, payload: { dev: info.dev, ino: info.ino } });
-    assert.equal((await lstat(f.recordPath)).mode & 0o777, 0o600);
-    assert.ok(!JSON.stringify(receipt).includes('mock-import-target'));
+    expect(record).toStrictEqual({ ...f.record, payload: { dev: info.dev, ino: info.ino } });
+    expect((await lstat(f.recordPath)).mode & 0o777).toBe(0o600);
+    expect.assert(!JSON.stringify(receipt).includes('mock-import-target'));
     transfers = new BotBundles({
       directory: path.join(f.options.directory, 'bundles'),
       profiles,
@@ -104,11 +105,11 @@ test('verified copied payloads get only new filesystem identity and pending impo
     });
     await transfers.retry(f.record.header.id);
     await transfers.settled;
-    assert.equal((await transfers.status(f.record.header.id)).state, 'complete');
+    expect((await transfers.status(f.record.header.id)).state).toBe('complete');
     const changed = await readFile(f.recordPath, 'utf8');
-    assert.deepEqual(await migrateBundlePayloads(f.options), receipt);
-    assert.equal(await readFile(f.recordPath, 'utf8'), changed);
-    assert.equal((await lstat(f.payloadPath)).size, 0);
+    expect(await migrateBundlePayloads(f.options)).toStrictEqual(receipt);
+    expect(await readFile(f.recordPath, 'utf8')).toBe(changed);
+    expect((await lstat(f.payloadPath)).size).toBe(0);
   } finally {
     await transfers.close();
     await skills.close();
@@ -124,8 +125,8 @@ test('copied partial uploads and released completed payloads retain their origin
       const bytes = await readFile(f.payloadPath);
       await migrateBundlePayloads(f.options);
       const record = JSON.parse(await readFile(f.recordPath, 'utf8'));
-      assert.equal(record.state, state);
-      assert.deepEqual(await readFile(f.payloadPath), bytes);
+      expect(record.state).toBe(state);
+      expect(await readFile(f.payloadPath)).toStrictEqual(bytes);
     } finally {
       await rm(f.root, { recursive: true, force: true });
     }
@@ -149,9 +150,9 @@ test('changed source bytes and a full payload that disagrees with its header can
         };
       }
       const before = await readFile(f.recordPath, 'utf8');
-      await assert.rejects(migrateBundlePayloads(f.options));
-      assert.equal(await readFile(f.recordPath, 'utf8'), before);
-      await assert.rejects(lstat(f.options.journalFile), { code: 'ENOENT' });
+      await expect(migrateBundlePayloads(f.options)).rejects.toThrowError();
+      expect(await readFile(f.recordPath, 'utf8')).toBe(before);
+      await expect(lstat(f.options.journalFile)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await rm(f.root, { recursive: true, force: true });
     }
@@ -176,8 +177,8 @@ test('a persisted plan precedes every rewrite and resumes after rename before di
       const value = JSON.parse(args[0]);
       if (value.header && value.payload) {
         const journal = JSON.parse(await readFile(f.options.journalFile, 'utf8'));
-        assert.equal(journal.phase, 'planned');
-        assert.equal(journal.plans[0].oldJsonSha, f.options.files[0].sha256);
+        expect(journal.phase).toBe('planned');
+        expect(journal.plans[0].oldJsonSha).toBe(f.options.files[0].sha256);
         observedPlan = true;
       }
     }
@@ -192,9 +193,9 @@ test('a persisted plan precedes every rewrite and resumes after rename before di
     return originalSync.call(this);
   };
   try {
-    await assert.rejects(migrateBundlePayloads(f.options));
-    assert.equal(observedPlan, true);
-    assert.equal(interrupted, true);
+    await expect(migrateBundlePayloads(f.options)).rejects.toThrowError();
+    expect(observedPlan).toBe(true);
+    expect(interrupted).toBe(true);
     prototype.writeFile = originalWrite;
     let resumedDirectorySync = false;
     prototype.sync = async function (this: FileHandle) {
@@ -202,9 +203,9 @@ test('a persisted plan precedes every rewrite and resumes after rename before di
       if (info.isDirectory() && info.ino === bundleInode) resumedDirectorySync = true;
       return originalSync.call(this);
     };
-    assert.equal(JSON.parse(await readFile(f.options.journalFile, 'utf8')).phase, 'planned');
-    assert.equal((await migrateBundlePayloads(f.options)).phase, 'complete');
-    assert.equal(resumedDirectorySync, true);
+    expect(JSON.parse(await readFile(f.options.journalFile, 'utf8')).phase).toBe('planned');
+    expect((await migrateBundlePayloads(f.options)).phase).toBe('complete');
+    expect(resumedDirectorySync).toBe(true);
   } finally {
     prototype.writeFile = originalWrite;
     prototype.sync = originalSync;
@@ -225,15 +226,15 @@ test('an interrupted plan never overwrites an unrelated later receipt edit', asy
     return original.call(this);
   };
   try {
-    await assert.rejects(migrateBundlePayloads(f.options));
+    await expect(migrateBundlePayloads(f.options)).rejects.toThrowError();
     prototype.sync = original;
     const changed = JSON.stringify({
       ...JSON.parse(await readFile(f.recordPath, 'utf8')),
       error: 'MOCK_LATER_USER_EDIT',
     });
     await writeFile(f.recordPath, changed, { mode: 0o600 });
-    await assert.rejects(migrateBundlePayloads(f.options), /BUNDLE_MIGRATION_CHANGED/);
-    assert.equal(await readFile(f.recordPath, 'utf8'), changed);
+    await expect(migrateBundlePayloads(f.options)).rejects.toThrowError(/BUNDLE_MIGRATION_CHANGED/);
+    expect(await readFile(f.recordPath, 'utf8')).toBe(changed);
   } finally {
     prototype.sync = original;
     await rm(f.root, { recursive: true, force: true });
@@ -244,14 +245,15 @@ test('journal replay binds the original manifest and canonical target directory 
   const f = await fixture();
   try {
     await migrateBundlePayloads(f.options);
-    await assert.rejects(
+    await expect(
       migrateBundlePayloads({ ...f.options, manifestHash: 'e'.repeat(64) }),
-      /BUNDLE_MIGRATION_TARGET_CHANGED/,
-    );
+    ).rejects.toThrowError(/BUNDLE_MIGRATION_TARGET_CHANGED/);
     const backup = path.join(f.root, 'model-backup');
     await rename(f.options.directory, backup);
     await cp(backup, f.options.directory, { recursive: true });
-    await assert.rejects(migrateBundlePayloads(f.options), /BUNDLE_MIGRATION_TARGET_CHANGED/);
+    await expect(migrateBundlePayloads(f.options)).rejects.toThrowError(
+      /BUNDLE_MIGRATION_TARGET_CHANGED/,
+    );
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
@@ -274,7 +276,7 @@ test('a resumed plan cannot change receipt content beyond its payload filesystem
     return original.apply(this, args);
   };
   try {
-    await assert.rejects(migrateBundlePayloads(f.options));
+    await expect(migrateBundlePayloads(f.options)).rejects.toThrowError();
     prototype.writeFile = original;
     const journal = JSON.parse(await readFile(f.options.journalFile, 'utf8'));
     journal.plans[0].json = JSON.stringify({
@@ -283,8 +285,10 @@ test('a resumed plan cannot change receipt content beyond its payload filesystem
     });
     journal.plans[0].newJsonSha = digest(journal.plans[0].json);
     await writeFile(f.options.journalFile, JSON.stringify(journal), { mode: 0o600 });
-    await assert.rejects(migrateBundlePayloads(f.options), /BUNDLE_MIGRATION_CORRUPT_JOURNAL/);
-    assert.equal(await readFile(f.recordPath, 'utf8'), f.original);
+    await expect(migrateBundlePayloads(f.options)).rejects.toThrowError(
+      /BUNDLE_MIGRATION_CORRUPT_JOURNAL/,
+    );
+    expect(await readFile(f.recordPath, 'utf8')).toBe(f.original);
   } finally {
     prototype.writeFile = original;
     await rm(f.root, { recursive: true, force: true });

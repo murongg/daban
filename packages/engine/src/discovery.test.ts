@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import { isModelDefinition, isModelInspection } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { ModelSettings } from './settings.js';
 
 const endpoint = {
@@ -27,8 +26,8 @@ test('bounds merged output limits to a smaller provider context', async () =>
       ),
     );
     const result = await settings.inspect({ ...query, kind: 'limits', model: 'mock-alpha' });
-    assert.equal(isModelInspection(result), true);
-    assert.equal(result.kind === 'limits' ? result.model.maxTokens : undefined, 4096);
+    expect(isModelInspection(result)).toBe(true);
+    expect(result.kind === 'limits' ? result.model.maxTokens : undefined).toBe(4096);
   }));
 test('persists optional capability declarations without overriding an explicit image setting', async () =>
   fixture(async (root) => {
@@ -44,7 +43,7 @@ test('persists optional capability declarations without overriding an explicit i
       vision: true,
       capabilities: { input: ['text'], toolCall: false, temperature: false },
     };
-    assert.equal(isModelDefinition(model), true);
+    expect(isModelDefinition(model)).toBe(true);
     for (const capabilities of [
       { input: ['bad'] },
       { input: ['text', 'text'] },
@@ -52,7 +51,7 @@ test('persists optional capability declarations without overriding an explicit i
       { extra: true },
       {},
     ])
-      assert.equal(isModelDefinition({ ...model, capabilities }), false);
+      expect(isModelDefinition({ ...model, capabilities })).toBe(false);
     await settings.configure({
       revision: 0,
       requestId: 'mock-capability-save',
@@ -60,17 +59,16 @@ test('persists optional capability declarations without overriding an explicit i
       apiKey: query.apiKey,
       connection: { ...endpoint, name: 'Mock Provider', models: [model] },
     });
-    assert.deepEqual(
-      (await new ModelSettings(file).status(true)).connections?.[0].models[0],
+    expect((await new ModelSettings(file).status(true)).connections?.[0].models[0]).toStrictEqual(
       model,
     );
-    assert.equal((await settings.resolve()).vision, true);
+    expect((await settings.resolve()).vision).toBe(true);
   }));
 test('matches catalog capabilities without credentials or a provider request and keeps false distinct from unknown', async () =>
   fixture(async (root) => {
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
-      assert.equal(String(url), 'https://models.dev/api.json');
-      assert.equal(new Headers(init?.headers).get('authorization'), null);
+      expect(String(url)).toBe('https://models.dev/api.json');
+      expect(new Headers(init?.headers).get('authorization')).toBe(null);
       return Response.json({
         mock: {
           api: endpoint.baseURL,
@@ -86,33 +84,34 @@ test('matches catalog capabilities without credentials or a provider request and
         },
       });
     });
-    assert.deepEqual(
+    expect(
       await inspect(settings, {
         kind: 'metadata',
         revision: 0,
         connection: endpoint,
         model: 'mock-alpha',
       }),
-      {
-        kind: 'metadata',
-        revision: 0,
-        model: {
-          id: 'mock-alpha',
-          name: 'mock-alpha',
-          contextWindow: 96000,
-          maxTokens: 8192,
-          source: 'models.dev',
-          capabilities: {
-            input: ['text', 'image', 'pdf'],
-            output: ['text'],
-            reasoning: true,
-            toolCall: false,
-            temperature: false,
-          },
+    ).toStrictEqual({
+      kind: 'metadata',
+      revision: 0,
+      model: {
+        id: 'mock-alpha',
+        name: 'mock-alpha',
+        contextWindow: 96000,
+        maxTokens: 8192,
+        source: 'models.dev',
+        capabilities: {
+          input: ['text', 'image', 'pdf'],
+          output: ['text'],
+          reasoning: true,
+          toolCall: false,
+          temperature: false,
         },
       },
-    );
-    await assert.rejects(readFile(path.join(root, 'credentials.json')), { code: 'ENOENT' });
+    });
+    await expect(readFile(path.join(root, 'credentials.json'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   }));
 test('keeps consensus capabilities when gateway limits conflict and omits conflicting declarations', async () =>
   fixture(async (root) => {
@@ -140,24 +139,23 @@ test('keeps consensus capabilities when gateway limits conflict and omits confli
         },
       }),
     );
-    assert.deepEqual(
+    expect(
       await inspect(settings, {
         kind: 'metadata',
         revision: 0,
         connection: endpoint,
         model: 'mock-alpha',
       }),
-      {
-        kind: 'metadata',
-        revision: 0,
-        model: {
-          id: 'mock-alpha',
-          name: 'mock-alpha',
-          source: 'models.dev',
-          capabilities: { input: ['text', 'image'], toolCall: true },
-        },
+    ).toStrictEqual({
+      kind: 'metadata',
+      revision: 0,
+      model: {
+        id: 'mock-alpha',
+        name: 'mock-alpha',
+        source: 'models.dev',
+        capabilities: { input: ['text', 'image'], toolCall: true },
       },
-    );
+    });
   }));
 test('merges capabilities with provider limits and prefers the exact catalog endpoint', async () =>
   fixture(async (root) => {
@@ -189,7 +187,9 @@ test('merges capabilities with provider limits and prefers the exact catalog end
             },
       ),
     );
-    assert.deepEqual(await inspect(settings, { ...query, kind: 'limits', model: 'mock-alpha' }), {
+    expect(
+      await inspect(settings, { ...query, kind: 'limits', model: 'mock-alpha' }),
+    ).toStrictEqual({
       kind: 'limits',
       revision: 0,
       model: {
@@ -224,7 +224,9 @@ test('matches a shared context limit even when providers differ in output limits
             },
       ),
     );
-    assert.deepEqual(await inspect(settings, { ...query, kind: 'limits', model: 'mock-alpha' }), {
+    expect(
+      await inspect(settings, { ...query, kind: 'limits', model: 'mock-alpha' }),
+    ).toStrictEqual({
       kind: 'limits',
       revision: 0,
       model: { id: 'mock-alpha', name: 'mock-alpha', contextWindow: 64000, source: 'models.dev' },
@@ -235,14 +237,16 @@ test('rejects incomplete pagination instead of presenting a partial list as comp
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
       Response.json({ data: [{ id: 'mock-alpha' }], has_more: true }),
     );
-    await assert.rejects(inspect(settings, query), { code: 'MODEL_DISCOVERY_LIMIT' });
+    await expect(inspect(settings, query)).rejects.toMatchObject({ code: 'MODEL_DISCOVERY_LIMIT' });
   }));
 test('never returns a provider credential echoed in model metadata', async () =>
   fixture(async (root) => {
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
       Response.json({ data: [{ id: 'mock-alpha', name: query.apiKey }] }),
     );
-    await assert.rejects(inspect(settings, query), { code: 'MODEL_API_INVALID_RESPONSE' });
+    await expect(inspect(settings, query)).rejects.toMatchObject({
+      code: 'MODEL_API_INVALID_RESPONSE',
+    });
   }));
 test('rejects escaped credentials in metadata and accepts a valid long model ID with a bounded label', async () =>
   fixture(async (root) => {
@@ -252,11 +256,11 @@ test('rejects escaped credentials in metadata and accepts a valid long model ID 
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
       Response.json({ data: [{ id, ...(label ? { name: label } : {}) }] }),
     );
-    await assert.rejects(inspect(settings, { ...query, apiKey: key }), {
+    await expect(inspect(settings, { ...query, apiKey: key })).rejects.toMatchObject({
       code: 'MODEL_API_INVALID_RESPONSE',
     });
     label = '';
-    assert.deepEqual(await inspect(settings, query), {
+    expect(await inspect(settings, query)).toStrictEqual({
       kind: 'list',
       revision: 0,
       models: [{ id, name: id.slice(0, 120) }],
@@ -266,7 +270,7 @@ test('lists available models without saving credentials and returns only bounded
   fixture(async (root) => {
     let request: RequestInit | undefined;
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
-      assert.equal(String(url), `${endpoint.baseURL}/models`);
+      expect(String(url)).toBe(`${endpoint.baseURL}/models`);
       request = init;
       return Response.json({
         data: [
@@ -281,7 +285,7 @@ test('lists available models without saving credentials and returns only bounded
         ],
       });
     });
-    assert.deepEqual(await inspect(settings, query), {
+    expect(await inspect(settings, query)).toStrictEqual({
       kind: 'list',
       revision: 0,
       models: [
@@ -294,20 +298,19 @@ test('lists available models without saving credentials and returns only bounded
         },
       ],
     });
-    assert.equal(
-      new Headers(request?.headers).get('authorization'),
+    expect(new Headers(request?.headers).get('authorization')).toBe(
       'Bearer synthetic-provider-key',
     );
-    assert.equal(request?.redirect, 'error');
-    await assert.rejects(readFile(settings.file), { code: 'ENOENT' });
+    expect(request?.redirect).toBe('error');
+    await expect(readFile(settings.file)).rejects.toMatchObject({ code: 'ENOENT' });
   }));
 test('reads paginated Gemini generation models and their reported token limits', async () =>
   fixture(async (root) => {
     const calls: string[] = [];
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
       calls.push(String(url));
-      assert.equal(new Headers(init?.headers).get('x-goog-api-key'), query.apiKey);
-      assert.equal(new Headers(init?.headers).get('authorization'), null);
+      expect(new Headers(init?.headers).get('x-goog-api-key')).toBe(query.apiKey);
+      expect(new Headers(init?.headers).get('authorization')).toBe(null);
       return Response.json(
         calls.length === 1
           ? {
@@ -338,7 +341,7 @@ test('reads paginated Gemini generation models and their reported token limits',
         api: 'google-generative-ai',
       },
     });
-    assert.deepEqual(result, {
+    expect(result).toStrictEqual({
       kind: 'list',
       revision: 0,
       models: [
@@ -352,14 +355,14 @@ test('reads paginated Gemini generation models and their reported token limits',
         { id: 'mock-beta', name: 'mock-beta' },
       ],
     });
-    assert.match(calls[1], /pageToken=mock-next/);
+    expect(calls[1]).toMatch(/pageToken=mock-next/);
   }));
 test('reads native Claude limits with its API headers and follows the exact model ID', async () =>
   fixture(async (root) => {
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
-      assert.equal(String(url), 'https://claude.example.test/v1/models/mock-alpha');
-      assert.equal(new Headers(init?.headers).get('x-api-key'), query.apiKey);
-      assert.equal(new Headers(init?.headers).get('anthropic-version'), '2023-06-01');
+      expect(String(url)).toBe('https://claude.example.test/v1/models/mock-alpha');
+      expect(new Headers(init?.headers).get('x-api-key')).toBe(query.apiKey);
+      expect(new Headers(init?.headers).get('anthropic-version')).toBe('2023-06-01');
       return Response.json({
         id: 'mock-alpha',
         display_name: 'Mock Alpha',
@@ -367,7 +370,7 @@ test('reads native Claude limits with its API headers and follows the exact mode
         max_tokens: 64000,
       });
     });
-    assert.deepEqual(
+    expect(
       await inspect(settings, {
         ...query,
         kind: 'limits',
@@ -378,18 +381,17 @@ test('reads native Claude limits with its API headers and follows the exact mode
           api: 'anthropic-messages',
         },
       }),
-      {
-        kind: 'limits',
-        revision: 0,
-        model: {
-          id: 'mock-alpha',
-          name: 'Mock Alpha',
-          contextWindow: 200000,
-          maxTokens: 64000,
-          source: 'provider',
-        },
+    ).toStrictEqual({
+      kind: 'limits',
+      revision: 0,
+      model: {
+        id: 'mock-alpha',
+        name: 'Mock Alpha',
+        contextWindow: 200000,
+        maxTokens: 64000,
+        source: 'provider',
       },
-    );
+    });
   }));
 test('uses exact unambiguous public catalog limits without forwarding any provider credential', async () =>
   fixture(async (root) => {
@@ -397,9 +399,9 @@ test('uses exact unambiguous public catalog limits without forwarding any provid
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
       if (String(url).startsWith(endpoint.baseURL))
         return Response.json({ data: [{ id: 'mock-alpha' }] });
-      assert.equal(String(url), 'https://models.dev/api.json');
-      assert.equal(new Headers(init?.headers).get('authorization'), null);
-      assert.equal(new Headers(init?.headers).get('x-api-key'), null);
+      expect(String(url)).toBe('https://models.dev/api.json');
+      expect(new Headers(init?.headers).get('authorization')).toBe(null);
+      expect(new Headers(init?.headers).get('x-api-key')).toBe(null);
       registryCalls++;
       return Response.json({
         mock: {
@@ -412,7 +414,7 @@ test('uses exact unambiguous public catalog limits without forwarding any provid
       });
     });
     const input = { ...query, kind: 'limits', model: 'mock-alpha' };
-    assert.deepEqual(await inspect(settings, input), {
+    expect(await inspect(settings, input)).toStrictEqual({
       kind: 'limits',
       revision: 0,
       model: {
@@ -424,7 +426,7 @@ test('uses exact unambiguous public catalog limits without forwarding any provid
       },
     });
     await inspect(settings, input);
-    assert.equal(registryCalls, 1);
+    expect(registryCalls).toBe(1);
   }));
 test('keeps limits unknown when public metadata is ambiguous or unavailable', async () =>
   fixture(async (root) => {
@@ -438,7 +440,9 @@ test('keeps limits unknown when public metadata is ambiguous or unavailable', as
             },
       ),
     );
-    assert.deepEqual(await inspect(settings, { ...query, kind: 'limits', model: 'mock-alpha' }), {
+    expect(
+      await inspect(settings, { ...query, kind: 'limits', model: 'mock-alpha' }),
+    ).toStrictEqual({
       kind: 'limits',
       revision: 0,
       model: { id: 'mock-alpha', name: 'mock-alpha' },
@@ -447,22 +451,22 @@ test('keeps limits unknown when public metadata is ambiguous or unavailable', as
 test('sends a real fixed-prompt test rather than treating a models-list entry as a working model', async () =>
   fixture(async (root) => {
     const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url, init) => {
-      assert.equal(String(url), `${endpoint.baseURL}/chat/completions`);
+      expect(String(url)).toBe(`${endpoint.baseURL}/chat/completions`);
       const body = JSON.parse(String(init?.body));
-      assert.equal(body.model, 'mock-alpha');
-      assert.deepEqual(body.messages, [{ role: 'user', content: 'Reply OK.' }]);
-      assert.equal(body.max_tokens, 64);
+      expect(body.model).toBe('mock-alpha');
+      expect(body.messages).toStrictEqual([{ role: 'user', content: 'Reply OK.' }]);
+      expect(body.max_tokens).toBe(64);
       return Response.json({
         choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
       });
     });
     const result = await inspect(settings, { ...query, kind: 'test', model: 'mock-alpha' });
-    assert.ok(result && typeof result === 'object');
-    assert.equal(Reflect.get(result, 'kind'), 'test');
-    assert.equal(Reflect.get(result, 'model'), 'mock-alpha');
-    assert.ok(Number.isFinite(Reflect.get(result, 'latencyMs')));
-    assert.equal(JSON.stringify(result).includes(query.apiKey), false);
-    await assert.rejects(readFile(settings.file), { code: 'ENOENT' });
+    expect.assert(result && typeof result === 'object');
+    expect(Reflect.get(result, 'kind')).toBe('test');
+    expect(Reflect.get(result, 'model')).toBe('mock-alpha');
+    expect.assert(Number.isFinite(Reflect.get(result, 'latencyMs')));
+    expect(JSON.stringify(result).includes(query.apiKey)).toBe(false);
+    await expect(readFile(settings.file)).rejects.toMatchObject({ code: 'ENOENT' });
   }));
 test('reuses a saved key only at the same connection, destination, protocol and revision', async () =>
   fixture(async (root) => {
@@ -498,14 +502,16 @@ test('reuses a saved key only at the same connection, destination, protocol and 
       { ...endpoint, api: 'openai-responses' },
       { ...endpoint, id: 'mock-other' },
     ])
-      await assert.rejects(inspect(settings, { ...savedQuery, revision: 1, connection }), {
+      await expect(
+        inspect(settings, { ...savedQuery, revision: 1, connection }),
+      ).rejects.toMatchObject({
         code: 'MODEL_CREDENTIAL_REQUIRED',
       });
-    await assert.rejects(inspect(settings, { ...savedQuery, revision: 0 }), {
+    await expect(inspect(settings, { ...savedQuery, revision: 0 })).rejects.toMatchObject({
       code: 'MODEL_SETTINGS_CONFLICT',
     });
-    assert.equal(calls, 2);
-    assert.deepEqual(await readFile(settings.file), before);
+    expect(calls).toBe(2);
+    expect(await readFile(settings.file)).toStrictEqual(before);
   }));
 test('rejects invalid inputs before network IO and returns sanitized upstream failures', async () =>
   fixture(async (root) => {
@@ -522,9 +528,13 @@ test('rejects invalid inputs before network IO and returns sanitized upstream fa
       { ...query, connection: { ...endpoint, baseURL: 'https://example.test/?key=bad' } },
       { ...query, extra: true },
     ])
-      await assert.rejects(inspect(settings, input), { code: 'INVALID_MODEL_SETTINGS' });
-    assert.equal(calls, 0);
-    await assert.rejects(inspect(settings, query), { code: 'MODEL_API_UNAUTHORIZED' });
+      await expect(inspect(settings, input)).rejects.toMatchObject({
+        code: 'INVALID_MODEL_SETTINGS',
+      });
+    expect(calls).toBe(0);
+    await expect(inspect(settings, query)).rejects.toMatchObject({
+      code: 'MODEL_API_UNAUTHORIZED',
+    });
   }));
 test('does not turn discovery into paid inference when a list route is unsupported', async () =>
   fixture(async (root) => {
@@ -533,6 +543,8 @@ test('does not turn discovery into paid inference when a list route is unsupport
       calls++;
       return new Response(null, { status: 404 });
     });
-    await assert.rejects(inspect(settings, query), { code: 'MODEL_DISCOVERY_UNAVAILABLE' });
-    assert.equal(calls, 1);
+    await expect(inspect(settings, query)).rejects.toMatchObject({
+      code: 'MODEL_DISCOVERY_UNAVAILABLE',
+    });
+    expect(calls).toBe(1);
   }));

@@ -1,82 +1,82 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import test from 'node:test';
 import type { ScheduleRule } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { privateMetadata, secureDirectory } from './private-files.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { type ScheduleDomain, Schedules } from './schedules.js';
 
-test('installed native calendar preserves public Sunday numbering, wall time and recurrence after DST on the host', async (t) => {
-  const sdkFile = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-sdk-client');
-  const calendar = await nativeSchedules(sdkFile);
-  const now = Date.parse('2026-10-29T12:00:00Z');
-  const cases: { name: string; rule: ScheduleRule; times: string[] }[] = [
-    {
-      name: 'daily',
-      rule: { kind: 'daily', time: '23:17', timeZone: 'Asia/Shanghai' },
-      times: ['2026-10-29T15:17:00.000Z', '2026-10-30T15:17:00.000Z'],
+const cases: { name: string; rule: ScheduleRule; times: string[] }[] = [
+  {
+    name: 'daily',
+    rule: { kind: 'daily', time: '23:17', timeZone: 'Asia/Shanghai' },
+    times: ['2026-10-29T15:17:00.000Z', '2026-10-30T15:17:00.000Z'],
+  },
+  {
+    name: 'Sunday across DST',
+    rule: {
+      kind: 'weekly',
+      weekdays: [0],
+      time: '23:17',
+      timeZone: 'America/New_York',
     },
-    {
-      name: 'Sunday across DST',
-      rule: {
-        kind: 'weekly',
-        weekdays: [0],
-        time: '23:17',
-        timeZone: 'America/New_York',
+    times: ['2026-11-02T04:17:00.000Z', '2026-11-09T04:17:00.000Z'],
+  },
+  {
+    name: 'weekdays across DST',
+    rule: {
+      kind: 'weekly',
+      weekdays: [1, 2, 3, 4, 5],
+      time: '23:17',
+      timeZone: 'America/New_York',
+    },
+    times: ['2026-10-30T03:17:00.000Z', '2026-10-31T03:17:00.000Z', '2026-11-03T04:17:00.000Z'],
+  },
+  {
+    name: 'once',
+    rule: { kind: 'once', date: '2026-11-15', time: '09:17', timeZone: 'Asia/Shanghai' },
+    times: ['2026-11-15T01:17:00.000Z'],
+  },
+  {
+    name: 'cron',
+    rule: { kind: 'cron', expression: '17 23 * * 1,3', timeZone: 'Asia/Shanghai' },
+    times: ['2026-11-02T15:17:00.000Z', '2026-11-04T15:17:00.000Z'],
+  },
+];
+
+test.each(cases)(
+  'installed native calendar preserves $name across host wall time and DST',
+  async (item) => {
+    const sdkFile = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-sdk-client');
+    const calendar = await nativeSchedules(sdkFile);
+    const now = Date.parse('2026-10-29T12:00:00Z');
+    const original = structuredClone(item.rule);
+    let record = calendar.create(
+      {
+        id: 'mock-native-calendar',
+        bot: 'mock-native-bot',
+        title: '合成日程',
+        prompt: '合成说明',
+        rule: item.rule,
       },
-      times: ['2026-11-02T04:17:00.000Z', '2026-11-09T04:17:00.000Z'],
-    },
-    {
-      name: 'weekdays across DST',
-      rule: {
-        kind: 'weekly',
-        weekdays: [1, 2, 3, 4, 5],
-        time: '23:17',
-        timeZone: 'America/New_York',
-      },
-      times: ['2026-10-30T03:17:00.000Z', '2026-10-31T03:17:00.000Z', '2026-11-03T04:17:00.000Z'],
-    },
-    {
-      name: 'once',
-      rule: { kind: 'once', date: '2026-11-15', time: '09:17', timeZone: 'Asia/Shanghai' },
-      times: ['2026-11-15T01:17:00.000Z'],
-    },
-    {
-      name: 'cron',
-      rule: { kind: 'cron', expression: '17 23 * * 1,3', timeZone: 'Asia/Shanghai' },
-      times: ['2026-11-02T15:17:00.000Z', '2026-11-04T15:17:00.000Z'],
-    },
-  ];
-  for (const item of cases)
-    await t.test(item.name, () => {
-      const original = structuredClone(item.rule);
-      let record = calendar.create(
-        {
-          id: 'mock-native-calendar',
-          bot: 'mock-native-bot',
-          title: '合成日程',
-          prompt: '合成说明',
-          rule: item.rule,
-        },
-        now,
-      );
-      for (let index = 0; index < item.times.length; index++) {
-        assert.equal(record.scheduledAt, item.times[index]);
-        record = calendar.decode(record);
-        const due = calendar.due(record, Date.parse(record.scheduledAt));
-        assert.equal(due.occurrenceAt, record.scheduledAt);
-        if (index + 1 < item.times.length) {
-          assert.equal(due.nextScheduledAt, item.times[index + 1]);
-          record = { ...record, scheduledAt: due.nextScheduledAt! };
-        } else if (item.rule.kind === 'once') assert.equal(due.nextScheduledAt, undefined);
-      }
-      assert.deepEqual(item.rule, original, 'native numbering must not mutate the public rule');
-    });
-});
+      now,
+    );
+    for (let index = 0; index < item.times.length; index++) {
+      expect(record.scheduledAt).toBe(item.times[index]);
+      record = calendar.decode(record);
+      const due = calendar.due(record, Date.parse(record.scheduledAt));
+      expect(due.occurrenceAt).toBe(record.scheduledAt);
+      if (index + 1 < item.times.length) {
+        expect(due.nextScheduledAt).toBe(item.times[index + 1]);
+        record = { ...record, scheduledAt: due.nextScheduledAt! };
+      } else if (item.rule.kind === 'once') expect(due.nextScheduledAt).toBe(undefined);
+    }
+    expect(item.rule, 'native numbering must not mutate the public rule').toStrictEqual(original);
+  },
+);
 
 const anchor = Date.parse('2026-01-01T00:00:00Z');
 const input = {
@@ -173,34 +173,38 @@ test('Bot archive suspends owned schedules and unclaimed firings without erasing
     f.busy.add(input.bot);
     f.setTime(anchor + 61000);
     await f.store.tick();
-    assert.equal(f.calls.length, 1);
+    expect(f.calls.length).toBe(1);
     const before = await f.store.get(input.id);
     const other = await f.store.get('mock-other-plan');
     Object.assign(f.runner, { admit: (bot: string) => bot !== input.bot });
     const result = await f.store.suspendBot(input.bot);
-    assert.equal(result.disabled, 1);
-    assert.equal(result.cancelled, 1);
+    expect(result.disabled).toBe(1);
+    expect(result.cancelled).toBe(1);
     const paused = await f.store.get(input.id);
-    assert.equal(paused.enabled, false);
-    assert.equal(paused.locked, true);
-    assert.equal(paused.revision, before.revision + 1);
-    assert.equal(paused.history[0].state, 'cancelled');
-    assert.equal(paused.history[0].error, 'BOT_ARCHIVED');
-    assert.deepEqual(await f.store.get('mock-other-plan'), other);
-    assert.deepEqual(await f.store.suspendBot(input.bot), { disabled: 0, cancelled: 0 });
-    await assert.rejects(f.store.create({ ...input, id: 'mock-blocked-new-plan' }), {
+    expect(paused.enabled).toBe(false);
+    expect(paused.locked).toBe(true);
+    expect(paused.revision).toBe(before.revision + 1);
+    expect(paused.history[0].state).toBe('cancelled');
+    expect(paused.history[0].error).toBe('BOT_ARCHIVED');
+    expect(await f.store.get('mock-other-plan')).toStrictEqual(other);
+    expect(await f.store.suspendBot(input.bot)).toStrictEqual({ disabled: 0, cancelled: 0 });
+    await expect(f.store.create({ ...input, id: 'mock-blocked-new-plan' })).rejects.toMatchObject({
       code: 'BOT_UNAVAILABLE',
     });
-    await assert.rejects(f.store.update(input.id, paused.revision, { enabled: true }), {
+    await expect(
+      f.store.update(input.id, paused.revision, { enabled: true }),
+    ).rejects.toMatchObject({
       code: 'BOT_UNAVAILABLE',
     });
-    await assert.rejects(f.store.run(input.id, 'mock-blocked-manual'), { code: 'BOT_UNAVAILABLE' });
+    await expect(f.store.run(input.id, 'mock-blocked-manual')).rejects.toMatchObject({
+      code: 'BOT_UNAVAILABLE',
+    });
     Object.assign(f.runner, { admit: () => true });
     await f.reopen();
-    assert.equal((await f.store.get(input.id)).enabled, false);
-    assert.equal((await f.store.get(input.id)).history[0].state, 'cancelled');
-    assert.equal((await f.store.get('mock-other-plan')).enabled, true);
-    assert.equal(f.calls.filter((call) => call.bot === input.bot).length, 0);
+    expect((await f.store.get(input.id)).enabled).toBe(false);
+    expect((await f.store.get(input.id)).history[0].state).toBe('cancelled');
+    expect((await f.store.get('mock-other-plan')).enabled).toBe(true);
+    expect(f.calls.filter((call) => call.bot === input.bot).length).toBe(0);
   } finally {
     await f.close();
   }
@@ -213,16 +217,16 @@ test('schedule admission is checked before enqueue and dispatch while lifecycle 
     Object.assign(f.runner, { admit: () => false });
     f.setTime(anchor + 61000);
     await f.store.tick();
-    assert.equal((await f.store.get(input.id)).history.length, 0);
-    assert.equal(f.calls.length, 0);
+    expect((await f.store.get(input.id)).history.length).toBe(0);
+    expect(f.calls.length).toBe(0);
     Object.assign(f.runner, { admit: () => true });
     f.busy.add(input.bot);
     await f.store.run(input.id, 'mock-existing-firing');
     f.busy.clear();
     Object.assign(f.runner, { admit: () => false });
     await f.store.tick();
-    assert.equal(f.calls.length, 0);
-    assert.equal((await f.store.get(input.id)).history[0].state, 'pending');
+    expect(f.calls.length).toBe(0);
+    expect((await f.store.get(input.id)).history[0].state).toBe('pending');
   } finally {
     await f.close();
   }
@@ -241,11 +245,11 @@ for (const code of ['BOT_CHANGING', 'RUNTIME_RECOVERY_PENDING', 'CHAT_CONFLICT']
       });
       f.setTime(anchor + 61000);
       await f.store.tick();
-      assert.equal((await f.store.get(input.id)).history[0].state, 'pending');
-      assert.equal(f.calls.length, 0);
+      expect((await f.store.get(input.id)).history[0].state).toBe('pending');
+      expect(f.calls.length).toBe(0);
       Object.assign(f.runner, { start });
       await f.store.tick();
-      assert.equal(f.calls.length, 1);
+      expect(f.calls.length).toBe(1);
     } finally {
       await f.close();
     }
@@ -257,51 +261,55 @@ test('Bot schedule ownership and human locks are enforced inside the shared dura
   try {
     const created = await f.store.create(input, actor);
     await f.store.create({ ...input, id: 'mock-other-schedule', bot: 'mock-beta' });
-    assert.equal((await f.store.list(actor)).length, 1);
-    await assert.rejects(f.store.get('mock-other-schedule', actor), { code: 'SCHEDULE_NOT_FOUND' });
-    await assert.rejects(f.store.update('mock-other-schedule', 1, { enabled: false }, actor), {
+    expect((await f.store.list(actor)).length).toBe(1);
+    await expect(f.store.get('mock-other-schedule', actor)).rejects.toMatchObject({
       code: 'SCHEDULE_NOT_FOUND',
     });
-    await assert.rejects(f.store.remove('mock-other-schedule', 1, actor), {
+    await expect(
+      f.store.update('mock-other-schedule', 1, { enabled: false }, actor),
+    ).rejects.toMatchObject({
       code: 'SCHEDULE_NOT_FOUND',
     });
-    await assert.rejects(
+    await expect(f.store.remove('mock-other-schedule', 1, actor)).rejects.toMatchObject({
+      code: 'SCHEDULE_NOT_FOUND',
+    });
+    await expect(
       f.store.create({ ...input, id: 'mock-forged-owner', bot: 'mock-beta' }, actor),
-      { code: 'SCHEDULE_NOT_FOUND' },
-    );
+    ).rejects.toMatchObject({ code: 'SCHEDULE_NOT_FOUND' });
     await f.store.run(input.id, 'mock-queued-before-lock');
     const locked = await f.store.update(input.id, created.revision, { locked: true });
-    assert.equal(locked.locked, true);
-    assert.equal(
-      locked.history[0].state,
-      'pending',
-      'locking is edit protection, not cancellation',
-    );
-    assert.equal((await f.store.get(input.id, actor)).locked, true);
-    await assert.rejects(f.store.update(input.id, locked.revision, { title: 'Bot 改动' }, actor), {
+    expect(locked.locked).toBe(true);
+    expect(locked.history[0].state, 'locking is edit protection, not cancellation').toBe('pending');
+    expect((await f.store.get(input.id, actor)).locked).toBe(true);
+    await expect(
+      f.store.update(input.id, locked.revision, { title: 'Bot 改动' }, actor),
+    ).rejects.toMatchObject({
       code: 'SCHEDULE_LOCKED',
     });
-    await assert.rejects(f.store.update(input.id, locked.revision, { locked: false }, actor), {
+    await expect(
+      f.store.update(input.id, locked.revision, { locked: false }, actor),
+    ).rejects.toMatchObject({
       code: 'SCHEDULE_LOCKED',
     });
-    await assert.rejects(f.store.remove(input.id, locked.revision, actor), {
+    await expect(f.store.remove(input.id, locked.revision, actor)).rejects.toMatchObject({
       code: 'SCHEDULE_LOCKED',
     });
     const unlocked = await f.store.update(input.id, locked.revision, { locked: false });
-    assert.equal(
+    expect(
       (await f.store.update(input.id, unlocked.revision, { title: '合成已允许改动' }, actor)).title,
-      '合成已允许改动',
-    );
+    ).toBe('合成已允许改动');
     await f.reopen();
-    assert.equal((await f.store.get(input.id)).locked, false);
+    expect((await f.store.get(input.id)).locked).toBe(false);
     const abort = new AbortController();
     const queued = f.store.create(
       { ...input, id: 'mock-stopped-create' },
       { bot: input.bot, signal: abort.signal },
     );
     abort.abort();
-    await assert.rejects(queued);
-    await assert.rejects(f.store.get('mock-stopped-create'), { code: 'SCHEDULE_NOT_FOUND' });
+    await expect(queued).rejects.toThrowError();
+    await expect(f.store.get('mock-stopped-create')).rejects.toMatchObject({
+      code: 'SCHEDULE_NOT_FOUND',
+    });
   } finally {
     await f.close();
   }
@@ -321,8 +329,8 @@ test('older schedule records without a lock flag remain readable and idempotent 
     db.close();
     await f.reopen();
     const current = await f.store.get(input.id);
-    assert.equal(current.locked, false);
-    assert.deepEqual(await f.store.create(input), current);
+    expect(current.locked).toBe(false);
+    expect(await f.store.create(input)).toStrictEqual(current);
   } finally {
     await f.close();
   }
@@ -332,31 +340,31 @@ test('durable schedules create idempotently, execute once per occurrence and pre
   const f = await fixture();
   try {
     const created = await f.store.create(input);
-    assert.equal(created.nextRunAt, '2026-01-01T00:01:00.000Z');
-    assert.deepEqual(await f.store.create(input), created);
+    expect(created.nextRunAt).toBe('2026-01-01T00:01:00.000Z');
+    expect(await f.store.create(input)).toStrictEqual(created);
     f.setTime(anchor + 30000);
     const edited = await f.store.update(input.id, 1, { title: '  合成新名称  ', rule: input.rule });
-    assert.equal(edited.title, '合成新名称');
-    assert.equal(edited.nextRunAt, created.nextRunAt);
-    await assert.rejects(f.store.create({ ...input, prompt: '另一份合成任务' }), {
+    expect(edited.title).toBe('合成新名称');
+    expect(edited.nextRunAt).toBe(created.nextRunAt);
+    await expect(f.store.create({ ...input, prompt: '另一份合成任务' })).rejects.toMatchObject({
       code: 'SCHEDULE_ID_REUSED',
     });
     f.setTime(anchor + 60000);
     await Promise.all([f.store.tick(), f.store.tick()]);
-    assert.equal(f.calls.length, 1);
-    assert.equal(f.calls[0].bot, input.bot);
-    assert.match(f.calls[0].task.prompt, /合成新名称/);
-    assert.match(f.calls[0].task.prompt, /2026-01-01T00:01:00/);
-    assert.match(f.calls[0].task.prompt, /只处理合成记录/);
+    expect(f.calls.length).toBe(1);
+    expect(f.calls[0].bot).toBe(input.bot);
+    expect(f.calls[0].task.prompt).toMatch(/合成新名称/);
+    expect(f.calls[0].task.prompt).toMatch(/2026-01-01T00:01:00/);
+    expect(f.calls[0].task.prompt).toMatch(/只处理合成记录/);
     f.receipts.get(f.calls[0].task.requestId)!.phase = 'completed';
     f.busy.clear();
     await f.store.tick();
-    assert.equal((await f.store.list())[0].history[0].state, 'completed');
+    expect((await f.store.list())[0].history[0].state).toBe('completed');
     await f.reopen();
     await f.store.tick();
-    assert.equal(f.calls.length, 1);
+    expect(f.calls.length).toBe(1);
     // Windows privacy comes from the protected root ACL, not emulated POSIX mode bits.
-    assert.equal(await privateMetadata(f.options.file, await stat(f.options.file), 0o600), true);
+    expect(await privateMetadata(f.options.file, await stat(f.options.file), 0o600)).toBe(true);
     await f.store.close();
     await f.store.close();
   } finally {
@@ -370,25 +378,23 @@ test('busy Bots queue a firing, repeated manual requests deduplicate and due tri
     await f.store.create(input);
     f.busy.add(input.bot);
     const manual = await f.store.run(input.id, 'mock-manual');
-    assert.deepEqual(await f.store.run(input.id, 'mock-manual'), manual);
+    expect(await f.store.run(input.id, 'mock-manual')).toStrictEqual(manual);
     f.setTime(anchor + 60000);
     await f.store.tick();
-    assert.equal(f.calls.length, 0);
-    assert.equal(
+    expect(f.calls.length).toBe(0);
+    expect(
       (await f.store.list())[0].history.filter((item) => item.state === 'pending').length,
-      1,
-    );
-    assert.equal(
+    ).toBe(1);
+    expect(
       (await f.store.list())[0].history.filter((item) => item.state === 'coalesced').length,
-      1,
-    );
+    ).toBe(1);
     await f.store.create({ ...input, id: 'mock-beta-schedule', bot: 'mock-beta' });
     await f.store.run('mock-beta-schedule', 'mock-beta-manual');
     await f.store.tick();
-    assert.equal(f.calls[0].bot, 'mock-beta');
+    expect(f.calls[0].bot).toBe('mock-beta');
     f.busy.delete(input.bot);
     await f.store.tick();
-    assert.equal(f.calls.length, 2);
+    expect(f.calls.length).toBe(2);
   } finally {
     await f.close();
   }
@@ -400,20 +406,20 @@ test('pause and edits cancel queued work; resume recalculates forward; revisions
     await f.store.create(input);
     await f.store.run(input.id, 'mock-pending');
     const paused = await f.store.update(input.id, 1, { enabled: false });
-    assert.equal(paused.history[0].state, 'cancelled');
+    expect(paused.history[0].state).toBe('cancelled');
     f.setTime(anchor + 3600000);
     await f.store.tick();
-    assert.equal(f.calls.length, 0);
-    await assert.rejects(f.store.update(input.id, 1, { enabled: true }), {
+    expect(f.calls.length).toBe(0);
+    await expect(f.store.update(input.id, 1, { enabled: true })).rejects.toMatchObject({
       code: 'SCHEDULE_CONFLICT',
     });
     const resumed = await f.store.update(input.id, paused.revision, { enabled: true });
-    assert.equal(resumed.nextRunAt, '2026-01-01T01:01:00.000Z');
+    expect(resumed.nextRunAt).toBe('2026-01-01T01:01:00.000Z');
     await f.store.run(input.id, 'mock-second-pending');
     await f.store.remove(input.id, resumed.revision);
     await f.store.tick();
-    assert.equal(f.calls.length, 0);
-    assert.equal((await f.store.list()).length, 0);
+    expect(f.calls.length).toBe(0);
+    expect((await f.store.list()).length).toBe(0);
   } finally {
     await f.close();
   }
@@ -428,16 +434,16 @@ test('ambiguous startup is interrupted without replay, while definite busy rejec
       throw new Error('synthetic ambiguous failure');
     };
     await f.store.tick();
-    assert.equal((await f.store.list())[0].history[0].state, 'interrupted');
+    expect((await f.store.list())[0].history[0].state).toBe('interrupted');
     await f.reopen();
     await f.store.tick();
-    assert.equal(f.calls.length, 0);
+    expect(f.calls.length).toBe(0);
     await f.store.run(input.id, 'mock-busy-race');
     f.runner.start = async () => {
       throw Object.assign(new Error('MODEL_ALREADY_RUNNING'), { code: 'MODEL_ALREADY_RUNNING' });
     };
     await f.store.tick();
-    assert.equal((await f.store.list())[0].history[0].state, 'pending');
+    expect((await f.store.list())[0].history[0].state).toBe('pending');
     await f.store.update(input.id, 1, { enabled: false });
     await f.store.run(input.id, 'mock-accepted-then-lost');
     f.runner.start = async (_bot, task) => {
@@ -445,7 +451,7 @@ test('ambiguous startup is interrupted without replay, while definite busy rejec
       throw new Error('synthetic response lost after acceptance');
     };
     await f.store.tick();
-    assert.equal((await f.store.list())[0].history[0].state, 'running');
+    expect((await f.store.list())[0].history[0].state).toBe('running');
   } finally {
     await f.close();
   }
@@ -461,14 +467,16 @@ test('restart follows durable model receipts and never retries an interrupted ru
     f.busy.clear();
     await f.reopen();
     await f.store.tick();
-    assert.equal(f.calls.length, 1);
-    assert.equal((await f.store.list())[0].history[0].state, 'interrupted');
-    await assert.rejects(f.store.create({ ...input, id: '../bad' }), { code: 'INVALID_SCHEDULE' });
-    await assert.rejects(f.store.create({ ...input, id: 'mock-bad', prompt: '' }), {
+    expect(f.calls.length).toBe(1);
+    expect((await f.store.list())[0].history[0].state).toBe('interrupted');
+    await expect(f.store.create({ ...input, id: '../bad' })).rejects.toMatchObject({
+      code: 'INVALID_SCHEDULE',
+    });
+    await expect(f.store.create({ ...input, id: 'mock-bad', prompt: '' })).rejects.toMatchObject({
       code: 'INVALID_SCHEDULE',
     });
     const bytes = await readFile(f.options.file);
-    assert.ok(bytes.length > 0);
+    expect.assert(bytes.length > 0);
   } finally {
     await f.close();
   }

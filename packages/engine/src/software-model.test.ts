@@ -1,9 +1,8 @@
-import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { SoftwarePlan } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { startPrototype } from './server.js';
 import { ModelSettings } from './settings.js';
@@ -77,7 +76,7 @@ test('model RPC cannot forge installation consent; only the routed server tool c
     await entered;
     const job = models.jobs.get('mock-bot')!,
       auth = `Bearer ${job.token}`;
-    await assert.rejects(
+    await expect(
       models.rpc('mock-bot', auth, {
         id: 1,
         method: 'interaction.open',
@@ -90,11 +89,10 @@ test('model RPC cannot forge installation consent; only the routed server tool c
           purpose: '合成伪造请求',
         },
       }),
-      { code: 'INVALID_INTERACTION' },
-    );
-    assert.equal((await models.interactions.list()).length, 0);
+    ).rejects.toMatchObject({ code: 'INVALID_INTERACTION' });
+    expect((await models.interactions.list()).length).toBe(0);
     const listed = await models.rpc('mock-bot', auth, { id: 2, method: 'tools/list' });
-    assert.match(JSON.stringify(listed), /software_install/);
+    expect(JSON.stringify(listed)).toMatch(/software_install/);
     const pending = models.rpc('mock-bot', auth, {
       id: 3,
       method: 'tools/call',
@@ -108,11 +106,11 @@ test('model RPC cannot forge installation consent; only the routed server tool c
       await new Promise((resolve) => setTimeout(resolve, 2));
       card = (await models.interactions.list())[0];
     }
-    assert.ok(card);
-    assert.equal(effects, 0);
+    expect.assert(card);
+    expect(effects).toBe(0);
     await models.interactions.reply('mock-bot', job.id, card.id, { kind: 'decision', allow: true });
-    assert.doesNotMatch(JSON.stringify(await pending), /SOFTWARE_CANCELLED/);
-    assert.equal(effects, 1);
+    expect(JSON.stringify(await pending)).not.toMatch(/SOFTWARE_CANCELLED/);
+    expect(effects).toBe(1);
     release();
     await job.done;
   } finally {
@@ -160,9 +158,9 @@ test('software capability upgrade retires the old no-install session and preserv
     await models.start('mock-bot', { requestId: 'mock-new', prompt: '合成新消息' });
     const current = models.jobs.get('mock-bot')!;
     await current.done;
-    assert.notEqual(current.sessionId, old.sessionId);
-    assert.equal(resumes, 0);
-    assert.ok(models.journal.history('mock-bot').some((item) => item.prompt === '合成旧消息'));
+    expect(current.sessionId).not.toBe(old.sessionId);
+    expect(resumes).toBe(0);
+    expect.assert(models.journal.history('mock-bot').some((item) => item.prompt === '合成旧消息'));
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -193,12 +191,12 @@ test('a configured installer can become ready after runtime startup without losi
       const response = await fetch(`${app.url}/api/state`, {
         headers: { 'x-prototype-token': app.token },
       });
-      assert.equal(response.status, 200);
+      expect(response.status).toBe(200);
       return response.json();
     };
-    assert.deepEqual((await state()).software, { available: false, items: [] });
+    expect((await state()).software).toStrictEqual({ available: false, items: [] });
     available = true;
-    assert.deepEqual((await state()).software, { available: true, items: [] });
+    expect((await state()).software).toStrictEqual({ available: true, items: [] });
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

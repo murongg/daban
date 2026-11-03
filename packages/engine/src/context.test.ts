@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import { CheckpointTracker, recoveryContext } from './checkpoint.js';
 import { contextBudget, contextPrefix, recoveryBudget } from './context.js';
 import { HistoryTools } from './history.js';
@@ -61,13 +60,13 @@ test('partial and error references in a multi-turn checkpoint can be read throug
     const history = new HistoryTools(journal);
     for (const field of ['partial', 'error'] as const) {
       const excerpt = context.recent.find((item) => item[field])?.[field];
-      assert.ok(excerpt);
+      expect.assert(excerpt);
       const result = await history.invoke(
         { bot: owner.bot, id: owner.runId, abort: new AbortController() },
         'bot_history_read',
         excerpt.read,
       );
-      assert.ok(
+      expect.assert(
         JSON.stringify(result).includes(`SYNTHETIC ${field === 'partial' ? 'PARTIAL' : 'FAILURE'}`),
       );
     }
@@ -77,12 +76,16 @@ test('partial and error references in a multi-turn checkpoint can be read throug
 });
 
 test('recovery reserves room for the current request and handles Unicode without splitting code points', () => {
-  assert.throws(() => contextBudget(16384, 16384), { code: 'MODEL_CONTEXT_BUDGET_INVALID' });
-  assert.throws(() => contextBudget(Number.NaN, 8192), { code: 'MODEL_CONTEXT_BUDGET_INVALID' });
-  assert.equal(recoveryBudget(16384, 8192, 'SYNTHETIC '.repeat(20000)), 0);
-  assert.ok(recoveryBudget(32768, 8192, '', 2) < recoveryBudget(32768, 8192, ''));
-  assert.equal(contextPrefix('prefix😀中文', 9), 'prefix');
-  assert.equal(contextPrefix('prefix😀中文', 10), 'prefix😀');
+  expect(() => contextBudget(16384, 16384)).toThrowError(
+    expect.objectContaining({ code: 'MODEL_CONTEXT_BUDGET_INVALID' }),
+  );
+  expect(() => contextBudget(Number.NaN, 8192)).toThrowError(
+    expect.objectContaining({ code: 'MODEL_CONTEXT_BUDGET_INVALID' }),
+  );
+  expect(recoveryBudget(16384, 8192, 'SYNTHETIC '.repeat(20000))).toBe(0);
+  expect.assert(recoveryBudget(32768, 8192, '', 2) < recoveryBudget(32768, 8192, ''));
+  expect(contextPrefix('prefix😀中文', 9)).toBe('prefix');
+  expect(contextPrefix('prefix😀中文', 10)).toBe('prefix😀');
 });
 
 test('portable context stays inside Bot, group and cleared-chat boundaries and redacts task plans', () => {
@@ -102,10 +105,10 @@ test('portable context stays inside Bot, group and cleared-chat boundaries and r
     owner,
     16000,
   );
-  assert.match(text, /SYNTHETIC CURRENT GOAL/);
-  assert.match(text, /SYNTHETIC UNFINISHED/);
-  assert.equal(/CLEARED CHAT|OTHER BOT|GROUP PRIVATE|synthetic-secret/.test(text), false);
-  assert.match(text, /"incomplete":true/);
+  expect(text).toMatch(/SYNTHETIC CURRENT GOAL/);
+  expect(text).toMatch(/SYNTHETIC UNFINISHED/);
+  expect(/CLEARED CHAT|OTHER BOT|GROUP PRIVATE|synthetic-secret/.test(text)).toBe(false);
+  expect(text).toMatch(/"incomplete":true/);
 });
 
 test('a bounded recovery checkpoint marks omissions and keeps exact read-back references', () => {
@@ -113,16 +116,16 @@ test('a bounded recovery checkpoint marks omissions and keeps exact read-back re
     row(String(i), { chatRevision: 1, result: '合成中文😀'.repeat(1000) }),
   );
   const text = recoveryContext(records, owner, 4000);
-  assert.ok(Buffer.byteLength(text) <= 4000);
-  assert.match(text, /"truncated":true/);
-  assert.match(text, /"field":"result"/);
-  assert.match(text, /bot_history_read/);
+  expect.assert(Buffer.byteLength(text) <= 4000);
+  expect(text).toMatch(/"truncated":true/);
+  expect(text).toMatch(/"field":"result"/);
+  expect(text).toMatch(/bot_history_read/);
   const data = JSON.parse(text.slice(text.indexOf('\n') + 1)) as {
     omittedCount: number;
     recent: unknown[];
   };
-  assert.ok(data.omittedCount > 0);
-  assert.ok(data.recent.length > 0);
+  expect.assert(data.omittedCount > 0);
+  expect.assert(data.recent.length > 0);
 });
 
 test('recovery keeps every inserted turn of a finished run in chronological order', () => {
@@ -148,18 +151,12 @@ test('recovery keeps every inserted turn of a finished run in chronological orde
       answer?: { text: string };
     }[];
   };
-  assert.equal(data.omittedCount, 0);
-  assert.deepEqual(
-    data.recent.map((item) => [item.request.text, item.answer?.text]),
-    [
-      ['SYNTHETIC ORIGINAL', 'SYNTHETIC ANSWER A'],
-      ['SYNTHETIC INSERT', 'SYNTHETIC ANSWER B'],
-    ],
-  );
-  assert.deepEqual(
-    data.recent.map((item) => item.request.read.turn),
-    [0, 1],
-  );
+  expect(data.omittedCount).toBe(0);
+  expect(data.recent.map((item) => [item.request.text, item.answer?.text])).toStrictEqual([
+    ['SYNTHETIC ORIGINAL', 'SYNTHETIC ANSWER A'],
+    ['SYNTHETIC INSERT', 'SYNTHETIC ANSWER B'],
+  ]);
+  expect(data.recent.map((item) => item.request.read.turn)).toStrictEqual([0, 1]);
 });
 
 test('old persona summaries do not reintroduce removed preferences into a rebuilt context', () => {
@@ -174,7 +171,7 @@ test('old persona summaries do not reintroduce removed preferences into a rebuil
     owner,
     16000,
   );
-  assert.equal(text.includes('RETIRED PERSONA'), false);
+  expect(text.includes('RETIRED PERSONA')).toBe(false);
 });
 
 test('the journal reloads valid checkpoints and discards corrupt optional checkpoints without losing history', async () => {
@@ -201,12 +198,11 @@ test('the journal reloads valid checkpoints and discards corrupt optional checkp
     );
     const reopened = new TaskJournal(root);
     await reopened.load();
-    assert.equal(
-      (await reopened.read('mock-bot', 'mock-run-01'))?.checkpoint?.text,
+    expect((await reopened.read('mock-bot', 'mock-run-01'))?.checkpoint?.text).toBe(
       'SYNTHETIC SAVED CHECKPOINT',
     );
-    assert.equal((await reopened.read('mock-bot', 'mock-run-02'))?.checkpoint, undefined);
-    assert.equal((await reopened.read('mock-bot', 'mock-run-02'))?.prompt, row('02').prompt);
+    expect((await reopened.read('mock-bot', 'mock-run-02'))?.checkpoint).toBe(undefined);
+    expect((await reopened.read('mock-bot', 'mock-run-02'))?.prompt).toBe(row('02').prompt);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -225,22 +221,20 @@ test('foreign, failed and incomplete compaction transactions never become recove
       method: 'session.event',
       params: { sessionId: session, event: { type, seq, data, ...extra } },
     });
-  assert.equal(
+  expect(
     event('compaction/start', 1, { compactionId: 'mock-foreign', turn: 1 }, 'mock-other'),
-    undefined,
-  );
-  assert.equal(
+  ).toBe(undefined);
+  expect(
     event('compaction/summary', 2, {
       compactionId: 'mock-foreign',
       summary: [{ type: 'text', text: 'SYNTHETIC FOREIGN' }],
     }),
-    undefined,
-  );
+  ).toBe(undefined);
   event('compaction/start', 3, { compactionId: 'mock-incomplete', turn: 1 });
   event('compaction/summary', 4, {
     compactionId: 'mock-incomplete',
     summary: [{ type: 'text', text: 'SYNTHETIC UNCOMMITTED' }],
     shadowedRange: { start: 0, end: 2 },
   });
-  assert.equal(event('compaction/end', 5, { compactionId: 'mock-incomplete', turn: 1 }), undefined);
+  expect(event('compaction/end', 5, { compactionId: 'mock-incomplete', turn: 1 })).toBe(undefined);
 });

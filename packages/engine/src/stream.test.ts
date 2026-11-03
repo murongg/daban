@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test, vi } from 'vitest';
 import { apply, StreamCollector, StreamPublisher } from './stream.js';
 
 const start = (revision = 1, attemptId = 'mock-attempt') => ({
@@ -36,11 +35,10 @@ test('native streams expose visible text only and never reasoning or tool argume
   const stream = new StreamCollector();
   stream.push(start());
   stream.push(chunk(2, 0, { type: 'block-start', index: 0, blockType: 'reasoning' }));
-  assert.equal(
+  expect(
     stream.push(chunk(3, 1, { type: 'reasoning-delta', index: 0, text: 'mock-private-reasoning' })),
-    undefined,
-  );
-  assert.equal(
+  ).toBe(undefined);
+  expect(
     stream.push(
       chunk(4, 2, {
         type: 'tool-call-delta',
@@ -49,49 +47,45 @@ test('native streams expose visible text only and never reasoning or tool argume
         argumentsDelta: 'mock-private-arguments',
       }),
     ),
-    undefined,
-  );
+  ).toBe(undefined);
   stream.push(chunk(5, 3, { type: 'block-start', index: 2, blockType: 'text' }));
-  assert.equal(
-    stream.push(chunk(6, 4, { type: 'text-delta', index: 2, text: '合成回答甲' }))?.text,
+  expect(stream.push(chunk(6, 4, { type: 'text-delta', index: 2, text: '合成回答甲' }))?.text).toBe(
     '合成回答甲',
   );
-  assert.equal(
+  expect(
     stream.push(chunk(7, 5, { type: 'text-delta', index: 0, text: 'mock-private-reasoning' })),
-    undefined,
-  );
-  assert.equal(
-    stream.push(chunk(8, 6, { type: 'text-delta', index: 2, text: '乙' }))?.text,
+  ).toBe(undefined);
+  expect(stream.push(chunk(8, 6, { type: 'text-delta', index: 2, text: '乙' }))?.text).toBe(
     '合成回答甲乙',
   );
-  assert.deepEqual(stream.push(end(9, 7)), { text: '合成回答甲乙', state: 'settled' });
+  expect(stream.push(end(9, 7))).toStrictEqual({ text: '合成回答甲乙', state: 'settled' });
 });
 test('duplicate, stale and missing chunks cannot duplicate or contaminate retries', () => {
   const stream = new StreamCollector();
   stream.push(start());
   stream.push(chunk(2, 0, { type: 'block-start', index: 0, blockType: 'text' }));
   const visible = chunk(3, 1, { type: 'text-delta', index: 0, text: '合成旧前缀' });
-  assert.equal(stream.push(visible)?.text, '合成旧前缀');
-  assert.equal(stream.push(visible), undefined);
-  assert.deepEqual(stream.push(end(4, 2, 'assistant/attempt')), { text: '', state: 'streaming' });
+  expect(stream.push(visible)?.text).toBe('合成旧前缀');
+  expect(stream.push(visible)).toBe(undefined);
+  expect(stream.push(end(4, 2, 'assistant/attempt'))).toStrictEqual({
+    text: '',
+    state: 'streaming',
+  });
   stream.push(start(5, 'mock-retry'));
-  assert.equal(
+  expect(
     stream.push(chunk(6, 0, { type: 'text-delta', index: 0, text: 'bad' }, 'mock-attempt')),
-    undefined,
-  );
+  ).toBe(undefined);
   stream.push(chunk(7, 0, { type: 'block-start', index: 0, blockType: 'text' }, 'mock-retry'));
-  assert.equal(
+  expect(
     stream.push(chunk(8, 1, { type: 'text-delta', index: 0, text: '合成新回答' }, 'mock-retry'))
       ?.text,
-    '合成新回答',
-  );
-  assert.deepEqual(
+  ).toBe('合成新回答');
+  expect(
     stream.push(chunk(9, 3, { type: 'text-delta', index: 0, text: 'missing' }, 'mock-retry')),
-    { text: '', state: 'streaming' },
-  );
+  ).toStrictEqual({ text: '', state: 'streaming' });
 });
-test('coalesced output retries the newest snapshot instead of replaying an old prefix', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+test('coalesced output retries the newest snapshot instead of replaying an old prefix', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const sent: unknown[] = [];
   let calls = 0;
   const publisher = new StreamPublisher(async (snapshot) => {
@@ -100,20 +94,20 @@ test('coalesced output retries the newest snapshot instead of replaying an old p
   });
   publisher.push('mock-session', { text: '甲', state: 'streaming' });
   publisher.push('mock-session', { text: '甲乙', state: 'streaming' });
-  t.mock.timers.tick(100);
+  vi.advanceTimersByTime(100);
   await new Promise(setImmediate);
   publisher.push('mock-session', { text: '甲乙丙', state: 'settled' });
-  t.mock.timers.tick(100);
+  vi.advanceTimersByTime(100);
   await new Promise(setImmediate);
   await publisher.close();
-  assert.deepEqual(sent, [
+  expect(sent).toStrictEqual([
     { sessionId: 'mock-session', revision: 3, text: '甲乙丙', state: 'settled' },
   ]);
 });
-test('the native adapter publishes only its exact live root and keeps revisions monotone after agent replacement', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+test('the native adapter publishes only its exact live root and keeps revisions monotone after agent replacement', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const sent: { sessionId: string; revision: number; text: string }[] = [];
-  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url: unknown, init?: RequestInit) => {
     const rpc = JSON.parse(String(init?.body));
     sent.push(rpc.params);
     return Response.json({ result: { accepted: true } });
@@ -126,7 +120,7 @@ test('the native adapter publishes only its exact live root and keeps revisions 
     {
       agents: { roots: () => [root] },
       on: (event, callback) => {
-        assert.equal(event, 'agent/assistant-stream');
+        expect(event).toBe('agent/assistant-stream');
         handler = callback;
       },
       effect: (factory) => {
@@ -144,23 +138,20 @@ test('the native adapter publishes only its exact live root and keeps revisions 
     emit(root, start());
     emit(root, chunk(2, 0, { type: 'block-start', index: 0, blockType: 'text' }));
     emit(root, chunk(3, 1, { type: 'text-delta', index: 0, text: `合成回答${attempt}` }));
-    t.mock.timers.tick(100);
+    vi.advanceTimersByTime(100);
     await new Promise(setImmediate);
   }
   await dispose();
-  assert.deepEqual(
-    sent.map((item) => item.text),
-    ['合成回答0', '合成回答1'],
-  );
-  assert.ok(sent[1].revision > sent[0].revision);
+  expect(sent.map((item) => item.text)).toStrictEqual(['合成回答0', '合成回答1']);
+  expect.assert(sent[1].revision > sent[0].revision);
 });
 
-test('the adapter captures the producing turn before publication and retains it across a delayed send', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+test('the adapter captures the producing turn before publication and retains it across a delayed send', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-stream-turn-'));
   const turnFile = path.join(dir, 'turn.json');
   const sent: { turnId?: string; text: string }[] = [];
-  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url: unknown, init?: RequestInit) => {
     sent.push(JSON.parse(String(init?.body)).params);
     return Response.json({ result: { accepted: true } });
   });
@@ -188,16 +179,16 @@ test('the adapter captures the producing turn before publication and retains it 
     emit(chunk(3, 1, { type: 'text-delta', index: 0, text: 'SYNTHETIC FIRST' }));
     emit(end(4, 2));
     await writeFile(turnFile, JSON.stringify({ id: 'mock-second-turn' }));
-    t.mock.timers.tick(100);
+    vi.advanceTimersByTime(100);
     await new Promise(setImmediate);
-    assert.equal(sent[0].turnId, 'mock-first-turn');
+    expect(sent[0].turnId).toBe('mock-first-turn');
     emit(start(5, 'mock-next-attempt'));
     emit(chunk(6, 0, { type: 'block-start', index: 0, blockType: 'text' }, 'mock-next-attempt'));
     emit(
       chunk(7, 1, { type: 'text-delta', index: 0, text: 'SYNTHETIC SECOND' }, 'mock-next-attempt'),
     );
     await dispose();
-    assert.equal(sent[1].turnId, 'mock-second-turn');
+    expect(sent[1].turnId).toBe('mock-second-turn');
   } finally {
     await dispose();
     await rm(dir, { recursive: true, force: true });

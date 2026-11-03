@@ -1,18 +1,17 @@
-import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import type { ToolResult } from './computer-tools.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
 function result(value: unknown) {
-  assert.ok(value && typeof value === 'object' && 'result' in value);
+  expect.assert(value && typeof value === 'object' && 'result' in value);
   const reply = value.result as ToolResult;
-  assert.equal(reply.isError, undefined, JSON.stringify(reply));
+  expect(reply.isError, JSON.stringify(reply)).toBe(undefined);
   const block = reply.content[0];
-  assert.equal(block.type, 'text');
+  expect(block.type).toBe('text');
   return JSON.parse(block.type === 'text' ? block.text : '');
 }
 
@@ -41,7 +40,7 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
       method: 'tools/call',
       params: { name, arguments: args },
     });
-    assert.ok(reply && 'result' in reply);
+    expect.assert(reply && 'result' in reply);
     emit('tool/result', { message: { toolCallId: callId, ...(reply.result as ToolResult) } });
     return reply;
   };
@@ -59,12 +58,12 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
             (value) => value.running && value.sessionId === id,
           )!;
           observers.set(job.bot, observer.onNotification);
-          assert.ok(job.prompt?.includes('bot_notes_read'));
+          expect.assert(job.prompt?.includes('bot_notes_read'));
           const offered = await models.rpc(job.bot, `Bearer ${job.token}`, {
             id: 'mock-tools',
             method: 'tools/list',
           });
-          assert.ok(offered && 'result' in offered);
+          expect.assert(offered && 'result' in offered);
           const list = offered.result as { tools: { name: string }[] };
           for (const name of [
             'bot_notes_list',
@@ -74,14 +73,11 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
             'bot_notes_trash',
             'bot_notes_restore',
           ])
-            assert.ok(
+            expect.assert(
               list.tools.some((tool) => tool.name === name),
               name,
             );
-          assert.equal(
-            list.tools.some((tool) => tool.name === 'screenshot'),
-            false,
-          );
+          expect(list.tools.some((tool) => tool.name === 'screenshot')).toBe(false);
           await act(job.bot);
           return { sessionId: id, finalResponse: 'MOCK VERIFIED NOTES REPLY' };
         },
@@ -106,8 +102,8 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
     });
     const job = models.jobs.get(bot)!;
     await job.done;
-    assert.equal(job.phase, 'completed', job.error);
-    assert.equal(job.files.length, 0);
+    expect(job.phase, job.error).toBe('completed');
+    expect(job.files.length).toBe(0);
     return job;
   }
   try {
@@ -122,30 +118,30 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
         color: 'mint',
       });
     const greeting = await turn('mock-alpha', 'mock-greeting');
-    assert.equal(greeting.toolCount, 0);
+    expect(greeting.toolCount).toBe(0);
     const args = { title: '合成模型便笺', body: 'MOCK ALPHA ONLY', status: 'open' };
     let noteId = '';
     act = async (bot) => {
       const note = result(await call(bot, 'bot_notes_add', args)).item;
       noteId = note.id;
-      assert.deepEqual(note.createdBy, { kind: 'bot', bot });
-      assert.equal(result(await call(bot, 'bot_notes_read', { id: noteId })).item.body, args.body);
+      expect(note.createdBy).toStrictEqual({ kind: 'bot', bot });
+      expect(result(await call(bot, 'bot_notes_read', { id: noteId })).item.body).toBe(args.body);
     };
     const first = await turn('mock-alpha', 'mock-add');
-    assert.equal(first.sessionId, greeting.sessionId);
+    expect(first.sessionId).toBe(greeting.sessionId);
     act = async (bot) => {
       const catalog = result(await call(bot, 'task_catalog'));
-      assert.deepEqual(catalog.notes.page.items, []);
+      expect(catalog.notes.page.items).toStrictEqual([]);
       const denied = await call(bot, 'bot_notes_read', { id: noteId });
-      assert.match(JSON.stringify(denied), /NOTE_NOT_FOUND/);
+      expect(JSON.stringify(denied)).toMatch(/NOTE_NOT_FOUND/);
       const own = result(
         await call(bot, 'bot_notes_add', { title: args.title, body: 'MOCK BETA ONLY' }),
       ).item;
-      assert.equal(own.bot, bot);
-      assert.notEqual(own.id, noteId);
+      expect(own.bot).toBe(bot);
+      expect(own.id).not.toBe(noteId);
     };
     const beta = await turn('mock-beta', 'mock-beta-add');
-    assert.notEqual(beta.sessionId, first.sessionId);
+    expect(beta.sessionId).not.toBe(first.sessionId);
     const human = await models.notes.write(
       'mock-alpha',
       {
@@ -158,22 +154,22 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
       { kind: 'human' },
     );
     act = async (bot) => {
-      assert.deepEqual(result(await call(bot, 'bot_notes_add', args)).item, human.item);
+      expect(result(await call(bot, 'bot_notes_add', args)).item).toStrictEqual(human.item);
     };
     const retry = await turn('mock-alpha', 'mock-explicit-retry', first.id);
-    assert.equal(retry.intentId, first.intentId);
-    assert.equal((await models.notes.status('mock-alpha')).available, true);
-    assert.equal((await models.notes.list('mock-alpha', { filter: 'all' })).items.length, 1);
-    assert.equal((await models.notes.list('mock-beta', { filter: 'all' })).items.length, 1);
+    expect(retry.intentId).toBe(first.intentId);
+    expect((await models.notes.status('mock-alpha')).available).toBe(true);
+    expect((await models.notes.list('mock-alpha', { filter: 'all' })).items.length).toBe(1);
+    expect((await models.notes.list('mock-beta', { filter: 'all' })).items.length).toBe(1);
     const transcript = await models.transcript({
       bot: 'mock-alpha',
       runId: first.id,
       chatRevision: 0,
     });
-    assert.ok(
+    expect.assert(
       transcript.items.some((row) => row.kind === 'call' && row.name?.endsWith('bot_notes_add')),
     );
-    assert.ok(first.trace.every((row) => row.surface === 'notes'));
+    expect.assert(first.trace.every((row) => row.surface === 'notes'));
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -209,7 +205,7 @@ test('notes capabilities replace a general-v6 native tool context while retainin
     await models.start('mock-alpha', { requestId: 'mock-old', prompt: 'MOCK OLD MESSAGE' });
     const old = models.jobs.get('mock-alpha')!;
     await old.done;
-    assert.equal(old.phase, 'completed');
+    expect(old.phase).toBe('completed');
     await models.close();
     const file = path.join(root, 'model/task-journal', `${old.id}.json`),
       journal = JSON.parse(await readFile(file, 'utf8'));
@@ -219,11 +215,11 @@ test('notes capabilities replace a general-v6 native tool context while retainin
     await models.start('mock-alpha', { requestId: 'mock-new', prompt: 'MOCK NEW GREETING' });
     const current = models.jobs.get('mock-alpha')!;
     await current.done;
-    assert.equal(current.phase, 'completed');
-    assert.notEqual(current.sessionId, old.sessionId);
-    assert.deepEqual(resumed, []);
-    assert.equal(current.toolCount, 0);
-    assert.ok(
+    expect(current.phase).toBe('completed');
+    expect(current.sessionId).not.toBe(old.sessionId);
+    expect(resumed).toStrictEqual([]);
+    expect(current.toolCount).toBe(0);
+    expect.assert(
       models.journal.history('mock-alpha').some((record) => record.prompt === 'MOCK OLD MESSAGE'),
     );
   } finally {

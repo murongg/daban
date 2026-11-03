@@ -1,11 +1,10 @@
-import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
 import type { BrowserCommandRequest } from '@daban/protocol';
 import type { BrowserContext, Page } from 'playwright';
+import { expect, test } from 'vitest';
 import { ComputerTools, type ToolRun } from './computer-tools.js';
 import { Browser } from './runtime.js';
 import { TabStore } from './tab-store.js';
@@ -101,32 +100,30 @@ test('human browser commands claim before effects and exact retries do not creat
       epoch: 0,
       action: 'new',
     };
-    await assert.rejects(app.tabs.human('a', command), { code: 'STALE_CONTROL' });
-    assert.equal(app.created.length, 0);
+    await expect(app.tabs.human('a', command)).rejects.toMatchObject({ code: 'STALE_CONTROL' });
+    expect(app.created.length).toBe(0);
     const human = await app.browser.transfer('a', 0, 'human');
     command.epoch = human.epoch;
     const [first, retry] = await Promise.all([
       app.tabs.human('a', command),
       app.tabs.human('a', command),
     ]);
-    assert.equal(first.state.active, retry.state.active);
-    assert.equal(app.created.length, 1);
-    assert.equal((await app.tabs.receipt('a', command.id)).phase, 'settled');
-    await assert.rejects(
+    expect(first.state.active).toBe(retry.state.active);
+    expect(app.created.length).toBe(1);
+    expect((await app.tabs.receipt('a', command.id)).phase).toBe('settled');
+    await expect(
       app.tabs.human('a', { ...command, action: 'open', url: 'https://example.test/' }),
-      { code: 'BROWSER_REQUEST_ID_REUSED' },
-    );
-    await assert.rejects(
+    ).rejects.toMatchObject({ code: 'BROWSER_REQUEST_ID_REUSED' });
+    await expect(
       app.tabs.human('a', { ...command, id: 'mock-old-instance', instance: 'old-instance' }),
-      { code: 'BROWSER_INSTANCE_CHANGED' },
-    );
-    assert.equal((await app.tabs.receipt('a', 'mock-old-instance')).phase, 'unknown');
+    ).rejects.toMatchObject({ code: 'BROWSER_INSTANCE_CHANGED' });
+    expect((await app.tabs.receipt('a', 'mock-old-instance')).phase).toBe('unknown');
     await app.close();
     app = await setup(path.join(root, 'tabs.sqlite'));
     const restored = await app.tabs.human('a', command);
-    assert.equal(restored.state.active, first.state.active);
-    assert.equal(app.created.length, 1, 'only the saved second tab is restored, with no replay');
-    assert.equal((await app.tabs.receipt('b', command.id)).phase, 'unknown');
+    expect(restored.state.active).toBe(first.state.active);
+    expect(app.created.length, 'only the saved second tab is restored, with no replay').toBe(1);
+    expect((await app.tabs.receipt('b', command.id)).phase).toBe('unknown');
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -148,15 +145,17 @@ test('an effect with a lost receipt stays ambiguous after restart and is never r
     app.store.finish = async () => {
       throw new Error('SYNTHETIC-DISK-FAILURE');
     };
-    await assert.rejects(app.tabs.human('a', command), { code: 'BROWSER_STATE_UNAVAILABLE' });
-    assert.equal(app.a.events.length, 1);
+    await expect(app.tabs.human('a', command)).rejects.toMatchObject({
+      code: 'BROWSER_STATE_UNAVAILABLE',
+    });
+    expect(app.a.events.length).toBe(1);
     await app.close();
     app = await setup(path.join(root, 'tabs.sqlite'));
     const result = await app.tabs.human('a', command);
-    assert.equal(result.error, 'BROWSER_OUTCOME_UNKNOWN');
-    assert.equal(result.uncertain, true);
-    assert.equal(app.a.events.length, 0);
-    assert.equal((await app.tabs.receipt('a', command.id)).phase, 'claimed');
+    expect(result.error).toBe('BROWSER_OUTCOME_UNKNOWN');
+    expect(result.uncertain).toBe(true);
+    expect(app.a.events.length).toBe(0);
+    expect((await app.tabs.receipt('a', command.id)).phase).toBe('claimed');
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -169,7 +168,7 @@ test('queued browser input and delayed frames cannot cross a tab, document or br
     const human = await app.browser.transfer('a', 0, 'human');
     const binding = app.tabs.binding('a');
     await app.browser.boundInput('a', human.epoch, binding, { type: 'text', text: 'synthetic' });
-    assert.deepEqual(app.a.events, ['text']);
+    expect(app.a.events).toStrictEqual(['text']);
     let release!: () => unknown;
     const blocked = app.browser.control.execute(
       'a',
@@ -185,28 +184,27 @@ test('queued browser input and delayed frames cannot cross a tab, document or br
       type: 'text',
       text: 'must-not-land',
     });
-    const stale = assert.rejects(input, { code: 'BROWSER_VIEW_STALE' });
+    const stale = expect(input).rejects.toMatchObject({ code: 'BROWSER_VIEW_STALE' });
     await app.a.goto('https://example.test/new-document');
     release();
     await blocked;
     await stale;
-    assert.deepEqual(app.a.events, ['text', 'https://example.test/new-document']);
-    await assert.rejects(
+    expect(app.a.events).toStrictEqual(['text', 'https://example.test/new-document']);
+    await expect(
       app.browser.boundInput(
         'a',
         human.epoch,
         { ...app.tabs.binding('a'), instance: 'old-instance' },
         { type: 'text', text: 'must-not-land' },
       ),
-      { code: 'BROWSER_VIEW_STALE' },
-    );
+    ).rejects.toMatchObject({ code: 'BROWSER_VIEW_STALE' });
     let finish!: (frame: Buffer) => unknown;
     app.a.screenshot = () =>
       new Promise<Buffer>((resolve) => {
         finish = resolve;
       });
     const frame = app.browser.view('a');
-    const changed = assert.rejects(frame, { code: 'BROWSER_VIEW_STALE' });
+    const changed = expect(frame).rejects.toMatchObject({ code: 'BROWSER_VIEW_STALE' });
     await new Promise(setImmediate);
     await app.tabs.human('a', {
       id: 'mock-switch',
@@ -217,8 +215,8 @@ test('queued browser input and delayed frames cannot cross a tab, document or br
     finish(Buffer.from('synthetic-old-page'));
     await changed;
     const next = await app.browser.view('a');
-    assert.equal(next.binding.tab, (await app.tabs.state('a')).active);
-    assert.equal(next.bot, 'a');
+    expect(next.binding.tab).toBe((await app.tabs.state('a')).active);
+    expect(next.bot).toBe('a');
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -233,7 +231,10 @@ test('browser pixel tools require the same document that produced the model scre
       control: app.browser.control,
       browser: app.browser,
       frame: async () => Buffer.from('synthetic-desktop'),
-      screens: { input: async () => assert.fail('no desktop input'), openApp: async () => {} },
+      screens: {
+        input: async () => expect.unreachable('no desktop input'),
+        openApp: async () => {},
+      },
     });
     const run: ToolRun = {
       bot: 'a',
@@ -243,29 +244,25 @@ test('browser pixel tools require the same document that produced the model scre
       seen: {},
       trace: [],
     };
-    assert.equal(
-      (await tools.invoke(run, 'screenshot', { surface: 'browser' })).isError,
-      undefined,
-    );
+    expect((await tools.invoke(run, 'screenshot', { surface: 'browser' })).isError).toBe(undefined);
     await app.a.goto('https://example.test/next-document');
     const result = await tools.invoke(run, 'act', {
       surface: 'browser',
       actions: [{ type: 'text', text: 'must-not-land' }],
     });
-    assert.equal(result.isError, true);
-    assert.equal(run.trace.at(-1)?.code, 'BROWSER_VIEW_STALE');
-    assert.deepEqual(app.a.events, ['https://example.test/next-document']);
+    expect(result.isError).toBe(true);
+    expect(run.trace.at(-1)?.code).toBe('BROWSER_VIEW_STALE');
+    expect(app.a.events).toStrictEqual(['https://example.test/next-document']);
     await tools.invoke(run, 'screenshot', { surface: 'browser' });
-    assert.equal(
+    expect(
       (
         await tools.invoke(run, 'act', {
           surface: 'browser',
           actions: [{ type: 'text', text: 'synthetic' }],
         })
       ).isError,
-      undefined,
-    );
-    assert.equal(app.a.events.at(-1), 'text');
+    ).toBe(undefined);
+    expect(app.a.events.at(-1)).toBe('text');
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -295,10 +292,10 @@ test('a held browser pointer is released on its original page before changing ta
       x: 2,
       y: 2,
     });
-    assert.deepEqual(app.a.events, ['down', 'up']);
-    assert.deepEqual(app.created[0].events, ['down']);
+    expect(app.a.events).toStrictEqual(['down', 'up']);
+    expect(app.created[0].events).toStrictEqual(['down']);
     await app.browser.transfer('a', human.epoch, 'agent');
-    assert.deepEqual(app.created[0].events, ['down', 'up']);
+    expect(app.created[0].events).toStrictEqual(['down', 'up']);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -320,14 +317,13 @@ test('a failed pointer release retains its original page so returning control ca
       x: 1,
       y: 1,
     });
-    await assert.rejects(
-      app.browser.transfer('a', human.epoch, 'agent'),
+    await expect(app.browser.transfer('a', human.epoch, 'agent')).rejects.toThrowError(
       /SYNTHETIC-RELEASE-FAILURE/,
     );
     const retained = app.browser.control.state('a');
-    assert.equal(retained.owner, 'human');
-    assert.equal((await app.browser.transfer('a', retained.epoch, 'agent')).owner, 'agent');
-    assert.equal(attempts, 2);
+    expect(retained.owner).toBe('human');
+    expect((await app.browser.transfer('a', retained.epoch, 'agent')).owner).toBe('agent');
+    expect(attempts).toBe(2);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });
@@ -356,20 +352,18 @@ test('pointer release forwards the active input cancellation when a native dialo
       x: 1,
       y: 1,
     });
-    await assert.rejects(
+    await expect(
       app.browser.boundInput('a', human.epoch, app.tabs.binding('a'), {
         type: 'pointer',
         phase: 'up',
         x: 1,
         y: 1,
       }),
-      { code: 'BROWSER_HUMAN_REQUIRED' },
-    );
-    assert.equal(
+    ).rejects.toMatchObject({ code: 'BROWSER_HUMAN_REQUIRED' });
+    expect(
       forwarded,
-      true,
       'mouse-up must be cancelled by the prompt, rather than wait for an unrelated cleanup timeout',
-    );
+    ).toBe(true);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

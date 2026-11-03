@@ -1,7 +1,6 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
 import type { Executor } from '@daban/engine/agent';
 import { type ExecutionSnapshot, executionCapabilities } from '@daban/protocol';
+import { expect, test } from 'vitest';
 import { ExecutionConnection } from './connection.js';
 
 const initial: ExecutionSnapshot = {
@@ -54,13 +53,12 @@ test('a guest restart rebuilds only the connection and never replays an uncertai
     },
   );
   await connection.ready;
-  await assert.rejects(
-    connection.call('tools.invoke', { runId: 'mock-run' }),
+  await expect(connection.call('tools.invoke', { runId: 'mock-run' })).rejects.toThrowError(
     /EXECUTION_GUEST_RESTARTED/,
   );
-  assert.equal(effects, 1);
-  assert.equal(links, 2);
-  assert.equal((await connection.refresh()).nonce, 'mock-next');
+  expect(effects).toBe(1);
+  expect(links).toBe(2);
+  expect((await connection.refresh()).nonce).toBe('mock-next');
   await connection.close();
 });
 test('close during connection setup cannot publish or dispatch late guest work', async () => {
@@ -82,8 +80,8 @@ test('close during connection setup cannot publish or dispatch late guest work',
   const ready = connection.ready.catch((error) => error);
   await connection.close();
   finish({ origin: 'http://127.0.0.1:12345', token: 'mock-token' });
-  assert.match(String(await ready), /EXECUTION_CONNECTION_CLOSED/);
-  assert.equal(dispatch, 0);
+  expect(String(await ready)).toMatch(/EXECUTION_CONNECTION_CLOSED/);
+  expect(dispatch).toBe(0);
 });
 
 test('automatic rebind refreshes the execution token through attach-only reconnect without replaying a mutation', async () => {
@@ -117,11 +115,13 @@ test('automatic rebind refreshes the execution token through attach-only reconne
   );
   try {
     await connection.ready;
-    await assert.rejects(connection.call('tools.invoke', {}), /EXECUTION_UNAUTHORIZED/);
-    assert.equal(effects, 1);
-    assert.equal(ensures, 1);
-    assert.equal(reconnects, 1);
-    assert.deepEqual(tokens, ['mock-old', 'mock-new']);
+    await expect(connection.call('tools.invoke', {})).rejects.toThrowError(
+      /EXECUTION_UNAUTHORIZED/,
+    );
+    expect(effects).toBe(1);
+    expect(ensures).toBe(1);
+    expect(reconnects).toBe(1);
+    expect(tokens).toStrictEqual(['mock-old', 'mock-new']);
   } finally {
     await connection.close();
   }
@@ -149,9 +149,9 @@ test('an explicit power connection waits for an older connection attempt and sti
     });
     release({ origin: 'http://127.0.0.1:12345', token: 'mock-old' });
     await connection.ready;
-    assert.equal((await explicit).nonce, 'mock-power-new');
-    assert.deepEqual(tokens, ['mock-old', 'mock-power-new']);
-    assert.equal(connection.snapshot?.nonce, 'mock-power-new');
+    expect((await explicit).nonce).toBe('mock-power-new');
+    expect(tokens).toStrictEqual(['mock-old', 'mock-power-new']);
+    expect(connection.snapshot?.nonce).toBe('mock-power-new');
   } finally {
     release({ origin: 'http://127.0.0.1:12345', token: 'mock-old' });
     await connection.close();
@@ -185,17 +185,17 @@ test('attach-only startup serves validated cached metadata offline and never sta
     },
   );
   try {
-    assert.deepEqual(await connection.ready, initial);
-    assert.equal(connection.connected, false);
-    assert.equal(ensures, 0);
-    assert.equal(reconnects, 0);
-    await assert.rejects(connection.call('tools.invoke', {}), /EXECUTION_UNAVAILABLE/);
-    await assert.rejects(connection.refresh(), /EXECUTOR_OFFLINE/);
-    assert.equal(ensures, 0);
+    expect(await connection.ready).toStrictEqual(initial);
+    expect(connection.connected).toBe(false);
+    expect(ensures).toBe(0);
+    expect(reconnects).toBe(0);
+    await expect(connection.call('tools.invoke', {})).rejects.toThrowError(/EXECUTION_UNAVAILABLE/);
+    await expect(connection.refresh()).rejects.toThrowError(/EXECUTOR_OFFLINE/);
+    expect(ensures).toBe(0);
     await connection.rebind({ origin: 'http://127.0.0.1:12345', token: 'mock-explicit-start' });
-    assert.equal(connection.connected, true);
-    assert.deepEqual(await connection.call('tools.invoke', {}), { accepted: true });
-    assert.equal(calls, 1);
+    expect(connection.connected).toBe(true);
+    expect(await connection.call('tools.invoke', {})).toStrictEqual({ accepted: true });
+    expect(calls).toBe(1);
   } finally {
     await connection.close();
   }
@@ -227,8 +227,8 @@ test('a late refresh cannot return or persist metadata from the peer replaced by
     await Promise.resolve();
     await connection.rebind({ origin: 'http://127.0.0.1:12346', token: 'mock-new' });
     release(initial);
-    assert.equal((await reading).nonce, 'mock-new');
-    assert.equal(connection.snapshot?.nonce, 'mock-new');
+    expect((await reading).nonce).toBe('mock-new');
+    expect(connection.snapshot?.nonce).toBe('mock-new');
   } finally {
     release(initial);
     await connection.close();
@@ -259,13 +259,12 @@ test('a late refresh cannot advertise cached metadata as live after the replacem
     await connection.ready;
     const reading = connection.refresh();
     await Promise.resolve();
-    await assert.rejects(
+    await expect(
       connection.rebind({ origin: 'http://127.0.0.1:12346', token: 'mock-failed' }),
-      /EXECUTION_UNAVAILABLE/,
-    );
+    ).rejects.toThrowError(/EXECUTION_UNAVAILABLE/);
     release(initial);
-    await assert.rejects(reading, /EXECUTION_UNAVAILABLE/);
-    assert.equal(connection.connected, false);
+    await expect(reading).rejects.toThrowError(/EXECUTION_UNAVAILABLE/);
+    expect(connection.connected).toBe(false);
   } finally {
     release(initial);
     await connection.close();

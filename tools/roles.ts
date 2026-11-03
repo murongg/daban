@@ -206,6 +206,8 @@ export async function packageHost(target: string, nodeDirectory: string) {
   manifest.dependencies['@daban/engine'] = 'file:./vendor/engine';
   manifest.dependencies['@daban/protocol'] = 'file:./vendor/protocol';
   delete manifest.scripts;
+  // The standalone lockfile describes production dependencies only.
+  delete manifest.devDependencies;
   await writeFile(path.join(target, 'package.json'), JSON.stringify(manifest, null, 2));
   for (const name of await readdir(path.join(root, 'dist-agent')))
     if (name.endsWith('.js') && !name.includes('.test.'))
