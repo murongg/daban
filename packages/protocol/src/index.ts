@@ -31,7 +31,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 43;
+export const managedProtocol = 44;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -2729,6 +2729,7 @@ export type InteractionInput = { id: string; sessionId: string } & (
     }
 );
 export type Interaction = InteractionInput & {
+  decisionSource?: 'policy';
   conversationId?: string;
   bot: string;
   runId: string;
@@ -2913,9 +2914,26 @@ export function matchesReply(input: InteractionInput, reply: unknown): reply is 
 }
 export function isInteraction(value: unknown): value is Interaction {
   if (!profileObject(value)) return false;
-  const { bot, runId, status, reply, createdAt, updatedAt, conversationId, ...input } = value;
+  const {
+    bot,
+    runId,
+    status,
+    reply,
+    createdAt,
+    updatedAt,
+    conversationId,
+    decisionSource,
+    ...input
+  } = value;
   return (
     isInteractionInput(input) &&
+    (decisionSource === undefined ||
+      (decisionSource === 'policy' &&
+        input.kind === 'approval' &&
+        status === 'resolved' &&
+        profileObject(reply) &&
+        reply.kind === 'decision' &&
+        reply.allow === true)) &&
     validAgentId(bot) &&
     validAgentId(runId) &&
     (conversationId === undefined || validAgentId(conversationId)) &&
@@ -2927,7 +2945,12 @@ export function isInteraction(value: unknown): value is Interaction {
     (status === 'resolved' ? matchesReply(input, reply) : reply === undefined)
   );
 }
+export type ApprovalMode = 'ask' | 'auto' | 'full';
+export function isApprovalMode(value: unknown): value is ApprovalMode {
+  return value === 'ask' || value === 'auto' || value === 'full';
+}
 export interface TaskRequest {
+  approvalMode?: ApprovalMode;
   chatRevision?: number;
   requestId: string;
   prompt: string;

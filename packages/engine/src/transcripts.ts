@@ -102,6 +102,7 @@ export function projectInteraction(
           status: item.status,
           ...body,
           ...(item.reply ? { reply: item.reply } : {}),
+          ...(item.decisionSource ? { decisionSource: item.decisionSource } : {}),
         },
         (_key, value: unknown) => (typeof value === 'string' ? redact(value) : value),
         2,

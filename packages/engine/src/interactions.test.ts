@@ -31,6 +31,51 @@ const question = {
   ],
 };
 const answer = { kind: 'answer' as const, answers: [{ id: 'format', selected: ['Markdown'] }] };
+
+test('full-access policy commits scoped automatic approvals but never answers questions or rewrites prior decisions', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-policy-approval-'));
+  const store = new Interactions(
+    directory,
+    undefined,
+    (bot: string, runId: string) => bot === 'mock-bot' && runId === 'mock-full-run',
+  );
+  const approval = {
+    id: 'mock-policy-web',
+    sessionId: 'mock-session',
+    kind: 'approval',
+    tool: 'web_fetch',
+    url: 'https://example.test/mock',
+  };
+  try {
+    const result = await store.open('mock-bot', 'mock-full-run', approval);
+    expect(result).toMatchObject({
+      status: 'resolved',
+      reply: { kind: 'decision', allow: true },
+      decisionSource: 'policy',
+    });
+    expect((await store.open('mock-bot', 'mock-full-run', question)).status).toBe('pending');
+    const other = await store.open('mock-other', 'mock-full-run', {
+      ...approval,
+      id: 'mock-other-web',
+    });
+    expect(other.status).toBe('pending');
+    await store.reply('mock-other', 'mock-full-run', other.id, { kind: 'decision', allow: false });
+    expect(
+      (await store.open('mock-other', 'mock-full-run', { ...approval, id: other.id })).reply,
+    ).toEqual({ kind: 'decision', allow: false });
+    const restored = new Interactions(directory);
+    expect((await restored.list()).find((item) => item.id === approval.id)).toMatchObject({
+      status: 'resolved',
+      decisionSource: 'policy',
+    });
+    await store.endRun('mock-bot', 'mock-full-run');
+    await expect(
+      store.open('mock-bot', 'mock-full-run', { ...approval, id: 'mock-late' }),
+    ).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 test('external MCP approval keeps exact Bot/run/session/connection/tool/argument provenance and never authorizes a different request', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-mcp-approval-'));
   const store = new Interactions(directory);
@@ -399,63 +444,72 @@ for (const failedKind of ['file', 'directory']) {
   });
 }
 
-test('stopping during the final directory sync withdraws the decision before a waiter can receive authority', {
-  timeout: 2000,
-}, async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'mock-stop-directory-sync-'));
-  const store = new Interactions(directory);
-  const input = {
-    id: 'mock-stop-directory-sync',
-    sessionId: 'mock-session',
-    kind: 'approval',
-    tool: 'web_fetch',
-    url: 'https://example.test/synthetic',
-  };
-  let entered: () => unknown = () => undefined;
-  let release: () => unknown = () => undefined;
-  const started = new Promise((resolve) => {
-    entered = () => resolve(undefined);
-  });
-  const held = new Promise((resolve) => {
-    release = () => resolve(undefined);
-  });
-  let restore = () => undefined;
-  try {
-    await store.open('mock-bot', 'mock-run', input);
-    const probe = await open(path.join(directory, 'mock-probe'), 'w');
-    const prototype: FileHandle = Object.getPrototypeOf(probe);
-    const sync = prototype.sync;
-    await probe.close();
-    let intercepted = false;
-    const mocked = vi.spyOn(prototype, 'sync').mockImplementation(async function (
-      this: FileHandle,
-    ) {
-      if ((await this.stat()).isDirectory() && !intercepted) {
-        intercepted = true;
-        entered();
-        await held;
-      }
-      return sync.call(this);
-    });
-    restore = () => {
-      mocked.mockRestore();
-      return undefined;
+test.each([false, true])(
+  'stopping during the final directory sync withdraws manual or automatic authority (%s)',
+  {
+    timeout: 2000,
+  },
+  async (automatic) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'mock-stop-directory-sync-'));
+    const store = new Interactions(directory, undefined, () => automatic);
+    const input = {
+      id: 'mock-stop-directory-sync',
+      sessionId: 'mock-session',
+      kind: 'approval',
+      tool: 'web_fetch',
+      url: 'https://example.test/synthetic',
     };
-    const waiting = store.wait('mock-bot', 'mock-run', input.id);
-    const responding = expect(
-      store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true }),
-    ).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
-    await started;
-    const stopped = store.endRun('mock-bot', 'mock-run');
-    release();
-    await responding;
-    await stopped;
-    expect((await waiting).status).toBe('cancelled');
-    expect((await store.list())[0].status).toBe('cancelled');
-  } finally {
-    release();
-    restore();
-    await store.endRun('mock-bot', 'mock-run');
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+    let entered: () => unknown = () => undefined;
+    let release: () => unknown = () => undefined;
+    const started = new Promise((resolve) => {
+      entered = () => resolve(undefined);
+    });
+    const held = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    let restore = () => undefined;
+    try {
+      await store.ready;
+      if (!automatic) await store.open('mock-bot', 'mock-run', input);
+      const probe = await open(path.join(directory, 'mock-probe'), 'w');
+      const prototype: FileHandle = Object.getPrototypeOf(probe);
+      const sync = prototype.sync;
+      await probe.close();
+      let intercepted = false;
+      const mocked = vi.spyOn(prototype, 'sync').mockImplementation(async function (
+        this: FileHandle,
+      ) {
+        if ((await this.stat()).isDirectory() && !intercepted) {
+          intercepted = true;
+          entered();
+          await held;
+        }
+        return sync.call(this);
+      });
+      restore = () => {
+        mocked.mockRestore();
+        return undefined;
+      };
+      const waiting = automatic ? undefined : store.wait('mock-bot', 'mock-run', input.id);
+      const responding = expect(
+        automatic
+          ? store.open('mock-bot', 'mock-run', input)
+          : store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true }),
+      ).rejects.toMatchObject({ code: 'INTERACTION_CLOSED' });
+      await started;
+      const stopped = store.endRun('mock-bot', 'mock-run');
+      release();
+      await responding;
+      await stopped;
+      if (waiting) expect((await waiting).status).toBe('cancelled');
+      const cancelled = (await store.list())[0];
+      expect(cancelled.status).toBe('cancelled');
+      expect(cancelled.decisionSource).toBeUndefined();
+    } finally {
+      release();
+      restore();
+      await store.endRun('mock-bot', 'mock-run');
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

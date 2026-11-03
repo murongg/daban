@@ -2,7 +2,21 @@
 
 [User guide](README.md) · [简体中文](../zh-CN/approvals.md)
 
-Review request cards in the conversation or **Inbox**. Approval applies to the specific operation shown, not permanent authority for the Bot.
+Use **Approval mode** below the message input, and review request cards in the conversation or **Inbox**. Manual approval applies to the specific operation shown, not permanent authority for the Bot.
+
+## Conversation approval modes
+
+Updated clients and services (protocol 44 onward) offer three modes for the current Bot's current private conversation:
+
+| Mode | Behavior |
+| --- | --- |
+| Request approval | Ask before every Linux command, public webpage read, external tool call, or software installation |
+| Approve for me (default) | Retain risk review: routine Linux operations run automatically; risky or uncertain operations, unauthorized webpages, and external tools ask |
+| Full access | Automatically approve enabled tools through the existing approval gates; records identify automatic policy decisions |
+
+The choice survives a local reload. A new conversation returns to the default. Changes apply to future task starts and continuations. Running tasks, messages inserted into those tasks, and sends awaiting receipt reconciliation retain their captured policy. Questions still require human answers.
+
+These modes control existing approval gates; they do not add approval to each browser or native desktop click. Full access preserves enabled-tool selection, execution and file boundaries, task ownership, human takeover, and request deduplication. It grants no additional host filesystem or shell access and never replays refused or uncertain operations.
 
 ## Request types
 

@@ -1,4 +1,14 @@
 export const english = {
+  'approval.mode': 'Approval mode',
+  'approval.ask': 'Request approval',
+  'approval.auto': 'Approve for me',
+  'approval.full': 'Full access',
+  'approval.askDescription': 'Ask before Linux commands, webpage reads and external tool calls.',
+  'approval.autoDescription':
+    'Run routine Linux operations automatically; ask for risky operations and external tools.',
+  'approval.fullDescription':
+    'Automatically approve enabled tools for future tasks in this conversation; keep environment and file access limits.',
+  'approval.automaticallyApproved': 'Automatically approved by conversation policy',
   'errors.taskTimeLimit': 'Task reached its time limit and stopped. Saved files are retained.',
   'errors.taskToolLimit':
     'Task reached its operation limit and stopped. Check saved files before continuing.',

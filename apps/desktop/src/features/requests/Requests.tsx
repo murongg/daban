@@ -320,11 +320,13 @@ function Request({
                 {current.reply?.kind === 'decision' && current.reply.allow ? (
                   <>
                     <Check />
-                    {current.kind === 'approval' && current.tool === 'vm_command'
-                      ? t('requests.vmCommandApproved')
-                      : current.kind === 'approval' && current.tool === 'software_install'
-                        ? t('requests.installationApproved')
-                        : t('requests.allowedOnce')}
+                    {current.decisionSource === 'policy'
+                      ? t('approval.automaticallyApproved')
+                      : current.kind === 'approval' && current.tool === 'vm_command'
+                        ? t('requests.vmCommandApproved')
+                        : current.kind === 'approval' && current.tool === 'software_install'
+                          ? t('requests.installationApproved')
+                          : t('requests.allowedOnce')}
                   </>
                 ) : (
                   <>

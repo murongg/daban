@@ -24,6 +24,12 @@ export class Interactions {
   constructor(
     readonly directory: string,
     private readonly onChange?: (value: Interaction) => unknown,
+    private readonly autoApprove?: (
+      bot: string,
+      runId: string,
+      sessionId: string,
+      conversationId?: string,
+    ) => boolean,
   ) {
     this.ready = this.load();
   }
@@ -83,6 +89,7 @@ export class Interactions {
       await this.commit({
         ...value,
         reply: undefined,
+        decisionSource: undefined,
         status: 'cancelled',
         updatedAt: new Date().toISOString(),
       });
@@ -128,6 +135,7 @@ export class Interactions {
           updatedAt: _updated,
           status: _status,
           reply: _reply,
+          decisionSource: _source,
           ...original
         } = existing;
         if (
@@ -138,12 +146,19 @@ export class Interactions {
         return structuredClone(existing);
       }
       const now = new Date().toISOString();
+      // Only the host's captured live-task policy can grant this; old records and questions never gain new authority.
+      const automatic =
+        value.kind === 'approval' &&
+        this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true;
       return this.commit({
         ...value,
         bot,
         runId,
         ...(conversationId ? { conversationId } : {}),
-        status: 'pending',
+        status: automatic ? 'resolved' : 'pending',
+        ...(automatic
+          ? { reply: { kind: 'decision' as const, allow: true }, decisionSource: 'policy' as const }
+          : {}),
         createdAt: now,
         updatedAt: now,
       });

@@ -1,6 +1,14 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'approval.mode': '审批模式',
+  'approval.ask': '请求批准',
+  'approval.auto': '帮我批准',
+  'approval.full': '完全访问权限',
+  'approval.askDescription': '执行 Linux 命令、读取网页和调用外部工具前请求批准。',
+  'approval.autoDescription': '普通 Linux 操作自动执行；风险操作和外部工具请求批准。',
+  'approval.fullDescription': '当前会话的后续任务自动批准已启用工具；保留执行环境与文件访问限制。',
+  'approval.automaticallyApproved': '已按会话策略自动批准',
   'errors.taskTimeLimit': '任务达到实际运行时长上限，已停止；已保存文件仍保留。',
   'errors.taskToolLimit': '任务达到操作次数上限，已停止；请核对已有文件后继续。',
   'errors.taskReplyTooLarge': '回复超过当前长度限制，请改为生成文件或分段回答。',

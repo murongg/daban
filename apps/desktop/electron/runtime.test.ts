@@ -5,6 +5,29 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
 
+it('validates the approval mode and refuses it before sending to a runtime without policy support', async () => {
+  const task = {
+    requestId: 'mock-approval-task',
+    prompt: 'Synthetic task',
+    approvalMode: 'full' as const,
+  };
+  expect(parseCommand({ type: 'task.start', bot: 'a', task })).toMatchObject({ task });
+  expect(() =>
+    parseCommand({ type: 'task.start', bot: 'a', task: { ...task, approvalMode: 'invalid' } }),
+  ).toThrow('INVALID_COMMAND');
+  const fetcher = vi.fn(async () => Response.json({}));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  vi.spyOn(client, 'status').mockResolvedValue({ ...disconnected('ready'), protocolVersion: 43 });
+  await expect(client.invoke({ type: 'task.start', bot: 'a', task })).rejects.toThrow(
+    'RUNTIME_TOO_OLD',
+  );
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
 it('validates a continuation turn as a bounded reference to an existing retry', () => {
   const task = {
     requestId: 'mock-request',

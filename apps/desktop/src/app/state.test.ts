@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { attachment, stagedAttachment, taskFile } from '../features/files/files';
 import { demoState as initialState } from '../test/fixtures';
 import {
+  chatApprovalMode,
   initialState as emptyState,
   knowledgeDraft,
   lifecycleRequest,
@@ -11,6 +12,29 @@ import {
   skillDraft,
 } from './state';
 import { restore, serialize } from './storage';
+
+it('keeps approval choice within one Bot conversation and preserves exact pending requests', () => {
+  let state = initialState();
+  state = reduce(state, { type: 'approval-mode', bot: 'research', revision: 0, mode: 'full' });
+  expect(chatApprovalMode(state, 'research', 0)).toBe('full');
+  expect(chatApprovalMode(state, 'writer', 0)).toBe('auto');
+  expect(chatApprovalMode(restore(serialize(state)), 'research', 0)).toBe('full');
+  const task = {
+    requestId: 'mock-mode-send',
+    prompt: 'Synthetic pending request',
+    approvalMode: 'full' as const,
+  };
+  state = reduce(state, { type: 'runtime-pending', bot: 'research', task });
+  state = reduce(state, { type: 'approval-mode', bot: 'research', revision: 0, mode: 'ask' });
+  expect(state.runtimeRequests.research).toEqual(task);
+  expect(chatApprovalMode(state, 'research', 0)).toBe('ask');
+  expect(chatApprovalMode(state, 'research', 1)).toBe('auto');
+  const raw = JSON.parse(serialize(state));
+  raw.state.approvalModes.research.mode = 'invalid';
+  const recovered = restore(JSON.stringify(raw));
+  expect(chatApprovalMode(recovered, 'research', 0)).toBe('auto');
+  expect(recovered.runtimeRequests.research).toEqual(task);
+});
 
 it('retains Bot history and drafts through authoritative lifecycle revisions and exact pending-operation recovery', () => {
   let state = initialState();
