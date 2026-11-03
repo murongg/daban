@@ -7,6 +7,7 @@ declare global {
   interface Window {
     readonly daban?: Readonly<{
       platform: 'darwin' | 'win32' | 'linux';
+      titlebar?: { setTheme: (theme: 'light' | 'dark') => Promise<boolean> };
       runtime?: RuntimeBridge;
       notifications?: NoticeBridge;
       locale?: LocaleBridge;

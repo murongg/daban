@@ -730,6 +730,10 @@ function Workbench() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = state.theme;
+    if (window.daban?.platform === 'win32')
+      window.daban.titlebar?.setTheme(state.theme).catch(() => {
+        console.error('Window theme synchronization failed');
+      });
   }, [state.theme]);
   useEffect(() => {
     try {
@@ -805,7 +809,7 @@ function Workbench() {
           {state.view === 'chat' && bot ? (
             <>
               <Avatar bot={bot} />
-              <div>
+              <div className="chat-identity">
                 <h1>{bot.name}</h1>
                 <p className="chat-subtitle">{subtitle}</p>
               </div>
@@ -942,7 +946,7 @@ function Workbench() {
             </>
           ) : (
             <>
-              <div>
+              <div className="chat-identity">
                 <h1>
                   {state.view === 'chat'
                     ? t('workspace.title')

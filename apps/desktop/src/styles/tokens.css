@@ -21,6 +21,7 @@
   --selection: #dce7dc;
   --focus: #61816c;
   --scroll: #d5d5ce;
+  --scroll-hover: #a6a69d;
   --code-keyword: #704c9f;
   --code-string: #386a51;
   --code-number: #8b5a24;
@@ -47,6 +48,7 @@
   --selection: #3d5143;
   --focus: #8ab49c;
   --scroll: #474740;
+  --scroll-hover: #707068;
   --code-keyword: #c7a4eb;
   --code-string: #a2c6af;
   --code-number: #e7be83;

@@ -21,6 +21,7 @@ import { desktopDriver } from './native';
 import { noticeIpc } from './notification-ipc';
 import { Notifications } from './notifications';
 import { runtimeService } from './service';
+import { titlebarIpc, titlebarOptions } from './titlebar';
 import { updateIpc } from './update-ipc';
 import { UpdateSave } from './update-save';
 import { Updates } from './updates';
@@ -31,6 +32,7 @@ const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
 if (process.platform === 'win32') app.setAppUserModelId('dev.daban.app');
 let closeLocaleIpc: (() => unknown) | undefined;
+let closeTitlebarIpc: (() => unknown) | undefined;
 let preferences: LocalePreferences | undefined;
 let mainWindow: BrowserWindow | undefined;
 let windowReady = false;
@@ -62,12 +64,7 @@ function createWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#f8f8f7',
-    ...(process.platform === 'darwin'
-      ? {
-          titleBarStyle: 'hiddenInset',
-          trafficLightPosition: { x: 20, y: 28 },
-        }
-      : {}),
+    ...titlebarOptions(process.platform),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -141,6 +138,7 @@ if (primary) {
       if (process.platform === 'darwin')
         app.dock?.setIcon(join(__dirname, '..', 'dist', 'app-icon.png'));
       const renderer = pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href;
+      closeTitlebarIpc = titlebarIpc(renderer);
       preferences = new LocalePreferences(join(app.getPath('userData'), 'locale.json'));
       await preferences.ready;
       localizeMenu(preferences.current);
@@ -294,6 +292,7 @@ if (primary) {
       await closeLocalServer?.();
       closeNoticeIpc?.();
       closeLocaleIpc?.();
+      closeTitlebarIpc?.();
       if (updateTimer) clearTimeout(updateTimer);
       closeUpdateIpc?.();
       updates?.close();
