@@ -2389,6 +2389,24 @@ textarea.skill-source {
   font-size: 14px;
   font-weight: 500;
 }
+.history-picker {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.history-picker-controls {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.history-picker-controls > .number-field {
+  width: 160px;
+  max-width: 100%;
+}
+.history-picker-controls > .secondary {
+  min-height: 42px;
+}
 .archive-banner {
   justify-content: space-between;
   flex-wrap: wrap;
