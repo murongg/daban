@@ -89,21 +89,25 @@ function bridge(read: (command: RuntimeCommand) => unknown | Promise<unknown>, p
 
 it('shows saved cumulative session statistics inside the read-only execution disclosure', async () => {
   bridge((command) => {
-    if (command.type !== 'transcript.list') throw new Error('UNEXPECTED_SYNTHETIC_ACTION');
+    if (command.type !== 'transcript.list' && command.type !== 'transcript.statistics')
+      throw new Error('UNEXPECTED_SYNTHETIC_ACTION');
     return {
       ...scope,
-      state: 'complete',
-      items: [],
-      stats: {
-        turns: 3,
-        steps: 5,
-        llmMs: 2500,
-        toolMs: 1250,
-        ttftMs: 900,
-        ttftSteps: 3,
-        decodeMs: 1600,
-        decodeTokens: 80,
-      },
+      ...(command.type === 'transcript.list' ? { state: 'complete', items: [] } : {}),
+      ...(command.type === 'transcript.statistics'
+        ? {
+            stats: {
+              turns: 3,
+              steps: 5,
+              llmMs: 2500,
+              toolMs: 1250,
+              ttftMs: 900,
+              ttftSteps: 3,
+              decodeMs: 1600,
+              decodeTokens: 80,
+            },
+          }
+        : {}),
     };
   });
   render(
@@ -159,7 +163,9 @@ it('loads metadata only after opening and pages full tool content and later even
   expect(await screen.findByText('第 2 条')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.list', 'transcript.content'].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list', 'transcript.content'].includes(
+        command.type,
+      ),
     ),
   ).toBe(true);
 });
@@ -188,7 +194,7 @@ it('refreshes from an accessible icon without closing the history or rerunning a
   expect(reads).toBe(2);
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.list'].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list'].includes(command.type),
     ),
   ).toBe(true);
 });

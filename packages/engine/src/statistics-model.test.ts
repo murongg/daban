@@ -78,13 +78,14 @@ test('native statistics accept only current root updates and survive task settle
       result: { accepted: false },
     });
     const scope = { bot: job.bot, runId: job.id, chatRevision: 0 };
-    expect(Reflect.get(await models.transcript(scope), 'stats')).toStrictEqual(stats);
+    expect(await models.transcript(scope)).not.toHaveProperty('stats');
+    expect(await models.statistics(scope)).toMatchObject({ ...scope, stats });
     release();
     await job.done;
     await models.close();
     models = new ModelRuns(options);
     await models.ready;
-    expect(Reflect.get(await models.transcript(scope), 'stats')).toStrictEqual(stats);
+    expect(await models.statistics(scope)).toMatchObject({ ...scope, stats });
     await expect(models.transcript({ ...scope, bot: 'mock-other-bot' })).rejects.toMatchObject({
       code: 'TRANSCRIPT_NOT_FOUND',
     });

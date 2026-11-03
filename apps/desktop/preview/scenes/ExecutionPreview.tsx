@@ -341,19 +341,9 @@ function fixture(command: RuntimeCommand): unknown {
         },
       ],
     };
-  if (command.type === 'transcript.list') {
-    if (mode === 'error') throw new Error('TRANSCRIPT_UNAVAILABLE');
+  if (command.type === 'transcript.statistics')
     return {
       ...command.query.scope,
-      state:
-        mode === 'empty'
-          ? snapshot.agents[scope.bot]?.running
-            ? 'recording'
-            : 'interrupted'
-          : mode === 'incomplete'
-            ? 'interrupted'
-            : 'complete',
-      items: mode === 'empty' ? [] : items.filter((item) => item.seq > (command.query.after ?? 0)),
       ...(query.has('stats')
         ? {
             stats: {
@@ -368,6 +358,20 @@ function fixture(command: RuntimeCommand): unknown {
             },
           }
         : {}),
+    };
+  if (command.type === 'transcript.list') {
+    if (mode === 'error') throw new Error('TRANSCRIPT_UNAVAILABLE');
+    return {
+      ...command.query.scope,
+      state:
+        mode === 'empty'
+          ? snapshot.agents[scope.bot]?.running
+            ? 'recording'
+            : 'interrupted'
+          : mode === 'incomplete'
+            ? 'interrupted'
+            : 'complete',
+      items: mode === 'empty' ? [] : items.filter((item) => item.seq > (command.query.after ?? 0)),
     };
   }
   if (command.type === 'transcript.content') {

@@ -904,11 +904,12 @@ export class ModelRuns {
   }
   async transcript(scope: TranscriptScope, after = 0) {
     await this.transcriptOwner(scope);
+    return this.transcripts.page(scope, after);
+  }
+  async statistics(scope: TranscriptScope) {
+    await this.transcriptOwner(scope);
     const record = await this.journal.read(scope.bot, scope.runId);
-    return {
-      ...this.transcripts.page(scope, after),
-      ...(isSessionStats(record?.stats) ? { stats: record.stats } : {}),
-    };
+    return { ...scope, ...(isSessionStats(record?.stats) ? { stats: record.stats } : {}) };
   }
   async transcriptContent(scope: TranscriptScope, seq: number, offset = 0) {
     await this.transcriptOwner(scope);

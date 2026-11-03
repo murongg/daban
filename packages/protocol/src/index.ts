@@ -1167,8 +1167,13 @@ export function isSessionStats(value: unknown): value is SessionStats {
     })
   );
 }
+export type RunStatistics = TranscriptScope & { stats?: SessionStats };
+export function isRunStatistics(value: unknown): value is RunStatistics {
+  return (
+    transcriptScope(value, ['stats']) && (value.stats === undefined || isSessionStats(value.stats))
+  );
+}
 export type TranscriptPage = TranscriptScope & {
-  stats?: SessionStats;
   state: TranscriptState;
   items: TranscriptItem[];
   nextAfter?: number;
@@ -1245,8 +1250,7 @@ export function isTranscriptItem(value: unknown): value is TranscriptItem {
 }
 export function isTranscriptPage(value: unknown): value is TranscriptPage {
   if (
-    !transcriptScope(value, ['state', 'items', 'nextAfter', 'stats']) ||
-    (value.stats !== undefined && !isSessionStats(value.stats)) ||
+    !transcriptScope(value, ['state', 'items', 'nextAfter']) ||
     typeof value.state !== 'string' ||
     !['recording', 'complete', 'interrupted', 'unavailable'].includes(value.state) ||
     !Array.isArray(value.items) ||
@@ -1561,6 +1565,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
+    'transcript.statistics',
     'transcript.list',
     'transcript.content',
     'memory.history',
@@ -3901,6 +3906,7 @@ export type RuntimeCommand =
   | { type: 'work.list'; query: WorkQuery }
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
+  | { type: 'transcript.statistics'; query: TranscriptQuery }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }

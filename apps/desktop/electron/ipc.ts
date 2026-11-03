@@ -130,6 +130,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'chat.new': ['type', 'request'],
     'chat.receipt': ['type', 'bot', 'id'],
     'chat.history': ['type', 'bot', 'revision', 'before', 'runId'],
+    'transcript.statistics': ['type', 'query'],
     'transcript.list': ['type', 'query'],
     'transcript.content': ['type', 'query'],
     'group.action': ['type', 'request'],
@@ -253,7 +254,11 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if ((v.type === 'work.write' || v.type === 'work.receipt') && !isWorkWrite(v.request))
     return fail();
   if (v.type === 'chat.new' && !isChatRequest(v.request)) return fail();
-  if (v.type === 'transcript.list' && !isTranscriptQuery(v.query)) return fail();
+  if (
+    (v.type === 'transcript.list' || v.type === 'transcript.statistics') &&
+    !isTranscriptQuery(v.query)
+  )
+    return fail();
   if (v.type === 'transcript.content' && !isTranscriptContentQuery(v.query)) return fail();
   if (v.type === 'chat.receipt' && (!validAgentId(v.bot) || !validAgentId(v.id))) return fail();
   if (
