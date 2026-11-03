@@ -1,11 +1,11 @@
 {
   "name": "@daban/agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@daban/engine": "0.1.0",
-    "@daban/protocol": "0.1.0",
+    "@daban/engine": "0.1.1",
+    "@daban/protocol": "0.1.1",
     "@deepseek-ai/dsh-sdk-client": "0.2.1-rc.3"
   },
   "scripts": {
