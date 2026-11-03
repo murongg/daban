@@ -123,6 +123,10 @@ export function useRuntime() {
 export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   const messages: Record<string, string> = {
+    AGENT_LEGACY_RESTART_REQUIRED: t('agentUpgrade.required'),
+    AGENT_LEGACY_RESTART_UNAVAILABLE: t('agentUpgrade.manual'),
+    AGENT_LEGACY_SCHEDULES_ACTIVE: t('agentUpgrade.schedules'),
+    AGENT_UPDATE_BUSY: t('agentUpgrade.busy'),
     LOCAL_PLATFORM_UNSUPPORTED: t('localComputer.platformUnsupported'),
     LOCAL_SCREEN_PERMISSION: t('localComputer.screenRequired'),
     LOCAL_ACCESSIBILITY_PERMISSION: t('localComputer.inputRequired'),

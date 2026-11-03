@@ -53,6 +53,14 @@ jobs:
       - name: Runtime and integration regressions
         if: runner.os == 'Linux'
         run: npm run test:runtime
+      - name: Verify legacy Agent upgrade in a disposable launchd scope
+        if: runner.os == 'macOS'
+        run: |
+          if launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+            DABAN_LAUNCHD_TEST=1 npx vitest run apps/desktop/electron/legacy.integration.test.ts
+          else
+            echo "No interactive launchd domain on this runner; scoped OS integration is covered by the local verification and mocked ownership tests."
+          fi
       - name: Native macOS module ABI
         if: runner.os == 'macOS'
         run: node --experimental-strip-types tools/native.ts abi

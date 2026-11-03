@@ -133,3 +133,15 @@ it('distinguishes an empty release feed from a failed check', async () => {
   );
   expect(owner.status().phase).toBe('unpublished');
 });
+
+it('keeps a legacy host restart requirement distinct from a generic installer failure', async () => {
+  const { owner, events, prepare, driver } = fixture();
+  events.emit('update-downloaded', { version: '1.1.0' });
+  prepare.mockRejectedValueOnce(Error('AGENT_LEGACY_RESTART_REQUIRED'));
+  await expect(owner.invoke({ type: 'install' })).rejects.toThrow('AGENT_LEGACY_RESTART_REQUIRED');
+  expect(owner.status()).toMatchObject({
+    phase: 'downloaded',
+    error: 'AGENT_LEGACY_RESTART_REQUIRED',
+  });
+  expect(driver.quitAndInstall).not.toHaveBeenCalled();
+});

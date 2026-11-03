@@ -214,6 +214,7 @@ export class Updates {
         'UPDATE_SAVE_FAILED',
         'AGENT_UPDATE_BUSY',
         'AGENT_UPDATE_UNAVAILABLE',
+        'AGENT_LEGACY_RESTART_REQUIRED',
       ].includes(raw)
         ? (raw as UpdateError)
         : 'UPDATE_INSTALL_FAILED';

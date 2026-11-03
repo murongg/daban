@@ -6,6 +6,7 @@ import {
   type DiagnosticReport,
   diagnosticIds,
   disconnected,
+  isGroupPage,
   isLocalComputerCommand,
   isRebootStatus,
   modelCatalog,
@@ -19,6 +20,7 @@ import {
   type SetupStatus,
 } from '@daban/protocol';
 import { BrowserWindow, clipboard, ipcMain, shell } from 'electron';
+import { agentUpgradeBlocked, legacyAgentError } from '../shared/agent';
 import { AgentSetup } from './agent-setup';
 import type { PreparedAgentFiles, RuntimePreparation } from './components';
 import { Daemon, daemonScope } from './daemon';
@@ -121,6 +123,7 @@ export function runtimeService(
     rebootPublished = 0;
   let recovering = false;
   let pendingHandoff = false;
+  let legacyHost = false;
   let connecting: Promise<RuntimeSnapshot> | undefined;
   let polling = false;
   let closed = false;
@@ -164,6 +167,43 @@ export function runtimeService(
           signal: AbortSignal.any([agentTransport.signal, ...(init.signal ? [init.signal] : [])]),
         }),
     });
+  }
+  async function assertLegacyIdle(owner: RuntimeClient, epoch: number) {
+    if (closed || client !== owner || connection !== epoch || !legacyHost)
+      throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    const current = await owner.status();
+    if (current.protocolVersion >= 43) throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    const blocked = agentUpgradeBlocked(current);
+    if (blocked) throw Error(blocked);
+    for (const group of current.groups!.items) {
+      let before: number | undefined;
+      for (let page = 0; ; page++) {
+        // Refuse if the complete legacy queue cannot be inspected within a bounded read.
+        if (page >= 100) throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+        const value = await owner.invoke({
+          type: 'group.read',
+          group: group.id,
+          ...(before === undefined ? {} : { before }),
+        });
+        if (!isGroupPage(value) || value.group.id !== group.id)
+          throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+        if (
+          value.deliveries.some((delivery) =>
+            ['pending', 'claimed', 'running'].includes(delivery.state),
+          )
+        )
+          throw Error('AGENT_UPDATE_BUSY');
+        if (value.nextBefore === undefined) break;
+        if (before !== undefined && value.nextBefore >= before)
+          throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+        before = value.nextBefore;
+      }
+    }
+    if (closed || client !== owner || connection !== epoch)
+      throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    const last = await owner.status();
+    const changed = agentUpgradeBlocked(last);
+    if (changed) throw Error(changed);
   }
   async function connectAgent() {
     if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
@@ -356,7 +396,31 @@ export function runtimeService(
         }
         await refresh();
         pendingHandoff = false;
+        legacyHost = false;
       } catch (error) {
+        if (
+          nativeFirst &&
+          error instanceof Error &&
+          error.message === 'AGENT_LEGACY_RESTART_REQUIRED'
+        ) {
+          const compatible = previousClient ?? privateClient();
+          const active = await compatible.status();
+          if (active.phase !== 'ready' || active.protocolVersion >= 43)
+            throw Error('AGENT_UPDATE_UNAVAILABLE');
+          client = compatible;
+          nativeMode = active.agent?.execution === 'local-workspace';
+          // Keep existing work usable; unsupported handoff is never permission for an automatic stop.
+          legacyHost = true;
+          pendingHandoff = false;
+          setupState = {
+            required: false,
+            target: 'agent',
+            phase: 'waiting',
+            error: 'AGENT_LEGACY_RESTART_REQUIRED',
+          };
+          publish(active);
+          return state;
+        }
         if (nativeFirst && error instanceof Error && error.message === 'AGENT_UPDATE_BUSY') {
           client = previousClient ?? privateClient();
           const active = previousClient ? previous : await client.status();
@@ -393,6 +457,49 @@ export function runtimeService(
     if (updating) {
       if (command.type === 'status') return state;
       throw new Error('AGENT_UPDATING');
+    }
+    if (command.type === 'agent.upgrade') {
+      if (!legacyHost || !agentConfig || !client || process.platform !== 'darwin')
+        throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+      const owner = client,
+        epoch = connection;
+      updating = true;
+      setupState = {
+        required: false,
+        target: 'agent',
+        phase: 'connecting',
+        error: legacyAgentError,
+      };
+      publish(state);
+      try {
+        await assertLegacyIdle(owner, epoch);
+        try {
+          await reconcileAgent({ ...agentConfig, scope: agentScope! }, nativeMode);
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== legacyAgentError) throw error;
+          const manager = daemon instanceof Daemon ? daemon : new Daemon(agentConfig);
+          daemon = manager;
+          await manager.restartLegacy(() => assertLegacyIdle(owner, epoch));
+        }
+        client = undefined;
+        legacyHost = false;
+        pendingHandoff = false;
+      } catch (error) {
+        updating = false;
+        setupState = {
+          required: false,
+          target: 'agent',
+          phase: 'waiting',
+          error: legacyAgentError,
+        };
+        await connect();
+        throw error;
+      } finally {
+        updating = false;
+      }
+      const connected = await connect();
+      if (connected.phase !== 'ready' || legacyHost) throw Error('AGENT_UPDATE_UNAVAILABLE');
+      return connected;
     }
     if (command.type === 'skill.pick') {
       if (closed || !client || state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
@@ -619,7 +726,14 @@ export function runtimeService(
         lastSetupPoll = Date.now();
         await connect();
       }
-      if (environment && nativeMode && client && !connecting && Date.now() - lastSetupPoll > 1000) {
+      if (
+        !legacyHost &&
+        environment &&
+        nativeMode &&
+        client &&
+        !connecting &&
+        Date.now() - lastSetupPoll > 1000
+      ) {
         try {
           lastSetupPoll = Date.now();
           setupState = await environment.invoke('status');

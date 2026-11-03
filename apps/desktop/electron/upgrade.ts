@@ -27,6 +27,7 @@ export async function prepareAgentUpdate(config: Config, dependencies: Dependenc
       body: JSON.stringify({ scope: config.scope }),
       signal: AbortSignal.timeout(8000),
     });
+    if ([404, 405].includes(response.status)) throw Error('AGENT_LEGACY_RESTART_REQUIRED');
     if (response.status === 409) throw Error('AGENT_UPDATE_BUSY');
     if (!response.ok) throw Error('AGENT_UPDATE_UNAVAILABLE');
     const value: unknown = await response.json();
@@ -61,7 +62,11 @@ export async function prepareAgentUpdate(config: Config, dependencies: Dependenc
       await (dependencies.pause ?? (() => new Promise((resolve) => setTimeout(resolve, 150))))();
     }
   } catch (error) {
-    if (error instanceof Error && error.message === 'AGENT_UPDATE_BUSY') throw error;
+    if (
+      error instanceof Error &&
+      ['AGENT_UPDATE_BUSY', 'AGENT_LEGACY_RESTART_REQUIRED'].includes(error.message)
+    )
+      throw error;
     throw Error('AGENT_UPDATE_UNAVAILABLE');
   }
 }

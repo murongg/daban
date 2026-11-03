@@ -1,6 +1,21 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'agentUpgrade.title': '后台需要升级',
+  'agentUpgrade.summary': '已连接到旧工作区，升级后台后可使用新版能力。',
+  'agentUpgrade.confirm': '重启 Daban 后台以完成升级。Linux 电脑和数据会保留。',
+  'agentUpgrade.warning':
+    '请先结束任务并暂停定时任务。旧后台无法阻止新任务启动，重启可能中断这些任务。',
+  'agentUpgrade.restart': '重启并升级后台',
+  'agentUpgrade.later': '稍后',
+  'agentUpgrade.working': '正在升级后台…',
+  'agentUpgrade.background': '后台继续',
+  'agentUpgrade.busy': '还有任务或电脑操作未完成，请结束后再升级后台。',
+  'agentUpgrade.schedules': '请先暂停启用的定时任务，再升级后台。',
+  'agentUpgrade.manual': '无法安全确认旧后台状态。请完全退出旧开发后台后重新连接。',
+  'agentUpgrade.required': '旧后台需要升级，请在运行环境设置中完成升级后重试。',
+  'agentUpgrade.open': '查看后台升级',
+
   'setup.agentTitle': '准备 Daban',
   'setup.agentWorking': '正在准备 Daban',
   'setup.agentDescription':
