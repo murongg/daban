@@ -50,7 +50,7 @@ const collaborationToolList = [
   {
     name: 'group_create',
     description:
-      'Only when the current human task needs complementary roles, create one local collaboration group with 1–7 other existing Bot IDs from group_directory. You join automatically. message must give the task goal, only necessary shareable context and each member’s assignment; never copy unrelated private chats, memory, credentials or attachments. Selected collaborators execute in order, then you synthesize in the group. This delegates the same human task and grants no extra permissions. One group per task, including retries; identical calls return the existing group without dispatching again, changed arguments conflict. After success tell the human the group name and finish this private turn; continue collaboration in the group, without chatter loops. An archived group is never restored by this tool.',
+      'Only when the current human task needs complementary roles, create one local collaboration group with 1–7 other existing Bot IDs from group_directory. You join automatically. message must give the task goal, necessary shareable context and each member’s assignment. Every member, INCLUDING YOUR FINAL GROUP TURN, receives this message instead of your private conversation. Preserve ALL requested deliverables, required markers, output locations, work-card or note operations and completion checks, including your own final duties. Do not reduce the task to only the specialists’ work. Never copy unrelated private chats, memory, credentials or attachments. Selected collaborators execute in order, then you synthesize in the group. This delegates the same human task and grants no extra permissions. One group per task, including retries; identical calls return the existing group without dispatching again, changed arguments conflict. If the human explicitly requests a retry check, replay the exact same arguments before finishing; never change arguments or dispatch extra work. Then tell the human the group name and finish this private turn; continue collaboration in the group, without chatter loops. An archived group is never restored by this tool.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -62,7 +62,13 @@ const collaborationToolList = [
           maxItems: 7,
           uniqueItems: true,
         },
-        message: { type: 'string', minLength: 1, maxLength: 12000 },
+        message: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 12000,
+          description:
+            'The complete task and completion contract shared with all members, including your own final group turn. Include each assignment, every requested artifact or saved work card, exact required output markers and all completion checks. Your private chat is not available in the group. Omit unrelated private content only; do not omit task requirements.',
+        },
       },
       required: ['name', 'members', 'message'],
       additionalProperties: false,
