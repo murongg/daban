@@ -1,4 +1,22 @@
 export const english = {
+  'agentUpgrade.title': 'Update the background Agent',
+  'agentUpgrade.summary':
+    'Your previous workspace is connected. Update the Agent to enable the latest capabilities.',
+  'agentUpgrade.confirm':
+    'Restart the Daban Agent to finish upgrading. Your Linux computer and data will be retained.',
+  'agentUpgrade.warning':
+    'Finish tasks and pause enabled schedules first. The legacy host cannot fence new work, so restarting may interrupt tasks that start meanwhile.',
+  'agentUpgrade.restart': 'Restart and upgrade Agent',
+  'agentUpgrade.later': 'Later',
+  'agentUpgrade.working': 'Upgrading the Agent…',
+  'agentUpgrade.background': 'Continue in background',
+  'agentUpgrade.busy': 'Finish active tasks or computer operations before upgrading the Agent.',
+  'agentUpgrade.schedules': 'Pause enabled schedules before upgrading the Agent.',
+  'agentUpgrade.manual':
+    'The legacy host cannot be safely identified. Fully exit the old development host, then reconnect.',
+  'agentUpgrade.required': 'Update the legacy Agent in runtime settings before retrying.',
+  'agentUpgrade.open': 'Review Agent upgrade',
+
   'setup.agentTitle': 'Prepare Daban',
   'setup.agentWorking': 'Getting Daban ready',
   'setup.agentDescription':

@@ -21,6 +21,7 @@ export const updateErrors = [
   'UPDATE_INSTALL_FAILED',
   'AGENT_UPDATE_BUSY',
   'AGENT_UPDATE_UNAVAILABLE',
+  'AGENT_LEGACY_RESTART_REQUIRED',
 ] as const;
 export type UpdateError = (typeof updateErrors)[number];
 export interface UpdateStatus {

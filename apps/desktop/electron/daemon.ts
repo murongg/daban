@@ -200,15 +200,102 @@ export class Daemon {
       throw new Error('AGENT_DAEMON_SCOPE_MISMATCH');
     return value as DaemonIdentity;
   }
-  private async command(args: string[]) {
+  private async system(program: string, args: string[]) {
     this.checkOpen();
-    return (this.dependencies.run ?? runCommand)('/bin/launchctl', args, {
+    return (this.dependencies.run ?? runCommand)(program, args, {
       signal: this.cancellation.signal,
       timeout: 8000,
       maxBuffer: 64 * 1024,
       env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
     });
   }
+  private command(args: string[]) {
+    return this.system('/bin/launchctl', args);
+  }
+  private legacyJob(text: string) {
+    const pid = Number(/^\s*pid = (\d+)\s*$/m.exec(text)?.[1]);
+    const program = /^\s*program = (.+)$/m.exec(text)?.[1];
+    const plist = /^\s*path = (.+)$/m.exec(text)?.[1];
+    const lines = text.split(/\r?\n/);
+    const start = lines.findIndex((line) => line.trim() === 'arguments = {');
+    const end = lines.findIndex((line, index) => index > start && line.trim() === '}');
+    const args =
+      start < 0 || end <= start ? [] : lines.slice(start + 1, end).map((line) => line.trim());
+    if (
+      !/^\s*state = running\s*$/m.test(text) ||
+      !Number.isSafeInteger(pid) ||
+      pid <= 0 ||
+      pid > 2147483647 ||
+      pid === process.pid ||
+      !program ||
+      !isAbsolute(program) ||
+      plist !== join(this.config.dataRoot, 'agent.plist') ||
+      args.length !== 9 ||
+      args[0] !== program ||
+      args[1] !== '--expose-internals' ||
+      !isAbsolute(args[2]) ||
+      JSON.stringify(args.slice(3)) !==
+        JSON.stringify([
+          '--data',
+          this.config.dataRoot,
+          '--socket',
+          this.config.socketPath,
+          '--vm-config',
+          this.config.vmConfig,
+        ])
+    )
+      throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    return { pid, program, args };
+  }
+  async restartLegacy(assertIdle: () => Promise<unknown>) {
+    await this.prepare();
+    const identity = await this.identity();
+    if (!identity || 'entry' in identity || 'executable' in identity)
+      throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    const target = `gui/${this.uid}/${this.label}`;
+    const printed = await this.command(['print', target]);
+    if (printed.code !== 0) throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    const job = this.legacyJob(printed.stdout);
+    const sockets = await this.system('/usr/sbin/lsof', [
+      '-nP',
+      '-a',
+      '-p',
+      String(job.pid),
+      '-U',
+      '-Fn',
+    ]);
+    if (sockets.code !== 0 || !sockets.stdout.split(/\r?\n/).includes(`n${this.config.socketPath}`))
+      throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    await assertIdle();
+    const current = await this.command(['print', target]);
+    if (
+      current.code !== 0 ||
+      JSON.stringify(this.legacyJob(current.stdout)) !== JSON.stringify(job)
+    )
+      throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    // Only an explicit confirmed restart may stop an unfenced legacy host. Closing/reconnecting the UI never calls this.
+    if ((await this.command(['bootout', target])).code !== 0)
+      throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+    const until = Date.now() + 30000;
+    while (true) {
+      let active: DaemonIdentity | undefined;
+      let inspected = true;
+      try {
+        active = await this.identity();
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'AGENT_DAEMON_UNAVAILABLE') throw error;
+        // Graceful shutdown can reset a request; require a later successful absence probe.
+        inspected = false;
+      }
+      const registered = await this.command(['print', target]);
+      // bootout can return with a SIGTERMed job still registered; absence of its socket is not enough.
+      if (inspected && !active && registered.code === 113) return;
+      if (![0, 113].includes(registered.code) || Date.now() >= until)
+        throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
+      await (this.dependencies.wait ?? wait)(150, this.cancellation.signal);
+    }
+  }
+
   private async launch() {
     await this.prepare();
     const existing = await this.identity();

@@ -3850,6 +3850,7 @@ export type RuntimeCommand =
   | { type: 'bot.import.submit'; id: string; bundle: BotBundle }
   | { type: 'bot.import.status' | 'bot.import.retry'; id: string }
   | { type: 'setup.status' | 'setup.start' | 'setup.cancel' }
+  | { type: 'agent.upgrade'; confirmed: true }
   | { type: 'recovery.status' | 'recovery.review' }
   | { type: 'recovery.restart'; request: RecoveryRequest }
   | { type: 'recovery.inspect' | 'recovery.cancel' | 'recovery.start'; id: string }

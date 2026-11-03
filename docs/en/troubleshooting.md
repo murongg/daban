@@ -48,3 +48,7 @@ Preserve the active VM, browser profile, user directory, and only remaining back
 ## Further diagnosis
 
 In Linux mode, run [Diagnostics](diagnostics.md) before considering [Recovery](recovery.md). Report platform, version, reproduction steps, and the exact error without sharing API keys, complete sensitive exports, or unredacted private screens.
+
+## Connecting after an early development build
+
+The client first reconnects to a compatible previous workspace and offers an Agent upgrade. Finish tasks, settle or cancel queued group deliveries, and pause schedules before choosing **Restart and upgrade Agent**. This restarts the Daban host service while keeping the Linux computer running and retaining chats, files and sign-ins. Choose **Later** to continue using the previous workspace and return through runtime settings. Closing the client window alone does not exit its background service.

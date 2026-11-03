@@ -37,3 +37,19 @@ it('busy, unsupported and mismatched services never become permission to kill a 
     expect(alive).not.toHaveBeenCalled();
   }
 });
+
+it('distinguishes a missing legacy handoff endpoint from busy/authentication/server failures', async () => {
+  for (const [status, code] of [
+    [404, 'AGENT_LEGACY_RESTART_REQUIRED'],
+    [405, 'AGENT_LEGACY_RESTART_REQUIRED'],
+    [403, 'AGENT_UPDATE_UNAVAILABLE'],
+    [500, 'AGENT_UPDATE_UNAVAILABLE'],
+  ] as const) {
+    await expect(
+      prepareAgentUpdate(config, {
+        token: async () => 'synthetic-token',
+        fetcher: async () => Response.json({}, { status }),
+      }),
+    ).rejects.toThrow(code);
+  }
+});

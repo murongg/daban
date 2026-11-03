@@ -179,6 +179,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'setup.status': ['type'],
     'setup.start': ['type'],
     'setup.cancel': ['type'],
+    'agent.upgrade': ['type', 'confirmed'],
     'runtime.inspect': ['type'],
     'recovery.status': ['type'],
     'recovery.review': ['type'],
@@ -199,6 +200,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     app: ['type', 'bot', 'epoch', 'app', 'instance'],
   };
   if (!fields[v.type as string] || !keys(v, fields[v.type as string])) return fail();
+  if (v.type === 'agent.upgrade' && v.confirmed !== true) return fail();
   if (String(v.type).startsWith('skill.')) {
     if (!validAgentId(v.bot)) return fail();
     if (

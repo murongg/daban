@@ -353,3 +353,89 @@ it.each([false, true])(
     await daemon.close();
   },
 );
+
+it.each([
+  'none',
+  'pending-removal',
+  'closing-socket',
+  'busy',
+  'foreign-socket',
+  'wrong-args',
+  'changed-job',
+] as const)(
+  'explicit legacy restart verifies job/socket ownership and idle state (%s)',
+  async (fault) => {
+    const config = await fixture();
+    let loaded = true,
+      prints = 0,
+      removals = 0,
+      socketReads = 0;
+    const run = vi.fn(async (program: string, args: string[]) => {
+      if (program === '/usr/sbin/lsof')
+        return {
+          code: 0,
+          stdout: `p424242\nn${fault === 'foreign-socket' ? '/synthetic/foreign.sock' : config.socketPath}\n`,
+        };
+      if (args[0] === 'print') {
+        if (!loaded)
+          return fault === 'pending-removal' && removals++ < 2
+            ? { code: 0, stdout: 'state = SIGTERMed' }
+            : { code: 113, stdout: '' };
+        prints++;
+        const pid = fault === 'changed-job' && prints > 1 ? 424243 : 424242;
+        const launch = [
+          '/synthetic/old/node',
+          '--expose-internals',
+          '/synthetic/old/main.js',
+          '--data',
+          fault === 'wrong-args' ? '/synthetic/foreign-data' : config.dataRoot,
+          '--socket',
+          config.socketPath,
+          '--vm-config',
+          config.vmConfig,
+        ];
+        return {
+          code: 0,
+          stdout: `\tpath = ${join(config.dataRoot, 'agent.plist')}\n\tstate = running\n\tprogram = ${launch[0]}\n\targuments = {\n${launch.map((item) => '\t\t' + item).join('\n')}\n\t}\n\tpid = ${pid}\n`,
+        };
+      }
+      if (args[0] === 'bootout') loaded = false;
+      return { code: 0, stdout: '' };
+    });
+    const identity = {
+      role: 'agent',
+      scope: daemonScope(config.dataRoot, config.vmConfig),
+      dataRoot: config.dataRoot,
+      socketPath: config.socketPath,
+    };
+    const guard = vi.fn(async () => {
+      if (fault === 'busy') throw Error('AGENT_UPDATE_BUSY');
+    });
+    const daemon = new Daemon(config, {
+      run,
+      inspect: async () => {
+        if (!loaded && fault === 'closing-socket' && socketReads++ === 0)
+          throw Error('AGENT_DAEMON_UNAVAILABLE');
+        return loaded ? identity : undefined;
+      },
+      wait: async () => {},
+      platform: 'darwin',
+    });
+    try {
+      if (['none', 'pending-removal', 'closing-socket'].includes(fault))
+        await daemon.restartLegacy(guard);
+      else await expect(daemon.restartLegacy(guard)).rejects.toThrow();
+      const stopped = run.mock.calls.filter(([, args]) => args[0] === 'bootout');
+      expect(stopped).toHaveLength(
+        ['none', 'pending-removal', 'closing-socket'].includes(fault) ? 1 : 0,
+      );
+      if (['none', 'pending-removal', 'closing-socket'].includes(fault))
+        expect(stopped[0][1]).toEqual(['bootout', `gui/${process.getuid!()}/${daemon.label}`]);
+      expect(run.mock.calls.some(([, args]) => args.includes('-k') || args[0] === 'kill')).toBe(
+        false,
+      );
+    } finally {
+      await daemon.close();
+    }
+  },
+);

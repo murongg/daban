@@ -25,6 +25,7 @@ import { Integrations } from '../integrations/Integrations';
 import { Models } from '../models/Models';
 import { Notifications } from '../notifications/Notifications';
 import { LinuxSetup } from '../onboarding/LinuxSetup';
+import { AgentUpgradePanel } from './AgentUpgrade';
 import { Language } from './Language';
 import { UpdatesPanel } from './Updates';
 import '../../styles/settings.css';
@@ -184,6 +185,7 @@ export function Settings({
               )}
             </div>
           </div>
+          <AgentUpgradePanel onDialogChange={setConnectionDialog} />
           <LinuxSetup />
           {!nativeOnly && (
             <div className="settings-section">

@@ -39,6 +39,7 @@ const errors: Record<UpdateError, MessageKey> = {
   UPDATE_INSTALL_FAILED: 'updates.installFailed',
   AGENT_UPDATE_BUSY: 'updates.agentBusy',
   AGENT_UPDATE_UNAVAILABLE: 'updates.agentUnavailable',
+  AGENT_LEGACY_RESTART_REQUIRED: 'agentUpgrade.required',
 };
 export function UpdatesPanel({
   onDialogChange,

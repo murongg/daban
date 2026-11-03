@@ -1,12 +1,12 @@
 {
   "name": "@daban/runtime",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@daban/runtime",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "dependencies": {
         "@daban/engine": "file:./vendor/engine",
         "@daban/protocol": "file:./vendor/protocol"
@@ -1098,7 +1098,7 @@
     },
     "vendor/engine": {
       "name": "@daban/engine",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "dependencies": {
         "@daban/protocol": "file:../protocol",
         "@modelcontextprotocol/client": "2.2.0",
@@ -1115,7 +1115,7 @@
     },
     "vendor/protocol": {
       "name": "@daban/protocol",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "license": "AGPL-3.0-only"
     }
   }

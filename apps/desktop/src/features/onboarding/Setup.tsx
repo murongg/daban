@@ -75,8 +75,11 @@ const errors: Record<string, MessageKey> = {
 export function SetupHeader() {
   useLocale();
   return (
-    <header className="setup-header">
-      <span>Daban</span>
+    <header className="setup-header" data-platform={window.daban?.platform}>
+      <span className="setup-brand">
+        <img src={`${import.meta.env.BASE_URL}app-icon.png`} alt="" width="24" height="24" />
+        <span>Daban</span>
+      </span>
       <div className="setup-tools">
         <Language />
         <span className="setup-local">

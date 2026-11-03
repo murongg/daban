@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   reconcile: vi.fn(async (..._args: unknown[]) => false),
   nativeEnsure: vi.fn(),
   nativeClose: vi.fn(),
+  daemonRestart: vi.fn(),
   daemonEnsure: vi.fn(),
   daemonClose: vi.fn(),
   daemonConfigs: [] as {
@@ -87,6 +88,9 @@ vi.mock('./daemon', async (importOriginal) => {
       ) {
         mocks.daemonConfigs.push(config);
         this.scope = actual.daemonScope(config.dataRoot, config.vmConfig);
+      }
+      restartLegacy(guard: () => Promise<unknown>) {
+        return mocks.daemonRestart(guard);
       }
       ensure() {
         return mocks.daemonEnsure();
@@ -550,7 +554,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-async function agentFixture() {
+async function agentFixture(protocol = 17) {
   const root = await fs.mkdtemp(join(tmpdir(), 'mock-service-agent-'));
   roots.add(root);
   const dataRoot = join(root, 'data');
@@ -589,6 +593,10 @@ async function agentFixture() {
     configured: true,
     revision: 0,
   };
+  const jobs: Record<string, Partial<import('@daban/protocol').RuntimeTask>> = {};
+  const groups: import('@daban/protocol').Group[] = [];
+  const pages = new Map<string, import('@daban/protocol').GroupPage>();
+  const schedules: import('@daban/protocol').Schedule[] = [];
   const server = createServer(async (request, response) => {
     let body = '';
     for await (const chunk of request) body += String(chunk);
@@ -621,6 +629,8 @@ async function agentFixture() {
           };
         response.end(JSON.stringify(power.status));
       }
+    } else if (request.url === '/api/groups/read') {
+      response.end(JSON.stringify(pages.get(JSON.parse(body).group)));
     } else if (request.url === '/agent/identity') response.end(JSON.stringify(identity));
     else if (request.url === '/api/model/configure') {
       const input = JSON.parse(body);
@@ -630,9 +640,19 @@ async function agentFixture() {
     else if (request.url === '/api/state')
       response.end(
         JSON.stringify({
-          clientProtocol: 17,
+          clientProtocol: protocol,
           mode: 'agent',
-          computerError: 'COMPUTER_START_FAILED',
+          ...(protocol < 19
+            ? { computerError: 'COMPUTER_START_FAILED' }
+            : {
+                computers: { available: true, revision: 0, limit: 2, items: [] },
+                chats: { available: true, revision: 0, items: [] },
+                recovery: { available: true, revision: 0 },
+                mcp: { available: true, revision: 0 },
+                skills: { available: true, revision: 0 },
+                schedules: { available: true, items: schedules },
+                groups: { available: true, revision: 0, items: groups },
+              }),
           sharedLogin: false,
           reboot: power.status,
           bots: {},
@@ -640,7 +660,7 @@ async function agentFixture() {
             available: true,
             provider: 'deepseek-official',
             model: settings.model,
-            bots: {},
+            bots: jobs,
           },
         }),
       );
@@ -652,6 +672,9 @@ async function agentFixture() {
   server.listen(socketPath);
   await once(server, 'listening');
   await fs.chmod(socketPath, 0o600);
+  mocks.daemonRestart
+    .mockReset()
+    .mockImplementation(async (guard: () => Promise<unknown>) => guard());
   mocks.daemonEnsure.mockReset().mockResolvedValue(undefined);
   mocks.daemonClose.mockReset().mockResolvedValue(undefined);
   mocks.daemonConfigs.length = 0;
@@ -661,6 +684,10 @@ async function agentFixture() {
   return {
     root,
     dataRoot,
+    jobs,
+    groups,
+    pages,
+    schedules,
     requests,
     server,
     identity,
@@ -1149,3 +1176,94 @@ it('keeps a busy compatible host visible on first launch and defers its runtime 
     await fixture.close();
   }
 });
+
+it('adopts a compatible legacy workspace when its host has no handoff API and never stops it automatically', async () => {
+  const fixture = await agentFixture(42);
+  mocks.reconcile.mockRejectedValueOnce(Error('AGENT_LEGACY_RESTART_REQUIRED'));
+  const service = runtimeService(
+    fixture.root,
+    'file:///mock/index.html',
+    '/mock/environment',
+    undefined,
+    { ...fixture.config, nativeFirst: true },
+  );
+  try {
+    const state = await service.connect();
+    expect(state.phase).toBe('ready');
+    expect(state.setup).toMatchObject({
+      required: false,
+      target: 'agent',
+      phase: 'waiting',
+      error: 'AGENT_LEGACY_RESTART_REQUIRED',
+    });
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it.skipIf(process.platform !== 'darwin').each(['idle', 'running', 'queued-group'] as const)(
+  'a confirmed legacy upgrade rechecks accepted work without restarting the VM (%s)',
+  async (condition) => {
+    const f = await agentFixture(42);
+    mocks.reconcile.mockRejectedValueOnce(Error('AGENT_LEGACY_RESTART_REQUIRED'));
+    const frame = { url: 'file:///mock/index.html' },
+      sender = { mainFrame: undefined as unknown, send: vi.fn() };
+    sender.mainFrame = frame;
+    mocks.windows.push({ webContents: sender });
+    const service = runtimeService(f.root, frame.url, '/mock/environment', undefined, {
+      ...f.config,
+      nativeFirst: true,
+    });
+    try {
+      expect((await service.connect()).phase).toBe('ready');
+      mocks.reconcile.mockRejectedValueOnce(Error('AGENT_LEGACY_RESTART_REQUIRED'));
+      if (condition === 'running') f.jobs['mock-active'] = task;
+      if (condition === 'queued-group') {
+        const group = {
+          id: 'mock-group',
+          name: 'Synthetic',
+          members: ['mock-bot', 'mock-second'],
+          revision: 1,
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        };
+        f.groups.push(group);
+        f.pages.set(group.id, {
+          group,
+          revision: 1,
+          messages: [],
+          deliveries: [
+            {
+              id: 'mock-delivery',
+              requestId: 'mock-request',
+              group: group.id,
+              sourceId: 'mock-source',
+              bot: 'mock-bot',
+              position: 0,
+              state: 'pending',
+            },
+          ],
+        });
+      }
+      const reply = await mocks.handlers.get('daban:runtime')!(
+        { senderFrame: frame, sender },
+        { type: 'agent.upgrade', confirmed: true },
+      );
+      expect(reply).toMatchObject(
+        condition === 'idle' ? { ok: true } : { ok: false, error: 'AGENT_UPDATE_BUSY' },
+      );
+      expect(mocks.daemonEnsure).toHaveBeenCalledTimes(condition === 'idle' ? 1 : 0);
+      expect(
+        f.power.commands.some((command) =>
+          ['recovery.restart', 'recovery.start'].includes(command.type),
+        ),
+      ).toBe(false);
+    } finally {
+      mocks.reconcile.mockReset().mockResolvedValue(false);
+      await service.close();
+      await f.close();
+    }
+  },
+);

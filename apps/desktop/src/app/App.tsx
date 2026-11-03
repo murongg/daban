@@ -66,6 +66,7 @@ import { useGroups } from '../features/groups/groups';
 import { Inbox } from '../features/inbox/Inbox';
 import { useNotices } from '../features/notifications/notices';
 import { Onboarding } from '../features/onboarding/Onboarding';
+import { AgentUpgradeNotice } from '../features/settings/AgentUpgrade';
 import { Settings } from '../features/settings/Settings';
 import { UpdateNotice } from '../features/settings/Updates';
 import { UpdateProvider, useUpdateSave } from '../features/settings/update';
@@ -160,6 +161,7 @@ export function App() {
       <UpdateProvider>
         <RuntimeProvider>
           <UpdateNotice />
+          <AgentUpgradeNotice />
           <Onboarding>
             <Workbench />
           </Onboarding>
