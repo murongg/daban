@@ -24,6 +24,10 @@ const notifications: NoticeBridge = {
   },
 };
 const locale: LocaleBridge = { invoke: (command) => ipcRenderer.invoke('daban:locale', command) };
+const titlebar = {
+  setTheme: (theme: 'light' | 'dark'): Promise<boolean> =>
+    ipcRenderer.invoke('daban:titlebar-theme', theme),
+};
 const updates: UpdateBridge = {
   invoke: (command) => ipcRenderer.invoke('daban:updates', command),
   subscribe(callback) {
@@ -36,5 +40,5 @@ const updates: UpdateBridge = {
 };
 contextBridge.exposeInMainWorld(
   'daban',
-  Object.freeze({ platform: process.platform, runtime, notifications, locale, updates }),
+  Object.freeze({ platform: process.platform, runtime, notifications, locale, updates, titlebar }),
 );

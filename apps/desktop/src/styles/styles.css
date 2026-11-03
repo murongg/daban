@@ -112,15 +112,50 @@ button {
     color 0.15s;
 }
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--scroll);
+  min-width: 32px;
+  min-height: 32px;
+  border: 2px solid transparent;
   border-radius: 6px;
+  background: var(--scroll);
+  background-clip: padding-box;
 }
-::-webkit-scrollbar-track {
+:hover::-webkit-scrollbar-thumb {
+  background-color: var(--scroll-hover);
+}
+:focus-within::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--muted);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.header-actions::-webkit-scrollbar,
+.workspace-tablist::-webkit-scrollbar,
+.browser-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+/* A non-auto standard scrollbar style overrides Chromium's custom thumb and buttons. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll) transparent;
+  }
+}
+@media (forced-colors: active) {
+  ::-webkit-scrollbar-thumb {
+    background-color: ButtonText;
+  }
 }
 .sr-only {
   position: absolute;
@@ -257,6 +292,13 @@ textarea.field {
   height: 28px;
   object-fit: contain;
   flex-shrink: 0;
+}
+.sidebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
 }
 .search-wrap {
   position: relative;
@@ -1113,7 +1155,6 @@ textarea.field {
   height: 48px;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
 }
 .workspace-tab:hover {
   color: var(--ink);
@@ -2945,6 +2986,51 @@ textarea.skill-source {
   -webkit-app-region: no-drag;
 }
 
+/* Electron reports the native caption's safe area in CSS pixels, including at mixed DPI. */
+.app[data-desktop="win32"],
+.setup-header[data-platform="win32"] {
+  --window-controls-width: calc(
+    100vw -
+    env(titlebar-area-x, 0px) -
+    env(titlebar-area-width, calc(100vw - 138px))
+  );
+}
+.app[data-desktop="win32"] .sidebar-header,
+.app[data-desktop="win32"] .chat-header {
+  height: 56px;
+  min-height: 56px;
+  flex-shrink: 0;
+}
+.app[data-desktop="win32"] .chat-header {
+  padding-right: calc(16px + var(--window-controls-width));
+}
+.app[data-desktop="win32"] .chat-identity {
+  min-width: 96px;
+  max-width: 200px;
+}
+.app[data-desktop="win32"] .chat-identity h1,
+.app[data-desktop="win32"] .chat-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app[data-desktop="win32"] .header-actions {
+  min-width: 0;
+  overflow-x: auto;
+  /* Leave room for the keyboard focus ring inside the scrollable toolbar. */
+  padding: 6px;
+  margin: -6px;
+  -webkit-app-region: no-drag;
+}
+.app[data-desktop="win32"] .header-divider {
+  flex-shrink: 0;
+}
+@media (max-width: 1080px) {
+  .app[data-desktop="win32"] .workspace {
+    top: 56px;
+  }
+}
+
 .live-desktop {
   margin: 0 17px;
 }
@@ -3688,7 +3774,6 @@ textarea.skill-source {
   align-items: center;
   overflow-x: auto;
   padding-bottom: 7px;
-  scrollbar-width: thin;
 }
 .browser-tab {
   display: flex;
@@ -3980,6 +4065,10 @@ textarea.skill-source {
 /* Keep the brand clear of native macOS window controls. */
 .setup-header[data-platform="darwin"] {
   padding-left: 112px;
+}
+.setup-header[data-platform="win32"] {
+  height: 56px;
+  padding-right: calc(24px + var(--window-controls-width));
 }
 .setup-brand {
   display: inline-flex;

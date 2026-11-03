@@ -222,6 +222,12 @@ export function Sidebar({
       {open && <div className="sidebar-scrim" onClick={close} aria-hidden="true" />}
       <aside className={`sidebar ${open ? 'open' : ''}`} aria-label={t('sidebar.sidebar')}>
         <header className="sidebar-header">
+          {window.daban?.platform === 'win32' && (
+            <span className="sidebar-brand">
+              <Brand />
+              <span>Daban</span>
+            </span>
+          )}
           <span className="spacer" />
           <IconButton label={t('common.newBot')} onClick={() => onCreate()}>
             <Plus />

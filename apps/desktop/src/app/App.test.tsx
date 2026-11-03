@@ -21,6 +21,21 @@ afterEach(() => Reflect.deleteProperty(window, 'daban'));
 
 // UI fixtures and user inputs are synthetic; the renderer never calls a model API.
 describe('daban client', () => {
+  it('synchronizes the Windows native titlebar with the restored and selected app theme', async () => {
+    const state = seedDemoState();
+    state.theme = 'dark';
+    localStorage.setItem(seedStorageKey, seedSerialize(state));
+    const setTheme = vi.fn().mockResolvedValue(true);
+    Object.defineProperty(window, 'daban', {
+      configurable: true,
+      value: { platform: 'win32', titlebar: { setTheme } },
+    });
+    render(<App />);
+    await waitFor(() => expect(setTheme).toHaveBeenLastCalledWith('dark'));
+    await userEvent.click(screen.getByRole('button', { name: '切换浅色主题' }));
+    await waitFor(() => expect(setTheme).toHaveBeenLastCalledWith('light'));
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
   it('shows the conversation workspace and filters Bot navigation', async () => {
     render(<App />);
     expect(screen.getByRole('heading', { name: '研究员' })).toBeVisible();
