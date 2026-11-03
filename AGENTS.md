@@ -50,6 +50,7 @@ Biome preserves existing non-null assertions, CSS cascade ordering, and necessar
 
 ## Verification Artifacts and Disk Usage
 
+- Do not add incidental verification or decorative screenshots to maintained project files or PR commits. Keep temporary screenshots in ignored artifact directories such as `outputs/`; include screenshots in the repository only when explicitly requested or necessary for maintained documentation.
 - After each verification phase, remove obsolete artifacts that can be rebuilt. Keep the current client and one rollback version, and the latest complete environment package plus one previous version. Reports, logs, and cleanup records may be retained.
 - Normally keep one reusable test VM. Retire extra instances created for standalone installation checks after verification finishes and they are no longer needed for recovery. Keep clean-image build VMs only as required by current build work.
 - Before deleting a test VM, check the verification reports, actual directory, and image provenance. Confirm that the VM is stopped and its disks are not in use, then delete it through the VM manager. Do not bulk-delete based only on directory names or historical reports.
