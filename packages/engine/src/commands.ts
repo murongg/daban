@@ -4,8 +4,12 @@ import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type ApprovalMode, isInteractionInput, validAgentId } from '@daban/protocol';
+import { and, eq, notInArray } from 'drizzle-orm';
+import { migrations } from './commands-migrations.js';
+import { commands } from './commands-schema.js';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
+import { configure, type Database, migrate } from './database.js';
 import { syncDirectory } from './durability.js';
 import type { Interactions } from './interactions.js';
 
@@ -33,11 +37,6 @@ export interface CommandReview {
   target: 'linux-vm';
 }
 export type CommandDecision = 'allow' | 'ask' | 'deny';
-interface RecordRow {
-  fingerprint: string;
-  phase: string;
-  result: string | null;
-}
 const failure = (code: string): ToolResult => ({
   isError: true,
   content: [{ type: 'text', text: code }],
@@ -52,9 +51,15 @@ function canonical(value: unknown): string {
     .join(',')}}`;
 }
 
+function legacy(client: DatabaseSync) {
+  client.exec(
+    'CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,request TEXT NOT NULL,phase TEXT NOT NULL,decision TEXT,result TEXT);',
+  );
+}
+
 export class Commands {
   readonly ready: Promise<unknown>;
-  private db?: DatabaseSync;
+  private db?: Database;
   private closed = false;
   private readonly active = new Map<
     string,
@@ -85,10 +90,20 @@ export class Commands {
       await handle.close();
     }
     await chmod(this.options.file, 0o600);
-    this.db = new DatabaseSync(this.options.file);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,request TEXT NOT NULL,phase TEXT NOT NULL,decision TEXT,result TEXT);
-      UPDATE commands SET phase='unknown' WHERE phase NOT IN ('settled','denied','unknown');`);
+    const client = new DatabaseSync(this.options.file);
+    try {
+      configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
+      this.db = migrate(client, migrations, legacy);
+      this.db
+        .update(commands)
+        .set({ phase: 'unknown' })
+        .where(notInArray(commands.phase, ['settled', 'denied', 'unknown']))
+        .run();
+    } catch {
+      this.db = undefined;
+      client.close();
+      throw new Fault('COMMAND_STORE_UNAVAILABLE');
+    }
     const directory = await open(
       path.dirname(this.options.file),
       constants.O_RDONLY | constants.O_DIRECTORY,
@@ -104,16 +119,20 @@ export class Commands {
     this.options.assertLive?.(run);
   }
   private row(id: string) {
-    return this.db!.prepare('SELECT fingerprint,phase,result FROM commands WHERE id=?').get(
-      id,
-    ) as unknown as RecordRow | undefined;
+    return this.db!.select({
+      fingerprint: commands.fingerprint,
+      phase: commands.phase,
+      result: commands.result,
+    })
+      .from(commands)
+      .where(eq(commands.id, id))
+      .get();
   }
   private finish(id: string, phase: 'settled' | 'denied' | 'unknown', result: ToolResult) {
-    this.db!.prepare('UPDATE commands SET phase=?,result=? WHERE id=?').run(
-      phase,
-      JSON.stringify(result),
-      id,
-    );
+    this.db!.update(commands)
+      .set({ phase, result: JSON.stringify(result) })
+      .where(eq(commands.id, id))
+      .run();
     return result;
   }
   invoke(
@@ -216,12 +235,9 @@ export class Commands {
             : failure('COMMAND_APPROVAL_REJECTED');
         return failure('COMMAND_OUTCOME_UNKNOWN');
       }
-      this.db!.prepare('INSERT INTO commands(id,fingerprint,request,phase) VALUES(?,?,?,?)').run(
-        id,
-        fingerprint,
-        canonical(request),
-        'reviewing',
-      );
+      this.db!.insert(commands)
+        .values({ id, fingerprint, request: canonical(request), phase: 'reviewing' })
+        .run();
       const decision =
         request.approvalMode === 'ask'
           ? 'ask'
@@ -276,9 +292,10 @@ export class Commands {
       }
       this.live(run);
       // Persist the one-use claim before crossing into the guest; a restart may only inspect this receipt.
-      const claimed = this.db!.prepare(
-        "UPDATE commands SET phase='dispatching',decision=? WHERE id=? AND phase='reviewing'",
-      ).run(decision, id);
+      const claimed = this.db!.update(commands)
+        .set({ phase: 'dispatching', decision })
+        .where(and(eq(commands.id, id), eq(commands.phase, 'reviewing')))
+        .run();
       if (Number(claimed.changes) !== 1) return failure('COMMAND_OUTCOME_UNKNOWN');
       await new Promise((resolve) => setImmediate(resolve));
       this.live(run);
@@ -306,7 +323,7 @@ export class Commands {
     this.closed = true;
     await Promise.allSettled([...this.active.values()].map((item) => item.promise));
     await this.ready.catch(() => {});
-    this.db?.close();
+    this.db?.$client.close();
     this.db = undefined;
   }
 }

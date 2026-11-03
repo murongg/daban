@@ -3,17 +3,96 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { Knowledge } from './knowledge.js';
+import { sources } from './knowledge-schema.js';
+
+test('a pre-ORM knowledge file keeps documents, history and originals and gains the import table', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-knowledge-legacy-'));
+  const file = path.join(root, 'knowledge.sqlite');
+  const data = Buffer.from('%PDF-1.7\nsynthetic legacy original');
+  const sha256 = createHash('sha256').update(data).digest('hex');
+  const stamp = '2026-01-01T00:00:00.000Z';
+  const old = new DatabaseSync(file);
+  // An early file without the import receipt table or the owner index.
+  old.exec(`CREATE TABLE documents (id TEXT PRIMARY KEY,bot TEXT NOT NULL,path TEXT NOT NULL,revision INTEGER NOT NULL,content TEXT NOT NULL,bytes INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,UNIQUE(bot,path));
+    CREATE TABLE revisions (document TEXT NOT NULL,revision INTEGER NOT NULL,path TEXT NOT NULL,content TEXT NOT NULL,bytes INTEGER NOT NULL,deleted INTEGER NOT NULL,at TEXT NOT NULL,actor TEXT NOT NULL,run TEXT,PRIMARY KEY(document,revision));
+    CREATE TABLE sources (document TEXT PRIMARY KEY,bot TEXT NOT NULL,name TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,data BLOB NOT NULL,UNIQUE(bot,name));`);
+  old
+    .prepare('INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?)')
+    .run('mock-legacy-doc', 'mock-alpha', 'legacy.pdf.txt', 1, 'LEGACY TEXT', 11, 0, stamp, stamp);
+  old
+    .prepare('INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?,?)')
+    .run('mock-legacy-doc', 1, 'legacy.pdf.txt', 'LEGACY TEXT', 11, 0, stamp, 'user', null);
+  old
+    .prepare('INSERT INTO sources VALUES(?,?,?,?,?,?)')
+    .run('mock-legacy-doc', 'mock-alpha', 'legacy.pdf', data.length, sha256, data);
+  old.close();
+  const store = new Knowledge(file);
+  try {
+    await store.ready;
+    expect(await store.status()).toStrictEqual({ available: true, revision: 1 });
+    const current = await store.read('mock-alpha', 'mock-legacy-doc');
+    expect(current).toMatchObject({
+      content: 'LEGACY TEXT',
+      revision: 1,
+      source: { name: 'legacy.pdf', size: data.length, sha256 },
+    });
+    expect((await store.source('mock-alpha', 'mock-legacy-doc')).file.data).toBe(
+      data.toString('base64'),
+    );
+    const edited = await store.edit('mock-alpha', 'mock-legacy-doc', 1, 'LEGACY', 'UPGRADED');
+    expect(edited).toMatchObject({ revision: 2, content: 'UPGRADED TEXT' });
+    expect((await store.versions('mock-alpha', 'mock-legacy-doc')).length).toBe(2);
+    const copied = await store.importBundle('mock-beta', 'c'.repeat(64), [
+      { path: 'mock/copied.md', content: 'SYNTHETIC COPY' },
+    ]);
+    expect(copied.map((item) => item.content)).toStrictEqual(['SYNTHETIC COPY']);
+    expect((await store.status()).revision).toBe(3);
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a knowledge file written by a newer build is refused as corrupt', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-knowledge-newer-'));
+  const file = path.join(root, 'knowledge.sqlite');
+  let store = new Knowledge(file);
+  try {
+    await store.ready;
+    await store.close();
+    const db = new DatabaseSync(file);
+    // Simulates a migration journal entry this build does not know.
+    db.prepare('INSERT INTO __drizzle_migrations(hash,created_at,name) VALUES(?,?,?)').run(
+      'mock-hash',
+      Date.parse('2099-01-01T00:00:00Z'),
+      '20990101000000_future',
+    );
+    db.close();
+    store = new Knowledge(file);
+    await expect(store.ready).rejects.toMatchObject({ code: 'KNOWLEDGE_CORRUPT' });
+    expect(await store.status()).toStrictEqual({
+      available: false,
+      error: 'KNOWLEDGE_UNAVAILABLE',
+    });
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('a failed original insert rolls back its text revision and corrupted originals are never served', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-import-atomic-'));
   const file = path.join(root, 'knowledge.sqlite');
   const store = new Knowledge(file);
   await store.ready;
-  const db = new DatabaseSync(file);
+  const client = new DatabaseSync(file);
+  const db = drizzle({ client });
   try {
-    db.exec(
+    client.exec(
       "CREATE TRIGGER reject_synthetic BEFORE INSERT ON sources WHEN new.name='fail.pdf' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;",
     );
     const upload = { name: 'fail.pdf', data: Buffer.from('synthetic original').toString('base64') };
@@ -27,16 +106,21 @@ test('a failed original insert rolls back its text revision and corrupted origin
       { ...upload, name: 'good.pdf' },
       'preserve text',
     );
-    db.prepare('UPDATE sources SET data=? WHERE document=?').run(
-      Buffer.from('synthetic corruption'),
-      saved.id,
-    );
+    db.update(sources)
+      .set({ data: Buffer.from('synthetic corruption') })
+      .where(eq(sources.document, saved.id))
+      .run();
+    await expect(store.source('mock-alpha', saved.id)).rejects.toMatchObject({
+      code: 'KNOWLEDGE_CORRUPT',
+    });
+    // A non-BLOB value in the untyped column is corruption, not a driver error.
+    client.prepare('UPDATE sources SET data=? WHERE document=?').run('synthetic text', saved.id);
     await expect(store.source('mock-alpha', saved.id)).rejects.toMatchObject({
       code: 'KNOWLEDGE_CORRUPT',
     });
     expect((await store.read('mock-alpha', saved.id)).content).toBe('preserve text');
   } finally {
-    db.close();
+    client.close();
     await store.close();
     await rm(root, { recursive: true, force: true });
   }

@@ -13,6 +13,7 @@ export const suites = {
     'upgrade.test',
     'upgrade.integration',
     'bundle-migration.test',
+    'database.test',
     'commands.test',
     'risk.test',
     'documents.test',

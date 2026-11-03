@@ -29,6 +29,79 @@ async function fixture(t: TestContext, limit = 2) {
   };
 }
 
+const legacyTables = {
+  computers:
+    'CREATE TABLE computers(bot TEXT PRIMARY KEY,revision INTEGER NOT NULL,phase TEXT NOT NULL,desired INTEGER NOT NULL,slot INTEGER UNIQUE,instance TEXT,boot TEXT NOT NULL,error TEXT,recovery TEXT,updated TEXT NOT NULL) STRICT;',
+  commands:
+    'CREATE TABLE computer_commands(id TEXT PRIMARY KEY,bot TEXT NOT NULL,signature TEXT NOT NULL,action TEXT NOT NULL,phase TEXT NOT NULL,error TEXT,uncertain INTEGER NOT NULL DEFAULT 0) STRICT;',
+  meta: 'CREATE TABLE computer_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;',
+};
+
+test('pre-ORM version 1 computer files keep ownership and receipts after the schema baseline', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-legacy-connections-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const full = path.join(root, 'full.sqlite');
+  let old = new DatabaseSync(full);
+  old.exec(`PRAGMA journal_mode=WAL;${legacyTables.computers}${legacyTables.commands}${legacyTables.meta}
+    INSERT INTO computer_meta VALUES(1,7);PRAGMA user_version=1;`);
+  old
+    .prepare("INSERT INTO computers VALUES(?,3,'connected',1,0,?,?,NULL,NULL,?)")
+    .run('mock-legacy', 'mock-old-instance', 'mock-old-boot', '2026-01-01T00:00:00.000Z');
+  old
+    .prepare("INSERT INTO computer_commands VALUES(?,?,?,'connect','settled',NULL,0)")
+    .run('mock-old-connect', 'mock-legacy', 'a'.repeat(64));
+  old.close();
+  const store = new Connections({ file: full, limit: 2, boot: 'mock-new-boot' });
+  t.onTestFinished(() => store.close());
+  await store.ready;
+  expect(store.snapshot().available).toBe(true);
+  // The reboot reconciliation is itself a committed transaction on top of the legacy revision.
+  expect(store.snapshot().revision).toBe(8);
+  const saved = store.get('mock-legacy');
+  expect(saved).toMatchObject({ phase: 'suspended', desired: true, reserved: false, revision: 4 });
+  expect(store.receipt('mock-old-connect', 'mock-legacy').phase).toBe('settled');
+  const next = store.claim({
+    id: 'mock-new-connect',
+    bot: 'mock-legacy',
+    action: 'connect',
+    revision: 4,
+  });
+  expect(next.fresh).toBe(true);
+  expect(next.slot).toBe(0);
+  const partial = path.join(root, 'partial.sqlite');
+  old = new DatabaseSync(partial);
+  old.exec(`${legacyTables.computers}PRAGMA user_version=1;`);
+  old.close();
+  const completed = new Connections({ file: partial, limit: 2, boot: 'mock-new-boot' });
+  t.onTestFinished(() => completed.close());
+  await completed.ready;
+  expect(completed.snapshot()).toMatchObject({ available: true, revision: 0, items: [] });
+  expect(
+    completed.claim({ id: 'mock-partial', bot: 'mock-new', action: 'connect', revision: 0 }).fresh,
+  ).toBe(true);
+});
+
+test('unversioned, newer or foreign computer files stay unavailable and unchanged', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-foreign-connections-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  for (const [name, schema] of [
+    ['unversioned', `${legacyTables.computers}PRAGMA user_version=0;`],
+    ['newer', `${legacyTables.computers}PRAGMA user_version=2;`],
+    ['foreign', 'CREATE TABLE mock_existing(value TEXT);PRAGMA user_version=1;'],
+  ]) {
+    const file = path.join(root, `${name}.sqlite`),
+      old = new DatabaseSync(file);
+    old.exec(schema);
+    old.close();
+    const bytes = await readFile(file),
+      store = new Connections({ file, limit: 2, boot: 'mock-boot' });
+    await store.ready;
+    expect(store.snapshot().available).toBe(false);
+    await store.close();
+    expect(await readFile(file)).toStrictEqual(bytes);
+  }
+});
+
 test('computer claims preserve logical IDs, reserve one slot and settle exact-ID retries without replay', async (t) => {
   const { store } = await fixture(t);
   const request = {

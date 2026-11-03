@@ -17,9 +17,12 @@
     "build:runtime": "npm run build:engine && npm run build --workspace @daban/runtime && node --experimental-strip-types tools/runtime.ts",
     "test:runtime": "npm run build:runtime && node --experimental-strip-types tools/tests.ts runtime",
     "check:source": "node --experimental-strip-types tools/source.ts",
+    "db:generate": "node --experimental-strip-types tools/migrations.ts generate",
+    "db:embed": "node --experimental-strip-types tools/migrations.ts embed",
+    "db:check": "node --experimental-strip-types tools/migrations.ts check",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "biome check . && npm run check:source",
+    "lint": "biome check . && npm run check:source && npm run db:check",
     "lint:fix": "biome check --write .",
     "test:integrations": "node --experimental-strip-types tools/tests.ts integrations",
     "test:lifecycle": "node --experimental-strip-types tools/tests.ts lifecycle",
@@ -49,7 +52,7 @@
     "vitest": "5.0.5"
   },
   "engines": {
-    "node": "^22.15.0 || >=24.0.0"
+    "node": "^22.16.0 || >=24.0.0"
   },
   "main": "dist-electron/main.cjs",
   "workspaces": [

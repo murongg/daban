@@ -1,9 +1,52 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { count, isNull } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { Attachments } from './attachments.js';
+import { purges, uploads } from './attachments-schema.js';
+
+const digest = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');
+
+test('a pre-ORM upload file without trash, versions or purge receipts keeps its bytes after the schema baseline', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-legacy-uploads-'));
+  const file = path.join(root, 'uploads.sqlite');
+  const data = Buffer.from('synthetic-pre-orm-original'),
+    name = 'mock-legacy.pdf',
+    sha256 = digest(data),
+    id = digest(`${name}\0${sha256}`);
+  const old = new DatabaseSync(file);
+  old.exec(
+    'CREATE TABLE uploads (bot TEXT NOT NULL,id TEXT NOT NULL,name TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,data BLOB NOT NULL,content TEXT NOT NULL,PRIMARY KEY(bot,id));',
+  );
+  old
+    .prepare('INSERT INTO uploads VALUES(?,?,?,?,?,?,?)')
+    .run('mock-alpha', id, name, data.length, sha256, data, 'MOCK-PRE-ORM');
+  old.close();
+  const store = new Attachments(file);
+  try {
+    const read = await store.read('mock-alpha', id);
+    expect(read.data.equals(data)).toBe(true);
+    expect(read.receipt.content).toBe('MOCK-PRE-ORM');
+    const page = await store.list('mock-alpha', {});
+    expect(page.textBytes).toBe(Buffer.byteLength('MOCK-PRE-ORM'));
+    const [entry] = page.items;
+    expect(entry.deleted).toBe(false);
+    const trashed = await store.trash('mock-alpha', id, entry.version);
+    expect((await store.purge('mock-alpha', id, trashed.version, name)).purged).toBe(true);
+    const inspect = drizzle({ client: new DatabaseSync(file, { readOnly: true }) });
+    expect(inspect.select({ count: count() }).from(uploads).get()!.count).toBe(0);
+    expect(inspect.select({ count: count() }).from(purges).get()!.count).toBe(1);
+    expect(inspect.select().from(uploads).where(isNull(uploads.version)).all()).toStrictEqual([]);
+    inspect.$client.close();
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('raster uploads retain immutable scoped originals without invoking document extraction', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-image-upload-'));
@@ -85,7 +128,7 @@ test('legacy uploads migrate without changing bytes and failed purge rolls back 
     await store.close();
     let db = new DatabaseSync(file);
     db.exec(
-      'DROP TABLE purges; ALTER TABLE uploads DROP COLUMN deleted; ALTER TABLE uploads DROP COLUMN version; ALTER TABLE uploads DROP COLUMN previous;',
+      'DROP TABLE __drizzle_migrations; DROP TABLE purges; ALTER TABLE uploads DROP COLUMN deleted; ALTER TABLE uploads DROP COLUMN version; ALTER TABLE uploads DROP COLUMN previous;',
     );
     db.close();
     store = new Attachments(file);
@@ -100,7 +143,7 @@ test('legacy uploads migrate without changing bytes and failed purge rolls back 
       store.purge('mock-alpha', entry.id, trashed.version, source.name),
     ).rejects.toThrowError();
     expect((await store.source('mock-alpha', entry.id)).file).toStrictEqual(source);
-    expect(db.prepare('SELECT COUNT(*) AS count FROM purges').get()!.count).toBe(0);
+    expect(drizzle({ client: db }).select({ count: count() }).from(purges).get()!.count).toBe(0);
     db.exec('DROP TRIGGER reject_purge');
     db.close();
     expect((await store.purge('mock-alpha', entry.id, trashed.version, source.name)).purged).toBe(
@@ -288,9 +331,9 @@ test('failed, empty and cancelled extraction publishes no attachment, and invali
         abort.signal,
       ),
     ).rejects.toThrowError();
-    const db = new DatabaseSync(path.join(root, 'uploads.sqlite'));
-    expect(db.prepare('SELECT COUNT(*) AS count FROM uploads').get()!.count).toBe(0);
-    db.close();
+    const db = drizzle({ client: new DatabaseSync(path.join(root, 'uploads.sqlite')) });
+    expect(db.select({ count: count() }).from(uploads).get()!.count).toBe(0);
+    db.$client.close();
     const saved = await store.upload('mock-alpha', file, async () => 'RECOVERED');
     expect((await store.read('mock-alpha', saved.id)).receipt.content).toBe('RECOVERED');
   } finally {

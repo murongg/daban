@@ -246,6 +246,7 @@ const phases = new Set([
 ]);
 export interface TaskRecord {
   stats?: SessionStats;
+  elapsedMs?: number;
   checkpoint?: import('./checkpoint.js').ConversationCheckpoint;
   chatRevision?: number;
   conversationId?: string;
@@ -374,6 +375,11 @@ export class TaskJournal {
         }
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
+        if (
+          task.elapsedMs !== undefined &&
+          (!Number.isSafeInteger(task.elapsedMs) || task.elapsedMs < 0)
+        )
+          delete task.elapsedMs;
         if (task.intentId !== undefined && !validAgentId(task.intentId)) delete task.intentId;
         // A field this build cannot validate is dropped alone; the rest of the saved task stays queryable.
         if (
@@ -441,6 +447,7 @@ export class TaskJournal {
       'executedCount',
       'trace',
       'createdAt',
+      'elapsedMs',
       'files',
       'inputs',
       'documentInputs',

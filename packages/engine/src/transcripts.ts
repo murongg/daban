@@ -15,7 +15,11 @@ import {
   transcriptEventLimit,
   transcriptPageLimit,
 } from '@daban/protocol';
+import { and, asc, eq, gt, max, sql } from 'drizzle-orm';
 import { Fault } from './control.js';
+import { configure, type Database, migrate } from './database.js';
+import { migrations } from './transcripts-migrations.js';
+import { transcriptEvents, transcriptRuns } from './transcripts-schema.js';
 
 export interface TranscriptEvent extends Omit<TranscriptItem, 'seq' | 'characters'> {
   source: string;
@@ -44,6 +48,12 @@ const short = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 300 && !value.includes('\0');
 const publicCode = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,80}$/.test(value);
+
+function legacy(client: DatabaseSync) {
+  client.exec(`CREATE TABLE IF NOT EXISTS transcript_runs(run TEXT PRIMARY KEY,scope TEXT NOT NULL,state TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS transcript_events(run TEXT NOT NULL,seq INTEGER NOT NULL,source TEXT NOT NULL,meta TEXT NOT NULL,body TEXT NOT NULL,
+      PRIMARY KEY(run,seq),UNIQUE(run,source));`);
+}
 
 function identity(scope: TranscriptScope) {
   if (!isTranscriptScope(scope)) throw new Fault('INVALID_TRANSCRIPT_SCOPE', 400);
@@ -124,12 +134,7 @@ function visibleContent(value: unknown, redact: (value: string) => string) {
     .join('\n');
 }
 
-export function projectTranscript(
-  note: unknown,
-  session: string,
-  redact: (value: string) => string,
-  prunedResult = false,
-): TranscriptEvent | undefined {
+function nativeEvent(note: unknown, session: string) {
   if (
     !record(note) ||
     note.method !== 'session.event' ||
@@ -148,6 +153,46 @@ export function projectTranscript(
     !Number.isFinite(new Date(event.time).valueOf())
   )
     throw new Fault('INVALID_TRANSCRIPT_EVENT');
+  return { type: event.type, seq: event.seq, time: event.time, data: event.data };
+}
+
+export function projectThinking(
+  note: unknown,
+  session: string,
+  redact: (value: string) => string,
+): TranscriptEvent | undefined {
+  const event = nativeEvent(note, session);
+  if (event?.type !== 'assistant/message') return;
+  const { data } = event;
+  if (!record(data.message) || !Array.isArray(data.message.content))
+    throw new Fault('INVALID_TRANSCRIPT_EVENT');
+  // Only provider-returned text blocks are displayable; never copy the native stream or event envelope.
+  const text = data.message.content
+    .filter(
+      (block) => record(block) && block.type === 'reasoning' && typeof block.text === 'string',
+    )
+    .map((block) => block.text)
+    .join('\n');
+  if (!text) return;
+  return {
+    source: `native:${session}:${event.seq}:thinking`,
+    kind: 'thinking',
+    at: new Date(event.time).toISOString(),
+    text: redact(text),
+    ...(integer(data.turn) && integer(data.step)
+      ? { thinkingId: `${data.turn}:${data.step}` }
+      : {}),
+  };
+}
+
+export function projectTranscript(
+  note: unknown,
+  session: string,
+  redact: (value: string) => string,
+  prunedResult = false,
+): TranscriptEvent | undefined {
+  const event = nativeEvent(note, session);
+  if (!event) return;
   const data = event.data;
   const base = { source: `native:${session}:${event.seq}`, at: new Date(event.time).toISOString() };
   if (event.type === 'tool/call') {
@@ -195,7 +240,7 @@ export function projectTranscript(
 
 export class Transcripts {
   readonly ready: Promise<unknown>;
-  private db!: DatabaseSync;
+  private db!: Database;
   private closed = false;
   constructor(readonly file: string) {
     this.ready = this.load();
@@ -214,19 +259,33 @@ export class Transcripts {
     } finally {
       await handle.close();
     }
-    this.db = new DatabaseSync(this.file);
-    this.db.exec(`PRAGMA journal_mode=WAL;
-      CREATE TABLE IF NOT EXISTS transcript_runs(run TEXT PRIMARY KEY,scope TEXT NOT NULL,state TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS transcript_events(run TEXT NOT NULL,seq INTEGER NOT NULL,source TEXT NOT NULL,meta TEXT NOT NULL,body TEXT NOT NULL,
-        PRIMARY KEY(run,seq),UNIQUE(run,source));
-      UPDATE transcript_runs SET state='interrupted' WHERE state='recording';`);
+    const client = new DatabaseSync(this.file);
+    try {
+      configure(client, { journal: 'WAL' });
+      this.db = migrate(client, migrations, legacy);
+    } catch (error) {
+      client.close();
+      if (
+        error instanceof Error &&
+        ['DATABASE_NEWER', 'DATABASE_UNVERSIONED'].includes(error.message)
+      )
+        throw new Fault('TRANSCRIPT_UNAVAILABLE');
+      throw error;
+    }
+    this.db
+      .update(transcriptRuns)
+      .set({ state: 'interrupted' })
+      .where(eq(transcriptRuns.state, 'recording'))
+      .run();
   }
   private find(scope: TranscriptScope) {
     const key = identity(scope);
     if (this.closed || !this.db) throw new Fault('TRANSCRIPT_UNAVAILABLE', 503);
     const row = this.db
-      .prepare('SELECT scope,state FROM transcript_runs WHERE run=?')
-      .get(scope.runId);
+      .select({ scope: transcriptRuns.scope, state: transcriptRuns.state })
+      .from(transcriptRuns)
+      .where(eq(transcriptRuns.run, scope.runId))
+      .get();
     if (row && row.scope !== key) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
     if (row && !['recording', 'complete', 'interrupted'].includes(String(row.state)))
       throw new Fault('TRANSCRIPT_CORRUPT');
@@ -242,7 +301,10 @@ export class Transcripts {
         throw new Fault('TRANSCRIPT_SCOPE_CONFLICT');
       throw error;
     }
-    this.db.prepare('INSERT INTO transcript_runs VALUES(?,?,?)').run(scope.runId, key, 'recording');
+    this.db
+      .insert(transcriptRuns)
+      .values({ run: scope.runId, scope: key, state: 'recording' })
+      .run();
   }
   append(scope: TranscriptScope, event: TranscriptEvent) {
     if (this.find(scope)?.state !== 'recording') throw new Fault('TRANSCRIPT_CLOSED');
@@ -257,36 +319,57 @@ export class Transcripts {
     // Content offsets are JavaScript UTF-16 offsets, not SQLite's Unicode code-point length().
     const encoded = JSON.stringify({ ...meta, characters: text.length });
     const old = this.db
-      .prepare('SELECT meta,body FROM transcript_events WHERE run=? AND source=?')
-      .get(scope.runId, source);
+      .select({ meta: transcriptEvents.meta, body: transcriptEvents.body })
+      .from(transcriptEvents)
+      .where(and(eq(transcriptEvents.run, scope.runId), eq(transcriptEvents.source, source)))
+      .get();
     if (old) {
       if (old.meta !== encoded || old.body !== text) throw new Fault('TRANSCRIPT_EVENT_CONFLICT');
       return;
     }
+    const last = this.db
+      .select({ seq: max(transcriptEvents.seq) })
+      .from(transcriptEvents)
+      .where(eq(transcriptEvents.run, scope.runId));
+    // The next sequence number is computed inside the INSERT so allocation stays one statement.
     this.db
-      .prepare(`INSERT INTO transcript_events(run,seq,source,meta,body)
-      SELECT ?,COALESCE(MAX(seq),0)+1,?,?,? FROM transcript_events WHERE run=?`)
-      .run(scope.runId, source, encoded, text, scope.runId);
+      .insert(transcriptEvents)
+      .values({
+        run: scope.runId,
+        seq: sql`coalesce((${last}), 0) + 1`,
+        source,
+        meta: encoded,
+        body: text,
+      })
+      .run();
   }
   finish(scope: TranscriptScope) {
     if (this.find(scope)?.state !== 'recording') throw new Fault('TRANSCRIPT_CLOSED');
-    this.db.prepare("UPDATE transcript_runs SET state='complete' WHERE run=?").run(scope.runId);
+    this.db
+      .update(transcriptRuns)
+      .set({ state: 'complete' })
+      .where(eq(transcriptRuns.run, scope.runId))
+      .run();
   }
   interrupt(scope: TranscriptScope) {
     if (this.find(scope)?.state === 'recording')
       this.db
-        .prepare("UPDATE transcript_runs SET state='interrupted' WHERE run=?")
-        .run(scope.runId);
+        .update(transcriptRuns)
+        .set({ state: 'interrupted' })
+        .where(eq(transcriptRuns.run, scope.runId))
+        .run();
   }
   page(scope: TranscriptScope, after = 0): TranscriptPage {
     const row = this.find(scope);
     if (!integer(after)) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
     const records = row
       ? this.db
-          .prepare(
-            'SELECT seq,meta FROM transcript_events WHERE run=? AND seq>? ORDER BY seq LIMIT ?',
-          )
-          .all(scope.runId, after, transcriptPageLimit + 1)
+          .select({ seq: transcriptEvents.seq, meta: transcriptEvents.meta })
+          .from(transcriptEvents)
+          .where(and(eq(transcriptEvents.run, scope.runId), gt(transcriptEvents.seq, after)))
+          .orderBy(asc(transcriptEvents.seq))
+          .limit(transcriptPageLimit + 1)
+          .all()
       : [];
     const items = records
       .slice(0, transcriptPageLimit)
@@ -309,8 +392,10 @@ export class Transcripts {
     this.find(scope);
     if (!integer(seq) || !seq || !integer(offset)) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
     const row = this.db
-      .prepare('SELECT body FROM transcript_events WHERE run=? AND seq=?')
-      .get(scope.runId, seq);
+      .select({ body: transcriptEvents.body })
+      .from(transcriptEvents)
+      .where(and(eq(transcriptEvents.run, scope.runId), eq(transcriptEvents.seq, seq)))
+      .get();
     if (!row) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
     const body = String(row.body);
     if (offset > body.length) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
@@ -330,10 +415,19 @@ export class Transcripts {
       throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
     const entries = row
       ? this.db
-          .prepare(
-            "SELECT seq,meta FROM transcript_events WHERE run=? AND seq>? AND json_extract(meta,'$.kind')='result' ORDER BY seq LIMIT ?",
+          .select({ seq: transcriptEvents.seq, meta: transcriptEvents.meta })
+          .from(transcriptEvents)
+          .where(
+            and(
+              eq(transcriptEvents.run, scope.runId),
+              gt(transcriptEvents.seq, after),
+              // The builder has no JSON path operator; filter on the stored metadata kind in SQL.
+              sql`json_extract(${transcriptEvents.meta}, '$.kind') = 'result'`,
+            ),
           )
-          .all(scope.runId, after, limit + 1)
+          .orderBy(asc(transcriptEvents.seq))
+          .limit(limit + 1)
+          .all()
       : [];
     const results = entries.slice(0, limit).map((entry) => {
       const item = metadata(Number(entry.seq), String(entry.meta));
@@ -355,8 +449,10 @@ export class Transcripts {
     if (!this.find(scope)) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
     if (!integer(seq) || !seq) throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
     const row = this.db
-      .prepare('SELECT meta,body FROM transcript_events WHERE run=? AND seq=?')
-      .get(scope.runId, seq);
+      .select({ meta: transcriptEvents.meta, body: transcriptEvents.body })
+      .from(transcriptEvents)
+      .where(and(eq(transcriptEvents.run, scope.runId), eq(transcriptEvents.seq, seq)))
+      .get();
     if (!row) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
     const item = metadata(seq, String(row.meta));
     if (item.kind !== 'result') throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
@@ -366,6 +462,6 @@ export class Transcripts {
     if (this.closed) return;
     await this.ready.catch(() => {});
     this.closed = true;
-    this.db?.close();
+    this.db?.$client.close();
   }
 }

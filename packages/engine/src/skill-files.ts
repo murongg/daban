@@ -6,8 +6,11 @@ import {
   type SkillResource,
   skillPackageLimit,
 } from '@daban/protocol';
+import { and, asc, eq, isNotNull, sql } from 'drizzle-orm';
 import { Fault } from './control.js';
+import type { Database } from './database.js';
 import { normalizeSkillPackage, packageResources, skillHash } from './skill-package.js';
+import { skillFiles, skillPackages, skills } from './skills-schema.js';
 
 export interface SkillFileSet {
   key: string;
@@ -17,20 +20,16 @@ export interface SkillFileSet {
 const unavailable = (): never => {
   throw new Fault('SKILLS_UNAVAILABLE', 503);
 };
+
+// Pre-ORM catalog version 1 to 2; runs inside the caller's migration transaction.
+export function upgradeSkillFiles(client: DatabaseSync) {
+  client.exec(`ALTER TABLE skills ADD COLUMN resources TEXT;
+    CREATE TABLE skill_packages(digest TEXT PRIMARY KEY,manifest TEXT NOT NULL,bytes INTEGER NOT NULL);
+    CREATE TABLE skill_files(package TEXT NOT NULL,path TEXT NOT NULL,data BLOB NOT NULL,sha TEXT NOT NULL,executable INTEGER NOT NULL,PRIMARY KEY(package,path));`);
+}
+
 export class SkillFiles {
-  constructor(private readonly db: DatabaseSync) {}
-  migrate() {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      this.db.exec(`ALTER TABLE skills ADD COLUMN resources TEXT;
-        CREATE TABLE skill_packages(digest TEXT PRIMARY KEY,manifest TEXT NOT NULL,bytes INTEGER NOT NULL);
-        CREATE TABLE skill_files(package TEXT NOT NULL,path TEXT NOT NULL,data BLOB NOT NULL,sha TEXT NOT NULL,executable INTEGER NOT NULL,PRIMARY KEY(package,path));
-        PRAGMA user_version=2; COMMIT;`);
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
-  }
+  constructor(private readonly db: Database) {}
   prepare(value: SkillPackage) {
     const bundle = normalizeSkillPackage(value),
       main = bundle.files.find((file) => file.path === 'SKILL.md')!;
@@ -44,7 +43,7 @@ export class SkillFiles {
   manifest(key: unknown): SkillResource[] {
     if (key === undefined || key === null) return [];
     if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key)) return unavailable();
-    const row = this.db.prepare('SELECT * FROM skill_packages WHERE digest=?').get(key);
+    const row = this.db.select().from(skillPackages).where(eq(skillPackages.digest, key)).get();
     if (!row || typeof row.manifest !== 'string' || row.manifest.length > 100000)
       return unavailable();
     let files: unknown;
@@ -63,10 +62,17 @@ export class SkillFiles {
     )
       return unavailable();
     const stored = this.db
-      .prepare(
-        'SELECT path,length(data) AS size,sha AS sha256,executable FROM skill_files WHERE package=? ORDER BY path',
-      )
-      .all(key)
+      .select({
+        path: skillFiles.path,
+        // SQLite length() reports stored BLOB bytes without loading every resource into memory.
+        size: sql<number>`length(${skillFiles.data})`,
+        sha256: skillFiles.sha,
+        executable: skillFiles.executable,
+      })
+      .from(skillFiles)
+      .where(eq(skillFiles.package, key))
+      .orderBy(asc(skillFiles.path))
+      .all()
       .map((file) => ({
         path: file.path,
         size: file.size,
@@ -107,30 +113,44 @@ export class SkillFiles {
   }
   save(set: SkillFileSet) {
     const existing = this.db
-      .prepare('SELECT digest FROM skill_packages WHERE digest=?')
-      .get(set.key);
+      .select({ digest: skillPackages.digest })
+      .from(skillPackages)
+      .where(eq(skillPackages.digest, set.key))
+      .get();
     if (existing) {
       this.manifest(set.key);
       return;
     }
-    this.db.prepare('INSERT INTO skill_packages VALUES(?,?,?)').run(
-      set.key,
-      JSON.stringify(set.manifest),
-      set.manifest.reduce((sum, file) => sum + file.size, 0),
-    );
+    this.db
+      .insert(skillPackages)
+      .values({
+        digest: set.key,
+        manifest: JSON.stringify(set.manifest),
+        bytes: set.manifest.reduce((sum, file) => sum + file.size, 0),
+      })
+      .run();
     for (const file of set.files) {
       const bytes = Buffer.from(file.data, 'base64');
       this.db
-        .prepare('INSERT INTO skill_files VALUES(?,?,?,?,?)')
-        .run(set.key, file.path, bytes, skillHash(bytes), Number(file.executable ?? false));
+        .insert(skillFiles)
+        .values({
+          package: set.key,
+          path: file.path,
+          data: bytes,
+          sha: skillHash(bytes),
+          executable: Number(file.executable ?? false),
+        })
+        .run();
     }
   }
   read(key: string, name: string) {
     const file = this.manifest(key).find((file) => file.path === name);
     if (!file) throw new Fault('SKILL_FILE_NOT_FOUND', 404);
     const row = this.db
-      .prepare('SELECT data FROM skill_files WHERE package=? AND path=?')
-      .get(key, name);
+      .select({ data: skillFiles.data })
+      .from(skillFiles)
+      .where(and(eq(skillFiles.package, key), eq(skillFiles.path, name)))
+      .get();
     if (!(row?.data instanceof Uint8Array)) return unavailable();
     const bytes = Buffer.from(row.data);
     if (bytes.length !== file.size || skillHash(bytes) !== file.sha256) return unavailable();
@@ -149,36 +169,31 @@ export class SkillFiles {
         });
     return normalizeSkillPackage({ files });
   }
+  private references() {
+    return this.db
+      .select({ resources: skills.resources })
+      .from(skills)
+      .where(isNotNull(skills.resources))
+      .all()
+      .map((row) => String(row.resources));
+  }
   collect(pins: Set<string>) {
-    const references = new Set(
-      this.db
-        .prepare('SELECT resources FROM skills WHERE resources IS NOT NULL')
-        .all()
-        .map((row) => String(row.resources)),
-    );
-    for (const row of this.db.prepare('SELECT digest FROM skill_packages').all()) {
+    const references = new Set(this.references());
+    for (const row of this.db.select({ digest: skillPackages.digest }).from(skillPackages).all()) {
       const key = String(row.digest);
       if (references.has(key) || pins.has(key)) continue;
-      this.db.prepare('DELETE FROM skill_files WHERE package=?').run(key);
-      this.db.prepare('DELETE FROM skill_packages WHERE digest=?').run(key);
+      this.db.delete(skillFiles).where(eq(skillFiles.package, key)).run();
+      this.db.delete(skillPackages).where(eq(skillPackages.digest, key)).run();
     }
-    if (
-      Number(
-        this.db.prepare('SELECT COALESCE(SUM(length(data)),0) AS bytes FROM skill_files').get()!
-          .bytes,
-      ) >
-      200 * 1024 * 1024
-    )
-      throw new Fault('SKILL_STORAGE_LIMIT', 413);
+    const total = this.db
+      // SQLite length() sums stored BLOB bytes without reading them into memory.
+      .select({ bytes: sql<number>`COALESCE(SUM(length(${skillFiles.data})), 0)` })
+      .from(skillFiles)
+      .get();
+    if (Number(total!.bytes) > 200 * 1024 * 1024) throw new Fault('SKILL_STORAGE_LIMIT', 413);
   }
   checkCapacity(sets: SkillFileSet[], pins: Set<string>) {
-    const required = new Set([
-      ...pins,
-      ...this.db
-        .prepare('SELECT resources FROM skills WHERE resources IS NOT NULL')
-        .all()
-        .map((row) => String(row.resources)),
-    ]);
+    const required = new Set([...pins, ...this.references()]);
     const additions = new Map(sets.map((set) => [set.key, set]));
     let bytes = 0;
     for (const key of new Set([...required, ...additions.keys()])) {

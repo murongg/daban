@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { type ReplyStream, replyLimit, validAgentId } from '@daban/protocol';
 import { type BridgeConfig, callBridge } from './bridge.js';
 
-type TextSnapshot = Omit<ReplyStream, 'revision'>;
+type StreamSnapshot = Omit<ReplyStream, 'revision'>;
 type Publication = ReplyStream & { sessionId: string };
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -14,16 +14,26 @@ export class StreamCollector {
   private cursor = 0;
   private active = false;
   private emitted = false;
-  private types = new Map<number, boolean>();
+  private types = new Map<number, 'text' | 'reasoning'>();
   private blocks = new Map<number, string>();
-  private text() {
+  private thinkingId = '';
+  private text(type: 'text' | 'reasoning' = 'text') {
     return [...this.blocks.entries()]
+      .filter(([index]) => this.types.get(index) === type)
       .sort(([a], [b]) => a - b)
       .map(([, text]) => text)
       .join('\n')
       .slice(0, replyLimit);
   }
-  push(value: unknown): TextSnapshot | undefined {
+  private snapshot(state: ReplyStream['state']): StreamSnapshot {
+    const thinking = this.text('reasoning');
+    return {
+      text: this.text(),
+      state,
+      ...(thinking && this.thinkingId ? { thinking: { id: this.thinkingId, text: thinking } } : {}),
+    };
+  }
+  push(value: unknown): StreamSnapshot | undefined {
     if (
       !record(value) ||
       !integer(value.revision) ||
@@ -42,6 +52,9 @@ export class StreamCollector {
       this.emitted = false;
       this.types.clear();
       this.blocks.clear();
+      // Native turn/step stays stable when this transient prefix becomes a durable assistant event.
+      this.thinkingId =
+        integer(value.turn) && integer(value.step) ? `${value.turn}:${value.step}` : '';
       return discard ? { text: '', state: 'streaming' } : undefined;
     }
     if (!this.active || value.attemptId !== this.attempt) return;
@@ -56,7 +69,7 @@ export class StreamCollector {
       return record(value.outcome) &&
         value.outcome.kind === 'committed' &&
         value.outcome.eventType === 'assistant/message'
-        ? { text: this.text(), state: 'settled' }
+        ? this.snapshot('settled')
         : { text: '', state: 'streaming' };
     }
     if (value.type !== 'chunk' || !record(value.chunk)) return;
@@ -64,11 +77,13 @@ export class StreamCollector {
     const chunk = value.chunk;
     if (!integer(chunk.index) || chunk.index > 100000) return;
     if (chunk.type === 'block-start') {
-      this.types.set(chunk.index, chunk.blockType === 'text');
+      if (chunk.blockType === 'text' || chunk.blockType === 'reasoning')
+        this.types.set(chunk.index, chunk.blockType);
       return;
     }
-    if (this.types.get(chunk.index) !== true) return;
-    if (chunk.type === 'text-delta' && typeof chunk.text === 'string')
+    const type = this.types.get(chunk.index);
+    if (!type) return;
+    if (chunk.type === `${type}-delta` && typeof chunk.text === 'string')
       this.blocks.set(
         chunk.index,
         ((this.blocks.get(chunk.index) || '') + chunk.text.slice(0, replyLimit)).slice(
@@ -79,13 +94,13 @@ export class StreamCollector {
     else if (
       chunk.type === 'block-end' &&
       record(chunk.block) &&
-      chunk.block.type === 'text' &&
+      chunk.block.type === type &&
       typeof chunk.block.text === 'string'
     )
       this.blocks.set(chunk.index, chunk.block.text.slice(0, replyLimit));
     else return;
     this.emitted = true;
-    return { text: this.text(), state: 'streaming' };
+    return this.snapshot('streaming');
   }
 }
 export class StreamPublisher {
@@ -95,7 +110,7 @@ export class StreamPublisher {
   private flight?: Promise<unknown>;
   private closing = false;
   constructor(private readonly send: (snapshot: Publication) => Promise<unknown>) {}
-  push(sessionId: string, snapshot: TextSnapshot) {
+  push(sessionId: string, snapshot: StreamSnapshot) {
     if (this.closing) return;
     this.pending = { sessionId, revision: ++this.revision, ...snapshot };
     this.schedule();

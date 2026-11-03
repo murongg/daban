@@ -857,7 +857,12 @@ it('validates interaction IPC and routes exact replies without exposing runtime 
   expect(JSON.stringify(posts)).not.toContain(token);
 });
 it('whitelists current and interrupted-history response snapshots without forwarding SDK internals', async () => {
-  const response = { revision: 3, text: '合成增量回复', state: 'streaming' };
+  const response = {
+    revision: 3,
+    text: '合成增量回复',
+    state: 'streaming',
+    thinking: { id: '1:1', text: '合成思考' },
+  };
   const fetcher = async (url: string) =>
     url.endsWith('/')
       ? new Response(`<meta name="prototype-token" content="${token}">`)
@@ -872,6 +877,7 @@ it('whitelists current and interrupted-history response snapshots without forwar
                   phase: 'running',
                   running: true,
                   response,
+                  elapsedMs: 12000,
                   history: [
                     {
                       runId: 'mock-old',
@@ -881,6 +887,7 @@ it('whitelists current and interrupted-history response snapshots without forwar
                       result: '',
                       error: '',
                       response,
+                      elapsedMs: 18000,
                       privateToken: 'mock-private',
                     },
                   ],
@@ -896,6 +903,8 @@ it('whitelists current and interrupted-history response snapshots without forwar
   const state = await new RuntimeClient({ origin: 'http://127.0.0.1:18766', fetcher }).status();
   expect(state.agents.a.response).toEqual(response);
   expect(state.agents.a.history[0].response).toEqual(response);
+  expect(state.agents.a.elapsedMs).toBe(12000);
+  expect(state.agents.a.history[0].elapsedMs).toBe(18000);
   expect(state.agents.b.response).toBeUndefined();
   expect(JSON.stringify(state)).not.toContain('mock-private');
 });

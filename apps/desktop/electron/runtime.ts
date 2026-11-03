@@ -180,6 +180,8 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
+    elapsedMs:
+      Number.isSafeInteger(task.elapsedMs) && task.elapsedMs! >= 0 ? task.elapsedMs : undefined,
     plan: isTaskPlan(task.plan) ? task.plan : undefined,
     phase: task.phase || 'idle',
     running: task.running === true,
@@ -210,6 +212,8 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       files: item.files,
       ...(Array.isArray(item.turns) && item.turns.every(isRunTurn) ? { turns: item.turns } : {}),
       response: isReplyStream(item.response) ? item.response : undefined,
+      elapsedMs:
+        Number.isSafeInteger(item.elapsedMs) && item.elapsedMs! >= 0 ? item.elapsedMs : undefined,
     })),
   };
 }

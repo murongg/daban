@@ -11,7 +11,11 @@ import {
   type ComputerStatus,
   validAgentId,
 } from '@daban/protocol';
+import { and, count, eq, sql } from 'drizzle-orm';
+import { migrations } from './connections-migrations.js';
+import { computerCommands, computerMeta, computers } from './connections-schema.js';
 import { Fault } from './control.js';
+import { configure, type Database, migrate, tables, unwrap } from './database.js';
 
 interface Row {
   bot: string;
@@ -46,6 +50,17 @@ const phases: readonly ComputerPhase[] = [
 ];
 const code = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Z_]{1,80}$/.test(value);
+const names = ['computer_commands', 'computer_meta', 'computers'];
+
+// Pre-ORM files: version 1 may hold any subset of the three tables; the old bootstrap completes it.
+function legacy(client: DatabaseSync) {
+  const version = Number(client.prepare('PRAGMA user_version').get()!.user_version);
+  if (version !== 1 || tables(client).some((name) => !names.includes(name)))
+    throw new Fault('COMPUTER_STORE_UNAVAILABLE', 503);
+  client.exec(`CREATE TABLE IF NOT EXISTS computers(bot TEXT PRIMARY KEY,revision INTEGER NOT NULL,phase TEXT NOT NULL,desired INTEGER NOT NULL,slot INTEGER UNIQUE,instance TEXT,boot TEXT NOT NULL,error TEXT,recovery TEXT,updated TEXT NOT NULL) STRICT;
+    CREATE TABLE IF NOT EXISTS computer_commands(id TEXT PRIMARY KEY,bot TEXT NOT NULL,signature TEXT NOT NULL,action TEXT NOT NULL,phase TEXT NOT NULL,error TEXT,uncertain INTEGER NOT NULL DEFAULT 0) STRICT;
+    CREATE TABLE IF NOT EXISTS computer_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;`);
+}
 const blank = (bot: string): ComputerState => ({
   bot,
   revision: 0,
@@ -57,7 +72,7 @@ const blank = (bot: string): ComputerState => ({
 export class Connections {
   // shortcut: one runtime owns a data root; add a process lease before supporting multiple servers for that root.
   readonly ready: Promise<unknown>;
-  private db?: DatabaseSync;
+  private db?: Database;
   private failed = false;
   private closed = false;
   private revision = 0;
@@ -91,27 +106,28 @@ export class Connections {
     } finally {
       await handle.close();
     }
-    this.db = new DatabaseSync(this.options.file);
-    const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-    const tables = this.db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-      .all()
-      .map((row) => String(row.name));
-    if (
-      ![0, 1].includes(version) ||
-      (version === 0 && tables.length) ||
-      tables.some((name) => !['computers', 'computer_commands', 'computer_meta'].includes(name))
-    )
+    const client = new DatabaseSync(this.options.file);
+    try {
+      configure(client, { synchronous: 'FULL', busyTimeout: 1000 });
+      // Refused files are checked before chmod and WAL so they are retained unchanged.
+      this.db = migrate(client, migrations, legacy);
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+    const db = this.db;
+    if (JSON.stringify(tables(db)) !== JSON.stringify(names))
       throw new Fault('COMPUTER_STORE_UNAVAILABLE', 503);
     await chmod(this.options.file, 0o600);
-    this.db.exec(`PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA busy_timeout=1000;
-      CREATE TABLE IF NOT EXISTS computers(bot TEXT PRIMARY KEY,revision INTEGER NOT NULL,phase TEXT NOT NULL,desired INTEGER NOT NULL,slot INTEGER UNIQUE,instance TEXT,boot TEXT NOT NULL,error TEXT,recovery TEXT,updated TEXT NOT NULL) STRICT;
-      CREATE TABLE IF NOT EXISTS computer_commands(id TEXT PRIMARY KEY,bot TEXT NOT NULL,signature TEXT NOT NULL,action TEXT NOT NULL,phase TEXT NOT NULL,error TEXT,uncertain INTEGER NOT NULL DEFAULT 0) STRICT;
-      CREATE TABLE IF NOT EXISTS computer_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;
-      INSERT OR IGNORE INTO computer_meta VALUES(1,0);PRAGMA user_version=1;`);
+    configure(client, { journal: 'WAL' });
+    db.insert(computerMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
     this.refresh();
     const reserved = [...this.rows.values()].filter((row) => row.slot !== undefined);
-    const claimed = this.db.prepare("SELECT id FROM computer_commands WHERE phase='claimed'").all();
+    const claimed = db
+      .select({ id: computerCommands.id })
+      .from(computerCommands)
+      .where(eq(computerCommands.phase, 'claimed'))
+      .all();
     if (reserved.length || claimed.length)
       this.transaction(() => {
         for (const old of reserved) {
@@ -126,9 +142,10 @@ export class Connections {
           });
         }
         // A new process cannot prove old effects were absent; even a reboot must not replay the old operation.
-        this.db!.prepare(
-          "UPDATE computer_commands SET phase='interrupted',error='COMPUTER_OUTCOME_UNKNOWN',uncertain=1 WHERE phase='claimed'",
-        ).run();
+        db.update(computerCommands)
+          .set({ phase: 'interrupted', error: 'COMPUTER_OUTCOME_UNKNOWN', uncertain: 1 })
+          .where(eq(computerCommands.phase, 'claimed'))
+          .run();
       });
   }
   private parse(raw: Record<string, unknown>): Row {
@@ -174,11 +191,15 @@ export class Connections {
   }
   private refresh() {
     const db = this.available(),
-      values = db.prepare('SELECT * FROM computers').all();
+      values = db.select().from(computers).all();
     if (values.length > 2000) throw new Fault('COMPUTER_STORE_LIMIT', 503);
     const rows = values.map((row) => this.parse(row));
     const revision = Number(
-      db.prepare('SELECT revision FROM computer_meta WHERE id=1').get()!.revision,
+      db
+        .select({ revision: computerMeta.revision })
+        .from(computerMeta)
+        .where(eq(computerMeta.id, 1))
+        .get()!.revision,
     );
     if (!Number.isSafeInteger(revision) || revision < 0)
       throw new Fault('COMPUTER_STORE_UNAVAILABLE', 503);
@@ -188,41 +209,61 @@ export class Connections {
   }
   private transaction<T>(action: () => T): T {
     const db = this.available();
-    db.exec('BEGIN IMMEDIATE');
     let committed = false;
     try {
-      const result = action();
-      db.prepare('UPDATE computer_meta SET revision=revision+1 WHERE id=1').run();
-      db.exec('COMMIT');
+      // Boxing keeps the generic result distinguishable from a Promise for Drizzle's sync typing.
+      const { result } = db.transaction(
+        () => {
+          const value = action();
+          db.update(computerMeta)
+            .set({ revision: sql`${computerMeta.revision} + 1` })
+            .where(eq(computerMeta.id, 1))
+            .run();
+          return { result: value };
+        },
+        { behavior: 'immediate' },
+      );
       committed = true;
       // Publish cached ownership only after the durable transaction has committed.
       this.refresh();
       return result;
     } catch (error) {
-      if (!committed) db.exec('ROLLBACK');
       if (committed || !(error instanceof Fault) || error.code === 'COMPUTER_STORE_UNAVAILABLE')
         this.failed = true;
-      throw error;
+      throw unwrap(error);
     }
   }
   private write(input: Omit<Row, 'revision' | 'updatedAt'> & { revision: number }) {
     if (!Number.isSafeInteger(input.revision + 1)) throw new Fault('COMPUTER_STORE_LIMIT', 503);
     this.available()
-      .prepare(
-        `INSERT INTO computers VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(bot) DO UPDATE SET revision=excluded.revision,phase=excluded.phase,desired=excluded.desired,slot=excluded.slot,instance=excluded.instance,boot=excluded.boot,error=excluded.error,recovery=excluded.recovery,updated=excluded.updated`,
-      )
-      .run(
-        input.bot,
-        input.revision + 1,
-        input.phase,
-        input.desired ? 1 : 0,
-        input.slot ?? null,
-        input.instance ?? null,
-        input.boot,
-        input.error ?? null,
-        input.recovery ?? null,
-        new Date().toISOString(),
-      );
+      .insert(computers)
+      .values({
+        bot: input.bot,
+        revision: input.revision + 1,
+        phase: input.phase,
+        desired: input.desired ? 1 : 0,
+        slot: input.slot ?? null,
+        instance: input.instance ?? null,
+        boot: input.boot,
+        error: input.error ?? null,
+        recovery: input.recovery ?? null,
+        updated: new Date().toISOString(),
+      })
+      .onConflictDoUpdate({
+        target: computers.bot,
+        set: {
+          revision: sql`excluded.revision`,
+          phase: sql`excluded.phase`,
+          desired: sql`excluded.desired`,
+          slot: sql`excluded.slot`,
+          instance: sql`excluded.instance`,
+          boot: sql`excluded.boot`,
+          error: sql`excluded.error`,
+          recovery: sql`excluded.recovery`,
+          updated: sql`excluded.updated`,
+        },
+      })
+      .run();
   }
   private public(row: Row): ComputerState {
     return {
@@ -292,7 +333,10 @@ export class Connections {
         ]),
       )
       .digest('hex');
-    const prior = this.db!.prepare('SELECT * FROM computer_commands WHERE id=?').get(request.id);
+    const prior = this.db!.select()
+      .from(computerCommands)
+      .where(eq(computerCommands.id, request.id))
+      .get();
     if (prior) {
       if (prior.bot !== request.bot || prior.signature !== signature)
         throw new Fault('COMPUTER_REQUEST_ID_REUSED');
@@ -324,15 +368,18 @@ export class Connections {
       );
     }
     this.transaction(() => {
-      if (
-        Number(this.db!.prepare('SELECT COUNT(*) AS count FROM computer_commands').get()!.count) >=
-        10000
-      )
+      if (this.db!.select({ count: count() }).from(computerCommands).get()!.count >= 10000)
         throw new Fault('COMPUTER_STORE_LIMIT', 503);
       // The runtime verifies registration and admission first; this durable claim must precede driver effects.
-      this.db!.prepare(
-        'INSERT INTO computer_commands(id,bot,signature,action,phase) VALUES(?,?,?,?,?)',
-      ).run(request.id, request.bot, signature, request.action, noop ? 'settled' : 'claimed');
+      this.db!.insert(computerCommands)
+        .values({
+          id: request.id,
+          bot: request.bot,
+          signature,
+          action: request.action,
+          phase: noop ? 'settled' : 'claimed',
+        })
+        .run();
       if (!noop)
         this.write({
           bot: request.bot,
@@ -351,7 +398,10 @@ export class Connections {
           recovery: undefined,
         });
       if (!noop && request.action === 'stop' && !current.reserved)
-        this.db!.prepare("UPDATE computer_commands SET phase='settled' WHERE id=?").run(request.id);
+        this.db!.update(computerCommands)
+          .set({ phase: 'settled' })
+          .where(eq(computerCommands.id, request.id))
+          .run();
     });
     const receipt = this.receipt(request.id, request.bot);
     return {
@@ -363,7 +413,7 @@ export class Connections {
   }
   finish(id: string, outcome: Outcome) {
     const db = this.available(),
-      operation = db.prepare('SELECT * FROM computer_commands WHERE id=?').get(id);
+      operation = db.select().from(computerCommands).where(eq(computerCommands.id, id)).get();
     if (!operation) throw new Fault('COMPUTER_REQUEST_NOT_FOUND', 404);
     if (operation.phase === 'settled') return;
     if (operation.phase !== 'claimed') throw new Fault('COMPUTER_OUTCOME_UNKNOWN');
@@ -399,19 +449,28 @@ export class Connections {
         error: outcome.phase === 'failed' ? outcome.error : undefined,
         recovery: outcome.phase === 'failed' && outcome.reserved ? outcome.recovery : undefined,
       });
-      db.prepare("UPDATE computer_commands SET phase='settled',error=?,uncertain=? WHERE id=?").run(
-        outcome.phase === 'failed' ? outcome.error : null,
-        outcome.phase === 'failed' && outcome.reserved ? 1 : 0,
-        id,
-      );
+      db.update(computerCommands)
+        .set({
+          phase: 'settled',
+          error: outcome.phase === 'failed' ? outcome.error : null,
+          uncertain: outcome.phase === 'failed' && outcome.reserved ? 1 : 0,
+        })
+        .where(eq(computerCommands.id, id))
+        .run();
     });
   }
   receipt(id: string, bot: string): ComputerReceipt {
     const db = this.available();
     if (!validAgentId(id) || !validAgentId(bot)) throw new Fault('INVALID_COMPUTER_REQUEST', 400);
     const row = db
-      .prepare('SELECT phase,error,uncertain FROM computer_commands WHERE id=? AND bot=?')
-      .get(id, bot);
+      .select({
+        phase: computerCommands.phase,
+        error: computerCommands.error,
+        uncertain: computerCommands.uncertain,
+      })
+      .from(computerCommands)
+      .where(and(eq(computerCommands.id, id), eq(computerCommands.bot, bot)))
+      .get();
     if (!row) return { id, bot, phase: 'unknown' };
     if (
       !['claimed', 'settled', 'interrupted'].includes(String(row.phase)) ||
@@ -448,6 +507,6 @@ export class Connections {
     if (this.closed) return;
     await this.ready;
     this.closed = true;
-    this.db?.close();
+    this.db?.$client.close();
   }
 }
