@@ -30,7 +30,7 @@ jobs:
       - name: Test desktop bindings and authority
         run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/electron/components.test.ts apps/desktop/electron/component-install.test.ts apps/desktop/electron/host-selection.test.ts apps/desktop/electron/environment-client.test.ts apps/desktop/src/features/computer/LocalComputer.test.tsx --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
-        run: npx vitest run --project node packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js --maxWorkers=2
+        run: npx vitest run --project node packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/component-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js --maxWorkers=2
       - name: Verify model icons and configuration
         run: npx vitest run apps/desktop/src/features/models/ModelInputs.test.tsx apps/desktop/src/features/models/Providers.test.tsx apps/desktop/src/features/models/BotModels.test.tsx apps/desktop/src/features/models/Models.test.tsx --maxWorkers=2
       - name: Verify skill package UI and bindings
