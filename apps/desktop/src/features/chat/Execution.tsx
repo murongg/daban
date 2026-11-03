@@ -256,6 +256,19 @@ function Reader({ scope }: { scope: TranscriptScope }) {
       >
         <RefreshCw />
       </IconButton>
+      {page?.stats && (
+        <p className="field-help">
+          {t('execution.sessionStatistics', {
+            0: page.stats.turns,
+            1: page.stats.steps,
+            2: (page.stats.llmMs / 1000).toFixed(1),
+            3: (page.stats.toolMs / 1000).toFixed(1),
+            4: page.stats.ttftSteps
+              ? (page.stats.ttftMs / page.stats.ttftSteps / 1000).toFixed(1)
+              : '—',
+          })}
+        </p>
+      )}
       {page?.state === 'unavailable' && (
         <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}

@@ -1131,7 +1131,44 @@ export interface TranscriptContentQuery {
   seq: number;
   offset?: number;
 }
+export interface SessionStats {
+  turns: number;
+  steps: number;
+  llmMs: number;
+  toolMs: number;
+  ttftMs: number;
+  ttftSteps: number;
+  decodeMs: number;
+  decodeTokens: number;
+}
+export function isSessionStats(value: unknown): value is SessionStats {
+  const fields = [
+    'turns',
+    'steps',
+    'llmMs',
+    'toolMs',
+    'ttftMs',
+    'ttftSteps',
+    'decodeMs',
+    'decodeTokens',
+  ];
+  return (
+    profileObject(value) &&
+    Object.keys(value).length === fields.length &&
+    fields.every((key) => {
+      const number = value[key];
+      return (
+        typeof number === 'number' &&
+        Number.isFinite(number) &&
+        number >= 0 &&
+        number <= Number.MAX_SAFE_INTEGER &&
+        (!['turns', 'steps', 'ttftSteps'].includes(key) || Number.isSafeInteger(number))
+      );
+    })
+  );
+}
 export type TranscriptPage = TranscriptScope & {
+  stats?: SessionStats;
   state: TranscriptState;
   items: TranscriptItem[];
   nextAfter?: number;
@@ -1208,7 +1245,8 @@ export function isTranscriptItem(value: unknown): value is TranscriptItem {
 }
 export function isTranscriptPage(value: unknown): value is TranscriptPage {
   if (
-    !transcriptScope(value, ['state', 'items', 'nextAfter']) ||
+    !transcriptScope(value, ['state', 'items', 'nextAfter', 'stats']) ||
+    (value.stats !== undefined && !isSessionStats(value.stats)) ||
     typeof value.state !== 'string' ||
     !['recording', 'complete', 'interrupted', 'unavailable'].includes(value.state) ||
     !Array.isArray(value.items) ||

@@ -354,6 +354,20 @@ function fixture(command: RuntimeCommand): unknown {
             ? 'interrupted'
             : 'complete',
       items: mode === 'empty' ? [] : items.filter((item) => item.seq > (command.query.after ?? 0)),
+      ...(query.has('stats')
+        ? {
+            stats: {
+              turns: 3,
+              steps: 5,
+              llmMs: 2500,
+              toolMs: 1250,
+              ttftMs: 900,
+              ttftSteps: 3,
+              decodeMs: 1600,
+              decodeTokens: 80,
+            },
+          }
+        : {}),
     };
   }
   if (command.type === 'transcript.content') {

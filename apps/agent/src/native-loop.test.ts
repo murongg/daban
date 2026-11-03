@@ -180,6 +180,15 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
   expect(job.phase, job.error).toBe('completed');
   expect(nativeCalls).toStrictEqual(['screenshot', 'act']);
   expect(job.result).toMatch(/SYNTHETIC NATIVE LOOP COMPLETE/);
+  const transcript = await agent.models.transcript({
+    bot: job.bot,
+    runId: job.id,
+    chatRevision: 0,
+  });
+  expect(transcript.stats).toMatchObject({ turns: 1, steps: 3 });
+  expect(transcript.stats!.llmMs).toBeGreaterThanOrEqual(0);
+  expect(transcript.stats!.toolMs).toBeGreaterThanOrEqual(0);
+
   const log = await readFile(path.join(agent.models.dir, 'dsh-startup.log'), 'utf8');
   const records = log
     .trim()

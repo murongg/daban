@@ -87,6 +87,34 @@ function bridge(read: (command: RuntimeCommand) => unknown | Promise<unknown>, p
   };
 }
 
+it('shows saved cumulative session statistics inside the read-only execution disclosure', async () => {
+  bridge((command) => {
+    if (command.type !== 'transcript.list') throw new Error('UNEXPECTED_SYNTHETIC_ACTION');
+    return {
+      ...scope,
+      state: 'complete',
+      items: [],
+      stats: {
+        turns: 3,
+        steps: 5,
+        llmMs: 2500,
+        toolMs: 1250,
+        ttftMs: 900,
+        ttftSteps: 3,
+        decodeMs: 1600,
+        decodeTokens: 80,
+      },
+    };
+  });
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="completed" />
+    </RuntimeProvider>,
+  );
+  await userEvent.setup().click(await screen.findByText('执行过程'));
+  expect(await screen.findByText(/会话累计.*3.*5.*2.5.*1.3.*0.3/)).toBeVisible();
+});
+
 it('loads metadata only after opening and pages full tool content and later events without invoking actions', async () => {
   const long = `${'x'.repeat(31999)}😀合成尾部`;
   const backend = bridge((command) => {

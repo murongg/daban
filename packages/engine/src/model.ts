@@ -12,6 +12,7 @@ import type {
   RunTurn,
   RuntimeFile,
   RuntimeTaskSummary,
+  SessionStats,
   TaskPlan,
   TaskRequest,
   TranscriptScope,
@@ -24,6 +25,7 @@ import {
   isInteractionInput,
   isModelId,
   isReplyStream,
+  isSessionStats,
   isTaskFileName,
   isTaskInsert,
   isTaskPlan,
@@ -143,6 +145,21 @@ export function sdkPatch(
     ].map((id) => ({ id, disabled: true })),
     {
       insert: [
+        {
+          id: 'session-statistics',
+          name: '@deepseek-ai/dsh-session-stats',
+        },
+        {
+          id: 'statistics-bridge',
+          name: new URL('./statistics.js', import.meta.url).href,
+          config: {
+            url: `${origin}/mcp/${bot}`,
+            capability,
+            ...(bridge
+              ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
+              : {}),
+          },
+        },
         {
           id: 'tool-result-pruner',
           name: '@deepseek-ai/dsh-compaction-tool-result-pruner',
@@ -477,6 +494,8 @@ interface ModelJob extends ToolRun {
   result: string;
   error: string;
   prompt?: string;
+  stats?: SessionStats;
+  statisticsSeq?: number;
   harness?: Harness;
   done?: Promise<unknown>;
   stopReason?: string;
@@ -885,7 +904,11 @@ export class ModelRuns {
   }
   async transcript(scope: TranscriptScope, after = 0) {
     await this.transcriptOwner(scope);
-    return this.transcripts.page(scope, after);
+    const record = await this.journal.read(scope.bot, scope.runId);
+    return {
+      ...this.transcripts.page(scope, after),
+      ...(isSessionStats(record?.stats) ? { stats: record.stats } : {}),
+    };
   }
   async transcriptContent(scope: TranscriptScope, seq: number, offset = 0) {
     await this.transcriptOwner(scope);
@@ -1186,6 +1209,7 @@ export class ModelRuns {
         documentInputs: job.documentInputs,
         response: job.phase === 'completed' ? undefined : response || job.response,
         checkpoint: job.checkpoint,
+        stats: job.stats,
         plan: job.plan,
         bot: job.bot,
         runId: job.id,
@@ -2056,7 +2080,25 @@ export class ModelRuns {
       throw new Fault('UNAUTHORIZED', 403);
     if (rpc.id === undefined) return null;
     let result: unknown;
-    if (rpc.method === 'response.update') {
+    if (rpc.method === 'statistics.update') {
+      const { sessionId, seq, stats, ...extra } = rpc.params || {};
+      if (
+        !job.task ||
+        sessionId !== job.sessionId ||
+        !Number.isSafeInteger(seq) ||
+        Number(seq) < 0 ||
+        !isSessionStats(stats) ||
+        Object.keys(extra).length
+      )
+        throw new Fault('INVALID_STATISTICS', 400);
+      const accepted = Number(seq) > (job.statisticsSeq ?? -1);
+      if (accepted) {
+        job.statisticsSeq = Number(seq);
+        job.stats = structuredClone(stats);
+        await this.persist(job);
+      }
+      result = { accepted };
+    } else if (rpc.method === 'response.update') {
       const { sessionId, ...response } = rpc.params || {};
       if (!job.task || sessionId !== job.sessionId || !isReplyStream(response))
         throw new Fault('INVALID_RESPONSE', 400);
