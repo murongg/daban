@@ -847,6 +847,30 @@ textarea.field {
 .execution-list > li {
   border-bottom: 1px solid var(--line);
 }
+.execution-list > .execution-thinking {
+  border-bottom: 0;
+  border-left: 1px solid var(--line);
+  margin: 12px 0 16px 7px;
+  padding: 0 0 0 14px;
+}
+.execution-thinking-label {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.execution-thinking-text {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.execution-thinking .execution-body {
+  padding: 0;
+}
+.execution-thinking .execution-content {
+  max-height: none;
+  overflow: visible;
+}
 .execution-entry > summary {
   min-height: 44px;
   flex-wrap: wrap;

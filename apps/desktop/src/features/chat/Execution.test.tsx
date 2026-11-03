@@ -87,6 +87,200 @@ function bridge(read: (command: RuntimeCommand) => unknown | Promise<unknown>, p
   };
 }
 
+it('keeps thinking folded with the execution process, follows live updates and preserves the open state on completion', async () => {
+  const backend = bridge(() => ({ ...scope, state: 'recording', items: [] }));
+  backend.snapshot.agents[scope.bot] = {
+    ...orderTask,
+    runId: scope.runId,
+    requestId: 'mock-thinking-request',
+    chatRevision: 0,
+    running: true,
+    phase: 'running',
+    response: {
+      revision: 1,
+      text: '',
+      state: 'streaming',
+      thinking: { id: '1:1', text: '合成实时思考' },
+    },
+  };
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="running" />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  const disclosure = (await screen.findByText('执行过程')).closest('details')!;
+  expect(disclosure.open).toBe(false);
+  expect(screen.queryByText('合成实时思考')).not.toBeInTheDocument();
+  expect(backend.invoke.mock.calls.filter(([command]) => command.type !== 'status')).toHaveLength(
+    0,
+  );
+  await user.click(screen.getByText('执行过程'));
+  expect(await screen.findByText('合成实时思考')).toBeVisible();
+  await act(async () =>
+    backend.publish({
+      ...backend.snapshot,
+      agents: {
+        ...backend.snapshot.agents,
+        [scope.bot]: {
+          ...backend.snapshot.agents[scope.bot],
+          response: {
+            revision: 2,
+            text: '合成正文',
+            state: 'streaming',
+            thinking: { id: '1:1', text: '合成实时思考，继续核对' },
+          },
+        },
+      },
+    }),
+  );
+  expect(await screen.findByText('合成实时思考，继续核对')).toBeVisible();
+  expect(screen.queryByText('合成正文')).not.toBeInTheDocument();
+  await act(async () =>
+    backend.publish({
+      ...backend.snapshot,
+      agents: {
+        ...backend.snapshot.agents,
+        [scope.bot]: { ...backend.snapshot.agents[scope.bot], running: false, phase: 'completed' },
+      },
+    }),
+  );
+  expect(disclosure.open).toBe(true);
+});
+
+it('renders durable thinking inline, expands long content and does not duplicate its live step', async () => {
+  const text = `合成长思考${'合成文字'.repeat(200)}合成尾部`;
+  const backend = bridge((command) =>
+    command.type === 'transcript.content'
+      ? { ...scope, seq: 1, offset: 0, total: text.length, text }
+      : {
+          ...scope,
+          state: 'recording',
+          items: [
+            {
+              seq: 1,
+              kind: 'thinking',
+              thinkingId: '1:1',
+              at: '2026-01-01T00:00:00Z',
+              characters: text.length,
+            },
+          ],
+        },
+  );
+  backend.snapshot.agents[scope.bot] = {
+    ...orderTask,
+    runId: scope.runId,
+    chatRevision: 0,
+    running: true,
+    phase: 'running',
+    response: {
+      revision: 1,
+      text: '',
+      state: 'streaming',
+      thinking: { id: '1:1', text: '合成重复实时内容' },
+    },
+  };
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="running" />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByText('执行过程'));
+  await screen.findByRole('button', { name: '展开全文' });
+  expect(screen.queryByText('合成重复实时内容')).not.toBeInTheDocument();
+  expect(screen.queryByText(text)).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '展开全文' }));
+  expect(await screen.findByText(text)).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '收起全文' }));
+  expect(screen.queryByText(text)).not.toBeInTheDocument();
+});
+
+it('shows the scoped task duration and never renders thinking from another chat or an older turn', async () => {
+  const backend = bridge(() => ({ ...scope, state: 'recording', items: [] }));
+  backend.snapshot.agents[scope.bot] = {
+    ...orderTask,
+    runId: scope.runId,
+    chatRevision: 0,
+    running: true,
+    phase: 'running',
+    elapsedMs: 12000,
+    turns: [{ id: 'mock-new-turn', prompt: '合成新请求', result: '' }],
+    response: {
+      revision: 1,
+      turnId: 'mock-old-turn',
+      text: '合成旧正文',
+      state: 'streaming',
+      thinking: { id: '1:1', text: '合成旧轮思考' },
+    },
+  };
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="running" />
+    </RuntimeProvider>,
+  );
+  await screen.findByText(/12 秒/);
+  expect(screen.getByText(/12 秒/)).toHaveTextContent('执行中');
+  await userEvent.click(screen.getByText('执行过程'));
+  await screen.findByText('暂无执行步骤。');
+  expect(screen.queryByText('合成旧轮思考')).not.toBeInTheDocument();
+  await act(async () =>
+    backend.publish({
+      ...backend.snapshot,
+      agents: {
+        ...backend.snapshot.agents,
+        [scope.bot]: {
+          ...backend.snapshot.agents[scope.bot],
+          chatRevision: 1,
+          response: {
+            revision: 2,
+            text: '',
+            state: 'streaming',
+            thinking: { id: '1:1', text: '合成其他会话思考' },
+          },
+        },
+      },
+    }),
+  );
+  expect(screen.queryByText('合成其他会话思考')).not.toBeInTheDocument();
+  expect(screen.queryByText(/12 秒/)).not.toBeInTheDocument();
+});
+
+it('retains an interrupted thinking prefix in the previous run after a newer run starts', async () => {
+  const backend = bridge(() => ({ ...scope, state: 'interrupted', items: [] }));
+  backend.snapshot.agents[scope.bot] = {
+    ...orderTask,
+    runId: 'mock-new-run',
+    chatRevision: 0,
+    history: [
+      {
+        runId: scope.runId,
+        requestId: 'mock-old-request',
+        prompt: '合成旧请求',
+        result: '',
+        error: '',
+        phase: 'interrupted',
+        chatRevision: 0,
+        response: {
+          revision: 1,
+          turnId: 'mock-old-request',
+          state: 'streaming',
+          text: '',
+          thinking: { id: '1:1', text: '合成中断思考' },
+        },
+      },
+    ],
+  };
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="interrupted" />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByText('执行过程'));
+  expect(await screen.findByText('合成中断思考')).toBeVisible();
+  expect(screen.getByText('执行记录不完整')).toBeVisible();
+});
+
 it('loads metadata only after opening and pages full tool content and later events without invoking actions', async () => {
   const long = `${'x'.repeat(31999)}😀合成尾部`;
   const backend = bridge((command) => {
@@ -335,6 +529,7 @@ it('saved private history and group replies use their own author, run and conver
           {
             chatRevision: 0,
             runId: old.runId,
+            elapsedMs: 18000,
             requestId: 'mock-history-request',
             prompt: '合成旧请求',
             result: '合成旧回复',
@@ -384,6 +579,7 @@ it('saved private history and group replies use their own author, run and conver
   );
   await screen.findByText('执行过程');
   expectExecutionBefore('合成旧回复');
+  expect(screen.getByText(/18 秒/)).toBeVisible();
   await user.click(await screen.findByText('执行过程'));
   expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
   expect(

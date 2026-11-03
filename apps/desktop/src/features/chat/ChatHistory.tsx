@@ -247,6 +247,8 @@ export function ChatHistory({
                               chatRevision: page.revision,
                             }}
                             phase={item.phase}
+                            elapsedMs={item.elapsedMs}
+                            thinking={item.response?.thinking}
                           />
                         )}
                         <div className="bubble">
