@@ -25,7 +25,7 @@ import {
   stagedAttachment,
 } from '../files/files';
 
-function transferFiles(data: DataTransfer) {
+export function transferFiles(data: DataTransfer) {
   const files = Array.from(data.files);
   return files.length
     ? files

@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { type Dispatch, useCallback, useEffect, useRef } from 'react';
-import { useRuntime } from '../../app/Runtime';
+import { runtimeMessage as taskError, useRuntime } from '../../app/Runtime';
 import { demoIds } from '../../app/samples';
 import {
   type Action,
@@ -330,7 +330,7 @@ export function Conversation({
         <div className="bubble">
           {message.role === 'bot' ? (
             <Markdown
-              text={message.text}
+              text={message.error ? taskError(message.error) : message.text}
               streaming={!!message.streaming || !!message.incomplete}
               fileIds={message.files || message.references}
               files={state.files}

@@ -90,6 +90,8 @@ export const suites = {
     'images.integration',
     'images-model.test',
     'groups.test',
+    'group-create.test',
+    'groups-model.test',
     'group-copy.test',
     'group-copy-api.test',
     'notices.test',

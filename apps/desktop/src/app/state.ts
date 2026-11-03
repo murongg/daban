@@ -33,6 +33,7 @@ import {
   type TaskRequest,
   validAgentId,
 } from '@daban/protocol';
+import { type Mention, readMentions, rebaseMentions, resolveMentions } from '../../shared/mentions';
 import { taskFile } from '../features/files/files';
 import { type NotesAction, type NotesState, reduceNotes } from '../features/notes/notes-state';
 import {
@@ -126,6 +127,8 @@ export interface Bot {
   members?: string[];
 }
 export interface Message {
+  // Only runtime failures carry this marker; authored text resembling an error code must stay literal.
+  error?: string;
   chatRevision?: number;
   incomplete?: boolean;
   id: string;
@@ -212,6 +215,7 @@ export interface State {
   chatRequests: Record<string, ChatRequest | undefined>;
   groupRevisions: Record<string, number>;
   groupTargets: Record<string, string>;
+  groupMentions?: Record<string, Mention[]>;
   knowledgeDrafts: Record<string, KnowledgeDraft | undefined>;
   replyDrafts: Record<string, Record<string, { selected: string[]; custom: string }>>;
   selected: string;
@@ -323,6 +327,7 @@ export type Action =
   | { type: 'group-sent'; group: string; input: GroupSend }
   | { type: 'group-clear'; group: string; id: string }
   | { type: 'group-target'; group: string; target: string }
+  | { type: 'group-draft'; group: string; text: string; mentions: Mention[] }
   | { type: 'knowledge-set'; bot: string; draft?: KnowledgeDraft }
   | { type: 'knowledge-stage'; bot: string; previous?: KnowledgeDraft; draft: KnowledgeDraft }
   | { type: 'knowledge-change'; bot: string; draft: Partial<KnowledgeDraft> }
@@ -388,6 +393,7 @@ export function initialState(): State {
     chatRequests: {},
     groupRevisions: {},
     groupTargets: {},
+    groupMentions: {},
     knowledgeDrafts: {},
     replyDrafts: {},
     runtimeRequests: {},
@@ -600,6 +606,17 @@ export function reduce(state: State, action: Action): State {
     }
     case 'group-target':
       return { ...state, groupTargets: { ...state.groupTargets, [action.group]: action.target } };
+    case 'group-draft': {
+      const text = action.text.slice(0, 12000);
+      return {
+        ...state,
+        drafts: { ...state.drafts, [action.group]: text },
+        groupMentions: {
+          ...state.groupMentions,
+          [action.group]: readMentions(action.mentions, text),
+        },
+      };
+    }
     case 'group-pending':
       return {
         ...state,
@@ -611,6 +628,23 @@ export function reduce(state: State, action: Action): State {
         : state;
     case 'group-sent': {
       if (state.groupRequests[action.group]?.id !== action.input.id) return state;
+      const members = state.bots.find((bot) => bot.id === action.group)?.members || [];
+      const mentions = resolveMentions(
+        state.drafts[action.group],
+        members.map((id) => {
+          const bot = state.bots.find(
+            (entry) => !entry.members && agentId(entry.id) === agentId(id),
+          );
+          return { id: agentId(id), name: bot?.name || agentId(id) };
+        }),
+        state.groupMentions?.[action.group] || [],
+      );
+      // Identical draft text can now name a different same-named Bot; preserve that newer intent.
+      const sameDraft =
+        state.drafts[action.group].trim() === action.input.prompt.trim() &&
+        !mentions.ambiguous.length &&
+        (!mentions.recipients.length ||
+          JSON.stringify(mentions.recipients) === JSON.stringify(action.input.recipients));
       const attached = state.attachments[action.group]
         .map((id) => state.files.find((file) => file.id === id))
         .filter((file): file is WorkspaceFile => !!file)
@@ -618,10 +652,10 @@ export function reduce(state: State, action: Action): State {
       return {
         ...state,
         groupRequests: { ...state.groupRequests, [action.group]: undefined },
-        drafts:
-          state.drafts[action.group].trim() === action.input.prompt.trim()
-            ? { ...state.drafts, [action.group]: '' }
-            : state.drafts,
+        drafts: sameDraft ? { ...state.drafts, [action.group]: '' } : state.drafts,
+        groupMentions: sameDraft
+          ? { ...state.groupMentions, [action.group]: [] }
+          : state.groupMentions,
         attachments:
           JSON.stringify(attached) === JSON.stringify(action.input.files || [])
             ? { ...state.attachments, [action.group]: [] }
@@ -904,6 +938,7 @@ export function reduce(state: State, action: Action): State {
               id: `runtime-turn:${task.runId}:${turn.id}`,
               role: 'bot',
               text: turn.result || turn.error || t('chathistory.noSavedResponses'),
+              error: turn.result ? undefined : turn.error || undefined,
               ...(artifacts.length ? { references: artifacts } : {}),
             },
             before,
@@ -927,6 +962,7 @@ export function reduce(state: State, action: Action): State {
             id: `runtime-result:${task.runId}`,
             role: 'bot',
             text: task.result || turn.result || task.error || turn.error || fallback,
+            error: task.result || turn.result ? undefined : task.error || turn.error || undefined,
             ...(artifacts.length ? { files: artifacts } : {}),
           },
           before,
@@ -1002,8 +1038,25 @@ export function reduce(state: State, action: Action): State {
       return { ...state, theme: action.theme };
     case 'control':
       return { ...state, controls: { ...state.controls, [action.bot]: action.owner } };
-    case 'draft':
-      return { ...state, drafts: { ...state.drafts, [action.bot]: action.text.slice(0, 12000) } };
+    case 'draft': {
+      const text = action.text.slice(0, 12000);
+      return {
+        ...state,
+        drafts: { ...state.drafts, [action.bot]: text },
+        ...(state.groupMentions?.[action.bot]?.length
+          ? {
+              groupMentions: {
+                ...state.groupMentions,
+                [action.bot]: rebaseMentions(
+                  state.drafts[action.bot] || '',
+                  text,
+                  state.groupMentions[action.bot],
+                ),
+              },
+            }
+          : {}),
+      };
+    }
     case 'queue-add': {
       const queue = messageQueue(state, action.bot);
       const task = action.task;

@@ -226,7 +226,7 @@ test('unreadable skills leave ordinary conversation available and never resume t
     await job.done;
     expect(job.phase).toBe('completed');
     expect(job.sessionId).not.toBe(previous);
-    expect.assert(prompt.includes('本轮技能服务暂不可用'));
+    expect.assert(prompt.includes('The skill service is unavailable for this turn'));
     expect(models.journal.history('mock-bot').length).toBe(2);
     expect((await models.profiles.get('mock-bot'))?.memory).toBe('SYNTHETIC-RETAINED-MEMORY');
     expect(await readFile(file)).toStrictEqual(corrupt);

@@ -1,4 +1,20 @@
 export const english = {
+  'errors.taskTimeLimit': 'Task reached its time limit and stopped. Saved files are retained.',
+  'errors.taskToolLimit':
+    'Task reached its operation limit and stopped. Check saved files before continuing.',
+  'errors.taskReplyTooLarge':
+    'The reply exceeds the length limit. Save it to a file or respond in sections.',
+  'errors.taskEnvironmentRestarted':
+    'The execution environment restarted and interrupted the task. Files are retained; you can send the task again.',
+  'errors.taskNoVisibleResult': 'The task returned no visible result.',
+  'errors.groupSourceClosed':
+    'The source task has ended or is no longer available for group collaboration.',
+  'errors.groupCollaborationConflict':
+    'This task already has a collaboration group. Reuse the original request.',
+  'execution.groupDirectory': 'Find collaborators',
+  'execution.groupCreate': 'Create collaboration group',
+  'execution.groupHistory': 'Read group history',
+  'execution.groupHandoff': 'Hand off group work',
   'agentUpgrade.title': 'Update the background Agent',
   'agentUpgrade.summary':
     'Your previous workspace is connected. Update the Agent to enable the latest capabilities.',
@@ -1672,6 +1688,14 @@ export const english = {
   'groupchat.selectedMemberSModelDoesNotSupport':
     "A selected member's model does not support images. Choose an image-capable model before sending; your draft is retained.",
   'groupchat.send': 'Send to',
+  'groupchat.messageWithMentions': 'Message {0}, type @ to mention…',
+  'groupchat.mentionMembers': 'Mention a group member',
+  'groupchat.mentionHelp': '↑↓ Select · Enter Confirm · Esc Close',
+  'groupchat.mentionNoMatches': 'No available members match',
+  'groupchat.mentionUnavailable':
+    'A mentioned member is unavailable. Remove or select the mention again.',
+  'groupchat.mentionAmbiguous':
+    'Some members share a name. Choose the specific Bot from the @ list.',
   'groupchat.sendResultUnconfirmedRetryChecksSameMessage':
     'Send result unconfirmed; retry checks the same message',
   'groupchat.sharedGroupConversationIndependentWorkMemory':

@@ -95,7 +95,7 @@ test('human waiting does not cancel a model task, while the active execution bud
     vi.advanceTimersByTime(1000);
     await models.jobs.get('a')!.done;
     expect(models.status().bots.a.phase).toBe('stopped');
-    expect(models.status().bots.a.error || '').toMatch(/运行时长/);
+    expect(models.status().bots.a.error).toBe('MODEL_TIME_LIMIT');
     await models.close();
   } finally {
     await rm(root, { recursive: true, force: true });

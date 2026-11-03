@@ -38,6 +38,8 @@ import type { ConversationScope, RunReceipt } from './tasks.js';
 export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
+  directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
+  source?(bot: string, runId: string, conversationId?: string): { intentId: string } | undefined;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
@@ -49,6 +51,11 @@ export interface GroupSource {
   bot: string;
   runId: string;
   group: string;
+  signal?: AbortSignal;
+}
+interface CollaborationSource {
+  bot: string;
+  runId: string;
   signal?: AbortSignal;
 }
 type Row = Record<string, unknown>;
@@ -99,6 +106,7 @@ export class Groups {
       CREATE TABLE IF NOT EXISTS group_deliveries(id TEXT PRIMARY KEY,grp TEXT NOT NULL,source TEXT NOT NULL,bot TEXT NOT NULL,position INTEGER NOT NULL,state TEXT NOT NULL,run TEXT,context TEXT,name TEXT,error TEXT);
       CREATE INDEX IF NOT EXISTS group_deliveries_queue ON group_deliveries(grp,source,position);
       CREATE TABLE IF NOT EXISTS group_handoffs(source TEXT PRIMARY KEY,signature TEXT NOT NULL,target TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS group_collaborations(source TEXT PRIMARY KEY,grp TEXT NOT NULL,turn TEXT NOT NULL,signature TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS group_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
       INSERT OR IGNORE INTO group_meta(id,revision) VALUES(1,0);`);
     if (
@@ -372,6 +380,120 @@ export class Groups {
     if (Number(this.db.prepare('SELECT count(*) AS count FROM group_defs').get()!.count) >= 50)
       throw new Fault('GROUP_LIMIT');
   }
+  private collaborationSource(source: CollaborationSource) {
+    source.signal?.throwIfAborted();
+    const task = this.runner.source?.(source.bot, source.runId);
+    if (!task || !validAgentId(task.intentId) || this.runner.admit?.(source.bot) === false)
+      throw new Fault('GROUP_SOURCE_CLOSED');
+    return digest([source.bot, task.intentId]);
+  }
+  directory(source: CollaborationSource, args: Record<string, unknown>) {
+    return this.exclusive(async () => {
+      const identity = this.collaborationSource(source);
+      if (
+        Object.keys(args).some((key) => !['offset', 'limit'].includes(key)) ||
+        (args.offset !== undefined &&
+          (!Number.isSafeInteger(args.offset) || Number(args.offset) < 0)) ||
+        (args.limit !== undefined &&
+          (!Number.isSafeInteger(args.limit) || Number(args.limit) < 1 || Number(args.limit) > 20))
+      )
+        throw new Fault('INVALID_GROUP_QUERY', 400);
+      if (!this.runner.directory) throw new Fault('GROUP_UNAVAILABLE', 503);
+      const members = await this.runner.directory();
+      if (this.collaborationSource(source) !== identity) throw new Fault('GROUP_SOURCE_CLOSED');
+      const eligible = members
+        .filter((member) => member.id !== source.bot && this.runner.admit?.(member.id) !== false)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      const offset = Number(args.offset ?? 0),
+        limit = Number(args.limit ?? 20);
+      return {
+        untrusted: true,
+        items: eligible.slice(offset, offset + limit).map(({ id, name, instructions }) => ({
+          id,
+          name,
+          role: Array.from(instructions || '')
+            .slice(0, 240)
+            .join(''),
+          ...(Array.from(instructions || '').length > 240 ? { roleTruncated: true } : {}),
+        })),
+        ...(offset + limit < eligible.length ? { nextOffset: offset + limit } : {}),
+      };
+    });
+  }
+  collaborate(source: CollaborationSource, input: unknown) {
+    if (
+      !object(input) ||
+      Object.keys(input).some((key) => !['name', 'members', 'message'].includes(key)) ||
+      !Array.isArray(input.members) ||
+      input.members.includes(source.bot) ||
+      !isGroupInput({
+        id: source.bot,
+        name: input.name,
+        members: [source.bot, ...input.members],
+      }) ||
+      typeof input.message !== 'string' ||
+      !input.message.trim() ||
+      input.message.length > 12000 ||
+      input.message.includes('\0')
+    )
+      return Promise.reject(new Fault('INVALID_GROUP', 400));
+    const value = {
+      name: String(input.name).trim(),
+      members: [...input.members] as string[],
+      message: input.message.trim(),
+    };
+    return this.exclusive(async () => {
+      const identity = this.collaborationSource(source);
+      const signature = JSON.stringify(value);
+      const prior = this.db
+        .prepare('SELECT * FROM group_collaborations WHERE source=?')
+        .get(identity);
+      if (prior) {
+        if (prior.signature !== signature) throw new Fault('GROUP_COLLABORATION_CONFLICT');
+        return { group: this.group(String(prior.grp)), sourceId: String(prior.turn), reused: true };
+      }
+      const id = `group-${identity}`,
+        sourceId = `task-${identity}`;
+      if (this.db.prepare('SELECT id FROM group_defs WHERE id=?').get(id))
+        throw new Fault('GROUP_ID_CONFLICT');
+      const members = [source.bot, ...value.members];
+      await this.creationMembers(id, members);
+      const author = await this.runner.member(source.bot);
+      // Directory reads yield; task identity and lifecycle eligibility must still match at commit.
+      if (this.collaborationSource(source) !== identity || !author)
+        throw new Fault('GROUP_SOURCE_CLOSED');
+      this.admitCreation(members);
+      const now = new Date().toISOString();
+      const group: Group = {
+        id,
+        name: value.name,
+        members,
+        revision: 1,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return this.transaction(() => {
+        this.db
+          .prepare('INSERT INTO group_defs(id,value) VALUES(?,?)')
+          .run(id, JSON.stringify(group));
+        this.enqueue(
+          {
+            id: sourceId,
+            group: id,
+            // Bot authorship is metadata; a prompt prefix would overflow valid summaries at the task limit.
+            prompt: value.message,
+            recipients: [...value.members, source.bot],
+          },
+          { bot: source.bot, name: author.name },
+        );
+        // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
+        this.db
+          .prepare('INSERT INTO group_collaborations(source,grp,turn,signature) VALUES(?,?,?,?)')
+          .run(identity, id, sourceId, signature);
+        return { group, sourceId, reused: false };
+      });
+    });
+  }
   private copied(request: GroupCopyRequest): GroupCopyAck | undefined {
     const row = this.db.prepare('SELECT * FROM group_defs WHERE id=?').get(request.id);
     if (!row) return undefined;
@@ -552,94 +674,104 @@ export class Groups {
     });
   }
   private commitSend(value: GroupSend) {
-    return this.transaction(() => {
-      const group = this.group(value.group),
-        signature = JSON.stringify([
-          value.prompt,
-          value.recipients,
-          value.files || [],
-          ...(value.revision === undefined ? [] : [value.revision]),
-        ]);
-      const prior = this.db
-        .prepare('SELECT * FROM group_turns WHERE grp=? AND id=?')
-        .get(group.id, value.id);
-      if (prior) {
-        if (prior.signature !== signature) throw new Fault('GROUP_REQUEST_ID_REUSED');
-        return this.accepted(group.id, value.id);
-      }
-      if (group.archived) throw new Fault('GROUP_ARCHIVED');
-      // Restoring a group cannot revive an unaccepted request sent before its archive boundary.
-      if (
-        value.revision === undefined &&
-        this.db.prepare('SELECT id FROM group_actions WHERE grp=? LIMIT 1').get(group.id)
-      )
-        throw new Fault('GROUP_REVISION_REQUIRED');
-      if (value.revision !== undefined && value.revision !== group.revision)
-        throw new Fault('GROUP_CONFLICT');
-      if (value.recipients.some((bot) => !group.members.includes(bot)))
-        throw new Fault('GROUP_MEMBER_REQUIRED');
-      if (value.recipients.some((bot) => this.runner.admit?.(bot) === false))
-        throw new Fault('BOT_UNAVAILABLE');
-      if (
-        Number(
-          this.db
-            .prepare(
-              "SELECT count(*) AS count FROM group_turns WHERE grp=? AND state IN ('pending','running')",
-            )
-            .get(group.id)!.count,
-        ) >= 20
-      )
-        throw new Fault('GROUP_QUEUE_LIMIT');
-      if (
-        Number(
-          this.db
-            .prepare(
-              `SELECT
+    return this.transaction(() => this.enqueue(value));
+  }
+  private enqueue(value: GroupSend, author?: { bot: string; name: string }) {
+    const group = this.group(value.group),
+      signature = JSON.stringify([
+        value.prompt,
+        value.recipients,
+        value.files || [],
+        ...(value.revision === undefined ? [] : [value.revision]),
+        ...(author ? [{ author: author.bot }] : []),
+      ]);
+    const prior = this.db
+      .prepare('SELECT * FROM group_turns WHERE grp=? AND id=?')
+      .get(group.id, value.id);
+    if (prior) {
+      if (prior.signature !== signature) throw new Fault('GROUP_REQUEST_ID_REUSED');
+      return author ? this.page(group.id) : this.accepted(group.id, value.id);
+    }
+    if (group.archived) throw new Fault('GROUP_ARCHIVED');
+    // Restoring a group cannot revive an unaccepted request sent before its archive boundary.
+    if (
+      value.revision === undefined &&
+      this.db.prepare('SELECT id FROM group_actions WHERE grp=? LIMIT 1').get(group.id)
+    )
+      throw new Fault('GROUP_REVISION_REQUIRED');
+    if (value.revision !== undefined && value.revision !== group.revision)
+      throw new Fault('GROUP_CONFLICT');
+    if (value.recipients.some((bot) => !group.members.includes(bot)))
+      throw new Fault('GROUP_MEMBER_REQUIRED');
+    if (value.recipients.some((bot) => this.runner.admit?.(bot) === false))
+      throw new Fault('BOT_UNAVAILABLE');
+    if (
+      Number(
+        this.db
+          .prepare(
+            "SELECT count(*) AS count FROM group_turns WHERE grp=? AND state IN ('pending','running')",
+          )
+          .get(group.id)!.count,
+      ) >= 20
+    )
+      throw new Fault('GROUP_QUEUE_LIMIT');
+    if (
+      Number(
+        this.db
+          .prepare(
+            `SELECT
                 (SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM group_messages WHERE grp=?) +
                 (SELECT coalesce(sum(length(CAST(prompt || signature || inputs AS BLOB))),0) FROM group_turns WHERE grp=?) +
                 (SELECT coalesce(sum(length(CAST(context AS BLOB))),0) FROM group_deliveries WHERE grp=?) AS size`,
-            )
-            .get(group.id, group.id, group.id)!.size,
-        ) +
-          Buffer.byteLength(JSON.stringify([value.prompt, signature, value.files || []])) >
-        50 * 1024 * 1024
-      )
-        throw new Fault('GROUP_STORAGE_LIMIT');
-      const now = new Date().toISOString();
-      this.db
-        .prepare(
-          "INSERT INTO group_messages(id,grp,source,role,text,created) VALUES(?,?,?,'user',?,?)",
-        )
-        .run(value.id, group.id, value.id, value.prompt, now);
-      const seq = this.db.prepare('SELECT last_insert_rowid() AS seq').get()!.seq;
-      this.db
-        .prepare(
-          "INSERT INTO group_turns(grp,id,prompt,recipients,signature,seq,created,state,inputs) VALUES(?,?,?,?,?,?,?,'pending',?)",
-        )
-        .run(
-          group.id,
-          value.id,
-          value.prompt,
-          JSON.stringify(value.recipients),
-          signature,
-          seq,
-          now,
-          JSON.stringify(value.files || []),
-        );
-      value.recipients.forEach((bot, position) => {
-        this.db
-          .prepare(
-            "INSERT INTO group_deliveries(id,grp,source,bot,position,state) VALUES(?,?,?,?,?,'pending')",
           )
-          .run(digest([group.id, value.id, position, bot]), group.id, value.id, bot, position);
-      });
-      this.changed();
-      return this.accepted(group.id, value.id);
+          .get(group.id, group.id, group.id)!.size,
+      ) +
+        Buffer.byteLength(JSON.stringify([value.prompt, signature, value.files || []])) >
+      50 * 1024 * 1024
+    )
+      throw new Fault('GROUP_STORAGE_LIMIT');
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        'INSERT INTO group_messages(id,grp,source,role,text,created,author,name) VALUES(?,?,?,?,?,?,?,?)',
+      )
+      .run(
+        value.id,
+        group.id,
+        value.id,
+        author ? 'bot' : 'user',
+        value.prompt,
+        now,
+        author?.bot ?? null,
+        author?.name ?? null,
+      );
+    const seq = this.db.prepare('SELECT last_insert_rowid() AS seq').get()!.seq;
+    this.db
+      .prepare(
+        "INSERT INTO group_turns(grp,id,prompt,recipients,signature,seq,created,state,inputs) VALUES(?,?,?,?,?,?,?,'pending',?)",
+      )
+      .run(
+        group.id,
+        value.id,
+        value.prompt,
+        JSON.stringify(value.recipients),
+        signature,
+        seq,
+        now,
+        JSON.stringify(value.files || []),
+      );
+    value.recipients.forEach((bot, position) => {
+      this.db
+        .prepare(
+          "INSERT INTO group_deliveries(id,grp,source,bot,position,state) VALUES(?,?,?,?,?,'pending')",
+        )
+        .run(digest([group.id, value.id, position, bot]), group.id, value.id, bot, position);
     });
+    this.changed();
+    return author ? this.page(group.id) : this.accepted(group.id, value.id);
   }
   private appendResult(row: Row, receipt: GroupReceipt) {
-    const text =
-      receipt.result || receipt.response?.text || receipt.error || '任务未返回可见结果。';
+    const text = receipt.result || receipt.response?.text || receipt.error || 'GROUP_RESULT_EMPTY';
     if (text.length > replyLimit) throw new Fault('GROUP_RESULT_INVALID');
     this.db
       .prepare(
@@ -947,6 +1079,7 @@ export class Groups {
       .get(group.id, source.bot);
     const receipt = row ? this.runner.findRequest(source.bot, requestId(row)) : undefined;
     if (
+      (this.runner.source && !this.runner.source(source.bot, source.runId, source.group)) ||
       !row ||
       !receipt ||
       receipt.runId !== source.runId ||

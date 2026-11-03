@@ -379,7 +379,7 @@ export class Schedules {
     const pending = this.db
       .prepare("SELECT id FROM firings WHERE schedule=? AND state='pending'")
       .get(input.id);
-    const prompt = `这是用户预先保存的定时任务「${input.title}」。\n计划触发时间：${occurrence}。\n按本轮实际条件执行以下任务说明，缺少输入时提问，不要凭历史声称已经完成：\n${input.prompt}`;
+    const prompt = `This is the user’s previously saved scheduled task: ${input.title}.\nScheduled trigger time: ${occurrence}.\nExecute the following instructions under the actual conditions of this turn. Ask if required input is missing, and do not claim completion based on history:\n${input.prompt}`;
     this.db
       .prepare(
         'INSERT INTO firings(id,schedule,bot,occurrence,created,state,prompt) VALUES(?,?,?,?,?,?,?)',
