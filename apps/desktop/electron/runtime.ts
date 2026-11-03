@@ -29,6 +29,7 @@ import {
   isComputerStatus,
   isDiagnosticReport,
   isDocumentOriginal,
+  isGoalProgress,
   isGroup,
   isGroupActionAck,
   isGroupCopyReceipt,
@@ -177,6 +178,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     throw new Error('INVALID_RUNTIME_STATE');
   return {
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
+    ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),

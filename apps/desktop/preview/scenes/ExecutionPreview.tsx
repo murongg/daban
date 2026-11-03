@@ -35,9 +35,11 @@ const scope: TranscriptScope =
     ? { bot: 'b', runId: 'mock-preview-group-run', conversationId: 'crew' }
     : { bot: 'a', runId: 'mock-preview-private-run', chatRevision: 0 };
 const reply =
-  mode === 'incomplete'
-    ? '合成任务已停止。以下记录只覆盖已保存的部分，请核对后续操作。'
-    : '合成核对已完成。执行步骤与原始输出已保留，可以展开查看；未执行任何真实业务操作。';
+  mode === 'goal'
+    ? '合成目标已达到本次续行上限，尚未完成。当前页面仅演示状态，不执行真实业务。'
+    : mode === 'incomplete'
+      ? '合成任务已停止。以下记录只覆盖已保存的部分，请核对后续操作。'
+      : '合成核对已完成。执行步骤与原始输出已保留，可以展开查看；未执行任何真实业务操作。';
 seed.messages.research = [
   { id: 'mock-execution-disclosure', role: 'notice', text: '合成验收数据 · 未连接真实模型或电脑' },
   {
@@ -218,6 +220,22 @@ if (mode === 'planning') {
     },
   ];
 }
+if (mode === 'goal')
+  snapshot.agents[scope.bot] = {
+    ...task,
+    phase: 'failed',
+    error: 'GOAL_ROUND_LIMIT',
+    goal: {
+      id: 'mock-goal',
+      revision: 2,
+      objective: '合成目标：核对资料并整理为可追溯的结果。',
+      phase: 'blocked',
+      activation: 'disarmed',
+      rounds: 3,
+      limit: 3,
+      reason: '合成状态：本次续行次数已用尽。',
+    },
+  };
 const group = {
   id: 'crew',
   name: '合成协作小组',

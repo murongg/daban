@@ -1,5 +1,6 @@
 import type {
   BrowserState,
+  GoalProgress,
   ModelId,
   ReplyStream,
   RunInsert,
@@ -20,6 +21,7 @@ export interface WindowInfo {
   title: string;
 }
 export interface RawModelTask {
+  goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;
   chatRevision?: number;

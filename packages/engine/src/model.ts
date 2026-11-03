@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   BotProfile,
+  GoalProgress,
   ModelId,
   ReplyStream,
   RunInsert,
@@ -22,6 +23,7 @@ import {
   imageMime,
   isAttachmentId,
   isChatPage,
+  isGoalProgress,
   isInteractionInput,
   isModelId,
   isReplyStream,
@@ -48,6 +50,7 @@ import type { Desktop } from './desktop.js';
 import { DshLog, defaultSdkFile, readDshStartup } from './dsh.js';
 import { observeTools } from './events.js';
 import { builtinSkills } from './find-skills.js';
+import { goalCommand, goalOperation, goalView, projectGoal } from './goals.js';
 import { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
 import { IntegrationTools } from './integration-tools.js';
@@ -232,6 +235,26 @@ export function sdkPatch(
                 id: 'daban-office',
                 name: new URL('./office.js', import.meta.url).href,
                 config: { sdkFile },
+              },
+            ] as const)
+          : []),
+        ...(task
+          ? ([
+              { id: 'goals', name: '@deepseek-ai/dsh-goal', config: { defaultMaxGoalRounds: 3 } },
+              { id: 'tool-goal', name: '@deepseek-ai/dsh-tool-goal' },
+              {
+                id: 'owned-goal-rounds',
+                name: new URL('./goals.js', import.meta.url).href,
+                config: {
+                  sdkFile,
+                  command: goalCommand(task.prompt),
+                  retry: !!task.retryOf,
+                  url: `${origin}/mcp/${bot}`,
+                  capability,
+                  ...(bridge
+                    ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
+                    : {}),
+                },
               },
             ] as const)
           : []),
@@ -498,6 +521,9 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  goalCreated?: boolean;
+  goalSession?: boolean;
+  goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;
   finalizing?: boolean;
@@ -617,7 +643,15 @@ export class ModelRuns {
   private readonly botAdmission: (bot: string) => boolean;
   private readonly sessions = new Map<
     string,
-    { id: string; persona: string; model: ModelId; skills: string; mcp: string; binding?: string }
+    {
+      id: string;
+      persona: string;
+      model: ModelId;
+      skills: string;
+      mcp: string;
+      binding?: string;
+      goalSession?: boolean;
+    }
   >();
   private readonly Harness?: HarnessConstructor;
   private readonly dshLog: DshLog;
@@ -829,6 +863,7 @@ export class ModelRuns {
       const job: ModelJob = {
         chatRevision: latest.chatRevision,
         planning: latest.planning,
+        goal: latest.goal,
         conversationId: latest.conversationId,
         // Saved turns and accepted inserts are what "continue" resumes; replaying only the original prompt would redo finished work.
         inserts: latest.kind === 'chat' ? (latest.inserts ?? []) : [],
@@ -898,7 +933,9 @@ export class ModelRuns {
       for (const [key, latest] of conversations) {
         if (
           latest.kind === 'chat' &&
-          latest.phase === 'completed' &&
+          (latest.phase === 'completed' ||
+            latest.goalSession === true ||
+            (isGoalProgress(latest.goal) && latest.goal.phase !== 'complete')) &&
           latest.sessionId &&
           (latest.sessionModel === undefined || isModelId(latest.sessionModel)) &&
           latest.sessionProfile === sessionProfile &&
@@ -912,6 +949,9 @@ export class ModelRuns {
         )
           this.sessions.set(key, {
             id: latest.sessionId,
+            goalSession:
+              latest.goalSession === true ||
+              (isGoalProgress(latest.goal) && latest.goal.phase !== 'complete'),
             persona: latest.sessionPersona!,
             model: latest.sessionModel || model,
             binding: latest.sessionBinding,
@@ -1067,6 +1107,7 @@ export class ModelRuns {
       elapsedMs: job.running ? Math.max(0, Date.now() - Date.parse(job.createdAt)) : job.elapsedMs,
       plan: job.plan,
       planning: job.planning,
+      goal: job.goal,
       files: job.files,
       running: job.running || !!job.finalizing,
       phase: job.finalizing
@@ -1122,6 +1163,7 @@ export class ModelRuns {
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
     if (!isTaskInsert(input)) throw new Fault('INVALID_TASK_INSERT', 400);
+    if (goalCommand(input.text)) throw new Fault('GOAL_REQUIRES_NEW_TASK', 409);
     const job = this.jobs.get(bot);
     // An insert must target the exact running task; group runs and stale revisions are never interchangeable.
     if (
@@ -1264,9 +1306,11 @@ export class ModelRuns {
         documentInputs: job.documentInputs,
         response: job.phase === 'completed' ? undefined : response || job.response,
         checkpoint: job.checkpoint,
+        goalSession: job.goalSession,
         stats: job.stats,
         plan: job.plan,
         planning: job.planning,
+        goal: job.goal,
         bot: job.bot,
         runId: job.id,
         intentId: job.intentId,
@@ -1584,6 +1628,7 @@ export class ModelRuns {
       // Keep the mode across SDK catalog/persona replacements; old context must never silently re-enable writes.
       if (task)
         job.binding = createHash('sha256').update(`${job.binding}:planning-v1`).digest('hex');
+      if (task) job.binding = createHash('sha256').update(`${job.binding}:goals-v1`).digest('hex');
       // Delegation changes native tool schemas; do not resume a cached pre-delegation catalog.
       if (task)
         job.binding = createHash('sha256').update(`${job.binding}:delegation-v1`).digest('hex');
@@ -1810,6 +1855,7 @@ export class ModelRuns {
         saved.mcp === (job.integrations?.key ?? '')
           ? saved.id
           : undefined;
+      if (previous && saved?.goalSession) job.goalSession = true;
       const session = previous ? await job.harness.resumeSession(previous) : job.harness.session();
       // Restoring a DSH session also restores its directory; pin it before any model step while retaining its native history.
       if (!this.Harness && !session.setWorkingDirectory)
@@ -1832,6 +1878,17 @@ export class ModelRuns {
       const checkpoints = new CheckpointTracker(session.id, job.redact!);
       const observe: HarnessObserver = {
         onNotification: (note) => {
+          const goal = projectGoal(note, session.id, job.goal, job.redact!);
+          if (goal !== undefined) {
+            job.goal = goal ?? undefined;
+            job.goalSession = goal !== null && goal.phase !== 'complete';
+            if (goalOperation(note, session.id) === 'create') job.goalCreated = true;
+            this.persist(job)
+              .catch(() => this.stop(job.bot, 'goal-save-failed'))
+              .catch(() => {
+                job.error = 'GOAL_STATE_SAVE_FAILED';
+              });
+          }
           const planning = projectPlanning(note, session.id);
           if (planning !== undefined && !job.abort.signal.aborted) {
             job.planning = planning;
@@ -1959,9 +2016,25 @@ export class ModelRuns {
         job.result = complete(result.finalResponse);
         job.phase = job.result ? 'completed' : 'failed';
         if (!job.result) job.error = 'MODEL_EMPTY_RESULT';
+        const goalIntent = goalCommand(job.task.prompt);
+        if (
+          goalIntent &&
+          ['create', 'resume'].includes(goalIntent.action) &&
+          !job.task.retryOf &&
+          (job.goal?.phase !== 'complete' || (goalIntent.action === 'create' && !job.goalCreated))
+        ) {
+          job.phase = 'failed';
+          job.error =
+            job.goal?.phase === 'blocked'
+              ? job.goal.rounds >= job.goal.limit
+                ? 'GOAL_ROUND_LIMIT'
+                : 'GOAL_BLOCKED'
+              : 'GOAL_INCOMPLETE';
+        }
         if (job.phase === 'completed')
           this.sessions.set(key, {
             id: result.sessionId,
+            goalSession: job.goalSession,
             persona: job.persona,
             model: config.model,
             binding: job.binding,
@@ -2061,8 +2134,19 @@ export class ModelRuns {
           this.interruptTranscript(job);
         }
       }
-      // Retire failed conversation state before exposing an idle Bot to a new accepted task.
-      if (job.task && job.phase !== 'completed')
+      // A committed goal is native session authority. Keep that compatible session even after Stop; its producer is disarmed on reload.
+      // Ordinary failed/empty conversations still retire below, and queued goal messages require a fresh owned reservation.
+      if (job.task && job.goalSession && job.sessionId)
+        this.sessions.set(sessionKey(job.bot, job.conversationId, job.chatRevision), {
+          id: job.sessionId,
+          goalSession: true,
+          persona: job.persona,
+          model: job.model!,
+          binding: job.binding,
+          skills: job.skills?.key ?? '',
+          mcp: job.integrations?.key ?? '',
+        });
+      else if (job.task && job.phase !== 'completed')
         this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
       job.running = false;
       job.imageInputs = undefined;
@@ -2100,7 +2184,12 @@ export class ModelRuns {
         job.error = 'MODEL_EVIDENCE_SAVE_FAILED';
       }
       // Session reuse is scoped by Bot and conversation; failed or empty chat turns must retire that exact cached entry.
-      if (job.task && job.phase !== 'completed' && this.jobs.get(job.bot) === job)
+      if (
+        job.task &&
+        job.phase !== 'completed' &&
+        !job.goalSession &&
+        this.jobs.get(job.bot) === job
+      )
         this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
       job.finalizing = false;
     }
@@ -2171,7 +2260,17 @@ export class ModelRuns {
       throw new Fault('UNAUTHORIZED', 403);
     if (rpc.id === undefined) return null;
     let result: unknown;
-    if (rpc.method === 'statistics.update') {
+    if (rpc.method === 'goal.observe') {
+      const { sessionId, goal, ...extra } = rpc.params ?? {};
+      if (!job.task || sessionId !== job.sessionId || Object.keys(extra).length)
+        throw new Fault('INVALID_GOAL_STATE', 400);
+      const observed = goal === null ? undefined : goalView(goal, job.redact!);
+      if (goal !== null && !observed) throw new Fault('INVALID_GOAL_STATE', 400);
+      job.goal = observed;
+      job.goalSession = observed !== undefined && observed.phase !== 'complete';
+      await this.persist(job);
+      result = { accepted: true };
+    } else if (rpc.method === 'statistics.update') {
       const { sessionId, seq, stats, ...extra } = rpc.params || {};
       if (
         !job.task ||

@@ -1,3 +1,6 @@
+export * from './goals.js';
+
+import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
 import {
   isSkillPackage,
@@ -1336,6 +1339,7 @@ export function isRunTurn(value: unknown): value is RunTurn {
   );
 }
 export interface RuntimeTask {
+  goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;
   chatRevision?: number;

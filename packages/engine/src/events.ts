@@ -28,6 +28,9 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
         'ask_user_question',
         'todo_write',
         'skill',
+        'get_goal',
+        'create_goal',
+        'update_goal',
         'subagent',
         'send_message',
         'interrupt_agent',
@@ -41,13 +44,15 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
         name: String(data.name),
         surface: ['web_fetch', 'web_search'].includes(String(data.name))
           ? 'web'
-          : ['subagent', 'send_message', 'interrupt_agent'].includes(String(data.name))
-            ? 'delegation'
-            : data.name === 'skill'
-              ? 'skill'
-              : data.name === 'todo_write'
-                ? 'plan'
-                : 'human',
+          : ['get_goal', 'create_goal', 'update_goal'].includes(String(data.name))
+            ? 'goal'
+            : ['subagent', 'send_message', 'interrupt_agent'].includes(String(data.name))
+              ? 'delegation'
+              : data.name === 'skill'
+                ? 'skill'
+                : data.name === 'todo_write'
+                  ? 'plan'
+                  : 'human',
         phase: 'running',
         at: new Date().toISOString(),
       };

@@ -2,6 +2,7 @@ import { lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/prom
 import path from 'node:path';
 import type {
   BotProfile,
+  GoalProgress,
   ModelId,
   ReplyStream,
   RunInsert,
@@ -15,6 +16,7 @@ import type {
 } from '@daban/protocol';
 import {
   isApprovalMode,
+  isGoalProgress,
   isReplyStream,
   isRunInsert,
   isRunTurn,
@@ -245,6 +247,8 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  goalSession?: boolean;
+  goal?: GoalProgress;
   planning?: boolean;
   stats?: SessionStats;
   elapsedMs?: number;
@@ -374,6 +378,9 @@ export class TaskJournal {
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
+          delete task.goalSession;
+        if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
         if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
@@ -411,6 +418,10 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
+      throw new Fault('INVALID_GOAL_STATE', 400);
+    if (value.goal !== undefined && !isGoalProgress(value.goal))
+      throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.planning !== undefined && typeof value.planning !== 'boolean')
       throw new Fault('INVALID_PLAN_MODE', 400);
     if (value.stats !== undefined && !isSessionStats(value.stats))
@@ -461,6 +472,8 @@ export class TaskJournal {
       'turns',
       'checkpoint',
       'planning',
+      'goal',
+      'goalSession',
       'stats',
     ];
     const task = Object.fromEntries(
