@@ -253,6 +253,8 @@ export async function assembleComponent(
 </dict></plist>\n`,
     );
   }
+  console.time('runtime:component-seal');
   await sealHostPackage(agent);
+  console.timeEnd('runtime:component-seal');
   return { directory, resources, agent };
 }
