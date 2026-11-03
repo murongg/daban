@@ -176,6 +176,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   )
     throw new Error('INVALID_RUNTIME_STATE');
   return {
+    ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     chatRevision: task.chatRevision,
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),

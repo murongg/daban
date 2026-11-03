@@ -245,6 +245,7 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  planning?: boolean;
   stats?: SessionStats;
   elapsedMs?: number;
   checkpoint?: import('./checkpoint.js').ConversationCheckpoint;
@@ -373,6 +374,7 @@ export class TaskJournal {
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
         if (
@@ -409,6 +411,8 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.planning !== undefined && typeof value.planning !== 'boolean')
+      throw new Fault('INVALID_PLAN_MODE', 400);
     if (value.stats !== undefined && !isSessionStats(value.stats))
       throw new Fault('INVALID_STATISTICS', 400);
     if (value.checkpoint !== undefined && !isConversationCheckpoint(value.checkpoint))
@@ -456,6 +460,7 @@ export class TaskJournal {
       'inserts',
       'turns',
       'checkpoint',
+      'planning',
       'stats',
     ];
     const task = Object.fromEntries(

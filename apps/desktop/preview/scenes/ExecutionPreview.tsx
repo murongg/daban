@@ -47,7 +47,7 @@ seed.messages.research = [
   },
   { id: `runtime-result:${scope.runId}`, role: 'bot', text: reply },
 ];
-if (mode === 'approval' || mode === 'empty')
+if (mode === 'approval' || mode === 'planning' || mode === 'empty')
   seed.messages.research = seed.messages.research.slice(0, 2);
 clientCache().setItem(storageKey, serialize(seed));
 const snapshot = previewSnapshot(mode === 'legacy' ? 32 : undefined);
@@ -182,6 +182,39 @@ if (mode === 'approval') {
       status: 'pending',
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
+    },
+  ];
+}
+if (mode === 'planning') {
+  snapshot.agents[scope.bot] = {
+    ...task,
+    planning: true,
+    running: true,
+    phase: 'waiting',
+    result: '',
+  };
+  snapshot.interactions = [
+    {
+      id: 'mock-plan-review',
+      bot: scope.bot,
+      runId: scope.runId,
+      sessionId: 'mock-plan-session',
+      kind: 'question',
+      status: 'pending',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      questions: [
+        {
+          id: 'mock-review',
+          question: '是否批准这份合成计划并进入执行阶段？',
+          detail:
+            '# 合成资料核对计划\n\n1. 阅读当前任务提供的合成资料，核对日期和计算口径。\n2. 列出资料中不一致或需要补充的字段。\n3. 按你确认的范围生成核对结果，保留原始输入。\n\n批准计划只会结束计划模式；具体工具仍需遵守原有审批。',
+          options: [
+            { label: 'Approve', description: '批准计划，从下一步进入执行阶段。' },
+            { label: 'Keep planning', description: '继续完善计划，可填写补充意见。' },
+          ],
+        },
+      ],
     },
   ];
 }

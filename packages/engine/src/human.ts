@@ -67,7 +67,28 @@ export function apply(ctx: Context, config: Config) {
       id: randomUUID(),
       sessionId: request.agent?.session.id,
       kind: 'question',
-      questions: request.questions,
+      questions: Array.isArray(request.questions)
+        ? request.questions.map((question: unknown) => {
+            if (
+              !question ||
+              typeof question !== 'object' ||
+              Array.isArray(question) ||
+              !('intent' in question)
+            )
+              return question;
+            const intent = question.intent;
+            if (
+              !intent ||
+              typeof intent !== 'object' ||
+              !('kind' in intent) ||
+              intent.kind !== 'plan-review' ||
+              !Object.keys(intent).every((key) => ['kind', 'approve', 'callId'].includes(key))
+            )
+              return question;
+            const { intent: _intent, ...visible } = question;
+            return visible;
+          })
+        : request.questions,
     };
     if (!isInteractionInput(input)) throw new Error('INVALID_INTERACTION');
     const result = await waitForReply(
