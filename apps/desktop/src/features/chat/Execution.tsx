@@ -33,6 +33,7 @@ const tools: Record<string, MessageKey> = {
   todo_write: 'execution.updatePlan',
   ask_user_question: 'execution.ask',
   skill: 'execution.loadSkill',
+  run_code: 'execution.runProgram',
   get_goal: 'execution.readGoal',
   create_goal: 'execution.createGoal',
   update_goal: 'execution.updateGoal',
