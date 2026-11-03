@@ -98,14 +98,14 @@ jobs:
         run: node --experimental-strip-types tools/component.ts build "$RUNNER_TEMP/runtime" "$RUNNER_TEMP/node-v24.22.1-darwin-arm64" "$RUNNER_TEMP/environment"
       - name: Pin the runtime and assemble the small client
         run: |
-          node --experimental-strip-types tools/component.ts reference "$RUNNER_TEMP/runtime/Daban-runtime-macos-arm64.zip" "$RUNNER_TEMP/runtime-macos-arm64.json"
-          node --experimental-strip-types tools/desktop.ts "$RUNNER_TEMP/runtime-macos-arm64.json" "$RUNNER_TEMP/bundle"
+          node --experimental-strip-types tools/component.ts reference "$RUNNER_TEMP/runtime/Daban-runtime-macos-arm64.zip" "$RUNNER_TEMP/runtime/runtime-macos-arm64.json"
+          node --experimental-strip-types tools/desktop.ts "$RUNNER_TEMP/runtime/runtime-macos-arm64.json" "$RUNNER_TEMP/bundle"
       - uses: actions/upload-artifact@v4
         with:
           name: Daban-runtime-macos-arm64
           path: |
             ${{ runner.temp }}/runtime/Daban-runtime-macos-arm64.zip
-            ${{ runner.temp }}/runtime-macos-arm64.json
+            ${{ runner.temp }}/runtime/runtime-macos-arm64.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -116,7 +116,7 @@ jobs:
           MACOS_NOTARY_PROFILE: daban-release
         run: node --experimental-strip-types tools/sign.ts "$RUNNER_TEMP/bundle/Daban.app" "$RUNNER_TEMP/release"
       - name: Verify the extracted runtime against the signed client publisher
-        run: node --experimental-strip-types tools/component.ts validate "$RUNNER_TEMP/bundle/Daban.app" "$RUNNER_TEMP/runtime/Daban-runtime-macos-arm64.zip" "$RUNNER_TEMP/runtime-macos-arm64.json"
+        run: node --experimental-strip-types tools/component.ts validate "$RUNNER_TEMP/bundle/Daban.app" "$RUNNER_TEMP/runtime/Daban-runtime-macos-arm64.zip" "$RUNNER_TEMP/runtime/runtime-macos-arm64.json"
       - name: Remove credentials
         if: always()
         run: |

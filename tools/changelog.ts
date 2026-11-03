@@ -53,6 +53,22 @@ export async function translateChangelog(
   );
   return { zh: result.zh.trim(), en: result.en.trim() };
 }
+export function changelogBase(value: unknown, tag: string) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('tag_name' in value) ||
+    typeof value.tag_name !== 'string' ||
+    !/^v\d+\.\d+\.\d+$/.test(value.tag_name) ||
+    !('draft' in value) ||
+    value.draft !== false ||
+    !('prerelease' in value) ||
+    value.prerelease !== false
+  )
+    throw Error('CHANGELOG_BASE_INVALID');
+  if (value.tag_name === tag) throw Error('CHANGELOG_ALREADY_PUBLISHED');
+  return value.tag_name;
+}
 async function main() {
   const tag = process.env.RELEASE_TAG ?? '';
   assert.match(tag, /^v[0-9][a-zA-Z0-9.-]*$/);
@@ -62,9 +78,20 @@ async function main() {
     execFileSync('git', args, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }).trim();
   let previous: string | undefined;
   try {
-    previous = git(['describe', '--tags', '--match', 'v[0-9]*', '--abbrev=0', `${tag}^`]);
-  } catch {
-    /* The first release includes all reachable commits. */
+    // Unpublished tags and runtime prereleases are not a changelog baseline.
+    const published: unknown = JSON.parse(
+      execFileSync('gh', ['api', `repos/${repository}/releases/latest`], {
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024,
+      }),
+    );
+    previous = changelogBase(published, tag);
+    git(['merge-base', '--is-ancestor', `${previous}^{commit}`, `${tag}^{commit}`]);
+  } catch (error) {
+    const stderr =
+      error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
+    if (!stderr.includes('HTTP 404')) throw error;
+    // A repository without a published stable release includes every reachable commit.
   }
   const payload = {
     tag_name: tag,

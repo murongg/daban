@@ -39,6 +39,9 @@ it('binds the runtime signature to the client publisher before allowing the exec
     if (program.endsWith('codesign')) {
       expect(args).toContain('--verify');
       expect(args).toContain('--deep');
+      expect(args).toContain(
+        '=anchor apple generic and identifier "dev.daban.runtime" and certificate leaf[subject.OU] = "TESTTEAM01"',
+      );
       expect(args.join(' ')).toContain('dev.daban.runtime');
       expect(args.join(' ')).toContain('TESTTEAM01');
     } else expect(program).toBe('/usr/sbin/spctl');
