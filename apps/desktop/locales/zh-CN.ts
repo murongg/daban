@@ -1,6 +1,26 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'setup.agentTitle': '准备 Daban',
+  'setup.agentWorking': '正在准备 Daban',
+  'setup.agentDescription':
+    '下载运行 Bot 所需的基础组件，完成后配置模型即可开始。Linux 电脑可以稍后安装。',
+  'setup.agentFootnote': '基础组件只需准备一次，之后从本机缓存启动。首次下载需要联网。',
+  'setup.downloadComponents': '下载基础组件',
+  'setup.unpackComponents': '解压基础组件',
+  'setup.verifyComponents': '校验运行组件',
+  'setup.downloadImage': '下载 Linux 系统',
+  'setup.downloadHelp': '下载可暂停，继续时会保留已下载的内容。',
+  'setup.installAgent': '准备基础组件',
+  'setup.linuxInstall': '安装 Linux 电脑',
+  'setup.linuxOptional':
+    '为 Bot 添加独立屏幕、终端和共享文件。不影响聊天和本机电脑控制，可稍后安装。',
+  'setup.linuxWaiting': '安装完成，等待当前任务结束后连接。',
+  'setup.linuxWorking': '正在安装 Linux 电脑',
+  'setup.linuxDownload': '下载进度',
+  'setup.agentReady': '基础组件已就绪',
+  'setup.onDemand': '需要时下载并安装',
+
   'updates.title': '应用更新',
   'updates.version': '当前版本 {0}',
   'updates.ready': '从 GitHub 检查稳定版更新',
@@ -2424,7 +2444,7 @@ export const chinese = {
   'setup.title': '给 Bot 一个本地工作空间',
   'setup.unpackingSystemFilesMayTakeLittleWhile': '正在解包系统文件，可能需要一些时间。',
   'setup.usesGibMemoryGibVirtualDiskDefault':
-    '默认分配 3 GiB 内存、16 GiB 虚拟磁盘。首次安装请预留至少 36 GB 可用空间。',
+    '默认分配 4 GiB 内存、16 GiB 虚拟磁盘。首次安装请预留至少 36 GB 可用空间。',
   'setup.waiting': '待执行',
   'setup.workspaceNeedsAttention': '工作空间还没准备好',
   'setup.workspaceReady': '工作空间准备好了',

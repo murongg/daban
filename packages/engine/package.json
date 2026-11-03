@@ -26,6 +26,18 @@
     "test": "npm run test:runtime --prefix ../.."
   },
   "exports": {
+    "./component-files": {
+      "types": "./dist/component-files.d.ts",
+      "import": "./dist/component-files.js"
+    },
+    "./component": {
+      "types": "./dist/component.d.ts",
+      "import": "./dist/component.js"
+    },
+    "./payload": {
+      "types": "./dist/payload.d.ts",
+      "import": "./dist/payload.js"
+    },
     "./agent": {
       "types": "./dist/agent.d.ts",
       "import": "./dist/agent.js"

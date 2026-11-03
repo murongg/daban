@@ -183,6 +183,8 @@ export async function packageHost(target: string, nodeDirectory: string) {
   });
   await moduleGraph(path.join(vendor, 'engine/dist'), [
     'agent.js',
+    // The host image downloader imports this public entry independently of HostCore.
+    'payload.js',
     'host.js',
     'human.js',
     'stream.js',

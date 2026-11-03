@@ -162,6 +162,53 @@ test('provisioning creates an isolated owned VM once and resumes its verified in
   execFileSync('/bin/sh', ['-n', path.join(f.options.directory, 'bootstrap.sh')]);
 });
 
+test('requests an image lazily for first creation and reuses an installed VM without it', async (t) => {
+  const f = await fixture(t);
+  const cached = path.join(f.root, 'cached-image.gz');
+  await rename(path.join(f.options.packDirectory, 'system.raw.gz'), cached);
+  let downloads = 0;
+  const options = {
+    ...f.options,
+    imageSource: async () => {
+      downloads++;
+      return cached;
+    },
+  };
+  const first = await ensureExecutionVm(options, {
+    run: f.run,
+    image: f.image,
+    port: async () => 19876,
+  });
+  assert.equal(downloads, 1);
+  await rm(cached);
+  assert.deepEqual(await ensureExecutionVm(options, { run: f.run, image: f.image }), first);
+  assert.equal(downloads, 1);
+  assert.equal(f.calls.filter((call) => call.args[0] === 'create').length, 1);
+});
+
+test('pauses before committing a VM creation intent and can continue that same installation', async (t) => {
+  const f = await fixture(t);
+  await assert.rejects(
+    ensureExecutionVm(
+      {
+        ...f.options,
+        checkpoint: async (phase: string) => {
+          if (phase === 'creating') throw Error('SYNTHETIC_SETUP_PAUSED');
+        },
+      },
+      { run: f.run, image: f.image, port: async () => 19876 },
+    ),
+    /SYNTHETIC_SETUP_PAUSED/,
+  );
+  assert.equal(f.calls.filter((call) => call.args[0] === 'create').length, 0);
+  assert.equal(
+    JSON.parse(await readFile(path.join(f.options.directory, 'provision.json'), 'utf8')).phase,
+    'assets',
+  );
+  await ensureExecutionVm(f.options, { run: f.run, image: f.image });
+  assert.equal(f.calls.filter((call) => call.args[0] === 'create').length, 1);
+});
+
 test('unknown VM creation is retained and inspected without blind create replay or deletion', async (t) => {
   const f = await fixture(t);
   let creates = 0;
@@ -338,4 +385,27 @@ test('an inspected partial create with no disk finishes the same instance withou
   assert.equal(config.vm, 'execution');
   assert.equal(f.calls.filter((call) => call.args[0] === 'create').length, 1);
   assert.equal(f.calls.filter((call) => call.args[0] === 'start').length, 1);
+});
+
+test('checks free space before downloading an optional image or mutating a VM', async (t) => {
+  const f = await fixture(t);
+  let downloads = 0;
+  await assert.rejects(
+    ensureExecutionVm(
+      {
+        ...f.options,
+        imageSource: async () => {
+          downloads++;
+          return path.join(f.options.packDirectory, 'system.raw.gz');
+        },
+      },
+      { run: f.run, image: f.image, space: async () => 0 },
+    ),
+    /SETUP_SPACE/,
+  );
+  assert.equal(downloads, 0);
+  assert.equal(
+    f.calls.some((call) => call.args[0] === 'create'),
+    false,
+  );
 });

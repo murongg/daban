@@ -1,18 +1,18 @@
 import assert from 'node:assert/strict';
-import { cp, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { componentIndex } from '@daban/engine/component';
 import { packageNative } from './native.ts';
 import { packageNotices } from './notices.ts';
-import { packageHost, sealHostPackage } from './roles.ts';
 
 assert.equal(process.platform, 'win32', 'WINDOWS_BUILD_REQUIRED');
 assert.equal(process.arch, 'x64', 'WINDOWS_X64_REQUIRED');
-const [output, nodeDirectory] = process.argv.slice(2);
+const [output, referenceFile] = process.argv.slice(2);
 assert.ok(
-  output && nodeDirectory,
-  'Usage: bundle:windows -- <new-output-folder> <Node24.22.1-folder>',
+  output && referenceFile,
+  'Usage: bundle:windows -- <new-output-folder> <runtime-reference.json>',
 );
 const root = fileURLToPath(new URL('..', import.meta.url)),
   target = path.resolve(output);
@@ -23,6 +23,10 @@ const electron = path.join(path.dirname(requireDesktop.resolve('electron/package
 for (const entry of await readdir(electron))
   await cp(path.join(electron, entry), path.join(target, entry), {
     recursive: true,
+    filter: (file) =>
+      path.basename(path.dirname(file)) !== 'locales' ||
+      !file.endsWith('.pak') ||
+      /^(?:en(?:[-_].*)?|zh[-_]CN(?:_.*)?)\.pak$/i.test(path.basename(file)),
     force: false,
     errorOnExist: true,
   });
@@ -41,7 +45,8 @@ await writeFile(
   JSON.stringify({ name: 'daban', version: manifest.version, main: 'dist-electron/main.cjs' }),
 );
 await packageNative(frontend, path.join(root, 'apps/desktop/package.json'));
-const agent = path.join(target, 'resources/agent');
-await packageHost(agent, path.resolve(nodeDirectory));
-await sealHostPackage(agent);
+const reference = JSON.parse(await readFile(path.resolve(referenceFile), 'utf8'));
+componentIndex(reference, reference.id);
+await writeFile(path.join(target, 'resources/runtime.json'), JSON.stringify(reference));
+await rm(path.join(target, 'resources/default_app.asar'), { force: true });
 await packageNotices(path.join(target, 'resources'), path.join(root, 'apps/desktop/package.json'));

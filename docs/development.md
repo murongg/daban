@@ -136,3 +136,15 @@ macOS 的连接配置位于 `~/Library/Application Support/daban-preview/runtime
 每份汇总日志最多 512 KiB，仅保留当前文件及 `.1`、`.2` 两份备份，总计最多 1.5 MiB。单条记录与启动临时快照均不超过 64 KiB；超量输出标记为截断。临时快照位于该任务的宿主机私有目录，收集后随 SDK 清理回收。
 
 启动快照包含进程、入口脚本、活动资源类型，以及初始化期间的 stderr 和崩溃信息。模型 Key、任务 RPC token、Bearer 凭据在写入前脱敏；不记录环境变量、请求/RPC 正文或正常聊天输出。收到初始化成功响应后立即停止采集。日志不可写不会中断任务，也不会自动延长 40 秒的初始化超时。
+
+
+## Small clients and optional runtimes
+
+Build the workspace first. Runtime components are separate immutable release assets, keyed by a source/dependency fingerprint. Renderer-only changes reuse the same runtime. Never package a user VM or move an existing runtime tag.
+
+- `tools/component.ts build <new-output> <Node24.22.1-folder> [clean-environment-pack]` builds the host component. Mac requires Developer ID and notarization credentials, and the pack contains only manifest, pinned Lima tools and notices; the Linux image is fetched by the host on explicit installation.
+- `tools/component.ts reference <runtime.zip> <reference.json>` pins its size and SHA256 into the client.
+- `tools/desktop.ts <reference.json> <new-output>` and `tools/windows.ts <new-output> <reference.json>` assemble small clients.
+- The **Signed macOS desktop** workflow can validate signing, notarization and both Mac download formats without publishing a desktop release. **Native desktop** validates Windows component extraction, cached first-use startup and NSIS packaging.
+
+Downloaded Mac code must pass the same publisher requirement as the signed client plus Gatekeeper. Windows checks the pinned archive and extracted host manifest. Host credentials and approvals stay outside Linux. Installing Linux requests an authenticated idle handoff; active jobs finish first. Runtime downloads are separate from the app update feed.

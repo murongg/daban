@@ -142,6 +142,7 @@ it.each([false, true])(
       mock.ready?.();
       await vi.waitFor(() => expect(mock.connect).toHaveBeenCalled());
       expect(mock.serviceArgs[0][4]).toEqual({
+        nativeFirst: true,
         entry: packaged
           ? join('/mock/Resources/agent', 'main.js')
           : expect.stringMatching(/\/resources\/agent\/main\.js$/),

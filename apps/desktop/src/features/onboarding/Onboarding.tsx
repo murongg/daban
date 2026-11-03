@@ -16,7 +16,7 @@ export function Onboarding({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Polling and temporary disconnects must never remount a secret draft or an entered workspace.
     if (stage === 'models' || stage === 'workspace') return;
-    if (snapshot.setup?.required) {
+    if (snapshot.setup?.required && snapshot.setup.target !== 'linux') {
       setStage('environment');
       return;
     }
@@ -38,6 +38,7 @@ export function Onboarding({ children }: { children: ReactNode }) {
     stage,
     snapshot.phase,
     snapshot.setup?.required,
+    snapshot.setup?.target,
     snapshot.model.configured,
     snapshot.model.revision,
     snapshot.protocolVersion,
@@ -64,7 +65,7 @@ export function Onboarding({ children }: { children: ReactNode }) {
         error={error}
       />
     );
-  if (snapshot.setup?.required) return <Setup />;
+  if (snapshot.setup?.required && snapshot.setup.target !== 'linux') return <Setup />;
   const offline = snapshot.phase === 'offline';
   const problem = error || (isMessageKey(snapshot.error) ? t(snapshot.error) : snapshot.error);
   return (

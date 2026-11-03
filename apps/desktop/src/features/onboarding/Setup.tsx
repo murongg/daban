@@ -14,12 +14,13 @@ import { useRuntime } from '../../app/Runtime';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { Language } from '../settings/Language';
 
-const steps = [
+const linuxSteps = [
   {
     phase: 'verifying',
     label: 'setup.checkLocalEnvironmentFiles',
     detail: 'setup.checkingInstallationFilesCompleteness',
   },
+  { phase: 'downloading', label: 'setup.downloadImage', detail: 'setup.downloadHelp' },
   {
     phase: 'extracting',
     label: 'setup.prepareLinuxSystem',
@@ -90,6 +91,22 @@ export function Setup() {
   useLocale();
   const runtime = useRuntime();
   const status = runtime.snapshot.setup!;
+  const agent = status.target === 'agent';
+  const steps = agent
+    ? ([
+        { phase: 'downloading', label: 'setup.downloadComponents', detail: 'setup.downloadHelp' },
+        {
+          phase: 'extracting',
+          label: 'setup.unpackComponents',
+          detail: 'setup.unpackingSystemFilesMayTakeLittleWhile',
+        },
+        {
+          phase: 'verifying',
+          label: 'setup.verifyComponents',
+          detail: 'setup.checkingInstallationFilesCompleteness',
+        },
+      ] as const)
+    : linuxSteps;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   // Terminal phases carry no step history; show recovery instead of guessing which steps completed.
@@ -99,7 +116,7 @@ export function Setup() {
   const initial = status.phase === 'available';
   // Only extraction has measured progress. An absent or invalid value must not become a fake 0%.
   const percent =
-    status.phase === 'extracting' &&
+    ['extracting', 'downloading'].includes(status.phase) &&
     typeof status.progress === 'number' &&
     Number.isFinite(status.progress) &&
     status.progress >= 0 &&
@@ -133,15 +150,21 @@ export function Setup() {
           </div>
           <h1 id="setup-title">
             {t(
-              working
-                ? 'setup.companionGettingThingsReady'
-                : (titles[status.phase] ?? 'setup.workspaceNeedsAttention'),
+              agent
+                ? working
+                  ? 'setup.agentWorking'
+                  : 'setup.agentTitle'
+                : working
+                  ? 'setup.companionGettingThingsReady'
+                  : (titles[status.phase] ?? 'setup.workspaceNeedsAttention'),
             )}
           </h1>
           <p className="setup-description">
-            {working
-              ? t('onboarding.environmentInProgress')
-              : t('setup.letBotsWorkSeparateLinuxEnvironmentEach')}
+            {agent
+              ? t('setup.agentDescription')
+              : working
+                ? t('onboarding.environmentInProgress')
+                : t('setup.letBotsWorkSeparateLinuxEnvironmentEach')}
           </p>
         </div>
         <div className="setup-install">
@@ -150,14 +173,16 @@ export function Setup() {
               <div className="setup-details">
                 <span>
                   <CircleCheck size={17} />
-                  {t('setup.environmentIncludedApp')}
+                  {t('setup.onDemand')}
                 </span>
                 <span>
                   <CircleCheck size={17} />
                   {t('setup.noSeparateDockerDshInstallationNeeded')}
                 </span>
               </div>
-              <p className="setup-budget">{t('setup.usesGibMemoryGibVirtualDiskDefault')}</p>
+              {!agent && (
+                <p className="setup-budget">{t('setup.usesGibMemoryGibVirtualDiskDefault')}</p>
+              )}
             </>
           )}
           {!initial && (
@@ -228,7 +253,13 @@ export function Setup() {
                                   <div
                                     className="setup-track"
                                     role="progressbar"
-                                    aria-label={t('setup.linuxExtractionProgress')}
+                                    aria-label={t(
+                                      agent
+                                        ? 'setup.downloadComponents'
+                                        : status.phase === 'downloading'
+                                          ? 'setup.linuxDownload'
+                                          : 'setup.linuxExtractionProgress',
+                                    )}
                                     aria-valuemin={0}
                                     aria-valuemax={100}
                                     aria-valuenow={percent}
@@ -279,14 +310,16 @@ export function Setup() {
                   onClick={() => act('setup.start')}
                 >
                   {status.phase === 'available'
-                    ? t('setup.createLocalEnvironment')
+                    ? t(agent ? 'setup.installAgent' : 'setup.createLocalEnvironment')
                     : t('setup.continueSetup')}
                   <ArrowRight size={17} />
                 </button>
               )
             )}
           </div>
-          <p className="setup-footnote">{t('onboarding.environmentFootnote')}</p>
+          <p className="setup-footnote">
+            {t(agent ? 'setup.agentFootnote' : 'onboarding.environmentFootnote')}
+          </p>
         </div>
       </section>
     </main>

@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   setupNotify: (_value: unknown) => {},
   openExternal: vi.fn(async () => undefined),
   writeClipboard: vi.fn(),
+  reconcile: vi.fn(async (..._args: unknown[]) => false),
+  nativeEnsure: vi.fn(),
+  nativeClose: vi.fn(),
   daemonEnsure: vi.fn(),
   daemonClose: vi.fn(),
   daemonConfigs: [] as {
@@ -94,6 +97,20 @@ vi.mock('./daemon', async (importOriginal) => {
     },
   };
 });
+
+vi.mock('./native-daemon', () => ({
+  NativeDaemon: class {
+    ensure() {
+      return mocks.nativeEnsure();
+    }
+    close() {
+      return mocks.nativeClose();
+    }
+  },
+}));
+vi.mock('./host-selection', () => ({
+  reconcileAgent: (...args: unknown[]) => mocks.reconcile(...args),
+}));
 
 import { daemonScope } from './daemon';
 import { runtimeService } from './service';
@@ -581,7 +598,9 @@ async function agentFixture() {
       body,
     });
     response.setHeader('content-type', 'application/json');
-    if (request.url === '/api/host/recovery') {
+    if (request.url === '/api/host/environment') {
+      response.end(JSON.stringify({ required: true, target: 'linux', phase: 'available' }));
+    } else if (request.url === '/api/host/recovery') {
       const command = JSON.parse(body) as RuntimeCommand;
       power.commands.push(command);
       if (command.type === 'recovery.status' && power.holdStatus) {
@@ -1052,6 +1071,80 @@ it('a late host recovery poll cannot erase the newer accepted power intent', asy
     });
   } finally {
     release();
+    await service.close();
+    await fixture.close();
+  }
+});
+
+it('prepares the base runtime before native startup, without requesting a Linux setup', async () => {
+  const fixture = await agentFixture();
+  await fs.unlink(fixture.config.vmConfig);
+  const snapshot = { ...disconnected('ready'), agent: { execution: 'local-workspace' } };
+  mocks.nativeEnsure.mockResolvedValue({
+    status: async () => snapshot,
+    invoke: async () => ({ available: false, error: 'RECOVERY_UNAVAILABLE' }),
+  });
+  mocks.nativeClose.mockResolvedValue(undefined);
+  const files = { entry: fixture.config.entry, executable: fixture.config.executable };
+  const prepare = vi.fn(async () => files),
+    close = vi.fn(async () => {});
+  const status = () => ({ required: false, target: 'agent' as const, phase: 'complete' as const });
+  const runtime = {
+    id: 'a'.repeat(64),
+    prepare,
+    resume: prepare,
+    status,
+    cancel: async () => status(),
+    close,
+  };
+  const service = runtimeService(
+    fixture.root,
+    'file:///mock/index.html',
+    '/mock/environment',
+    undefined,
+    {
+      dataRoot: fixture.dataRoot,
+      socketPath: fixture.config.socketPath,
+      vmConfig: fixture.config.vmConfig,
+      runtime,
+      nativeFirst: true,
+    },
+  );
+  try {
+    expect((await service.connect()).phase).toBe('ready');
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(mocks.nativeEnsure).toHaveBeenCalledTimes(1);
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+    expect(
+      fixture.requests.some(
+        (row) => row.route.includes('/environment') && JSON.parse(row.body).action === 'start',
+      ),
+    ).toBe(false);
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+  expect(close).toHaveBeenCalledTimes(1);
+});
+
+it('keeps a busy compatible host visible on first launch and defers its runtime handoff', async () => {
+  const fixture = await agentFixture();
+  mocks.reconcile.mockRejectedValueOnce(Error('AGENT_UPDATE_BUSY'));
+  const service = runtimeService(
+    fixture.root,
+    'file:///mock/index.html',
+    '/mock/environment',
+    undefined,
+    { ...fixture.config, nativeFirst: true },
+  );
+  try {
+    const state = await service.connect();
+    expect(state.phase).toBe('ready');
+    expect(state.setup?.phase).toBe('waiting');
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+    expect((await service.connect()).phase).toBe('ready');
+    expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1);
+  } finally {
     await service.close();
     await fixture.close();
   }

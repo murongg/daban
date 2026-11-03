@@ -15,6 +15,7 @@ import type { Bot } from '../../app/state';
 import { IconButton } from '../../components/controls/Button';
 import { t, useLocale } from '../../i18n/locale';
 import { Browser } from '../browser/Browser';
+import { LinuxSetup } from '../onboarding/LinuxSetup';
 import { Connection } from './Connection';
 import { LiveDesktop } from './LiveDesktop';
 import { LocalComputer } from './LocalComputer';
@@ -232,12 +233,13 @@ function VirtualComputer({
 export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
   const runtime = useRuntime();
   const local = runtime.snapshot.localComputer;
+  const optionalLinux = runtime.snapshot.setup?.target === 'linux';
   const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
   const canonical = agentId(props.bot.id);
   const [source, setSource] = useState<'vm' | 'local'>(nativeOnly ? 'local' : 'vm');
   useEffect(() => {
-    if (nativeOnly || local?.session?.bot === canonical) setSource('local');
-  }, [nativeOnly, local?.session?.bot, canonical]);
+    if ((nativeOnly && !optionalLinux) || local?.session?.bot === canonical) setSource('local');
+  }, [nativeOnly, optionalLinux, local?.session?.bot, canonical]);
   async function choose(next: 'vm' | 'local') {
     if (next === 'vm' && local?.session?.bot === canonical) {
       if (runtime.snapshot.agents[canonical]?.running) return;
@@ -256,9 +258,9 @@ export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
   }
   return (
     <>
-      {local && !nativeOnly && !props.expanded && (
+      {local && (!nativeOnly || optionalLinux) && !props.expanded && (
         <nav className="computer-modes" aria-label={t('localComputer.source')}>
-          {!nativeOnly && (
+          {(!nativeOnly || optionalLinux) && (
             <button type="button" aria-pressed={source === 'vm'} onClick={() => choose('vm')}>
               {t('localComputer.virtual')}
             </button>
@@ -270,6 +272,8 @@ export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
       )}
       {source === 'local' && local ? (
         <LocalComputer bot={props.bot} />
+      ) : nativeOnly && optionalLinux ? (
+        <LinuxSetup />
       ) : (
         <VirtualComputer {...props} />
       )}

@@ -5,13 +5,14 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { startAgent } from '@daban/engine/agent';
+import { startAgent, type startNativeAgent } from '@daban/engine/agent';
 import {
   type ExecutionSnapshot,
   executionCapabilities,
   type RecoveryReceipt,
   type RecoveryReview,
 } from '@daban/protocol';
+import { writeSetupRecord } from './bootstrap.js';
 import { ExecutionConnection } from './connection.js';
 import {
   agentScope,
@@ -625,5 +626,42 @@ test('an aborted bootstrap leaves its last progress intact instead of presenting
     assert.ok(!f.events.includes('core'));
   } finally {
     await f.cleanup();
+  }
+});
+
+test('native-first startup defers Linux tools and bootstrap until explicit environment installation', async () => {
+  const f = await fixture();
+  let captured: Parameters<typeof startNativeAgent>[0] | undefined;
+  const owner = await startAgentProcess(
+    { ...f.options, mode: 'native' },
+    {
+      ...f.dependencies,
+      platform: 'darwin',
+      native: async (options) => {
+        captured = options;
+        return { close: async () => {} };
+      },
+      bootstrap: async (options) => {
+        f.events.push('bootstrap');
+        await writeSetupRecord(options.vmConfigFile, config);
+        return config;
+      },
+    },
+  );
+  try {
+    assert.deepEqual(f.events, []);
+    assert.equal((await captured!.environment!.status()).target, 'linux');
+    await captured!.environment!.start();
+    for (
+      let attempt = 0;
+      attempt < 100 && (await captured!.environment!.status()).required;
+      attempt++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(f.events, ['tools', 'bootstrap']);
+    assert.equal((await captured!.environment!.status()).required, false);
+  } finally {
+    await owner.close();
+    await rm(f.root, { recursive: true, force: true });
   }
 });

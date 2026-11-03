@@ -18,7 +18,7 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +31,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run build
       - name: Test desktop bindings and authority
-        run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/src/features/computer/LocalComputer.test.tsx --maxWorkers=2
+        run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/electron/components.test.ts apps/desktop/electron/component-install.test.ts apps/desktop/electron/host-selection.test.ts apps/desktop/electron/environment-client.test.ts apps/desktop/src/features/computer/LocalComputer.test.tsx --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
         run: node --experimental-sqlite --test packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js
       - name: Verify model icons and configuration
@@ -49,16 +49,39 @@ jobs:
         run: node --experimental-strip-types tools/native.ts transport
       - name: Verify Windows native module ABI
         run: node --experimental-strip-types tools/native.ts abi
-      - name: Build portable Windows client
+      - name: Reuse an immutable runtime when its sources are unchanged
+        id: runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types tools/component.ts fetch "${{ runner.temp }}/runtime"
+      - name: Build the separate Windows runtime
+        if: steps.runtime.outputs.cached != 'true'
         shell: pwsh
         run: |
-          $env:DABAN_NODE_DIRECTORY = Split-Path (Get-Command node).Source
-          $bundle = Join-Path $env:RUNNER_TEMP 'Daban-win-x64'
-          npm run bundle:windows -- $bundle $env:DABAN_NODE_DIRECTORY
+          $node = Split-Path (Get-Command node).Source
+          node --experimental-strip-types tools/component.ts build "${{ runner.temp }}/runtime" $node
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build the small portable Windows client
+        shell: pwsh
+        run: |
+          node --experimental-strip-types tools/component.ts reference "${{ runner.temp }}/runtime/Daban-runtime-windows-x64.zip" "${{ runner.temp }}/runtime-windows-x64.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --experimental-strip-types tools/windows.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/runtime-windows-x64.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Daban-runtime-windows-x64
+          path: |
+            ${{ runner.temp }}/runtime/Daban-runtime-windows-x64.zip
+            ${{ runner.temp }}/runtime-windows-x64.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Verify the extracted runtime against its pinned archive
+        run: node --experimental-strip-types tools/component.ts validate "${{ runner.temp }}/Daban-win-x64/Daban.exe" "${{ runner.temp }}/runtime/Daban-runtime-windows-x64.zip" "${{ runner.temp }}/runtime-windows-x64.json"
       - name: Verify packaged dependencies and first-use startup
-        timeout-minutes: 3
-        run: node --experimental-strip-types tools/windows.acceptance.ts "${{ runner.temp }}/Daban-win-x64"
+        timeout-minutes: 6
+        run: node --experimental-strip-types tools/windows.acceptance.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/runtime/Daban-runtime-windows-x64.zip"
       - name: Build per-user Windows installer and update metadata
         run: node --experimental-strip-types tools/installer.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/Daban-installer"
       - name: Verify isolated Windows online update and draft preservation
@@ -76,7 +99,7 @@ jobs:
           path: |
             ${{ runner.temp }}/Daban-installer/*.exe
             ${{ runner.temp }}/Daban-installer/*.blockmap
-            ${{ runner.temp }}/Daban-installer/*.yml
+            ${{ runner.temp }}/Daban-installer/latest*.yml
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

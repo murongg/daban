@@ -8,6 +8,7 @@ import {
 } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import { RuntimeProvider, useRuntime } from '../../src/app/Runtime';
+import { LinuxSetup } from '../../src/features/onboarding/LinuxSetup';
 import { Setup } from '../../src/features/onboarding/Setup';
 import '../../src/styles/tokens.css';
 import '../../src/styles/styles.css';
@@ -19,6 +20,8 @@ const phase =
   (
     [
       'available',
+      'downloading',
+      'waiting',
       'verifying',
       'extracting',
       'creating',
@@ -33,7 +36,8 @@ const phase =
 const snapshot = disconnected('ready');
 snapshot.protocolVersion = managedProtocol;
 snapshot.setup = {
-  required: true,
+  required: phase !== 'waiting',
+  target: query.get('target') === 'agent' ? 'agent' : 'linux',
   phase,
   ...(query.has('progress') ? { progress: Number(query.get('progress')) } : {}),
   ...(phase === 'failed'
@@ -54,6 +58,7 @@ const bridge: RuntimeBridge = {
     if (command.type !== 'status') {
       snapshot.setup = {
         required: true,
+        target: snapshot.setup?.target,
         phase: command.type === 'setup.start' ? 'verifying' : 'cancelled',
       };
       for (const listener of listeners) listener(structuredClone(snapshot));
@@ -71,7 +76,13 @@ Object.defineProperty(window, 'daban', {
 });
 function Preview() {
   const runtime = useRuntime();
-  return runtime.snapshot.setup ? <Setup /> : null;
+  return runtime.snapshot.setup ? (
+    query.get('target') === 'linux' ? (
+      <LinuxSetup />
+    ) : (
+      <Setup />
+    )
+  ) : null;
 }
 createRoot(document.getElementById('root')!).render(
   <RuntimeProvider>

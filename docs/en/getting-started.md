@@ -18,7 +18,7 @@ Use a complete desktop package supplied by the maintainer and an API key from a 
 
 1. On Mac, put the application in a stable location before opening it. On Windows, extract the entire portable package and run `Daban.exe`; do not copy the executable on its own.
 2. Choose Simplified Chinese or English.
-3. For Linux mode on Mac, follow environment setup. Reserve at least 36 GB of free disk space for the first installation and follow the requirements shown in the app. Watch the current step; a paused installation can be continued without deleting the environment. Windows native mode requires no Linux VM.
+3. Let Daban download and cache its core runtime components. No VM is needed to start chatting. You can pause and resume this download. Install Linux later if you need an independent computer.
 4. Select a provider, enter its API key, and select or enter a model. Verify and save, then choose **Start using Daban**. See [Models & providers](models.md).
 5. Add a companion from the [Bot gallery](gallery.md), or [create a Bot](bots.md). A new workspace contains no sample conversations or test Bots.
 6. Send a first task, such as: “Turn the following meeting notes into decisions and action items.”
@@ -35,3 +35,7 @@ Open the Bot's computer panel and choose a [Linux VM](linux-computer.md) or your
 - Hosted cloud computers, a mobile client, and cross-device synchronization are not currently provided. The execution computer must remain available.
 
 Start with [Troubleshooting](troubleshooting.md) when something goes wrong. Preserve existing data instead of deleting the VM or user directory as a first step.
+
+## Optional Linux computer
+
+The small client downloads and caches the core Agent components on first use. Configure a model to start chatting; no VM is required. Add a Linux computer later from the computer panel or runtime settings. Its system image downloads only when you choose to install it. Downloads support pause and resume, and existing installations are reused. Linux is currently available on Apple silicon Macs; Windows uses the local desktop.

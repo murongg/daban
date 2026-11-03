@@ -24,6 +24,7 @@ import { download } from '../files/files';
 import { Integrations } from '../integrations/Integrations';
 import { Models } from '../models/Models';
 import { Notifications } from '../notifications/Notifications';
+import { LinuxSetup } from '../onboarding/LinuxSetup';
 import { Language } from './Language';
 import { UpdatesPanel } from './Updates';
 import '../../styles/settings.css';
@@ -183,6 +184,7 @@ export function Settings({
               )}
             </div>
           </div>
+          <LinuxSetup />
           {!nativeOnly && (
             <div className="settings-section">
               <h2>{t('settings.runtime')}</h2>

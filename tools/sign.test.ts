@@ -3,7 +3,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { isMachO, notarizeDistribution, sealSignedLima, signApplication } from './sign.ts';
+import {
+  isMachO,
+  notarizeDistribution,
+  sealSignedLima,
+  signApplication,
+  signRuntime,
+} from './sign.ts';
 
 test('detects native macOS code without treating scripts and Linux guests as signable', () => {
   for (const hex of ['cffaedfe', 'feedfacf', 'cafebabe', 'bebafeca', 'cafebabf'])
@@ -159,4 +165,32 @@ test('reports bounded signing command output without dumping unrelated process m
   assert.deepEqual(signingDiagnostics(null), []);
   const output = signingDiagnostics({ stdout: 'x'.repeat(20000), stderr: undefined });
   assert.equal(output[0].length, 'stdout:\n'.length + 16000);
+});
+
+test('signs the runtime code, refreshes its host manifest, then seals the outer runtime app', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-sign-runtime-'));
+  try {
+    const app = path.join(root, 'DabanRuntime.app');
+    await mkdir(path.join(app, 'Contents/MacOS'), { recursive: true });
+    await writeFile(path.join(app, 'Contents/MacOS/agent'), Buffer.from('cffaedfe00000000', 'hex'));
+    const events: string[] = [];
+    await signRuntime(
+      app,
+      { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
+      {
+        run: async (_program, args) => {
+          events.push(
+            args.includes('--verify') ? 'verify' : args.at(-1) === app ? 'outer' : 'native',
+          );
+          return '';
+        },
+        seal: async () => {
+          events.push('seal');
+        },
+      },
+    );
+    assert.deepEqual(events, ['native', 'seal', 'outer', 'verify']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

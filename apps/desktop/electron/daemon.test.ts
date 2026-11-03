@@ -316,3 +316,40 @@ it('proves a first-use host is absent without starting it, and never treats a bo
   expect(run.mock.calls.every((call) => call[1][0] === 'print')).toBe(true);
   await daemon.close();
 });
+
+it.each([false, true])(
+  'reloads an old runtime only after a proven successful stopped job (active=%s)',
+  async (active) => {
+    const config = await fixture();
+    let loaded = true,
+      ready = false;
+    const run = vi.fn(async (_program: string, args: string[]) => {
+      if (args[0] === 'print')
+        return {
+          code: loaded ? 0 : 113,
+          stdout: `program = /synthetic/old/node\narguments = { /synthetic/old/main.js }\nstate = ${active ? 'running' : 'not running'}\n${active ? 'pid = 1234' : 'last exit code = 0'}\n`,
+        };
+      if (args[0] === 'bootout') loaded = false;
+      if (args[0] === 'bootstrap') {
+        loaded = true;
+        ready = true;
+      }
+      return { code: 0, stdout: '' };
+    });
+    const identity = {
+      role: 'agent',
+      scope: daemonScope(config.dataRoot, config.vmConfig),
+      dataRoot: config.dataRoot,
+      socketPath: config.socketPath,
+    };
+    const daemon = new Daemon(config, {
+      run,
+      inspect: async () => (ready ? identity : undefined),
+      platform: 'darwin',
+    });
+    if (active) await expect(daemon.ensure()).rejects.toThrow('AGENT_UPDATE_BUSY');
+    else expect(await daemon.ensure()).toEqual(identity);
+    expect(run.mock.calls.filter(([, args]) => args[0] === 'bootout')).toHaveLength(active ? 0 : 1);
+    await daemon.close();
+  },
+);

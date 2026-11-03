@@ -35,6 +35,7 @@ import {
   isNoteCommand,
   isRebootStatus,
   isRecoveryRequest,
+  isSetupStatus,
   isSkillBinding,
   isSkillContent,
   isSkillPackage,
@@ -56,6 +57,7 @@ import {
   type RebootStatus,
   type RuntimeCommand,
   type RuntimeNoticeStatus,
+  type SetupStatus,
   validAgentId,
 } from '@daban/protocol';
 import { Authority, ViewerGrants } from './authority.js';
@@ -226,10 +228,21 @@ export interface PrototypeOptions {
 }
 export interface HostComposition {
   onUpdate?: () => unknown;
+  environment?: {
+    readonly busy: boolean;
+    status(): Promise<SetupStatus>;
+    start(): Promise<SetupStatus>;
+    cancel(): Promise<SetupStatus>;
+  };
   localComputer?: import('./local-computer.js').LocalComputerClient;
   nativeWorkspace?: string;
   offlineWorkspaceRoot?: string;
-  identity?: { dataRoot: string; socketPath: string };
+  identity?: {
+    dataRoot: string;
+    socketPath: string;
+    entry?: string;
+    executable?: string;
+  };
   reboot?: {
     status: () => RebootStatus | Promise<RebootStatus>;
     invoke: (command: RuntimeCommand) => Promise<unknown>;
@@ -503,6 +516,8 @@ export async function startPrototype({
             scope: host.scope,
             dataRoot: host.identity?.dataRoot || host.dataRoot,
             socketPath: host.identity?.socketPath || host.socketPath,
+            ...(host.identity?.entry ? { entry: host.identity.entry } : {}),
+            ...(host.identity?.executable ? { executable: host.identity.executable } : {}),
           });
         if (host && url.pathname === '/api/host/update') {
           if (!authority.accepts(req.headers['x-prototype-token']))
@@ -518,6 +533,7 @@ export async function startPrototype({
               !(recovery?.admit() ?? true) ||
               changing.size > 0 ||
               !!models?.bundles.busy ||
+              !!host.environment?.busy ||
               [...(models?.jobs.values() ?? [])].some((job) => job.running),
           );
           // Respond before the CLI drains its HTTP listener. The VM is not part of this handoff.
@@ -532,6 +548,23 @@ export async function startPrototype({
           return json(res, { scope: host.scope, pid: process.pid });
         }
         if (host) releaseUpdate = upgrade.enter();
+        if (host && url.pathname === '/api/host/environment') {
+          if (!authority.accepts(req.headers['x-prototype-token']))
+            throw new Fault('UNAUTHORIZED', 403);
+          if (req.method !== 'POST' || url.search) throw new Fault('INVALID_SETUP_REQUEST', 400);
+          if (!ready || !host.environment) throw new Fault('SETUP_UNAVAILABLE', 503);
+          const request = await body(req),
+            action = request.action;
+          if (
+            Object.keys(request).length !== 2 ||
+            request.scope !== host.scope ||
+            (action !== 'status' && action !== 'start' && action !== 'cancel')
+          )
+            throw new Fault('INVALID_SETUP_REQUEST', 400);
+          const value = await host.environment[action]();
+          if (!isSetupStatus(value)) throw new Fault('SETUP_STORE', 500);
+          return json(res, value);
+        }
         const groupProtocol = req.headers['x-daban-client-protocol'];
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)

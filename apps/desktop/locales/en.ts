@@ -1,4 +1,25 @@
 export const english = {
+  'setup.agentTitle': 'Prepare Daban',
+  'setup.agentWorking': 'Getting Daban ready',
+  'setup.agentDescription':
+    'Download the core components to run Bots, then configure a model to get started. You can add a Linux computer later.',
+  'setup.agentFootnote':
+    'Core components are prepared once and cached locally. The first download requires internet access.',
+  'setup.downloadComponents': 'Download core components',
+  'setup.unpackComponents': 'Unpack core components',
+  'setup.verifyComponents': 'Verify runtime components',
+  'setup.downloadImage': 'Download Linux system',
+  'setup.downloadHelp': 'You can pause the download and resume from saved progress.',
+  'setup.installAgent': 'Prepare core components',
+  'setup.linuxInstall': 'Install Linux computer',
+  'setup.linuxOptional':
+    'Add independent screens, a terminal and shared files for Bots. Chat and local computer control work without it. Install whenever you need it.',
+  'setup.linuxWaiting': 'Installed. Waiting for current tasks to finish before connecting.',
+  'setup.linuxWorking': 'Installing Linux computer',
+  'setup.linuxDownload': 'Download progress',
+  'setup.agentReady': 'Core components are ready',
+  'setup.onDemand': 'Download and install when needed',
+
   'updates.title': 'App updates',
   'updates.version': 'Current version {0}',
   'updates.ready': 'Check stable releases on GitHub',
@@ -2661,7 +2682,7 @@ export const english = {
   'setup.unpackingSystemFilesMayTakeLittleWhile':
     'Unpacking the system files. This may take a little while.',
   'setup.usesGibMemoryGibVirtualDiskDefault':
-    'Uses 3 GiB of memory and a 16 GiB virtual disk by default. Reserve at least 36 GB of free space for first-time setup.',
+    'Uses 4 GiB of memory and a 16 GiB virtual disk by default. Reserve at least 36 GB of free space for first-time setup.',
   'setup.waiting': 'Waiting',
   'setup.workspaceNeedsAttention': 'Your workspace needs attention',
   'setup.workspaceReady': 'Your workspace is ready',

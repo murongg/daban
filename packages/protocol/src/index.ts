@@ -1365,24 +1365,78 @@ export function isRuntimeNoticeStatus(value: unknown): value is RuntimeNoticeSta
     browserCode(value.error)
   );
 }
-export type SetupPhase =
-  | 'existing'
-  | 'available'
-  | 'verifying'
-  | 'extracting'
-  | 'creating'
-  | 'starting'
-  | 'connecting'
-  | 'cancelling'
-  | 'cancelled'
-  | 'complete'
-  | 'failed'
-  | 'unavailable';
+export interface EnvironmentImage {
+  id: string;
+  file: 'system.raw.gz';
+  url: string;
+  bytes: number;
+  sha256: string;
+  rawBytes: number;
+  rawSha256: string;
+}
+export const environmentImage: Readonly<EnvironmentImage> = Object.freeze({
+  id: 'daban-38-0b2c13631d754382',
+  file: 'system.raw.gz',
+  url: 'https://github.com/murongg/daban/releases/download/environment-v38/system.raw.gz',
+  bytes: 1243539382,
+  sha256: '0b2c13631d75438214b32ebe5f016b625e27c993d602019b83eee47e044ebde9',
+  rawBytes: 17179869184,
+  rawSha256: 'e74a74239cb93d057b17d9a7c72f4dfd2fcab051a1be052766ed350f6bb62df7',
+});
+
+export const setupPhases = [
+  'existing',
+  'available',
+  'downloading',
+  'verifying',
+  'extracting',
+  'creating',
+  'starting',
+  'connecting',
+  'waiting',
+  'cancelling',
+  'cancelled',
+  'complete',
+  'failed',
+  'unavailable',
+] as const;
+export type SetupPhase = (typeof setupPhases)[number];
 export interface SetupStatus {
   required: boolean;
   phase: SetupPhase;
+  target?: 'agent' | 'linux';
   progress?: number;
+  downloaded?: number;
+  total?: number;
   error?: string;
+}
+export function isSetupStatus(value: unknown): value is SetupStatus {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return (
+    Object.keys(item).every((key) =>
+      ['required', 'phase', 'target', 'progress', 'downloaded', 'total', 'error'].includes(key),
+    ) &&
+    typeof item.required === 'boolean' &&
+    setupPhases.includes(item.phase as SetupPhase) &&
+    (item.target === undefined || item.target === 'agent' || item.target === 'linux') &&
+    (item.progress === undefined ||
+      (typeof item.progress === 'number' &&
+        Number.isFinite(item.progress) &&
+        item.progress >= 0 &&
+        item.progress <= 100)) &&
+    ((item.downloaded === undefined && item.total === undefined) ||
+      (typeof item.downloaded === 'number' &&
+        Number.isSafeInteger(item.downloaded) &&
+        item.downloaded >= 0 &&
+        typeof item.total === 'number' &&
+        Number.isSafeInteger(item.total) &&
+        item.total > 0 &&
+        item.total <= 4 * 1024 ** 3 &&
+        item.downloaded <= item.total)) &&
+    (item.error === undefined ||
+      (typeof item.error === 'string' && /^[A-Z_]{1,100}$/.test(item.error)))
+  );
 }
 export interface RuntimeSnapshot {
   botCapabilities?: true;

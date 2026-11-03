@@ -4,6 +4,7 @@ import { lstat, mkdir, open, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { migrateBundlePayloads } from '@daban/engine/agent';
 import type { SetupStatus } from '@daban/protocol';
+import { imageFile } from './image.js';
 import {
   type ControlDataPort,
   type MigrationIdentity,
@@ -62,7 +63,7 @@ export function setupPhase(stage: string): SetupStatus['phase'] {
   if (stage === 'bootstrapping' || stage === 'ready') return 'connecting';
   return 'verifying';
 }
-async function atomic(file: string, value: unknown) {
+export async function writeSetupRecord(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${randomUUID()}.tmp`,
     handle = await open(temporary, 'wx', 0o600);
@@ -80,7 +81,7 @@ async function atomic(file: string, value: unknown) {
     await parent.close();
   }
 }
-async function json(file: string): Promise<unknown> {
+export async function readSetupRecord(file: string): Promise<unknown> {
   try {
     const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
@@ -102,7 +103,7 @@ async function json(file: string): Promise<unknown> {
     throw new Error('AGENT_BOOTSTRAP_STORE');
   }
 }
-function config(value: unknown): VmConfig {
+export function parseVmConfig(value: unknown): VmConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('AGENT_VM_CONFIG');
   const v = value as Record<string, unknown>;
@@ -156,13 +157,13 @@ export async function bootstrapAgent(
   const progress = (value: SetupStatus) => {
     // Extraction callbacks are synchronous; serialize their writes so a late callback cannot replace completion.
     progressWrites = progressWrites.then(() =>
-      atomic(path.join(options.dataRoot, 'progress.json'), value),
+      writeSetupRecord(path.join(options.dataRoot, 'progress.json'), value),
     );
     return progressWrites;
   };
   const pause = async () => {
     options.signal?.throwIfAborted();
-    const value = await json(path.join(options.dataRoot, 'cancel.json'));
+    const value = await readSetupRecord(path.join(options.dataRoot, 'cancel.json'));
     options.signal?.throwIfAborted();
     if (value && typeof value === 'object' && 'cancelled' in value && value.cancelled === true) {
       await progress({ required: true, phase: 'cancelled' });
@@ -171,7 +172,7 @@ export async function bootstrapAgent(
   };
   await pause();
   const journal = path.join(options.dataRoot, 'bootstrap.json'),
-    saved = await json(journal);
+    saved = await readSetupRecord(journal);
   let state: State;
   if (saved) {
     if (
@@ -188,31 +189,31 @@ export async function bootstrapAgent(
     )
       throw new Error('AGENT_BOOTSTRAP_STORE');
     state = saved as State;
-    if (state.source !== null) config(state.source);
-    if (state.target) config(state.target);
+    if (state.source !== null) parseVmConfig(state.source);
+    if (state.target) parseVmConfig(state.target);
     if (['restore', 'ready'].includes(state.phase) && !state.target)
       throw new Error('AGENT_BOOTSTRAP_STORE');
   } else {
-    const previous = await json(options.vmConfigFile);
+    const previous = await readSetupRecord(options.vmConfigFile);
     state = {
       version: 1,
       dataRoot: options.dataRoot,
       configFile: options.vmConfigFile,
-      source: previous ? config(previous) : null,
+      source: previous ? parseVmConfig(previous) : null,
       phase: 'snapshot',
     };
-    await atomic(journal, state);
+    await writeSetupRecord(journal, state);
   }
   if (state.phase === 'ready' && state.target) {
-    const existing = await json(options.vmConfigFile);
+    const existing = await readSetupRecord(options.vmConfigFile);
     if (
       existing &&
-      !sameConfig(config(existing), state.target) &&
-      !sameConfig(config(existing), state.source)
+      !sameConfig(parseVmConfig(existing), state.target) &&
+      !sameConfig(parseVmConfig(existing), state.source)
     )
       throw new Error('AGENT_VM_TARGET_CHANGED');
     await pause();
-    await atomic(options.vmConfigFile, state.target);
+    await writeSetupRecord(options.vmConfigFile, state.target);
     await progress({ required: false, phase: 'complete' });
     return state.target;
   }
@@ -266,20 +267,19 @@ export async function bootstrapAgent(
   }
   await pause();
   state.phase = 'provision';
-  await atomic(journal, state);
+  await writeSetupRecord(journal, state);
   await progress({ required: true, phase: 'verifying' });
   await pause();
   state.target = await (
     dependencies.provision ??
     ((opts) =>
       ensureExecutionVm(opts, {
-        progress: (stage, percent) => {
+        progress: (stage, percent) =>
           progress({
             required: true,
             phase: setupPhase(stage),
             ...(percent === undefined ? {} : { progress: percent }),
-          }).catch(() => {});
-        },
+          }),
       }))
   )({
     directory: path.join(options.dataRoot, 'execution'),
@@ -287,9 +287,35 @@ export async function bootstrapAgent(
     executorArchive: options.executorArchive,
     limactl: options.limactl,
     vm: target.vm,
+    checkpoint: async () => {
+      await progressWrites;
+      await pause();
+    },
+    imageSource: async () => {
+      await pause();
+      try {
+        const file = await imageFile({
+          dataRoot: options.dataRoot,
+          packDirectory: options.packDirectory,
+          signal: options.signal,
+          progress: ({ received, total }) =>
+            progress({
+              required: true,
+              phase: 'downloading',
+              downloaded: received,
+              total,
+              progress: Math.floor((received / total) * 100),
+            }).catch(() => {}),
+        });
+        await pause();
+        return file;
+      } finally {
+        await progressWrites;
+      }
+    },
   });
   state.phase = 'restore';
-  await atomic(journal, state);
+  await writeSetupRecord(journal, state);
   await pause();
   if (manifests) {
     if (!options.restoreHelper && !dependencies.restore) throw new Error('AGENT_RESTORE_REQUIRED');
@@ -306,18 +332,18 @@ export async function bootstrapAgent(
       cacheDirectory: path.join(options.dataRoot, 'public-transfer'),
     });
   }
-  const existing = await json(options.vmConfigFile);
+  const existing = await readSetupRecord(options.vmConfigFile);
   if (
     existing &&
-    !sameConfig(config(existing), state.source) &&
-    !sameConfig(config(existing), state.target)
+    !sameConfig(parseVmConfig(existing), state.source) &&
+    !sameConfig(parseVmConfig(existing), state.target)
   )
     throw new Error('AGENT_VM_TARGET_CHANGED');
   await pause();
   state.phase = 'ready';
-  await atomic(journal, state);
+  await writeSetupRecord(journal, state);
   await pause();
-  await atomic(options.vmConfigFile, state.target);
+  await writeSetupRecord(options.vmConfigFile, state.target);
   await progress({ required: false, phase: 'complete' });
   return state.target;
 }

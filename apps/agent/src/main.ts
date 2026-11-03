@@ -17,6 +17,7 @@ import type {
 } from '@daban/protocol';
 import { type BootstrapOptions, bootstrapAgent } from './bootstrap.js';
 import { ExecutionConnection } from './connection.js';
+import { Environment } from './environment.js';
 import { startupErrorCode, writeStartupFailure } from './failure.js';
 import { HostPower, type PowerOptions } from './power.js';
 import { resolveSdk } from './sdk.js';
@@ -64,6 +65,10 @@ interface Power {
   close(): Promise<unknown>;
 }
 export interface MainDependencies {
+  platform?: NodeJS.Platform;
+  native?: (
+    options: Parameters<typeof startNativeAgent>[0],
+  ) => Promise<{ close(): Promise<unknown> }>;
   tools(options: {
     dataRoot: string;
     vmConfigFile: string;
@@ -153,7 +158,31 @@ export async function startAgentProcess(
 ) {
   if (options.mode === 'native') {
     const scope = agentScope(options.dataRoot, options.vmConfigFile);
-    const native = await startNativeAgent({
+    const environment =
+      (factory.platform ?? process.platform) === 'darwin'
+        ? new Environment({
+            dataRoot: options.dataRoot,
+            vmConfigFile: options.vmConfigFile,
+            prepare: async (installSignal) => {
+              const payload = factory.assets ?? assets();
+              const limactl = await factory.tools({
+                dataRoot: options.dataRoot,
+                vmConfigFile: options.vmConfigFile,
+                packDirectory: payload.packDirectory,
+              });
+              installSignal.throwIfAborted();
+              return factory.bootstrap({ ...payload, ...options, limactl, signal: installSignal });
+            },
+          })
+        : undefined;
+    const native = await (factory.native ?? startNativeAgent)({
+      environment,
+      identity: {
+        dataRoot: options.dataRoot,
+        socketPath: options.socketPath,
+        entry: fileURLToPath(import.meta.url),
+        executable: process.execPath,
+      },
       onUpdate,
       dataRoot: options.dataRoot,
       socketPath: options.socketPath,
@@ -163,7 +192,15 @@ export async function startAgentProcess(
       nativeWorkspace: path.join(options.dataRoot, 'workspace'),
       localComputer: new LocalComputerClient(options.dataRoot),
     });
-    return { scope, close: native.close };
+    // Only the process that acquired the private server may resume an interrupted installer.
+    await environment?.resumePending();
+    return {
+      scope,
+      close: async () => {
+        await environment?.close();
+        await native.close();
+      },
+    };
   }
   let link: Link | undefined,
     connection: Connection | undefined,
@@ -312,6 +349,12 @@ export async function startAgentProcess(
       },
     };
     core = await factory.core({
+      identity: {
+        dataRoot: options.dataRoot,
+        socketPath: options.socketPath,
+        entry: fileURLToPath(import.meta.url),
+        executable: process.execPath,
+      },
       onUpdate,
       dataRoot: options.dataRoot,
       socketPath: options.socketPath,

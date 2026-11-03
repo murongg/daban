@@ -215,7 +215,26 @@ export class Daemon {
     if (existing) return existing;
     const domain = `gui/${this.uid}`;
     const target = `${domain}/${this.label}`;
-    if ((await this.command(['print', target])).code !== 0) {
+    let registered = await this.command(['print', target]);
+    if (
+      registered.code === 0 &&
+      registered.stdout.includes('program =') &&
+      (!registered.stdout.includes(this.config.executable) ||
+        !registered.stdout.includes(this.config.entry))
+    ) {
+      // An authenticated handoff exits successfully. Never unload a booting or running owner.
+      if (
+        !/^\s*state = not running\s*$/m.test(registered.stdout) ||
+        !/^\s*last exit code = 0\s*$/m.test(registered.stdout) ||
+        /^\s*pid = /m.test(registered.stdout)
+      )
+        throw Error('AGENT_UPDATE_BUSY');
+      if ((await this.command(['bootout', target])).code !== 0)
+        throw Error('AGENT_DAEMON_UNAVAILABLE');
+      registered = await this.command(['print', target]);
+      if (registered.code !== 113) throw Error('AGENT_DAEMON_UNAVAILABLE');
+    }
+    if (registered.code !== 0) {
       const log = join(this.config.dataRoot, 'agent.log');
       await this.privateFile(log, '');
       const plist = join(this.config.dataRoot, 'agent.plist');
