@@ -15,10 +15,11 @@ import type {
   RecoveryReview,
   RuntimeCommand,
 } from '@daban/protocol';
-import { type BootstrapOptions, bootstrapAgent } from './bootstrap.js';
+import { type BootstrapOptions, bootstrapAgent, writeSetupRecord } from './bootstrap.js';
 import { ExecutionConnection } from './connection.js';
 import { Environment } from './environment.js';
 import { startupErrorCode, writeStartupFailure } from './failure.js';
+import { linuxAssets } from './linux.js';
 import { HostPower, type PowerOptions } from './power.js';
 import { resolveSdk } from './sdk.js';
 import {
@@ -41,6 +42,8 @@ interface Assets {
   executorArchive: string;
   sourceHelper: string;
   restoreHelper: string;
+  limaArchive?: string;
+  limaDigest?: string;
 }
 type Link = Pick<VmLink, 'ensure' | 'reconnect' | 'state' | 'startVm' | 'stopVm' | 'close'>;
 interface Connection extends Executor {
@@ -73,6 +76,8 @@ export interface MainDependencies {
     dataRoot: string;
     vmConfigFile: string;
     packDirectory: string;
+    archive?: string;
+    digest?: string;
   }): Promise<string>;
   bootstrap(options: BootstrapOptions): Promise<VmConfig>;
   link(config: VmConfig, socketPath: string): Link;
@@ -142,10 +147,35 @@ export function agentVmTarget(config: VmConfig) {
     )
     .digest('hex');
 }
-function assets(): Assets {
+async function assets(dataRoot: string, signal?: AbortSignal): Promise<Assets> {
+  // Drain queued progress writes before bootstrap or pause can publish a newer phase.
+  let progressWrites: Promise<unknown> = Promise.resolve();
+  let payload: Awaited<ReturnType<typeof linuxAssets>>;
+  try {
+    payload = await linuxAssets({
+      dataRoot,
+      entryDirectory: fileURLToPath(new URL('.', import.meta.url)),
+      signal,
+      progress: ({ received, total }) => {
+        progressWrites = progressWrites
+          .then(() =>
+            writeSetupRecord(path.join(dataRoot, 'progress.json'), {
+              required: true,
+              target: 'linux',
+              phase: 'downloading',
+              downloaded: received,
+              total,
+              progress: Math.floor((received / total) * 100),
+            }),
+          )
+          .catch(() => console.error('Linux download progress could not be saved'));
+      },
+    });
+  } finally {
+    await progressWrites;
+  }
   return {
-    packDirectory: fileURLToPath(new URL('../environment', import.meta.url)),
-    executorArchive: fileURLToPath(new URL('./executor.tar.gz', import.meta.url)),
+    ...payload,
     sourceHelper: fileURLToPath(new URL('./source-reader.mjs', import.meta.url)),
     restoreHelper: fileURLToPath(new URL('./restore-worker.mjs', import.meta.url)),
   };
@@ -164,11 +194,13 @@ export async function startAgentProcess(
             dataRoot: options.dataRoot,
             vmConfigFile: options.vmConfigFile,
             prepare: async (installSignal) => {
-              const payload = factory.assets ?? assets();
+              const payload = factory.assets ?? (await assets(options.dataRoot, installSignal));
               const limactl = await factory.tools({
                 dataRoot: options.dataRoot,
                 vmConfigFile: options.vmConfigFile,
                 packDirectory: payload.packDirectory,
+                archive: payload.limaArchive,
+                digest: payload.limaDigest,
               });
               installSignal.throwIfAborted();
               return factory.bootstrap({ ...payload, ...options, limactl, signal: installSignal });
@@ -236,11 +268,13 @@ export async function startAgentProcess(
   try {
     signal?.throwIfAborted();
     await assertSetupRunning(options.dataRoot);
-    const payload = factory.assets ?? assets();
+    const payload = factory.assets ?? (await assets(options.dataRoot, signal));
     const limactl = await factory.tools({
       dataRoot: options.dataRoot,
       vmConfigFile: options.vmConfigFile,
       packDirectory: payload.packDirectory,
+      archive: payload.limaArchive,
+      digest: payload.limaDigest,
     });
     signal?.throwIfAborted();
     const config = await factory.bootstrap({

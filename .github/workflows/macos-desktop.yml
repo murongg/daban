@@ -102,6 +102,9 @@ jobs:
           path: |
             ${{ runner.temp }}/runtime/Daban-runtime-macos-arm64.zip
             ${{ runner.temp }}/runtime/runtime-macos-arm64.json
+            ${{ runner.temp }}/runtime/Daban-lima-macos-arm64.tar.gz
+            ${{ runner.temp }}/runtime/Daban-executor-linux-arm64.tar.gz
+            ${{ runner.temp }}/runtime/linux.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 7

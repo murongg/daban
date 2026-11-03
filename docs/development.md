@@ -105,7 +105,7 @@ Linux CI 先安装桌面运行依赖并构建全部工作区，完整执行一�
 npm run bundle:desktop -- /absolute/path/to/environment-pack /absolute/path/to/new-output /absolute/path/to/node-24.22.1
 ```
 
-输出目录必须尚不存在。成功后在该目录生成 `Daban.app`，包含 Electron、界面、宿主机后台及独立 Linux 执行环境，无需用户另外安装 Docker、Node.js 或 DSH。
+输出目录必须尚不存在。成功后在该目录生成 `Daban.app`。客户端首次下载后台、Node.js 和 DSH；Lima、Linux 执行程序和系统镜像在用户安装 Linux 环境时按需下载，无需用户另外安装 Docker、Node.js 或 DSH。
 
 当前构建器固定使用已封存的 38 版无凭据基础镜像，并叠加当前执行端；环境包须匹配构建器校验，不能任意替换。环境准备与校验代码见 [environment.ts](../tools/environment.ts)、[guest.ts](../tools/guest.ts) 和 [desktop.ts](../tools/desktop.ts)。本地打包使用临时签名；正式发行由 [CI 与 Release](releasing.md) 中的工作流完成 Developer ID 签名和 Apple 公证，应用内更新见[应用更新](zh-CN/updates.md)。
 
@@ -147,7 +147,7 @@ macOS 的连接配置位于 `~/Library/Application Support/daban-preview/runtime
 
 Build the workspace first. Runtime components are separate immutable release assets, keyed by a source/dependency fingerprint. Renderer-only changes reuse the same runtime. Never package a user VM or move an existing runtime tag.
 
-- `tools/component.ts build <new-output> <Node24.22.1-folder> [clean-environment-pack]` builds the host component. Mac requires Developer ID and notarization credentials, and the pack contains only manifest, pinned Lima tools and notices; the Linux image is fetched by the host on explicit installation.
+- `tools/component.ts build <new-output> <Node24.22.1-folder> [clean-environment-pack]` builds the host component. Mac requires Developer ID and notarization credentials. Lima and the current Linux executor are published as separate, hash-pinned assets; the host contains only their references and small environment metadata. Both executable assets and the Linux image are downloaded on explicit Linux installation.
 - `tools/component.ts reference <runtime.zip> <reference.json>` pins its size and SHA256 into the client.
 - `tools/desktop.ts <reference.json> <new-output>` and `tools/windows.ts <new-output> <reference.json>` assemble small clients.
 - The **Signed macOS desktop** workflow can validate signing, notarization and both Mac download formats without publishing a desktop release. **Native desktop** validates Windows component extraction, cached first-use startup and NSIS packaging.

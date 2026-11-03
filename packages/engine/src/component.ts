@@ -11,6 +11,12 @@ export interface ComponentIndex {
   id: string;
   assets: ComponentAsset[];
 }
+export interface LinuxIndex {
+  version: 1;
+  id: string;
+  lima: Pick<Payload, 'bytes' | 'sha256'>;
+  executor: Pick<Payload, 'bytes' | 'sha256'>;
+}
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 function asset(value: unknown): ComponentAsset {
@@ -70,5 +76,27 @@ export function componentPayload(id: string, value: ComponentAsset): Payload {
     url: `https://github.com/murongg/daban/releases/download/${tag}/${componentFilename(item)}`,
     bytes: item.bytes,
     sha256: item.sha256,
+  };
+}
+
+export function linuxIndex(value: unknown, id: string): LinuxIndex {
+  componentTag(id);
+  if (!record(value) || Object.keys(value).length !== 4 || value.version !== 1 || value.id !== id)
+    throw Error('COMPONENT_MANIFEST');
+  const payload = (item: unknown) => {
+    if (!record(item) || Object.keys(item).length !== 2) throw Error('COMPONENT_MANIFEST');
+    const checked = asset({ ...item, platform: 'darwin', arch: 'arm64' });
+    return { bytes: checked.bytes, sha256: checked.sha256 };
+  };
+  return { version: 1, id, lima: payload(value.lima), executor: payload(value.executor) };
+}
+export function linuxFilename(kind: 'lima' | 'executor') {
+  return kind === 'lima' ? 'Daban-lima-macos-arm64.tar.gz' : 'Daban-executor-linux-arm64.tar.gz';
+}
+export function linuxPayload(index: LinuxIndex, kind: 'lima' | 'executor'): Payload {
+  const checked = linuxIndex(index, index.id);
+  return {
+    url: `https://github.com/murongg/daban/releases/download/${componentTag(checked.id)}/${linuxFilename(kind)}`,
+    ...checked[kind],
   };
 }

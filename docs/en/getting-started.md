@@ -38,4 +38,4 @@ Start with [Troubleshooting](troubleshooting.md) when something goes wrong. Pres
 
 ## Optional Linux computer
 
-The small client downloads and caches the core Agent components on first use. Configure a model to start chatting; no VM is required. Add a Linux computer later from the computer panel or runtime settings. Its system image downloads only when you choose to install it. Downloads support pause and resume, and existing installations are reused. Linux is currently available on Apple silicon Macs; Windows uses the local desktop.
+The small client downloads and caches the background service, Node.js, and DSH on first use. Configure a model to start chatting; no VM is required. Add a Linux computer later from the computer panel or runtime settings. Lima tools, the Linux executor, and the system image download only when you choose to install Linux. Downloads support pause and resume, and verified caches and existing installations are reused. Reserve 40 GB of free disk space for the first Linux installation. Linux is currently available on Apple silicon Macs; Windows uses the local desktop.

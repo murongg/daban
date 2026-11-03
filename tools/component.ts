@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   appendFile,
+  copyFile,
   mkdir,
   mkdtemp,
   readdir,
@@ -13,17 +14,24 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { componentFilename, componentIndex, componentTag } from '@daban/engine/component';
+import {
+  componentFilename,
+  componentIndex,
+  componentTag,
+  type LinuxIndex,
+  linuxFilename,
+  linuxIndex,
+} from '@daban/engine/component';
 import {
   componentPaths,
   extractComponent,
   verifyComponent,
 } from '../apps/desktop/electron/component-install.ts';
 import { fetchComponent, publishComponent } from './component-release.ts';
-import { assembleComponent, componentSourceId } from './components.ts';
+import { assembleComponent, assembleLinux, componentSourceId, verifyLinux } from './components.ts';
 import { hashAsset } from './environment.ts';
-import { materializeHost, sealHostPackage } from './roles.ts';
-import { signComponent } from './sign.ts';
+import { materializeHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
+import { signComponent, signLinux } from './sign.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const [action, input, nodeDirectory, environmentDirectory] = process.argv.slice(2);
@@ -44,6 +52,15 @@ if (action === 'id') console.log(componentTag(id));
 else if (action === 'fetch') {
   assert.ok(input && process.env.GITHUB_OUTPUT, 'COMPONENT_ARGUMENTS');
   const cached = await fetchComponent(componentTag(id), filename, path.resolve(input));
+  if (cached && platform === 'darwin') {
+    for (const name of ['linux.json', linuxFilename('lima'), linuxFilename('executor')]) {
+      assert.ok(
+        await fetchComponent(componentTag(id), name, path.resolve(input)),
+        'COMPONENT_RELEASE_ASSETS',
+      );
+    }
+    await verifyLinux(input, id);
+  }
   await appendFile(process.env.GITHUB_OUTPUT, `cached=${cached}\n`);
 } else if (action === 'publish') {
   assert.ok(input && process.env.EXPECTED_COMMIT, 'COMPONENT_ARGUMENTS');
@@ -59,42 +76,75 @@ else if (action === 'fetch') {
     }
   }
   assert.equal(files.length, 2, 'COMPONENT_RELEASE_ASSETS');
+  await verifyLinux(input, id);
+  for (const kind of ['lima', 'executor'] as const)
+    files.push(path.join(input, linuxFilename(kind)));
+  files.push(path.join(input, 'linux.json'));
   await publishComponent(componentTag(id), process.env.EXPECTED_COMMIT, files);
 } else if (action === 'build') {
   assert.ok(input && nodeDirectory, 'COMPONENT_ARGUMENTS');
   const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-  console.time('runtime:assemble');
-  const result = await assembleComponent({
-    output: path.resolve(input),
-    nodeDirectory: path.resolve(nodeDirectory),
-    environmentDirectory: environmentDirectory && path.resolve(environmentDirectory),
-    platform,
-    arch,
-    version,
-    id,
-  });
-  console.timeEnd('runtime:assemble');
-  const archive = path.resolve(input, filename);
-  if (process.platform === 'darwin') {
-    if (process.env.MACOS_SIGNING_IDENTITY)
-      await signComponent(result.directory, archive, {
-        identity: process.env.MACOS_SIGNING_IDENTITY,
-        keychain: process.env.MACOS_KEYCHAIN,
-      });
-    else throw Error('DEVELOPER_ID_REQUIRED');
-  } else {
-    // Seal after materialization so the archive includes every dependency independently of build-machine links.
-    console.time('runtime:materialize');
-    await materializeHost(result.agent);
-    console.timeEnd('runtime:materialize');
-    console.time('runtime:seal');
-    await sealHostPackage(result.agent);
-    console.timeEnd('runtime:seal');
-    console.time('runtime:archive');
-    execFileSync('tar.exe', ['-a', '-cf', archive, '-C', path.resolve(input), 'DabanRuntime']);
-    console.timeEnd('runtime:archive');
+  const signing = {
+    identity: process.env.MACOS_SIGNING_IDENTITY ?? '',
+    keychain: process.env.MACOS_KEYCHAIN,
+  };
+  let linuxReference: LinuxIndex | undefined;
+  let linuxDirectory: string | undefined;
+  if (platform === 'darwin') {
+    assert.ok(environmentDirectory, 'COMPONENT_ENVIRONMENT');
+    if (!signing.identity) throw Error('DEVELOPER_ID_REQUIRED');
+    linuxDirectory = await mkdtemp(path.join(tmpdir(), 'daban-linux-release-'));
+    try {
+      linuxReference = await assembleLinux(
+        { output: linuxDirectory, environmentDirectory: path.resolve(environmentDirectory), id },
+        (resources) => signLinux(resources, signing),
+      );
+    } catch (error) {
+      await rm(linuxDirectory, { recursive: true, force: true });
+      throw error;
+    }
   }
-  console.log(archive);
+  try {
+    console.time('runtime:assemble');
+    const result = await assembleComponent({
+      output: path.resolve(input),
+      nodeDirectory: path.resolve(nodeDirectory),
+      environmentDirectory: linuxDirectory && path.join(linuxDirectory, 'environment'),
+      linuxReference,
+      platform,
+      arch,
+      version,
+      id,
+    });
+    console.timeEnd('runtime:assemble');
+    const archive = path.resolve(input, filename);
+    if (linuxDirectory) {
+      for (const name of ['linux.json', linuxFilename('lima'), linuxFilename('executor')])
+        await copyFile(path.join(linuxDirectory, name), path.join(input, name));
+    }
+    if (process.platform === 'darwin') {
+      if (process.env.MACOS_SIGNING_IDENTITY)
+        await signComponent(result.directory, archive, {
+          identity: process.env.MACOS_SIGNING_IDENTITY,
+          keychain: process.env.MACOS_KEYCHAIN,
+        });
+      else throw Error('DEVELOPER_ID_REQUIRED');
+    } else {
+      // Seal after materialization so the archive includes every dependency independently of build-machine links.
+      console.time('runtime:materialize');
+      await materializeHost(result.agent);
+      console.timeEnd('runtime:materialize');
+      console.time('runtime:seal');
+      await sealHostPackage(result.agent);
+      console.timeEnd('runtime:seal');
+      console.time('runtime:archive');
+      execFileSync('tar.exe', ['-a', '-cf', archive, '-C', path.resolve(input), 'DabanRuntime']);
+      console.timeEnd('runtime:archive');
+    }
+    console.log(archive);
+  } finally {
+    if (linuxDirectory) await rm(linuxDirectory, { recursive: true, force: true });
+  }
 } else if (action === 'validate') {
   assert.ok(input && nodeDirectory && environmentDirectory, 'COMPONENT_ARGUMENTS');
   const reference = componentIndex(JSON.parse(await readFile(environmentDirectory, 'utf8')), id);
@@ -122,6 +172,16 @@ else if (action === 'fetch') {
       publisher: path.resolve(input),
     });
     console.timeEnd('runtime:verify');
+    if (platform === 'darwin') {
+      const directory = path.dirname(archive);
+      const entry = componentPaths(stage, platform).entry;
+      const linux = linuxIndex(
+        JSON.parse(await readFile(path.join(path.dirname(entry), 'linux.json'), 'utf8')),
+        id,
+      );
+      assert.deepEqual(linux, await verifyLinux(directory, id));
+      await verifyExecutorBuild(path.join(directory, linuxFilename('executor')));
+    }
     assert.equal(
       execFileSync(componentPaths(stage, platform).executable, ['--version'], {
         encoding: 'utf8',

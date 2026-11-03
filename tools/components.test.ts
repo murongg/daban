@@ -1,8 +1,10 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { linuxFilename } from '@daban/engine/component';
 import { expect, test } from 'vitest';
-import { assembleComponent, componentSourceId } from './components.ts';
+import { assembleComponent, assembleLinux, componentSourceId, verifyLinux } from './components.ts';
+import { hashAsset } from './environment.ts';
 
 test('component identity follows runtime sources and dependencies, independently of renderer edits', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-component-source-'));
@@ -105,19 +107,68 @@ test('component identity follows runtime sources and dependencies, independently
   expect(await componentSourceId(root)).not.toBe(fourth);
 });
 
-test('assembles a host component without Electron, renderer assets or a Linux disk image', async (t) => {
+test('pins optional payloads after Lima signing and keeps their metadata separate from executable bytes', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-linux-layout-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const events: string[] = [];
+  const reference = await assembleLinux(
+    { output: root, environmentDirectory: '/synthetic/environment', id: 'a'.repeat(64) },
+    async (resources) => {
+      events.push('signed');
+      await writeFile(path.join(resources, 'environment/lima.tar.gz'), 'SYNTHETIC SIGNED LIMA');
+    },
+    {
+      tools: async (_source, target) => {
+        await mkdir(target);
+        await writeFile(path.join(target, 'lima.tar.gz'), 'SYNTHETIC UNSIGNED LIMA');
+        await writeFile(path.join(target, 'manifest.json'), '{}');
+        await writeFile(path.join(target, 'COMPONENTS.md'), 'SYNTHETIC NOTICES');
+      },
+      executor: async (target) => {
+        events.push('executor');
+        await writeFile(target, 'SYNTHETIC EXECUTOR');
+      },
+    },
+  );
+  expect(events).toStrictEqual(['executor', 'signed']);
+  for (const kind of ['lima', 'executor'] as const) {
+    const hash = await hashAsset(path.join(root, linuxFilename(kind)), 'sha256');
+    expect(reference[kind]).toStrictEqual({ bytes: hash.bytes, sha256: hash.digest });
+  }
+  expect(JSON.parse(await readFile(path.join(root, 'linux.json'), 'utf8'))).toStrictEqual(
+    reference,
+  );
+  expect(await verifyLinux(root, reference.id)).toStrictEqual(reference);
+  await writeFile(path.join(root, linuxFilename('executor')), 'SYNTHETIC CORRUPT EXECUTOR');
+  await expect(verifyLinux(root, reference.id)).rejects.toThrowError(/COMPONENT_RELEASE_INTEGRITY/);
+  await expect(lstat(path.join(root, 'environment/lima.tar.gz'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  });
+});
+
+test('assembles a host component that pins optional Linux resources without bundling them', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-component-layout-'));
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
   const platforms =
     process.platform === 'win32' ? (['win32'] as const) : (['darwin', 'win32'] as const);
+  const environmentDirectory = path.join(root, 'synthetic-environment');
+  await mkdir(environmentDirectory);
+  await writeFile(path.join(environmentDirectory, 'manifest.json'), '{}');
+  await writeFile(path.join(environmentDirectory, 'COMPONENTS.md'), 'SYNTHETIC NOTICES');
   for (const platform of platforms) {
     const id = 'd'.repeat(64);
-    let tools = 0;
+    const linux = {
+      version: 1 as const,
+      id,
+      lima: { bytes: 512, sha256: 'a'.repeat(64) },
+      executor: { bytes: 128, sha256: 'b'.repeat(64) },
+    };
     const result = await assembleComponent(
       {
         output: path.join(root, platform),
         nodeDirectory: path.join(root, 'synthetic-node'),
-        environmentDirectory: path.join(root, 'synthetic-environment'),
+        linuxReference: platform === 'darwin' ? linux : undefined,
+        environmentDirectory,
         platform,
         arch: platform === 'darwin' ? 'arm64' : 'x64',
         version: '0.1.0-synthetic',
@@ -134,14 +185,6 @@ test('assembles a host component without Electron, renderer assets or a Linux di
             'SYNTHETIC NODE',
             { mode: 0o700 },
           );
-        },
-        tools: async (_source, target) => {
-          tools++;
-          await mkdir(target);
-          await writeFile(path.join(target, 'lima.tar.gz'), 'SYNTHETIC VERIFIED VM TOOLS');
-        },
-        executor: async (target) => {
-          await writeFile(target, 'SYNTHETIC EXECUTOR');
         },
       },
     );
@@ -160,7 +203,15 @@ test('assembles a host component without Electron, renderer assets or a Linux di
       code: 'ENOENT',
     });
     if (platform === 'darwin') {
-      expect(tools).toBe(1);
+      expect(
+        JSON.parse(await readFile(path.join(result.agent, 'linux.json'), 'utf8')),
+      ).toStrictEqual(linux);
+      await expect(
+        lstat(path.join(result.resources, 'environment/lima.tar.gz')),
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(lstat(path.join(result.agent, 'executor.tar.gz'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
       const entry = path.join(result.directory, 'Contents/MacOS/agent');
       expect((await lstat(entry)).isFile()).toBe(true);
       await expect(lstat(path.join(result.agent, 'node/bin/node'))).rejects.toMatchObject({
@@ -171,6 +222,6 @@ test('assembles a host component without Electron, renderer assets or a Linux di
           'dev.daban.runtime',
         ),
       );
-    } else expect(tools).toBe(0);
+    }
   }
 });

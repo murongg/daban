@@ -21,6 +21,8 @@ interface ToolOptions {
   dataRoot: string;
   vmConfigFile: string;
   packDirectory: string;
+  archive?: string;
+  digest?: string;
 }
 interface ToolDependencies {
   digest?: string;
@@ -137,7 +139,7 @@ export async function ensureLima(options: ToolOptions, dependencies: ToolDepende
     return ownedExecutable(path.join(tools, 'bin/limactl'));
   }
   const manifest = await json(path.join(options.packDirectory, 'manifest.json'), false);
-  const expected = dependencies.digest ?? limaDigest;
+  const expected = dependencies.digest ?? options.digest ?? limaDigest;
   if (
     !object(manifest) ||
     !object(manifest.lima) ||
@@ -148,7 +150,7 @@ export async function ensureLima(options: ToolOptions, dependencies: ToolDepende
     Number(manifest.lima.bytes) > 512 * 1024 * 1024
   )
     throw new Error('AGENT_TOOLS_INTEGRITY');
-  const archive = path.join(options.packDirectory, 'lima.tar.gz');
+  const archive = options.archive ?? path.join(options.packDirectory, 'lima.tar.gz');
   const handle = await open(archive, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const before = await handle.stat();
