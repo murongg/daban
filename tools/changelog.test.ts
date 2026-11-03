@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { translateChangelog } from './changelog.ts';
+import { changelogBase, translateChangelog } from './changelog.ts';
 
 const config = {
   url: 'https://models.example.test/v1',
@@ -42,4 +42,23 @@ test('does not publish partial translations or hide provider failures', async ()
     Response.json({ choices: [{ message: { content: '{}' }, finish_reason: 'length' }] }),
   ])
     await assert.rejects(translateChangelog('synthetic records', config, async () => response));
+});
+
+test('changelog comparison uses the previous published version, never an unfinished Git tag or runtime release', () => {
+  assert.equal(
+    changelogBase({ tag_name: 'v1.0.0', draft: false, prerelease: false }, 'v1.0.2'),
+    'v1.0.0',
+  );
+  assert.throws(
+    () =>
+      changelogBase(
+        { tag_name: 'runtime-' + 'a'.repeat(24), draft: false, prerelease: true },
+        'v1.0.2',
+      ),
+    /CHANGELOG_BASE_INVALID/,
+  );
+  assert.throws(
+    () => changelogBase({ tag_name: 'v1.0.2', draft: false, prerelease: false }, 'v1.0.2'),
+    /CHANGELOG_ALREADY_PUBLISHED/,
+  );
 });

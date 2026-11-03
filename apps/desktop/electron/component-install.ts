@@ -114,7 +114,8 @@ export async function verifyComponent(
           '--deep',
           '--strict',
           '-R',
-          `anchor apple generic and identifier "dev.daban.runtime" and certificate leaf[subject.OU] = "${team}"`,
+          // codesign treats plain text as a file path; '=' selects an inline requirement.
+          `=anchor apple generic and identifier "dev.daban.runtime" and certificate leaf[subject.OU] = "${team}"`,
           root,
         ],
         options.signal,

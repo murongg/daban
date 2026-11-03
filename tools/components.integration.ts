@@ -43,6 +43,14 @@ test('the Mac component layout supports a sealed shared executable without dupli
   await sealHostPackage(result.agent);
   await run('/usr/bin/codesign', ['--force', '--sign', '-', result.directory]);
   await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', result.directory]);
+  await run('/usr/bin/codesign', [
+    '--verify',
+    '--deep',
+    '--strict',
+    '-R',
+    '=identifier "dev.daban.runtime"',
+    result.directory,
+  ]);
   const detail = await run('/usr/bin/codesign', ['-d', '--verbose=2', result.directory]);
   assert.match(detail.stderr, /Identifier=dev\.daban\.runtime/);
 });
