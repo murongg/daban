@@ -14,6 +14,7 @@ import { RuntimeProvider } from '../../app/Runtime';
 import { reduce } from '../../app/state';
 import { Workspace } from '../../app/Workspace';
 import { demoState as initialState } from '../../test/fixtures';
+import { mockViewport } from '../../test/viewport';
 import { Conversation } from '../chat/Conversation';
 
 const content = '---\nname: mock-workflow\ndescription: 合成汇总工作流\n---\n只整理合成记录。';
@@ -33,7 +34,7 @@ afterEach(() => {
   Reflect.deleteProperty(window, 'daban');
   localStorage.clear();
 });
-function connect(extraBot?: string, system = false) {
+function connect(extraBot?: string, system = false, count = 1) {
   let document: SkillDocument = {
       ...structuredClone(original),
       ...(!system ? { ownerBot: agentId(initialState().bots[0].id) } : {}),
@@ -83,7 +84,12 @@ function connect(extraBot?: string, system = false) {
           items:
             command.includeDeleted === document.deleted ||
             (!command.includeDeleted && !document.deleted)
-              ? [entry(command.bot)]
+              ? Array.from({ length: count }, (_, index) => ({
+                  ...entry(command.bot),
+                  ...(count > 1
+                    ? { id: `mock-skill-${index}`, name: `SYNTHETIC SKILL ${index}` }
+                    : {}),
+                }))
               : [],
         },
       };
@@ -368,4 +374,16 @@ it('keeps a system skill readable and independently switchable while protecting 
   await userEvent.click(screen.getByRole('button', { name: '查看 mock-workflow' }));
   expect(await screen.findByRole('textbox', { name: '技能说明' })).toHaveAttribute('readonly');
   expect(screen.getByRole('button', { name: '保存技能' })).toBeDisabled();
+});
+
+it('mounts a bounded skill catalog without losing its controls', async () => {
+  const restore = mockViewport();
+  try {
+    connect(undefined, false, 1000);
+    mount();
+    await screen.findByText('SYNTHETIC SKILL 0');
+    await waitFor(() => expect(screen.queryAllByText(/^SYNTHETIC SKILL/).length).toBeLessThan(80));
+  } finally {
+    restore();
+  }
 });

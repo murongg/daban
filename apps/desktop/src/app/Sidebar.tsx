@@ -23,7 +23,8 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { type Dispatch, type RefObject, useCallback, useEffect, useState } from 'react';
+import { type Dispatch, type RefObject, useCallback, useEffect, useMemo, useState } from 'react';
+import { WindowList } from '../components/collection/WindowList';
 import { IconButton } from '../components/controls/Button';
 import { Avatar, Brand } from '../features/bots/Avatar';
 import { t, useLocale } from '../i18n/locale';
@@ -69,6 +70,7 @@ export function Sidebar({
     anchor: SidebarAnchor;
   }>();
   const [edit, setEdit] = useState<SectionEdit>();
+  const [retainedBot, setRetainedBot] = useState('');
   const organization = state.organization;
   // biome-ignore lint/correctness/useExhaustiveDependencies: View, conversation and search define the transient menu's lifetime.
   useEffect(() => {
@@ -81,7 +83,10 @@ export function Sidebar({
         const focusId = menu.focusId;
         queueMicrotask(() => {
           // A following editor owns focus; moving a pinned row must not steal it back.
-          if (!document.getElementById('root')?.inert) document.getElementById(focusId)?.focus();
+          if (!document.getElementById('root')?.inert)
+            (
+              document.getElementById(focusId) || document.getElementById('sidebar-create-section')
+            )?.focus();
         });
       }
     },
@@ -98,6 +103,7 @@ export function Sidebar({
       });
   }, [edit]);
   function openMenu(kind: 'bot' | 'section', id: string, element: HTMLElement) {
+    if (kind === 'bot') setRetainedBot(id);
     const rect = element.getBoundingClientRect();
     setMenu((current) =>
       current?.kind === kind && current.id === id
@@ -114,16 +120,47 @@ export function Sidebar({
     ? (runtime.snapshot.interactions || []).filter((item) => item.status === 'pending').length
     : state.approvals.filter((a) => a.status === 'pending').length;
   // Shipped demo previews are not runtime history; search the user's retained messages instead.
-  const filtered = state.bots
-    .filter((b) => !b.archived)
-    .filter((b) =>
-      `${b.name} ${b.role} ${runtime.enabled ? '' : b.preview} ${(state.messages[b.id] || [])
-        .filter((message) => !runtime.enabled || !demoIds.has(message.id))
-        .map((message) => message.text)
-        .join(' ')}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
-    );
+  const needle = query.toLowerCase();
+  const filtered = useMemo(
+    () =>
+      state.bots
+        .filter((b) => !b.archived)
+        .filter((b) => {
+          if (!needle) return true;
+          return `${b.name} ${b.role} ${runtime.enabled ? '' : b.preview} ${(
+            state.messages[b.id] || []
+          )
+            .filter((message) => !runtime.enabled || !demoIds.has(message.id))
+            .map((message) => message.text)
+            .join(' ')}`
+            .toLowerCase()
+            .includes(needle);
+        }),
+    [state.bots, state.messages, runtime.enabled, needle],
+  );
+  const buckets = useMemo(() => {
+    const lookup = new Map(filtered.map((bot) => [bot.id, bot]));
+    const pins = new Set(organization.pins);
+    const sections = new Map<string, Bot[]>();
+    const bots: Bot[] = [],
+      groups: Bot[] = [];
+    for (const bot of filtered) {
+      if (pins.has(bot.id)) continue;
+      const section = organization.placements[bot.id];
+      if (section) {
+        const rows = sections.get(section) || [];
+        rows.push(bot);
+        sections.set(section, rows);
+      } else (bot.members ? groups : bots).push(bot);
+    }
+    return {
+      pins: organization.pins.flatMap((id) => lookup.get(id) || []),
+      sections,
+      bots,
+      groups,
+    };
+  }, [filtered, organization.pins, organization.placements]);
+  const persistent = [state.selected, retainedBot];
   function select(bot: string) {
     setMenu(undefined);
     dispatch({ type: 'select', bot });
@@ -320,23 +357,24 @@ export function Sidebar({
             </IconButton>
           </div>
           <nav aria-label={t('sidebar.botList')}>
-            {organization.pins.some((id) => filtered.some((bot) => bot.id === id)) && (
+            {buckets.pins.length > 0 && (
               <fieldset aria-label={t('sidebar.pin')} className="sidebar-block">
                 <div className="section-label">
                   <Pin aria-hidden="true" />
                   <span>{t('sidebar.pin')}</span>
                 </div>
-                {organization.pins
-                  .flatMap((id) => filtered.find((bot) => bot.id === id) || [])
-                  .map(row)}
+                <WindowList
+                  scope={`pins:${query}`}
+                  items={buckets.pins}
+                  getKey={(bot) => bot.id}
+                  renderItem={row}
+                  persistentKeys={persistent}
+                  estimate={76}
+                />
               </fieldset>
             )}
             {organization.sections.map((section) => {
-              const members = filtered.filter(
-                (bot) =>
-                  organization.placements[bot.id] === section.id &&
-                  !organization.pins.includes(bot.id),
-              );
+              const members = buckets.sections.get(section.id) || [];
               if (query && !members.length) return null;
               const expanded = !section.collapsed || !!query;
               return (
@@ -375,7 +413,14 @@ export function Sidebar({
                   </div>
                   {expanded &&
                     (members.length ? (
-                      members.map(row)
+                      <WindowList
+                        scope={`${section.id}:${query}`}
+                        items={members}
+                        getKey={(bot) => bot.id}
+                        renderItem={row}
+                        persistentKeys={persistent}
+                        estimate={76}
+                      />
                     ) : (
                       <p className="section-empty">{t('sidebar.noBotsYetUseOrganizeMenuBeside')}</p>
                     ))}
@@ -383,23 +428,22 @@ export function Sidebar({
               );
             })}
             {organization.sections.length > 0 &&
-              filtered.some(
-                (bot) => !organization.placements[bot.id] && !organization.pins.includes(bot.id),
-              ) && <div className="section-label">{t('sidebar.ungrouped')}</div>}
+              (buckets.bots.length > 0 || buckets.groups.length > 0) && (
+                <div className="section-label">{t('sidebar.ungrouped')}</div>
+              )}
             {state.bots.some((entry) => !entry.members) &&
               state.bots.every((entry) => entry.members || entry.archived) && (
                 <p className="no-results">{t('sidebar.allBotsArchived')}</p>
               )}
-            {filtered
-              .filter(
-                (b) =>
-                  !b.members && !organization.pins.includes(b.id) && !organization.placements[b.id],
-              )
-              .map(row)}
-            {filtered.some(
-              (b) =>
-                b.members && !organization.pins.includes(b.id) && !organization.placements[b.id],
-            ) && (
+            <WindowList
+              scope={`bots:${query}`}
+              items={buckets.bots}
+              getKey={(bot) => bot.id}
+              renderItem={row}
+              persistentKeys={persistent}
+              estimate={76}
+            />
+            {buckets.groups.length > 0 && (
               <div className="section-label">
                 <span>{t('common.groupChat')}</span>
                 <span className="spacer" />
@@ -408,12 +452,14 @@ export function Sidebar({
                 </IconButton>
               </div>
             )}
-            {filtered
-              .filter(
-                (b) =>
-                  b.members && !organization.pins.includes(b.id) && !organization.placements[b.id],
-              )
-              .map(row)}
+            <WindowList
+              scope={`groups:${query}`}
+              items={buckets.groups}
+              getKey={(bot) => bot.id}
+              renderItem={row}
+              persistentKeys={persistent}
+              estimate={76}
+            />
             {!state.bots.length && !query && (
               <div className="no-results">
                 {t('sidebar.noBotsYet')}

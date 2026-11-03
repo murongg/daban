@@ -364,6 +364,7 @@ export const chinese = {
   'chat.taskInterruptedSavedFilesRetained': '任务已中断，已保存文件仍保留',
   'chat.verifyingQueuedMessageInsert': '正在核实插话是否已送达…',
   'chat.thinking': '正在思考',
+  'chat.loadEarlierMessages': '加载更早消息',
   'chat.times': '次',
   'chat.todayExampleConversation': '今天 10:24 · 示例对话',
   'chat.toolCalled': '已调用工具',

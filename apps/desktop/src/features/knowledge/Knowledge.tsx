@@ -21,6 +21,7 @@ import {
   knowledgeDraft,
   type State,
 } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import {
@@ -406,8 +407,12 @@ export function Knowledge({
         />
         {t('common.showTrash')}
       </label>
-      <div className="file-list">
-        {files.map((file) => (
+      <WindowList
+        scope={`${bot.id}:${query}:${trash}`}
+        className="file-list"
+        items={files}
+        getKey={(file) => file.id}
+        renderItem={(file) => (
           <div className="file-row" key={file.id}>
             <button
               type="button"
@@ -436,8 +441,8 @@ export function Knowledge({
               </IconButton>
             )}
           </div>
-        ))}
-      </div>
+        )}
+      />
       {!files.length && available && (
         <p className="panel-description">
           {query

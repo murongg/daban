@@ -241,6 +241,7 @@ it('retains local user cache without presenting shipped demo replies as real his
     />,
   );
   await screen.findByText('这次对话没有已保存的任务记录。');
+  expect(screen.queryByText('SYNTHETIC LOCAL USER CACHE')).not.toBeInTheDocument();
   await userEvent.click(screen.getByText('本机旧缓存（可能与后端记录重复）'));
   expect(screen.getByText('SYNTHETIC LOCAL USER CACHE')).toBeVisible();
   expect(screen.queryByText(state.messages.research[0].text)).not.toBeInTheDocument();

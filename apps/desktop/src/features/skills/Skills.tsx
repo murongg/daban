@@ -17,6 +17,7 @@ import {
   skillDraft,
   skillEditor,
 } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { t, useLocale } from '../../i18n/locale';
@@ -477,11 +478,15 @@ export function Skills({
           </div>
         </form>
       )}
-      <section
+      <WindowList
+        scope={`${bot.id}:${trash}`}
+        tag="section"
         className="skills-list"
-        aria-label={trash ? t('skills.skillTrash') : t('common.skillLibrary')}
-      >
-        {catalog?.items.map((entry) => (
+        label={trash ? t('skills.skillTrash') : t('common.skillLibrary')}
+        items={catalog?.items || []}
+        getKey={(entry) => entry.id}
+        estimate={220}
+        renderItem={(entry) => (
           <article className="skill-item" key={entry.id}>
             <div className="skill-title">
               <strong>{entry.name}</strong>
@@ -580,13 +585,13 @@ export function Skills({
               )}
             </div>
           </article>
-        ))}
-        {available && catalog?.items.length === 0 && (
-          <p className="empty-state">
-            {trash ? t('skills.trashEmpty') : t('skills.noSkillsYetImportSkillMdWrite')}
-          </p>
         )}
-      </section>
+      />
+      {available && catalog?.items.length === 0 && (
+        <p className="empty-state">
+          {trash ? t('skills.trashEmpty') : t('skills.noSkillsYetImportSkillMdWrite')}
+        </p>
+      )}
       {install && install.bot === bot.id && (
         <SkillInstall
           bot={agentId(install.bot)}

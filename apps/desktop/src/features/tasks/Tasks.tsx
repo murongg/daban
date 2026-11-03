@@ -9,6 +9,7 @@ import { Columns3, List, MessageSquare, Plus, RefreshCw, Search, Trash2 } from '
 import { type Dispatch, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { Select } from '../../components/controls/Select';
 import { Tooltip } from '../../components/controls/Tooltip';
 import { getLocale, t, useLocale } from '../../i18n/locale';
@@ -334,7 +335,14 @@ export function Tasks({
                         {t(states[status])}
                         <span>{work.items.filter((row) => row.status === status).length}</span>
                       </h2>
-                      <ul>{work.items.filter((row) => row.status === status).map(card)}</ul>
+                      <WindowList
+                        tag="ul"
+                        scope={`${cache.filter}:${cache.text}:${status}`}
+                        items={work.items.filter((row) => row.status === status)}
+                        getKey={(row) => row.id}
+                        renderItem={card}
+                        estimate={140}
+                      />
                       {!work.items.some((row) => row.status === status) && (
                         <p className="field-help">{t('tasks.noLoadedTasks')}</p>
                       )}
@@ -342,7 +350,15 @@ export function Tasks({
                   ))}
                 </div>
               ) : (
-                <ul className="task-list">{work.items.map(card)}</ul>
+                <WindowList
+                  tag="ul"
+                  className="task-list"
+                  scope={`${cache.filter}:${cache.text}`}
+                  items={work.items}
+                  getKey={(row) => row.id}
+                  renderItem={card}
+                  estimate={120}
+                />
               )}
               {work.next !== undefined && (
                 <button

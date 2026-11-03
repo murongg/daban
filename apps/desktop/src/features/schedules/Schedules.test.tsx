@@ -20,6 +20,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { parseCommand } from '../../../electron/ipc';
 import { App } from '../../app/App';
+import { mockViewport } from '../../test/viewport';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
 function record(input: ScheduleInput): Schedule {
@@ -318,4 +319,28 @@ it('retains an existing weekly rule when opening its editor in English', async (
       patch: expect.objectContaining({ title: 'SYNTHETIC WEEKLY UPDATED', rule }),
     }),
   );
+});
+
+it('bounds a large schedule list while keeping the native management controls', async () => {
+  const restore = mockViewport();
+  try {
+    connect(
+      undefined,
+      Array.from({ length: 1000 }, (_, index) =>
+        record({
+          id: `mock-schedule-${index}`,
+          bot: 'a',
+          title: `SYNTHETIC SCHEDULE ${index}`,
+          prompt: 'MOCK SCHEDULE PROMPT',
+          rule: { kind: 'every', everySeconds: 3600 },
+        }),
+      ),
+    );
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+    await screen.findByText('SYNTHETIC SCHEDULE 0');
+    expect(screen.queryAllByText(/^SYNTHETIC SCHEDULE/).length).toBeLessThan(80);
+  } finally {
+    restore();
+  }
 });

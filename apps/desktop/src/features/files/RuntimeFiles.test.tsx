@@ -16,6 +16,7 @@ import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
+import { mockViewport } from '../../test/viewport';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
 const file: RuntimeFile = {
@@ -26,11 +27,15 @@ const file: RuntimeFile = {
 };
 function connect(
   read: () => Promise<RuntimeFile> = async () => ({ ...file, content: 'alpha,12\n' }),
+  count = 1,
 ) {
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 4;
   snapshot.model.configured = true;
-  let files = [file];
+  let files = Array.from({ length: count }, (_, index) => ({
+    ...file,
+    ...(count > 1 ? { path: `mock-files/${index}.txt`, name: `SYNTHETIC FILE ${index}` } : {}),
+  }));
   const listeners = new Set<(state: RuntimeSnapshot) => unknown>();
   const invoke = vi.fn(
     async (command: RuntimeCommand): Promise<RuntimeReply> => ({
@@ -221,4 +226,17 @@ it('refreshes shared outputs when a Bot without a computer finishes a task', asy
   await screen.findByText(file.path);
   backend.complete();
   expect(await screen.findByText('chief/mock-note.md')).toBeVisible();
+});
+
+it('mounts only a window of a large shared file list', async () => {
+  const restore = mockViewport();
+  try {
+    connect(undefined, 1000);
+    render(<App />);
+    await userEvent.click(await screen.findByRole('tab', { name: '文件' }));
+    await screen.findByText('SYNTHETIC FILE 0');
+    expect(screen.queryAllByText(/^SYNTHETIC FILE/).length).toBeLessThan(80);
+  } finally {
+    restore();
+  }
 });

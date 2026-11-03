@@ -10,6 +10,7 @@ import {
   routineDraft,
   type State,
 } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { DateField } from '../../components/controls/DateField';
 import { NumberField } from '../../components/controls/NumberField';
@@ -228,96 +229,104 @@ export function Schedules({
           {status.error}
         </p>
       )}
-      {items.map((item) => (
-        <div className="routine-row" key={item.id}>
-          <div className="routine-top">
-            <span className="routine-title">{item.title}</span>
-            <button
-              type="button"
-              className="toggle"
-              role="switch"
-              aria-label={`${item.enabled ? t('common.disable') : t('common.enable')} ${item.title}`}
-              aria-checked={item.enabled}
-              disabled={!available || !!status.busy}
-              onClick={() => operate(item, 'toggle')}
-            />
-          </div>
-          <p className="routine-description">
-            <Clock3 />
-            {timing(item.rule)}
-          </p>
-          <p className="panel-description">{item.prompt}</p>
-          <p className="inline-note">
-            {item.enabled && item.nextRunAt
-              ? t('schedules.nextRunTime', {
-                  0: localTime(
-                    item.nextRunAt,
-                    'timeZone' in item.rule ? item.rule.timeZone : 'Asia/Shanghai',
-                  ),
-                })
-              : item.rule.kind === 'once' && item.history.length
-                ? t('schedules.oneTimeTaskTriggered')
-                : t('common.paused')}
-          </p>
-          <div className="routine-bottom">
-            <span>
-              {item.history[0] ? t(phases[item.history[0].state]) : t('schedules.notTriggeredYet')}
-            </span>
-            <span className="spacer" />
-            <IconButton
-              label={t('schedules.scheduledTask', {
-                0: item.locked ? t('schedules.unlock') : t('schedules.lock'),
-                1: item.title,
-              })}
-              aria-pressed={!!item.locked}
-              disabled={!available || !!status.busy || runtime.snapshot.protocolVersion < 6}
-              onClick={() => operate(item, 'lock')}
-            >
-              {item.locked ? <Lock /> : <LockOpen />}
-            </IconButton>
-            <IconButton
-              label={t('schedules.runNow', { 0: item.title })}
-              disabled={!available || !!status.busy}
-              onClick={() => operate(item, 'run')}
-            >
-              <Play />
-            </IconButton>
-            <IconButton
-              label={t('schedules.editScheduledTask', { 0: item.title })}
-              disabled={!!status.busy || !!form.pending}
-              onClick={() => edit(item)}
-            >
-              <Pencil />
-            </IconButton>
-            <IconButton
-              label={t('common.deleteSchedule', { 0: item.title })}
-              disabled={!available || !!status.busy}
-              onClick={() => operate(item, 'remove')}
-            >
-              <Trash2 />
-            </IconButton>
-          </div>
-          {!!item.history.length && (
-            <details className="schedule-history">
-              <summary>{t('schedules.recentTriggers')}</summary>
-              <ul>
-                {item.history.map((firing) => (
-                  <li key={firing.id}>
-                    {localTime(
-                      firing.occurrenceAt,
+      <WindowList
+        scope={bot.id}
+        items={items}
+        getKey={(item) => item.id}
+        estimate={250}
+        renderItem={(item) => (
+          <div className="routine-row" key={item.id}>
+            <div className="routine-top">
+              <span className="routine-title">{item.title}</span>
+              <button
+                type="button"
+                className="toggle"
+                role="switch"
+                aria-label={`${item.enabled ? t('common.disable') : t('common.enable')} ${item.title}`}
+                aria-checked={item.enabled}
+                disabled={!available || !!status.busy}
+                onClick={() => operate(item, 'toggle')}
+              />
+            </div>
+            <p className="routine-description">
+              <Clock3 />
+              {timing(item.rule)}
+            </p>
+            <p className="panel-description">{item.prompt}</p>
+            <p className="inline-note">
+              {item.enabled && item.nextRunAt
+                ? t('schedules.nextRunTime', {
+                    0: localTime(
+                      item.nextRunAt,
                       'timeZone' in item.rule ? item.rule.timeZone : 'Asia/Shanghai',
-                    )}{' '}
-                    · {t(phases[firing.state])}
-                    {firing.error && (
-                      <p className="form-error">{runtimeError(new Error(firing.error))}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </div>
-      ))}
+                    ),
+                  })
+                : item.rule.kind === 'once' && item.history.length
+                  ? t('schedules.oneTimeTaskTriggered')
+                  : t('common.paused')}
+            </p>
+            <div className="routine-bottom">
+              <span>
+                {item.history[0]
+                  ? t(phases[item.history[0].state])
+                  : t('schedules.notTriggeredYet')}
+              </span>
+              <span className="spacer" />
+              <IconButton
+                label={t('schedules.scheduledTask', {
+                  0: item.locked ? t('schedules.unlock') : t('schedules.lock'),
+                  1: item.title,
+                })}
+                aria-pressed={!!item.locked}
+                disabled={!available || !!status.busy || runtime.snapshot.protocolVersion < 6}
+                onClick={() => operate(item, 'lock')}
+              >
+                {item.locked ? <Lock /> : <LockOpen />}
+              </IconButton>
+              <IconButton
+                label={t('schedules.runNow', { 0: item.title })}
+                disabled={!available || !!status.busy}
+                onClick={() => operate(item, 'run')}
+              >
+                <Play />
+              </IconButton>
+              <IconButton
+                label={t('schedules.editScheduledTask', { 0: item.title })}
+                disabled={!!status.busy || !!form.pending}
+                onClick={() => edit(item)}
+              >
+                <Pencil />
+              </IconButton>
+              <IconButton
+                label={t('common.deleteSchedule', { 0: item.title })}
+                disabled={!available || !!status.busy}
+                onClick={() => operate(item, 'remove')}
+              >
+                <Trash2 />
+              </IconButton>
+            </div>
+            {!!item.history.length && (
+              <details className="schedule-history">
+                <summary>{t('schedules.recentTriggers')}</summary>
+                <ul>
+                  {item.history.map((firing) => (
+                    <li key={firing.id}>
+                      {localTime(
+                        firing.occurrenceAt,
+                        'timeZone' in item.rule ? item.rule.timeZone : 'Asia/Shanghai',
+                      )}{' '}
+                      · {t(phases[firing.state])}
+                      {firing.error && (
+                        <p className="form-error">{runtimeError(new Error(firing.error))}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+      />
       {!items.length && !form.open && available && (
         <div className="empty-panel">
           <Clock3 />
