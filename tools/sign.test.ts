@@ -44,6 +44,18 @@ test('pins the re-signed Lima archive in both the environment and host code', as
   }
 });
 
+test('seals separately distributed Lima without requiring a bundled host executable', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-optional-lima-signature-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'environment'));
+  await writeFile(path.join(root, 'environment/lima.tar.gz'), 'SYNTHETIC SIGNED LIMA');
+  await writeFile(path.join(root, 'environment/manifest.json'), JSON.stringify({ lima: {} }));
+  const sealed = await sealSignedLima(root, false);
+  expect(
+    JSON.parse(await readFile(path.join(root, 'environment/manifest.json'), 'utf8')).lima.sha256,
+  ).toBe(sealed.sha256);
+});
+
 test('refreshes the host integrity seal after nested signing and before the outer signature', async () => {
   const events: string[] = [];
   await signApplication(

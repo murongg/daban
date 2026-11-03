@@ -14,11 +14,19 @@ test('the Mac component layout supports a sealed shared executable without dupli
 }, async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'daban-component-signature-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, 'manifest.json'), '{}');
+  await writeFile(path.join(root, 'COMPONENTS.md'), 'SYNTHETIC NOTICES');
   const result = await assembleComponent(
     {
       output: path.join(root, 'output'),
       nodeDirectory: root,
       environmentDirectory: root,
+      linuxReference: {
+        version: 1,
+        id: 'e'.repeat(64),
+        lima: { bytes: 1, sha256: 'a'.repeat(64) },
+        executor: { bytes: 1, sha256: 'b'.repeat(64) },
+      },
       platform: 'darwin',
       arch: 'arm64',
       version: '0.1.0-synthetic',
@@ -29,12 +37,6 @@ test('the Mac component layout supports a sealed shared executable without dupli
         await mkdir(path.join(target, 'node/bin'), { recursive: true });
         await copyFile('/usr/bin/true', path.join(target, 'node/bin/node'));
         await writeFile(path.join(target, 'main.js'), 'export const synthetic = true;');
-      },
-      tools: async (_source, target) => {
-        await mkdir(target);
-      },
-      executor: async (target) => {
-        await writeFile(target, 'SYNTHETIC EXECUTOR');
       },
     },
   );

@@ -74,7 +74,7 @@ function signingArguments(options: Signing, entitlements?: string) {
     ...(entitlements ? ['--entitlements', entitlements] : []),
   ];
 }
-export async function sealSignedLima(resources: string) {
+export async function sealSignedLima(resources: string, host = true) {
   const digest = await hashAsset(path.join(resources, 'environment/lima.tar.gz'), 'sha256');
   const result = { bytes: digest.bytes, sha256: digest.digest };
   const file = path.join(resources, 'environment/manifest.json');
@@ -82,13 +82,14 @@ export async function sealSignedLima(resources: string) {
   manifest.lima = { file: 'lima.tar.gz', ...result };
   await writeFile(file, JSON.stringify(manifest, null, 2) + '\n');
   // Pin signed bytes in host code as well: never trust an arbitrary digest from environment metadata.
-  await writeFile(
-    path.join(resources, 'agent/assets.js'),
-    `export const limaDigest = '${result.sha256}';\n`,
-  );
+  if (host)
+    await writeFile(
+      path.join(resources, 'agent/assets.js'),
+      `export const limaDigest = '${result.sha256}';\n`,
+    );
   return result;
 }
-async function signLima(resources: string, options: Signing) {
+async function signLima(resources: string, options: Signing, standalone = false) {
   const archive = path.join(resources, 'environment/lima.tar.gz');
   await verifyAsset(archive, 'sha256', environmentAssets.lima.digest);
   const stage = await mkdtemp(path.join(tmpdir(), 'daban-sign-lima-'));
@@ -121,15 +122,28 @@ async function signLima(resources: string, options: Signing) {
       }
     }
     assert.ok(signed > 0, 'LIMA_CODE_MISSING');
+    if (standalone) {
+      // Standalone CLI tools cannot staple tickets; notarize their signed bytes before archiving them.
+      const submission = path.join(stage, '..', path.basename(stage) + '.zip');
+      try {
+        await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', stage, submission]);
+        await notarize(submission, options);
+      } finally {
+        await rm(submission, { force: true });
+      }
+    }
     const temporary = archive + '.signed';
     await execute('/usr/bin/tar', ['--format=ustar', '-czf', temporary, '-C', stage, '.'], {
       env: { ...process.env, COPYFILE_DISABLE: '1' },
     });
     await rename(temporary, archive);
-    await sealSignedLima(resources);
+    await sealSignedLima(resources, !standalone);
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
+}
+export async function signLinux(resources: string, options: Signing) {
+  await signLima(resources, options, true);
 }
 export async function signApplication(
   app: string,
@@ -195,7 +209,6 @@ export async function signRuntime(
   await dependencies.run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
 }
 export async function signComponent(app: string, archive: string, options: Signing) {
-  await signLima(path.join(app, 'Contents/Resources'), options);
   await signRuntime(app, options);
   const temporary = archive + '.submit.zip';
   try {

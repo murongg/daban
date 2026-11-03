@@ -33,7 +33,7 @@ CI 不使用 Apple 或模型凭据；发行工作流只由版本标签或手动�
 
 ### 基础环境包
 
-macOS 安装包包含完整的 Linux 基础环境，Git 仓库不保存这个大文件。先将经干净镜像与首次安装验收的 **38 版**基础包上传到 `MACOS_ENVIRONMENT_TAG` 指定的同仓库 Release，包含：
+macOS 客户端和首次下载的基础运行包都不包含 Linux 可执行资源或系统镜像。构建时使用经干净镜像与首次安装验收的 **38 版**基础包；Git 仓库不保存这个大文件。将它上传到 `MACOS_ENVIRONMENT_TAG` 指定的同仓库 Release，包含：
 
 ```text
 manifest.json
@@ -79,7 +79,9 @@ git push origin v0.1.0
 - `CHANGELOG.zh-CN.md`、`CHANGELOG.en.md` 和 `SHA256SUMS.txt`；GitHub Release 正文同时展示两种语言和原始 PR/比较链接。
 - 在线更新清单 `latest.yml` / `latest-mac.yml`（预发布版本使用对应频道名）和 `.blockmap`。清单与对应安装包一起上传，不能先单独发布清单。
 
-macOS 过程会签名 Electron、内嵌 Node、原生模块与 Lima，重新固定签名后 Lima 的摘要，再生成宿主机完整性清单和应用外层签名。公证使用 Hardened Runtime；按 [Apple 的发行流程](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution)，只提交最外层 DMG，即可取得容器与嵌套应用的票据，避免重复上传整个大包。应用和 DMG 均通过 `stapler validate` 与 Gatekeeper 检查后才上传；ZIP 在应用附票后生成。
+macOS 过程将 Lima 和 Linux 执行程序发布为 `Daban-lima-macos-arm64.tar.gz` 与 `Daban-executor-linux-arm64.tar.gz`；同一不可变 runtime Release 还包含 `linux.json` 和两种平台的基础运行包。Lima 工具单独签名并公证后才封装，签名后的摘要和长度固定在基础运行包内的 `agent/linux.json`，环境元数据只保留少量文字。客户端在安装 Linux 时下载资源，校验后复用私有缓存；基础包发布和缓存复用都必须同时验证两份可选资源。
+
+Electron、Node 和原生模块继续使用 Hardened Runtime、Developer ID 签名和 Apple 公证。独立基础运行包在附票后生成 ZIP；客户端提交最外层 DMG，并检查应用和 DMG 的 `stapler validate` 与 Gatekeeper 结果后再发布。Linux 命令行工具没有可附票的应用容器，其签名字节在归档前独立提交公证；不放宽工具摘要或执行权限检查。
 
 当前不构建 Intel Mac 或 Linux 客户端。应用内更新检查稳定版，下载和重启安装由用户确认。Mac 更新配置在签名前写入资源目录；Windows 安装器从独立副本构建，不会把更新配置写进便携目录。普通 CI 不会启动用户 VM、调用真实模型或申请桌面控制权限。
 

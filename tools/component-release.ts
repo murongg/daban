@@ -11,6 +11,8 @@ const gh: Run = async (args) =>
 interface Release {
   assets: { name: string; digest: string; size: number }[];
 }
+const releaseAsset =
+  /^(?:Daban-runtime-(?:macos-arm64|windows-x64)\.zip|Daban-lima-macos-arm64\.tar\.gz|Daban-executor-linux-arm64\.tar\.gz|linux\.json)$/;
 async function release(tag: string, run: Run): Promise<Release | undefined> {
   if (!/^runtime-[a-f0-9]{24}$/.test(tag)) throw Error('COMPONENT_RELEASE_TAG');
   let text: string;
@@ -53,8 +55,7 @@ export async function fetchComponent(
   directory: string,
   run: Run = gh,
 ) {
-  if (!/^Daban-runtime-(macos-arm64|windows-x64)\.zip$/.test(filename))
-    throw Error('COMPONENT_RELEASE_ASSET');
+  if (!releaseAsset.test(filename)) throw Error('COMPONENT_RELEASE_ASSET');
   const found = (await release(tag, run))?.assets.find((asset) => asset.name === filename);
   if (!found) return false;
   if (
@@ -64,7 +65,7 @@ export async function fetchComponent(
     found.size > 2 * 1024 ** 3
   )
     throw Error('COMPONENT_RELEASE_RESPONSE');
-  await mkdir(directory, { recursive: false });
+  await mkdir(directory, { recursive: true });
   await run([
     'release',
     'download',
@@ -90,13 +91,17 @@ export async function publishComponent(
   files: string[],
   run: Run = gh,
 ) {
-  if (!/^[a-f0-9]{40}$/.test(commit) || !files.length || files.length > 2)
+  if (
+    !/^[a-f0-9]{40}$/.test(commit) ||
+    !files.length ||
+    files.length > 5 ||
+    new Set(files.map((file) => path.basename(file))).size !== files.length
+  )
     throw Error('COMPONENT_RELEASE_COMMIT');
   const current = await release(tag, run);
   const additions: string[] = [];
   for (const file of files) {
-    if (!/^Daban-runtime-(macos-arm64|windows-x64)\.zip$/.test(path.basename(file)))
-      throw Error('COMPONENT_RELEASE_ASSET');
+    if (!releaseAsset.test(path.basename(file))) throw Error('COMPONENT_RELEASE_ASSET');
     const saved = current?.assets.find((asset) => asset.name === path.basename(file));
     if (saved) {
       // Public runtime assets are immutable, including retries of a desktop release.

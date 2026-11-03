@@ -14,9 +14,9 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { componentTag } from '@daban/engine/component';
+import { componentTag, type LinuxIndex, linuxFilename, linuxIndex } from '@daban/engine/component';
 import { environmentImage } from '@daban/protocol';
-import { environmentAssets, verifyAsset } from './environment.ts';
+import { environmentAssets, hashAsset, verifyAsset } from './environment.ts';
 import { macVersion } from './release.ts';
 import { buildExecutor, packageHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
 
@@ -186,10 +186,49 @@ async function packageExecutor(target: string) {
     await rm(stage, { recursive: true, force: true });
   }
 }
+export async function assembleLinux(
+  options: { output: string; environmentDirectory: string; id: string },
+  sign: (resources: string) => Promise<unknown>,
+  dependencies: { tools?: typeof copyVmTools; executor?: typeof packageExecutor } = {},
+) {
+  const environment = path.join(options.output, 'environment');
+  await (dependencies.tools ?? copyVmTools)(options.environmentDirectory, environment);
+  const executor = path.join(options.output, linuxFilename('executor'));
+  await (dependencies.executor ?? packageExecutor)(executor);
+  await sign(options.output);
+  const lima = path.join(options.output, linuxFilename('lima'));
+  await rename(path.join(environment, 'lima.tar.gz'), lima);
+  const describe = async (file: string) => {
+    const hash = await hashAsset(file, 'sha256');
+    return { bytes: hash.bytes, sha256: hash.digest };
+  };
+  const reference = linuxIndex(
+    { version: 1, id: options.id, lima: await describe(lima), executor: await describe(executor) },
+    options.id,
+  );
+  await writeFile(
+    path.join(options.output, 'linux.json'),
+    JSON.stringify(reference, null, 2) + '\n',
+  );
+  return reference;
+}
+export async function verifyLinux(directory: string, id: string) {
+  const reference = linuxIndex(
+    JSON.parse(await readFile(path.join(directory, 'linux.json'), 'utf8')),
+    id,
+  );
+  for (const kind of ['lima', 'executor'] as const) {
+    const hash = await hashAsset(path.join(directory, linuxFilename(kind)), 'sha256');
+    if (hash.bytes !== reference[kind].bytes || hash.digest !== reference[kind].sha256)
+      throw Error('COMPONENT_RELEASE_INTEGRITY');
+  }
+  return reference;
+}
 interface ComponentBuild {
   output: string;
   nodeDirectory: string;
   environmentDirectory?: string;
+  linuxReference?: LinuxIndex;
   platform: 'darwin' | 'win32';
   arch: 'arm64' | 'x64';
   version: string;
@@ -199,8 +238,6 @@ export async function assembleComponent(
   options: ComponentBuild,
   dependencies: {
     host?: typeof packageHost;
-    tools?: typeof copyVmTools;
-    executor?: typeof packageExecutor;
   } = {},
 ) {
   componentTag(options.id);
@@ -227,12 +264,15 @@ export async function assembleComponent(
     JSON.stringify({ version: 1, id: options.id, platform: options.platform, arch: options.arch }),
   );
   if (options.platform === 'darwin') {
-    if (!options.environmentDirectory) throw Error('COMPONENT_ENVIRONMENT');
-    await (dependencies.tools ?? copyVmTools)(
-      options.environmentDirectory,
-      path.join(resources, 'environment'),
-    );
-    await (dependencies.executor ?? packageExecutor)(path.join(agent, 'executor.tar.gz'));
+    if (!options.environmentDirectory || !options.linuxReference)
+      throw Error('COMPONENT_ENVIRONMENT');
+    const reference = linuxIndex(options.linuxReference, options.id);
+    await writeFile(path.join(agent, 'linux.json'), JSON.stringify(reference, null, 2) + '\n');
+    const environment = path.join(resources, 'environment');
+    await mkdir(environment);
+    // Keep only small, signed metadata in the host; executable payloads have separate pinned downloads.
+    for (const file of ['manifest.json', 'COMPONENTS.md'])
+      await copyFile(path.join(options.environmentDirectory, file), path.join(environment, file));
     const contents = path.join(directory, 'Contents');
     await mkdir(path.join(contents, 'MacOS'));
     // Apple's main executable must be regular; keep one Node copy inside the signed component.

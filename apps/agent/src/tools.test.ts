@@ -5,13 +5,14 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 import { ensureLima } from './tools.js';
 
-test('first installation verifies its bundled tool archive before creating a usable private tool root', async () => {
+test('first installation verifies its separately downloaded tool archive before creating a usable private tool root', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-agent-tools-'));
   const pack = path.join(root, 'pack');
   await mkdir(pack);
   const archive = Buffer.from('SYNTHETIC VERIFIED TOOL ARCHIVE');
   const digest = createHash('sha256').update(archive).digest('hex');
-  await writeFile(path.join(pack, 'lima.tar.gz'), archive);
+  const downloaded = path.join(root, 'cached-lima.tar.gz');
+  await writeFile(downloaded, archive);
   await writeFile(
     path.join(pack, 'manifest.json'),
     JSON.stringify({ lima: { file: 'lima.tar.gz', bytes: archive.length, sha256: digest } }),
@@ -23,6 +24,8 @@ test('first installation verifies its bundled tool archive before creating a usa
         dataRoot: path.join(root, 'agent'),
         vmConfigFile: path.join(root, 'runtime.json'),
         packDirectory: pack,
+        archive: downloaded,
+        digest,
       },
       {
         digest,
@@ -52,13 +55,14 @@ test('first installation verifies its bundled tool archive before creating a usa
         },
       ),
     ).toBe(binary);
-    await writeFile(path.join(pack, 'lima.tar.gz'), 'MOCK MODIFIED ARCHIVE');
+    await writeFile(downloaded, 'MOCK MODIFIED ARCHIVE');
     await expect(
       ensureLima(
         {
           dataRoot: path.join(root, 'other-agent'),
           vmConfigFile: path.join(root, 'runtime.json'),
           packDirectory: pack,
+          archive: downloaded,
         },
         {
           digest,

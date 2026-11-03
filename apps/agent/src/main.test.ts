@@ -632,11 +632,16 @@ test('an aborted bootstrap leaves its last progress intact instead of presenting
 
 test('native-first startup defers Linux tools and bootstrap until explicit environment installation', async () => {
   const f = await fixture();
+  let assetReads = 0;
   let captured: Parameters<typeof startNativeAgent>[0] | undefined;
   const owner = await startAgentProcess(
     { ...f.options, mode: 'native' },
     {
       ...f.dependencies,
+      get assets() {
+        assetReads++;
+        return f.dependencies.assets;
+      },
       platform: 'darwin',
       native: async (options) => {
         captured = options;
@@ -651,6 +656,7 @@ test('native-first startup defers Linux tools and bootstrap until explicit envir
   );
   try {
     expect(f.events).toStrictEqual([]);
+    expect(assetReads).toBe(0);
     expect((await captured!.environment!.status()).target).toBe('linux');
     await captured!.environment!.start();
     for (
@@ -660,6 +666,7 @@ test('native-first startup defers Linux tools and bootstrap until explicit envir
     )
       await new Promise((resolve) => setTimeout(resolve, 5));
     expect(f.events).toStrictEqual(['tools', 'bootstrap']);
+    expect(assetReads).toBe(1);
     expect((await captured!.environment!.status()).required).toBe(false);
   } finally {
     await owner.close();

@@ -1,9 +1,38 @@
 import { expect, test } from 'vitest';
-import { componentAsset, componentIndex, componentPayload, componentTag } from './component.js';
+import {
+  componentAsset,
+  componentIndex,
+  componentPayload,
+  componentTag,
+  linuxIndex,
+  linuxPayload,
+} from './component.js';
 
 const id = '1'.repeat(64);
 const mac = { platform: 'darwin', arch: 'arm64', bytes: 1024, sha256: 'a'.repeat(64) };
 const win = { platform: 'win32', arch: 'x64', bytes: 2048, sha256: 'b'.repeat(64) };
+
+test('pins the optional Linux bundle and its signed Lima archive without accepting URL overrides', () => {
+  const reference = {
+    version: 1,
+    id,
+    lima: { bytes: 512, sha256: 'c'.repeat(64) },
+    executor: { bytes: 128, sha256: 'd'.repeat(64) },
+  };
+  expect(linuxPayload(linuxIndex(reference, id), 'lima')).toStrictEqual({
+    url: `https://github.com/murongg/daban/releases/download/runtime-${id.slice(0, 24)}/Daban-lima-macos-arm64.tar.gz`,
+    bytes: 512,
+    sha256: 'c'.repeat(64),
+  });
+  for (const value of [
+    { ...reference, id: '2'.repeat(64) },
+    { ...reference, url: 'https://example.test/override' },
+    { ...reference, lima: { ...reference.lima, bytes: 0 } },
+    { ...reference, executor: { ...reference.executor, sha256: 'invalid' } },
+    { ...reference, lima: { ...reference.lima, sha256: 'invalid' } },
+  ])
+    expect(() => linuxIndex(value, id)).toThrowError(/COMPONENT_MANIFEST/);
+});
 
 test('pins component identity and constructs only fixed repository release URLs', () => {
   const index = componentIndex({ version: 1, id, assets: [mac, win] }, id);

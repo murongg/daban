@@ -58,3 +58,35 @@ test('checks uploaded runtime digests before allowing the desktop release to con
   await publishComponent('runtime-' + 'a'.repeat(24), 'b'.repeat(40), [file], run);
   expect(inspections).toBe(2);
 });
+
+test('publishes both optional Linux payloads with the host runtimes and refuses digest replacement', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-linux-publication-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const names = [
+    'Daban-runtime-macos-arm64.zip',
+    'Daban-runtime-windows-x64.zip',
+    'Daban-lima-macos-arm64.tar.gz',
+    'Daban-executor-linux-arm64.tar.gz',
+    'linux.json',
+  ];
+  const files = names.map((name) => path.join(root, name));
+  for (const file of files) await writeFile(file, 'SYNTHETIC RELEASE DATA');
+  const assets = await Promise.all(
+    files.map(async (file) => ({
+      name: path.basename(file),
+      size: 21,
+      digest: 'sha256:' + (await hashAsset(file, 'sha256')).digest,
+    })),
+  );
+  await expect(
+    publishComponent('runtime-' + 'a'.repeat(24), 'b'.repeat(40), files, async () =>
+      JSON.stringify({ assets }),
+    ),
+  ).resolves.toBeUndefined();
+  assets[2].digest = 'sha256:' + 'c'.repeat(64);
+  await expect(
+    publishComponent('runtime-' + 'a'.repeat(24), 'b'.repeat(40), files, async () =>
+      JSON.stringify({ assets }),
+    ),
+  ).rejects.toThrowError(/COMPONENT_RELEASE_CONFLICT/);
+});
