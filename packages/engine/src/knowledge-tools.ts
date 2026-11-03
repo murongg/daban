@@ -117,11 +117,15 @@ const number = (value: unknown, fallback: number, max: number, min = 1) => {
 export class KnowledgeTools {
   readonly surface = 'knowledge';
   readonly fields = fields;
-  readonly list = knowledgeToolList;
+  readonly list: typeof knowledgeToolList;
   constructor(
     readonly store: Knowledge,
-    readonly exportFile: (run: AgentToolRun, name: string, content: string) => Promise<unknown>,
-  ) {}
+    readonly exportFile?: (run: AgentToolRun, name: string, content: string) => Promise<unknown>,
+  ) {
+    this.list = exportFile
+      ? knowledgeToolList
+      : knowledgeToolList.filter((tool) => tool.name !== 'bot_knowledge_export');
+  }
   private meta(document: KnowledgeDocument): KnowledgeFile {
     const { content: _content, ...file } = document;
     return file;
@@ -224,6 +228,7 @@ export class KnowledgeTools {
             ),
           );
         else if (name === 'bot_knowledge_export') {
+          if (!this.exportFile) throw new Fault('KNOWLEDGE_EXPORT_UNAVAILABLE', 503);
           const document = await this.store.read(run.bot, args.id);
           if (document.deleted || document.revision !== revision)
             throw new Fault('KNOWLEDGE_CONFLICT');

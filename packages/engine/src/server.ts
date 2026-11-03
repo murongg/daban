@@ -728,6 +728,8 @@ export async function startPrototype({
             (remoteRoute ||
               ['/api/computers/action', '/api/computers/receipt'].includes(url.pathname))
           ) {
+            const execution = host.execution;
+            if (!execution) throw new Fault('LOCAL_VM_UNAVAILABLE', 503);
             if (!models) throw new Fault('STARTING', 503);
             if (!['GET', 'POST'].includes(req.method || ''))
               throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -759,7 +761,7 @@ export async function startPrototype({
                 await models.drainComputer(bot!);
                 models.profiles.assertActive(bot!);
               }
-              const result = await host.execution!.call('computer.request', {
+              const result = await execution.call('computer.request', {
                 method: req.method,
                 path: url.pathname + url.search,
                 ...(data ? { body: data } : {}),
