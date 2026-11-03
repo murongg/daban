@@ -62,7 +62,8 @@ type Recovery = NonNullable<Awaited<ReturnType<typeof startAgent>>['recovery']>;
 interface Core {
   recovery?: Pick<Recovery, 'review' | 'prepare' | 'claim' | 'cancel' | 'receipt'>;
   models: {
-    jobs: { values(): IterableIterator<{ bot: string; running: boolean }> };
+    jobs: { values(): IterableIterator<{ bot: string }> };
+    running(bot: string): boolean;
     stop(bot: string, reason?: string): Promise<unknown>;
   };
   refreshExecution(): Promise<ExecutionSnapshot>;
@@ -325,7 +326,7 @@ export async function startAgentProcess(
     if (core)
       await Promise.all(
         [...core.models.jobs.values()]
-          .filter((job) => job.running)
+          .filter((job) => core!.models.running(job.bot))
           .map((job) => core!.models.stop(job.bot, reason)),
       );
   };

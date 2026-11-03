@@ -94,7 +94,7 @@ test.for(['hyperv', 'qemu'] as const)(
       core: async (value) => {
         expect(value.execution?.snapshot?.computer.environment.arch).toBe('x64');
         return {
-          models: { jobs: new Map(), stop: rejectLima },
+          models: { jobs: new Map(), running: () => false, stop: rejectLima },
           refreshExecution: async () => snapshot,
           close: async () => {},
         };

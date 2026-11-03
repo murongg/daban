@@ -138,7 +138,11 @@ async function fixture() {
       jobs: new Map([
         ['mock-running', { bot: 'mock-running', running: true }],
         ['mock-idle', { bot: 'mock-idle', running: false }],
+        ['mock-finalizing', { bot: 'mock-finalizing', running: false }],
       ]),
+      running(bot: string) {
+        return bot === 'mock-running' || bot === 'mock-finalizing';
+      },
       async stop(bot: string) {
         events.push(`stop-model:${bot}`);
       },
@@ -321,6 +325,7 @@ test('production wiring binds real VM identity, lazy recovery revisions and expl
     f.claim();
     await f.powerOptions.beforeStop!();
     expect.assert(f.events.includes('stop-model:mock-running'));
+    expect.assert(f.events.includes('stop-model:mock-finalizing'));
     expect.assert(!f.events.includes('stop-model:mock-idle'));
     const before = f.events.length;
     await f.powerOptions.driver.start();

@@ -1,6 +1,6 @@
 import { agentId, type ChatPage, isChatPage } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { runtimeError, useRuntime } from '../../app/Runtime';
+import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app/Runtime';
 import { demoIds } from '../../app/samples';
 import type { Bot, Message, WorkspaceFile } from '../../app/state';
 import { Markdown } from '../../components/content/Markdown';
@@ -217,10 +217,12 @@ export function ChatHistory({
                     ? item.result ||
                       turn.result ||
                       item.response?.text ||
-                      item.error ||
-                      turn.error ||
+                      (item.error && taskError(item.error)) ||
+                      (turn.error && taskError(turn.error)) ||
                       t('chathistory.noSavedResponses')
-                    : turn.result || turn.error || t('chathistory.noSavedResponses');
+                    : turn.result ||
+                      (turn.error && taskError(turn.error)) ||
+                      t('chathistory.noSavedResponses');
                   return (
                     <div key={turn.id}>
                       <article className="message user">
@@ -233,7 +235,7 @@ export function ChatHistory({
                             : item.phase === 'stopped'
                               ? t('common.stopped')
                               : t('common.interrupted')}
-                          {item.error ? ` · ${item.error}` : ''}
+                          {item.error ? ` · ${taskError(item.error)}` : ''}
                         </p>
                       )}
                       <article className="message bot">

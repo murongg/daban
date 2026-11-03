@@ -227,7 +227,11 @@ export class AgentTools {
       ...(this.software?.list || []),
       ...(run?.skills?.skills.length ? this.skills?.list || [] : []),
       ...(this.catalog?.list || []),
-      ...(conversationId ? this.groups?.list || [] : []),
+      ...(conversationId
+        ? this.groups?.list || []
+        : run?.bot === bot && run.task && !run.conversationId
+          ? this.groups?.collaborationList || []
+          : []),
       ...(run?.bot === bot && run.conversationId === conversationId
         ? this.integrations?.list(run) || []
         : []),

@@ -338,7 +338,7 @@ export async function startPrototype({
             };
           }),
         running: [...(models?.jobs.values() || [])]
-          .filter((job) => job.running)
+          .filter((job) => models!.running(job.bot))
           .map((job) => job.bot),
         changing:
           changing.size > 0 ||
@@ -362,7 +362,7 @@ export async function startPrototype({
         try {
           await Promise.allSettled(
             [...(models?.jobs.values() || [])]
-              .filter((job) => job.running)
+              .filter((job) => models!.running(job.bot))
               .map((job) => models!.stop(job.bot, 'execution-restarted')),
           );
           executionSnapshot = snapshot;
@@ -535,7 +535,7 @@ export async function startPrototype({
               changing.size > 0 ||
               !!models?.bundles.busy ||
               !!host.environment?.busy ||
-              [...(models?.jobs.values() ?? [])].some((job) => job.running),
+              [...(models?.jobs.values() ?? [])].some((job) => models!.running(job.bot)),
           );
           // Respond before the CLI drains its HTTP listener. The VM is not part of this handoff.
           res.once('finish', () => {
@@ -1865,7 +1865,7 @@ export async function startPrototype({
           computersRevision: 0,
           screens: [],
           running: [...(models?.jobs.values() || [])]
-            .filter((job) => job.running)
+            .filter((job) => models!.running(job.bot))
             .map((job) => job.bot),
           changing: changing.size > 0 || !!models?.bundles.busy,
         }),
@@ -1919,7 +1919,7 @@ export async function startPrototype({
                 return { computer, ...(lease ? { lease } : {}) };
               }),
             running: [...(models?.jobs.values() ?? [])]
-              .filter((job) => job.running)
+              .filter((job) => models!.running(job.bot))
               .map((job) => job.bot),
             changing:
               !!models?.bundles.busy ||
@@ -2028,6 +2028,8 @@ export async function startPrototype({
         path.join(modelDir, 'groups.sqlite'),
         {
           member: (bot) => models!.profiles.get(bot),
+          directory: () => models!.profiles.list(),
+          source: (bot, runId, group) => models!.groupSource(bot, runId, group),
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),

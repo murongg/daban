@@ -195,7 +195,7 @@ test('a long human wait preserves the active execution budget and cancellation s
     vi.advanceTimersByTime(300001);
     await job.done;
     expect(models.status().bots['mock-bot'].phase).toBe('stopped');
-    expect(models.status().bots['mock-bot'].error || '').toMatch(/时长上限/);
+    expect(models.status().bots['mock-bot'].error).toBe('MODEL_TIME_LIMIT');
   } finally {
     await models?.close();
     await rm(root, { recursive: true, force: true });

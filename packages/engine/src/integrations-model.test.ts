@@ -180,7 +180,7 @@ test('DSH tools use the accepted Bot catalog, one-time approvals and shared budg
     expect(changed.sessionId).not.toBe(enabledSession);
     expect(changed.integrations?.connections.length).toBe(0);
     await finish('mock-a');
-    expect.assert(prompts.at(-1)?.includes('重新核对'));
+    expect.assert(prompts.at(-1)?.includes('recheck'));
     const other = await start('mock-b', 'mock-mcp-other');
     expect(other.integrations?.connections.length).toBe(0);
     await finish('mock-b');

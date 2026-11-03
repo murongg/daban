@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { vmErrorKey } from '../../shared/vm';
 import { type MessageKey, t, useLocale } from '../i18n/locale';
+import { taskErrorKey } from '../i18n/tasks';
 
 interface Connection {
   enabled: boolean;
@@ -125,6 +126,11 @@ export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   const vmKey = vmErrorKey(error);
   if (vmKey) return t(vmKey);
+  return runtimeMessage(code, t('errors.operationUnconfirmedCheckConnectionTaskStateRetrying'));
+}
+export function runtimeMessage(code: string, fallback = code) {
+  const key = taskErrorKey(code);
+  if (key) return t(key);
   const messages: Record<string, string> = {
     AGENT_LEGACY_RESTART_REQUIRED: t('agentUpgrade.required'),
     AGENT_LEGACY_RESTART_UNAVAILABLE: t('agentUpgrade.manual'),
@@ -456,5 +462,5 @@ export function runtimeError(error: unknown) {
     RECOVERY_ALREADY_ISSUED: t('errors.shutdownRequestMayAlreadyHaveBeenSent'),
     RECOVERY_REQUEST_NOT_OWNED: t('errors.clientHasNoMatchingRecoveryRecordVerify'),
   };
-  return messages[code] || t('errors.operationUnconfirmedCheckConnectionTaskStateRetrying');
+  return Object.hasOwn(messages, code) ? messages[code] : fallback;
 }
