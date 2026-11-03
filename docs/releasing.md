@@ -94,13 +94,13 @@ Electron、Node 和原生模块继续使用 Hardened Runtime、Developer ID 签�
 
 ### 更新日志格式
 
-AI 只生成结构化内容，Markdown 标题、列表和空行由发布脚本统一排版：
+AI 只生成结构化变更内容，版本、语言标签、emoji 分类和列表由发布脚本统一排版：
 
-- 开头用一句话概括本次更新。
-- 按「重要变更 → 新增功能 → 体验优化 → 问题修复 → 维护更新」固定顺序展示，省略空分类。
-- 每条变更使用单层列表，保留 PR、提交引用及原始链接；重复记录合并，不添加未经记录支持的功能或验证结论。
+- 采用「版本号 + emoji 分类条目」的紧凑格式，不额外添加摘要或分类大标题。
+- 按「⚠️ 重要变更 → ✨ 新增 → ⚡ 优化 → 🐛 修复 → 🛠️ 维护」固定顺序展示，省略空分类。
+- 每条变更占一行，使用 `- ✨ **新增**：变更内容` / `- ✨ **Features**: Change description` 的单层列表格式。每条用一句话说明，保留 PR、提交引用及原始链接；重复记录合并，不添加未经记录支持的功能或验证结论。
 - 中英文的分类、条目数量和顺序须一致；脚本校验内容结构和各分类条目数量，不符合要求时阻止发布。
-- 独立下载文件使用版本作为一级标题、分类作为二级标题；Release 正文使用语言作为二级标题、分类作为三级标题。
+- 独立下载文件开头加粗版本号；Release 正文使用加粗的语言标签分隔中英文，两者使用相同的 emoji、分类顺序和条目版式。
 - 单语文件固定命名为 `CHANGELOG.zh-CN.md` 和 `CHANGELOG.en.md`，各自只包含对应语言的更新内容，作为 Release 附件发布，方便后续客户端按界面语言读取。
 - GitHub 原始记录和比较链接放在正文末尾的「原始记录 / Original change records」折叠区。
 
@@ -116,4 +116,4 @@ After merging the changes to release, use a clean, up-to-date main checkout, run
 
 Downloads include notarized Apple Silicon DMG/ZIP files, a Windows x64 portable ZIP, both language changelogs, and SHA-256 checksums. Release notes include both languages and the original change links. Existing releases are not overwritten. Windows signing and Intel Mac builds are not included. Installed clients support stable in-app updates; publish the NSIS installer, Mac ZIP, update manifests and blockmaps together. Portable Windows builds remain separate. Mac update configuration is embedded before signing, and ZIP packaging preserves the signed application.
 
-The model returns structured content; the release script controls Markdown layout. Notes start with a one-sentence summary, followed by nonempty categories in this order: Breaking changes, Features, Improvements, Fixes, Maintenance. Each change uses a single-level bullet, merges duplicate records, and retains PR/commit references and source links. Both languages must use matching categories, item counts and item order; structural validation and category counts are checked before publication. Downloaded changelogs use the version as an H1 and categories as H2 headings. The single-language files, `CHANGELOG.zh-CN.md` and `CHANGELOG.en.md`, are published as Release assets so a future client can select notes by interface language. The bilingual Release body uses H2 language headings and H3 categories, with original records and comparison links in a collapsed details section at the end.
+The model returns structured changes; the release script controls the compact Markdown layout. Notes use a version label and one-line bullets such as `- ✨ **Features**: Change description`, without a separate summary or category headings. Categories appear in this order: ⚠️ Breaking changes, ✨ Features, ⚡ Improvements, 🐛 Fixes, 🛠️ Maintenance; empty categories are omitted. Each item uses one concise sentence, merges duplicate records, and retains PR/commit references and source links. Both languages use the same emoji, category order and bullet layout, with matching item counts and item order; structural validation and category counts are checked before publication. Downloaded changelogs start with a bold version label. The single-language files, `CHANGELOG.zh-CN.md` and `CHANGELOG.en.md`, are published as Release assets so a future client can select notes by interface language. The bilingual Release body uses bold language labels, with original records and comparison links in a collapsed details section at the end.
