@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, copyFile, mkdir, mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
+import { access, copyFile, mkdir, readFile } from 'node:fs/promises';
 import { request } from 'node:https';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { privateClientOptions } from '@daban/engine/local-computer';
 import { isLocalComputerStatus } from '@daban/protocol';
+import { withComponentStage } from './components.ts';
 import { hashAsset } from './environment.ts';
 
 assert.equal(process.platform, 'win32');
@@ -51,22 +51,21 @@ const reference = JSON.parse(
 );
 assert.equal((await hashAsset(archive, 'sha256')).digest, reference.assets[0].sha256);
 await assert.rejects(access(path.resolve(target, 'resources/agent')), { code: 'ENOENT' });
-const inspect = await mkdtemp(path.join(tmpdir(), 'daban-runtime-acceptance-'));
-console.time('acceptance:inspect-extract');
-await run('tar.exe', ['-xf', path.resolve(archive), '-C', inspect]);
-console.timeEnd('acceptance:inspect-extract');
-const cache = path.join(root, 'components/downloads');
-await mkdir(cache, { recursive: true });
-await copyFile(archive, path.join(cache, reference.assets[0].sha256 + '.zip'));
-const agent = path.join(inspect, 'DabanRuntime/agent'),
-  smokes = ['native-loop.test.js', 'calendar.test.js'].map((name) => path.join(agent, name));
-for (const smoke of smokes)
-  await copyFile(
-    fileURLToPath(new URL(`../dist-agent/${path.basename(smoke)}`, import.meta.url)),
-    smoke,
-    constants.COPYFILE_EXCL,
-  );
-try {
+await withComponentStage(async (inspect) => {
+  console.time('acceptance:inspect-extract');
+  await run('tar.exe', ['-xf', path.resolve(archive), '-C', inspect]);
+  console.timeEnd('acceptance:inspect-extract');
+  const cache = path.join(root, 'components/downloads');
+  await mkdir(cache, { recursive: true });
+  await copyFile(archive, path.join(cache, reference.assets[0].sha256 + '.zip'));
+  const agent = path.join(inspect, 'DabanRuntime/agent'),
+    smokes = ['native-loop.test.js', 'calendar.test.js'].map((name) => path.join(agent, name));
+  for (const smoke of smokes)
+    await copyFile(
+      fileURLToPath(new URL(`../dist-agent/${path.basename(smoke)}`, import.meta.url)),
+      smoke,
+      constants.COPYFILE_EXCL,
+    );
   console.time('acceptance:sdk-smoke');
   const sdk = await run(
     path.join(agent, 'node/node.exe'),
@@ -88,10 +87,7 @@ try {
   assert.match(sdk.stdout, /real host calendar recovers/);
   process.stdout.write(sdk.stdout);
   console.timeEnd('acceptance:sdk-smoke');
-} finally {
-  for (const smoke of smokes) await unlink(smoke);
-  await rm(inspect, { recursive: true, force: true });
-}
+});
 const child = spawn(path.resolve(target, 'Daban.exe'), [], {
   cwd: path.resolve(target),
   stdio: ['ignore', 'pipe', 'pipe'],

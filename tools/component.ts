@@ -28,7 +28,13 @@ import {
   verifyComponent,
 } from '../apps/desktop/electron/component-install.ts';
 import { fetchComponent, publishComponent } from './component-release.ts';
-import { assembleComponent, assembleLinux, componentSourceId, verifyLinux } from './components.ts';
+import {
+  assembleComponent,
+  assembleLinux,
+  componentSourceId,
+  verifyLinux,
+  withComponentStage,
+} from './components.ts';
 import { hashAsset } from './environment.ts';
 import { materializeHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
 import { signComponent, signLinux } from './sign.ts';
@@ -157,8 +163,7 @@ else if (action === 'fetch') {
   assert.equal((await stat(archive)).size, expected.bytes);
   assert.equal((await hashAsset(archive, 'sha256')).digest, expected.sha256);
   console.timeEnd('runtime:archive-integrity');
-  const stage = await mkdtemp(path.join(tmpdir(), 'daban-runtime-validation-'));
-  try {
+  await withComponentStage(async (stage) => {
     console.time('runtime:extract');
     await extractComponent(archive, stage, platform);
     console.timeEnd('runtime:extract');
@@ -188,10 +193,8 @@ else if (action === 'fetch') {
       }).trim(),
       'v24.22.1',
     );
-    console.log('Verified downloaded runtime integrity, publisher trust and standalone Node.');
-  } finally {
-    await rm(stage, { recursive: true, force: true });
-  }
+  });
+  console.log('Verified downloaded runtime integrity, publisher trust and standalone Node.');
 } else if (action === 'reference') {
   assert.ok(input && nodeDirectory, 'COMPONENT_ARGUMENTS');
   const archive = path.resolve(input);

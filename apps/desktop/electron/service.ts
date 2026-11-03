@@ -343,6 +343,8 @@ export function runtimeService(
     return changed;
   }
   async function refreshReboot() {
+    // Native workspaces have no VM recovery authority; their own recovery snapshot still fences effects.
+    if (nativeMode) return;
     const ticket = ++rebootRequested,
       epoch = connection,
       current = client;
@@ -600,6 +602,7 @@ export function runtimeService(
       command.type === 'recovery.cancel' ||
       command.type === 'recovery.start'
     ) {
+      if (nativeMode) throw new Error('RECOVERY_UNAVAILABLE');
       if (agentConfig) {
         if (!client) throw new Error('RUNTIME_OFFLINE');
         if (command.type === 'recovery.status') {

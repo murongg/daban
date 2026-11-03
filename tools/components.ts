@@ -123,6 +123,16 @@ export async function componentSourceId(root: string) {
   return hash.digest('hex');
 }
 
+export async function withComponentStage(operation: (directory: string) => Promise<unknown>) {
+  const directory = await mkdtemp(path.join(tmpdir(), 'daban-runtime-validation-'));
+  try {
+    return await operation(directory);
+  } finally {
+    // Windows may briefly retain the just-executed Node image. Persistent cleanup failures still reject.
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  }
+}
+
 async function copyVmTools(source: string, target: string) {
   const value: unknown = JSON.parse(await readFile(path.join(source, 'manifest.json'), 'utf8'));
   if (

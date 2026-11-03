@@ -113,6 +113,8 @@ export class AgentSetup {
     }
     try {
       const info = await file.stat();
+      // An atomic progress replacement unlinks the old observation; discard it without trusting its contents.
+      if (name === 'progress.json' && info.nlink === 0) return undefined;
       if (
         !info.isFile() ||
         info.uid !== process.getuid?.() ||
@@ -200,7 +202,7 @@ export class AgentSetup {
       this.polling = true;
       this.poll()
         .catch(() => {
-          if (!this.closed && !this.cancelled) {
+          if (!this.closed && !this.cancelled && this.value.required) {
             this.publish({ required: true, phase: 'failed', error: 'SETUP_STORE' });
             this.observation.abort();
             this.stopWatching();
@@ -217,9 +219,16 @@ export class AgentSetup {
   }
   private async poll() {
     const generation = this.generation;
-    if (this.closed || this.cancelled) return;
+    if (this.closed || this.cancelled || !this.value.required) return;
     const progress = await this.read('progress.json');
-    if (this.closed || this.cancelled || generation !== this.generation || progress === undefined)
+    // Completion is authoritative; an earlier progress read must never reopen its observer.
+    if (
+      this.closed ||
+      this.cancelled ||
+      !this.value.required ||
+      generation !== this.generation ||
+      progress === undefined
+    )
       return;
     if (!status(progress)) throw new Error('SETUP_STORE');
     if (progress.phase === 'complete') {
@@ -235,7 +244,7 @@ export class AgentSetup {
     }
   }
   private observe() {
-    if (this.closed || this.cancelled || this.active) return;
+    if (this.closed || this.cancelled || !this.value.required || this.active) return;
     this.active = true;
     this.observation = new AbortController();
     this.watch();

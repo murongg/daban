@@ -117,7 +117,9 @@ vi.mock('./host-selection', () => ({
 }));
 
 import { daemonScope } from './daemon';
+import { RuntimeClient } from './runtime';
 import { runtimeService } from './service';
+import { readAgentToken, unixFetch } from './unix';
 
 const roots = new Set<string>();
 afterEach(async () => {
@@ -554,7 +556,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-async function agentFixture(protocol = 17) {
+async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-workspace' = 'linux-vm') {
   const root = await fs.mkdtemp(join(tmpdir(), 'mock-service-agent-'));
   roots.add(root);
   const dataRoot = join(root, 'data');
@@ -587,10 +589,13 @@ async function agentFixture(protocol = 17) {
     commands: [] as RuntimeCommand[],
     holdStatus: undefined as (() => Promise<RebootStatus>) | undefined,
   };
+  const recovery = {
+    status: { available: true, revision: 0 } as import('@daban/protocol').RecoveryStatus,
+  };
   let settings = {
     provider: 'deepseek-official',
     model: 'deepseek-flash',
-    configured: true,
+    configured: execution !== 'local-workspace',
     revision: 0,
   };
   const jobs: Record<string, Partial<import('@daban/protocol').RuntimeTask>> = {};
@@ -609,6 +614,11 @@ async function agentFixture(protocol = 17) {
     if (request.url === '/api/host/environment') {
       response.end(JSON.stringify({ required: true, target: 'linux', phase: 'available' }));
     } else if (request.url === '/api/host/recovery') {
+      if (execution === 'local-workspace') {
+        response.writeHead(503);
+        response.end(JSON.stringify({ error: 'RECOVERY_UNAVAILABLE' }));
+        return;
+      }
       const command = JSON.parse(body) as RuntimeCommand;
       power.commands.push(command);
       if (command.type === 'recovery.status' && power.holdStatus) {
@@ -629,6 +639,31 @@ async function agentFixture(protocol = 17) {
           };
         response.end(JSON.stringify(power.status));
       }
+    } else if (request.url === '/api/model/inspect') {
+      const input = JSON.parse(body);
+      response.end(
+        JSON.stringify(
+          input.kind === 'list'
+            ? {
+                kind: 'list',
+                revision: input.revision,
+                models: [{ id: 'mock-model', name: 'Synthetic model' }],
+              }
+            : input.kind === 'test'
+              ? {
+                  kind: 'test',
+                  revision: input.revision,
+                  model: input.model,
+                  latencyMs: 1,
+                  checkedAt: '2026-01-01T00:00:00.000Z',
+                }
+              : {
+                  kind: input.kind,
+                  revision: input.revision,
+                  model: { id: input.model, name: 'Synthetic model', contextWindow: 32768 },
+                },
+        ),
+      );
     } else if (request.url === '/api/groups/read') {
       response.end(JSON.stringify(pages.get(JSON.parse(body).group)));
     } else if (request.url === '/agent/identity') response.end(JSON.stringify(identity));
@@ -647,17 +682,20 @@ async function agentFixture(protocol = 17) {
             : {
                 computers: { available: true, revision: 0, limit: 2, items: [] },
                 chats: { available: true, revision: 0, items: [] },
-                recovery: { available: true, revision: 0 },
+                recovery: recovery.status,
                 mcp: { available: true, revision: 0 },
                 skills: { available: true, revision: 0 },
                 schedules: { available: true, items: schedules },
                 groups: { available: true, revision: 0, items: groups },
               }),
           sharedLogin: false,
-          reboot: power.status,
+          ...(execution === 'local-workspace'
+            ? { agent: { location: 'host', execution, privilege: 'workspace', approvals: 'host' } }
+            : { reboot: power.status }),
           bots: {},
           model: {
             available: true,
+            ...(execution === 'local-workspace' ? { inspection: true } : {}),
             provider: 'deepseek-official',
             model: settings.model,
             bots: jobs,
@@ -688,6 +726,7 @@ async function agentFixture(protocol = 17) {
     groups,
     pages,
     schedules,
+    recovery,
     requests,
     server,
     identity,
@@ -1152,6 +1191,86 @@ it('prepares the base runtime before native startup, without requesting a Linux 
     await fixture.close();
   }
   expect(close).toHaveBeenCalledTimes(1);
+});
+
+it('keeps first-use native model setup usable without probing an uninstalled VM recovery endpoint', async () => {
+  const f = await agentFixture(43, 'local-workspace');
+  await fs.unlink(f.config.vmConfig);
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:8766',
+    fetcher: unixFetch(f.config.socketPath),
+    tokenProvider: () => readAgentToken(f.dataRoot),
+    agent: true,
+  });
+  mocks.nativeEnsure.mockResolvedValue(client);
+  const frame = { url: 'file:///mock/index.html' },
+    sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(f.root, frame.url, '/mock/environment', undefined, {
+    ...f.config,
+    nativeFirst: true,
+  });
+  const invoke = (command: RuntimeCommand) =>
+    mocks.handlers.get('daban:runtime')!({ senderFrame: frame, sender }, command);
+  try {
+    const connected = await service.connect();
+    expect(connected.agent?.execution).toBe('local-workspace');
+    expect(connected.model.configured).toBe(false);
+    for (const kind of ['list', 'test', 'metadata', 'limits'] as const) {
+      const input = {
+        connection: { id: 'mock-provider', baseURL: 'https://models.example.test/v1' },
+        apiKey: 'synthetic-key',
+        revision: 0,
+        ...(kind === 'list' ? { kind } : { kind, model: 'mock-model' }),
+      };
+      const reply = await invoke({ type: 'model.inspect', input });
+      expect(reply, JSON.stringify(reply)).toMatchObject({
+        ok: true,
+        value: { kind, revision: 0 },
+      });
+    }
+    const polls = vi.spyOn(client, 'status');
+    await vi.waitFor(() => expect(polls).toHaveBeenCalled(), { timeout: 2000 });
+    const state = await invoke({ type: 'status' });
+    expect(state).toMatchObject({
+      ok: true,
+      value: { phase: 'ready' },
+    });
+    expect(state).not.toHaveProperty('value.reboot');
+    expect(await invoke({ type: 'recovery.status' })).toEqual({
+      ok: false,
+      error: 'RECOVERY_UNAVAILABLE',
+    });
+    expect(f.requests.some((request) => request.route === '/api/host/recovery')).toBe(false);
+    expect(
+      f.requests.some(
+        (request) =>
+          request.route.includes('/environment') && JSON.parse(request.body).action === 'start',
+      ),
+    ).toBe(false);
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+
+    f.recovery.status = {
+      available: true,
+      revision: 1,
+      operation: { id: 'mock-pending', revision: 1, phase: 'prepared', review: f.power.review },
+    };
+    await service.connect();
+    expect(
+      await invoke({
+        type: 'model.inspect',
+        input: {
+          kind: 'list',
+          revision: 0,
+          connection: { id: 'mock-provider', baseURL: 'https://models.example.test/v1' },
+          apiKey: 'synthetic-key',
+        },
+      }),
+    ).toEqual({ ok: false, error: 'RUNTIME_RECOVERY_PENDING' });
+  } finally {
+    await service.close();
+    await f.close();
+  }
 });
 
 it('keeps a busy compatible host visible on first launch and defers its runtime handoff', async () => {

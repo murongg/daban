@@ -626,8 +626,12 @@ export class ModelRuns {
       offered: (run) => this.tools.list(run.bot, run.model, run.conversationId, run),
     });
     this.attachments = new Attachments(path.join(dir, 'attachments.sqlite'));
-    this.tools.knowledge = new KnowledgeTools(this.knowledge, (run, name, content) =>
-      this.tools.writeText(run, name, content, true),
+    // Native tasks have no model file writer; omit that capability rather than advertise a failing export.
+    this.tools.knowledge = new KnowledgeTools(
+      this.knowledge,
+      nativeOnly
+        ? undefined
+        : (run, name, content) => this.tools.writeText(run, name, content, true),
     );
     this.notes = new Notes(path.join(dir, 'notes.sqlite'), (bot) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');

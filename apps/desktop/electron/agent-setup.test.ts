@@ -27,6 +27,182 @@ async function fixture() {
   return { root, config };
 }
 
+function deferred() {
+  let resolve: () => unknown = () => {};
+  const promise = new Promise<undefined>((done) => {
+    resolve = () => done(undefined);
+  });
+  return { promise, resolve };
+}
+
+it.each(['progress.json', 'cancel.json'])(
+  'discards only a superseded progress observation while retaining intent-file checks (%s)',
+  async (name) => {
+    const f = await fixture();
+    const setup = new AgentSetup({ config: f.config });
+    await setup.status();
+    const file = join(f.config.dataRoot, name);
+    const content =
+      name === 'progress.json'
+        ? JSON.stringify({ required: true, phase: 'verifying' })
+        : JSON.stringify({ cancelled: true });
+    await fs.writeFile(file, content, { mode: 0o600 });
+    const open = fs.open.bind(fs);
+    let replaced = false;
+    vi.spyOn(fs, 'open').mockImplementation(async (target, flags, mode) => {
+      const handle = await open(target, flags, mode);
+      if (target === file && !replaced) {
+        replaced = true;
+        await fs.writeFile(file + '.replacement', content, { mode: 0o600 });
+        await fs.rename(file + '.replacement', file);
+        expect((await handle.stat()).nlink).toBe(0);
+      }
+      return handle;
+    });
+    try {
+      const read = Reflect.get(setup, 'read') as (file: string) => Promise<unknown>;
+      const result = read.call(setup, name);
+      if (name === 'progress.json') await expect(result).resolves.toBeUndefined();
+      else await expect(result).rejects.toThrow('SETUP_STORE');
+    } finally {
+      await setup.close();
+    }
+  },
+);
+
+it('still rejects a live hard-linked progress file', async () => {
+  const f = await fixture();
+  const setup = new AgentSetup({ config: f.config });
+  await setup.status();
+  const file = join(f.config.dataRoot, 'progress.json');
+  await fs.writeFile(file, JSON.stringify({ required: true, phase: 'verifying' }), { mode: 0o600 });
+  await fs.link(file, file + '.linked');
+  try {
+    const read = Reflect.get(setup, 'read') as (file: string) => Promise<unknown>;
+    await expect(read.call(setup, 'progress.json')).rejects.toThrow('SETUP_STORE');
+  } finally {
+    await setup.close();
+  }
+});
+
+it('a progress read begun before readiness cannot revert completion or start another supervisor', async () => {
+  const f = await fixture();
+  const entered = deferred(),
+    finish = deferred(),
+    reading = deferred(),
+    resume = deferred();
+  const changes: SetupStatus[] = [];
+  let starts = 0;
+  const setup = new AgentSetup({
+    config: f.config,
+    pollMs: 600000,
+    onChange: (value) => changes.push(value),
+    daemon: () => ({
+      close: async () => {},
+      ensure: async () => {
+        starts++;
+        await fs.writeFile(f.config.vmConfig, '{}', { mode: 0o600 });
+        if (starts === 1) {
+          entered.resolve();
+          await finish.promise;
+        }
+      },
+    }),
+  });
+  let polling: Promise<unknown> | undefined;
+  try {
+    await setup.start();
+    await entered.promise;
+    await fs.writeFile(
+      join(f.config.dataRoot, 'progress.json'),
+      JSON.stringify({ required: true, phase: 'complete' }),
+      { mode: 0o600 },
+    );
+    const read = Reflect.get(setup, 'read') as (name: string) => Promise<unknown>;
+    let held = false;
+    // Hold one already-scheduled observation at its IO boundary, without timer-dependent sleeps.
+    Reflect.set(setup, 'read', async (name: string) => {
+      const value = await read.call(setup, name);
+      if (name === 'progress.json' && !held) {
+        held = true;
+        reading.resolve();
+        await resume.promise;
+      }
+      return value;
+    });
+    polling = Reflect.apply(Reflect.get(setup, 'poll'), setup, []) as Promise<unknown>;
+    await reading.promise;
+    finish.resolve();
+    await setup.settled;
+    expect(await setup.status()).toEqual({ required: false, phase: 'complete' });
+    const completed = changes.length;
+    resume.resolve();
+    await polling;
+    await setup.settled;
+    expect(starts).toBe(1);
+    expect(changes.slice(completed).some((value) => value.required)).toBe(false);
+    expect(await setup.status()).toEqual({ required: false, phase: 'complete' });
+  } finally {
+    finish.resolve();
+    resume.resolve();
+    await setup.close();
+    await polling;
+  }
+});
+
+it('a delayed VM-existence check cannot start observation after an explicit start already completed', async () => {
+  const f = await fixture();
+  await fs.writeFile(
+    join(f.config.dataRoot, 'progress.json'),
+    JSON.stringify({ required: true, phase: 'verifying' }),
+    { mode: 0o600 },
+  );
+  const entered = deferred(),
+    resume = deferred();
+  const ensure = vi.fn(async () => {
+    await fs.writeFile(f.config.vmConfig, '{}', { mode: 0o600 });
+  });
+  const setup = new AgentSetup({
+    config: f.config,
+    pollMs: 600000,
+    daemon: () => ({ ensure, close: async () => {} }),
+  });
+  let polling: Promise<unknown> | undefined;
+  try {
+    await setup.status();
+    await fs.writeFile(f.config.vmConfig, '{}', { mode: 0o600 });
+    await fs.writeFile(
+      join(f.config.dataRoot, 'progress.json'),
+      JSON.stringify({ required: true, phase: 'complete' }),
+      { mode: 0o600 },
+    );
+    const access = fs.access.bind(fs);
+    let held = false;
+    vi.spyOn(fs, 'access').mockImplementation(async (file, mode) => {
+      if (file === f.config.vmConfig && !held) {
+        held = true;
+        entered.resolve();
+        await resume.promise;
+      }
+      return access(file, mode);
+    });
+    polling = Reflect.apply(Reflect.get(setup, 'poll'), setup, []) as Promise<unknown>;
+    await entered.promise;
+    await setup.start();
+    await setup.settled;
+    expect(await setup.status()).toEqual({ required: false, phase: 'complete' });
+    resume.resolve();
+    await polling;
+    await setup.settled;
+    expect(ensure).toHaveBeenCalledTimes(1);
+    expect(await setup.status()).toEqual({ required: false, phase: 'complete' });
+  } finally {
+    resume.resolve();
+    await setup.close();
+    await polling;
+  }
+});
+
 it('offers setup without starting anything and reports progress until the daemon is actually ready', async () => {
   const f = await fixture();
   const updates: SetupStatus[] = [];
