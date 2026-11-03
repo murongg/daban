@@ -1,3 +1,7 @@
+import { managedProtocol } from '@daban/protocol';
+
+export { windowsEnvironment } from './qemu-reference.js';
+
 import type { Payload } from './payload.js';
 
 export interface ComponentAsset {
@@ -16,6 +20,14 @@ export interface LinuxIndex {
   id: string;
   lima: Pick<Payload, 'bytes' | 'sha256'>;
   executor: Pick<Payload, 'bytes' | 'sha256'>;
+}
+export interface QemuIndex {
+  version: 1;
+  protocol: number;
+  bytes: number;
+  sha256: string;
+  unpackedBytes: number;
+  requiredBytes: number;
 }
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -98,5 +110,45 @@ export function linuxPayload(index: LinuxIndex, kind: 'lima' | 'executor'): Payl
   return {
     url: `https://github.com/murongg/daban/releases/download/${componentTag(checked.id)}/${linuxFilename(kind)}`,
     ...checked[kind],
+  };
+}
+
+export function qemuIndex(value: unknown): QemuIndex {
+  if (
+    !record(value) ||
+    Object.keys(value).length !== 6 ||
+    value.version !== 1 ||
+    value.protocol !== managedProtocol ||
+    typeof value.bytes !== 'number' ||
+    !Number.isSafeInteger(value.bytes) ||
+    value.bytes <= 0 ||
+    value.bytes > 2 * 1024 ** 3 ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.unpackedBytes !== 'number' ||
+    !Number.isSafeInteger(value.unpackedBytes) ||
+    value.unpackedBytes <= 0 ||
+    value.unpackedBytes > 8 * 1024 ** 3 ||
+    typeof value.requiredBytes !== 'number' ||
+    !Number.isSafeInteger(value.requiredBytes) ||
+    value.requiredBytes < value.unpackedBytes + 4 * 1024 ** 3 ||
+    value.requiredBytes > 128 * 1024 ** 3
+  )
+    throw Error('QEMU_DOWNLOAD_REFERENCE');
+  return value as unknown as QemuIndex;
+}
+export function qemuFilename() {
+  return 'Daban-linux-windows-x64.zip';
+}
+export function qemuTag(index: QemuIndex) {
+  return `qemu-${qemuIndex(index).sha256.slice(0, 24)}`;
+}
+export function qemuPayload(index: QemuIndex): Payload {
+  const checked = qemuIndex(index);
+  // Environment identity follows its bytes, so host upgrades retain the same resumable download cache.
+  return {
+    url: `https://github.com/murongg/daban/releases/download/${qemuTag(checked)}/${qemuFilename()}`,
+    bytes: checked.bytes,
+    sha256: checked.sha256,
   };
 }

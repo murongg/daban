@@ -27,6 +27,10 @@
     "test": "npm run test:runtime --prefix ../.."
   },
   "exports": {
+    "./archive": {
+      "types": "./dist/archive.d.ts",
+      "import": "./dist/archive.js"
+    },
     "./component-files": {
       "types": "./dist/component-files.d.ts",
       "import": "./dist/component-files.js"

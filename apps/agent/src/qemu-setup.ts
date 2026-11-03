@@ -10,7 +10,8 @@ import {
   type WindowsSetup,
 } from '@daban/protocol';
 import { parseQemuMachine } from './qemu.js';
-import { installQemu, type QemuInstallOptions, readQemuBundle } from './qemu-install.js';
+import { qemuResources, withQemuAssets } from './qemu-assets.js';
+import { installQemu, type QemuInstallOptions } from './qemu-install.js';
 import { readQemuRecord, writeQemuRecord } from './qemu-store.js';
 import { WindowsHost } from './windows.js';
 
@@ -26,6 +27,7 @@ interface Dependencies {
     Pick<WindowsSetup, 'requiredBytes' | 'availableBytes' | 'downloadBytes'>
   >;
   prepare?: (options: QemuInstallOptions) => Promise<unknown>;
+  download?: typeof withQemuAssets;
 }
 interface Request {
   version: 1;
@@ -94,15 +96,13 @@ export class QemuSetup {
     const resources = await (
       this.dependencies.resources ??
       (async () => {
-        const requiredBytes = installed
-          ? 0
-          : (await readQemuBundle(this.options.bundleDirectory)).image.expandedBytes +
-            4 * 1024 ** 3;
+        const resources = installed
+          ? { requiredBytes: 0, downloadBytes: 0 }
+          : await qemuResources(this.options);
         const space = await statfs(this.options.dataRoot);
         return {
-          requiredBytes,
+          ...resources,
           availableBytes: space.bavail * space.bsize,
-          downloadBytes: 0,
         };
       })
     )();
@@ -207,9 +207,14 @@ export class QemuSetup {
           phase: this.cancellation?.signal.aborted ? 'cancelled' : 'failed',
           error: this.cancellation?.signal.aborted
             ? undefined
-            : error instanceof Error && /^(QEMU|EXECUTOR|EXECUTION)_[A-Z_]+$/.test(error.message)
-              ? error.message
-              : 'QEMU_SETUP_FAILED',
+            : /^(?:PAYLOAD_INTEGRITY|ARCHIVE_[A-Z_]+)$/.test(detail)
+              ? 'QEMU_ASSET_INTEGRITY'
+              : /^PAYLOAD_[A-Z_]+$/.test(detail)
+                ? 'QEMU_DOWNLOAD_FAILED'
+                : error instanceof Error &&
+                    /^(QEMU|EXECUTOR|EXECUTION)_[A-Z_]+$/.test(error.message)
+                  ? error.message
+                  : 'QEMU_SETUP_FAILED',
         });
       })
       .catch(() => {
@@ -224,12 +229,61 @@ export class QemuSetup {
     this.cancellation = new AbortController();
     const signal = this.cancellation.signal;
     this.track(async () => {
-      await (this.dependencies.prepare ?? installQemu)({
-        ...this.options,
-        mode,
-        signal,
-        changed: (value) => this.publish(value),
-      });
+      // Download callbacks are synchronous; drain their writes before any later phase, including cancellation.
+      let writes: Promise<unknown> = Promise.resolve();
+      let writeError: unknown;
+      const drain = async () => {
+        await writes;
+        if (writeError) throw writeError;
+      };
+      const prepare = async (bundleDirectory: string) => {
+        await drain();
+        signal.throwIfAborted();
+        await (this.dependencies.prepare ?? installQemu)({
+          ...this.options,
+          bundleDirectory,
+          mode,
+          signal,
+          changed: (value) => this.publish(value),
+        });
+      };
+      const root = path.join(this.options.dataRoot, 'qemu');
+      const saved = await readQemuRecord(path.join(root, 'machine.json'));
+      try {
+        // A published machine owns its disk and tools, even if its first connection was interrupted.
+        if (saved !== undefined) {
+          parseQemuMachine(saved, root);
+          await prepare(this.options.bundleDirectory);
+        } else
+          await (this.dependencies.download ?? withQemuAssets)(
+            {
+              ...this.options,
+              signal,
+              progress: ({ received, total }) => {
+                writes = writes
+                  .then(() =>
+                    this.publish({
+                      phase: 'downloading',
+                      downloaded: received,
+                      total,
+                      progress: Math.floor((received / total) * 100),
+                    }),
+                  )
+                  .catch((error) => {
+                    writeError ??= error;
+                  });
+              },
+              extracting: async () => {
+                await drain();
+                signal.throwIfAborted();
+                await this.publish({ phase: 'extracting', progress: undefined });
+              },
+            },
+            prepare,
+          );
+      } finally {
+        await drain();
+      }
       signal.throwIfAborted();
       const connection = await readVmConnection(this.options.vmConfigFile);
       if (connection?.provider !== 'qemu' || !connection.enabled)

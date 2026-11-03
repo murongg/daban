@@ -37,7 +37,7 @@ jobs:
         run: npx vitest run --project node dist-agent/ssh.test.js dist-agent/hyperv.test.js dist-agent/main-hyperv.test.js dist-agent/failure-private.test.js packages/engine/dist/host-vm.test.js packages/engine/dist/reboot-private.test.js packages/engine/dist/vm-config.test.js --maxWorkers=2
       - name: Test managed QEMU installation, Windows preflight and ordinary-user setup
         run: |
-          npx vitest run --project node dist-agent/qemu.test.js dist-agent/qemu-store.test.js dist-agent/qmp.test.js dist-agent/seed.test.js dist-agent/qemu-install.test.js dist-agent/qemu-setup.test.js dist-agent/windows.test.js packages/engine/dist/setup-status.test.js packages/engine/dist/environment-api.test.js --maxWorkers=2
+          npx vitest run --project node dist-agent/qemu.test.js dist-agent/qemu-store.test.js dist-agent/qmp.test.js dist-agent/seed.test.js dist-agent/qemu-install.test.js dist-agent/qemu-setup.test.js dist-agent/qemu-assets.test.js dist-agent/windows.test.js packages/engine/dist/setup-status.test.js packages/engine/dist/environment-api.test.js packages/engine/dist/archive.test.js tools/qemu-release.test.ts tools/component-release.test.ts --maxWorkers=2
           npx vitest run --project desktop apps/desktop/src/features/onboarding/WindowsSetup.test.tsx apps/desktop/src/features/onboarding/LinuxSetup.test.tsx apps/desktop/electron/restart.test.ts --maxWorkers=2
       - name: Test standalone Linux bundle
         run: npx vitest run --project node tools/linux.test.ts tools/sdk.test.ts dist-agent/sdk.test.js --maxWorkers=2

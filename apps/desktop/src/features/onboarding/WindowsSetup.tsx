@@ -48,6 +48,11 @@ export function WindowsSetup({ status }: { status: SetupStatus }) {
     >
       <h2>{t('settings.localLinux')}</h2>
       <p className="panel-description">{t('setup.linuxOptional')}</p>
+      {!!windows.downloadBytes && (
+        <p className="setting-description">
+          {t('setup.windowsDownloadSize', { 0: (windows.downloadBytes / 1024 ** 3).toFixed(1) })}
+        </p>
+      )}
       <p className="setting-description">
         {t('setup.windowsResources', { 0: windows.memoryMiB / 1024, 1: windows.diskGiB })}
       </p>
@@ -74,6 +79,27 @@ export function WindowsSetup({ status }: { status: SetupStatus }) {
         </p>
       )}
       {needsRestart && <p role="status">{t('setup.windowsRestartNeeded')}</p>}
+      {status.phase === 'downloading' && status.progress !== undefined && (
+        <div className="setup-measured">
+          <div
+            className="setup-track"
+            role="progressbar"
+            aria-label={t('setup.linuxDownload')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={status.progress}
+          >
+            <span style={{ width: `${status.progress}%` }} />
+          </div>
+          <span>
+            {t('setup.windowsDownloadProgress', {
+              0: ((status.downloaded ?? 0) / 1024 ** 3).toFixed(1),
+              1: ((status.total ?? windows.downloadBytes ?? 0) / 1024 ** 3).toFixed(1),
+              2: status.progress,
+            })}
+          </span>
+        </div>
+      )}
       {!enoughSpace && (
         <p role="alert" className="form-error">
           {t('setup.windowsDiskSpace')}

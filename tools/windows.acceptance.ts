@@ -164,6 +164,8 @@ try {
       assert.deepEqual(value.profiles, []);
       assert.equal((value.knowledge as { documentParsing?: boolean }).documentParsing, false);
       assert.equal((value.schedules as { available?: boolean }).available, true);
+      assert.equal((value.setup as { phase?: string }).phase, 'available');
+      assert.ok((value.setup as { windows?: { downloadBytes?: number } }).windows?.downloadBytes);
       ready = true;
       console.log(`Runtime ready after ${Date.now() - preparationStarted} ms.`);
       break;
@@ -177,7 +179,7 @@ try {
     `Packaged client failed first-use startup: ${lastError instanceof Error ? lastError.message : 'not ready'}`,
   );
   console.log(
-    'Packaged Windows first-use startup verified: no VM, empty workspace, desktop control disabled.',
+    'Packaged Windows first-use startup verified: optional Linux download available, no VM, empty workspace, desktop control disabled.',
   );
 } finally {
   for (const line of launchOutput.split(/\r?\n/))

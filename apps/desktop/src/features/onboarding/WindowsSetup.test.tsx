@@ -66,3 +66,25 @@ it('explains a required restart and asks for confirmation without restarting on 
     expect(mock.command).toHaveBeenCalledWith({ type: 'setup.restart', confirmed: true }),
   );
 });
+
+it('shows the optional download size and a measured download that can be paused', async () => {
+  mock.setup.windows!.downloadBytes = 1.6 * 1024 ** 3;
+  const view = render(<LinuxSetup />);
+  expect(screen.getByText(/点击安装后下载.*1.6 GB/)).toBeVisible();
+  expect(mock.command).not.toHaveBeenCalled();
+  mock.setup = {
+    ...mock.setup,
+    phase: 'downloading',
+    downloaded: 0.4 * 1024 ** 3,
+    total: 1.6 * 1024 ** 3,
+    progress: 25,
+  };
+  view.rerender(<LinuxSetup />);
+  expect(screen.getByRole('progressbar', { name: '下载进度' })).toHaveAttribute(
+    'aria-valuenow',
+    '25',
+  );
+  expect(screen.getByText(/0.4 GB.*1.6 GB.*25%/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: '暂停安装' }));
+  await waitFor(() => expect(mock.command).toHaveBeenCalledWith({ type: 'setup.cancel' }));
+});

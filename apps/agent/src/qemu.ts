@@ -147,7 +147,7 @@ export async function qemuFileHash(file: string) {
   }
 }
 
-export async function verifyQemuTools(machine: QemuMachine, root: string) {
+export async function verifyQemuTools(machine: Pick<QemuMachine, 'toolsId'>, root: string) {
   const tools = await secureDirectory(path.join(root, 'tools'));
   const file = path.join(tools, 'manifest.json');
   const metadata = await qemuFileHash(file);

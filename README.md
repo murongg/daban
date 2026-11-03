@@ -18,7 +18,7 @@
 
   <p>Daban 是基于 DeepSeek Harness 的桌面 AI 工作区。你可以和 Bot 聊天、查资料、处理文件，也可以让它使用独立的 Linux 桌面，操作浏览器、终端和其他应用。需要时，随时接管它的屏幕。</p>
 
-  <p>目前处于早期预览阶段。Apple 芯片 Mac 支持 Linux 虚拟机和本机桌面两种模式；Windows x64 完整环境包可一键配置 QEMU Linux 电脑，默认使用 WHPX 硬件加速，也保留本机桌面和手动 Hyper-V 接入。</p>
+  <p>目前处于早期预览阶段。Apple 芯片 Mac 支持 Linux 虚拟机和本机桌面两种模式；Windows x64 可按需下载并一键配置 QEMU Linux 电脑，默认使用 WHPX 硬件加速，也保留本机桌面和手动 Hyper-V 接入。</p>
 
   <p>
     使用说明：<a href="docs/zh-CN/README.md">简体中文</a> · <a href="docs/en/README.md">English</a> · <a href="docs/README.md">文档首页</a>
@@ -49,7 +49,7 @@
 
 界面支持简体中文和 English，可在「设置 → 通用 → 界面语言」即时切换。首次安装页也提供语言选择，设置只保存在当前设备。
 
-基础运行组件会自动准备并缓存在本机，无需另外安装 Docker、Node.js 或 DSH。Mac 首次下载只包含后台、Node.js 和 DSH；Lima 工具、Linux 执行程序与系统镜像在从电脑面板或「设置 → 运行环境」安装 Linux 电脑时才下载，并缓存复用，首次安装建议预留 40 GB 可用磁盘空间。Windows 完整环境包已包含运行组件和 Linux 镜像，从电脑面板点击安装即可；若 Windows 要求重启，可稍后重启或主动选择较慢的兼容模式。已有 Hyper-V 连接保留在高级设置，详见 [Windows Linux 电脑](docs/windows-vm.md)。PDF 和 Office 文档解析需要 Linux 工作区；没有 Linux 时仍可使用文本与图片。
+基础运行组件会自动准备并缓存在本机，无需另外安装 Docker、Node.js 或 DSH。Mac 首次下载只包含后台、Node.js 和 DSH；Lima 工具、Linux 执行程序与系统镜像在从电脑面板或「设置 → 运行环境」安装 Linux 电脑时才下载，并缓存复用，首次安装建议预留 40 GB 可用磁盘空间。Windows 也使用轻量客户端，点击「安装 Linux 电脑」后才下载约 1.6 GB 的 QEMU 与 Debian 环境，支持暂停、断点续传和校验缓存；仅打开应用或使用本机功能不会下载虚拟机。客户端升级可复用同版本环境，已有 Linux 电脑可离线启动。若 Windows 要求重启，可稍后重启或主动选择较慢的兼容模式。已有 Hyper-V 连接保留在高级设置，详见 [Windows Linux 电脑](docs/windows-vm.md)。PDF 和 Office 文档解析需要 Linux 工作区；没有 Linux 时仍可使用文本与图片。
 
 程序和 Linux 环境运行在本机，模型请求会发送到你配置的供应商，API 用量由你自己的账户承担。退出客户端后，已启动的后台任务仍可继续，本机桌面控制会断开；电脑休眠或关机期间无法持续执行。
 

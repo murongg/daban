@@ -25,7 +25,12 @@ export const english = {
   'setup.windowsDiskSpace':
     'There is not enough free disk space. Free up space and continue installation.',
   'setup.windowsVerifying': 'Checking the environment and Windows requirements…',
-  'setup.windowsExtracting': 'Extracting the bundled Linux environment…',
+  'setup.windowsExtracting': 'Extracting the Linux environment…',
+  'setup.windowsDownloadSize':
+    'Downloads about {0} GB after you click install. You can pause and resume.',
+  'setup.windowsDownloadProgress': '{0} GB / {1} GB · {2}%',
+  'setup.windowsDownloadFailed':
+    'Download interrupted. Check your connection and continue; downloaded files are retained.',
   'setup.windowsCreating': 'Preparing your Linux computer…',
   'setup.windowsStarting': 'Starting Linux…',
   'setup.windowsConnecting': 'Connecting and checking the execution service…',
@@ -33,9 +38,9 @@ export const english = {
   'setup.windowsFailed':
     'Installation could not finish. Existing files have been retained. Reopen Daban and retry.',
   'setup.windowsBundleMissing':
-    'The Linux environment is missing from this app package. Install the complete Windows package and continue.',
+    'The Linux environment is unavailable. Continue setup to download it again.',
   'setup.windowsIntegrity':
-    'The environment files failed verification. Install a fresh complete package and retry.',
+    'The environment files failed verification. Retry installation to download them again.',
   'setup.windowsUncertain':
     'The Linux computer’s state could not be confirmed. Reopen Daban to reconnect. It will not create a duplicate computer.',
   'setup.windowsEnableFailed':

@@ -16,6 +16,7 @@ const errors: Record<string, MessageKey> = {
   RECOVERY_TARGET_CHANGED: 'vm.targetChanged',
   AGENT_EXECUTION_CACHE_INVALID: 'vm.targetChanged',
   QEMU_DISK_SPACE: 'setup.windowsDiskSpace',
+  QEMU_DOWNLOAD_FAILED: 'setup.windowsDownloadFailed',
   QEMU_BUNDLE_MISSING: 'setup.windowsBundleMissing',
   QEMU_BUNDLE_INVALID: 'setup.windowsIntegrity',
   QEMU_BUNDLE_CHANGED: 'setup.windowsIntegrity',

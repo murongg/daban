@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { request } from 'node:https';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { componentAsset, componentIndex, windowsEnvironment } from '@daban/engine/component';
 import { readVmConnection } from '@daban/engine/host';
 import { privateClientOptions, secureDirectory } from '@daban/engine/local-computer';
 import type {
@@ -15,6 +16,7 @@ import type {
   SetupStatus,
 } from '@daban/protocol';
 import { _electron, type ElectronApplication, type Page } from 'playwright';
+import { hashAsset } from './environment.ts';
 
 const repository = fileURLToPath(new URL('..', import.meta.url));
 const { QemuLink }: typeof import('../apps/agent/src/qemu.ts') = await import(
@@ -23,7 +25,9 @@ const { QemuLink }: typeof import('../apps/agent/src/qemu.ts') = await import(
 const { ExecutionConnection }: typeof import('../apps/agent/src/connection.ts') = await import(
   pathToFileURL(path.join(repository, 'dist-agent/connection.js')).href
 );
-const [binary, profileDirectory, reportDirectory, mode, continuation] = process.argv.slice(2);
+const [binary, profileDirectory, reportDirectory, mode, continuation, runtimeArchive] =
+  process.argv.slice(2);
+const download = continuation === '--download';
 assert.ok(
   binary && profileDirectory && reportDirectory && (mode === 'tcg' || mode === 'whpx'),
   'Usage: qemu-client.acceptance.ts <Daban.exe> <new-profile> <reports> tcg|whpx',
@@ -53,6 +57,21 @@ if (!resume)
   await writeFile(marker, JSON.stringify({ version: 1, owner: 'qemu-client', mode }), {
     flag: 'wx',
   });
+if (download) {
+  assert.ok(runtimeArchive, 'DOWNLOAD_ACCEPTANCE_RUNTIME_REQUIRED');
+  const reference = JSON.parse(
+    await readFile(path.resolve(binary, '../resources/runtime.json'), 'utf8'),
+  ) as { id: string };
+  const asset = componentAsset(componentIndex(reference, reference.id), 'win32', 'x64');
+  const actual = await hashAsset(path.resolve(runtimeArchive), 'sha256');
+  assert.equal(actual.bytes, asset.bytes);
+  assert.equal(actual.digest, asset.sha256);
+  const cache = await secureDirectory(path.join(profile, 'components/downloads'));
+  await copyFile(path.resolve(runtimeArchive), path.join(cache, asset.sha256 + '.zip'));
+  await assert.rejects(lstat(path.resolve(binary, '../resources/environment/qemu')), {
+    code: 'ENOENT',
+  });
+}
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const scope = digest([path.resolve(dataRoot), path.resolve(profile, 'runtime.json')]);
 const socketPath = String.raw`\\.\pipe\daban-agent-${digest([path.resolve(profile, 'agent.sock'), scope]).slice(0, 32)}`;
@@ -194,13 +213,66 @@ try {
         'ready',
         'WHPX acceptance requires a completed Windows restart.',
       );
-    check('isolated-packaged-client-and-bundled-runtime');
+    check(
+      download
+        ? 'lightweight-client-without-bundled-qemu-or-image'
+        : 'isolated-packaged-client-and-bundled-runtime',
+    );
+    if (download) {
+      assert.equal(initial.setup.phase, 'available');
+      assert.equal(initial.setup.windows.downloadBytes, windowsEnvironment.bytes);
+      await assert.rejects(lstat(path.join(dataRoot, 'qemu-cache')), { code: 'ENOENT' });
+      check('opening-client-does-not-download-linux');
+    }
     await invoke(opened.page, { type: 'setup.start', mode });
+    if (download) {
+      const end = Date.now() + 180000;
+      let received = 0;
+      while (Date.now() < end) {
+        const state = await invoke<RuntimeSnapshot>(opened.page, { type: 'status' });
+        if (state.setup?.phase === 'failed')
+          throw Error(state.setup.error ?? 'ACCEPTANCE_DOWNLOAD_FAILED');
+        if (
+          state.setup?.phase === 'downloading' &&
+          (state.setup.downloaded ?? 0) > 32 * 1024 ** 2
+        ) {
+          received = state.setup.downloaded!;
+          break;
+        }
+        await delay(300);
+      }
+      assert.ok(
+        received > 0 && received < windowsEnvironment.bytes,
+        'REAL_DOWNLOAD_PROGRESS_REQUIRED',
+      );
+      await invoke(opened.page, { type: 'setup.cancel' });
+      const until = Date.now() + 30000;
+      let paused = false;
+      while (Date.now() < until) {
+        const state = await invoke<RuntimeSnapshot>(opened.page, { type: 'status' });
+        if (state.setup?.phase === 'cancelled') {
+          paused = true;
+          break;
+        }
+        await delay(200);
+      }
+      assert.ok(paused, 'DOWNLOAD_DID_NOT_PAUSE');
+      const partial = await lstat(
+        path.join(dataRoot, 'qemu-cache', windowsEnvironment.sha256 + '.zip.part'),
+      );
+      assert.ok(partial.size >= received && partial.size < windowsEnvironment.bytes);
+      await closeWindow(opened.app, opened.page);
+      opened = await launch();
+      const state = await ready(opened.page, 'local-workspace');
+      assert.equal(state.setup?.phase, 'cancelled');
+      check('real-https-download-paused-with-partial-data-and-survives-client-reopen');
+      await invoke(opened.page, { type: 'setup.start', mode });
+    }
     await closeWindow(opened.app, opened.page);
     opened = undefined;
     let installed: SetupStatus | undefined;
     let phase = '';
-    const end = Date.now() + 660000;
+    const end = Date.now() + (download ? 1200000 : 660000);
     while (Date.now() < end) {
       installed = (await host('/api/host/environment', { scope, action: 'status' })) as SetupStatus;
       if (phase !== installed.phase) {

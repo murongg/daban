@@ -1,10 +1,13 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { windowsEnvironment } from '@daban/engine/component';
 import { saveVmConnection } from '@daban/engine/host';
+import { secureDirectory } from '@daban/engine/local-computer';
 import type { VmConnection, WindowsAcceleration } from '@daban/protocol';
 import { expect, type TestContext, test } from 'vitest';
 import { QemuSetup } from './qemu-setup.js';
+import { readQemuRecord, writeQemuRecord } from './qemu-store.js';
 
 async function fixture(t: TestContext) {
   const temporary = await mkdtemp(path.join(tmpdir(), 'mock-qemu-setup-'));
@@ -24,6 +27,8 @@ async function fixture(t: TestContext) {
     hostKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
   };
   const options = { dataRoot, vmConfigFile, bundleDirectory: path.join(temporary, 'bundle') };
+  await secureDirectory(options.bundleDirectory);
+  await writeFile(path.join(options.bundleDirectory, 'qemu.json'), 'SYNTHETIC BUNDLED MANIFEST');
   const dependencies = {
     probe: async () => acceleration,
     enable: async () => {
@@ -61,6 +66,109 @@ test('a retained manual Hyper-V connection is never replaced by automatic QEMU i
   await setup.settled;
   expect(f.actions).toEqual([]);
   await setup.close();
+});
+
+test('a lightweight client can report installation resources with no bundled environment and no download', async (t) => {
+  const f = await fixture(t);
+  const setup = new QemuSetup(
+    { ...f.options, bundleDirectory: path.join(f.options.dataRoot, 'absent') },
+    { probe: f.dependencies.probe },
+  );
+  expect(await setup.status()).toMatchObject({
+    phase: 'available',
+    windows: {
+      downloadBytes: windowsEnvironment.bytes,
+      requiredBytes: windowsEnvironment.requiredBytes,
+    },
+  });
+  await setup.resumePending();
+  expect(setup.busy).toBe(false);
+  await setup.close();
+  await saveVmConnection(f.options.vmConfigFile, f.config);
+  const installed = new QemuSetup(f.options, {
+    probe: async () => {
+      throw Error('INSTALLED_VM_MUST_NOT_REQUIRE_ASSETS');
+    },
+  });
+  expect(await installed.status()).toMatchObject({ phase: 'complete', required: false });
+  await installed.close();
+});
+
+test('a published machine reconnects offline after an interrupted first boot without fetching an environment', async (t) => {
+  const f = await fixture(t);
+  f.ready();
+  await secureDirectory(f.options.dataRoot);
+  const root = await secureDirectory(path.join(f.options.dataRoot, 'qemu'));
+  await writeQemuRecord(path.join(root, 'machine.json'), {
+    version: 1,
+    connection: f.config,
+    acceleration: 'whpx',
+    qmpPort: 23457,
+    toolsId: 'a'.repeat(64),
+  });
+  const setup = new QemuSetup(
+    { ...f.options, bundleDirectory: path.join(f.options.dataRoot, 'absent') },
+    {
+      probe: f.dependencies.probe,
+      prepare: f.dependencies.prepare,
+      download: async () => {
+        throw Error('OFFLINE_MACHINE_MUST_NOT_DOWNLOAD');
+      },
+    },
+  );
+  await setup.start();
+  await setup.settled;
+  expect(await setup.status()).toMatchObject({ required: false, phase: 'complete' });
+  expect(f.actions).toEqual(['whpx']);
+  await setup.close();
+});
+
+test('download progress drains before installation completion and a pause cannot be overwritten by late progress', async (t) => {
+  const f = await fixture(t);
+  f.ready();
+  const setup = new QemuSetup(f.options, {
+    ...f.dependencies,
+    download: async (options, install) => {
+      options.progress?.({ received: 25, total: 100 });
+      options.progress?.({ received: 100, total: 100 });
+      await options.extracting?.();
+      return install(options.bundleDirectory);
+    },
+  });
+  await setup.start();
+  await setup.settled;
+  expect(await readQemuRecord(path.join(f.options.dataRoot, 'qemu-progress.json'))).toMatchObject({
+    phase: 'complete',
+    required: false,
+  });
+  await setup.close();
+  await rm(f.options.vmConfigFile);
+  let began!: () => unknown;
+  const started = new Promise<unknown>((resolve) => {
+    began = () => resolve(undefined);
+  });
+  const paused = new QemuSetup(f.options, {
+    ...f.dependencies,
+    download: async (options, install) => {
+      options.progress?.({ received: 25, total: 100 });
+      began();
+      await new Promise<unknown>((resolve) =>
+        options.signal!.addEventListener('abort', () => resolve(undefined), { once: true }),
+      );
+      options.progress?.({ received: 50, total: 100 });
+      options.signal!.throwIfAborted();
+      return install(options.bundleDirectory);
+    },
+  });
+  await paused.start();
+  await started;
+  await paused.cancel();
+  await paused.settled;
+  expect(await readQemuRecord(path.join(f.options.dataRoot, 'qemu-progress.json'))).toMatchObject({
+    phase: 'cancelled',
+  });
+  expect(f.actions).toEqual(['whpx']);
+  await paused.close();
 });
 
 test.skipIf(process.platform !== 'win32')(
