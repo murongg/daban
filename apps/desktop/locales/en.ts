@@ -22,6 +22,8 @@ export const english = {
   'errors.groupCollaborationConflict':
     'This task already has a collaboration group. Reuse the original request.',
   'execution.readImage': 'View image',
+  'execution.sessionStatistics':
+    'Session total through this task: {0} turns · {1} steps · model {2}s · tools {3}s · average first token {4}s',
   'execution.groupDirectory': 'Find collaborators',
   'execution.groupCreate': 'Create collaboration group',
   'execution.groupHistory': 'Read group history',
@@ -1473,6 +1475,10 @@ export const english = {
   'execution.continueReading': 'Continue reading',
   'execution.controlComputer': 'Control computer',
   'execution.execution': 'Execution',
+  'execution.thinking': 'Thinking',
+  'execution.duration': '{0}s',
+  'execution.expandThinking': 'Show full text',
+  'execution.collapseThinking': 'Collapse text',
   'execution.incompleteExecutionHistory': 'Incomplete execution history',
   'execution.interimResponse': 'Interim response',
   'execution.loadingContent': 'Loading content…',

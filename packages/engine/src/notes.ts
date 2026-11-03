@@ -20,7 +20,11 @@ import {
   noteKey,
   validAgentId,
 } from '@daban/protocol';
+import { and, count, desc, eq, getColumns, lt, ne, or, type SQL, sql, sum } from 'drizzle-orm';
 import { errorCode, Fault } from './control.js';
+import { configure, type Database, migrate, tables, unwrap } from './database.js';
+import { migrations } from './notes-migrations.js';
+import { noteItems, noteMeta, noteOperations } from './notes-schema.js';
 import { privateMetadata } from './private-files.js';
 
 type Row = Record<string, unknown>;
@@ -30,10 +34,19 @@ const signature = (bot: string, request: NoteWrite, actor: NoteAuthor) =>
   createHash('sha256')
     .update(noteKey(bot, request, actor))
     .digest('hex');
+const names = ['note_items', 'note_meta', 'note_operations'];
+
+// Pre-ORM files: version 1 with exactly the three tables is the baseline; anything else stays refused.
+function legacy(client: DatabaseSync) {
+  const version = Number(client.prepare('PRAGMA user_version').get()!.user_version);
+  if (version !== 1 || JSON.stringify(tables(client)) !== JSON.stringify(names))
+    throw new Fault('NOTES_CORRUPT');
+}
+
 export class Notes {
   // One runtime owns the database; a process lease is required before supporting multiple writers.
   readonly ready: Promise<unknown>;
-  private db?: DatabaseSync;
+  private db?: Database;
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
   constructor(
@@ -44,6 +57,7 @@ export class Notes {
     this.ready.catch(() => {});
   }
   private async load() {
+    let client: DatabaseSync | undefined;
     try {
       await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const existing = await lstat(this.file).catch((error) => {
@@ -60,34 +74,16 @@ export class Notes {
         throw new Fault('NOTES_CORRUPT');
       if (!existing) await (await open(this.file, 'wx', 0o600)).close();
       await chmod(this.file, 0o600);
-      this.db = new DatabaseSync(this.file);
-      const version = Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-      const names = this.db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-        )
-        .all()
-        .map((row) => String(row.name));
-      if (
-        version === 0
-          ? names.length > 0
-          : version !== 1 ||
-            JSON.stringify(names) !== JSON.stringify(['note_items', 'note_meta', 'note_operations'])
-      )
+      client = new DatabaseSync(this.file);
+      configure(client, { synchronous: 'FULL', foreignKeys: true, busyTimeout: 5000 });
+      // Refusal happens before WAL so an unknown file keeps its exact bytes; a failed first open publishes no tables.
+      this.db = migrate(client, migrations, legacy);
+      configure(client, { journal: 'WAL' });
+      if (JSON.stringify(tables(this.db)) !== JSON.stringify(names))
         throw new Fault('NOTES_CORRUPT');
-      this.db.exec(
-        'PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;',
-      );
-      // A failed first open must not leave an incomplete schema claiming to be version 1.
-      if (version === 0)
-        this.db.exec(`BEGIN IMMEDIATE;
-        CREATE TABLE note_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,bot TEXT NOT NULL,id TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL,UNIQUE(bot,id)) STRICT;
-        CREATE TABLE note_operations(bot TEXT NOT NULL,id TEXT NOT NULL,note TEXT NOT NULL,signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL,PRIMARY KEY(bot,id),FOREIGN KEY(bot,note) REFERENCES note_items(bot,id)) STRICT;
-        CREATE TABLE note_meta(bot TEXT PRIMARY KEY,revision INTEGER NOT NULL) STRICT;
-        PRAGMA user_version=1;COMMIT;`);
-      const items = this.db.prepare('SELECT * FROM note_items').all();
+      const items = this.db.select().from(noteItems).all();
       if (items.length > capacity) throw new Fault('NOTES_CORRUPT');
-      const metas = this.db.prepare('SELECT * FROM note_meta').all(),
+      const metas = this.db.select().from(noteMeta).all(),
         bots = new Set<string>();
       for (const meta of metas) {
         if (
@@ -108,8 +104,11 @@ export class Notes {
       for (const meta of metas)
         if (totals.get(String(meta.bot)) !== meta.revision) throw new Fault('NOTES_CORRUPT');
       const operations = this.db
-        .prepare(
-          'SELECT o.*,n.revision AS note_revision FROM note_operations o LEFT JOIN note_items n ON n.bot=o.bot AND n.id=o.note',
+        .select({ ...getColumns(noteOperations), noteRevision: noteItems.revision })
+        .from(noteOperations)
+        .leftJoin(
+          noteItems,
+          and(eq(noteItems.bot, noteOperations.bot), eq(noteItems.id, noteOperations.note)),
         )
         .all();
       if (operations.length > operationLimit) throw new Fault('NOTES_CORRUPT');
@@ -117,13 +116,13 @@ export class Notes {
         this.operation(row);
         if (
           !bots.has(String(row.bot)) ||
-          !Number.isSafeInteger(row.note_revision) ||
-          Number(row.note_revision) < Number(row.revision)
+          !Number.isSafeInteger(row.noteRevision) ||
+          Number(row.noteRevision) < Number(row.revision)
         )
           throw new Fault('NOTES_CORRUPT');
       }
     } catch {
-      this.db?.close();
+      client?.close();
       this.db = undefined;
       throw new Fault('NOTES_CORRUPT');
     }
@@ -147,10 +146,16 @@ export class Notes {
   private revision(bot: string) {
     const db = this.db;
     if (!db) throw new Fault('NOTES_CORRUPT');
-    const meta = db.prepare('SELECT revision FROM note_meta WHERE bot=?').get(bot);
+    const meta = db
+      .select({ revision: noteMeta.revision })
+      .from(noteMeta)
+      .where(eq(noteMeta.bot, bot))
+      .get();
     const total = db
-      .prepare('SELECT SUM(revision) AS revision FROM note_items WHERE bot=?')
-      .get(bot)!;
+      .select({ revision: sum(noteItems.revision).mapWith(Number) })
+      .from(noteItems)
+      .where(eq(noteItems.bot, bot))
+      .get()!;
     if (!meta) {
       if (total.revision !== null) throw new Fault('NOTES_CORRUPT');
       return 0;
@@ -193,8 +198,10 @@ export class Notes {
   }
   private find(bot: string, id: string) {
     const row = this.database()
-      .prepare('SELECT * FROM note_items WHERE bot=? AND id=?')
-      .get(bot, id);
+      .select()
+      .from(noteItems)
+      .where(and(eq(noteItems.bot, bot), eq(noteItems.id, id)))
+      .get();
     if (!row) throw new Fault('NOTE_NOT_FOUND', 404);
     return this.item(row);
   }
@@ -222,9 +229,11 @@ export class Notes {
       return {
         available: true,
         revision: this.revision(bot),
-        count: Number(
-          this.database().prepare('SELECT COUNT(*) AS n FROM note_items WHERE bot=?').get(bot)!.n,
-        ),
+        count: this.database()
+          .select({ n: count() })
+          .from(noteItems)
+          .where(eq(noteItems.bot, bot))
+          .get()!.n,
       };
     } catch {
       return { available: false, error: 'NOTES_CORRUPT' };
@@ -237,28 +246,32 @@ export class Notes {
     return this.exclusive(() => {
       const revision = this.revision(bot),
         filter = query.filter ?? 'active';
-      const conditions = ['bot=?', filter === 'trash' ? 'deleted=1' : 'deleted=0'];
-      const values: (string | number)[] = [bot];
-      if (filter === 'active') conditions.push("status!='done'");
-      else if (['open', 'parked', 'done'].includes(filter)) {
-        conditions.push('status=?');
-        values.push(filter);
-      }
-      if (query.before !== undefined) {
-        conditions.push('seq<?');
-        values.push(query.before);
-      }
+      const conditions: (SQL | undefined)[] = [
+        eq(noteItems.bot, bot),
+        eq(noteItems.deleted, filter === 'trash' ? 1 : 0),
+      ];
+      if (filter === 'active') conditions.push(ne(noteItems.status, 'done'));
+      else if (['open', 'parked', 'done'].includes(filter))
+        conditions.push(eq(noteItems.status, filter));
+      if (query.before !== undefined) conditions.push(lt(noteItems.seq, query.before));
       if (query.text) {
         const text = `%${query.text.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
-        conditions.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')");
-        values.push(text, text);
+        // Drizzle's like() has no ESCAPE clause; literal %, _ and backslash must not act as wildcards.
+        conditions.push(
+          or(
+            sql`${noteItems.title} LIKE ${text} ESCAPE '\\'`,
+            sql`${noteItems.body} LIKE ${text} ESCAPE '\\'`,
+          ),
+        );
       }
       const limit = query.limit ?? 50;
       const rows = this.database()
-        .prepare(
-          `SELECT * FROM note_items WHERE ${conditions.join(' AND ')} ORDER BY seq DESC LIMIT ?`,
-        )
-        .all(...values, limit + 1);
+        .select()
+        .from(noteItems)
+        .where(and(...conditions))
+        .orderBy(desc(noteItems.seq))
+        .limit(limit + 1)
+        .all();
       const page = rows.slice(0, limit);
       return {
         bot,
@@ -291,8 +304,10 @@ export class Notes {
   private accepted(bot: string, request: NoteWrite, actor: NoteAuthor): NoteAck | undefined {
     // Both the row lookup and fingerprint carry the Bot; another Bot's matching IDs reveal no receipt.
     const row = this.database()
-      .prepare('SELECT * FROM note_operations WHERE bot=? AND id=?')
-      .get(bot, request.id);
+      .select()
+      .from(noteOperations)
+      .where(and(eq(noteOperations.bot, bot), eq(noteOperations.id, request.id)))
+      .get();
     if (!row) return undefined;
     this.operation(row);
     if (row.signature !== signature(bot, request, actor)) throw new Fault('NOTE_REQUEST_CONFLICT');
@@ -331,14 +346,11 @@ export class Notes {
   }
   private transaction<T>(action: () => T) {
     const db = this.database();
-    db.exec('BEGIN IMMEDIATE');
     try {
-      const value = action();
-      db.exec('COMMIT');
-      return value;
+      // Boxing keeps the generic result distinguishable from a Promise for Drizzle's sync typing.
+      return db.transaction(() => ({ result: action() }), { behavior: 'immediate' }).result;
     } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
+      throw unwrap(error);
     }
   }
   write(bot: string, input: unknown, by: unknown, signal?: AbortSignal): Promise<NoteAck> {
@@ -356,19 +368,19 @@ export class Notes {
       const prior = this.accepted(bot, request, actor);
       if (prior) return prior;
       const db = this.database();
-      if (
-        Number(db.prepare('SELECT COUNT(*) AS n FROM note_operations').get()!.n) >= operationLimit
-      )
+      if (db.select({ n: count() }).from(noteOperations).get()!.n >= operationLimit)
         throw new Fault('NOTE_OPERATION_LIMIT');
       const row = db
-        .prepare('SELECT * FROM note_items WHERE bot=? AND id=?')
-        .get(bot, request.note);
+        .select()
+        .from(noteItems)
+        .where(and(eq(noteItems.bot, bot), eq(noteItems.id, request.note)))
+        .get();
       const now = new Date().toISOString();
       let item: NoteItem,
         changed = true;
       if (request.action === 'create') {
         if (row) throw new Fault('NOTE_ID_CONFLICT');
-        if (Number(db.prepare('SELECT COUNT(*) AS n FROM note_items').get()!.n) >= capacity)
+        if (db.select({ n: count() }).from(noteItems).get()!.n >= capacity)
           throw new Fault('NOTE_LIMIT');
         item = {
           ...request.value,
@@ -411,49 +423,63 @@ export class Notes {
       }
       return this.transaction(() => {
         if (request.action === 'create')
-          db.prepare(
-            'INSERT INTO note_items(bot,id,title,body,status,revision,deleted,created,updated,completed,creator,editor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-          ).run(
-            bot,
-            item.id,
-            item.title,
-            item.body,
-            item.status,
-            item.revision,
-            Number(item.deleted),
-            item.createdAt,
-            item.updatedAt,
-            item.completedAt ?? null,
-            JSON.stringify(item.createdBy),
-            JSON.stringify(item.updatedBy),
-          );
+          db.insert(noteItems)
+            .values({
+              bot,
+              id: item.id,
+              title: item.title,
+              body: item.body,
+              status: item.status,
+              revision: item.revision,
+              deleted: Number(item.deleted),
+              created: item.createdAt,
+              updated: item.updatedAt,
+              completed: item.completedAt ?? null,
+              creator: JSON.stringify(item.createdBy),
+              editor: JSON.stringify(item.updatedBy),
+            })
+            .run();
         else if (changed) {
           const result = db
-            .prepare(
-              'UPDATE note_items SET title=?,body=?,status=?,revision=?,deleted=?,updated=?,completed=?,editor=? WHERE bot=? AND id=? AND revision=?',
+            .update(noteItems)
+            .set({
+              title: item.title,
+              body: item.body,
+              status: item.status,
+              revision: item.revision,
+              deleted: Number(item.deleted),
+              updated: item.updatedAt,
+              completed: item.completedAt ?? null,
+              editor: JSON.stringify(item.updatedBy),
+            })
+            .where(
+              and(
+                eq(noteItems.bot, bot),
+                eq(noteItems.id, item.id),
+                eq(noteItems.revision, request.revision),
+              ),
             )
-            .run(
-              item.title,
-              item.body,
-              item.status,
-              item.revision,
-              Number(item.deleted),
-              item.updatedAt,
-              item.completedAt ?? null,
-              JSON.stringify(item.updatedBy),
-              bot,
-              item.id,
-              request.revision,
-            );
+            .run();
           if (Number(result.changes) !== 1) throw new Fault('NOTE_CONFLICT');
         }
-        db.prepare(
-          'INSERT INTO note_operations(bot,id,note,signature,revision,at) VALUES(?,?,?,?,?,?)',
-        ).run(bot, request.id, item.id, signature(bot, request, actor), item.revision, now);
+        db.insert(noteOperations)
+          .values({
+            bot,
+            id: request.id,
+            note: item.id,
+            signature: signature(bot, request, actor),
+            revision: item.revision,
+            at: now,
+          })
+          .run();
         if (changed)
-          db.prepare(
-            'INSERT INTO note_meta(bot,revision) VALUES(?,1) ON CONFLICT(bot) DO UPDATE SET revision=revision+1',
-          ).run(bot);
+          db.insert(noteMeta)
+            .values({ bot, revision: 1 })
+            .onConflictDoUpdate({
+              target: noteMeta.bot,
+              set: { revision: sql`${noteMeta.revision} + 1` },
+            })
+            .run();
         return {
           state: 'complete' as const,
           bot,
@@ -470,7 +496,7 @@ export class Notes {
     this.closed = true;
     await this.chain.catch(() => {});
     await this.ready.catch(() => {});
-    this.db?.close();
+    this.db?.$client.close();
     this.db = undefined;
   }
 }

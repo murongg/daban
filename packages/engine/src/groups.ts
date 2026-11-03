@@ -31,8 +31,21 @@ import {
   type TaskRequest,
   validAgentId,
 } from '@daban/protocol';
+import { and, asc, count, desc, eq, inArray, lt, lte, type SQL, sql } from 'drizzle-orm';
 import type { Attachments } from './attachments.js';
 import { errorCode, Fault } from './control.js';
+import { configure, type Database, migrate } from './database.js';
+import { migrations } from './groups-migrations.js';
+import {
+  groupActions,
+  groupCollaborations,
+  groupDefs,
+  groupDeliveries,
+  groupHandoffs,
+  groupMessages,
+  groupMeta,
+  groupTurns,
+} from './groups-schema.js';
 import type { ConversationScope, RunReceipt } from './tasks.js';
 
 export type GroupReceipt = RunReceipt;
@@ -58,19 +71,48 @@ interface CollaborationSource {
   runId: string;
   signal?: AbortSignal;
 }
-type Row = Record<string, unknown>;
+type Delivery = typeof groupDeliveries.$inferSelect;
+type Message = typeof groupMessages.$inferSelect;
 const digest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 40);
 const activeStates = new Set(['pending', 'claimed', 'running']);
 const terminal = new Set(['completed', 'failed', 'stopped', 'interrupted']);
-const requestId = (delivery: Row) => `group-${delivery.id}`;
+const requestId = (delivery: { id: string }) => `group-${delivery.id}`;
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
+const live = [...activeStates];
+const claimed = ['claimed', 'running'];
+const waiting = ['pending', 'running'];
+
+function legacy(client: DatabaseSync) {
+  client.exec(`CREATE TABLE IF NOT EXISTS group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL,copy_origin TEXT);
+    CREATE TABLE IF NOT EXISTS group_actions(id TEXT PRIMARY KEY,grp TEXT NOT NULL,value TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS group_actions_owner ON group_actions(grp);
+    CREATE TABLE IF NOT EXISTS group_turns(grp TEXT NOT NULL,id TEXT NOT NULL,prompt TEXT NOT NULL,recipients TEXT NOT NULL,signature TEXT NOT NULL,seq INTEGER,created TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(grp,id));
+    CREATE TABLE IF NOT EXISTS group_messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL,grp TEXT NOT NULL,source TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,created TEXT NOT NULL,author TEXT,name TEXT,phase TEXT,model TEXT,files TEXT,UNIQUE(grp,id));
+    CREATE INDEX IF NOT EXISTS group_messages_page ON group_messages(grp,seq);
+    CREATE TABLE IF NOT EXISTS group_deliveries(id TEXT PRIMARY KEY,grp TEXT NOT NULL,source TEXT NOT NULL,bot TEXT NOT NULL,position INTEGER NOT NULL,state TEXT NOT NULL,run TEXT,context TEXT,name TEXT,error TEXT);
+    CREATE INDEX IF NOT EXISTS group_deliveries_queue ON group_deliveries(grp,source,position);
+    CREATE TABLE IF NOT EXISTS group_handoffs(source TEXT PRIMARY KEY,signature TEXT NOT NULL,target TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS group_collaborations(source TEXT PRIMARY KEY,grp TEXT NOT NULL,turn TEXT NOT NULL,signature TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS group_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);`);
+  const columns = (table: string) =>
+    client
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .map((row) => row.name);
+  if (!columns('group_defs').includes('copy_origin'))
+    client.exec('ALTER TABLE group_defs ADD COLUMN copy_origin TEXT');
+  if (!columns('group_turns').includes('inputs'))
+    client.exec("ALTER TABLE group_turns ADD COLUMN inputs TEXT NOT NULL DEFAULT '[]'");
+  if (!columns('group_messages').includes('run'))
+    client.exec('ALTER TABLE group_messages ADD COLUMN run TEXT');
+}
 
 export class Groups {
   // shortcut: one local service owns this database; acquire a process lease before supporting multiple dispatchers.
   readonly ready: Promise<unknown>;
-  private db!: DatabaseSync;
+  private db!: Database;
   private chain: Promise<unknown> = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
@@ -95,44 +137,20 @@ export class Groups {
     );
     await handle.close();
     await chmod(this.file, 0o600);
-    this.db = new DatabaseSync(this.file);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
-      CREATE TABLE IF NOT EXISTS group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL,copy_origin TEXT);
-      CREATE TABLE IF NOT EXISTS group_actions(id TEXT PRIMARY KEY,grp TEXT NOT NULL,value TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS group_actions_owner ON group_actions(grp);
-      CREATE TABLE IF NOT EXISTS group_turns(grp TEXT NOT NULL,id TEXT NOT NULL,prompt TEXT NOT NULL,recipients TEXT NOT NULL,signature TEXT NOT NULL,seq INTEGER,created TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(grp,id));
-      CREATE TABLE IF NOT EXISTS group_messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL,grp TEXT NOT NULL,source TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,created TEXT NOT NULL,author TEXT,name TEXT,phase TEXT,model TEXT,files TEXT,UNIQUE(grp,id));
-      CREATE INDEX IF NOT EXISTS group_messages_page ON group_messages(grp,seq);
-      CREATE TABLE IF NOT EXISTS group_deliveries(id TEXT PRIMARY KEY,grp TEXT NOT NULL,source TEXT NOT NULL,bot TEXT NOT NULL,position INTEGER NOT NULL,state TEXT NOT NULL,run TEXT,context TEXT,name TEXT,error TEXT);
-      CREATE INDEX IF NOT EXISTS group_deliveries_queue ON group_deliveries(grp,source,position);
-      CREATE TABLE IF NOT EXISTS group_handoffs(source TEXT PRIMARY KEY,signature TEXT NOT NULL,target TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS group_collaborations(source TEXT PRIMARY KEY,grp TEXT NOT NULL,turn TEXT NOT NULL,signature TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS group_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
-      INSERT OR IGNORE INTO group_meta(id,revision) VALUES(1,0);`);
-    if (
-      !this.db
-        .prepare('PRAGMA table_info(group_defs)')
-        .all()
-        .some((row) => row.name === 'copy_origin')
-    )
-      this.db.exec('ALTER TABLE group_defs ADD COLUMN copy_origin TEXT');
-    if (
-      !this.db
-        .prepare('PRAGMA table_info(group_turns)')
-        .all()
-        .some((row) => row.name === 'inputs')
-    )
-      this.db.exec("ALTER TABLE group_turns ADD COLUMN inputs TEXT NOT NULL DEFAULT '[]'");
-    if (
-      !this.db
-        .prepare('PRAGMA table_info(group_messages)')
-        .all()
-        .some((row) => row.name === 'run')
-    )
-      this.db.exec('ALTER TABLE group_messages ADD COLUMN run TEXT');
-    for (const row of this.db.prepare('SELECT * FROM group_defs').all()) this.definition(row);
+    const client = new DatabaseSync(this.file);
+    try {
+      configure(client, { journal: 'WAL', foreignKeys: true });
+      this.db = migrate(client, migrations, legacy);
+      this.db.insert(groupMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+    for (const row of this.db.select().from(groupDefs).all()) this.definition(row);
     for (const row of this.db
-      .prepare("SELECT * FROM group_deliveries WHERE state IN ('claimed','running')")
+      .select()
+      .from(groupDeliveries)
+      .where(inArray(groupDeliveries.state, claimed))
       .all())
       this.reconcile(row, true);
   }
@@ -147,31 +165,38 @@ export class Groups {
     this.chain = next;
     return next;
   }
-  private transaction<T>(operation: () => T) {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = operation();
-      this.db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
-  }
   private changed() {
-    this.db.exec('UPDATE group_meta SET revision=revision+1 WHERE id=1');
+    this.db
+      .update(groupMeta)
+      .set({ revision: sql`${groupMeta.revision} + 1` })
+      .where(eq(groupMeta.id, 1))
+      .run();
   }
   private revision() {
-    return Number(this.db.prepare('SELECT revision FROM group_meta WHERE id=1').get()!.revision);
+    return Number(
+      this.db
+        .select({ revision: groupMeta.revision })
+        .from(groupMeta)
+        .where(eq(groupMeta.id, 1))
+        .get()!.revision,
+    );
   }
   private accepted(group: string, source: string): GroupPage {
     const row = this.db
-      .prepare("SELECT * FROM group_messages WHERE grp=? AND id=? AND role='user'")
-      .get(group, source);
+      .select()
+      .from(groupMessages)
+      .where(
+        and(
+          eq(groupMessages.grp, group),
+          eq(groupMessages.id, source),
+          eq(groupMessages.role, 'user'),
+        ),
+      )
+      .get();
     if (!row) throw new Fault('GROUP_CORRUPT');
     return { ...this.page(group), accepted: this.message(row) };
   }
-  private definition(row: Row): Group {
+  private definition(row: { id: string; value: string }): Group {
     let value: unknown;
     try {
       value = JSON.parse(String(row.value));
@@ -183,12 +208,12 @@ export class Groups {
   }
   private group(id: string) {
     if (!validAgentId(id)) throw new Fault('INVALID_GROUP', 400);
-    const row = this.db.prepare('SELECT * FROM group_defs WHERE id=?').get(id);
+    const row = this.db.select().from(groupDefs).where(eq(groupDefs.id, id)).get();
     if (!row) throw new Fault('GROUP_NOT_FOUND', 404);
     return this.definition(row);
   }
   private actionRecord(id: string): GroupActionReceipt | undefined {
-    const row = this.db.prepare('SELECT * FROM group_actions WHERE id=?').get(id);
+    const row = this.db.select().from(groupActions).where(eq(groupActions.id, id)).get();
     if (!row) return undefined;
     let value: unknown;
     try {
@@ -205,10 +230,11 @@ export class Groups {
   private busy(id: string) {
     return (
       !!this.db
-        .prepare(
-          "SELECT id FROM group_deliveries WHERE grp=? AND state IN ('pending','claimed','running') LIMIT 1",
-        )
-        .get(id) || this.runner.groupRunning?.(id) === true
+        .select({ id: groupDeliveries.id })
+        .from(groupDeliveries)
+        .where(and(eq(groupDeliveries.grp, id), inArray(groupDeliveries.state, live)))
+        .limit(1)
+        .get() || this.runner.groupRunning?.(id) === true
     );
   }
   action(input: unknown): Promise<GroupActionAck> {
@@ -220,40 +246,47 @@ export class Groups {
       revision: input.revision,
     };
     return this.exclusive(() =>
-      this.transaction(() => {
-        const prior = this.actionRecord(request.id);
-        if (prior) {
-          if (JSON.stringify(prior.request) !== JSON.stringify(request))
-            throw new Fault('GROUP_ACTION_ID_REUSED');
-          return { receipt: prior, group: this.group(request.group) };
-        }
-        const current = this.group(request.group);
-        if (current.revision !== request.revision) throw new Fault('GROUP_CONFLICT');
-        if (typeof this.runner.groupRunning !== 'function')
-          throw new Fault('GROUP_LIFECYCLE_UNAVAILABLE', 503);
-        if (this.busy(request.group)) throw new Fault('GROUP_BUSY');
-        if (!!current.archived === (request.action === 'archive'))
-          throw new Fault('GROUP_STATE_CONFLICT');
-        if (
-          Number(this.db.prepare('SELECT count(*) AS count FROM group_actions').get()!.count) >=
-          10000
-        )
-          throw new Fault('GROUP_ACTION_LIMIT');
-        const now = new Date().toISOString(),
-          group: Group = { ...current, revision: current.revision + 1, updatedAt: now };
-        if (request.action === 'archive') group.archived = true;
-        else delete group.archived;
-        const receipt: GroupActionReceipt = { request, revision: group.revision, completedAt: now };
-        // The receipt and state move together; a replay only returns current state, never reapplies intent.
-        this.db
-          .prepare('UPDATE group_defs SET value=? WHERE id=?')
-          .run(JSON.stringify(group), group.id);
-        this.db
-          .prepare('INSERT INTO group_actions(id,grp,value) VALUES(?,?,?)')
-          .run(request.id, group.id, JSON.stringify(receipt));
-        this.changed();
-        return { receipt, group };
-      }),
+      this.db.transaction(
+        () => {
+          const prior = this.actionRecord(request.id);
+          if (prior) {
+            if (JSON.stringify(prior.request) !== JSON.stringify(request))
+              throw new Fault('GROUP_ACTION_ID_REUSED');
+            return { receipt: prior, group: this.group(request.group) };
+          }
+          const current = this.group(request.group);
+          if (current.revision !== request.revision) throw new Fault('GROUP_CONFLICT');
+          if (typeof this.runner.groupRunning !== 'function')
+            throw new Fault('GROUP_LIFECYCLE_UNAVAILABLE', 503);
+          if (this.busy(request.group)) throw new Fault('GROUP_BUSY');
+          if (!!current.archived === (request.action === 'archive'))
+            throw new Fault('GROUP_STATE_CONFLICT');
+          if (Number(this.db.select({ count: count() }).from(groupActions).get()!.count) >= 10000)
+            throw new Fault('GROUP_ACTION_LIMIT');
+          const now = new Date().toISOString(),
+            group: Group = { ...current, revision: current.revision + 1, updatedAt: now };
+          if (request.action === 'archive') group.archived = true;
+          else delete group.archived;
+          const receipt: GroupActionReceipt = {
+            request,
+            revision: group.revision,
+            completedAt: now,
+          };
+          // The receipt and state move together; a replay only returns current state, never reapplies intent.
+          this.db
+            .update(groupDefs)
+            .set({ value: JSON.stringify(group) })
+            .where(eq(groupDefs.id, group.id))
+            .run();
+          this.db
+            .insert(groupActions)
+            .values({ id: request.id, grp: group.id, value: JSON.stringify(receipt) })
+            .run();
+          this.changed();
+          return { receipt, group };
+        },
+        { behavior: 'immediate' },
+      ),
     );
   }
   actionReceipt(group: string, id: string): Promise<GroupActionAck> {
@@ -266,7 +299,7 @@ export class Groups {
       return { receipt, group: this.group(group) };
     });
   }
-  private delivery(row: Row): GroupDelivery {
+  private delivery(row: Delivery): GroupDelivery {
     return {
       requestId: requestId(row),
       id: String(row.id),
@@ -279,7 +312,7 @@ export class Groups {
       ...(row.error ? { error: String(row.error) } : {}),
     };
   }
-  private message(row: Row): GroupMessage {
+  private message(row: Message): GroupMessage {
     const inputs =
       row.role === 'user'
         ? this.inputs(String(row.grp), String(row.source)).map((file) => file.name)
@@ -311,8 +344,14 @@ export class Groups {
     )
       throw new Fault('INVALID_GROUP_QUERY', 400);
     const rows = this.db
-      .prepare('SELECT * FROM group_messages WHERE grp=? AND seq<? ORDER BY seq DESC LIMIT ?')
-      .all(id, before || Number.MAX_SAFE_INTEGER, limit + 1);
+      .select()
+      .from(groupMessages)
+      .where(
+        and(eq(groupMessages.grp, id), lt(groupMessages.seq, before || Number.MAX_SAFE_INTEGER)),
+      )
+      .orderBy(desc(groupMessages.seq))
+      .limit(limit + 1)
+      .all();
     const messages = rows
       .slice(0, limit)
       .reverse()
@@ -322,8 +361,13 @@ export class Groups {
       revision: this.revision(),
       messages,
       deliveries: this.db
-        .prepare('SELECT * FROM group_deliveries WHERE grp=? ORDER BY rowid DESC LIMIT 160')
-        .all(id)
+        .select()
+        .from(groupDeliveries)
+        .where(eq(groupDeliveries.grp, id))
+        // rowid is the implicit insertion order; it is not a declared column.
+        .orderBy(desc(sql`rowid`))
+        .limit(160)
+        .all()
         .reverse()
         .map((row) => this.delivery(row)),
       ...(rows.length > limit ? { nextBefore: messages[0].sequence } : {}),
@@ -338,7 +382,9 @@ export class Groups {
         available: !this.failure,
         revision: this.revision(),
         items: this.db
-          .prepare('SELECT * FROM group_defs ORDER BY id')
+          .select()
+          .from(groupDefs)
+          .orderBy(asc(groupDefs.id))
           .all()
           .map((row) => this.definition(row)),
         ...(this.failure ? { error: this.failure } : {}),
@@ -355,9 +401,12 @@ export class Groups {
   notices(): Promise<RuntimeNotice[]> {
     return this.exclusive(() =>
       this.db
-        .prepare(
-          "SELECT grp,id,state FROM group_turns WHERE state IN ('completed','failed','interrupted') ORDER BY rowid DESC LIMIT 1000",
-        )
+        .select({ grp: groupTurns.grp, id: groupTurns.id, state: groupTurns.state })
+        .from(groupTurns)
+        .where(inArray(groupTurns.state, ['completed', 'failed', 'interrupted']))
+        // rowid is the implicit insertion order; it is not a declared column.
+        .orderBy(desc(sql`rowid`))
+        .limit(1000)
         .all()
         .reverse()
         .map((row) => ({
@@ -377,7 +426,7 @@ export class Groups {
     // Directory awaits must finish first; commit in this same turn before lifecycle permission can change.
     if (members.some((member) => this.runner.admit?.(member) === false))
       throw new Fault('BOT_UNAVAILABLE');
-    if (Number(this.db.prepare('SELECT count(*) AS count FROM group_defs').get()!.count) >= 50)
+    if (Number(this.db.select({ count: count() }).from(groupDefs).get()!.count) >= 50)
       throw new Fault('GROUP_LIMIT');
   }
   private collaborationSource(source: CollaborationSource) {
@@ -446,15 +495,17 @@ export class Groups {
       const identity = this.collaborationSource(source);
       const signature = JSON.stringify(value);
       const prior = this.db
-        .prepare('SELECT * FROM group_collaborations WHERE source=?')
-        .get(identity);
+        .select()
+        .from(groupCollaborations)
+        .where(eq(groupCollaborations.source, identity))
+        .get();
       if (prior) {
         if (prior.signature !== signature) throw new Fault('GROUP_COLLABORATION_CONFLICT');
         return { group: this.group(String(prior.grp)), sourceId: String(prior.turn), reused: true };
       }
       const id = `group-${identity}`,
         sourceId = `task-${identity}`;
-      if (this.db.prepare('SELECT id FROM group_defs WHERE id=?').get(id))
+      if (this.db.select({ id: groupDefs.id }).from(groupDefs).where(eq(groupDefs.id, id)).get())
         throw new Fault('GROUP_ID_CONFLICT');
       const members = [source.bot, ...value.members];
       await this.creationMembers(id, members);
@@ -472,33 +523,38 @@ export class Groups {
         createdAt: now,
         updatedAt: now,
       };
-      return this.transaction(() => {
-        this.db
-          .prepare('INSERT INTO group_defs(id,value) VALUES(?,?)')
-          .run(id, JSON.stringify(group));
-        this.enqueue(
-          {
-            id: sourceId,
-            group: id,
-            // Bot authorship is metadata; a prompt prefix would overflow valid summaries at the task limit.
-            prompt: value.message,
-            recipients: [...value.members, source.bot],
-          },
-          { bot: source.bot, name: author.name },
-        );
-        // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
-        this.db
-          .prepare('INSERT INTO group_collaborations(source,grp,turn,signature) VALUES(?,?,?,?)')
-          .run(identity, id, sourceId, signature);
-        return { group, sourceId, reused: false };
-      });
+      return this.db.transaction(
+        () => {
+          this.db
+            .insert(groupDefs)
+            .values({ id, value: JSON.stringify(group) })
+            .run();
+          this.enqueue(
+            {
+              id: sourceId,
+              group: id,
+              // Bot authorship is metadata; a prompt prefix would overflow valid summaries at the task limit.
+              prompt: value.message,
+              recipients: [...value.members, source.bot],
+            },
+            { bot: source.bot, name: author.name },
+          );
+          // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
+          this.db
+            .insert(groupCollaborations)
+            .values({ source: identity, grp: id, turn: sourceId, signature })
+            .run();
+          return { group, sourceId, reused: false };
+        },
+        { behavior: 'immediate' },
+      );
     });
   }
   private copied(request: GroupCopyRequest): GroupCopyAck | undefined {
-    const row = this.db.prepare('SELECT * FROM group_defs WHERE id=?').get(request.id);
+    const row = this.db.select().from(groupDefs).where(eq(groupDefs.id, request.id)).get();
     if (!row) return undefined;
     const origin = createHash('sha256').update(groupCopyKey(request)).digest('hex');
-    if (row.copy_origin !== origin) throw new Fault('GROUP_COPY_CONFLICT');
+    if (row.copyOrigin !== origin) throw new Fault('GROUP_COPY_CONFLICT');
     return { request, state: 'complete', group: this.definition(row) };
   }
   copyReceipt(input: unknown): Promise<GroupCopyReceipt> {
@@ -529,24 +585,28 @@ export class Groups {
         createdAt: now,
         updatedAt: now,
       };
-      return this.transaction(() => {
-        this.db
-          .prepare('INSERT INTO group_defs(id,value,copy_origin) VALUES(?,?,?)')
-          .run(
-            group.id,
-            JSON.stringify(group),
-            createHash('sha256').update(groupCopyKey(request)).digest('hex'),
-          );
-        this.changed();
-        return { request, state: 'complete', group };
-      });
+      return this.db.transaction(
+        () => {
+          this.db
+            .insert(groupDefs)
+            .values({
+              id: group.id,
+              value: JSON.stringify(group),
+              copyOrigin: createHash('sha256').update(groupCopyKey(request)).digest('hex'),
+            })
+            .run();
+          this.changed();
+          return { request, state: 'complete', group };
+        },
+        { behavior: 'immediate' },
+      );
     });
   }
   register(input: unknown) {
     if (!isGroupInput(input)) return Promise.reject(new Fault('INVALID_GROUP', 400));
     const value = structuredClone(input);
     return this.exclusive(async () => {
-      const prior = this.db.prepare('SELECT * FROM group_defs WHERE id=?').get(value.id);
+      const prior = this.db.select().from(groupDefs).where(eq(groupDefs.id, value.id)).get();
       if (prior) return this.definition(prior);
       await this.creationMembers(value.id, value.members);
       this.admitCreation(value.members);
@@ -558,13 +618,17 @@ export class Groups {
         createdAt: now,
         updatedAt: now,
       };
-      return this.transaction(() => {
-        this.db
-          .prepare('INSERT INTO group_defs(id,value) VALUES(?,?)')
-          .run(group.id, JSON.stringify(group));
-        this.changed();
-        return group;
-      });
+      return this.db.transaction(
+        () => {
+          this.db
+            .insert(groupDefs)
+            .values({ id: group.id, value: JSON.stringify(group) })
+            .run();
+          this.changed();
+          return group;
+        },
+        { behavior: 'immediate' },
+      );
     });
   }
   update(id: string, revision: number, patch: unknown) {
@@ -602,11 +666,18 @@ export class Groups {
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),
       };
-      return this.transaction(() => {
-        this.db.prepare('UPDATE group_defs SET value=? WHERE id=?').run(JSON.stringify(group), id);
-        this.changed();
-        return group;
-      });
+      return this.db.transaction(
+        () => {
+          this.db
+            .update(groupDefs)
+            .set({ value: JSON.stringify(group) })
+            .where(eq(groupDefs.id, id))
+            .run();
+          this.changed();
+          return group;
+        },
+        { behavior: 'immediate' },
+      );
     });
   }
   send(input: unknown) {
@@ -616,8 +687,10 @@ export class Groups {
       this.group(value.group);
       if (
         this.db
-          .prepare('SELECT id FROM group_turns WHERE grp=? AND id=?')
-          .get(value.group, value.id)
+          .select({ id: groupTurns.id })
+          .from(groupTurns)
+          .where(and(eq(groupTurns.grp, value.group), eq(groupTurns.id, value.id)))
+          .get()
       )
         return this.commitSend(value);
       if (this.group(value.group).archived) throw new Fault('GROUP_ARCHIVED');
@@ -641,8 +714,10 @@ export class Groups {
   }
   private inputs(group: string, source: string): TaskFile[] {
     const row = this.db
-      .prepare('SELECT inputs FROM group_turns WHERE grp=? AND id=?')
-      .get(group, source);
+      .select({ inputs: groupTurns.inputs })
+      .from(groupTurns)
+      .where(and(eq(groupTurns.grp, group), eq(groupTurns.id, source)))
+      .get();
     if (!row) throw new Fault('GROUP_MESSAGE_NOT_FOUND', 404);
     let files: unknown;
     try {
@@ -658,10 +733,18 @@ export class Groups {
     if (this.preparing.get(owner)?.has(id)) return true;
     if (!this.db || this.closed || this.failure) throw new Fault('GROUP_UNAVAILABLE', 503);
     return !!this.db
-      .prepare(
-        "SELECT t.id FROM group_turns t,json_each(t.inputs) f WHERE t.grp=? AND t.state IN ('pending','running') AND json_extract(f.value,'$.attachmentId')=? LIMIT 1",
+      .select({ id: groupTurns.id })
+      .from(groupTurns)
+      .where(
+        and(
+          eq(groupTurns.grp, owner),
+          inArray(groupTurns.state, waiting),
+          // json_each over the stored inputs array has no query-builder form.
+          sql`EXISTS (SELECT 1 FROM json_each(${groupTurns.inputs}) f WHERE json_extract(f.value,'$.attachmentId')=${id})`,
+        ),
       )
-      .get(owner, id);
+      .limit(1)
+      .get();
   }
   inputSource(group: string, source: string, name: string) {
     if (!validAgentId(source) || !isTaskFileName(name))
@@ -674,7 +757,7 @@ export class Groups {
     });
   }
   private commitSend(value: GroupSend) {
-    return this.transaction(() => this.enqueue(value));
+    return this.db.transaction(() => this.enqueue(value), { behavior: 'immediate' });
   }
   private enqueue(value: GroupSend, author?: { bot: string; name: string }) {
     const group = this.group(value.group),
@@ -686,8 +769,10 @@ export class Groups {
         ...(author ? [{ author: author.bot }] : []),
       ]);
     const prior = this.db
-      .prepare('SELECT * FROM group_turns WHERE grp=? AND id=?')
-      .get(group.id, value.id);
+      .select()
+      .from(groupTurns)
+      .where(and(eq(groupTurns.grp, group.id), eq(groupTurns.id, value.id)))
+      .get();
     if (prior) {
       if (prior.signature !== signature) throw new Fault('GROUP_REQUEST_ID_REUSED');
       return author ? this.page(group.id) : this.accepted(group.id, value.id);
@@ -696,7 +781,12 @@ export class Groups {
     // Restoring a group cannot revive an unaccepted request sent before its archive boundary.
     if (
       value.revision === undefined &&
-      this.db.prepare('SELECT id FROM group_actions WHERE grp=? LIMIT 1').get(group.id)
+      this.db
+        .select({ id: groupActions.id })
+        .from(groupActions)
+        .where(eq(groupActions.grp, group.id))
+        .limit(1)
+        .get()
     )
       throw new Fault('GROUP_REVISION_REQUIRED');
     if (value.revision !== undefined && value.revision !== group.revision)
@@ -708,177 +798,214 @@ export class Groups {
     if (
       Number(
         this.db
-          .prepare(
-            "SELECT count(*) AS count FROM group_turns WHERE grp=? AND state IN ('pending','running')",
-          )
-          .get(group.id)!.count,
+          .select({ count: count() })
+          .from(groupTurns)
+          .where(and(eq(groupTurns.grp, group.id), inArray(groupTurns.state, waiting)))
+          .get()!.count,
       ) >= 20
     )
       throw new Fault('GROUP_QUEUE_LIMIT');
     if (
-      Number(
-        this.db
-          .prepare(
-            `SELECT
-                (SELECT coalesce(sum(length(CAST(text AS BLOB))),0) FROM group_messages WHERE grp=?) +
-                (SELECT coalesce(sum(length(CAST(prompt || signature || inputs AS BLOB))),0) FROM group_turns WHERE grp=?) +
-                (SELECT coalesce(sum(length(CAST(context AS BLOB))),0) FROM group_deliveries WHERE grp=?) AS size`,
-          )
-          .get(group.id, group.id, group.id)!.size,
-      ) +
+      this.stored(group.id) +
         Buffer.byteLength(JSON.stringify([value.prompt, signature, value.files || []])) >
       50 * 1024 * 1024
     )
       throw new Fault('GROUP_STORAGE_LIMIT');
     const now = new Date().toISOString();
+    const { seq } = this.db
+      .insert(groupMessages)
+      .values({
+        id: value.id,
+        grp: group.id,
+        source: value.id,
+        role: author ? 'bot' : 'user',
+        text: value.prompt,
+        created: now,
+        author: author?.bot ?? null,
+        name: author?.name ?? null,
+      })
+      .returning({ seq: groupMessages.seq })
+      .get();
     this.db
-      .prepare(
-        'INSERT INTO group_messages(id,grp,source,role,text,created,author,name) VALUES(?,?,?,?,?,?,?,?)',
-      )
-      .run(
-        value.id,
-        group.id,
-        value.id,
-        author ? 'bot' : 'user',
-        value.prompt,
-        now,
-        author?.bot ?? null,
-        author?.name ?? null,
-      );
-    const seq = this.db.prepare('SELECT last_insert_rowid() AS seq').get()!.seq;
-    this.db
-      .prepare(
-        "INSERT INTO group_turns(grp,id,prompt,recipients,signature,seq,created,state,inputs) VALUES(?,?,?,?,?,?,?,'pending',?)",
-      )
-      .run(
-        group.id,
-        value.id,
-        value.prompt,
-        JSON.stringify(value.recipients),
+      .insert(groupTurns)
+      .values({
+        grp: group.id,
+        id: value.id,
+        prompt: value.prompt,
+        recipients: JSON.stringify(value.recipients),
         signature,
         seq,
-        now,
-        JSON.stringify(value.files || []),
-      );
+        created: now,
+        state: 'pending',
+        inputs: JSON.stringify(value.files || []),
+      })
+      .run();
     value.recipients.forEach((bot, position) => {
       this.db
-        .prepare(
-          "INSERT INTO group_deliveries(id,grp,source,bot,position,state) VALUES(?,?,?,?,?,'pending')",
-        )
-        .run(digest([group.id, value.id, position, bot]), group.id, value.id, bot, position);
+        .insert(groupDeliveries)
+        .values({
+          id: digest([group.id, value.id, position, bot]),
+          grp: group.id,
+          source: value.id,
+          bot,
+          position,
+          state: 'pending',
+        })
+        .run();
     });
     this.changed();
     return author ? this.page(group.id) : this.accepted(group.id, value.id);
   }
-  private appendResult(row: Row, receipt: GroupReceipt) {
+  private stored(group: string) {
+    // CAST AS BLOB measures stored UTF-8 bytes; the builder has no byte-length operator.
+    const bytes = (value: SQL) => sql<number>`coalesce(sum(length(CAST(${value} AS BLOB))),0)`;
+    const messages = this.db
+      .select({ size: bytes(sql`${groupMessages.text}`) })
+      .from(groupMessages)
+      .where(eq(groupMessages.grp, group))
+      .get()!.size;
+    const turns = this.db
+      .select({
+        size: bytes(sql`${groupTurns.prompt} || ${groupTurns.signature} || ${groupTurns.inputs}`),
+      })
+      .from(groupTurns)
+      .where(eq(groupTurns.grp, group))
+      .get()!.size;
+    const deliveries = this.db
+      .select({ size: bytes(sql`${groupDeliveries.context}`) })
+      .from(groupDeliveries)
+      .where(eq(groupDeliveries.grp, group))
+      .get()!.size;
+    return Number(messages) + Number(turns) + Number(deliveries);
+  }
+  private appendResult(row: Delivery, receipt: GroupReceipt) {
     const text = receipt.result || receipt.response?.text || receipt.error || 'GROUP_RESULT_EMPTY';
     if (text.length > replyLimit) throw new Fault('GROUP_RESULT_INVALID');
     this.db
-      .prepare(
-        'INSERT OR IGNORE INTO group_messages(id,grp,source,role,text,created,author,name,phase,model,files,run) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-      )
-      .run(
-        `reply-${row.id}`,
-        String(row.grp),
-        String(row.source),
-        receipt.result || receipt.response?.text ? 'bot' : 'notice',
+      .insert(groupMessages)
+      .values({
+        id: `reply-${row.id}`,
+        grp: String(row.grp),
+        source: String(row.source),
+        role: receipt.result || receipt.response?.text ? 'bot' : 'notice',
         text,
-        new Date().toISOString(),
-        String(row.bot),
-        String(row.name || row.bot),
-        receipt.phase,
-        receipt.model || null,
-        receipt.files?.length
+        created: new Date().toISOString(),
+        author: String(row.bot),
+        name: String(row.name || row.bot),
+        phase: receipt.phase,
+        model: receipt.model || null,
+        files: receipt.files?.length
           ? JSON.stringify(
               receipt.files
                 .slice(0, 20)
                 .map(({ path, name, size, modified }) => ({ path, name, size, modified })),
             )
           : null,
-        receipt.runId,
-      );
+        run: receipt.runId,
+      })
+      .onConflictDoNothing()
+      .run();
   }
   private finishRound(group: string, source: string, state: string, error?: string) {
     this.db
-      .prepare('UPDATE group_turns SET state=? WHERE grp=? AND id=?')
-      .run(state, group, source);
+      .update(groupTurns)
+      .set({ state })
+      .where(and(eq(groupTurns.grp, group), eq(groupTurns.id, source)))
+      .run();
     if (state !== 'completed')
       this.db
-        .prepare(
-          "UPDATE group_deliveries SET state='cancelled',error=? WHERE grp=? AND source=? AND state='pending'",
+        .update(groupDeliveries)
+        .set({ state: 'cancelled', error: error || null })
+        .where(
+          and(
+            eq(groupDeliveries.grp, group),
+            eq(groupDeliveries.source, source),
+            eq(groupDeliveries.state, 'pending'),
+          ),
         )
-        .run(error || null, group, source);
+        .run();
   }
-  private reconcile(row: Row, recovering = false) {
+  private reconcile(row: Delivery, recovering = false) {
     const receipt = this.runner.findRequest(String(row.bot), requestId(row));
     if (!receipt && !recovering && row.state === 'claimed') return;
-    this.transaction(() => {
-      if (
-        !receipt ||
-        receipt.conversationId !== row.grp ||
-        (row.run && row.run !== receipt.runId)
-      ) {
-        this.db
-          .prepare(
-            "UPDATE group_deliveries SET state='interrupted',error='GROUP_OUTCOME_UNKNOWN' WHERE id=?",
+    this.db.transaction(
+      () => {
+        if (
+          !receipt ||
+          receipt.conversationId !== row.grp ||
+          (row.run && row.run !== receipt.runId)
+        ) {
+          this.db
+            .update(groupDeliveries)
+            .set({ state: 'interrupted', error: 'GROUP_OUTCOME_UNKNOWN' })
+            .where(eq(groupDeliveries.id, String(row.id)))
+            .run();
+          this.finishRound(
+            String(row.grp),
+            String(row.source),
+            'interrupted',
+            'GROUP_OUTCOME_UNKNOWN',
+          );
+          this.changed();
+          return;
+        }
+        if (terminal.has(receipt.phase)) {
+          const state =
+            receipt.phase === 'completed'
+              ? 'completed'
+              : receipt.phase === 'failed'
+                ? 'failed'
+                : 'interrupted';
+          this.db
+            .update(groupDeliveries)
+            .set({ state, run: receipt.runId, error: receipt.error || null })
+            .where(eq(groupDeliveries.id, String(row.id)))
+            .run();
+          this.appendResult(row, receipt);
+          if (state !== 'completed')
+            this.finishRound(String(row.grp), String(row.source), state, receipt.error);
+          else if (
+            !this.db
+              .select({ id: groupDeliveries.id })
+              .from(groupDeliveries)
+              .where(
+                and(
+                  eq(groupDeliveries.grp, String(row.grp)),
+                  eq(groupDeliveries.source, String(row.source)),
+                  inArray(groupDeliveries.state, live),
+                ),
+              )
+              .limit(1)
+              .get()
           )
-          .run(String(row.id));
-        this.finishRound(
-          String(row.grp),
-          String(row.source),
-          'interrupted',
-          'GROUP_OUTCOME_UNKNOWN',
-        );
-        this.changed();
-        return;
-      }
-      if (terminal.has(receipt.phase)) {
-        const state =
-          receipt.phase === 'completed'
-            ? 'completed'
-            : receipt.phase === 'failed'
-              ? 'failed'
-              : 'interrupted';
-        this.db
-          .prepare('UPDATE group_deliveries SET state=?,run=?,error=? WHERE id=?')
-          .run(state, receipt.runId, receipt.error || null, String(row.id));
-        this.appendResult(row, receipt);
-        if (state !== 'completed')
-          this.finishRound(String(row.grp), String(row.source), state, receipt.error);
-        else if (
-          !this.db
-            .prepare(
-              "SELECT id FROM group_deliveries WHERE grp=? AND source=? AND state IN ('pending','claimed','running') LIMIT 1",
-            )
-            .get(String(row.grp), String(row.source))
-        )
-          this.finishRound(String(row.grp), String(row.source), 'completed');
-        this.changed();
-      } else if (row.state !== 'running' || row.run !== receipt.runId) {
-        this.db
-          .prepare("UPDATE group_deliveries SET state='running',run=? WHERE id=?")
-          .run(receipt.runId, String(row.id));
-        this.changed();
-      }
-    });
+            this.finishRound(String(row.grp), String(row.source), 'completed');
+          this.changed();
+        } else if (row.state !== 'running' || row.run !== receipt.runId) {
+          this.db
+            .update(groupDeliveries)
+            .set({ state: 'running', run: receipt.runId })
+            .where(eq(groupDeliveries.id, String(row.id)))
+            .run();
+          this.changed();
+        }
+      },
+      { behavior: 'immediate' },
+    );
   }
   private context(
-    row: Row,
+    row: Delivery,
     group: Group,
     members: { id: string; name: string; role?: string; available: boolean }[],
   ): string {
-    const turn = this.db
-      .prepare('SELECT * FROM group_turns WHERE grp=? AND id=?')
-      .get(group.id, String(row.source))!;
+    const turn = this.turn(group.id, String(row.source));
     // Include earlier turns even if their replies arrived later, but never a newer human request.
-    const messages = this.db
-      .prepare(
-        'SELECT m.* FROM group_messages m JOIN group_turns t ON t.grp=m.grp AND t.id=m.source WHERE m.grp=? AND t.seq<=? ORDER BY m.seq DESC LIMIT 12',
-      )
-      .all(group.id, Number(turn.seq))
+    const messages = this.earlier(group.id, Number(turn.seq))
+      .orderBy(desc(groupMessages.seq))
+      .limit(12)
+      .all()
       .reverse()
       .map((value) => {
-        const message = this.message(value),
+        const message = this.message(value.message),
           chars = Array.from(message.text);
         return {
           id: message.id,
@@ -898,19 +1025,47 @@ export class Groups {
       untrusted: true,
     });
   }
+  private turn(group: string, id: string) {
+    return this.db
+      .select()
+      .from(groupTurns)
+      .where(and(eq(groupTurns.grp, group), eq(groupTurns.id, id)))
+      .get()!;
+  }
+  private earlier(group: string, seq: number, ...conditions: SQL[]) {
+    return this.db
+      .select({ message: groupMessages })
+      .from(groupMessages)
+      .innerJoin(
+        groupTurns,
+        and(eq(groupTurns.grp, groupMessages.grp), eq(groupTurns.id, groupMessages.source)),
+      )
+      .where(and(eq(groupMessages.grp, group), lte(groupTurns.seq, seq), ...conditions))
+      .$dynamic();
+  }
+  private stages(group: string, source: string) {
+    return this.db
+      .select()
+      .from(groupDeliveries)
+      .where(and(eq(groupDeliveries.grp, group), eq(groupDeliveries.source, source)))
+      .orderBy(asc(groupDeliveries.position))
+      .all();
+  }
   tick() {
     return this.exclusive(async () => {
       for (const row of this.db
-        .prepare("SELECT * FROM group_deliveries WHERE state IN ('claimed','running')")
+        .select()
+        .from(groupDeliveries)
+        .where(inArray(groupDeliveries.state, claimed))
         .all())
         this.reconcile(row);
-      for (const definition of this.db.prepare('SELECT * FROM group_defs ORDER BY id').all()) {
+      for (const definition of this.db.select().from(groupDefs).orderBy(asc(groupDefs.id)).all()) {
         if (
           Number(
             this.db
-              .prepare(
-                "SELECT count(*) AS count FROM group_deliveries WHERE state IN ('claimed','running')",
-              )
+              .select({ count: count() })
+              .from(groupDeliveries)
+              .where(inArray(groupDeliveries.state, claimed))
               .get()!.count,
           ) >= 2
         )
@@ -918,14 +1073,14 @@ export class Groups {
         const group = this.definition(definition);
         if (group.archived) continue;
         const turn = this.db
-          .prepare(
-            "SELECT * FROM group_turns WHERE grp=? AND state IN ('pending','running') ORDER BY seq LIMIT 1",
-          )
-          .get(group.id);
+          .select()
+          .from(groupTurns)
+          .where(and(eq(groupTurns.grp, group.id), inArray(groupTurns.state, waiting)))
+          .orderBy(asc(groupTurns.seq))
+          .limit(1)
+          .get();
         if (!turn) continue;
-        const stages = this.db
-          .prepare('SELECT * FROM group_deliveries WHERE grp=? AND source=? ORDER BY position')
-          .all(group.id, String(turn.id));
+        const stages = this.stages(group.id, String(turn.id));
         if (
           stages.some((stage) => activeStates.has(String(stage.state)) && stage.state !== 'pending')
         )
@@ -939,15 +1094,18 @@ export class Groups {
           continue;
         const member = await this.runner.member(String(row.bot));
         if (!member) {
-          this.transaction(() => {
-            this.db
-              .prepare(
-                "UPDATE group_deliveries SET state='failed',error='GROUP_MEMBER_REQUIRED' WHERE id=?",
-              )
-              .run(String(row.id));
-            this.finishRound(group.id, String(turn.id), 'failed', 'GROUP_MEMBER_REQUIRED');
-            this.changed();
-          });
+          this.db.transaction(
+            () => {
+              this.db
+                .update(groupDeliveries)
+                .set({ state: 'failed', error: 'GROUP_MEMBER_REQUIRED' })
+                .where(eq(groupDeliveries.id, String(row.id)))
+                .run();
+              this.finishRound(group.id, String(turn.id), 'failed', 'GROUP_MEMBER_REQUIRED');
+              this.changed();
+            },
+            { behavior: 'immediate' },
+          );
           continue;
         }
         const directory = await Promise.all(
@@ -964,17 +1122,24 @@ export class Groups {
         const context = row.context ? String(row.context) : this.context(row, group, directory);
         // Directory reads yield; recheck eligibility in the same turn that claims the delivery.
         if (this.runner.admit?.(String(row.bot)) === false) continue;
-        this.transaction(() => {
-          this.db
-            .prepare(
-              "UPDATE group_deliveries SET state='claimed',context=?,name=? WHERE id=? AND state='pending'",
-            )
-            .run(context, member.name, String(row.id));
-          this.db
-            .prepare("UPDATE group_turns SET state='running' WHERE grp=? AND id=?")
-            .run(group.id, String(turn.id));
-          this.changed();
-        });
+        this.db.transaction(
+          () => {
+            this.db
+              .update(groupDeliveries)
+              .set({ state: 'claimed', context, name: member.name })
+              .where(
+                and(eq(groupDeliveries.id, String(row.id)), eq(groupDeliveries.state, 'pending')),
+              )
+              .run();
+            this.db
+              .update(groupTurns)
+              .set({ state: 'running' })
+              .where(and(eq(groupTurns.grp, group.id), eq(groupTurns.id, String(turn.id))))
+              .run();
+            this.changed();
+          },
+          { behavior: 'immediate' },
+        );
         row.context = context;
         row.name = member.name;
         row.state = 'claimed';
@@ -997,20 +1162,30 @@ export class Groups {
               errorCode(error) || '',
             )
           )
-            this.transaction(() => {
-              this.db
-                .prepare("UPDATE group_deliveries SET state='pending' WHERE id=?")
-                .run(String(row.id));
-              this.changed();
-            });
+            this.db.transaction(
+              () => {
+                this.db
+                  .update(groupDeliveries)
+                  .set({ state: 'pending' })
+                  .where(eq(groupDeliveries.id, String(row.id)))
+                  .run();
+                this.changed();
+              },
+              { behavior: 'immediate' },
+            );
           else
-            this.transaction(() => {
-              this.db
-                .prepare("UPDATE group_deliveries SET state='interrupted',error=? WHERE id=?")
-                .run(errorCode(error) || 'GROUP_OUTCOME_UNKNOWN', String(row.id));
-              this.finishRound(group.id, String(turn.id), 'interrupted', errorCode(error));
-              this.changed();
-            });
+            this.db.transaction(
+              () => {
+                this.db
+                  .update(groupDeliveries)
+                  .set({ state: 'interrupted', error: errorCode(error) || 'GROUP_OUTCOME_UNKNOWN' })
+                  .where(eq(groupDeliveries.id, String(row.id)))
+                  .run();
+                this.finishRound(group.id, String(turn.id), 'interrupted', errorCode(error));
+                this.changed();
+              },
+              { behavior: 'immediate' },
+            );
         }
       }
       this.failure = '';
@@ -1019,26 +1194,43 @@ export class Groups {
   async cancel(group: string, sourceId: string) {
     if (!validAgentId(sourceId)) throw new Fault('INVALID_GROUP_MESSAGE', 400);
     const active = await this.exclusive(() =>
-      this.transaction(() => {
-        this.group(group);
-        const rows = this.db
-          .prepare('SELECT * FROM group_deliveries WHERE grp=? AND source=?')
-          .all(group, sourceId);
-        if (!rows.length) throw new Fault('GROUP_MESSAGE_NOT_FOUND', 404);
-        const active = rows.filter((row) => row.state === 'claimed' || row.state === 'running');
-        this.db
-          .prepare(
-            "UPDATE group_deliveries SET state='cancelled' WHERE grp=? AND source=? AND state IN ('pending','claimed','running')",
-          )
-          .run(group, sourceId);
-        this.db
-          .prepare(
-            "UPDATE group_turns SET state='cancelled' WHERE grp=? AND id=? AND state IN ('pending','running')",
-          )
-          .run(group, sourceId);
-        this.changed();
-        return active;
-      }),
+      this.db.transaction(
+        () => {
+          this.group(group);
+          const rows = this.db
+            .select()
+            .from(groupDeliveries)
+            .where(and(eq(groupDeliveries.grp, group), eq(groupDeliveries.source, sourceId)))
+            .all();
+          if (!rows.length) throw new Fault('GROUP_MESSAGE_NOT_FOUND', 404);
+          const active = rows.filter((row) => row.state === 'claimed' || row.state === 'running');
+          this.db
+            .update(groupDeliveries)
+            .set({ state: 'cancelled' })
+            .where(
+              and(
+                eq(groupDeliveries.grp, group),
+                eq(groupDeliveries.source, sourceId),
+                inArray(groupDeliveries.state, live),
+              ),
+            )
+            .run();
+          this.db
+            .update(groupTurns)
+            .set({ state: 'cancelled' })
+            .where(
+              and(
+                eq(groupTurns.grp, group),
+                eq(groupTurns.id, sourceId),
+                inArray(groupTurns.state, waiting),
+              ),
+            )
+            .run();
+          this.changed();
+          return active;
+        },
+        { behavior: 'immediate' },
+      ),
     );
     // Stop outside the database owner: a model may itself be awaiting a queued group tool.
     await Promise.all(
@@ -1048,10 +1240,13 @@ export class Groups {
       for (const row of active) {
         const receipt = this.runner.findRequest(String(row.bot), requestId(row));
         if (receipt?.conversationId === group && terminal.has(receipt.phase))
-          this.transaction(() => {
-            this.appendResult(row, receipt);
-            this.changed();
-          });
+          this.db.transaction(
+            () => {
+              this.appendResult(row, receipt);
+              this.changed();
+            },
+            { behavior: 'immediate' },
+          );
       }
       return { ...this.page(group), cancelledSource: sourceId };
     });
@@ -1061,10 +1256,11 @@ export class Groups {
     return this.exclusive(
       () =>
         !!this.db
-          .prepare(
-            "SELECT id FROM group_deliveries WHERE bot=? AND state IN ('pending','claimed','running') LIMIT 1",
-          )
-          .get(bot),
+          .select({ id: groupDeliveries.id })
+          .from(groupDeliveries)
+          .where(and(eq(groupDeliveries.bot, bot), inArray(groupDeliveries.state, live)))
+          .limit(1)
+          .get(),
     );
   }
   private activeSource(source: GroupSource) {
@@ -1073,10 +1269,18 @@ export class Groups {
     if (group.archived) throw new Fault('GROUP_ARCHIVED');
     if (!group.members.includes(source.bot)) throw new Fault('GROUP_SOURCE_CLOSED');
     const row = this.db
-      .prepare(
-        "SELECT * FROM group_deliveries WHERE grp=? AND bot=? AND state IN ('claimed','running') ORDER BY position LIMIT 1",
+      .select()
+      .from(groupDeliveries)
+      .where(
+        and(
+          eq(groupDeliveries.grp, group.id),
+          eq(groupDeliveries.bot, source.bot),
+          inArray(groupDeliveries.state, claimed),
+        ),
       )
-      .get(group.id, source.bot);
+      .orderBy(asc(groupDeliveries.position))
+      .limit(1)
+      .get();
     const receipt = row ? this.runner.findRequest(source.bot, requestId(row)) : undefined;
     if (
       (this.runner.source && !this.runner.source(source.bot, source.runId, source.group)) ||
@@ -1103,19 +1307,17 @@ export class Groups {
         Object.keys(args).some((key) => !['messageId', 'offset', 'limit', 'before'].includes(key))
       )
         throw new Fault('INVALID_GROUP_QUERY', 400);
-      const turn = this.db
-        .prepare('SELECT * FROM group_turns WHERE grp=? AND id=?')
-        .get(group.id, String(row.source))!;
+      const turn = this.turn(group.id, String(row.source));
       if (args.messageId !== undefined) {
         if (!validAgentId(args.messageId) || args.before !== undefined)
           throw new Fault('INVALID_GROUP_QUERY', 400);
-        const target = this.db
-          .prepare(
-            'SELECT m.* FROM group_messages m JOIN group_turns t ON t.grp=m.grp AND t.id=m.source WHERE m.grp=? AND m.id=? AND t.seq<=?',
-          )
-          .get(group.id, args.messageId, Number(turn.seq));
+        const target = this.earlier(
+          group.id,
+          Number(turn.seq),
+          eq(groupMessages.id, args.messageId),
+        ).get();
         if (!target) throw new Fault('GROUP_MESSAGE_NOT_FOUND', 404);
-        const message = this.message(target),
+        const message = this.message(target.message),
           chars = Array.from(message.text),
           offset = number(args.offset, 0, 0, 1000000),
           limit = number(args.limit, 1000, 1, 2000);
@@ -1137,13 +1339,12 @@ export class Groups {
       if (args.offset !== undefined) throw new Fault('INVALID_GROUP_QUERY', 400);
       const limit = number(args.limit, 10, 1, 20),
         before = number(args.before, Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER);
-      const messages = this.db
-        .prepare(
-          'SELECT m.* FROM group_messages m JOIN group_turns t ON t.grp=m.grp AND t.id=m.source WHERE m.grp=? AND t.seq<=? AND m.seq<? ORDER BY m.seq DESC LIMIT ?',
-        )
-        .all(group.id, Number(turn.seq), before, limit + 1);
+      const messages = this.earlier(group.id, Number(turn.seq), lt(groupMessages.seq, before))
+        .orderBy(desc(groupMessages.seq))
+        .limit(limit + 1)
+        .all();
       const entries = messages.slice(0, limit).map((value) => {
-        const message = this.message(value),
+        const message = this.message(value.message),
           chars = Array.from(message.text);
         return {
           id: message.id,
@@ -1176,68 +1377,80 @@ export class Groups {
       return Promise.reject(new Fault('INVALID_GROUP_HANDOFF', 400));
     const value = { bot: input.bot, message: input.message };
     return this.exclusive(() =>
-      this.transaction(() => {
-        const { group, row } = this.activeSource(source);
-        if (
-          !group.members.includes(source.bot) ||
-          !group.members.includes(value.bot) ||
-          value.bot === source.bot
-        )
-          throw new Fault('GROUP_MEMBER_REQUIRED');
-        const signature = JSON.stringify(value),
-          previous = this.db
-            .prepare('SELECT * FROM group_handoffs WHERE source=?')
-            .get(String(row.id));
-        if (previous) {
-          if (previous.signature !== signature) throw new Fault('GROUP_HANDOFF_CONFLICT');
+      this.db.transaction(
+        () => {
+          const { group, row } = this.activeSource(source);
+          if (
+            !group.members.includes(source.bot) ||
+            !group.members.includes(value.bot) ||
+            value.bot === source.bot
+          )
+            throw new Fault('GROUP_MEMBER_REQUIRED');
+          const signature = JSON.stringify(value),
+            previous = this.db
+              .select()
+              .from(groupHandoffs)
+              .where(eq(groupHandoffs.source, String(row.id)))
+              .get();
+          if (previous) {
+            if (previous.signature !== signature) throw new Fault('GROUP_HANDOFF_CONFLICT');
+            return {
+              group: group.id,
+              sourceId: String(row.source),
+              bot: value.bot,
+              deliveryId: String(previous.target),
+            };
+          }
+          if (this.runner.admit?.(value.bot) === false) throw new Fault('BOT_UNAVAILABLE');
+          const stages = this.stages(group.id, String(row.source));
+          let target: { id: string } | undefined = stages.find(
+            (stage) => stage.bot === value.bot && stage.state === 'pending',
+          );
+          if (!target) {
+            if (stages.length >= 8) throw new Fault('GROUP_HANDOFF_LIMIT');
+            const position = Number(stages.at(-1)!.position) + 1;
+            const id = digest([group.id, row.source, position, value.bot]);
+            this.db
+              .insert(groupDeliveries)
+              .values({
+                id,
+                grp: group.id,
+                source: String(row.source),
+                bot: value.bot,
+                position,
+                state: 'pending',
+              })
+              .run();
+            target = { id };
+          }
+          this.db
+            .insert(groupHandoffs)
+            .values({ source: String(row.id), signature, target: String(target.id) })
+            .run();
+          this.db
+            .insert(groupMessages)
+            .values({
+              id: `handoff-${row.id}`,
+              grp: group.id,
+              source: String(row.source),
+              role: 'bot',
+              text: `转交给 ${value.bot}：${value.message}`,
+              created: new Date().toISOString(),
+              author: source.bot,
+              name: String(row.name || source.bot),
+              run: source.runId,
+            })
+            .run();
+          this.changed();
           return {
             group: group.id,
             sourceId: String(row.source),
             bot: value.bot,
-            deliveryId: String(previous.target),
+            deliveryId: String(target.id),
           };
-        }
-        if (this.runner.admit?.(value.bot) === false) throw new Fault('BOT_UNAVAILABLE');
-        const stages = this.db
-          .prepare('SELECT * FROM group_deliveries WHERE grp=? AND source=? ORDER BY position')
-          .all(group.id, String(row.source));
-        let target = stages.find((stage) => stage.bot === value.bot && stage.state === 'pending');
-        if (!target) {
-          if (stages.length >= 8) throw new Fault('GROUP_HANDOFF_LIMIT');
-          const position = Number(stages.at(-1)!.position) + 1;
-          const id = digest([group.id, row.source, position, value.bot]);
-          this.db
-            .prepare(
-              "INSERT INTO group_deliveries(id,grp,source,bot,position,state) VALUES(?,?,?,?,?,'pending')",
-            )
-            .run(id, group.id, String(row.source), value.bot, position);
-          target = { id };
-        }
-        this.db
-          .prepare('INSERT INTO group_handoffs(source,signature,target) VALUES(?,?,?)')
-          .run(String(row.id), signature, String(target.id));
-        this.db
-          .prepare(
-            "INSERT INTO group_messages(id,grp,source,role,text,created,author,name,run) VALUES(?,?,?,'bot',?,?,?,?,?)",
-          )
-          .run(
-            `handoff-${row.id}`,
-            group.id,
-            String(row.source),
-            `转交给 ${value.bot}：${value.message}`,
-            new Date().toISOString(),
-            source.bot,
-            String(row.name || source.bot),
-            source.runId,
-          );
-        this.changed();
-        return {
-          group: group.id,
-          sourceId: String(row.source),
-          bot: value.bot,
-          deliveryId: String(target.id),
-        };
-      }),
+        },
+        { behavior: 'immediate' },
+      ),
     );
   }
   start() {
@@ -1255,7 +1468,7 @@ export class Groups {
     await this.ready.catch(() => {});
     if (this.closed) return;
     this.closed = true;
-    this.db?.close();
+    this.db?.$client.close();
   }
   async drain() {
     await this.chain.catch(() => {});

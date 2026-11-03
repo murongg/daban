@@ -8,6 +8,7 @@ import type {
   RunTurn,
   RuntimeFile,
   RuntimeNotice,
+  SessionStats,
   TaskPlan,
   TaskRequest,
   TaskTrace,
@@ -17,6 +18,7 @@ import {
   isReplyStream,
   isRunInsert,
   isRunTurn,
+  isSessionStats,
   isTaskFile,
   turnLimit,
   validAgentId,
@@ -243,6 +245,8 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  stats?: SessionStats;
+  elapsedMs?: number;
   checkpoint?: import('./checkpoint.js').ConversationCheckpoint;
   chatRevision?: number;
   conversationId?: string;
@@ -369,7 +373,13 @@ export class TaskJournal {
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
+        if (
+          task.elapsedMs !== undefined &&
+          (!Number.isSafeInteger(task.elapsedMs) || task.elapsedMs < 0)
+        )
+          delete task.elapsedMs;
         if (task.intentId !== undefined && !validAgentId(task.intentId)) delete task.intentId;
         // A field this build cannot validate is dropped alone; the rest of the saved task stays queryable.
         if (
@@ -399,6 +409,8 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.stats !== undefined && !isSessionStats(value.stats))
+      throw new Fault('INVALID_STATISTICS', 400);
     if (value.checkpoint !== undefined && !isConversationCheckpoint(value.checkpoint))
       throw new Fault('INVALID_CONTEXT_CHECKPOINT', 400);
     if (
@@ -435,6 +447,7 @@ export class TaskJournal {
       'executedCount',
       'trace',
       'createdAt',
+      'elapsedMs',
       'files',
       'inputs',
       'documentInputs',
@@ -443,6 +456,7 @@ export class TaskJournal {
       'inserts',
       'turns',
       'checkpoint',
+      'stats',
     ];
     const task = Object.fromEntries(
       fields

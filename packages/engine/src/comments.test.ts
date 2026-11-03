@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { isWorkCommentReceipt, workKey } from '@daban/protocol';
+import { count, eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { Work } from './work.js';
+import { workItems, workMeta, workOperations } from './work-schema.js';
 
 const human = { kind: 'human' as const };
 const bot = { kind: 'bot' as const, bot: 'mock-alpha' };
@@ -28,41 +31,43 @@ const input = (id = 'mock-comment', revision = 1) => ({
   revision,
   body: '  MOCK COMMENT\n合成讨论内容。  ',
 });
+// A pre-ORM schema1 file: no comments table, no comment counter and no workflow metadata.
+function legacyFile(file: string) {
+  const db = new DatabaseSync(file);
+  db.exec(`CREATE TABLE work_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,description TEXT NOT NULL,progress TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL) STRICT;
+    CREATE TABLE work_operations(id TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES work_items(id),signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
+    CREATE TABLE work_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;
+    INSERT INTO work_meta VALUES(1,1);PRAGMA user_version=1;`);
+  const at = '2026-01-01T00:00:00.000Z';
+  db.prepare(
+    'INSERT INTO work_items(id,title,description,progress,status,revision,deleted,created,updated,completed,creator,editor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+  ).run(
+    create.item,
+    fields.title,
+    fields.description,
+    fields.progress,
+    'todo',
+    1,
+    0,
+    at,
+    at,
+    null,
+    JSON.stringify(human),
+    JSON.stringify(human),
+  );
+  db.prepare('INSERT INTO work_operations VALUES(?,?,?,?,?)').run(
+    create.id,
+    create.item,
+    createHash('sha256').update(workKey(create, human)).digest('hex'),
+    1,
+    at,
+  );
+  db.close();
+}
 async function fixture(legacy = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-comments-')),
     file = path.join(root, 'work.sqlite');
-  if (legacy) {
-    const db = new DatabaseSync(file);
-    db.exec(`CREATE TABLE work_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,description TEXT NOT NULL,progress TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL) STRICT;
-      CREATE TABLE work_operations(id TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES work_items(id),signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
-      CREATE TABLE work_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;
-      INSERT INTO work_meta VALUES(1,1);PRAGMA user_version=1;`);
-    const at = '2026-01-01T00:00:00.000Z';
-    db.prepare(
-      'INSERT INTO work_items(id,title,description,progress,status,revision,deleted,created,updated,completed,creator,editor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-    ).run(
-      create.item,
-      fields.title,
-      fields.description,
-      fields.progress,
-      'todo',
-      1,
-      0,
-      at,
-      at,
-      null,
-      JSON.stringify(human),
-      JSON.stringify(human),
-    );
-    db.prepare('INSERT INTO work_operations VALUES(?,?,?,?,?)').run(
-      create.id,
-      create.item,
-      createHash('sha256').update(workKey(create, human)).digest('hex'),
-      1,
-      at,
-    );
-    db.close();
-  }
+  if (legacy) legacyFile(file);
   let store = new Work(file);
   await store.ready;
   if (!legacy) await store.write(create, human);
@@ -94,16 +99,16 @@ test('additive migration retains legacy items, fingerprints and accepted receipt
       revision: 1,
       comments: [],
     });
-    const db = new DatabaseSync(f.file, { readOnly: true });
+    const db = drizzle({ client: new DatabaseSync(f.file, { readOnly: true }) });
     try {
-      expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
-      expect(db.prepare('SELECT COUNT(*) AS n FROM work_items').get()!.n).toBe(1);
-      expect(db.prepare('SELECT signature FROM work_operations').get()!.signature).toBe(
-        createHash('sha256').update(workKey(create, human)).digest('hex'),
-      );
-      expect(db.prepare('SELECT comments FROM work_meta').get()!.comments).toBe(0);
+      expect(db.$client.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+      expect(db.select({ n: count() }).from(workItems).get()!.n).toBe(1);
+      expect(
+        db.select({ signature: workOperations.signature }).from(workOperations).get()!.signature,
+      ).toBe(createHash('sha256').update(workKey(create, human)).digest('hex'));
+      expect(db.select({ comments: workMeta.comments }).from(workMeta).get()!.comments).toBe(0);
     } finally {
-      db.close();
+      db.$client.close();
     }
     await f.store.comment(input(), bot);
     await f.reopen();
@@ -298,15 +303,22 @@ test('invalid inputs, cancellation, queued argument mutation and close preserve 
 test('comments and legacy writes share one retained operation capacity', async () => {
   const f = await fixture();
   try {
-    const db = new DatabaseSync(f.file);
+    const db = drizzle({ client: new DatabaseSync(f.file) });
     try {
-      const add = db.prepare('INSERT INTO work_operations VALUES(?,?,?,?,?)');
-      db.exec('BEGIN');
-      for (let i = 0; i < 9998; i++)
-        add.run(`mock-padding-${i}`, create.item, '0'.repeat(64), 1, '2026-01-01T00:00:00.000Z');
-      db.exec('COMMIT');
+      db.transaction((tx) => {
+        for (let i = 0; i < 9998; i++)
+          tx.insert(workOperations)
+            .values({
+              id: `mock-padding-${i}`,
+              item: create.item,
+              signature: '0'.repeat(64),
+              revision: 1,
+              at: '2026-01-01T00:00:00.000Z',
+            })
+            .run();
+      });
     } finally {
-      db.close();
+      db.$client.close();
     }
     await f.store.comment(input(), human);
     await expect(f.store.comment(input('mock-over', 2), human)).rejects.toMatchObject({
@@ -374,19 +386,11 @@ test('initialization and schema1 migration publish comments and version atomical
   for (const legacy of [false, true]) {
     const root = await mkdtemp(path.join(tmpdir(), 'mock-comment-migrate-'));
     const file = path.join(root, 'work.sqlite');
-    if (legacy) {
-      const initial = new Work(file);
-      await initial.ready;
-      await initial.write(create, human);
-      await initial.close();
-      const db = new DatabaseSync(file);
-      db.exec(
-        'DROP TABLE work_comments;ALTER TABLE work_meta DROP COLUMN comments;ALTER TABLE work_items DROP COLUMN priority;ALTER TABLE work_items DROP COLUMN assignee;PRAGMA user_version=1;',
-      );
-      db.close();
-    }
+    if (legacy) legacyFile(file);
     const original = DatabaseSync.prototype.exec;
+    const prepare = DatabaseSync.prototype.prepare;
     let injected = false;
+    // The legacy upgrade issues its DDL through exec(); the baseline migration through prepare().
     DatabaseSync.prototype.exec = function (this: DatabaseSync, sql: string) {
       const result = original.call(this, sql);
       if (/CREATE TABLE work_comments\b/.test(sql)) {
@@ -395,12 +399,20 @@ test('initialization and schema1 migration publish comments and version atomical
       }
       return result;
     };
+    DatabaseSync.prototype.prepare = function (this: DatabaseSync, sql: string) {
+      if (/CREATE TABLE `work_comments`/.test(sql)) {
+        injected = true;
+        throw Error('MOCK SCHEMA FAILURE');
+      }
+      return prepare.call(this, sql);
+    };
     let broken: Work | undefined;
     try {
       broken = new Work(file);
       await expect(broken.ready).rejects.toMatchObject({ code: 'WORK_CORRUPT' });
     } finally {
       DatabaseSync.prototype.exec = original;
+      DatabaseSync.prototype.prepare = prepare;
       await broken?.close();
     }
     try {
@@ -443,25 +455,26 @@ test('initialization and schema1 migration publish comments and version atomical
 test('unknown schemas and malformed legacy rows are retained without migration', async () => {
   for (const mutation of [
     'PRAGMA user_version=99',
+    'PRAGMA user_version=0',
     'CREATE TABLE mock_foreign(value TEXT)',
     "UPDATE work_items SET creator='MOCK INVALID JSON'",
     'UPDATE work_meta SET revision=0',
     'DELETE FROM work_operations',
   ]) {
-    const f = await fixture();
+    const root = await mkdtemp(path.join(tmpdir(), 'mock-comment-unknown-'));
+    const file = path.join(root, 'work.sqlite');
     try {
-      await f.store.close();
-      const db = new DatabaseSync(f.file);
-      db.exec(
-        'DROP TABLE work_comments;ALTER TABLE work_meta DROP COLUMN comments;ALTER TABLE work_items DROP COLUMN priority;ALTER TABLE work_items DROP COLUMN assignee;PRAGMA user_version=1;',
-      );
+      legacyFile(file);
+      const db = new DatabaseSync(file);
       db.exec(mutation);
       db.close();
-      await expect(f.reopen()).rejects.toMatchObject({ code: 'WORK_CORRUPT' });
-      const check = new DatabaseSync(f.file, { readOnly: true });
+      const store = new Work(file);
+      await expect(store.ready).rejects.toMatchObject({ code: 'WORK_CORRUPT' });
+      await store.close();
+      const check = new DatabaseSync(file, { readOnly: true });
       try {
         expect(check.prepare('PRAGMA user_version').get()!.user_version).toBe(
-          mutation.includes('99') ? 99 : 1,
+          Number(/user_version=(\d+)/.exec(mutation)?.[1] ?? 1),
         );
         expect(
           check.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='work_comments'").get()!
@@ -477,7 +490,7 @@ test('unknown schemas and malformed legacy rows are retained without migration',
         check.close();
       }
     } finally {
-      await f.close();
+      await rm(root, { recursive: true, force: true });
     }
   }
 });
@@ -505,11 +518,11 @@ test('immediate close drains schema initialization without misclassifying the st
   try {
     await store.close();
     expect(await store.status()).toStrictEqual({ available: false, error: 'WORK_CLOSED' });
-    const db = new DatabaseSync(file, { readOnly: true });
+    const db = drizzle({ client: new DatabaseSync(file, { readOnly: true }) });
     try {
-      expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+      expect(db.select().from(workMeta).all()).toStrictEqual([{ id: 1, revision: 0, comments: 0 }]);
     } finally {
-      db.close();
+      db.$client.close();
     }
     const reopened = new Work(file);
     await reopened.ready;
@@ -527,12 +540,12 @@ test('immediate close drains schema initialization without misclassifying the st
 test('a legacy edit after clock rollback cannot make accepted discussion history unreadable', async () => {
   const f = await fixture();
   try {
-    const db = new DatabaseSync(f.file);
-    db.prepare('UPDATE work_items SET updated=? WHERE id=?').run(
-      '2099-01-01T00:00:00.000Z',
-      create.item,
-    );
-    db.close();
+    const db = drizzle({ client: new DatabaseSync(f.file) });
+    db.update(workItems)
+      .set({ updated: '2099-01-01T00:00:00.000Z' })
+      .where(eq(workItems.id, create.item))
+      .run();
+    db.$client.close();
     const accepted = await f.store.comment(input(), bot);
     const edited = await f.store.write(
       {

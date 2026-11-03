@@ -19,13 +19,17 @@ import {
   type SkillResourceData,
   validAgentId,
 } from '@daban/protocol';
+import { and, count, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
+import { Fault } from './control.js';
+import { configure, type Database, migrate, tables } from './database.js';
 import { parseSkill } from './skill-content.js';
-import { type SkillFileSet, SkillFiles } from './skill-files.js';
+import { type SkillFileSet, SkillFiles, upgradeSkillFiles } from './skill-files.js';
 import { inspectSkillPackage, skillHash } from './skill-package.js';
+import { migrations } from './skills-migrations.js';
+import { skillBindings, skillMeta, skills } from './skills-schema.js';
 
 export { parseSkill } from './skill-content.js';
-
-import { Fault } from './control.js';
 
 export interface SkillRecipe {
   name: string;
@@ -49,12 +53,14 @@ export interface SkillDefault {
 const invalid = (): never => {
   throw new Fault('INVALID_SKILL', 400);
 };
-type Row = Record<string, unknown>;
+type Row = typeof skills.$inferSelect;
+const ownedBy = (owner: string | undefined) =>
+  owner === undefined ? isNull(skills.owner) : eq(skills.owner, owner);
 type SkillSource = { id: string; revision: number; content: string; resources: string | null };
 export class Skills {
   // shortcut: one runtime writes a data root; add a process lease before allowing multiple services.
   readonly ready: Promise<unknown>;
-  private db?: DatabaseSync;
+  private db?: Database;
   private failed = false;
   private closed = false;
   private files?: SkillFiles;
@@ -83,33 +89,33 @@ export class Skills {
       await handle.close();
     }
     await chmod(this.file, 0o600);
-    const db = new DatabaseSync(this.file);
+    const client = new DatabaseSync(this.file);
+    // The legacy step validates through this same connection inside migrate's transaction.
+    const db = drizzle({ client });
     this.db = db;
     this.files = new SkillFiles(db);
-    const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-      .all()
-      .map((row) => String(row.name))
-      .sort();
+    try {
+      configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
+      migrate(client, migrations, (legacy) => this.upgrade(legacy));
+      // An existing catalog is validated, never repaired by re-creating missing consent or revision rows.
+      this.verify();
+      this.install();
+    } catch (error) {
+      this.db = undefined;
+      client.close();
+      throw error;
+    }
+  }
+  private upgrade(client: DatabaseSync) {
+    const version = Number(client.prepare('PRAGMA user_version').get()!.user_version);
+    const names = tables(client).join(',');
     if (
-      (version === 0 && tables.length) ||
-      ![0, 1, 2, 3].includes(version) ||
-      (version === 1 && tables.join(',') !== 'skill_bindings,skill_meta,skills') ||
-      (version >= 2 &&
-        tables.join(',') !== 'skill_bindings,skill_files,skill_meta,skill_packages,skills')
+      ![1, 2, 3].includes(version) ||
+      (version === 1 && names !== 'skill_bindings,skill_meta,skills') ||
+      (version >= 2 && names !== 'skill_bindings,skill_files,skill_meta,skill_packages,skills')
     )
       throw new Fault('SKILLS_UNAVAILABLE', 503);
-    db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
-    // An existing catalog is validated, never repaired by re-creating missing consent or revision rows.
-    if (version === 0)
-      db.exec(`
-      CREATE TABLE skills(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);
-      CREATE TABLE skill_bindings(bot TEXT NOT NULL,skill TEXT NOT NULL,revision INTEGER NOT NULL,enabled INTEGER NOT NULL,PRIMARY KEY(bot,skill));
-      CREATE TABLE skill_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
-      INSERT INTO skill_meta VALUES(1,0); PRAGMA user_version=1;`);
-    const schema = Number(db.prepare('PRAGMA user_version').get()!.user_version);
-    const columns = db
+    const columns = client
       .prepare('PRAGMA table_info(skills)')
       .all()
       .map((item) => String(item.name))
@@ -123,25 +129,38 @@ export class Skills {
       'deleted',
       'created',
       'updated',
-      ...(schema >= 2 ? ['resources'] : []),
-      ...(schema >= 3 ? ['owner'] : []),
+      ...(version >= 2 ? ['resources'] : []),
+      ...(version >= 3 ? ['owner'] : []),
     ]
       .sort()
       .join(',');
     if (columns !== expectedColumns) throw new Fault('SKILLS_UNAVAILABLE', 503);
+    if (version < 2) upgradeSkillFiles(client);
+    if (version < 3)
+      client.exec(`ALTER TABLE skills RENAME TO skills_v2;
+        CREATE TABLE skills(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,resources TEXT,owner TEXT);
+        INSERT INTO skills SELECT id,name,revision,content,deleted,created,updated,resources,NULL FROM skills_v2;
+        DROP TABLE skills_v2;
+        CREATE UNIQUE INDEX skill_owner_name ON skills(COALESCE(owner,''),name);`);
+    // A corrupt pre-ORM store rolls back with the upgrade; migration must never "repair" it.
+    this.verify();
+  }
+  private verify() {
+    const db = this.available();
     this.revision();
-    if (Number(db.prepare('SELECT COUNT(*) AS count FROM skills').get()!.count) > 100)
+    if (db.select({ count: count() }).from(skills).get()!.count > 100)
       throw new Fault('SKILLS_UNAVAILABLE', 503);
     const documents = new Map(
       db
-        .prepare('SELECT * FROM skills')
+        .select()
+        .from(skills)
         .all()
         .map((row) => {
           const document = this.document(row);
           return [document.id, document] as const;
         }),
     );
-    for (const row of db.prepare('SELECT * FROM skill_bindings').all()) {
+    for (const row of db.select().from(skillBindings).all()) {
       const document = documents.get(String(row.skill));
       if (
         !validAgentId(row.bot) ||
@@ -154,34 +173,14 @@ export class Skills {
       )
         throw new Fault('SKILLS_UNAVAILABLE', 503);
     }
-    // Validate existing consent and content before migrating; a corrupt store must never be "repaired" by migration.
-    if (version < 2) this.files.migrate();
-    if (version < 3) {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        db.exec(`ALTER TABLE skills RENAME TO skills_v2;
-          CREATE TABLE skills(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,resources TEXT,owner TEXT);
-          INSERT INTO skills SELECT id,name,revision,content,deleted,created,updated,resources,NULL FROM skills_v2;
-          DROP TABLE skills_v2;
-          CREATE UNIQUE INDEX skill_owner_name ON skills(COALESCE(owner,''),name);
-          PRAGMA user_version=3; COMMIT;`);
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
-    } else if (
-      !db
-        .prepare('PRAGMA table_info(skills)')
-        .all()
-        .some((column) => column.name === 'owner')
-    ) {
-      throw new Fault('SKILLS_UNAVAILABLE', 503);
-    }
+  }
+  private install() {
+    const db = this.available();
     for (const skill of this.defaults) {
       if (!validAgentId(skill.id)) throw new Fault('INVALID_SKILL');
-      const prepared = this.files.prepare(skill.package),
+      const prepared = this.files!.prepare(skill.package),
         parsed = parseSkill(prepared.content, true);
-      const existing = db.prepare('SELECT * FROM skills WHERE id=?').get(skill.id);
+      const existing = db.select().from(skills).where(eq(skills.id, skill.id)).get();
       if (existing && skill.previousDigests) {
         const current = this.document(existing);
         // Only a checksum-known shipped revision may be upgraded; keep all per-Bot opt-outs and IDs intact.
@@ -195,29 +194,48 @@ export class Skills {
             !skill.previousDigests.includes(current.package.digest)
           )
             throw new Fault('SKILLS_UNAVAILABLE', 503);
-          this.files.checkCapacity([prepared.set], new Set(this.pins.keys()));
+          this.files!.checkCapacity([prepared.set], new Set(this.pins.keys()));
           this.transaction(() => {
             this.files!.save(prepared.set);
-            db.prepare(
-              'UPDATE skills SET content=?,resources=?,revision=revision+1,updated=? WHERE id=?',
-            ).run(prepared.content, prepared.set.key, new Date().toISOString(), skill.id);
+            db.update(skills)
+              .set({
+                content: prepared.content,
+                resources: prepared.set.key,
+                revision: sql`${skills.revision} + 1`,
+                updated: new Date().toISOString(),
+              })
+              .where(eq(skills.id, skill.id))
+              .run();
           });
         }
       }
       // Defaults never replace user-authored names or consume the last slot of a full existing library.
       if (
         db
-          .prepare('SELECT id FROM skills WHERE id=? OR (owner IS NULL AND name=?)')
-          .get(skill.id, parsed.name) ||
-        Number(db.prepare('SELECT COUNT(*) AS count FROM skills').get()!.count) >= 100
+          .select({ id: skills.id })
+          .from(skills)
+          .where(
+            or(eq(skills.id, skill.id), and(isNull(skills.owner), eq(skills.name, parsed.name))),
+          )
+          .get() ||
+        db.select({ count: count() }).from(skills).get()!.count >= 100
       )
         continue;
       const now = new Date().toISOString();
       this.transaction(() => {
         this.files!.save(prepared.set);
-        db.prepare(
-          'INSERT INTO skills(id,name,revision,content,deleted,created,updated,resources) VALUES(?,?,1,?,0,?,?,?)',
-        ).run(skill.id, parsed.name, prepared.content, now, now, prepared.set.key);
+        db.insert(skills)
+          .values({
+            id: skill.id,
+            name: parsed.name,
+            revision: 1,
+            content: prepared.content,
+            deleted: 0,
+            created: now,
+            updated: now,
+            resources: prepared.set.key,
+          })
+          .run();
       });
     }
   }
@@ -227,7 +245,9 @@ export class Skills {
   }
   private revision() {
     const value = this.available()
-      .prepare('SELECT revision FROM skill_meta WHERE id=1')
+      .select({ revision: skillMeta.revision })
+      .from(skillMeta)
+      .where(eq(skillMeta.id, 1))
       .get()?.revision;
     if (!Number.isSafeInteger(value) || Number(value) < 0)
       throw new Fault('SKILLS_UNAVAILABLE', 503);
@@ -235,18 +255,21 @@ export class Skills {
   }
   private transaction<T>(action: () => T) {
     const db = this.available();
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = action();
-      this.files!.collect(new Set(this.pins.keys()));
-      if (this.revision() >= Number.MAX_SAFE_INTEGER - 1) throw new Fault('SKILL_LIMIT');
-      db.prepare('UPDATE skill_meta SET revision=revision+1 WHERE id=1').run();
-      db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
+    // Boxing keeps the generic result distinguishable from a Promise for Drizzle's sync typing.
+    const committed = db.transaction(
+      () => {
+        const result = action();
+        this.files!.collect(new Set(this.pins.keys()));
+        if (this.revision() >= Number.MAX_SAFE_INTEGER - 1) throw new Fault('SKILL_LIMIT');
+        db.update(skillMeta)
+          .set({ revision: sql`${skillMeta.revision} + 1` })
+          .where(eq(skillMeta.id, 1))
+          .run();
+        return { result };
+      },
+      { behavior: 'immediate' },
+    );
+    return committed.result;
   }
   async status() {
     await this.ready;
@@ -265,13 +288,21 @@ export class Skills {
     if (bot !== undefined && !validAgentId(bot)) throw new Fault('INVALID_SKILL', 400);
   }
   private visible(bot: string, deleted = false) {
-    const rows = this.available()
-      .prepare('SELECT * FROM skills WHERE deleted=? AND (owner IS NULL OR owner=?) ORDER BY name')
-      .all(Number(deleted), bot);
+    const db = this.available();
+    const rows = db
+      .select()
+      .from(skills)
+      .where(
+        and(eq(skills.deleted, Number(deleted)), or(isNull(skills.owner), eq(skills.owner, bot))),
+      )
+      .orderBy(skills.name)
+      .all();
     const owned = new Set(
-      this.available()
-        .prepare('SELECT name FROM skills WHERE owner=?')
-        .all(bot)
+      db
+        .select({ name: skills.name })
+        .from(skills)
+        .where(eq(skills.owner, bot))
+        .all()
         .map((row) => String(row.name)),
     );
     return rows.filter((row) => this.owner(row) === bot || !owned.has(this.document(row).name));
@@ -285,7 +316,7 @@ export class Skills {
   }
   private row(id: string) {
     if (!validAgentId(id)) throw new Fault('INVALID_SKILL', 400);
-    const row = this.available().prepare('SELECT * FROM skills WHERE id=?').get(id);
+    const row = this.available().select().from(skills).where(eq(skills.id, id)).get();
     if (!row) throw new Fault('SKILL_NOT_FOUND', 404);
     return row;
   }
@@ -316,19 +347,21 @@ export class Skills {
   }
   private entry(bot: string, row: Row): SkillEntry {
     const { content: _content, files: _files, ...summary } = this.document(row);
-    const binding = this.available()
-      .prepare('SELECT * FROM skill_bindings WHERE bot=? AND skill=?')
-      .get(bot, summary.id);
+    const db = this.available();
+    const binding = db
+      .select()
+      .from(skillBindings)
+      .where(and(eq(skillBindings.bot, bot), eq(skillBindings.skill, summary.id)))
+      .get();
     // A newly shipped default must not displace an existing Bot's twenty explicitly enabled skills.
     const defaultEnabled =
       !!summary.system &&
-      Number(
-        this.available()
-          .prepare(
-            'SELECT COUNT(*) AS count FROM skill_bindings b JOIN skills s ON s.id=b.skill WHERE b.bot=? AND b.enabled=1 AND s.deleted=0',
-          )
-          .get(bot)!.count,
-      ) < 20;
+      db
+        .select({ count: count() })
+        .from(skillBindings)
+        .innerJoin(skills, eq(skills.id, skillBindings.skill))
+        .where(and(eq(skillBindings.bot, bot), eq(skillBindings.enabled, 1), eq(skills.deleted, 0)))
+        .get()!.count < 20;
     return {
       ...summary,
       enabled: !summary.deleted && (binding ? binding.enabled === 1 : defaultEnabled),
@@ -364,15 +397,17 @@ export class Skills {
       item,
       set,
       prior: db
-        .prepare('SELECT * FROM skills WHERE name=? AND owner IS ?')
-        .get(item.name, bot ?? null),
+        .select()
+        .from(skills)
+        .where(and(eq(skills.name, item.name), ownedBy(bot)))
+        .get(),
     }));
     for (const entry of entries) {
       if (
         bot &&
         !entry.prior &&
         this.defaults.some((item) => {
-          const row = db.prepare('SELECT * FROM skills WHERE id=?').get(item.id);
+          const row = db.select().from(skills).where(eq(skills.id, item.id)).get();
           return row && this.document(row).name === entry.item.name;
         })
       )
@@ -386,8 +421,8 @@ export class Skills {
       )
         throw new Fault('SKILL_NAME_CONFLICT');
     }
-    const count = Number(db.prepare('SELECT COUNT(*) AS count FROM skills').get()!.count);
-    if (count + entries.filter((entry) => !entry.prior).length > 100)
+    const total = db.select({ count: count() }).from(skills).get()!.count;
+    if (total + entries.filter((entry) => !entry.prior).length > 100)
       throw new Fault('SKILL_LIMIT');
     this.files!.checkCapacity(
       entries.flatMap((entry) => (entry.set ? [entry.set] : [])),
@@ -409,26 +444,38 @@ export class Skills {
         const id = randomUUID(),
           now = new Date().toISOString();
         if (entry.set) this.files!.save(entry.set);
-        this.available()
-          .prepare(
-            'INSERT INTO skills(id,name,revision,content,deleted,created,updated,resources,owner) VALUES(?,?,1,?,0,?,?,?,?)',
-          )
-          .run(
+        const db = this.available();
+        db.insert(skills)
+          .values({
             id,
-            entry.item.name,
-            entry.item.content,
-            now,
-            now,
-            entry.set?.key ?? null,
-            bot ?? null,
-          );
+            name: entry.item.name,
+            revision: 1,
+            content: entry.item.content,
+            deleted: 0,
+            created: now,
+            updated: now,
+            resources: entry.set?.key ?? null,
+            owner: bot ?? null,
+          })
+          .run();
         if (bot) {
           // A private replacement must never fall back to a previously enabled shared version after uninstall.
-          this.available()
-            .prepare(
-              'UPDATE skill_bindings SET enabled=0,revision=revision+1 WHERE bot=? AND enabled=1 AND skill IN (SELECT id FROM skills WHERE owner IS NULL AND name=?)',
+          db.update(skillBindings)
+            .set({ enabled: 0, revision: sql`${skillBindings.revision} + 1` })
+            .where(
+              and(
+                eq(skillBindings.bot, bot),
+                eq(skillBindings.enabled, 1),
+                inArray(
+                  skillBindings.skill,
+                  db
+                    .select({ id: skills.id })
+                    .from(skills)
+                    .where(and(isNull(skills.owner), eq(skills.name, entry.item.name))),
+                ),
+              ),
             )
-            .run(bot, entry.item.name);
+            .run();
         }
         return this.document(this.row(id));
       }),
@@ -480,6 +527,13 @@ export class Skills {
     if (row.revision !== revision) throw new Fault('SKILL_CONFLICT');
     if (revision >= Number.MAX_SAFE_INTEGER - 1) throw new Fault('SKILL_LIMIT');
   }
+  private named(name: string, owner: string | undefined, id: string) {
+    return this.available()
+      .select({ id: skills.id })
+      .from(skills)
+      .where(and(eq(skills.name, name), ownedBy(owner), ne(skills.id, id)))
+      .get();
+  }
   private mutable(id: string, bot?: string) {
     if (this.defaults.some((skill) => skill.id === id))
       throw new Fault('SKILL_SYSTEM_READ_ONLY', 409);
@@ -498,17 +552,19 @@ export class Skills {
     const parsed = parseSkill(content, typeof row.resources === 'string'),
       db = this.available();
     this.files!.info(content, row.resources);
-    if (
-      db
-        .prepare('SELECT id FROM skills WHERE name=? AND owner IS ? AND id<>?')
-        .get(parsed.name, this.owner(row) ?? null, id)
-    )
-      throw new Fault('SKILL_NAME_CONFLICT');
+    if (this.named(parsed.name, this.owner(row), id)) throw new Fault('SKILL_NAME_CONFLICT');
     if (row.content !== content)
       this.transaction(() =>
         db
-          .prepare('UPDATE skills SET name=?,content=?,revision=revision+1,updated=? WHERE id=?')
-          .run(parsed.name, content, new Date().toISOString(), id),
+          .update(skills)
+          .set({
+            name: parsed.name,
+            content,
+            revision: sql`${skills.revision} + 1`,
+            updated: new Date().toISOString(),
+          })
+          .where(eq(skills.id, id))
+          .run(),
       );
     return this.document(this.row(id));
   }
@@ -520,12 +576,7 @@ export class Skills {
     if (row.deleted === 1) throw new Fault('SKILL_ARCHIVED');
     const prepared = this.files!.prepare(bundle),
       parsed = parseSkill(prepared.content, true);
-    if (
-      this.available()
-        .prepare('SELECT id FROM skills WHERE name=? AND owner IS ? AND id<>?')
-        .get(parsed.name, this.owner(row) ?? null, id)
-    )
-      throw new Fault('SKILL_NAME_CONFLICT');
+    if (this.named(parsed.name, this.owner(row), id)) throw new Fault('SKILL_NAME_CONFLICT');
     if (
       row.content !== prepared.content ||
       JSON.stringify(this.files!.manifest(row.resources)) !== JSON.stringify(prepared.set.manifest)
@@ -533,10 +584,16 @@ export class Skills {
       this.transaction(() => {
         this.files!.save(prepared.set);
         this.available()
-          .prepare(
-            'UPDATE skills SET name=?,content=?,resources=?,revision=revision+1,updated=? WHERE id=?',
-          )
-          .run(parsed.name, prepared.content, prepared.set.key, new Date().toISOString(), id);
+          .update(skills)
+          .set({
+            name: parsed.name,
+            content: prepared.content,
+            resources: prepared.set.key,
+            revision: sql`${skills.revision} + 1`,
+            updated: new Date().toISOString(),
+          })
+          .where(eq(skills.id, id))
+          .run();
       });
     return this.document(this.row(id));
   }
@@ -636,16 +693,20 @@ export class Skills {
     if ((row.deleted === 1) !== deleted)
       this.transaction(() => {
         const db = this.available();
-        db.prepare('UPDATE skills SET deleted=?,revision=revision+1,updated=? WHERE id=?').run(
-          Number(deleted),
-          new Date().toISOString(),
-          id,
-        );
+        db.update(skills)
+          .set({
+            deleted: Number(deleted),
+            revision: sql`${skills.revision} + 1`,
+            updated: new Date().toISOString(),
+          })
+          .where(eq(skills.id, id))
+          .run();
         // Restoring a document must never restore another Bot's old enablement consent.
         if (deleted)
-          db.prepare('UPDATE skill_bindings SET enabled=0,revision=revision+1 WHERE skill=?').run(
-            id,
-          );
+          db.update(skillBindings)
+            .set({ enabled: 0, revision: sql`${skillBindings.revision} + 1` })
+            .where(eq(skillBindings.skill, id))
+            .run();
       });
     return this.document(this.row(id));
   }
@@ -673,10 +734,18 @@ export class Skills {
       if (input.enabled && this.activeRows(bot).length >= 20) throw new Fault('SKILL_ACTIVE_LIMIT');
       this.transaction(() =>
         db
-          .prepare(
-            'INSERT INTO skill_bindings VALUES(?,?,?,?) ON CONFLICT(bot,skill) DO UPDATE SET revision=excluded.revision,enabled=excluded.enabled',
-          )
-          .run(bot, input.id, current.bindingRevision + 1, Number(input.enabled)),
+          .insert(skillBindings)
+          .values({
+            bot,
+            skill: input.id,
+            revision: current.bindingRevision + 1,
+            enabled: Number(input.enabled),
+          })
+          .onConflictDoUpdate({
+            target: [skillBindings.bot, skillBindings.skill],
+            set: { revision: sql`excluded.revision`, enabled: sql`excluded.enabled` },
+          })
+          .run(),
       );
     }
     return this.entry(bot, row);
@@ -708,7 +777,7 @@ export class Skills {
       content: document.content,
       resources: typeof row.resources === 'string' ? row.resources : null,
     });
-    const skills = [
+    const recipes = [
       ...(previous?.skills ?? []).filter((item) => item.name !== document.name),
       {
         name: document.name,
@@ -719,7 +788,7 @@ export class Skills {
         ...(document.package ? { package: document.package, files: document.files } : {}),
       },
     ];
-    if (skills.length > 20) throw new Fault('SKILL_ACTIVE_LIMIT');
+    if (recipes.length > 20) throw new Fault('SKILL_ACTIVE_LIMIT');
     // Extend only the confirmed installation. Capturing all current bindings would pull unrelated grants into a live task.
     return this.pin(
       bot,
@@ -728,7 +797,7 @@ export class Skills {
         key: createHash('sha256')
           .update(JSON.stringify([...sources.values()].map((item) => [item.id, item.revision])))
           .digest('hex'),
-        skills,
+        skills: recipes,
       },
       sources,
     );
@@ -778,7 +847,7 @@ export class Skills {
   async close() {
     this.closed = true;
     await this.ready;
-    this.db?.close();
+    this.db?.$client.close();
     this.db = undefined;
   }
 }

@@ -31,13 +31,13 @@ const end = (
   index,
   outcome: { kind: 'committed', eventType, seq: 10 },
 });
-test('native streams expose visible text only and never reasoning or tool arguments', () => {
+test('native streams keep thinking separate from reply text and never publish tool arguments', () => {
   const stream = new StreamCollector();
   stream.push(start());
   stream.push(chunk(2, 0, { type: 'block-start', index: 0, blockType: 'reasoning' }));
   expect(
     stream.push(chunk(3, 1, { type: 'reasoning-delta', index: 0, text: 'mock-private-reasoning' })),
-  ).toBe(undefined);
+  ).toMatchObject({ text: '', thinking: { id: '1:1', text: 'mock-private-reasoning' } });
   expect(
     stream.push(
       chunk(4, 2, {
@@ -58,7 +58,34 @@ test('native streams expose visible text only and never reasoning or tool argume
   expect(stream.push(chunk(8, 6, { type: 'text-delta', index: 2, text: '乙' }))?.text).toBe(
     '合成回答甲乙',
   );
-  expect(stream.push(end(9, 7))).toStrictEqual({ text: '合成回答甲乙', state: 'settled' });
+  expect(stream.push(end(9, 7))).toMatchObject({
+    text: '合成回答甲乙',
+    state: 'settled',
+    thinking: { id: '1:1', text: 'mock-private-reasoning' },
+  });
+});
+test('thinking snapshots reset on retries and gaps, and settled thinking retains its step identity', () => {
+  const stream = new StreamCollector();
+  stream.push(start());
+  stream.push(chunk(2, 0, { type: 'block-start', index: 0, blockType: 'reasoning' }));
+  stream.push(chunk(3, 1, { type: 'reasoning-delta', index: 0, text: '合成思考' }));
+  expect(stream.push(end(4, 2))).toMatchObject({
+    text: '',
+    state: 'settled',
+    thinking: { id: '1:1', text: '合成思考' },
+  });
+  stream.push({ ...start(5, 'mock-retry'), step: 2 });
+  stream.push(chunk(6, 0, { type: 'block-start', index: 1, blockType: 'reasoning' }, 'mock-retry'));
+  expect(
+    stream.push(
+      chunk(7, 1, { type: 'reasoning-delta', index: 1, text: '合成新思考' }, 'mock-retry'),
+    ),
+  ).toMatchObject({
+    thinking: { id: '1:2', text: '合成新思考' },
+  });
+  expect(
+    stream.push(chunk(8, 3, { type: 'reasoning-delta', index: 1, text: '合成缺失' }, 'mock-retry')),
+  ).toStrictEqual({ text: '', state: 'streaming' });
 });
 test('duplicate, stale and missing chunks cannot duplicate or contaminate retries', () => {
   const stream = new StreamCollector();
