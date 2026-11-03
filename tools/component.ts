@@ -2,12 +2,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   appendFile,
-  cp,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
-  rename,
   rm,
   stat,
   writeFile,
@@ -24,7 +22,7 @@ import {
 import { fetchComponent, publishComponent } from './component-release.ts';
 import { assembleComponent, componentSourceId } from './components.ts';
 import { hashAsset } from './environment.ts';
-import { sealHostPackage } from './roles.ts';
+import { materializeHost, sealHostPackage } from './roles.ts';
 import { signComponent } from './sign.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -65,6 +63,7 @@ else if (action === 'fetch') {
 } else if (action === 'build') {
   assert.ok(input && nodeDirectory, 'COMPONENT_ARGUMENTS');
   const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  console.time('runtime:assemble');
   const result = await assembleComponent({
     output: path.resolve(input),
     nodeDirectory: path.resolve(nodeDirectory),
@@ -74,6 +73,7 @@ else if (action === 'fetch') {
     version,
     id,
   });
+  console.timeEnd('runtime:assemble');
   const archive = path.resolve(input, filename);
   if (process.platform === 'darwin') {
     if (process.env.MACOS_SIGNING_IDENTITY)
@@ -83,13 +83,16 @@ else if (action === 'fetch') {
       });
     else throw Error('DEVELOPER_ID_REQUIRED');
   } else {
-    // Materialize npm file: junctions before sealing: installed bytes must be independent of the build machine.
-    const materialized = result.directory + '-materialized';
-    await cp(result.directory, materialized, { recursive: true, dereference: true });
-    await rm(result.directory, { recursive: true });
-    await rename(materialized, result.directory);
+    // Seal after materialization so the archive includes every dependency independently of build-machine links.
+    console.time('runtime:materialize');
+    await materializeHost(result.agent);
+    console.timeEnd('runtime:materialize');
+    console.time('runtime:seal');
     await sealHostPackage(result.agent);
+    console.timeEnd('runtime:seal');
+    console.time('runtime:archive');
     execFileSync('tar.exe', ['-a', '-cf', archive, '-C', path.resolve(input), 'DabanRuntime']);
+    console.timeEnd('runtime:archive');
   }
   console.log(archive);
 } else if (action === 'validate') {
@@ -100,11 +103,16 @@ else if (action === 'fetch') {
   );
   assert.ok(expected, 'COMPONENT_PLATFORM');
   const archive = path.resolve(nodeDirectory);
+  console.time('runtime:archive-integrity');
   assert.equal((await stat(archive)).size, expected.bytes);
   assert.equal((await hashAsset(archive, 'sha256')).digest, expected.sha256);
+  console.timeEnd('runtime:archive-integrity');
   const stage = await mkdtemp(path.join(tmpdir(), 'daban-runtime-validation-'));
   try {
+    console.time('runtime:extract');
     await extractComponent(archive, stage, platform);
+    console.timeEnd('runtime:extract');
+    console.time('runtime:verify');
     await verifyComponent({
       directory: stage,
       id,
@@ -113,6 +121,7 @@ else if (action === 'fetch') {
       archive,
       publisher: path.resolve(input),
     });
+    console.timeEnd('runtime:verify');
     assert.equal(
       execFileSync(componentPaths(stage, platform).executable, ['--version'], {
         encoding: 'utf8',

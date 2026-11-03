@@ -13,6 +13,7 @@ import {
   readFile,
   realpath,
   rename,
+  rm,
   unlink,
   writeFile,
 } from 'node:fs/promises';
@@ -164,6 +165,7 @@ export async function verifyExecutorBuild(archive: string, compiledRoot = root) 
   }
 }
 export async function packageHost(target: string, nodeDirectory: string) {
+  console.time('runtime:host-layout');
   const nodeFile =
     process.platform === 'win32'
       ? path.join(nodeDirectory, 'node.exe')
@@ -232,6 +234,8 @@ export async function packageHost(target: string, nodeDirectory: string) {
             path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
         ]
       : [];
+  console.timeEnd('runtime:host-layout');
+  console.time('runtime:dependencies');
   execFileSync(
     npmProgram,
     [
@@ -247,6 +251,8 @@ export async function packageHost(target: string, nodeDirectory: string) {
     ],
     { cwd: target, stdio: 'inherit' },
   );
+  console.timeEnd('runtime:dependencies');
+  console.time('runtime:host-helpers');
   for (const name of ['source-reader', 'restore-worker']) {
     const { build } = await import('vite');
     await build({
@@ -265,8 +271,54 @@ export async function packageHost(target: string, nodeDirectory: string) {
       },
     });
   }
+  console.timeEnd('runtime:host-helpers');
+  console.time('runtime:host-seal');
   await sealHostPackage(target);
+  console.timeEnd('runtime:host-seal');
 }
+
+export async function materializeHost(target: string) {
+  const info = await lstat(target);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw Error('HOST_PACKAGE_UNSAFE_ROOT');
+  const directory = await realpath(target);
+  const links: { file: string; source: string }[] = [];
+  async function walk(dir: string) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        const source = await realpath(file);
+        const relative = path.relative(directory, source);
+        if (
+          !relative ||
+          relative === '..' ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        )
+          throw Error('HOST_PACKAGE_LINK_ESCAPE');
+        links.push({ file, source });
+      } else if (entry.isDirectory()) await walk(file);
+    }
+  }
+  await walk(directory);
+  // Validate the whole link graph before cp can dereference a nested dependency link.
+  for (const { file, source } of links) {
+    const stage = path.join(path.dirname(file), `.materialized-${randomUUID()}`);
+    try {
+      // Untouched dependencies keep their existing bytes and inodes.
+      await cp(source, stage, {
+        recursive: true,
+        dereference: true,
+        force: false,
+        errorOnExist: true,
+      });
+      await unlink(file);
+      await rename(stage, file);
+    } finally {
+      await rm(stage, { recursive: true, force: true });
+    }
+  }
+}
+
 export async function sealHostPackage(target: string) {
   const metadata = await lstat(target);
   if (!metadata.isDirectory() || metadata.isSymbolicLink())
