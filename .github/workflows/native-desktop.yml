@@ -28,7 +28,9 @@ jobs:
       - uses: ./.github/actions/setup
       - run: npm run build
       - name: Test desktop bindings and authority
-        run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/electron/components.test.ts apps/desktop/electron/component-install.test.ts apps/desktop/electron/host-selection.test.ts apps/desktop/electron/environment-client.test.ts apps/desktop/src/features/computer/LocalComputer.test.tsx --maxWorkers=2
+        run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/electron/agent-setup.test.ts apps/desktop/electron/service.test.ts apps/desktop/electron/notification-main.test.ts apps/desktop/electron/components.test.ts apps/desktop/electron/component-install.test.ts apps/desktop/electron/host-selection.test.ts apps/desktop/electron/environment-client.test.ts apps/desktop/src/features/computer/LocalComputer.test.tsx --maxWorkers=2
+      - name: Test Windows release tooling against a disposable local remote
+        run: npx vitest run --project node tools/bump.test.ts --maxWorkers=2
       - name: Test manual Hyper-V settings and mode switching
         run: npx vitest run apps/desktop/electron/vm-config.test.ts apps/desktop/electron/vm-settings.test.ts apps/desktop/electron/service-vm.test.ts apps/desktop/src/features/settings/VirtualMachine.test.tsx --maxWorkers=2
       - name: Test VM host transport, SSH ownership and restart receipts

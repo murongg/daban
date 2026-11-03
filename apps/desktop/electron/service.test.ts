@@ -104,11 +104,21 @@ vi.mock('./daemon', async (importOriginal) => {
 
 vi.mock('./native-daemon', () => ({
   NativeDaemon: class {
-    ensure() {
-      return mocks.nativeEnsure();
+    readonly scope: string;
+    constructor(
+      readonly config: import('./daemon').DaemonConfig,
+      readonly mode: 'native' | 'vm' = 'native',
+    ) {
+      this.scope = daemonScope(config.dataRoot, config.vmConfig);
+      if (mode === 'vm') mocks.daemonConfigs.push(config);
+    }
+    async ensure() {
+      if (this.mode === 'native') return mocks.nativeEnsure();
+      await mocks.daemonEnsure();
+      return agentClient(this.config);
     }
     close() {
-      return mocks.nativeClose();
+      return this.mode === 'native' ? mocks.nativeClose() : mocks.daemonClose();
     }
   },
 }));
@@ -119,6 +129,7 @@ vi.mock('./host-selection', () => ({
 import { daemonScope } from './daemon';
 import { RuntimeClient } from './runtime';
 import { runtimeService } from './service';
+import { controlSocket, prepareSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
 
 const roots = new Set<string>();
@@ -500,7 +511,7 @@ it('a late poll cannot overwrite the snapshot fetched after accepting a new task
   }
 });
 
-it('offers first-run setup only for absent configuration, admits narrow commands and connects after its committed completion', async () => {
+it('offers legacy Mac setup only for absent configuration, admits narrow commands and connects after its committed completion', async () => {
   const frame = { url: 'file:///mock/index.html' };
   const sender = { mainFrame: frame, send: vi.fn() };
   mocks.windows.push({ webContents: sender });
@@ -512,7 +523,15 @@ it('offers first-run setup only for absent configuration, admits narrow commands
   );
   const client = { status: vi.fn(async () => disconnected('ready')), releaseInputs: vi.fn() };
   const host = { connect: vi.fn(async () => client), close: vi.fn() };
-  const service = runtimeService('/mock/setup', frame.url, '/mock/resources');
+  const service = runtimeService(
+    '/mock/setup',
+    frame.url,
+    '/mock/resources',
+    undefined,
+    undefined,
+    undefined,
+    'darwin',
+  );
   try {
     expect(await service.connect()).toMatchObject({ setup: available });
     expect(mocks.setupStart).not.toHaveBeenCalled();
@@ -552,21 +571,46 @@ it('offers first-run setup only for absent configuration, admits narrow commands
 
 import { once } from 'node:events';
 import fs from 'node:fs/promises';
-import { createServer } from 'node:http';
+import type { RequestListener } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { privateServer, secureDirectory } from '@daban/engine/local-computer';
+
+function agentClient(config: { dataRoot: string; socketPath: string }) {
+  return new RuntimeClient({
+    origin: 'http://127.0.0.1:8766',
+    fetcher: unixFetch(config.socketPath, {
+      certificateFile: join(config.dataRoot, 'model/control-certificate.pem'),
+    }),
+    tokenProvider: () => readAgentToken(config.dataRoot),
+    agent: true,
+  });
+}
 
 async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-workspace' = 'linux-vm') {
-  const root = await fs.mkdtemp(join(tmpdir(), 'mock-service-agent-'));
-  roots.add(root);
-  const dataRoot = join(root, 'data');
-  const socketPath = join(root, 's');
+  const temporary = await fs.mkdtemp(join(tmpdir(), 'mock-service-agent-'));
+  roots.add(temporary);
+  const root = await secureDirectory(join(temporary, 'private'));
+  const dataRoot = await secureDirectory(join(root, 'data'));
   const vmConfig = join(root, 'runtime.json');
-  await fs.mkdir(join(dataRoot, 'model'), { recursive: true, mode: 0o700 });
-  await fs.chmod(dataRoot, 0o700);
+  const socketPath = controlSocket(join(root, 's'), daemonScope(dataRoot, vmConfig));
+  await secureDirectory(join(dataRoot, 'model'));
   await fs.writeFile(join(dataRoot, 'model/control-token'), 'a'.repeat(64), { mode: 0o600 });
   await fs.writeFile(join(dataRoot, 'execution-token'), 'b'.repeat(64), { mode: 0o600 });
-  await fs.writeFile(vmConfig, '{}', { mode: 0o600 });
+  await fs.writeFile(
+    vmConfig,
+    JSON.stringify({
+      provider: 'qemu',
+      enabled: execution === 'linux-vm',
+      vmId: '11111111-2222-4333-8444-555555555555',
+      host: '127.0.0.1',
+      sshPort: 2222,
+      user: 'mock-bot',
+      identityFile: join(root, 'mock-key'),
+      hostKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    }),
+    { mode: 0o600 },
+  );
   const entry = join(root, 'agent.js'),
     executable = join(root, 'node');
   await fs.writeFile(entry, 'SYNTHETIC AGENT ENTRY', { mode: 0o600 });
@@ -602,7 +646,7 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
   const groups: import('@daban/protocol').Group[] = [];
   const pages = new Map<string, import('@daban/protocol').GroupPage>();
   const schedules: import('@daban/protocol').Schedule[] = [];
-  const server = createServer(async (request, response) => {
+  const listener: RequestListener = async (request, response) => {
     let body = '';
     for await (const chunk of request) body += String(chunk);
     requests.push({
@@ -690,7 +734,9 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
               }),
           sharedLogin: false,
           ...(execution === 'local-workspace'
-            ? { agent: { location: 'host', execution, privilege: 'workspace', approvals: 'host' } }
+            ? {
+                agent: { location: 'host', execution, privilege: 'workspace', approvals: 'host' },
+              }
             : { reboot: power.status }),
           bots: {},
           model: {
@@ -706,10 +752,15 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
       response.writeHead(404);
       response.end('{}');
     }
-  });
+  };
+  const endpoint = await privateServer(listener, join(dataRoot, 'model/control-certificate.pem'));
+  const { server } = endpoint;
+  await prepareSocket(socketPath);
+  if (process.platform !== 'win32' && dirname(socketPath) !== root) roots.add(dirname(socketPath));
   server.listen(socketPath);
   await once(server, 'listening');
-  await fs.chmod(socketPath, 0o600);
+  if (process.platform !== 'win32') await fs.chmod(socketPath, 0o600);
+  await endpoint.publish();
   mocks.daemonRestart
     .mockReset()
     .mockImplementation(async (guard: () => Promise<unknown>) => guard());
@@ -865,7 +916,7 @@ it('does not attach a late agent client after closing during daemon startup', as
   }
 });
 
-it('creates first-run executor configuration through agent bootstrap without invoking legacy VM setup', async () => {
+it('creates first-run executor configuration through legacy Mac agent bootstrap without invoking legacy VM setup', async () => {
   const fixture = await agentFixture();
   await fs.unlink(fixture.config.vmConfig);
   const available = { required: true, phase: 'available' };
@@ -888,6 +939,8 @@ it('creates first-run executor configuration through agent bootstrap without inv
     '/mock/resources',
     undefined,
     fixture.config,
+    undefined,
+    'darwin',
   );
   try {
     expect(await service.connect()).toMatchObject({ phase: 'offline', setup: available });
@@ -912,7 +965,7 @@ it('creates first-run executor configuration through agent bootstrap without inv
   }
 });
 
-it('does not automatically restart paused agent bootstrap after a partial configuration is written', async () => {
+it('does not automatically restart paused legacy Mac bootstrap after a partial configuration is written', async () => {
   const fixture = await agentFixture();
   await fs.unlink(fixture.config.vmConfig);
   let release: () => unknown = () => {};
@@ -931,6 +984,8 @@ it('does not automatically restart paused agent bootstrap after a partial config
     '/mock/resources',
     undefined,
     fixture.config,
+    undefined,
+    'darwin',
   );
   const invoke = (type: 'setup.start' | 'setup.cancel') =>
     mocks.handlers.get('daban:runtime')!({ sender, senderFrame: frame }, { type });
@@ -1196,12 +1251,7 @@ it('prepares the base runtime before native startup, without requesting a Linux 
 it('keeps first-use native model setup usable without probing an uninstalled VM recovery endpoint', async () => {
   const f = await agentFixture(43, 'local-workspace');
   await fs.unlink(f.config.vmConfig);
-  const client = new RuntimeClient({
-    origin: 'http://127.0.0.1:8766',
-    fetcher: unixFetch(f.config.socketPath),
-    tokenProvider: () => readAgentToken(f.dataRoot),
-    agent: true,
-  });
+  const client = agentClient(f.config);
   mocks.nativeEnsure.mockResolvedValue(client);
   const frame = { url: 'file:///mock/index.html' },
     sender = { mainFrame: frame, send: vi.fn() };

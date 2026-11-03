@@ -60,6 +60,7 @@ export function runtimeService(
   onSnapshot?: (snapshot: RuntimeSnapshot, scope?: string) => Promise<unknown>,
   agent?: AgentConfig,
   local?: LocalComputer,
+  platform: NodeJS.Platform = process.platform,
 ) {
   const dataRoot = agent?.dataRoot ?? join(userData, 'agent');
   const vmConfig = agent?.vmConfig ?? join(userData, 'runtime.json');
@@ -81,15 +82,15 @@ export function runtimeService(
         },
         dataRoot,
         vmConfig,
-        ...(process.platform === 'win32' ? { qemuBundle: join(resources, 'qemu') } : {}),
+        ...(platform === 'win32' ? { qemuBundle: join(resources, 'qemu') } : {}),
         socketPath: agent.socketPath ?? controlSocket(join(userData, 'agent.sock'), agentScope!),
       }
     : undefined;
   let daemon: Daemon | NativeDaemon | undefined;
-  let nativeMode = !!agentConfig && process.platform === 'win32';
+  let nativeMode = !!agentConfig && platform === 'win32';
   const nativeFirst = !!(component || agent?.nativeFirst);
   const environment =
-    agentConfig && ['darwin', 'win32'].includes(process.platform) && nativeFirst
+    agentConfig && ['darwin', 'win32'].includes(platform) && nativeFirst
       ? new EnvironmentClient({
           ...{ dataRoot, socketPath: agentConfig.socketPath },
           scope: agentScope!,
@@ -140,6 +141,7 @@ export function runtimeService(
     lastSetupPoll = 0;
   const vmSettings = new VmSettings({
     file: vmConfig,
+    platform,
     handoff: async () => {
       if (closed || updating || connecting || recovering || !agentConfig || !files)
         throw new Error('AGENT_UPDATE_BUSY');
@@ -238,9 +240,8 @@ export function runtimeService(
         throw error;
       },
     );
-    const windowsVm = process.platform === 'win32' ? await readVmConnection(vmConfig) : undefined;
-    const desiredNative =
-      process.platform === 'win32' ? !windowsVm?.enabled : nativeFirst && !configured;
+    const windowsVm = platform === 'win32' ? await readVmConnection(vmConfig) : undefined;
+    const desiredNative = platform === 'win32' ? !windowsVm?.enabled : nativeFirst && !configured;
     if (nativeFirst) {
       const changed = await reconcileAgent({ ...agentConfig, scope: agentScope! }, desiredNative);
       if (changed) {
@@ -264,7 +265,7 @@ export function runtimeService(
         : { required: false, phase: 'complete' };
       return connected;
     }
-    if (process.platform === 'win32') {
+    if (platform === 'win32') {
       await secureDirectory(agentConfig.dataRoot);
       nativeMode = false;
       const windows =
@@ -484,7 +485,7 @@ export function runtimeService(
           publish(disconnected('offline', 'errors.runtimeConnectionUnavailable'));
           return state;
         }
-        if (process.platform === 'win32') {
+        if (platform === 'win32') {
           publish(disconnected('offline', vmErrorKey(error) ?? 'vm.unavailable'));
           return state;
         }
@@ -507,7 +508,7 @@ export function runtimeService(
       throw new Error('AGENT_UPDATING');
     }
     if (command.type === 'agent.upgrade') {
-      if (!legacyHost || !agentConfig || !client || process.platform !== 'darwin')
+      if (!legacyHost || !agentConfig || !client || platform !== 'darwin')
         throw Error('AGENT_LEGACY_RESTART_UNAVAILABLE');
       const owner = client,
         epoch = connection;
@@ -869,7 +870,7 @@ export function runtimeService(
         throw new Error('AGENT_UPDATE_BUSY');
       updating = true;
       try {
-        if (!nativeMode && process.platform !== 'win32') {
+        if (!nativeMode && platform !== 'win32') {
           const manager = daemon instanceof Daemon ? daemon : new Daemon(agentConfig);
           daemon = manager;
           if (await manager.inactive()) {

@@ -29,7 +29,7 @@ test('agent resolves its owned SDK entry only when both SDK and DSH match the pi
       manifest('@deepseek-ai/dsh-sdk-client', '0.2.1-rc.3'),
     );
     await writeFile(join(runtime, 'package.json'), manifest('@deepseek-ai/dsh', '0.2.1-rc.3'));
-    expect(resolveSdk(owner)).toBe(await realpath(join(client, 'index.js')));
+    expect(await realpath(resolveSdk(owner))).toBe(await realpath(join(client, 'index.js')));
     await writeFile(join(runtime, 'package.json'), manifest('@deepseek-ai/dsh', '0.2.1-rc.4'));
     expect(() => resolveSdk(owner)).toThrowError(
       expect.objectContaining({

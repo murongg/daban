@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdtemp, open, rename, rm, unlink } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdtemp, open, rename, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type ComponentIndex,
@@ -207,6 +207,8 @@ export class Components implements RuntimePreparation {
         }
         if (hash.digest('hex') !== this.payload.sha256) throw Error('COMPONENT_INTEGRITY');
         await copyFile(source, temporary, constants.COPYFILE_EXCL);
+        // Bundled archives may be world-readable; the private cache must satisfy the downloader's ownership checks.
+        await chmod(temporary, 0o600);
         // Verify the copied bytes through the existing downloader before any extraction or execution.
         await rename(temporary, this.archive);
       } finally {

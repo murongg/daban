@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { componentIndex } from '@daban/engine/component';
-import { secureDirectory } from '@daban/engine/local-computer';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import type { SetupStatus } from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 import { componentPaths } from './component-install';
@@ -96,6 +96,8 @@ it('prepares the bundled runtime offline and applies the same archive integrity 
   await source.prepare();
   expect(f.options.fetcher).not.toHaveBeenCalled();
   expect(f.verify).toHaveBeenCalledTimes(1);
+  const cached = Reflect.get(source, 'archive') as string;
+  expect(await privateMetadata(cached, await lstat(cached), 0o600)).toBe(true);
   const broken = await fixture();
   await writeFile(archive, 'SYNTHETIC CORRUPTION');
   await expect(

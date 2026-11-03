@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import type { SetupStatus } from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentSetup } from './agent-setup';
@@ -21,7 +22,7 @@ async function fixture() {
     entry: join(root, 'agent.js'),
     executable: join(root, 'node'),
   };
-  await fs.mkdir(config.dataRoot, { mode: 0o700 });
+  await secureDirectory(config.dataRoot);
   await fs.writeFile(config.entry, 'SYNTHETIC ENTRY', { mode: 0o600 });
   await fs.writeFile(config.executable, 'SYNTHETIC EXECUTABLE', { mode: 0o700 });
   return { root, config };
@@ -53,9 +54,10 @@ it.each(['progress.json', 'cancel.json'])(
       const handle = await open(target, flags, mode);
       if (target === file && !replaced) {
         replaced = true;
-        await fs.writeFile(file + '.replacement', content, { mode: 0o600 });
-        await fs.rename(file + '.replacement', file);
-        expect((await handle.stat()).nlink).toBe(0);
+        const info = await handle.stat();
+        // Windows locks open entries against replacement; model the unlinked observation at its IO boundary.
+        info.nlink = 0;
+        vi.spyOn(handle, 'stat').mockResolvedValue(info);
       }
       return handle;
     });
@@ -84,6 +86,38 @@ it('still rejects a live hard-linked progress file', async () => {
     await setup.close();
   }
 });
+
+it.each(['progress.json', 'cancel.json'])(
+  'does not trust a named entry swapped before opening (%s)',
+  async (name) => {
+    const f = await fixture();
+    const setup = new AgentSetup({ config: f.config });
+    await setup.status();
+    const file = join(f.config.dataRoot, name);
+    const content =
+      name === 'progress.json'
+        ? JSON.stringify({ required: true, phase: 'verifying' })
+        : JSON.stringify({ cancelled: true });
+    await fs.writeFile(file, content, { mode: 0o600 });
+    await fs.writeFile(file + '.replacement', content, { mode: 0o600 });
+    const open = fs.open.bind(fs);
+    let swapped = false;
+    vi.spyOn(fs, 'open').mockImplementation(async (target, flags, mode) => {
+      if (target === file && !swapped) {
+        swapped = true;
+        await fs.rename(file + '.replacement', file);
+      }
+      return open(target, flags, mode);
+    });
+    try {
+      const read = Reflect.get(setup, 'read') as (file: string) => Promise<unknown>;
+      if (name === 'progress.json') await expect(read.call(setup, name)).resolves.toBeUndefined();
+      else await expect(read.call(setup, name)).rejects.toThrow('SETUP_STORE');
+    } finally {
+      await setup.close();
+    }
+  },
+);
 
 it('a progress read begun before readiness cannot revert completion or start another supervisor', async () => {
   const f = await fixture();
@@ -281,7 +315,8 @@ it('pauses by marker even after a partial VM configuration exists and resumes wi
     expect(JSON.parse(await fs.readFile(join(f.config.dataRoot, 'cancel.json'), 'utf8'))).toEqual({
       cancelled: true,
     });
-    expect((await fs.lstat(join(f.config.dataRoot, 'cancel.json'))).mode & 0o777).toBe(0o600);
+    const marker = join(f.config.dataRoot, 'cancel.json');
+    expect(await privateMetadata(marker, await fs.lstat(marker), 0o600)).toBe(true);
     await setup.settled;
     expect(owners[0].close).toHaveBeenCalled();
     const reopened = new AgentSetup({ config: f.config, daemon: factory, pollMs: 5 });

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, type TestContext, test } from 'vitest';
 import { downloadPayload, type Payload } from './payload.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 const bytes = Buffer.from('SYNTHETIC IMMUTABLE RUNTIME PAYLOAD');
 const asset: Payload = {
@@ -14,8 +15,9 @@ const asset: Payload = {
 const response = (data: Uint8Array = bytes) =>
   new Response(new Uint8Array(data), { headers: { 'content-length': String(data.length) } });
 async function fixture(t: TestContext) {
-  const directory = await mkdtemp(path.join(tmpdir(), 'mock-payload-'));
-  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-payload-'));
+  t.onTestFinished(() => rm(temporary, { recursive: true, force: true }));
+  const directory = await secureDirectory(path.join(temporary, 'private'));
   return { directory, file: path.join(directory, 'runtime.zip') };
 }
 
@@ -30,7 +32,7 @@ test('publishes only a verified payload and reuses a valid cache without a reque
   expect(await readFile(file)).toStrictEqual(bytes);
   await downloadPayload(file, asset, { fetcher });
   expect(calls).toBe(1);
-  if (process.platform !== 'win32') expect((await lstat(file)).mode & 0o777).toBe(0o600);
+  expect(await privateMetadata(file, await lstat(file), 0o600)).toBe(true);
 });
 
 test('resumes an interrupted stream and verifies the complete file before publishing', async (t) => {

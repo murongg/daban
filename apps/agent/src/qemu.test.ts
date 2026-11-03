@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { secureDirectory } from '@daban/engine/local-computer';
 import type { VmConnection } from '@daban/protocol';
 import { expect, type TestContext, test } from 'vitest';
 import {
@@ -65,7 +66,8 @@ test('WHPX retains hardware CPU acceleration with the interrupt controller requi
 test('QEMU verifies every pinned binary and firmware, including comma filenames, and refuses tampered bytes', async (t) => {
   const f = await fixture(t);
   const tools = path.join(f.root, 'tools');
-  await mkdir(path.join(tools, 'share'), { recursive: true });
+  await secureDirectory(tools);
+  await secureDirectory(path.join(tools, 'share'));
   const content = 'SYNTHETIC BINARY';
   const files = Object.fromEntries(
     ['qemu-system-x86_64.exe', 'qemu-img.exe', 'share/mock,firmware.bin'].map((name) => [
