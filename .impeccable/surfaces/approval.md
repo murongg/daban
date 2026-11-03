@@ -20,12 +20,12 @@ Full access preserves enabled-tool selection, execution-environment and file-acc
 
 Use the house React Aria Select, its selected checkmark and keyboard focus treatment. The compact transparent trigger retains the existing softly curved control shape (6px radius), muted label (12px) and Lucide icon (16px): Hand, ShieldCheck or ShieldAlert. Expanded options pair each label with its wrapping explanation; the trigger omits the explanation. Option width is bounded by the viewport.
 
-Full access deliberately uses a warm orange foreground in both its trigger and option, including the explanation: light theme (`#a94714`), dark theme (`#ff985e`). These are scoped approval-control colors, not new global accents. Preserve the normal selection surface and focus outline. Selection and Escape dismissal use the shared accessible Select; Escape returns focus to the trigger. Read-only, pending and recovering conversations disable the control.
+Full access uses the existing red `--danger` foreground in both its trigger and option, including the explanation, as requested by the user. Preserve the normal selection surface and focus outline. Selection and Escape dismissal use the shared accessible Select; Escape returns focus to the trigger. Read-only, pending and recovering conversations disable the control.
 
 ## Evidence and boundary
 
 The supplied [dark](../review/approval/dark.png), [English light](../review/approval/light-en.png) and [compact](../review/approval/compact.png) captures show the production composer and option hierarchy. [browser.json](../review/approval/browser.json) records Full access selection, Escape focus return, new-conversation reset to `auto`, the selector's absence on legacy protocol, and no horizontal overflow at the compact 900px viewport.
 
-The scoped finish review returned `ship` after the light-theme focused orange contrast correction was resolved. This is acceptance of this UI addition; deployment and native-app acceptance are outside that verdict.
+The scoped finish review returned `ship` after the original light-theme focused contrast correction was resolved. The subsequent user-requested red palette is checked separately. Deployment and native-app acceptance are outside that earlier verdict.
 
 Source of truth: [ApprovalMode.tsx](../../apps/desktop/src/features/chat/ApprovalMode.tsx), [approval.css](../../apps/desktop/src/features/chat/approval.css), [Conversation.tsx](../../apps/desktop/src/features/chat/Conversation.tsx), the shared [Select.tsx](../../apps/desktop/src/components/controls/Select.tsx), paired `approval.*` messages in [English](../../apps/desktop/locales/en.ts) and [Chinese](../../apps/desktop/locales/zh-CN.ts), and the [English](../../docs/en/approvals.md) / [Chinese](../../docs/zh-CN/approvals.md) approval guides.

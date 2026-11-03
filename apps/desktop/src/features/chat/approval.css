@@ -45,7 +45,7 @@
 }
 .select-option[data-value="full"]:has(.approval-icon),
 .approval-choice .select-trigger[data-value="full"] {
-  color: light-dark(#a94714, #ff985e);
+  color: var(--danger);
 }
 .select-option[data-value="full"] .approval-mode-detail {
   color: inherit;
