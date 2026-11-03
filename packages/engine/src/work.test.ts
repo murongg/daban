@@ -1,9 +1,15 @@
+import { createHash } from 'node:crypto';
 import { link, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { workKey } from '@daban/protocol';
+import { count, eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test, vi } from 'vitest';
+import { tables } from './database.js';
 import { Work } from './work.js';
+import { workItems, workMeta, workOperations } from './work-schema.js';
 
 const human = { kind: 'human' as const };
 const bot = { kind: 'bot' as const, bot: 'mock-alpha' };
@@ -42,6 +48,94 @@ async function fixture() {
     },
   };
 }
+
+test('a pre-ORM schema3 work file keeps items, receipts and authority after the schema baseline', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-work-legacy-'));
+  const file = path.join(root, 'work.sqlite');
+  const at = '2026-01-01T00:00:00.000Z';
+  const input = { ...create(), revision: 0 as const };
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE work_items(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,description TEXT NOT NULL,progress TEXT NOT NULL,status TEXT NOT NULL,revision INTEGER NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,completed TEXT,creator TEXT NOT NULL,editor TEXT NOT NULL,priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),assignee TEXT) STRICT;
+    CREATE TABLE work_operations(id TEXT PRIMARY KEY,item TEXT NOT NULL REFERENCES work_items(id),signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
+    CREATE TABLE work_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,comments INTEGER NOT NULL DEFAULT 0 CHECK(comments>=0)) STRICT;
+    CREATE TABLE work_comments(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,item TEXT NOT NULL REFERENCES work_items(id),body TEXT NOT NULL,creator TEXT NOT NULL,signature TEXT NOT NULL,revision INTEGER NOT NULL,at TEXT NOT NULL) STRICT;
+    INSERT INTO work_meta VALUES(1,1,0);
+    PRAGMA user_version=3;`);
+  old
+    .prepare(
+      'INSERT INTO work_items(id,title,description,progress,status,revision,deleted,created,updated,completed,creator,editor,priority,assignee) VALUES(?,?,?,?,?,1,0,?,?,NULL,?,?,?,?)',
+    )
+    .run(
+      input.item,
+      fields.title,
+      fields.description,
+      fields.progress,
+      'review',
+      at,
+      at,
+      JSON.stringify(human),
+      JSON.stringify(human),
+      'high',
+      bot.bot,
+    );
+  old
+    .prepare('INSERT INTO work_operations VALUES(?,?,?,?,?)')
+    .run(
+      input.id,
+      input.item,
+      createHash('sha256').update(workKey(input, human)).digest('hex'),
+      1,
+      at,
+    );
+  old.close();
+  let store = new Work(file);
+  try {
+    await store.ready;
+    const receipt = await store.receipt(input, human);
+    expect.assert(receipt.state === 'complete');
+    expect(receipt.acceptedAt).toBe(at);
+    expect(receipt.item).toMatchObject({
+      status: 'review',
+      priority: 'high',
+      assignee: bot.bot,
+      revision: 1,
+      createdBy: human,
+    });
+    expect(await store.status()).toStrictEqual({ available: true, revision: 1, count: 1 });
+    const edited = await store.write(
+      {
+        id: 'mock-after-baseline',
+        item: input.item,
+        revision: 1,
+        action: 'update',
+        value: { status: 'done' },
+      },
+      bot,
+    );
+    expect(edited.item.revision).toBe(2);
+    const comment = { id: 'mock-after-comment', item: input.item, revision: 2, body: 'MOCK' };
+    expect((await store.comment(comment, bot)).item.revision).toBe(3);
+    await store.close();
+    store = new Work(file);
+    await store.ready;
+    expect((await store.commentReceipt(comment, bot)).state).toBe('complete');
+    expect(await store.status()).toStrictEqual({ available: true, revision: 3, count: 1 });
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      expect(tables(db)).toStrictEqual([
+        'work_comments',
+        'work_items',
+        'work_meta',
+        'work_operations',
+      ]);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('shared work preserves immutable creation provenance and current progress without representing an Agent run', async () => {
   const f = await fixture();
@@ -518,12 +612,12 @@ test('an existing database cannot silently reset a missing global revision autho
     db.exec('DELETE FROM work_meta');
     db.close();
     await expect(f.reopen()).rejects.toThrowError(/WORK_CORRUPT/);
-    const inspect = new DatabaseSync(f.file, { readOnly: true });
+    const inspect = drizzle({ client: new DatabaseSync(f.file, { readOnly: true }) });
     try {
-      expect(inspect.prepare('SELECT COUNT(*) AS count FROM work_items').get()!.count).toBe(1);
-      expect(inspect.prepare('SELECT COUNT(*) AS count FROM work_meta').get()!.count).toBe(0);
+      expect(inspect.select({ n: count() }).from(workItems).get()!.n).toBe(1);
+      expect(inspect.select({ n: count() }).from(workMeta).get()!.n).toBe(0);
     } finally {
-      inspect.close();
+      inspect.$client.close();
     }
   } finally {
     await f.close();
@@ -548,10 +642,15 @@ test('loss of revision authority during service life cannot publish an untracked
         bot,
       ),
     ).rejects.toThrowError(/WORK_CORRUPT/);
-    expect(db.prepare('SELECT status FROM work_items WHERE id=?').get('mock-item')!.status).toBe(
-      'todo',
-    );
-    expect(db.prepare('SELECT COUNT(*) AS count FROM work_operations').get()!.count).toBe(1);
+    const orm = drizzle({ client: db });
+    expect(
+      orm
+        .select({ status: workItems.status })
+        .from(workItems)
+        .where(eq(workItems.id, 'mock-item'))
+        .get()!.status,
+    ).toBe('todo');
+    expect(orm.select({ n: count() }).from(workOperations).get()!.n).toBe(1);
   } finally {
     db.close();
     await f.close();
@@ -561,23 +660,21 @@ test('loss of revision authority during service life cannot publish an untracked
 test('a storage failure during initial schema creation leaves no partially published authority', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-work-init-'));
   const file = path.join(root, 'work.sqlite');
-  const execute = DatabaseSync.prototype.exec;
+  const prepare = DatabaseSync.prototype.prepare;
   let injected = false;
-  vi.spyOn(DatabaseSync.prototype, 'exec').mockImplementation(function (
+  // The baseline migration runs each statement through prepare().
+  vi.spyOn(DatabaseSync.prototype, 'prepare').mockImplementation(function (
     this: DatabaseSync,
     sql: string,
   ) {
-    if (!injected && /CREATE TABLE(?: IF NOT EXISTS)? work_operations/.test(sql)) {
+    if (!injected && /CREATE TABLE `work_operations`/.test(sql)) {
       injected = true;
-      return execute.call(
+      return prepare.call(
         this,
-        sql.replace(
-          /CREATE TABLE(?: IF NOT EXISTS)? work_operations/,
-          'MOCK_STORAGE_REFUSAL work_operations',
-        ),
+        sql.replace(/CREATE TABLE `work_operations`/, 'MOCK_STORAGE_REFUSAL `work_operations`'),
       );
     }
-    return execute.call(this, sql);
+    return prepare.call(this, sql);
   });
   const failed = new Work(file);
   try {

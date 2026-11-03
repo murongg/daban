@@ -23,13 +23,39 @@ import {
   isTaskFileName,
   validAgentId,
 } from '@daban/protocol';
+import { and, eq, getColumns, gt, isNull, sql, sum } from 'drizzle-orm';
+import { migrations } from './attachments-migrations.js';
+import { purges, uploads } from './attachments-schema.js';
 import { errorCode, Fault } from './control.js';
+import { checkpoint, configure, type Database, migrate, unwrap } from './database.js';
 import { imageInput } from './images.js';
 
 const digest = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');
+// Raw projection keeps a mistyped (non-BLOB) value visible to the corruption check instead of failing in the Buffer codec.
+const fields = { ...getColumns(uploads), data: sql<unknown>`${uploads.data}` };
+// Drizzle has no byte-length function; CAST to BLOB measures UTF-8 bytes rather than characters.
+const textBytes = sql<number>`length(CAST(${uploads.content} AS BLOB))`;
+
+// Pre-ORM files may predate the purge receipts and the deleted, version and previous columns.
+function legacy(client: DatabaseSync) {
+  client.exec(`CREATE TABLE IF NOT EXISTS uploads (bot TEXT NOT NULL,id TEXT NOT NULL,name TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,data BLOB NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,version TEXT,previous TEXT,PRIMARY KEY(bot,id));
+    CREATE TABLE IF NOT EXISTS purges (bot TEXT NOT NULL,id TEXT NOT NULL,version TEXT NOT NULL,confirmation TEXT NOT NULL,PRIMARY KEY(bot,id,version));`);
+  const columns = new Set(
+    client
+      .prepare('PRAGMA table_info(uploads)')
+      .all()
+      .map((row) => row.name),
+  );
+  for (const [name, definition] of [
+    ['deleted', 'INTEGER NOT NULL DEFAULT 0'],
+    ['version', 'TEXT'],
+    ['previous', 'TEXT'],
+  ])
+    if (!columns.has(name)) client.exec(`ALTER TABLE uploads ADD COLUMN ${name} ${definition}`);
+}
 export class Attachments {
   readonly ready: Promise<unknown>;
-  private db!: DatabaseSync;
+  private db!: Database;
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
   constructor(readonly file: string) {
@@ -40,7 +66,7 @@ export class Attachments {
     try {
       await this.ready;
       if (this.closed) return { available: false };
-      this.db.prepare('SELECT 1').get();
+      this.db.select({ bot: uploads.bot }).from(uploads).limit(1).get();
       return { available: true };
     } catch {
       return { available: false };
@@ -56,28 +82,31 @@ export class Attachments {
       throw new Fault('ATTACHMENT_CORRUPT');
     if (!prior) await (await open(this.file, 'wx', 0o600)).close();
     await chmod(this.file, 0o600);
-    this.db = new DatabaseSync(this.file);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;
-      CREATE TABLE IF NOT EXISTS uploads (bot TEXT NOT NULL,id TEXT NOT NULL,name TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,data BLOB NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,version TEXT,previous TEXT,PRIMARY KEY(bot,id));
-      CREATE TABLE IF NOT EXISTS purges (bot TEXT NOT NULL,id TEXT NOT NULL,version TEXT NOT NULL,confirmation TEXT NOT NULL,PRIMARY KEY(bot,id,version));`);
-    const columns = new Set(
-      this.db
-        .prepare('PRAGMA table_info(uploads)')
-        .all()
-        .map((row) => row.name),
-    );
+    const client = new DatabaseSync(this.file);
+    try {
+      configure(client, {
+        journal: 'WAL',
+        synchronous: 'FULL',
+        busyTimeout: 5000,
+        secureDelete: true,
+      });
+      this.db = migrate(client, migrations, legacy);
+    } catch (error) {
+      client.close();
+      throw error;
+    }
     this.transaction(() => {
-      for (const [name, definition] of [
-        ['deleted', 'INTEGER NOT NULL DEFAULT 0'],
-        ['version', 'TEXT'],
-        ['previous', 'TEXT'],
-      ])
-        if (!columns.has(name))
-          this.db.exec(`ALTER TABLE uploads ADD COLUMN ${name} ${definition}`);
-      for (const row of this.db.prepare('SELECT bot,id FROM uploads WHERE version IS NULL').all())
+      const unversioned = this.db
+        .select({ bot: uploads.bot, id: uploads.id })
+        .from(uploads)
+        .where(isNull(uploads.version))
+        .all();
+      for (const row of unversioned)
         this.db
-          .prepare('UPDATE uploads SET version=? WHERE bot=? AND id=? AND version IS NULL')
-          .run(randomUUID(), String(row.bot), String(row.id));
+          .update(uploads)
+          .set({ version: randomUUID() })
+          .where(and(eq(uploads.bot, row.bot), eq(uploads.id, row.id), isNull(uploads.version)))
+          .run();
     });
   }
   private exclusive<T>(bot: string, action: () => T, signal?: AbortSignal): Promise<T> {
@@ -93,19 +122,31 @@ export class Attachments {
   }
   private row(bot: string, id: string) {
     if (!isAttachmentId(id)) throw new Fault('INVALID_ATTACHMENT', 400);
-    const row = this.db.prepare('SELECT * FROM uploads WHERE bot=? AND id=?').get(bot, id);
+    const row = this.find(bot, id);
     if (!row) throw new Fault('ATTACHMENT_NOT_FOUND', 404);
     return row;
   }
+  private find(bot: string, id: string) {
+    return this.db
+      .select(fields)
+      .from(uploads)
+      .where(and(eq(uploads.bot, bot), eq(uploads.id, id)))
+      .get();
+  }
+  private usage(bot: string) {
+    const usage = this.db
+      .select({ bytes: sum(uploads.bytes), text: sum(textBytes) })
+      .from(uploads)
+      .where(eq(uploads.bot, bot))
+      .get()!;
+    return { bytes: Number(usage.bytes ?? 0), text: Number(usage.text ?? 0) };
+  }
   private transaction<T>(action: () => T) {
-    this.db.exec('BEGIN IMMEDIATE');
     try {
-      const result = action();
-      this.db.exec('COMMIT');
-      return result;
+      // Boxing keeps the generic result distinguishable from a Promise for Drizzle's sync typing.
+      return this.db.transaction(() => ({ result: action() }), { behavior: 'immediate' }).result;
     } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
+      throw unwrap(error);
     }
   }
   private entry(row: Record<string, unknown>): AttachmentEntry {
@@ -114,7 +155,7 @@ export class Attachments {
       ...this.ref(row),
       version: row.version,
       deleted: row.deleted === 1,
-      textSize: row.text_bytes ?? Buffer.byteLength(String(row.content || '')),
+      textSize: row.textBytes ?? Buffer.byteLength(String(row.content || '')),
     };
     if (!isAttachmentEntry(entry)) throw new Fault('ATTACHMENT_CORRUPT');
     return entry;
@@ -164,11 +205,7 @@ export class Attachments {
     if (data.toString('base64') !== input.data) throw new Fault('INVALID_ATTACHMENT', 400);
     const sha256 = digest(data),
       id = digest(`${input.name}\0${sha256}`);
-    const prior = await this.exclusive(
-      bot,
-      () => this.db.prepare('SELECT * FROM uploads WHERE bot=? AND id=?').get(bot, id),
-      signal,
-    );
+    const prior = await this.exclusive(bot, () => this.find(bot, id), signal);
     if (prior) return this.materialize(this.available(prior)).receipt;
     const image = imageMime(input.name) ? imageInput(input) : undefined;
     const content = image
@@ -178,41 +215,32 @@ export class Attachments {
     if (!content.trim()) throw new Fault('DOCUMENT_EMPTY', 400);
     return this.exclusive(
       bot,
-      () => {
-        this.db.exec('BEGIN IMMEDIATE');
-        try {
-          const current = this.db
-            .prepare('SELECT * FROM uploads WHERE bot=? AND id=?')
-            .get(bot, id);
-          if (current) {
-            const receipt = this.materialize(this.available(current)).receipt;
-            this.db.exec('COMMIT');
-            return receipt;
-          }
-          const usage = this.db
-            .prepare(
-              'SELECT COALESCE(SUM(bytes),0) AS bytes,COALESCE(SUM(length(CAST(content AS BLOB))),0) AS text FROM uploads WHERE bot=?',
-            )
-            .get(bot)!;
+      () =>
+        this.transaction(() => {
+          const current = this.find(bot, id);
+          if (current) return this.materialize(this.available(current)).receipt;
+          const usage = this.usage(bot);
           if (
-            Number(usage.bytes) + data.length > 50 * 1024 * 1024 ||
-            Number(usage.text) + Buffer.byteLength(content) > 20 * 1024 * 1024
+            usage.bytes + data.length > 50 * 1024 * 1024 ||
+            usage.text + Buffer.byteLength(content) > 20 * 1024 * 1024
           )
             throw new Fault('ATTACHMENT_STORAGE_LIMIT');
           // Immutable original and extracted text are one record; task retries keep this source outside writable workspaces.
           this.db
-            .prepare(
-              'INSERT INTO uploads(bot,id,name,bytes,sha256,data,content,version) VALUES(?,?,?,?,?,?,?,?)',
-            )
-            .run(bot, id, input.name, data.length, sha256, data, content, randomUUID());
-          const receipt = this.materialize(this.row(bot, id)).receipt;
-          this.db.exec('COMMIT');
-          return receipt;
-        } catch (error) {
-          this.db.exec('ROLLBACK');
-          throw error;
-        }
-      },
+            .insert(uploads)
+            .values({
+              bot,
+              id,
+              name: input.name,
+              bytes: data.length,
+              sha256,
+              data,
+              content,
+              version: randomUUID(),
+            })
+            .run();
+          return this.materialize(this.row(bot, id)).receipt;
+        }),
       signal,
     );
   }
@@ -232,16 +260,28 @@ export class Attachments {
     if (!isAttachmentQuery(query)) return Promise.reject(new Fault('INVALID_ATTACHMENT', 400));
     const input = structuredClone(query);
     return this.exclusive(bot, () => {
-      const usage = this.db
-        .prepare(
-          'SELECT COALESCE(SUM(bytes),0) AS bytes,COALESCE(SUM(length(CAST(content AS BLOB))),0) AS text FROM uploads WHERE bot=?',
-        )
-        .get(bot)!;
+      const usage = this.usage(bot);
       const rows = this.db
-        .prepare(
-          'SELECT bot,id,name,bytes,sha256,version,deleted,length(CAST(content AS BLOB)) AS text_bytes FROM uploads WHERE bot=? AND deleted=? AND id>? ORDER BY id',
+        .select({
+          bot: uploads.bot,
+          id: uploads.id,
+          name: uploads.name,
+          bytes: uploads.bytes,
+          sha256: uploads.sha256,
+          version: uploads.version,
+          deleted: uploads.deleted,
+          textBytes,
+        })
+        .from(uploads)
+        .where(
+          and(
+            eq(uploads.bot, bot),
+            eq(uploads.deleted, input.trash ? 1 : 0),
+            gt(uploads.id, input.before || ''),
+          ),
         )
-        .all(bot, input.trash ? 1 : 0, input.before || '');
+        .orderBy(uploads.id)
+        .all();
       const items = rows
         .filter((row) =>
           String(row.name)
@@ -252,8 +292,8 @@ export class Attachments {
         .map((row) => this.entry(row));
       return {
         items: items.slice(0, 50),
-        originalBytes: Number(usage.bytes),
-        textBytes: Number(usage.text),
+        originalBytes: usage.bytes,
+        textBytes: usage.text,
         ...(items.length > 50 ? { next: items[49].id } : {}),
       };
     });
@@ -270,8 +310,10 @@ export class Attachments {
         }
         if (entry.deleted === deleted) return entry;
         this.db
-          .prepare('UPDATE uploads SET deleted=?,version=?,previous=? WHERE bot=? AND id=?')
-          .run(deleted ? 1 : 0, randomUUID(), version, bot, id);
+          .update(uploads)
+          .set({ deleted: deleted ? 1 : 0, version: randomUUID(), previous: version })
+          .where(and(eq(uploads.bot, bot), eq(uploads.id, id)))
+          .run();
         return this.entry(this.row(bot, id));
       }),
     );
@@ -287,11 +329,13 @@ export class Attachments {
       return Promise.reject(new Fault('INVALID_ATTACHMENT', 400));
     return this.exclusive(bot, () => {
       this.transaction(() => {
-        const row = this.db.prepare('SELECT * FROM uploads WHERE bot=? AND id=?').get(bot, id);
+        const row = this.find(bot, id);
         if (!row) {
           const prior = this.db
-            .prepare('SELECT confirmation FROM purges WHERE bot=? AND id=? AND version=?')
-            .get(bot, id, version);
+            .select({ confirmation: purges.confirmation })
+            .from(purges)
+            .where(and(eq(purges.bot, bot), eq(purges.id, id), eq(purges.version, version)))
+            .get();
           if (!prior) throw new Fault('ATTACHMENT_NOT_FOUND', 404);
           if (prior.confirmation !== digest(confirmation))
             throw new Fault('ATTACHMENT_CONFIRMATION', 400);
@@ -302,13 +346,17 @@ export class Attachments {
         if (row.name !== confirmation) throw new Fault('ATTACHMENT_CONFIRMATION', 400);
         // The scoped receipt and byte removal share a transaction; a fresh upload has a different mutation version.
         this.db
-          .prepare('INSERT INTO purges(bot,id,version,confirmation) VALUES(?,?,?,?)')
-          .run(bot, id, version, digest(confirmation));
-        this.db.prepare('DELETE FROM uploads WHERE bot=? AND id=?').run(bot, id);
+          .insert(purges)
+          .values({ bot, id, version, confirmation: digest(confirmation) })
+          .run();
+        this.db
+          .delete(uploads)
+          .where(and(eq(uploads.bot, bot), eq(uploads.id, id)))
+          .run();
       });
       let checkpointed = false;
       try {
-        checkpointed = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy === 0;
+        checkpointed = checkpoint(this.db);
       } catch {}
       return { bot, id, version, purged: true, checkpointed };
     });
@@ -318,6 +366,6 @@ export class Attachments {
     await this.ready.catch(() => {});
     if (this.closed) return;
     this.closed = true;
-    this.db?.close();
+    this.db?.$client.close();
   }
 }

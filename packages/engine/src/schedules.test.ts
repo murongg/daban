@@ -4,10 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ScheduleRule } from '@daban/protocol';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { privateMetadata, secureDirectory } from './private-files.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { type ScheduleDomain, Schedules } from './schedules.js';
+import { schedules } from './schedules-schema.js';
 
 const cases: { name: string; rule: ScheduleRule; times: string[] }[] = [
   {
@@ -107,6 +110,70 @@ const domain: ScheduleDomain = {
     return value;
   },
 };
+test('a pre-ORM schedule file keeps plans and recovers claimed firings after the schema baseline', async () => {
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-schedules-legacy-'));
+  const directory = path.join(temporary, 'private');
+  await secureDirectory(directory);
+  const file = path.join(directory, 'schedules.sqlite');
+  const stamp = new Date(anchor).toISOString();
+  const record = domain.create(input, anchor);
+  const old = new DatabaseSync(file);
+  // An early file without the firing indexes; the input predates the lock flag.
+  old.exec(`CREATE TABLE schedules (id TEXT PRIMARY KEY, bot TEXT NOT NULL, input TEXT NOT NULL, record TEXT NOT NULL, revision INTEGER NOT NULL, enabled INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL, updated TEXT NOT NULL);
+    CREATE TABLE firings (id TEXT PRIMARY KEY, schedule TEXT NOT NULL, bot TEXT NOT NULL, occurrence TEXT NOT NULL, created TEXT NOT NULL, state TEXT NOT NULL, prompt TEXT NOT NULL, run TEXT, error TEXT);`);
+  old
+    .prepare(
+      'INSERT INTO schedules(id,bot,input,record,revision,enabled,created,updated) VALUES(?,?,?,?,?,?,?,?)',
+    )
+    .run(
+      input.id,
+      input.bot,
+      JSON.stringify({ ...input, enabled: true }),
+      JSON.stringify(record),
+      3,
+      1,
+      stamp,
+      stamp,
+    );
+  old
+    .prepare('INSERT INTO firings VALUES(?,?,?,?,?,?,?,?,?)')
+    .run('mock-legacy-firing', input.id, input.bot, stamp, stamp, 'claimed', 'legacy', null, null);
+  old.close();
+  const store = new Schedules({
+    file,
+    runner: { running: () => false, findRequest: () => undefined, start: async () => ({}) },
+    clock: () => anchor,
+    domain: Promise.resolve(domain),
+  });
+  try {
+    await store.ready;
+    const current = await store.get(input.id);
+    expect(current).toMatchObject({
+      revision: 3,
+      enabled: true,
+      locked: false,
+      nextRunAt: record.scheduledAt,
+    });
+    expect(current.history).toStrictEqual([
+      {
+        id: 'mock-legacy-firing',
+        requestId: 'schedule-mock-legacy-firing',
+        occurrenceAt: stamp,
+        createdAt: stamp,
+        state: 'interrupted',
+        error: 'SCHEDULE_OUTCOME_UNKNOWN',
+      },
+    ]);
+    const updated = await store.update(input.id, 3, { title: '升级后的合成任务' });
+    expect(updated.revision).toBe(4);
+    expect((await store.run(input.id, 'mock-legacy-manual')).state).toBe('pending');
+    expect((await store.get(input.id)).history.length).toBe(2);
+  } finally {
+    await store.close();
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 async function fixture() {
   const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-schedules-'));
   const directory = path.join(temporary, 'private');
@@ -320,13 +387,18 @@ test('older schedule records without a lock flag remain readable and idempotent 
   try {
     await f.store.create(input);
     await f.store.close();
-    const db = new DatabaseSync(f.options.file);
+    const client = new DatabaseSync(f.options.file);
+    const db = drizzle({ client });
     const raw = JSON.parse(
-      String(db.prepare('SELECT input FROM schedules WHERE id=?').get(input.id)!.input),
+      db.select({ input: schedules.input }).from(schedules).where(eq(schedules.id, input.id)).get()!
+        .input,
     );
     delete raw.locked;
-    db.prepare('UPDATE schedules SET input=? WHERE id=?').run(JSON.stringify(raw), input.id);
-    db.close();
+    db.update(schedules)
+      .set({ input: JSON.stringify(raw) })
+      .where(eq(schedules.id, input.id))
+      .run();
+    client.close();
     await f.reopen();
     const current = await f.store.get(input.id);
     expect(current.locked).toBe(false);

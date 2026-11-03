@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
 
 interface Registry {
@@ -179,6 +180,81 @@ test('invalid metadata, symlinks and corrupt tab storage fail closed without rep
     await expect(store.read()).rejects.toMatchObject({ code: 'BROWSER_STATE_UNAVAILABLE' });
   } finally {
     await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test('a pre-ORM version 1 tab file keeps saved tabs and receipts after the schema baseline', async () => {
+  const { TabStore } = await load();
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-pre-orm-tabs-'));
+  const file = path.join(root, 'tabs.sqlite');
+  const old = new DatabaseSync(file);
+  old.exec(`PRAGMA journal_mode=WAL;
+    CREATE TABLE browser_tabs(id TEXT PRIMARY KEY,bot TEXT NOT NULL,url TEXT NOT NULL,title TEXT NOT NULL,position INTEGER NOT NULL) STRICT;
+    CREATE TABLE browser_active(bot TEXT PRIMARY KEY,tab TEXT NOT NULL) STRICT;
+    CREATE TABLE browser_commands(id TEXT PRIMARY KEY,bot TEXT NOT NULL,signature TEXT NOT NULL,phase TEXT NOT NULL,error TEXT,uncertain INTEGER) STRICT;
+    CREATE TABLE browser_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL) STRICT;
+    INSERT INTO browser_meta VALUES(1,3);PRAGMA user_version=1;`);
+  for (const [position, tab] of state.tabs.entries())
+    old
+      .prepare('INSERT INTO browser_tabs VALUES(?,?,?,?,?)')
+      .run(tab.id, tab.bot, tab.url, tab.title, position);
+  for (const [bot, tab] of Object.entries(state.active))
+    old.prepare('INSERT INTO browser_active VALUES(?,?)').run(bot, tab);
+  old
+    .prepare("INSERT INTO browser_commands VALUES(?,?,?,'settled','SYNTHETIC_REFUSAL',1)")
+    .run('mock-old-command', 'a', 'e'.repeat(64));
+  old.close();
+  let store = new TabStore(file, ['a', 'b']);
+  try {
+    await store.ready;
+    expect(await store.read()).toStrictEqual(state);
+    expect(await store.receipt('mock-old-command', 'a')).toStrictEqual({
+      phase: 'settled',
+      error: 'SYNTHETIC_REFUSAL',
+      uncertain: true,
+    });
+    expect(await store.claim('mock-old-command', 'a', 'e'.repeat(64))).toBe('settled');
+    const changed: Registry = {
+      ...state,
+      tabs: [{ ...state.tabs[0], title: 'Synthetic Changed' }, state.tabs[1]],
+    };
+    await store.save(changed);
+    await store.close();
+    store = new TabStore(file, ['a', 'b']);
+    await store.ready;
+    expect(await store.read()).toStrictEqual(changed);
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test('unversioned, newer or foreign tab files stay unavailable and unchanged', async () => {
+  const { TabStore } = await load();
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-foreign-tabs-'));
+  try {
+    for (const [name, schema] of [
+      [
+        'unversioned',
+        'CREATE TABLE browser_meta(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);',
+      ],
+      [
+        'newer',
+        'CREATE TABLE browser_meta(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);PRAGMA user_version=2;',
+      ],
+      ['foreign', 'CREATE TABLE mock_existing(value TEXT);PRAGMA user_version=1;'],
+    ]) {
+      const file = path.join(root, `${name}.sqlite`),
+        old = new DatabaseSync(file);
+      old.exec(schema);
+      old.close();
+      const bytes = await readFile(file),
+        store = new TabStore(file, ['a', 'b']);
+      await store.ready;
+      await expect(store.read()).rejects.toMatchObject({ code: 'BROWSER_STATE_UNAVAILABLE' });
+      await store.close();
+      expect(await readFile(file)).toStrictEqual(bytes);
+    }
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

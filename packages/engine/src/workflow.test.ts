@@ -16,7 +16,7 @@ const fields = {
   status: 'todo' as const,
 };
 const create = (id = 'mock-card', value: object = {}) => ({
-  id: 'mock-create-' + id,
+  id: `mock-create-${id}`,
   item: id,
   revision: 0,
   action: 'create',
@@ -137,7 +137,7 @@ test('six workflow states preserve completion time, and closed requires an expli
       item = (
         await f.store.write(
           {
-            id: 'mock-state-' + status,
+            id: `mock-state-${status}`,
             item: item.id,
             revision: item.revision,
             action: 'update',
@@ -241,7 +241,6 @@ test('schema3 validates stored assignees instead of adopting an invalid private 
     await f.store.write(create('mock-corrupt', { priority: 'high', assignee: 'mock-beta' }), human);
     await f.store.close();
     const db = new DatabaseSync(f.file);
-    expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
     db.prepare("UPDATE work_items SET assignee='../mock-private' WHERE id='mock-corrupt'").run();
     db.close();
     const bad = new Work(f.file);
@@ -316,7 +315,7 @@ test('schema2 migration preserves literal comments, old receipts and all old row
     await store.ready;
     const after = new DatabaseSync(f.file, { readOnly: true });
     expect(after.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
-    expect(after.prepare('SELECT ' + columns.join(',') + ' FROM work_items').all()).toStrictEqual(
+    expect(after.prepare(`SELECT ${columns.join(',')} FROM work_items`).all()).toStrictEqual(
       oldRows,
     );
     expect(after.prepare('SELECT * FROM work_comments').all()).toStrictEqual(oldComments);

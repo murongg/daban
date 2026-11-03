@@ -2,14 +2,136 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { Attachments } from './attachments.js';
 import { GroupTools } from './group-tools.js';
 import { type GroupRunner, Groups } from './groups.js';
+import { groupTurns } from './groups-schema.js';
 import { WorkspaceFiles } from './workspace.js';
 
 const input = { id: 'mock-group', name: '合成协作群', members: ['mock-alpha', 'mock-beta'] };
+const legacyFiles = {
+  // The first shipped layout: no copy origin, turn inputs, message runs or later receipt tables.
+  initial: `CREATE TABLE group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL);
+    CREATE TABLE group_turns(grp TEXT NOT NULL,id TEXT NOT NULL,prompt TEXT NOT NULL,recipients TEXT NOT NULL,signature TEXT NOT NULL,seq INTEGER,created TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(grp,id));
+    CREATE TABLE group_messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL,grp TEXT NOT NULL,source TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,created TEXT NOT NULL,author TEXT,name TEXT,phase TEXT,model TEXT,files TEXT,UNIQUE(grp,id));
+    CREATE INDEX group_messages_page ON group_messages(grp,seq);
+    CREATE TABLE group_deliveries(id TEXT PRIMARY KEY,grp TEXT NOT NULL,source TEXT NOT NULL,bot TEXT NOT NULL,position INTEGER NOT NULL,state TEXT NOT NULL,run TEXT,context TEXT,name TEXT,error TEXT);
+    CREATE INDEX group_deliveries_queue ON group_deliveries(grp,source,position);
+    CREATE TABLE group_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);`,
+  // The last pre-ORM layout, after every additive column upgrade the old bootstrap applied.
+  upgraded: `CREATE TABLE group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL,copy_origin TEXT);
+    CREATE TABLE group_actions(id TEXT PRIMARY KEY,grp TEXT NOT NULL,value TEXT NOT NULL);
+    CREATE INDEX group_actions_owner ON group_actions(grp);
+    CREATE TABLE group_turns(grp TEXT NOT NULL,id TEXT NOT NULL,prompt TEXT NOT NULL,recipients TEXT NOT NULL,signature TEXT NOT NULL,seq INTEGER,created TEXT NOT NULL,state TEXT NOT NULL,PRIMARY KEY(grp,id));
+    ALTER TABLE group_turns ADD COLUMN inputs TEXT NOT NULL DEFAULT '[]';
+    CREATE TABLE group_messages(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL,grp TEXT NOT NULL,source TEXT NOT NULL,role TEXT NOT NULL,text TEXT NOT NULL,created TEXT NOT NULL,author TEXT,name TEXT,phase TEXT,model TEXT,files TEXT,UNIQUE(grp,id));
+    ALTER TABLE group_messages ADD COLUMN run TEXT;
+    CREATE INDEX group_messages_page ON group_messages(grp,seq);
+    CREATE TABLE group_deliveries(id TEXT PRIMARY KEY,grp TEXT NOT NULL,source TEXT NOT NULL,bot TEXT NOT NULL,position INTEGER NOT NULL,state TEXT NOT NULL,run TEXT,context TEXT,name TEXT,error TEXT);
+    CREATE INDEX group_deliveries_queue ON group_deliveries(grp,source,position);
+    CREATE TABLE group_handoffs(source TEXT PRIMARY KEY,signature TEXT NOT NULL,target TEXT NOT NULL);
+    CREATE TABLE group_collaborations(source TEXT PRIMARY KEY,grp TEXT NOT NULL,turn TEXT NOT NULL,signature TEXT NOT NULL);
+    CREATE TABLE group_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);`,
+};
+test.each(Object.entries(legacyFiles))(
+  'a pre-ORM %s group file keeps its history and accepts new turns after the schema baseline',
+  async (_name, ddl) => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'mock-groups-legacy-'));
+    const file = path.join(dir, 'groups.sqlite');
+    const created = '2026-01-01T00:00:00.000Z';
+    const group = { ...input, revision: 1, createdAt: created, updatedAt: created };
+    const old = new DatabaseSync(file);
+    old.exec(ddl);
+    old.exec('INSERT INTO group_meta VALUES(1,5)');
+    old
+      .prepare('INSERT INTO group_defs(id,value) VALUES(?,?)')
+      .run(input.id, JSON.stringify(group));
+    old
+      .prepare(
+        "INSERT INTO group_turns(grp,id,prompt,recipients,signature,seq,created,state) VALUES(?,?,?,?,?,1,?,'completed')",
+      )
+      .run(
+        input.id,
+        'mock-old-turn',
+        'SYNTHETIC OLD PROMPT',
+        '["mock-alpha"]',
+        'mock-sig',
+        created,
+      );
+    old
+      .prepare(
+        "INSERT INTO group_messages(id,grp,source,role,text,created) VALUES(?,?,?,'user',?,?)",
+      )
+      .run('mock-old-turn', input.id, 'mock-old-turn', 'SYNTHETIC OLD PROMPT', created);
+    old
+      .prepare(
+        "INSERT INTO group_messages(id,grp,source,role,text,created,author,name,phase) VALUES(?,?,?,'bot',?,?,?,?,'completed')",
+      )
+      .run(
+        'reply-mock-old',
+        input.id,
+        'mock-old-turn',
+        'SYNTHETIC OLD ANSWER',
+        created,
+        'mock-alpha',
+        '合成 mock-alpha',
+      );
+    old
+      .prepare(
+        "INSERT INTO group_deliveries(id,grp,source,bot,position,state,run) VALUES(?,?,?,?,0,'completed',?)",
+      )
+      .run('mock-old', input.id, 'mock-old-turn', 'mock-alpha', 'run-old');
+    old.close();
+    const fake = runner();
+    let groups = new Groups(file, fake.value);
+    try {
+      await groups.ready;
+      const status = await groups.status();
+      expect(status).toStrictEqual({ available: true, revision: 5, items: [group] });
+      const page = await groups.read(input.id);
+      expect(
+        page.messages.map((message) => [message.sequence, message.role, message.text]),
+      ).toStrictEqual([
+        [1, 'user', 'SYNTHETIC OLD PROMPT'],
+        [2, 'bot', 'SYNTHETIC OLD ANSWER'],
+      ]);
+      expect(
+        page.deliveries.map((delivery) => [delivery.id, delivery.state, delivery.runId]),
+      ).toStrictEqual([['mock-old', 'completed', 'run-old']]);
+      const sent = await groups.send({
+        id: 'mock-new-turn',
+        group: input.id,
+        prompt: 'SYNTHETIC NEW PROMPT',
+        recipients: ['mock-alpha'],
+      });
+      expect(sent.accepted?.sequence).toBe(3);
+      expect(sent.revision).toBe(6);
+      await groups.tick();
+      expect(fake.calls.map((call) => call.prompt)).toStrictEqual(['SYNTHETIC NEW PROMPT']);
+      expect.assert(fake.calls[0].context.includes('SYNTHETIC OLD ANSWER'));
+      fake.complete(0, 'SYNTHETIC NEW ANSWER');
+      await groups.tick();
+      await groups.close();
+      groups = new Groups(file, fake.value);
+      const reopened = await groups.read(input.id);
+      expect(reopened.messages.at(-1)).toMatchObject({
+        role: 'bot',
+        text: 'SYNTHETIC NEW ANSWER',
+        runId: 'run-1',
+      });
+      expect(await groups.notices()).toStrictEqual([
+        { kind: 'group', id: 'mock-old-turn', group: input.id, phase: 'completed' },
+        { kind: 'group', id: 'mock-new-turn', group: input.id, phase: 'completed' },
+      ]);
+    } finally {
+      await groups.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
 test('group outcome notices use the whole canonical turn, not the last observed member job', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mock-group-notices-'));
   const fake = runner(),
@@ -800,7 +922,10 @@ test('retained input payloads count against group storage and rejected uploads r
     });
     await groups.cancel(input.id, 'old-input');
     const db = new DatabaseSync(dbfile);
-    db.prepare("UPDATE group_turns SET signature=printf('%.*c',?,'x')").run(50 * 1024 * 1024);
+    drizzle({ client: db })
+      .update(groupTurns)
+      .set({ signature: 'x'.repeat(50 * 1024 * 1024) })
+      .run();
     db.close();
     await expect(
       groups.send({

@@ -2,8 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { type GroupRunner, Groups } from './groups.js';
+import { groupDefs } from './groups-schema.js';
 
 const source = {
   id: 'mock-source-group',
@@ -238,7 +241,9 @@ test('the definition and private receipt roll back together if the SQLite transa
     db.exec(
       "CREATE TRIGGER mock_abort_copy BEFORE UPDATE ON group_meta BEGIN SELECT RAISE(ABORT,'MOCK_WRITE_FAILURE'); END",
     );
-    await expect(f.groups.copy(request)).rejects.toThrowError(/MOCK_WRITE_FAILURE/);
+    await expect(f.groups.copy(request)).rejects.toMatchObject({
+      cause: { message: expect.stringMatching(/MOCK_WRITE_FAILURE/) },
+    });
     expect(await f.groups.copyReceipt(request)).toStrictEqual({ request, state: 'unknown' });
     expect((await f.groups.status()).items.length).toBe(1);
     db.exec('DROP TRIGGER mock_abort_copy');
@@ -252,7 +257,8 @@ test('the definition and private receipt roll back together if the SQLite transa
 
 test('copy origins migrate privately from legacy groups and survive ordinary value updates without leaking or forging authority', async () => {
   const f = await fixture(true);
-  const db = new DatabaseSync(f.file);
+  const client = new DatabaseSync(f.file);
+  const db = drizzle({ client });
   try {
     const first = await f.groups.copy(request);
     const edited = {
@@ -261,7 +267,10 @@ test('copy origins migrate privately from legacy groups and survive ordinary val
       revision: 2,
       updatedAt: new Date().toISOString(),
     };
-    db.prepare('UPDATE group_defs SET value=? WHERE id=?').run(JSON.stringify(edited), request.id);
+    db.update(groupDefs)
+      .set({ value: JSON.stringify(edited) })
+      .where(eq(groupDefs.id, request.id))
+      .run();
     await f.reopen();
     const receipt = await f.groups.copyReceipt(request);
     expect.assert(receipt.state === 'complete');
@@ -270,14 +279,14 @@ test('copy origins migrate privately from legacy groups and survive ordinary val
     await expect(
       f.groups.register({ ...edited, copy_origin: 'MOCK FORGED ORIGIN' }),
     ).rejects.toThrowError(/INVALID_GROUP/);
-    db.prepare('UPDATE group_defs SET copy_origin=? WHERE id=?').run(
-      'MOCK CORRUPT ORIGIN',
-      request.id,
-    );
+    db.update(groupDefs)
+      .set({ copyOrigin: 'MOCK CORRUPT ORIGIN' })
+      .where(eq(groupDefs.id, request.id))
+      .run();
     await expect(f.groups.copyReceipt(request)).rejects.toThrowError(/GROUP_COPY_CONFLICT/);
     expect((await f.groups.read(request.id)).group).toStrictEqual(edited);
   } finally {
-    db.close();
+    client.close();
     await f.close();
   }
 });
@@ -308,7 +317,8 @@ test('copies respect the existing retained-group capacity while accepted receipt
 
 test('creation admission cannot yield to another lifecycle owner before the group row is committed', async () => {
   const f = await fixture();
-  const db = new DatabaseSync(f.file);
+  const client = new DatabaseSync(f.file);
+  const db = drizzle({ client });
   const observed: boolean[] = [];
   let target = request.id;
   try {
@@ -316,7 +326,13 @@ test('creation admission cannot yield to another lifecycle owner before the grou
       if (member === 'mock-beta') {
         const captured = target;
         queueMicrotask(() =>
-          observed.push(!!db.prepare('SELECT id FROM group_defs WHERE id=?').get(captured)),
+          observed.push(
+            !!db
+              .select({ id: groupDefs.id })
+              .from(groupDefs)
+              .where(eq(groupDefs.id, captured))
+              .get(),
+          ),
         );
       }
       return true;
@@ -326,7 +342,7 @@ test('creation admission cannot yield to another lifecycle owner before the grou
     await f.groups.register({ id: target, name: '合成普通创建', members: source.members });
     expect(observed).toStrictEqual([true, true]);
   } finally {
-    db.close();
+    client.close();
     await f.close();
   }
 });

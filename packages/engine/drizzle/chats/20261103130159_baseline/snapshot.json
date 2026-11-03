@@ -1,0 +1,126 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "04647705-43ff-4f3e-8800-80d2bf1f049f",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "name": "chat_meta",
+      "entityType": "tables"
+    },
+    {
+      "name": "chat_receipts",
+      "entityType": "tables"
+    },
+    {
+      "name": "chats",
+      "entityType": "tables"
+    },
+    {
+      "table": "chat_meta",
+      "name": "id",
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "chat_meta",
+      "name": "revision",
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "chat_receipts",
+      "name": "id",
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "chat_receipts",
+      "name": "bot",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "chat_receipts",
+      "name": "value",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "chats",
+      "name": "bot",
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "chats",
+      "name": "value",
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "entityType": "columns"
+    },
+    {
+      "table": "chat_meta",
+      "name": "chat_meta_pk",
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "table": "chat_receipts",
+      "name": "chat_receipts_pk",
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "table": "chats",
+      "name": "chats_pk",
+      "columns": [
+        "bot"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "table": "chat_meta",
+      "name": "chat_meta_singleton",
+      "value": "\"id\" = 1",
+      "entityType": "checks"
+    }
+  ],
+  "renames": []
+}

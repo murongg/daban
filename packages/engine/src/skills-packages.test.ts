@@ -4,6 +4,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { SkillPackage } from '@daban/protocol';
 import { expect, test } from 'vitest';
+import { tables } from './database.js';
 import { Skills } from './skills.js';
 
 const content =
@@ -52,14 +53,67 @@ test('migrates legacy skill storage without changing saved content, bindings or 
       expect((await store.status()).revision).toBe(7);
       const reader = new DatabaseSync(file, { readOnly: true });
       try {
-        expect(reader.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+        expect(tables(reader)).toStrictEqual([
+          'skill_bindings',
+          'skill_files',
+          'skill_meta',
+          'skill_packages',
+          'skills',
+        ]);
       } finally {
         reader.close();
       }
+      const owned = await store.importPackage(bundle(), 'mock-bot');
+      expect(owned.ownerBot).toBe('mock-bot');
+      expect((await store.status()).revision).toBe(8);
     } finally {
       await store.close();
     }
   }));
+test('pre-ORM catalog versions 2 and 3 keep packages, bindings and revisions after the schema baseline', async () => {
+  for (const version of [2, 3])
+    await fixture(async (root) => {
+      const file = path.join(root, 'skills.sqlite');
+      let store = new Skills(file);
+      const skill = await store.importPackage(bundle());
+      await store.bind('mock-a', {
+        id: skill.id,
+        revision: skill.revision,
+        bindingRevision: 0,
+        enabled: true,
+      });
+      const before = await store.status();
+      await store.close();
+      // Rewrite the file into the exact layout a pre-ORM build left behind for this version.
+      const old = new DatabaseSync(file);
+      old.exec(
+        version === 3
+          ? 'DROP TABLE __drizzle_migrations; PRAGMA user_version=3;'
+          : `DROP TABLE __drizzle_migrations; DROP INDEX skill_owner_name; ALTER TABLE skills RENAME TO skills_v3;
+            CREATE TABLE skills(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,resources TEXT);
+            INSERT INTO skills SELECT id,name,revision,content,deleted,created,updated,resources FROM skills_v3;
+            DROP TABLE skills_v3; PRAGMA user_version=2;`,
+      );
+      old.close();
+      store = new Skills(file);
+      try {
+        expect(await store.read(skill.id), String(version)).toStrictEqual(skill);
+        expect(await store.status()).toStrictEqual(before);
+        const item = (await store.list('mock-a')).items[0];
+        expect(item.enabled).toBe(true);
+        expect(item.bindingRevision).toBe(1);
+        const resource = await store.readResource(skill.id, skill.revision, 'assets/data.bin');
+        expect(Buffer.from(resource.data, 'base64')).toStrictEqual(Buffer.from([0, 1, 255]));
+        const owned = await store.importPackage(bundle('SYNTHETIC PRIVATE'), 'mock-a');
+        expect(owned.ownerBot).toBe('mock-a');
+        expect((await store.list('mock-a')).items.map((entry) => entry.id)).toStrictEqual([
+          owned.id,
+        ]);
+      } finally {
+        await store.close();
+      }
+    });
+});
 test('retains binary resources, preserves immutable active snapshots and keeps imports disabled', async () =>
   fixture(async (root) => {
     const store = new Skills(path.join(root, 'skills.sqlite'));

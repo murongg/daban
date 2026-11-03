@@ -11,7 +11,17 @@ import {
   type McpSave,
   validAgentId,
 } from '@daban/protocol';
+import { and, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { Fault } from './control.js';
+import { configure, type Database, migrate, tables } from './database.js';
+import { migrations } from './integrations-migrations.js';
+import {
+  callReceipts,
+  configCommands,
+  integrationBindings,
+  integrationMeta,
+  integrations,
+} from './integrations-schema.js';
 import { canonicalJson, type McpTool, mcpCatalog, mcpDigest } from './mcp-catalog.js';
 import { publicAddress } from './network.js';
 
@@ -89,6 +99,48 @@ export function mcpSecrets(config: { endpoint: string; bearer?: string }) {
     ),
   ];
 }
+const storeTables =
+  'call_receipts,config_commands,integration_bindings,integration_meta,integrations';
+const legacyColumns = [
+  'id',
+  'revision',
+  'name',
+  'name_key',
+  'endpoint',
+  'bearer',
+  'deleted',
+  'health',
+  'catalog',
+  'digest',
+  'checked',
+  'error',
+  'created',
+  'updated',
+];
+
+// Pre-ORM files carried user_version 1 or 2; version 1 gains the owner column and owner-scoped names.
+function legacy(client: DatabaseSync) {
+  const version = Number(client.prepare('PRAGMA user_version').get()!.user_version);
+  if (![1, 2].includes(version) || tables(client).join(',') !== storeTables)
+    throw new Error('invalid schema');
+  const columns = client
+    .prepare('PRAGMA table_info(integrations)')
+    .all()
+    .map((item) => String(item.name))
+    .sort()
+    .join(',');
+  const expected = [...legacyColumns, ...(version >= 2 ? ['owner'] : [])].sort().join(',');
+  if (columns !== expected) throw new Error('invalid ownership columns');
+  if (!client.prepare('SELECT id FROM integration_meta WHERE id=1').get())
+    throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+  if (version === 1)
+    client.exec(`ALTER TABLE integrations RENAME TO integrations_v1;
+      CREATE TABLE integrations(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,name TEXT NOT NULL,name_key TEXT NOT NULL,endpoint TEXT NOT NULL,bearer TEXT,deleted INTEGER NOT NULL,health TEXT NOT NULL,catalog TEXT NOT NULL,digest TEXT,checked TEXT,error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL,owner TEXT);
+      INSERT INTO integrations SELECT id,revision,name,name_key,endpoint,bearer,deleted,health,catalog,digest,checked,error,created,updated,NULL FROM integrations_v1;
+      DROP TABLE integrations_v1;
+      CREATE UNIQUE INDEX integration_owner_name ON integrations(COALESCE(owner,''),name_key);`);
+}
+
 export class Integrations {
   // shortcut: one runtime writes a data root; add a process lease before allowing multiple services.
   readonly ready: Promise<unknown>;
@@ -105,7 +157,7 @@ export class Integrations {
       console.error('MCP_CHANGE_OBSERVER_FAILED');
     }
   }
-  private db?: DatabaseSync;
+  private db?: Database;
   private failed = false;
   private closed = false;
   constructor(readonly file: string) {
@@ -131,76 +183,51 @@ export class Integrations {
       await handle.close();
     }
     await chmod(this.file, 0o600);
-    this.db = new DatabaseSync(this.file);
-    const db = this.db;
-    const version = Number(db.prepare('PRAGMA user_version').get()!.user_version);
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-      .all()
-      .map((row) => String(row.name))
-      .sort();
-    if (
-      (version === 0 && tables.length) ||
-      ![0, 1, 2].includes(version) ||
-      (version >= 1 &&
-        tables.join(',') !==
-          'call_receipts,config_commands,integration_bindings,integration_meta,integrations')
-    )
-      throw new Error('invalid schema');
-    db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
-    if (version === 0)
-      db.exec(`CREATE TABLE integrations(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,endpoint TEXT NOT NULL,bearer TEXT,deleted INTEGER NOT NULL,health TEXT NOT NULL,catalog TEXT NOT NULL,digest TEXT,checked TEXT,error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);
-      CREATE TABLE integration_bindings(bot TEXT NOT NULL,connection TEXT NOT NULL,revision INTEGER NOT NULL,config_revision INTEGER NOT NULL,digest TEXT,tools TEXT NOT NULL,enabled INTEGER NOT NULL,PRIMARY KEY(bot,connection));
-      CREATE TABLE config_commands(id TEXT PRIMARY KEY,hash TEXT NOT NULL,connection TEXT NOT NULL,revision INTEGER NOT NULL);
-      CREATE TABLE call_receipts(id TEXT PRIMARY KEY,hash TEXT NOT NULL,semantic TEXT NOT NULL,bot TEXT NOT NULL,run TEXT NOT NULL,session TEXT NOT NULL,connection TEXT NOT NULL,config_revision INTEGER NOT NULL,tool TEXT NOT NULL,phase TEXT NOT NULL,preview TEXT NOT NULL,result TEXT,error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);
-      CREATE INDEX receipt_owner ON call_receipts(bot,run,semantic);
-      CREATE TABLE integration_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL); INSERT INTO integration_meta VALUES(1,0); PRAGMA user_version=1;`);
-    const columns = db
-      .prepare('PRAGMA table_info(integrations)')
-      .all()
-      .map((item) => String(item.name))
-      .sort()
-      .join(',');
-    const expectedColumns = [
-      'id',
-      'revision',
-      'name',
-      'name_key',
-      'endpoint',
-      'bearer',
-      'deleted',
-      'health',
-      'catalog',
-      'digest',
-      'checked',
-      'error',
-      'created',
-      'updated',
-      ...(version >= 2 ? ['owner'] : []),
-    ]
-      .sort()
-      .join(',');
-    if (columns !== expectedColumns) throw new Error('invalid ownership columns');
+    const client = new DatabaseSync(this.file);
+    try {
+      configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
+      this.db = migrate(client, migrations, legacy);
+      this.db.insert(integrationMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
+      this.verify(this.db);
+      // Neither an uncommitted decision nor a dispatched external effect is replayed after service reconstruction.
+      const dispatched = sql`${callReceipts.phase} = 'dispatched'`;
+      this.db
+        .update(callReceipts)
+        .set({
+          phase: sql`CASE WHEN ${dispatched} THEN 'unknown' ELSE 'cancelled' END`,
+          error: sql`CASE WHEN ${dispatched} THEN 'MCP_OUTCOME_UNKNOWN' ELSE 'MCP_CANCELLED' END`,
+          updated: new Date().toISOString(),
+        })
+        .where(inArray(callReceipts.phase, ['claimed', 'dispatched']))
+        .run();
+    } catch (error) {
+      this.db = undefined;
+      client.close();
+      throw error;
+    }
+  }
+  private verify(db: Database) {
+    if (tables(db).join(',') !== storeTables) throw new Error('invalid schema');
     this.currentRevision();
-    if (Number(db.prepare('SELECT COUNT(*) AS count FROM integrations').get()!.count) > 50)
+    if (db.select({ count: count() }).from(integrations).get()!.count > 50)
       throw new Error('store limit');
-    for (const row of db.prepare('SELECT * FROM integrations').all()) {
+    for (const row of db.select().from(integrations).all()) {
       this.config(row);
       this.public(row);
     }
-    for (const row of db.prepare('SELECT * FROM integration_bindings').all()) {
+    for (const row of db.select().from(integrationBindings).all()) {
+      const connection = validAgentId(row.connection)
+        ? db.select().from(integrations).where(eq(integrations.id, row.connection)).get()
+        : undefined;
       if (
         !validAgentId(row.bot) ||
         !validAgentId(row.connection) ||
         !revision(row.revision) ||
-        !revision(row.config_revision) ||
+        !revision(row.configRevision) ||
         ![0, 1].includes(Number(row.enabled)) ||
-        !db.prepare('SELECT id FROM integrations WHERE id=?').get(String(row.connection))
+        !connection
       )
         throw new Error('invalid binding');
-      const connection = db
-        .prepare('SELECT * FROM integrations WHERE id=?')
-        .get(String(row.connection))!;
       if (this.owner(connection) && this.owner(connection) !== row.bot)
         throw new Error('invalid owner binding');
       const names: unknown = JSON.parse(String(row.tools));
@@ -213,31 +240,6 @@ export class Integrations {
       )
         throw new Error('invalid binding');
     }
-    if (version < 2) {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        db.exec(`ALTER TABLE integrations RENAME TO integrations_v1;
-        CREATE TABLE integrations(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,name TEXT NOT NULL,name_key TEXT NOT NULL,endpoint TEXT NOT NULL,bearer TEXT,deleted INTEGER NOT NULL,health TEXT NOT NULL,catalog TEXT NOT NULL,digest TEXT,checked TEXT,error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL,owner TEXT);
-        INSERT INTO integrations SELECT id,revision,name,name_key,endpoint,bearer,deleted,health,catalog,digest,checked,error,created,updated,NULL FROM integrations_v1;
-        DROP TABLE integrations_v1;
-        CREATE UNIQUE INDEX integration_owner_name ON integrations(COALESCE(owner,''),name_key);
-        PRAGMA user_version=2; COMMIT;`);
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
-    } else if (
-      !db
-        .prepare('PRAGMA table_info(integrations)')
-        .all()
-        .some((column) => column.name === 'owner')
-    ) {
-      throw new Error('invalid ownership schema');
-    }
-    // Neither an uncommitted decision nor a dispatched external effect is replayed after service reconstruction.
-    db.prepare(
-      "UPDATE call_receipts SET phase=CASE WHEN phase='dispatched' THEN 'unknown' ELSE 'cancelled' END,error=CASE WHEN phase='dispatched' THEN 'MCP_OUTCOME_UNKNOWN' ELSE 'MCP_CANCELLED' END,updated=? WHERE phase IN ('claimed','dispatched')",
-    ).run(new Date().toISOString());
   }
   private owner(row: Row) {
     if (row.owner === null || row.owner === undefined) return undefined;
@@ -251,31 +253,38 @@ export class Integrations {
       throw new Fault('MCP_NOT_FOUND', 404);
     return row;
   }
+  // Shared connections plus the ones a Bot owns; `owner = NULL` never matches, as in the old SQL.
+  private visible(bot: string | undefined) {
+    return bot === undefined
+      ? isNull(integrations.owner)
+      : or(isNull(integrations.owner), eq(integrations.owner, bot));
+  }
   private currentRevision() {
     const value = this.available()
-      .prepare('SELECT revision FROM integration_meta WHERE id=1')
+      .select({ revision: integrationMeta.revision })
+      .from(integrationMeta)
+      .where(eq(integrationMeta.id, 1))
       .get()?.revision;
     if (!revision(value, true)) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
     return Number(value);
   }
-  private transaction<T>(action: () => T) {
-    const db = this.available();
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = action();
-      if (this.currentRevision() >= Number.MAX_SAFE_INTEGER - 2)
-        throw new Fault('MCP_STORAGE_LIMIT');
-      db.prepare('UPDATE integration_meta SET revision=revision+1 WHERE id=1').run();
-      db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
+  private transaction(action: () => unknown) {
+    this.available().transaction(
+      (tx) => {
+        action();
+        if (this.currentRevision() >= Number.MAX_SAFE_INTEGER - 2)
+          throw new Fault('MCP_STORAGE_LIMIT');
+        tx.update(integrationMeta)
+          .set({ revision: sql`${integrationMeta.revision} + 1` })
+          .where(eq(integrationMeta.id, 1))
+          .run();
+      },
+      { behavior: 'immediate' },
+    );
   }
   private row(id: string) {
     if (!validAgentId(id)) throw new Fault('INVALID_MCP_CONFIG', 400);
-    const row = this.available().prepare('SELECT * FROM integrations WHERE id=?').get(id);
+    const row = this.available().select().from(integrations).where(eq(integrations.id, id)).get();
     if (!row) throw new Fault('MCP_NOT_FOUND', 404);
     return row;
   }
@@ -364,10 +373,11 @@ export class Integrations {
     return {
       revision: this.currentRevision(),
       items: this.available()
-        .prepare(
-          'SELECT * FROM integrations WHERE deleted=? AND (owner IS NULL OR owner=?) ORDER BY name',
-        )
-        .all(Number(includeDeleted), bot ?? null)
+        .select()
+        .from(integrations)
+        .where(and(eq(integrations.deleted, Number(includeDeleted)), this.visible(bot)))
+        .orderBy(integrations.name)
+        .all()
         .map((row) => this.public(row)),
     };
   }
@@ -384,8 +394,10 @@ export class Integrations {
     await this.ready;
     if (!validAgentId(id) || !validAgentId(connection)) throw new Fault('INVALID_MCP_CONFIG', 400);
     const receipt = this.available()
-      .prepare('SELECT * FROM config_commands WHERE id=? AND connection=?')
-      .get(id, connection);
+      .select()
+      .from(configCommands)
+      .where(and(eq(configCommands.id, id), eq(configCommands.connection, connection)))
+      .get();
     if (!receipt) throw new Fault('MCP_SAVE_NOT_FOUND', 404);
     return {
       receipt: { id, connection, revision: Number(receipt.revision) },
@@ -418,7 +430,11 @@ export class Integrations {
     if (input.endpoint !== undefined) endpoint(input.endpoint);
     const db = this.available(),
       fingerprint = mcpDigest(JSON.parse(JSON.stringify(bot === undefined ? input : [bot, input])));
-    const prior = db.prepare('SELECT * FROM config_commands WHERE id=?').get(input.requestId);
+    const prior = db
+      .select()
+      .from(configCommands)
+      .where(eq(configCommands.id, input.requestId))
+      .get();
     if (prior) {
       if (prior.hash !== fingerprint || prior.connection !== input.id)
         throw new Fault('MCP_REQUEST_ID_REUSED');
@@ -427,16 +443,16 @@ export class Integrations {
         current: this.public(this.scoped(input.id, bot)),
       };
     }
-    const row = db.prepare('SELECT * FROM integrations WHERE id=?').get(input.id);
+    const row = db.select().from(integrations).where(eq(integrations.id, input.id)).get();
     if (row) {
       this.scoped(input.id, bot);
       if (bot !== undefined && !this.owner(row)) throw new Fault('MCP_SHARED_READ_ONLY', 409);
     }
     if ((row?.revision ?? 0) !== input.revision) throw new Fault('MCP_CONFLICT');
     if (row?.deleted === 1) throw new Fault('MCP_ARCHIVED');
-    if (!row && Number(db.prepare('SELECT COUNT(*) AS count FROM integrations').get()!.count) >= 50)
+    if (!row && db.select({ count: count() }).from(integrations).get()!.count >= 50)
       throw new Fault('MCP_CONNECTION_LIMIT');
-    if (Number(db.prepare('SELECT COUNT(*) AS count FROM config_commands').get()!.count) >= 10000)
+    if (db.select({ count: count() }).from(configCommands).get()!.count >= 10000)
       throw new Fault('MCP_STORAGE_LIMIT');
     const old = row ? this.config(row) : undefined,
       url = input.endpoint === undefined ? old?.endpoint : endpoint(input.endpoint);
@@ -444,10 +460,19 @@ export class Integrations {
     const bearer = input.bearer === null ? undefined : input.bearer || old?.bearer,
       name = input.name.trim(),
       nameKey = name.normalize('NFC').toLowerCase();
+    const scope = row ? this.owner(row) : bot;
     if (
       db
-        .prepare('SELECT id FROM integrations WHERE name_key=? AND owner IS ? AND id<>?')
-        .get(nameKey, row ? (this.owner(row) ?? null) : (bot ?? null), input.id)
+        .select({ id: integrations.id })
+        .from(integrations)
+        .where(
+          and(
+            eq(integrations.nameKey, nameKey),
+            scope === undefined ? isNull(integrations.owner) : eq(integrations.owner, scope),
+            ne(integrations.id, input.id),
+          ),
+        )
+        .get()
     )
       throw new Fault('MCP_NAME_CONFLICT');
     const changed = !old || url !== old.endpoint || bearer !== old.bearer;
@@ -455,31 +480,45 @@ export class Integrations {
       now = new Date().toISOString();
     this.transaction(() => {
       if (!row)
-        db.prepare(
-          "INSERT INTO integrations(id,revision,name,name_key,endpoint,bearer,deleted,health,catalog,digest,checked,error,created,updated,owner) VALUES(?,?,?,?,?,?,0,'unchecked','[]',NULL,NULL,NULL,?,?,?)",
-        ).run(input.id, next, name, nameKey, url, bearer ?? null, now, now, bot ?? null);
+        db.insert(integrations)
+          .values({
+            id: input.id,
+            revision: next,
+            name,
+            nameKey,
+            endpoint: url,
+            bearer: bearer ?? null,
+            deleted: 0,
+            health: 'unchecked',
+            catalog: '[]',
+            digest: null,
+            checked: null,
+            error: null,
+            created: now,
+            updated: now,
+            owner: bot ?? null,
+          })
+          .run();
       else
-        db.prepare(
-          'UPDATE integrations SET revision=?,name=?,name_key=?,endpoint=?,bearer=?,health=?,catalog=?,digest=?,checked=?,error=NULL,updated=? WHERE id=?',
-        ).run(
-          next,
-          name,
-          nameKey,
-          url,
-          bearer ?? null,
-          changed ? 'unchecked' : String(row.health),
-          changed ? '[]' : String(row.catalog),
-          changed ? null : (row.digest as string | null),
-          changed ? null : (row.checked as string | null),
-          now,
-          input.id,
-        );
-      db.prepare('INSERT INTO config_commands VALUES(?,?,?,?)').run(
-        input.requestId,
-        fingerprint,
-        input.id,
-        next,
-      );
+        db.update(integrations)
+          .set({
+            revision: next,
+            name,
+            nameKey,
+            endpoint: url,
+            bearer: bearer ?? null,
+            health: changed ? 'unchecked' : String(row.health),
+            catalog: changed ? '[]' : String(row.catalog),
+            digest: changed ? null : row.digest,
+            checked: changed ? null : row.checked,
+            error: null,
+            updated: now,
+          })
+          .where(eq(integrations.id, input.id))
+          .run();
+      db.insert(configCommands)
+        .values({ id: input.requestId, hash: fingerprint, connection: input.id, revision: next })
+        .run();
     });
     await this.notify(input.id, undefined, 'config');
     return {
@@ -498,10 +537,17 @@ export class Integrations {
       changed = digest !== row.digest;
     this.transaction(() =>
       this.available()
-        .prepare(
-          "UPDATE integrations SET catalog=?,digest=?,health='ready',checked=?,error=NULL,updated=? WHERE id=?",
-        )
-        .run(JSON.stringify(tools), digest, new Date().toISOString(), new Date().toISOString(), id),
+        .update(integrations)
+        .set({
+          catalog: JSON.stringify(tools),
+          digest,
+          health: 'ready',
+          checked: new Date().toISOString(),
+          error: null,
+          updated: new Date().toISOString(),
+        })
+        .where(eq(integrations.id, id))
+        .run(),
     );
     if (changed) await this.notify(id, undefined, 'catalog');
     return { current: this.public(this.row(id)), tools };
@@ -513,15 +559,19 @@ export class Integrations {
     if (!code(error)) throw new Fault('INVALID_MCP_CONFIG', 400);
     this.transaction(() =>
       this.available()
-        .prepare("UPDATE integrations SET health='unavailable',checked=?,error=? WHERE id=?")
-        .run(new Date().toISOString(), error, id),
+        .update(integrations)
+        .set({ health: 'unavailable', checked: new Date().toISOString(), error })
+        .where(eq(integrations.id, id))
+        .run(),
     );
     return this.public(this.row(id));
   }
   private binding(bot: string, id: string) {
     return this.available()
-      .prepare('SELECT * FROM integration_bindings WHERE bot=? AND connection=?')
-      .get(bot, id);
+      .select()
+      .from(integrationBindings)
+      .where(and(eq(integrationBindings.bot, bot), eq(integrationBindings.connection, id)))
+      .get();
   }
   async assignments(bot: string) {
     await this.ready;
@@ -530,10 +580,11 @@ export class Integrations {
       bot,
       revision: this.currentRevision(),
       items: this.available()
-        .prepare(
-          'SELECT * FROM integrations WHERE deleted=0 AND (owner IS NULL OR owner=?) ORDER BY name',
-        )
-        .all(bot)
+        .select()
+        .from(integrations)
+        .where(and(eq(integrations.deleted, 0), this.visible(bot)))
+        .orderBy(integrations.name)
+        .all()
         .map((row) => {
           const connection = this.public(row),
             binding = this.binding(bot, connection.id);
@@ -545,7 +596,7 @@ export class Integrations {
             catalogDigest: binding?.digest ? String(binding.digest) : undefined,
             available:
               binding?.enabled === 1 &&
-              binding.config_revision === connection.revision &&
+              binding.configRevision === connection.revision &&
               binding.digest === connection.catalogDigest,
           };
         }),
@@ -594,27 +645,42 @@ export class Integrations {
       if (input.tools.some((name) => !config.tools.some((tool) => tool.name === name)))
         throw new Fault('MCP_TOOL_NOT_FOUND');
       const others = this.available()
-        .prepare(
-          'SELECT tools FROM integration_bindings WHERE bot=? AND connection<>? AND enabled=1',
+        .select({ tools: integrationBindings.tools })
+        .from(integrationBindings)
+        .where(
+          and(
+            eq(integrationBindings.bot, bot),
+            ne(integrationBindings.connection, input.connection),
+            eq(integrationBindings.enabled, 1),
+          ),
         )
-        .all(bot, input.connection)
+        .all()
         .reduce((count, row) => count + (JSON.parse(String(row.tools)) as string[]).length, 0);
       if (others + input.tools.length > 32) throw new Fault('MCP_TOOL_LIMIT');
     }
     this.transaction(() =>
       this.available()
-        .prepare(
-          'INSERT INTO integration_bindings VALUES(?,?,?,?,?,?,?) ON CONFLICT(bot,connection) DO UPDATE SET revision=excluded.revision,config_revision=excluded.config_revision,digest=excluded.digest,tools=excluded.tools,enabled=excluded.enabled',
-        )
-        .run(
+        .insert(integrationBindings)
+        .values({
           bot,
-          input.connection,
-          input.bindingRevision + 1,
-          input.configRevision,
-          input.catalogDigest ?? null,
-          JSON.stringify(input.tools),
-          Number(input.enabled),
-        ),
+          connection: input.connection,
+          revision: input.bindingRevision + 1,
+          configRevision: input.configRevision,
+          digest: input.catalogDigest ?? null,
+          tools: JSON.stringify(input.tools),
+          enabled: Number(input.enabled),
+        })
+        .onConflictDoUpdate({
+          target: [integrationBindings.bot, integrationBindings.connection],
+          set: {
+            revision: sql`excluded.revision`,
+            configRevision: sql`excluded.config_revision`,
+            digest: sql`excluded.digest`,
+            tools: sql`excluded.tools`,
+            enabled: sql`excluded.enabled`,
+          },
+        })
+        .run(),
     );
     await this.notify(input.connection, bot, 'binding');
     return (await this.assignments(bot)).items.find(
@@ -630,13 +696,19 @@ export class Integrations {
     if ((row.deleted === 1) !== value)
       this.transaction(() => {
         const db = this.available();
-        db.prepare(
-          'UPDATE integrations SET deleted=?,revision=revision+1,updated=? WHERE id=?',
-        ).run(Number(value), new Date().toISOString(), id);
+        db.update(integrations)
+          .set({
+            deleted: Number(value),
+            revision: sql`${integrations.revision} + 1`,
+            updated: new Date().toISOString(),
+          })
+          .where(eq(integrations.id, id))
+          .run();
         if (value)
-          db.prepare(
-            'UPDATE integration_bindings SET enabled=0,revision=revision+1 WHERE connection=?',
-          ).run(id);
+          db.update(integrationBindings)
+            .set({ enabled: 0, revision: sql`${integrationBindings.revision} + 1` })
+            .where(eq(integrationBindings.connection, id))
+            .run();
       });
     await this.notify(id, undefined, 'config');
     return this.public(this.row(id));
@@ -654,14 +726,17 @@ export class Integrations {
       const connections: McpCapture[] = [],
         warnings: string[] = [];
       const rows = this.available()
-        .prepare('SELECT * FROM integration_bindings WHERE bot=? AND enabled=1 ORDER BY connection')
-        .all(bot);
+        .select()
+        .from(integrationBindings)
+        .where(and(eq(integrationBindings.bot, bot), eq(integrationBindings.enabled, 1)))
+        .orderBy(integrationBindings.connection)
+        .all();
       for (const binding of rows) {
         const row = this.scoped(String(binding.connection), bot),
           config = this.config(row);
         if (
           config.deleted ||
-          binding.config_revision !== config.revision ||
+          binding.configRevision !== config.revision ||
           !config.catalogDigest ||
           binding.digest !== config.catalogDigest
         ) {
@@ -689,7 +764,7 @@ export class Integrations {
         available: true,
         key: rows.length
           ? mcpDigest([
-              rows.map((row) => [row.connection, row.revision, row.config_revision, row.digest]),
+              rows.map((row) => [row.connection, row.revision, row.configRevision, row.digest]),
               // A stale binding can keep its row revision while its live tool authority disappears.
               connections.map((entry) => [entry.connection, entry.revision, entry.catalogDigest]),
             ])
@@ -719,7 +794,7 @@ export class Integrations {
       !binding ||
       binding.enabled !== 1 ||
       binding.revision !== capture.bindingRevision ||
-      binding.config_revision !== capture.revision ||
+      binding.configRevision !== capture.revision ||
       binding.digest !== capture.catalogDigest ||
       !(JSON.parse(String(binding.tools)) as string[]).includes(tool)
     )
@@ -727,7 +802,7 @@ export class Integrations {
     return config;
   }
   private call(id: string) {
-    const row = this.available().prepare('SELECT * FROM call_receipts WHERE id=?').get(id);
+    const row = this.available().select().from(callReceipts).where(eq(callReceipts.id, id)).get();
     if (!row) throw new Fault('MCP_REQUEST_NOT_FOUND', 404);
     return row;
   }
@@ -738,7 +813,7 @@ export class Integrations {
       run: String(row.run),
       session: String(row.session),
       connection: String(row.connection),
-      configRevision: Number(row.config_revision),
+      configRevision: Number(row.configRevision),
       tool: String(row.tool),
       phase: String(row.phase),
       preview: String(row.preview),
@@ -775,19 +850,27 @@ export class Integrations {
       ]),
       fingerprint = mcpDigest([semantic, input.id, input.session, input.configRevision]);
     const db = this.available(),
-      old = db.prepare('SELECT * FROM call_receipts WHERE id=?').get(input.id);
+      old = db.select().from(callReceipts).where(eq(callReceipts.id, input.id)).get();
     if (old) {
       if (old.hash !== fingerprint) throw new Fault('MCP_REQUEST_ID_REUSED');
       return { fresh: false, receipt: this.receiptRow(old) };
     }
     const pending = db
-      .prepare(
-        "SELECT phase FROM call_receipts WHERE bot=? AND run=? AND semantic=? AND phase IN ('claimed','dispatched','unknown') LIMIT 1",
+      .select({ phase: callReceipts.phase })
+      .from(callReceipts)
+      .where(
+        and(
+          eq(callReceipts.bot, input.bot),
+          eq(callReceipts.run, input.run),
+          eq(callReceipts.semantic, semantic),
+          inArray(callReceipts.phase, ['claimed', 'dispatched', 'unknown']),
+        ),
       )
-      .get(input.bot, input.run, semantic);
+      .limit(1)
+      .get();
     if (pending)
       throw new Fault(pending.phase === 'claimed' ? 'MCP_CALL_PENDING' : 'MCP_OUTCOME_UNKNOWN');
-    if (Number(db.prepare('SELECT COUNT(*) AS count FROM call_receipts').get()!.count) >= 10000)
+    if (db.select({ count: count() }).from(callReceipts).get()!.count >= 10000)
       throw new Fault('MCP_STORAGE_LIMIT');
     const config = this.config(this.row(input.connection));
     if (config.deleted || config.revision !== input.configRevision)
@@ -795,21 +878,25 @@ export class Integrations {
     const now = new Date().toISOString();
     this.transaction(() =>
       db
-        .prepare("INSERT INTO call_receipts VALUES(?,?,?,?,?,?,?,?,?,'claimed',?,NULL,NULL,?,?)")
-        .run(
-          input.id,
-          fingerprint,
+        .insert(callReceipts)
+        .values({
+          id: input.id,
+          hash: fingerprint,
           semantic,
-          input.bot,
-          input.run,
-          input.session,
-          input.connection,
-          input.configRevision,
-          input.tool,
-          input.preview,
-          now,
-          now,
-        ),
+          bot: input.bot,
+          run: input.run,
+          session: input.session,
+          connection: input.connection,
+          configRevision: input.configRevision,
+          tool: input.tool,
+          phase: 'claimed',
+          preview: input.preview,
+          result: null,
+          error: null,
+          created: now,
+          updated: now,
+        })
+        .run(),
     );
     return { fresh: true, receipt: this.receiptRow(this.call(input.id)) };
   }
@@ -818,12 +905,14 @@ export class Integrations {
     const row = this.call(id);
     if (row.phase !== 'claimed') throw new Fault('MCP_REPLAY_BLOCKED');
     const config = this.config(this.row(String(row.connection)));
-    if (config.deleted || config.revision !== row.config_revision)
+    if (config.deleted || config.revision !== row.configRevision)
       throw new Fault('MCP_AUTHORITY_CHANGED');
     this.transaction(() =>
       this.available()
-        .prepare("UPDATE call_receipts SET phase='dispatched',updated=? WHERE id=?")
-        .run(new Date().toISOString(), id),
+        .update(callReceipts)
+        .set({ phase: 'dispatched', updated: new Date().toISOString() })
+        .where(eq(callReceipts.id, id))
+        .run(),
     );
   }
   async finish(id: string, outcome: McpOutcome) {
@@ -849,14 +938,15 @@ export class Integrations {
       throw new Fault('INVALID_MCP_RECEIPT', 400);
     this.transaction(() =>
       this.available()
-        .prepare('UPDATE call_receipts SET phase=?,result=?,error=?,updated=? WHERE id=?')
-        .run(
-          outcome.phase,
-          outcome.result ?? null,
-          outcome.error ?? null,
-          new Date().toISOString(),
-          id,
-        ),
+        .update(callReceipts)
+        .set({
+          phase: outcome.phase,
+          result: outcome.result ?? null,
+          error: outcome.error ?? null,
+          updated: new Date().toISOString(),
+        })
+        .where(eq(callReceipts.id, id))
+        .run(),
     );
     return this.receiptRow(this.call(id));
   }
@@ -870,19 +960,38 @@ export class Integrations {
     await this.ready;
     if (!validAgentId(bot) || (connection !== undefined && !validAgentId(connection)))
       throw new Fault('INVALID_MCP_CONFIG', 400);
-    const query = `SELECT id,hash,semantic,bot,run,session,connection,config_revision,tool,phase,
-      SUBSTR(preview,1,1400) AS preview,NULL AS result,error,created,updated
-      FROM call_receipts WHERE bot=?${connection ? ' AND connection=?' : ''}
-      ORDER BY created DESC,id DESC LIMIT 20`;
     const rows = this.available()
-      .prepare(query)
-      .all(bot, ...(connection ? [connection] : []));
-    return { bot, items: rows.map((row) => this.receiptRow(row)) };
+      .select({
+        id: callReceipts.id,
+        bot: callReceipts.bot,
+        run: callReceipts.run,
+        session: callReceipts.session,
+        connection: callReceipts.connection,
+        configRevision: callReceipts.configRevision,
+        tool: callReceipts.tool,
+        phase: callReceipts.phase,
+        preview: sql<string>`SUBSTR(${callReceipts.preview},1,1400)`,
+        error: callReceipts.error,
+        created: callReceipts.created,
+        updated: callReceipts.updated,
+      })
+      .from(callReceipts)
+      .where(
+        and(
+          eq(callReceipts.bot, bot),
+          connection ? eq(callReceipts.connection, connection) : undefined,
+        ),
+      )
+      .orderBy(desc(callReceipts.created), desc(callReceipts.id))
+      .limit(20)
+      .all();
+    // History omits result bodies.
+    return { bot, items: rows.map((row) => this.receiptRow({ ...row, result: null })) };
   }
   async close() {
     this.closed = true;
     await this.ready;
-    this.db?.close();
+    this.db?.$client.close();
     this.db = undefined;
   }
 }

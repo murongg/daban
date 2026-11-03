@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { TranscriptScope } from '@daban/protocol';
+import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import { redact } from './redaction.js';
 import { projectInteraction, projectTranscript, Transcripts } from './transcripts.js';
+import { transcriptRuns } from './transcripts-schema.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 const note = (seq: number, type: string, data: unknown, session = 'mock-session') => ({
@@ -18,6 +21,56 @@ const call = (seq = 1, text = '{"path":"/workspace/synthetic.txt"}') =>
     name: 'computer__read_file',
     arguments: text,
   });
+
+test('a pre-ORM transcript file keeps its events, interrupts open runs and keeps numbering', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-transcripts-legacy-'));
+  const file = path.join(root, 'transcripts.sqlite');
+  const legacy = { ...scope, runId: 'mock-legacy-run' };
+  const text = 'SYNTHETIC LEGACY RESULT';
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE transcript_runs(run TEXT PRIMARY KEY,scope TEXT NOT NULL,state TEXT NOT NULL);
+    CREATE TABLE transcript_events(run TEXT NOT NULL,seq INTEGER NOT NULL,source TEXT NOT NULL,meta TEXT NOT NULL,body TEXT NOT NULL,
+      PRIMARY KEY(run,seq),UNIQUE(run,source));`);
+  old
+    .prepare('INSERT INTO transcript_runs VALUES(?,?,?)')
+    .run(legacy.runId, JSON.stringify([scope.bot, legacy.runId, null, 0]), 'recording');
+  old.prepare('INSERT INTO transcript_events VALUES(?,?,?,?,?)').run(
+    legacy.runId,
+    1,
+    'mock-legacy-source',
+    JSON.stringify({
+      kind: 'result',
+      at: '2026-01-01T00:00:00Z',
+      callId: 'mock-legacy-call',
+      characters: text.length,
+    }),
+    text,
+  );
+  old.close();
+  const log = new Transcripts(file);
+  try {
+    await log.ready;
+    const page = log.page(legacy);
+    expect(page.state).toBe('interrupted');
+    expect(page.items).toMatchObject([{ seq: 1, kind: 'result', callId: 'mock-legacy-call' }]);
+    expect(log.results(legacy).results).toStrictEqual([
+      { seq: 1, callId: 'mock-legacy-call', isError: false, characters: text.length },
+    ]);
+    expect(log.result(legacy, 1).text).toBe(text);
+    log.begin(scope);
+    for (const source of ['mock-first', 'mock-second'])
+      log.append(scope, {
+        source,
+        kind: 'assistant',
+        at: '2026-01-01T00:00:01Z',
+        text: source,
+      });
+    expect(log.page(scope).items.map((item) => item.seq)).toStrictEqual([1, 2]);
+  } finally {
+    await log.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('visible JSON retains exact numeric spellings while escaped credentials are redacted', () => {
   const raw =
@@ -64,11 +117,11 @@ test('tool result recovery requires its persisted transcript owner even if orpha
       at: '2026-01-01T00:00:00Z',
       text: 'SYNTHETIC OWNED RESULT',
     });
-    const database = new DatabaseSync(file);
+    const client = new DatabaseSync(file);
     try {
-      database.prepare('DELETE FROM transcript_runs WHERE run=?').run(scope.runId);
+      drizzle({ client }).delete(transcriptRuns).where(eq(transcriptRuns.run, scope.runId)).run();
     } finally {
-      database.close();
+      client.close();
     }
     expect(() => log.result(scope, 1)).toThrowError(
       expect.objectContaining({ code: 'TRANSCRIPT_NOT_FOUND' }),
