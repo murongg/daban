@@ -49,6 +49,10 @@ await cp(source, target, {
   force: false,
   errorOnExist: true,
   mode: constants.COPYFILE_FICLONE,
+  // Keep the two supported UI languages, their regional/gender variants and native shared resources.
+  filter: (file) =>
+    !file.endsWith('.lproj') ||
+    /^(?:en(?:_|\.lproj)|zh_CN(?:_|\.lproj)|Base\.lproj)/.test(path.basename(file)),
 });
 // Preserve framework links verbatim: Node's default copy otherwise points back into node_modules.
 for (const entry of await readdir(target, { recursive: true, withFileTypes: true })) {

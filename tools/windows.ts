@@ -23,6 +23,10 @@ const electron = path.join(path.dirname(requireDesktop.resolve('electron/package
 for (const entry of await readdir(electron))
   await cp(path.join(electron, entry), path.join(target, entry), {
     recursive: true,
+    filter: (file) =>
+      path.basename(path.dirname(file)) !== 'locales' ||
+      !file.endsWith('.pak') ||
+      /^(?:en(?:[-_].*)?|zh[-_]CN(?:_.*)?)\.pak$/i.test(path.basename(file)),
     force: false,
     errorOnExist: true,
   });
