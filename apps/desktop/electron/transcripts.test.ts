@@ -57,6 +57,8 @@ it('strict transcript projections bind private/group scope, immutable event meta
 it('transcript IPC and HTTP reads gate before old-runtime calls and reject cross-scope or stale replies', async () => {
   const list = parseCommand({ type: 'transcript.list', query: { scope, after: 0 } });
   const read = parseCommand({ type: 'transcript.content', query: { scope, seq: 1, offset: 0 } });
+  const statistics = parseCommand({ type: 'transcript.statistics', query: { scope } });
+  expect(recoveryReader(statistics)).toBe(true);
   expect(recoveryReader(list)).toBe(true);
   expect(recoveryReader(read)).toBe(true);
   for (const value of [
@@ -110,8 +112,29 @@ it('transcript IPC and HTTP reads gate before old-runtime calls and reject cross
   await expect(client.invoke(list)).rejects.toThrow('RUNTIME_TOO_OLD');
   await expect(client.invoke(read)).rejects.toThrow('RUNTIME_TOO_OLD');
   expect(posts).toHaveLength(0);
+  await expect(client.invoke(statistics)).rejects.toThrow('RUNTIME_TOO_OLD');
   protocol = 33;
   expect(await client.invoke(list)).toEqual(reply);
+  const pageReply = reply;
+  reply = {
+    ...scope,
+    stats: {
+      turns: 1,
+      steps: 2,
+      llmMs: 50,
+      toolMs: 20,
+      ttftMs: 10,
+      ttftSteps: 1,
+      decodeMs: 40,
+      decodeTokens: 8,
+    },
+  };
+  expect(await client.invoke(statistics)).toEqual(reply);
+  expect(posts.at(-1)?.path).toBe('/api/transcripts/statistics');
+  reply = { ...scope, bot: 'mock-other', stats: {} };
+  await expect(client.invoke(statistics)).rejects.toThrow('INVALID_STATISTICS');
+  reply = pageReply;
+  await client.invoke(list);
   expect(posts.at(-1)).toEqual({ path: '/api/transcripts/list', body: { scope, after: 0 } });
   reply = { ...scope, bot: 'mock-other', state: 'complete', items: [item] };
   await expect(client.invoke(list)).rejects.toThrow('INVALID_TRANSCRIPT_PAGE');

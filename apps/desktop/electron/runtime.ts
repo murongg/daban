@@ -68,6 +68,7 @@ import {
   isRecoveryStatus,
   isReplyStream,
   isRunInsert,
+  isRunStatistics,
   isRunTurn,
   isRuntimeDownload,
   isRuntimeNoticeStatus,
@@ -179,6 +180,8 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
+    elapsedMs:
+      Number.isSafeInteger(task.elapsedMs) && task.elapsedMs! >= 0 ? task.elapsedMs : undefined,
     plan: isTaskPlan(task.plan) ? task.plan : undefined,
     phase: task.phase || 'idle',
     running: task.running === true,
@@ -209,6 +212,8 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       files: item.files,
       ...(Array.isArray(item.turns) && item.turns.every(isRunTurn) ? { turns: item.turns } : {}),
       response: isReplyStream(item.response) ? item.response : undefined,
+      elapsedMs:
+        Number.isSafeInteger(item.elapsedMs) && item.elapsedMs! >= 0 ? item.elapsedMs : undefined,
     })),
   };
 }
@@ -906,16 +911,23 @@ export class RuntimeClient {
         throw new Error('INVALID_BOT_COPY_ACK');
       return value;
     }
-    if (command.type === 'transcript.list' || command.type === 'transcript.content') {
+    if (
+      command.type === 'transcript.statistics' ||
+      command.type === 'transcript.list' ||
+      command.type === 'transcript.content'
+    ) {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 33) throw new Error('RUNTIME_TOO_OLD');
       const scope = command.query.scope;
       const value: unknown = await this.api(
-        `/api/transcripts/${command.type === 'transcript.list' ? 'list' : 'content'}`,
+        `/api/transcripts/${command.type === 'transcript.statistics' ? 'statistics' : command.type === 'transcript.list' ? 'list' : 'content'}`,
         command.query,
       );
-      if (command.type === 'transcript.list') {
+      if (command.type === 'transcript.statistics') {
+        if (!isRunStatistics(value) || !sameTranscriptScope(value, scope))
+          throw new Error('INVALID_STATISTICS');
+      } else if (command.type === 'transcript.list') {
         if (
           !isTranscriptPage(value) ||
           !sameTranscriptScope(value, scope) ||

@@ -137,6 +137,7 @@ const recoveryReads = new Set([
   '/api/groups/action-receipt',
   '/api/chats/receipt',
   '/api/chats/history',
+  '/api/transcripts/statistics',
   '/api/transcripts/list',
   '/api/transcripts/content',
   '/api/memory/history',
@@ -1086,6 +1087,8 @@ export async function startPrototype({
           if (url.pathname.startsWith('/api/transcripts/') && req.method === 'POST') {
             if (!models) throw new Fault('TRANSCRIPT_UNAVAILABLE', 503);
             const data = await body(req);
+            if (url.pathname === '/api/transcripts/statistics' && isTranscriptQuery(data))
+              return json(res, await models.statistics(data.scope));
             if (url.pathname === '/api/transcripts/list' && isTranscriptQuery(data))
               return json(res, await models.transcript(data.scope, data.after));
             if (url.pathname === '/api/transcripts/content' && isTranscriptContentQuery(data))
