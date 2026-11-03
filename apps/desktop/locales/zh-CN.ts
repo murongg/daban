@@ -1512,6 +1512,12 @@ export const chinese = {
   'groupchat.selectedMemberSModelDoesNotSupport':
     '所选成员中有模型不支持图片，请切换为支持图片的模型后发送；草稿已保留。',
   'groupchat.send': '发送给',
+  'groupchat.messageWithMentions': '发消息给 {0}，输入 @ 选择成员…',
+  'groupchat.mentionMembers': '提及群成员',
+  'groupchat.mentionHelp': '↑↓ 选择 · Enter 确认 · Esc 关闭',
+  'groupchat.mentionNoMatches': '没有匹配的可用成员',
+  'groupchat.mentionUnavailable': '提及的成员已不可用，请删除或重新选择。',
+  'groupchat.mentionAmbiguous': '有同名成员，请从 @ 列表选择具体 Bot。',
   'groupchat.sendResultUnconfirmedRetryChecksSameMessage': '发送结果待确认；重试将核对同一条消息',
   'groupchat.sharedGroupConversationIndependentWorkMemory': '群内共享对话 · 各自保留工作记忆',
   'groupchat.startCollaborating': '一起开始协作',

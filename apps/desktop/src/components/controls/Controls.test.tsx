@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type FormEvent, useCallback, useState } from 'react';
 import { expect, it, vi } from 'vitest';
@@ -203,6 +203,29 @@ it('keeps icon-decorated selection labels searchable and keyboard-selectable', a
   expect(screen.getByRole('option', { name: 'Beta model' })).toBeVisible();
   await userEvent.keyboard('b{Enter}');
   expect(change).toHaveBeenCalledWith('beta');
+});
+
+it('opens a prefixed select from its visible label without changing option names or keyboard selection', async () => {
+  const change = vi.fn();
+  render(
+    <Select
+      label="Synthetic recipient"
+      prefix="Send to"
+      value="alpha"
+      options={[
+        { value: 'alpha', label: 'Synthetic Alpha' },
+        { value: 'beta', label: 'Synthetic Beta' },
+      ]}
+      onValueChange={change}
+    />,
+  );
+  const trigger = screen.getByRole('button', { name: /Synthetic recipient$/ });
+  await userEvent.click(within(trigger).getByText('Send to'));
+  expect(screen.getByRole('option', { name: 'Synthetic Alpha' })).toBeVisible();
+  expect(screen.getByRole('option', { name: 'Synthetic Beta' })).toBeVisible();
+  await userEvent.keyboard('s{ArrowDown}{Enter}');
+  expect(change).toHaveBeenCalledWith('beta');
+  await waitFor(() => expect(trigger).toHaveFocus());
 });
 
 it('closes only the topmost popup, then allows the enclosing dialog to close', async () => {

@@ -318,10 +318,6 @@ input.field {
 .field.number-control {
   padding: 0 8px;
 }
-.group-recipient .field.select-trigger {
-  height: 32px;
-  min-height: 32px;
-}
 .control-popover svg,
 .select-trigger svg,
 .date-control svg,

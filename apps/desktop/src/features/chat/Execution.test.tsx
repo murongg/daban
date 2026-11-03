@@ -411,7 +411,9 @@ it('saved private history and group replies use their own author, run and conver
   expectExecutionBefore('合成群回复');
   await user.click(await screen.findByText('执行过程'));
   expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
-  expect(screen.getByDisplayValue('SYNTHETIC GROUP DRAFT')).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe(
+    'SYNTHETIC GROUP DRAFT',
+  );
   expect(
     backend.invoke.mock.calls.some(
       ([command]) =>

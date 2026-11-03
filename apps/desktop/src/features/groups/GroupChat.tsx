@@ -13,6 +13,7 @@ import {
 } from '@daban/protocol';
 import { ArrowUp, FileText, Paperclip, Plus, X } from 'lucide-react';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
+import { readMentions, resolveMentions } from '../../../shared/mentions';
 import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app/Runtime';
 import {
   type Action,
@@ -39,6 +40,7 @@ import {
   taskFile,
 } from '../files/files';
 import { Requests } from '../requests/Requests';
+import { Mentions, MentionText } from './Mentions';
 
 export function GroupChat({
   state,
@@ -53,7 +55,7 @@ export function GroupChat({
   notify: (text: string) => unknown;
   preview: (file: WorkspaceFile) => unknown;
 }) {
-  useLocale();
+  const locale = useLocale();
   const runtime = useRuntime();
   const [page, setPage] = useState<GroupPage>();
   const [error, setError] = useState('');
@@ -73,7 +75,7 @@ export function GroupChat({
   const registeredId = registered?.id;
   const pending = state.groupRequests[bot.id];
   const readOnly = !!registered?.archived || !!bot.archived || !!state.groupActions[bot.id];
-  const { upload, attach, paste, transfer, dragging } = useInputs(
+  const { upload, attach, transfer, dragging } = useInputs(
     state,
     bot,
     dispatch,
@@ -96,6 +98,24 @@ export function GroupChat({
       ? availableMembers.length > 0
       : availableMembers.some((member) => member.id === target);
   const draft = state.drafts[bot.id];
+  const selectedMentions = readMentions(state.groupMentions?.[bot.id], draft);
+  const mentioned = resolveMentions(
+    draft,
+    members.map((member) => ({ id: member.id, name: member.bot?.name || member.id })),
+    selectedMentions,
+  );
+  const mentionError = mentioned.ambiguous.length
+    ? t('groupchat.mentionAmbiguous')
+    : mentioned.recipients.some((id) => !availableMembers.some((member) => member.id === id))
+      ? t('groupchat.mentionUnavailable')
+      : '';
+  const validRecipients = !mentionError && (mentioned.recipients.length > 0 || validTarget);
+  const recipientNames = new Intl.ListFormat(locale, {
+    style: 'short',
+    type: 'conjunction',
+  }).format(
+    mentioned.recipients.map((id) => mentioned.mentions.find((item) => item.id === id)!.name),
+  );
   const attached = state.attachments[bot.id]
     .map((id) => state.files.find((file) => file.id === id))
     .filter((file): file is WorkspaceFile => !!file);
@@ -161,7 +181,9 @@ export function GroupChat({
       return;
     if (
       !pending &&
-      (!validTarget || (!draft.trim() && !attached.length) || !runtime.snapshot.model.configured)
+      (!validRecipients ||
+        (!draft.trim() && !attached.length) ||
+        !runtime.snapshot.model.configured)
     )
       return;
     const input: GroupSend = pending || {
@@ -169,7 +191,11 @@ export function GroupChat({
       id: crypto.randomUUID(),
       group: bot.id,
       prompt: draft.trim() || t('common.reviewFilesCompleteTaskIDescribed'),
-      recipients: target === '*' ? availableMembers.map((member) => member.id) : [target],
+      recipients: mentioned.recipients.length
+        ? mentioned.recipients
+        : target === '*'
+          ? availableMembers.map((member) => member.id)
+          : [target],
       files: attached.map(taskFile),
     };
     if (!pending && attached.some((file) => imageMime(file.upload?.name || file.name))) {
@@ -310,7 +336,16 @@ export function GroupChat({
           ) : value.role === 'notice' ? (
             taskError(value.text)
           ) : (
-            value.text
+            <MentionText
+              text={value.text}
+              mentions={
+                resolveMentions(
+                  value.text,
+                  members.map((member) => ({ id: member.id, name: member.bot?.name || member.id })),
+                  [],
+                ).mentions
+              }
+            />
           )}
         </div>
         {value.phase && value.phase !== 'completed' && (
@@ -555,22 +590,29 @@ export function GroupChat({
               {t('common.preparingAttachments')}
             </p>
           )}
-          <textarea
-            aria-label={t('common.sendMessage')}
-            placeholder={t('chat.messageRecipient', { 0: bot.name })}
+          <Mentions
+            placeholder={t('groupchat.messageWithMentions', { 0: bot.name })}
             value={draft}
-            rows={2}
+            mentions={selectedMentions}
+            members={availableMembers.map((member) => ({
+              id: member.id,
+              name: member.bot?.name || member.id,
+              description: member.bot?.role,
+            }))}
             disabled={readOnly}
-            onPaste={paste}
-            maxLength={12000}
-            onChange={(event) => dispatch({ type: 'draft', bot: bot.id, text: event.target.value })}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                if (!pending) send().catch((error) => notify(runtimeError(error)));
-              }
+            onFiles={attach}
+            onChange={(text, mentions) =>
+              dispatch({ type: 'group-draft', group: bot.id, text, mentions })
+            }
+            onSubmit={() => {
+              if (!pending) send().catch((error) => notify(runtimeError(error)));
             }}
           />
+          {mentionError && (
+            <p className="form-error" role="status">
+              {mentionError}
+            </p>
+          )}
           <div className="composer-bottom">
             <IconButton
               label={t('common.addAttachment')}
@@ -601,10 +643,16 @@ export function GroupChat({
                 if (!readOnly) await attach(files);
               }}
             />
-            <div className="group-recipient">
-              {t('groupchat.send')}{' '}
+            {mentioned.recipients.length ? (
+              <span className="group-recipient-summary" role="status" title={recipientNames}>
+                <span>{t('groupchat.send')}</span>
+                <span>{recipientNames}</span>
+              </span>
+            ) : (
               <Select
+                className="group-recipient"
                 label={t('groupchat.send')}
+                prefix={t('groupchat.send')}
                 value={target}
                 disabled={readOnly || sending || !!pending}
                 onValueChange={(value) =>
@@ -632,7 +680,7 @@ export function GroupChat({
                     : [{ value: '*', label: t('groupchat.allAvailableMembersOrder') }]),
                 ]}
               />
-            </div>
+            )}
             <span className="spacer" />
             <button
               type="submit"
@@ -643,7 +691,7 @@ export function GroupChat({
                 !ready ||
                 readOnly ||
                 !registered ||
-                !validTarget ||
+                !validRecipients ||
                 !!pending ||
                 sending ||
                 !!state.attachmentUploads[bot.id] ||

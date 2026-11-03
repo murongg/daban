@@ -32,6 +32,26 @@ const group: Group = {
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
+it('persists selected mention identities and preserves a newer mention draft after an older send acknowledgement', () => {
+  let state = initialState();
+  const mention = { id: 'a', name: 'Synthetic same-name Bot', start: 0, end: 24 };
+  const text = '@Synthetic same-name Bot verify';
+  state = reduce(state, { type: 'group-draft', group: 'crew', text, mentions: [mention] });
+  state = restore(serialize(state));
+  expect(state.groupMentions?.crew).toEqual([mention]);
+  const input = { id: 'mock-old-send', group: 'crew', prompt: text, recipients: ['a'] };
+  state = reduce(state, { type: 'group-pending', group: 'crew', input });
+  const newer = { ...mention, id: 'b' };
+  state = reduce(state, {
+    type: 'group-draft',
+    group: 'crew',
+    text: `${text} again`,
+    mentions: [newer],
+  });
+  state = reduce(state, { type: 'group-sent', group: 'crew', input });
+  expect(state.drafts.crew).toBe(`${text} again`);
+  expect(state.groupMentions?.crew).toEqual([newer]);
+});
 it('retains group history/drafts/members across archived metadata and persists only a scoped unresolved action', () => {
   let state = initialState();
   state.drafts.crew = 'SYNTHETIC RETAINED GROUP DRAFT';
@@ -64,6 +84,38 @@ it('retains group history/drafts/members across archived metadata and persists o
   expect(damaged.groupActions.crew).toBeUndefined();
   expect(damaged.drafts.crew).toBe('SYNTHETIC RETAINED GROUP DRAFT');
 });
+it('does not clear a same-text draft that now mentions a different same-named Bot', () => {
+  let state = initialState();
+  const text = '@Synthetic verify';
+  const first = { id: 'a', name: 'Synthetic', start: 0, end: 10 };
+  state = reduce(state, { type: 'group-draft', group: 'crew', text, mentions: [first] });
+  const input = { id: 'mock-mention-receipt', group: 'crew', prompt: text, recipients: ['a'] };
+  state = reduce(state, { type: 'group-pending', group: 'crew', input });
+  state = reduce(state, {
+    type: 'group-draft',
+    group: 'crew',
+    text,
+    mentions: [{ ...first, id: 'b' }],
+  });
+  state = reduce(state, { type: 'group-sent', group: 'crew', input });
+  expect(state.drafts.crew).toBe(text);
+  expect(state.groupMentions?.crew).toEqual([{ ...first, id: 'b' }]);
+});
+it('clears an acknowledged draft containing both selected and directly typed mentions', () => {
+  let state = initialState();
+  const text = '@研究员 @写作搭档 verify';
+  state = reduce(state, {
+    type: 'group-draft',
+    group: 'crew',
+    text,
+    mentions: [{ id: 'a', name: '研究员', start: 0, end: 4 }],
+  });
+  const input = { id: 'mock-mixed-mentions', group: 'crew', prompt: text, recipients: ['a', 'b'] };
+  state = reduce(state, { type: 'group-pending', group: 'crew', input });
+  state = reduce(state, { type: 'group-sent', group: 'crew', input });
+  expect(state.drafts.crew).toBe('');
+  expect(state.groupMentions?.crew).toEqual([]);
+});
 it('retains group drafts while a global recovery fence blocks new collaboration', async () => {
   const fake = connect(false, true);
   const state = initialState();
@@ -73,7 +125,7 @@ it('retains group drafts while a global recovery fence blocks new collaboration'
   localStorage.setItem(storageKey, serialize(state));
   render(<App />);
   const input = await screen.findByRole('textbox', { name: '发送消息' });
-  expect(input).toHaveValue('SYNTHETIC-QUEUED-DRAFT');
+  expect(input.textContent).toBe('SYNTHETIC-QUEUED-DRAFT');
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
   expect(fake.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
 });
@@ -289,8 +341,13 @@ it('archives a group from its header, keeps history and drafts readable, and res
   await userEvent.click(await screen.findByRole('button', { name: '归档群聊' }));
   await userEvent.click(screen.getByRole('button', { name: '确认归档' }));
   expect(await screen.findByText('已归档 · 历史只读')).toBeVisible();
-  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC GROUP DRAFT');
-  expect(screen.getByRole('textbox', { name: '发送消息' })).toBeDisabled();
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe(
+    'SYNTHETIC GROUP DRAFT',
+  );
+  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveAttribute(
+    'aria-readonly',
+    'true',
+  );
   expect(screen.getByRole('button', { name: '编辑群聊' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '添加附件' })).toBeDisabled();
   expect(screen.getByText('群聊已归档，历史和草稿保留。恢复后可发送新协作。')).toBeVisible();
@@ -300,8 +357,13 @@ it('archives a group from its header, keeps history and drafts readable, and res
   await userEvent.click(screen.getByRole('button', { name: '确认恢复' }));
   await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
   await userEvent.click(screen.getByRole('button', { name: '周报协作' }));
-  expect(await screen.findByRole('textbox', { name: '发送消息' })).toBeEnabled();
-  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC GROUP DRAFT');
+  expect(await screen.findByRole('textbox', { name: '发送消息' })).toHaveAttribute(
+    'aria-readonly',
+    'false',
+  );
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe(
+    'SYNTHETIC GROUP DRAFT',
+  );
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'group.action'),
@@ -313,7 +375,7 @@ it('keeps the existing group draft unsent, routes an explicit receiver and never
   render(<App />);
   await findSelectControl('发送给');
   expect(screen.getByText('群聊 · 已连接')).toBeVisible();
-  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('合成未发送群消息');
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe('合成未发送群消息');
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
   await selectOption(userEvent, selectControl('发送给'), 'a');
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
@@ -329,6 +391,76 @@ it('keeps the existing group draft unsent, routes an explicit receiver and never
   expect(screen.queryByText('合成群回复 GROUP-47')).not.toBeInTheDocument();
   const stored = JSON.parse(localStorage.getItem(storageKey)!);
   expect(JSON.stringify(stored.state.messages.research)).not.toContain('GROUP-47');
+});
+
+it('selects an @mention with the keyboard without submitting, then sends only to that member', async () => {
+  seed('');
+  const backend = connect();
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, '@研');
+  expect(screen.getByRole('option', { name: '研究员' })).toBeVisible();
+  await userEvent.keyboard('{Enter}');
+  expect(input.textContent).toBe('@研究员 ');
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
+  await userEvent.type(input, '核对合成记录');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual(
+    expect.objectContaining({
+      type: 'group.send',
+      input: expect.objectContaining({ recipients: ['a'], prompt: '@研究员 核对合成记录' }),
+    }),
+  );
+});
+
+it('routes multiple typed mentions in order without duplicate recipients or a fallback recipient', async () => {
+  seed('@写作搭档 @研究员 @写作搭档 检查合成记录');
+  const backend = connect();
+  render(<App />);
+  await screen.findByRole('textbox', { name: '发送消息' });
+  await userEvent.click(await screen.findByRole('button', { name: '发送消息' }));
+  expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual(
+    expect.objectContaining({
+      type: 'group.send',
+      input: expect.objectContaining({ recipients: ['b', 'a'] }),
+    }),
+  );
+});
+
+it('does not fall back to another member when an explicitly mentioned member is archived', async () => {
+  seed('@研究员 核对合成记录');
+  const backend = connect(true);
+  render(<App />);
+  expect((await screen.findByRole('textbox', { name: '发送消息' })).textContent).toBe(
+    '@研究员 核对合成记录',
+  );
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+  expect(screen.getByText('提及的成员已不可用，请删除或重新选择。')).toBeVisible();
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
+});
+
+it('retries a pending mention send with its original recipients even after editing the draft', async () => {
+  seed('@研究员 原合成任务');
+  const backend = connect();
+  backend.failNext();
+  let view = render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '发送消息' }));
+  await screen.findByRole('button', { name: '重试发送' });
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  await userEvent.clear(input);
+  await userEvent.type(input, '@写作搭档 新合成草稿');
+  view.unmount();
+  view = render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '重试发送' }));
+  const sends = backend.invoke.mock.calls
+    .map(([command]) => command)
+    .filter((command) => command.type === 'group.send');
+  expect(sends).toHaveLength(2);
+  expect(sends[0]).toMatchObject({ input: { recipients: ['a'] } });
+  expect(sends[1]).toEqual(sends[0]);
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe(
+    '@写作搭档 新合成草稿',
+  );
 });
 
 it('excludes archived members from an explicit all-available send while keeping historical identity', async () => {
@@ -358,7 +490,9 @@ it('keeps an archived explicit recipient unresolved instead of silently retarget
   const target = await findSelectControl('发送给');
   expect(target).toHaveAttribute('data-value', 'a');
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
-  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(state.drafts[group.id]);
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe(
+    state.drafts[group.id],
+  );
 });
 
 it('leaves archived identities out of new group member selection', async () => {
@@ -394,7 +528,7 @@ it('retains an ambiguous group send across relaunch for an exact manual retry wh
     .filter((command) => command.type === 'group.send');
   expect(sends).toHaveLength(2);
   expect(sends[1]).toEqual(sends[0]);
-  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('合成新草稿');
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe('合成新草稿');
 });
 
 it('creates a real group before selecting it and saves member edits against the authoritative revision', async () => {
@@ -415,7 +549,7 @@ it('creates a real group before selecting it and saves member edits against the 
     revision: 1,
     input: { name: '合成双人协作', members: ['a', 'b'] },
   });
-  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('合成未发送群消息');
+  expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe('合成未发送群消息');
   await userEvent.click(screen.getByRole('button', { name: '创建 Bot 群聊' }));
   dialog = screen.getByRole('dialog', { name: '创建群聊' });
   await userEvent.type(within(dialog).getByRole('textbox', { name: '名称' }), '合成新群');

@@ -1688,6 +1688,14 @@ export const english = {
   'groupchat.selectedMemberSModelDoesNotSupport':
     "A selected member's model does not support images. Choose an image-capable model before sending; your draft is retained.",
   'groupchat.send': 'Send to',
+  'groupchat.messageWithMentions': 'Message {0}, type @ to mention…',
+  'groupchat.mentionMembers': 'Mention a group member',
+  'groupchat.mentionHelp': '↑↓ Select · Enter Confirm · Esc Close',
+  'groupchat.mentionNoMatches': 'No available members match',
+  'groupchat.mentionUnavailable':
+    'A mentioned member is unavailable. Remove or select the mention again.',
+  'groupchat.mentionAmbiguous':
+    'Some members share a name. Choose the specific Bot from the @ list.',
   'groupchat.sendResultUnconfirmedRetryChecksSameMessage':
     'Send result unconfirmed; retry checks the same message',
   'groupchat.sharedGroupConversationIndependentWorkMemory':

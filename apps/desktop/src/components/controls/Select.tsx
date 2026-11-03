@@ -20,6 +20,7 @@ export interface SelectOption {
 }
 export function Select({
   label,
+  prefix,
   value,
   onValueChange,
   options,
@@ -27,6 +28,7 @@ export function Select({
   className = '',
 }: {
   label: string;
+  prefix?: string;
   value: string;
   onValueChange: (value: string) => unknown;
   options: readonly SelectOption[];
@@ -54,7 +56,12 @@ export function Select({
       }}
     >
       <Button aria-label={label} className="field select-trigger" data-value={value}>
-        <SelectValue>
+        {prefix && (
+          <span className="select-prefix" aria-hidden="true">
+            {prefix}
+          </span>
+        )}
+        <SelectValue className="select-value">
           {({ selectedText }) => (
             <span className="select-label">
               {selected?.icon}

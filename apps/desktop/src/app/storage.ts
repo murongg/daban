@@ -13,6 +13,7 @@ import {
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
+import { readMentions } from '../../shared/mentions';
 import { restoreNotes } from '../features/notes/notes-state';
 import { restoreComments } from '../features/tasks/comments-state';
 import { restoreWork } from '../features/tasks/work-state';
@@ -328,6 +329,13 @@ export function restore(raw: string | null): State {
     )
       return initialState();
     // Versioned browser storage is untrusted input; reject a partial snapshot instead of merging broken Bot records.
+    s.groupMentions = Object.fromEntries(
+      Object.entries(record(s.groupMentions) ? s.groupMentions : {}).flatMap(([id, value]) => {
+        if (!bots.some((bot) => bot.id === id && Array.isArray(bot.members))) return [];
+        const draft = record(s.drafts) && typeof s.drafts[id] === 'string' ? s.drafts[id] : '';
+        return [[id, readMentions(value, draft)]];
+      }),
+    );
     return removeSamples(s as unknown as State);
   } catch {
     return initialState();
