@@ -34,7 +34,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 44;
+export const managedProtocol = 45;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1117,10 +1117,11 @@ export type TranscriptScope = { bot: string; runId: string } & (
 export type TranscriptState = 'recording' | 'complete' | 'interrupted' | 'unavailable';
 export interface TranscriptItem {
   seq: number;
-  kind: 'call' | 'result' | 'assistant' | 'plan' | 'interaction';
+  kind: 'call' | 'result' | 'assistant' | 'thinking' | 'plan' | 'interaction';
   at: string;
   name?: string;
   callId?: string;
+  thinkingId?: string;
   isError?: boolean;
   code?: string;
   characters: number;
@@ -1133,6 +1134,48 @@ export interface TranscriptContentQuery {
   scope: TranscriptScope;
   seq: number;
   offset?: number;
+}
+export interface SessionStats {
+  turns: number;
+  steps: number;
+  llmMs: number;
+  toolMs: number;
+  ttftMs: number;
+  ttftSteps: number;
+  decodeMs: number;
+  decodeTokens: number;
+}
+export function isSessionStats(value: unknown): value is SessionStats {
+  const fields = [
+    'turns',
+    'steps',
+    'llmMs',
+    'toolMs',
+    'ttftMs',
+    'ttftSteps',
+    'decodeMs',
+    'decodeTokens',
+  ];
+  return (
+    profileObject(value) &&
+    Object.keys(value).length === fields.length &&
+    fields.every((key) => {
+      const number = value[key];
+      return (
+        typeof number === 'number' &&
+        Number.isFinite(number) &&
+        number >= 0 &&
+        number <= Number.MAX_SAFE_INTEGER &&
+        (!['turns', 'steps', 'ttftSteps'].includes(key) || Number.isSafeInteger(number))
+      );
+    })
+  );
+}
+export type RunStatistics = TranscriptScope & { stats?: SessionStats };
+export function isRunStatistics(value: unknown): value is RunStatistics {
+  return (
+    transcriptScope(value, ['stats']) && (value.stats === undefined || isSessionStats(value.stats))
+  );
 }
 export type TranscriptPage = TranscriptScope & {
   state: TranscriptState;
@@ -1192,16 +1235,28 @@ export function isTranscriptContentQuery(value: unknown): value is TranscriptCon
 export function isTranscriptItem(value: unknown): value is TranscriptItem {
   return (
     profileObject(value) &&
-    exactKeys(value, ['seq', 'kind', 'at', 'name', 'callId', 'isError', 'code', 'characters']) &&
+    exactKeys(value, [
+      'seq',
+      'kind',
+      'at',
+      'name',
+      'callId',
+      'thinkingId',
+      'isError',
+      'code',
+      'characters',
+    ]) &&
     browserNumber(value.seq) &&
     value.seq > 0 &&
     typeof value.kind === 'string' &&
-    ['call', 'result', 'assistant', 'plan', 'interaction'].includes(value.kind) &&
+    ['call', 'result', 'assistant', 'thinking', 'plan', 'interaction'].includes(value.kind) &&
     mcpDate(value.at) &&
     browserNumber(value.characters) &&
     value.characters <= transcriptEventLimit &&
     (value.name === undefined || boundedText(value.name, 300)) &&
     (value.callId === undefined || boundedText(value.callId, 300)) &&
+    (value.thinkingId === undefined ||
+      (value.kind === 'thinking' && boundedText(value.thinkingId, 200))) &&
     (value.isError === undefined || typeof value.isError === 'boolean') &&
     (value.code === undefined ||
       (value.isError === true &&
@@ -1286,6 +1341,7 @@ export function isRunTurn(value: unknown): value is RunTurn {
 export interface RuntimeTask {
   goal?: GoalProgress;
   planning?: boolean;
+  elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
   model?: ModelId;
@@ -1310,6 +1366,7 @@ export interface RuntimeTask {
   inserts?: RunInsert[];
 }
 export interface RuntimeTaskSummary {
+  elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
   response?: ReplyStream;
@@ -1528,6 +1585,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
+    'transcript.statistics',
     'transcript.list',
     'transcript.content',
     'memory.history',
@@ -1973,6 +2031,7 @@ export function isChatPage(value: unknown): value is ChatPage {
             'files',
             'response',
             'turns',
+            'elapsedMs',
           ].includes(key),
         ) &&
         item.chatRevision === value.revision &&
@@ -1991,6 +2050,7 @@ export function isChatPage(value: unknown): value is ChatPage {
             item.files.length <= 200 &&
             item.files.every(isRuntimeFileMetadata))) &&
         (item.response === undefined || isReplyStream(item.response)) &&
+        (item.elapsedMs === undefined || browserNumber(item.elapsedMs)) &&
         (item.turns === undefined ||
           (Array.isArray(item.turns) &&
             item.turns.length <= turnLimit &&
@@ -2685,16 +2745,22 @@ export interface ReplyStream {
   state: 'streaming' | 'settled';
   // The turn that produced this prefix; older turns' text must not render as the current turn's reply.
   turnId?: string;
+  thinking?: { id: string; text: string };
 }
 export function isReplyStream(value: unknown): value is ReplyStream {
   return (
     profileObject(value) &&
-    exactKeys(value, ['revision', 'text', 'state', 'turnId']) &&
+    exactKeys(value, ['revision', 'text', 'state', 'turnId', 'thinking']) &&
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) > 0 &&
     boundedText(value.text, replyLimit, true) &&
     ['streaming', 'settled'].includes(String(value.state)) &&
-    (value.turnId === undefined || validAgentId(value.turnId))
+    (value.turnId === undefined || validAgentId(value.turnId)) &&
+    (value.thinking === undefined ||
+      (profileObject(value.thinking) &&
+        exactKeys(value.thinking, ['id', 'text']) &&
+        boundedText(value.thinking.id, 200) &&
+        boundedText(value.thinking.text, replyLimit, true)))
   );
 }
 export interface UserQuestion {
@@ -3868,6 +3934,7 @@ export type RuntimeCommand =
   | { type: 'work.list'; query: WorkQuery }
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
+  | { type: 'transcript.statistics'; query: TranscriptQuery }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }

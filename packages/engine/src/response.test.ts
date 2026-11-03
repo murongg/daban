@@ -218,6 +218,56 @@ test('completed answers are not silently truncated at the old preview limit', as
     await f.close();
   }
 });
+
+test('thinking uses the same turn ownership, validation and credential redaction as visible replies', async () => {
+  const f = await fixture();
+  try {
+    const job = await f.start('mock-a');
+    const update = (revision: number, thinking: unknown) =>
+      f.models.rpc('mock-a', `Bearer ${job.token}`, {
+        id: revision,
+        method: 'response.update',
+        params: { sessionId: job.sessionId, revision, text: '', state: 'streaming', thinking },
+      });
+    await update(1, { id: '1:1', text: `合成思考 ${f.key.slice(0, 16)}` });
+    expect(f.models.status().bots['mock-a'].response?.thinking?.text).toBe('合成思考 ');
+    expect(f.models.status().bots['mock-a'].response?.turnId).toBe(job.requestId);
+    await expect(update(2, { id: '1:1', text: 'x'.repeat(65537) })).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+    });
+    await expect(
+      update(2, { id: '1:1', text: '合成思考', internal: 'PRIVATE' }),
+    ).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    await f.models.stop('mock-a');
+    const restored = new ModelRuns(f.options);
+    await restored.ready;
+    expect(restored.status().bots['mock-a'].response?.thinking?.text).toBe('合成思考 ');
+    await restored.close();
+  } finally {
+    await f.close();
+  }
+});
+
+test('execution duration stops at completion and survives a restart and history reads', async () => {
+  const f = await fixture();
+  try {
+    const job = await f.start('mock-a');
+    job.createdAt = new Date(Date.now() - 12000).toISOString();
+    expect(f.models.status().bots['mock-a'].elapsedMs).toBeGreaterThanOrEqual(12000);
+    await f.finish('mock-a', '合成完成');
+    const elapsed = f.models.status().bots['mock-a'].elapsedMs;
+    expect(elapsed).toBeGreaterThanOrEqual(12000);
+    job.createdAt = new Date(Date.now() - 30000).toISOString();
+    expect(f.models.status().bots['mock-a'].elapsedMs).toBe(elapsed);
+    expect((await f.models.chatHistory('mock-a', 0)).items[0].elapsedMs).toBe(elapsed);
+    const restored = new ModelRuns(f.options);
+    await restored.ready;
+    expect(restored.status().bots['mock-a'].elapsedMs).toBe(elapsed);
+    await restored.close();
+  } finally {
+    await f.close();
+  }
+});
 test('an in-flight disk write is not exposed through history before the current response commits', async () => {
   const f = await fixture();
   try {

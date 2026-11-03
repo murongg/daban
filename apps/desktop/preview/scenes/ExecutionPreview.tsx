@@ -134,8 +134,24 @@ const task: RuntimeTask = {
   files: [],
   trace: [],
   history: [],
+  elapsedMs: 18000,
 };
 snapshot.agents[scope.bot] = task;
+const thinkingText = '我会先核对合成资料的目标、时间安排与负责人，再整理需要确认的事项。';
+if (mode === 'thinking' && query.has('live'))
+  snapshot.agents[scope.bot] = {
+    ...task,
+    running: true,
+    phase: 'running',
+    result: '',
+    elapsedMs: 12000,
+    response: {
+      revision: 1,
+      text: '',
+      state: 'streaming',
+      thinking: { id: '1:1', text: thinkingText },
+    },
+  };
 if (mode === 'empty')
   snapshot.agents[scope.bot] = {
     ...task,
@@ -303,6 +319,25 @@ const items: TranscriptItem[] = bodies.map((text, index) => ({
     ? { callId: 'mock-search-call', ...(index === 0 ? { name: 'web_search' } : { isError: false }) }
     : {}),
 }));
+if (mode === 'thinking') {
+  if (query.has('live')) {
+    bodies.length = 0;
+    items.length = 0;
+  } else {
+    const text = query.has('long') ? thinkingText.repeat(35) : thinkingText;
+    bodies.unshift(text);
+    items.unshift({
+      seq: 0,
+      kind: 'thinking',
+      thinkingId: '1:1',
+      at: '2026-01-01T00:00:00Z',
+      characters: text.length,
+    });
+    items.forEach((item, index) => {
+      item.seq = index + 1;
+    });
+  }
+}
 const listeners = new Set<Parameters<RuntimeBridge['subscribe']>[0]>();
 function fixture(command: RuntimeCommand): unknown {
   if (command.type === 'status') return snapshot;
@@ -392,12 +427,30 @@ function fixture(command: RuntimeCommand): unknown {
         },
       ],
     };
+  if (command.type === 'transcript.statistics')
+    return {
+      ...command.query.scope,
+      ...(query.has('stats')
+        ? {
+            stats: {
+              turns: 3,
+              steps: 5,
+              llmMs: 2500,
+              toolMs: 1250,
+              ttftMs: 900,
+              ttftSteps: 3,
+              decodeMs: 1600,
+              decodeTokens: 80,
+            },
+          }
+        : {}),
+    };
   if (command.type === 'transcript.list') {
     if (mode === 'error') throw new Error('TRANSCRIPT_UNAVAILABLE');
     return {
       ...command.query.scope,
       state:
-        mode === 'empty'
+        mode === 'empty' || (mode === 'thinking' && query.has('live'))
           ? snapshot.agents[scope.bot]?.running
             ? 'recording'
             : 'interrupted'

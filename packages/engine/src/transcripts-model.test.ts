@@ -51,7 +51,7 @@ test('model runs retain scoped native execution and durable human decisions acro
             message: {
               content: [
                 { type: 'text', text: '合成回复' },
-                { type: 'reasoning', text: 'SYNTHETIC PRIVATE REASONING' },
+                { type: 'reasoning', text: '合成模型思考' },
               ],
             },
           });
@@ -118,7 +118,8 @@ test('model runs retain scoped native execution and durable human decisions acro
     await settle('a');
     const complete = await models.transcript(scope);
     expect(complete.state).toBe('complete');
-    expect(complete.items.length).toBe(5);
+    expect(complete.items.length).toBe(6);
+    expect(complete.items.some((item) => item.kind === 'thinking')).toBe(true);
     let combined = '';
     for (const item of complete.items)
       combined += (await models.transcriptContent(scope, item.seq)).text;
@@ -129,7 +130,7 @@ test('model runs retain scoped native execution and durable human decisions acro
     await entered(2);
     await settle('a');
     expect(sessions[0]).toBe(sessions[1]);
-    expect((await models.transcript(scope)).items.length).toBe(5);
+    expect((await models.transcript(scope)).items.length).toBe(6);
     await models.start(
       'a',
       { requestId: 'mock-group-first', prompt: '合成群聊任务' },
@@ -150,7 +151,7 @@ test('model runs retain scoped native execution and durable human decisions acro
     await expect(
       models.transcript({ bot: 'a', runId: groupScope.runId, chatRevision: 0 }),
     ).rejects.toMatchObject({ code: 'TRANSCRIPT_NOT_FOUND' });
-    expect((await models.transcript(groupScope)).items.length).toBe(3);
+    expect((await models.transcript(groupScope)).items.length).toBe(4);
     const legacy = { bot: 'a', runId: 'mock-legacy-run', chatRevision: 0 };
     await models.journal.put({
       ...legacy,
@@ -214,7 +215,7 @@ test('model runs retain scoped native execution and durable human decisions acro
     models = new ModelRuns(options);
     await models.ready;
     expect(await models.transcript(scope)).toStrictEqual(complete);
-    expect((await models.transcript(groupScope)).items.length).toBe(3);
+    expect((await models.transcript(groupScope)).items.length).toBe(4);
     expect((await models.transcript(failedScope)).state).toBe('interrupted');
     expect((await models.transcript(legacy)).state).toBe('unavailable');
   } finally {

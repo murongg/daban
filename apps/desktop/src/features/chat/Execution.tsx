@@ -1,7 +1,10 @@
 import {
   type GoalProgress,
+  isRunStatistics,
   isTranscriptContent,
   isTranscriptPage,
+  type ReplyStream,
+  type SessionStats,
   sameTranscriptScope,
   type TaskPhase,
   type TranscriptContent,
@@ -24,6 +27,7 @@ const tools: Record<string, MessageKey> = {
   web_search: 'execution.searchWeb',
   web_fetch: 'execution.readWebpage',
   read_file: 'execution.readFile',
+  read_image: 'execution.readImage',
   write_file: 'execution.writeFile',
   list_files: 'common.viewFiles',
   shell: 'execution.runCommand',
@@ -36,6 +40,9 @@ const tools: Record<string, MessageKey> = {
   get_goal: 'execution.readGoal',
   create_goal: 'execution.createGoal',
   update_goal: 'execution.updateGoal',
+  subagent: 'execution.delegateTask',
+  send_message: 'execution.messageWorker',
+  interrupt_agent: 'execution.stopWorker',
 };
 function label(item: TranscriptItem, name?: string) {
   const tool = name ? t(tools[name.split('__').at(-1)!]) || name : t('execution.tool');
@@ -44,9 +51,32 @@ function label(item: TranscriptItem, name?: string) {
     return `${tool} · ${item.isError ? t('common.failed') : t('execution.result')}`;
   return {
     assistant: t('execution.interimResponse'),
+    thinking: t('execution.thinking'),
     plan: t('execution.taskPlan'),
     interaction: t('execution.questionsApprovals'),
   }[item.kind];
+}
+
+function ThinkingText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = text.length > 240;
+  return (
+    <>
+      <p className="execution-thinking-text">
+        {long && !expanded ? `${text.slice(0, 240)}…` : text}
+      </p>
+      {long && (
+        <button
+          type="button"
+          className="text-button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {t(expanded ? 'execution.collapseThinking' : 'execution.expandThinking')}
+        </button>
+      )}
+    </>
+  );
 }
 
 function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem }) {
@@ -113,7 +143,7 @@ function Content({ scope, item }: { scope: TranscriptScope; item: TranscriptItem
       {content && (
         // biome-ignore lint/a11y/noNoninteractiveTabindex: Long read-only output needs a named keyboard-scrollable region.
         <section className="execution-content" aria-label={regionLabel} tabIndex={0}>
-          {content.text}
+          {item.kind === 'thinking' ? <ThinkingText text={content.text} /> : content.text}
         </section>
       )}
       {busy && (
@@ -156,6 +186,13 @@ function Entry({
 }) {
   useLocale();
   const [open, setOpen] = useState(false);
+  if (item.kind === 'thinking')
+    return (
+      <li className="execution-thinking">
+        <p className="execution-thinking-label">{t('execution.thinking')}</p>
+        <Content scope={scope} item={item} />
+      </li>
+    );
   return (
     <li>
       <details className="execution-entry" onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -171,7 +208,47 @@ function Entry({
   );
 }
 
-function Reader({ scope }: { scope: TranscriptScope }) {
+function Statistics({ scope, refresh }: { scope: TranscriptScope; refresh?: TranscriptPage }) {
+  useLocale();
+  const runtime = useRuntime();
+  const [stats, setStats] = useState<SessionStats>();
+  useEffect(() => {
+    if (!refresh) return;
+    let active = true;
+    runtime
+      .command({ type: 'transcript.statistics', query: { scope } })
+      .then((value) => {
+        if (active && isRunStatistics(value) && sameTranscriptScope(value, scope))
+          setStats(value.stats);
+      })
+      .catch(() => {
+        // Older services have no statistics route. Optional telemetry must not break execution-history reads.
+        if (active) setStats(undefined);
+      });
+    return () => {
+      active = false;
+    };
+  }, [runtime.command, scope, refresh]);
+  return stats ? (
+    <p className="field-help">
+      {t('execution.sessionStatistics', {
+        0: stats.turns,
+        1: stats.steps,
+        2: (stats.llmMs / 1000).toFixed(1),
+        3: (stats.toolMs / 1000).toFixed(1),
+        4: stats.ttftSteps ? (stats.ttftMs / stats.ttftSteps / 1000).toFixed(1) : '—',
+      })}
+    </p>
+  ) : null;
+}
+
+function Reader({
+  scope,
+  thinking,
+}: {
+  scope: TranscriptScope;
+  thinking?: ReplyStream['thinking'];
+}) {
   useLocale();
   const runtime = useRuntime();
   const [target] = useState(() => ({ ...scope }));
@@ -245,6 +322,13 @@ function Reader({ scope }: { scope: TranscriptScope }) {
       .filter((item) => item.kind === 'call' && item.callId)
       .map((item) => [item.callId, item.name]),
   );
+  // A committed native step replaces its live prefix, even when both arrive in the same poll.
+  const liveThinking =
+    thinking?.text &&
+    !page?.nextAfter &&
+    !page?.items.some((item) => item.kind === 'thinking' && item.thinkingId === thinking.id)
+      ? thinking
+      : undefined;
   return (
     <div className="execution-reader">
       {/* Keep this outside summary: refreshing must never toggle the execution disclosure. */}
@@ -260,6 +344,7 @@ function Reader({ scope }: { scope: TranscriptScope }) {
       >
         <RefreshCw />
       </IconButton>
+      <Statistics scope={target} refresh={page} />
       {page?.state === 'unavailable' && (
         <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}
@@ -269,12 +354,12 @@ function Reader({ scope }: { scope: TranscriptScope }) {
       {page?.state === 'interrupted' && (
         <p className="field-help">{t('execution.onlySavedPortionShownDoesNotConfirm')}</p>
       )}
-      {page && page.state !== 'unavailable' && !page.items.length && (
+      {page && page.state !== 'unavailable' && !page.items.length && !liveThinking && (
         <p className="inline-note">{t('execution.noToolInteractionStepsWereRecordedTask')}</p>
       )}
-      {!!page?.items.length && (
+      {(!!page?.items.length || !!liveThinking) && (
         <ol className="execution-list">
-          {page.items.map((item) => (
+          {page?.items.map((item) => (
             <Entry
               key={item.seq}
               scope={target}
@@ -282,6 +367,12 @@ function Reader({ scope }: { scope: TranscriptScope }) {
               name={item.name || names.get(item.callId)}
             />
           ))}
+          {liveThinking && (
+            <li className="execution-thinking" key={`thinking:${liveThinking.id}`}>
+              <p className="execution-thinking-label">{t('execution.thinking')}</p>
+              <ThinkingText text={liveThinking.text} />
+            </li>
+          )}
         </ol>
       )}
       {busy && !page && (
@@ -310,7 +401,17 @@ function Reader({ scope }: { scope: TranscriptScope }) {
   );
 }
 
-function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhase }) {
+function Disclosure({
+  scope,
+  phase,
+  elapsedMs: savedElapsed,
+  thinking: savedThinking,
+}: {
+  scope: TranscriptScope;
+  phase?: TaskPhase;
+  elapsedMs?: number;
+  thinking?: ReplyStream['thinking'];
+}) {
   useLocale();
   const runtime = useRuntime();
   const [open, setOpen] = useState(false);
@@ -337,6 +438,38 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
         : undefined;
   const preparing = compatible && phase === 'starting';
   const available = compatible && !preparing;
+  const task = runtime.snapshot.agents[scope.bot];
+  const current =
+    task?.runId === scope.runId &&
+    task.conversationId === scope.conversationId &&
+    (scope.conversationId || (task.chatRevision ?? 0) === scope.chatRevision)
+      ? task
+      : undefined;
+  const recorded =
+    current ??
+    task?.history.find(
+      (item) =>
+        item.runId === scope.runId &&
+        item.conversationId === scope.conversationId &&
+        (scope.conversationId || (item.chatRevision ?? 0) === scope.chatRevision),
+    );
+  const elapsedMs = savedElapsed ?? recorded?.elapsedMs;
+  const candidate = recorded?.response;
+  const turnId = recorded?.turns?.at(-1)?.id ?? recorded?.requestId;
+  // A retained prefix from an earlier turn must not describe the current turn's activity.
+  const response =
+    candidate && (!candidate.turnId || candidate.turnId === turnId) ? candidate : undefined;
+  const thinking = savedThinking ?? response?.thinking;
+  const activity =
+    phase === 'running' && current?.running && response?.state === 'streaming'
+      ? response.text
+        ? t('chat.replying')
+        : thinking?.text
+          ? t('chat.thinking')
+          : taskPhase(phase)
+      : phase
+        ? taskPhase(phase)
+        : '';
   return (
     <details
       className="activity execution"
@@ -353,7 +486,15 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
             {t('execution.goalStatus', { 0: t(goalState), 1: goal.rounds, 2: goal.limit })}
           </span>
         )}
-        {phase && <span className="execution-phase">{taskPhase(phase)}</span>}
+
+        {phase && (
+          <span className="execution-phase">
+            {activity}
+            {elapsedMs === undefined
+              ? ''
+              : ` · ${t('execution.duration', { 0: Math.floor(elapsedMs / 1000) })}`}
+          </span>
+        )}
         <ChevronDown className="execution-chevron" />
       </summary>
       {open && goal && (
@@ -368,7 +509,7 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
             {t('execution.taskPreparingExecutionRecordsAppearWhenStarts')}
           </p>
         ) : available ? (
-          <Reader scope={scope} />
+          <Reader scope={scope} thinking={thinking} />
         ) : (
           <p className="field-help">
             {ready
@@ -380,7 +521,12 @@ function Disclosure({ scope, phase }: { scope: TranscriptScope; phase?: TaskPhas
   );
 }
 
-export function Execution(props: { scope: TranscriptScope; phase?: TaskPhase }) {
+export function Execution(props: {
+  scope: TranscriptScope;
+  phase?: TaskPhase;
+  elapsedMs?: number;
+  thinking?: ReplyStream['thinking'];
+}) {
   useLocale();
   const { scope } = props;
   return (
