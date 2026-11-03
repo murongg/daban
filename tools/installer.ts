@@ -39,6 +39,7 @@ function configuration(
       createDesktopShortcut: false,
       runAfterFinish: true,
     },
+    compression: 'maximum',
     npmRebuild: false,
   };
 }
@@ -68,7 +69,15 @@ export async function packageWindowsInstaller(portable: string, output: string) 
     // npm file: dependencies can be junctions. Materialize them so installers never retain a build-machine path.
     await cp(portable, app, { recursive: true, dereference: true });
     await writeUpdateConfig(path.join(app, 'resources'));
-    await sealHostPackage(path.join(app, 'resources/agent'));
+    if (
+      await import('node:fs/promises').then((fs) =>
+        fs.access(path.join(app, 'resources/agent')).then(
+          () => true,
+          () => false,
+        ),
+      )
+    )
+      await sealHostPackage(path.join(app, 'resources/agent'));
     return await build({
       projectDir: root,
       prepackaged: app,

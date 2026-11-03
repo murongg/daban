@@ -4,6 +4,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const suites = {
   runtime: [
+    'environment-api.test',
+    'setup-status.test',
+    'component-files.test',
+    'component.test',
+    'payload.test',
     'agent-server.test',
     'upgrade.test',
     'upgrade.integration',

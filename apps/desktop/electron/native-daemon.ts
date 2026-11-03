@@ -98,8 +98,8 @@ export class NativeDaemon {
           'native',
         ],
         {
-          cwd: path.dirname(this.config.entry),
-          env,
+          cwd: this.config.dataRoot,
+          env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
           detached: true,
           windowsHide: true,
           stdio: ['ignore', output.fd, output.fd],

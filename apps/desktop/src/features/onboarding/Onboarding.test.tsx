@@ -119,6 +119,19 @@ it('finishes environment setup before opening the first model connection form', 
   expect(await screen.findByRole('heading', { name: '连接你的第一个模型' })).toBeVisible();
   expect(screen.getByLabelText('API Key')).toBeVisible();
 });
+it('offers model configuration and chat without installing an optional Linux environment', async () => {
+  const value = snapshot();
+  value.setup = { required: true, target: 'linux', phase: 'available' };
+  const backend = connect(value);
+  render(<App />);
+  await fill();
+  expect(screen.queryByRole('button', { name: '创建本地环境' })).not.toBeInTheDocument();
+  expect(backend.invoke).not.toHaveBeenCalledWith({ type: 'setup.start' });
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await userEvent.click(await screen.findByRole('button', { name: '开始使用' }));
+  expect(await screen.findByRole('button', { name: '自定义 Bot' })).toBeVisible();
+  expect(backend.invoke).not.toHaveBeenCalledWith({ type: 'setup.start' });
+});
 it('requires an acknowledged model save and an explicit Start before entering the workspace', async () => {
   const backend = connect(snapshot());
   render(<App />);

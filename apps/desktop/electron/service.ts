@@ -20,8 +20,11 @@ import {
 } from '@daban/protocol';
 import { BrowserWindow, clipboard, ipcMain, shell } from 'electron';
 import { AgentSetup } from './agent-setup';
+import type { PreparedAgentFiles, RuntimePreparation } from './components';
 import { Daemon, daemonScope } from './daemon';
+import { EnvironmentClient } from './environment-client';
 import { loadHost, type ManagedHost } from './host';
+import { reconcileAgent } from './host-selection';
 import { parseCommand, trustedSender } from './ipc';
 import type { LocalComputer } from './local-computer';
 import { NativeDaemon } from './native-daemon';
@@ -32,13 +35,17 @@ import { controlSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
 import { prepareAgentUpdate } from './upgrade';
 
-export interface AgentConfig {
-  entry: string;
-  executable: string;
+interface AgentLocations {
   dataRoot?: string;
   socketPath?: string;
   vmConfig?: string;
+  nativeFirst?: boolean;
 }
+export type AgentConfig = AgentLocations &
+  (
+    | { entry: string; executable: string; runtime?: never }
+    | { runtime: RuntimePreparation; entry?: never; executable?: never }
+  );
 
 export function runtimeService(
   userData: string,
@@ -51,17 +58,40 @@ export function runtimeService(
   const dataRoot = agent?.dataRoot ?? join(userData, 'agent');
   const vmConfig = agent?.vmConfig ?? join(userData, 'runtime.json');
   const agentScope = agent ? daemonScope(dataRoot, vmConfig) : undefined;
+  const component = agent?.runtime;
+  let files: PreparedAgentFiles | undefined =
+    agent && !component && agent.entry && agent.executable
+      ? { entry: agent.entry, executable: agent.executable }
+      : undefined;
   const agentConfig = agent
     ? {
-        entry: agent.entry,
-        executable: agent.executable,
+        get entry() {
+          if (!files) throw Error('COMPONENT_NOT_READY');
+          return files.entry;
+        },
+        get executable() {
+          if (!files) throw Error('COMPONENT_NOT_READY');
+          return files.executable;
+        },
         dataRoot,
         vmConfig,
         socketPath: agent.socketPath ?? controlSocket(join(userData, 'agent.sock'), agentScope!),
       }
     : undefined;
   let daemon: Daemon | NativeDaemon | undefined;
-  const nativeMode = !!agentConfig && process.platform === 'win32';
+  let nativeMode = !!agentConfig && process.platform === 'win32';
+  const nativeFirst = !!(component || agent?.nativeFirst);
+  const environment =
+    agentConfig && process.platform === 'darwin' && nativeFirst
+      ? new EnvironmentClient({
+          ...{ dataRoot, socketPath: agentConfig.socketPath },
+          scope: agentScope!,
+        })
+      : undefined;
+  function componentChanged(next: SetupStatus) {
+    setupState = next;
+    publish(state);
+  }
   const agentTransport = new AbortController();
   let setup: Setup | AgentSetup | undefined;
   let setupState: SetupStatus | undefined;
@@ -87,6 +117,7 @@ export function runtimeService(
   let rebootRequested = 0,
     rebootPublished = 0;
   let recovering = false;
+  let pendingHandoff = false;
   let connecting: Promise<RuntimeSnapshot> | undefined;
   let polling = false;
   let closed = false;
@@ -94,7 +125,8 @@ export function runtimeService(
   let connection = 0;
   let requested = 0,
     published = 0,
-    lastPoll = 0;
+    lastPoll = 0,
+    lastSetupPoll = 0;
   async function managed() {
     if (closed) throw new Error('RUNTIME_CLOSED');
     if (agentConfig) throw new Error('AGENT_CONTROL_ONLY');
@@ -132,16 +164,40 @@ export function runtimeService(
   }
   async function connectAgent() {
     if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
-    if (nativeMode) {
+    if (component && !files) files = await component.prepare(componentChanged);
+    if (closed) throw Error('RUNTIME_CLOSED');
+    const configured = await access(vmConfig).then(
+      () => true,
+      (error) => {
+        if (error && typeof error === 'object' && error.code === 'ENOENT') return false;
+        throw error;
+      },
+    );
+    const desiredNative = process.platform === 'win32' || (nativeFirst && !configured);
+    if (nativeFirst) {
+      const changed = await reconcileAgent({ ...agentConfig, scope: agentScope! }, desiredNative);
+      if (changed) {
+        client = undefined;
+        publish(disconnected('connecting'));
+        await daemon?.close();
+        daemon = undefined;
+      }
+    }
+    if (desiredNative) {
       await secureDirectory(agentConfig.dataRoot);
       const native = daemon instanceof NativeDaemon ? daemon : new NativeDaemon(agentConfig);
       daemon = native;
-      return native.ensure();
+      const connected = await native.ensure();
+      nativeMode = true;
+      setupState = environment
+        ? await environment.invoke('status')
+        : { required: false, phase: 'complete' };
+      return connected;
     }
     // A partial configuration does not clear a user pause or authorize a legacy VM installation.
-    const progress = await installation().status();
+    const progress = nativeFirst ? { required: false } : await installation().status();
     if (progress.required) {
-      setupState = progress;
+      if ('phase' in progress) setupState = progress;
       throw new Error('SETUP_REQUIRED');
     }
     await access(agentConfig.vmConfig);
@@ -149,6 +205,8 @@ export function runtimeService(
     daemon ??= new Daemon(agentConfig);
     await daemon.ensure();
     if (closed) throw new Error('RUNTIME_CLOSED');
+    nativeMode = false;
+    if (nativeFirst) setupState = { required: false, target: 'linux', phase: 'complete' };
     return privateClient();
   }
   async function inspectAgent(): Promise<DiagnosticReport> {
@@ -283,7 +341,9 @@ export function runtimeService(
       connection++;
       rebootPublished = ++rebootRequested;
       published = ++requested;
-      publish(disconnected('connecting'));
+      const previous = state,
+        previousClient = client;
+      if (!(previousClient && nativeMode && nativeFirst)) publish(disconnected('connecting'));
       try {
         if (agentConfig) client = await connectAgent();
         else {
@@ -292,8 +352,23 @@ export function runtimeService(
           client = await owner.connect();
         }
         await refresh();
+        pendingHandoff = false;
       } catch (error) {
+        if (nativeFirst && error instanceof Error && error.message === 'AGENT_UPDATE_BUSY') {
+          client = previousClient ?? privateClient();
+          const active = previousClient ? previous : await client.status();
+          nativeMode = active.agent?.execution === 'local-workspace';
+          pendingHandoff = true;
+          setupState = { required: false, target: 'agent', phase: 'waiting' };
+          publish(active);
+          return state;
+        }
         if (agentConfig) client = undefined;
+        if (component && !files) {
+          setupState = component.status();
+          publish(disconnected('offline'));
+          return state;
+        }
         if (nativeMode) {
           publish(disconnected('offline', 'errors.runtimeConnectionUnavailable'));
           return state;
@@ -371,6 +446,28 @@ export function runtimeService(
       command.type === 'setup.start' ||
       command.type === 'setup.cancel'
     ) {
+      if (component && !files) {
+        if (command.type === 'setup.cancel') return component.cancel();
+        if (command.type === 'setup.start') {
+          files = await component.resume(componentChanged);
+          await connect();
+        }
+        setupState = files ? setupState : component.status();
+        publish(state);
+        return setupState;
+      }
+      if (environment && nativeMode) {
+        const value = await environment.invoke(
+          command.type === 'setup.start'
+            ? 'start'
+            : command.type === 'setup.cancel'
+              ? 'cancel'
+              : 'status',
+        );
+        setupState = value;
+        publish(state);
+        return value;
+      }
       if (nativeMode) return { required: false, phase: 'complete' };
       const owner = installation();
       const value =
@@ -509,6 +606,26 @@ export function runtimeService(
     polling = true;
     try {
       await refreshReboot();
+      if (
+        pendingHandoff &&
+        client &&
+        !connecting &&
+        Date.now() - lastSetupPoll > 1000 &&
+        !Object.values(state.agents).some((task) => task.running)
+      ) {
+        lastSetupPoll = Date.now();
+        await connect();
+      }
+      if (environment && nativeMode && client && !connecting && Date.now() - lastSetupPoll > 1000) {
+        try {
+          lastSetupPoll = Date.now();
+          setupState = await environment.invoke('status');
+          publish(state);
+          if (!setupState.required) await connect();
+        } catch {
+          /* A transient setup poll must not disconnect ordinary chat. */
+        }
+      }
       if (!client || connecting || recovering) return;
       const interval = Object.values(state.agents).some(
         (task) => task.running && !['waiting', 'paused'].includes(task.phase),
@@ -539,9 +656,15 @@ export function runtimeService(
         connecting ||
         recovering ||
         (setupState &&
-          ['verifying', 'extracting', 'creating', 'starting', 'connecting', 'cancelling'].includes(
-            setupState.phase,
-          ))
+          [
+            'downloading',
+            'verifying',
+            'extracting',
+            'creating',
+            'starting',
+            'connecting',
+            'cancelling',
+          ].includes(setupState.phase))
       )
         throw new Error('AGENT_UPDATE_BUSY');
       updating = true;
@@ -570,6 +693,7 @@ export function runtimeService(
       closed = true;
       clearInterval(timer);
       ipcMain.removeHandler('daban:runtime');
+      await component?.close();
       await setup?.close();
       // This cancels only the UI's startup wait; launchd keeps accepted tasks alive.
       await daemon?.close();

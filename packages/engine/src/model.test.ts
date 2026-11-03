@@ -1528,3 +1528,72 @@ test('report verification cannot return private bytes when a checked public file
   await assert.rejects(verifyOutput('a', root));
   assert.equal(replaced, true);
 });
+
+test('enabling Linux retires a native-only SDK context while preserving saved conversation turns', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-execution-context-'));
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+    Response.json({ data: [{ id: 'mock-chat' }] }),
+  );
+  const resumed: string[] = [];
+  class Harness {
+    async start() {}
+    async close() {}
+    session(id = 'mock-native-context') {
+      return { id, run: async () => ({ sessionId: id, finalResponse: 'Synthetic response.' }) };
+    }
+    async resumeSession(id: string) {
+      resumed.push(id);
+      return this.session(id);
+    }
+  }
+  const options = {
+    settings,
+    Harness,
+    workspace: path.join(root, 'workspace'),
+    dir: path.join(root, 'model'),
+    origin: 'http://127.0.0.1:12345',
+  };
+  let models = new ModelRuns({ ...options, nativeOnly: true });
+  try {
+    await settings.configure({
+      revision: 0,
+      requestId: 'mock-config',
+      model: 'provider:mock:mock-chat',
+      apiKey: 'synthetic-key',
+      connection: {
+        id: 'mock',
+        name: 'Synthetic',
+        baseURL: 'https://example.test/v1',
+        models: [
+          {
+            id: 'mock-chat',
+            name: 'Synthetic',
+            vision: false,
+            contextWindow: 64000,
+            maxTokens: 4096,
+          },
+        ],
+      },
+    });
+    await models.profiles.register({
+      id: 'mock-bot',
+      name: 'Synthetic Bot',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+    await models.start('mock-bot', { requestId: 'mock-first', prompt: 'Synthetic first turn.' });
+    await models.jobs.get('mock-bot')!.done;
+    assert.equal(models.jobs.get('mock-bot')!.phase, 'completed');
+    await models.close();
+    models = new ModelRuns({ ...options, nativeOnly: false });
+    await models.start('mock-bot', { requestId: 'mock-second', prompt: 'Synthetic second turn.' });
+    await models.jobs.get('mock-bot')!.done;
+    assert.equal(models.jobs.get('mock-bot')!.phase, 'completed');
+    assert.deepEqual(resumed, []);
+    assert.ok(models.jobs.get('mock-bot')!.prompt?.includes('Synthetic first turn.'));
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

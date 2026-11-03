@@ -9,6 +9,7 @@ import {
   open,
   realpath,
   rename,
+  statfs,
   unlink,
   writeFile,
 } from 'node:fs/promises';
@@ -17,22 +18,11 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
+import { type EnvironmentImage, environmentImage } from '@daban/protocol';
 import type { VmConfig } from './vm.js';
 
-export interface CleanImage {
-  id: string;
-  bytes: number;
-  sha256: string;
-  rawBytes: number;
-  rawSha256: string;
-}
-const clean38: CleanImage = {
-  id: 'daban-38-0b2c13631d754382',
-  bytes: 1243539382,
-  sha256: '0b2c13631d75438214b32ebe5f016b625e27c993d602019b83eee47e044ebde9',
-  rawBytes: 17179869184,
-  rawSha256: 'e74a74239cb93d057b17d9a7c72f4dfd2fcab051a1be052766ed350f6bb62df7',
-};
+export type CleanImage = Omit<EnvironmentImage, 'file' | 'url'>;
+const clean38: CleanImage = environmentImage;
 interface RunOptions {
   env: NodeJS.ProcessEnv;
   timeout: number;
@@ -47,6 +37,7 @@ interface ProvisionDependencies {
   run?: Run;
   progress?: (stage: string, percent?: number) => unknown;
   port?: () => Promise<number>;
+  space?: (directory: string) => Promise<number>;
   image?: CleanImage;
 }
 interface Journal {
@@ -486,6 +477,8 @@ export async function ensureExecutionVm(
     executorArchive: string;
     limactl: string;
     vm?: string;
+    imageSource?: () => Promise<string>;
+    checkpoint?: (phase: string) => Promise<unknown>;
   },
   dependencies: ProvisionDependencies = {},
 ): Promise<VmConfig> {
@@ -604,9 +597,11 @@ export async function ensureExecutionVm(
     return result;
   };
   const phase = async (value: Journal['phase']) => {
+    // Pause before recording mutation intent; a resumed installer must not inherit an unissued create.
+    await options.checkpoint?.(value);
     journal.phase = value;
     await save(journalFile, journal);
-    dependencies.progress?.(value);
+    await dependencies.progress?.(value);
   };
   const list = async () => {
     // Filtered list exits nonzero before first creation; this home is private to exactly one VM.
@@ -708,14 +703,24 @@ export async function ensureExecutionVm(
     // A previous create may still be running. Missing status is never permission to create again.
     if (journal.phase !== 'assets') throw new Error('PROVISION_CREATE_UNCERTAIN');
     const raw = path.join(root, 'system.raw');
-    if (!(await present(raw)))
-      await materializeImage(
-        path.join(options.packDirectory, 'system.raw.gz'),
-        raw,
-        image,
-        (percent) => dependencies.progress?.('image', percent),
+    if (!(await present(raw))) {
+      const available = await (
+        dependencies.space ??
+        (async (directory: string) => {
+          const disk = await statfs(directory);
+          return disk.bavail * disk.bsize;
+        })
+      )(root);
+      // The download, verified raw base and Lima's writable disk coexist during first creation.
+      if (available < image.rawBytes * 2 + image.bytes + 1024 ** 3) throw Error('SETUP_SPACE');
+      const source = options.imageSource
+        ? await options.imageSource()
+        : path.join(options.packDirectory, environmentImage.file);
+      if (!path.isAbsolute(source) || /[\0\r\n]/.test(source)) throw new Error('PROVISION_CONFIG');
+      await materializeImage(source, raw, image, (percent) =>
+        dependencies.progress?.('image', percent),
       );
-    else {
+    } else {
       const actual = await hash(raw);
       if (actual.bytes !== image.rawBytes || actual.sha256 !== image.rawSha256)
         throw new Error('PROVISION_IMAGE_INTEGRITY');

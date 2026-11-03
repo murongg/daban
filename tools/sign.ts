@@ -139,6 +139,7 @@ export async function signApplication(
     seal: (directory: string) => Promise<unknown>;
     run: Run;
   } = { sign, seal: sealHostPackage, run },
+  host = true,
 ) {
   const args = signingArguments(options, appEntitlements);
   await dependencies.sign({
@@ -163,9 +164,50 @@ export async function signApplication(
     optionsForFile: () => ({ entitlements: appEntitlements, hardenedRuntime: true }),
   });
   // Nested signatures change Node/native bytes. Rebuild our host manifest before sealing the outer bundle.
+  if (host) await dependencies.seal(path.join(app, 'Contents/Resources/agent'));
+  await dependencies.run('/usr/bin/codesign', [...args, app]);
+  await dependencies.run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
+}
+export async function signRuntime(
+  app: string,
+  options: Signing,
+  dependencies: { run: Run; seal: (directory: string) => Promise<unknown> } = {
+    run,
+    seal: sealHostPackage,
+  },
+) {
+  const args = signingArguments(options, appEntitlements);
+  const entries = await readdir(app, { recursive: true, withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const file = path.join(entry.parentPath, entry.name),
+      handle = await open(file, 'r');
+    const magic = Buffer.alloc(4);
+    try {
+      await handle.read(magic, 0, 4, 0);
+    } finally {
+      await handle.close();
+    }
+    if (isMachO(magic)) await dependencies.run('/usr/bin/codesign', [...args, file]);
+  }
   await dependencies.seal(path.join(app, 'Contents/Resources/agent'));
   await dependencies.run('/usr/bin/codesign', [...args, app]);
   await dependencies.run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
+}
+export async function signComponent(app: string, archive: string, options: Signing) {
+  await signLima(path.join(app, 'Contents/Resources'), options);
+  await signRuntime(app, options);
+  const temporary = archive + '.submit.zip';
+  try {
+    await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, temporary]);
+    await notarize(temporary, options);
+    await run('/usr/bin/xcrun', ['stapler', 'staple', app]);
+    await run('/usr/bin/xcrun', ['stapler', 'validate', app]);
+    await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
+    await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, archive]);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 async function notarize(file: string, options: Signing) {
   const profile = process.env.MACOS_NOTARY_PROFILE;
@@ -229,10 +271,15 @@ async function main() {
   signingArguments(options);
   assert.ok(process.env.MACOS_NOTARY_PROFILE, 'MACOS_NOTARY_PROFILE_REQUIRED');
   await mkdir(output);
-  console.log('Signing the pinned Lima tools.');
-  await signLima(path.join(app, 'Contents/Resources'), options);
+  const host = await import('node:fs/promises').then((fs) =>
+    fs.access(path.join(app, 'Contents/Resources/agent')).then(
+      () => true,
+      () => false,
+    ),
+  );
+  if (host) await signLima(path.join(app, 'Contents/Resources'), options);
   console.log('Signing nested application code and sealing the host package.');
-  await signApplication(app, options);
+  await signApplication(app, options, undefined, host);
   const version = JSON.parse(
     await readFile(path.join(app, 'Contents/Resources/app/package.json'), 'utf8'),
   ).version;

@@ -11,6 +11,7 @@ import {
   session,
 } from 'electron';
 import { type MessageKey, type Parameters, translate } from '../shared/locale';
+import { Components, readComponentReference } from './components';
 import { LocalComputer } from './local-computer';
 import { localServer } from './local-server';
 import { LocalePreferences } from './locale';
@@ -191,6 +192,27 @@ if (primary) {
           console.error('Local computer bridge unavailable');
         }
       }
+      const reference = await readComponentReference(join(process.resourcesPath, 'runtime.json'));
+      const agentSource = reference
+        ? {
+            runtime: new Components({
+              directory: join(app.getPath('userData'), 'components'),
+              reference,
+              platform: process.platform,
+              arch: process.arch,
+              publisher:
+                process.platform === 'darwin'
+                  ? join(process.resourcesPath, '../..')
+                  : app.getPath('exe'),
+            }),
+          }
+        : {
+            entry: join(agentDirectory, 'main.js'),
+            executable:
+              process.platform === 'win32'
+                ? join(agentDirectory, 'node/node.exe')
+                : join(agentDirectory, 'node/bin/node'),
+          };
       service = runtimeService(
         app.getPath('userData'),
         pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href,
@@ -198,13 +220,7 @@ if (primary) {
           ? join(process.resourcesPath, 'environment')
           : join(__dirname, '..', 'resources/environment'),
         (snapshot, scope) => notifications!.observe(snapshot, scope),
-        {
-          entry: join(agentDirectory, 'main.js'),
-          executable:
-            process.platform === 'win32'
-              ? join(agentDirectory, 'node/node.exe')
-              : join(agentDirectory, 'node/bin/node'),
-        },
+        { ...agentSource, nativeFirst: true },
         localComputer,
       );
       session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>

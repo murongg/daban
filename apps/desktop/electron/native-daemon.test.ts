@@ -64,6 +64,8 @@ it('launches a single native-only agent and closing the client leaves its backgr
     expect(args).toContain('native');
     expect(args).toContain('--mode');
     expect(options.detached).toBe(true);
+    expect(options.cwd).toBe(config.dataRoot);
+    expect(options.env.ELECTRON_RUN_AS_NODE).toBe('1');
     expect(options.windowsHide).toBe(true);
     expect(options.env).not.toHaveProperty('DEEPSEEK_API_KEY');
     await daemon.close();

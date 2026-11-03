@@ -99,6 +99,7 @@ export async function startAgent(options: AgentOptions) {
       dataRoot,
       socketPath,
       identity: {
+        ...options.identity,
         dataRoot: path.resolve(options.dataRoot),
         socketPath: path.resolve(options.socketPath),
       },

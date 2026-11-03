@@ -1365,7 +1365,10 @@ export class ModelRuns {
       job.route = config;
       job.model = config.model;
       job.vision = config.vision;
-      job.binding = config.binding;
+      // Native-only and Linux sessions expose different tools and workspace paths. Keep visible turns, never resume across modes.
+      job.binding = this.tools.options.nativeOnly
+        ? createHash('sha256').update(`${config.binding}:native-workspace`).digest('hex')
+        : config.binding;
       if (!task && !config.vision) throw new Fault('MODEL_COMPUTER_UNSUPPORTED', 400);
       const secrets = [
         ...config.secrets,

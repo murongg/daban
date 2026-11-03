@@ -35,12 +35,12 @@ it('pairs the companion with an ordered live step and distinct completed and wai
   render(<Setup />);
   expect(screen.getByRole('heading', { name: '搭子正在布置工作空间' })).toBeVisible();
   const steps = within(screen.getByRole('list', { name: '安装步骤' })).getAllByRole('listitem');
-  expect(steps).toHaveLength(5);
-  for (const step of steps.slice(0, 3)) expect(step).toHaveTextContent('已完成');
-  expect(steps[3]).toHaveAttribute('aria-current', 'step');
-  expect(steps[3]).toHaveTextContent('启动本地环境');
-  expect(steps[3]).toHaveTextContent('进行中');
-  expect(steps[4]).toHaveTextContent('待执行');
+  expect(steps).toHaveLength(6);
+  for (const step of steps.slice(0, 4)) expect(step).toHaveTextContent('已完成');
+  expect(steps[4]).toHaveAttribute('aria-current', 'step');
+  expect(steps[4]).toHaveTextContent('启动本地环境');
+  expect(steps[4]).toHaveTextContent('进行中');
+  expect(steps[5]).toHaveTextContent('待执行');
   expect(screen.getByRole('status')).toHaveTextContent('启动本地环境');
   expect(document.querySelector('.setup-companion')).toHaveAttribute('data-active', 'true');
 });
@@ -92,4 +92,11 @@ it('offers a language choice before installing Linux without starting setup', as
   mocks.state = { required: true, phase: 'connecting' };
   view.rerender(<Setup />);
   expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent('Connect workspace');
+});
+it('prepares only the Agent base on first use and shows measured component downloads', () => {
+  mocks.state = { required: true, target: 'agent', phase: 'downloading', progress: 32 };
+  render(<Setup />);
+  expect(screen.getByRole('heading', { name: '正在准备 Daban' })).toBeVisible();
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '32');
+  expect(screen.queryByText('准备 Linux 系统')).not.toBeInTheDocument();
 });
