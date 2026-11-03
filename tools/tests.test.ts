@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { runTests } from './tests.ts';
+import { runTests, suites } from './tests.ts';
 
 test('runs compiled unit tests with Vitest and keeps Linux integrations on Node', () => {
   const calls: string[][] = [];
@@ -42,6 +42,44 @@ test('runs the complete runtime suite in its existing stage order', () => {
     'recovery',
   ].entries())
     expect.assert(calls[index * 2].includes(`packages/engine/dist/${name}.test.js`));
+});
+
+test('runs every Linux integration once without repeating completed unit tests', () => {
+  const calls: string[][] = [];
+  expect(
+    runTests('runtime', ['--integration-only', '--test-name-pattern=synthetic'], (args) => {
+      calls.push(args);
+      return { status: 0 };
+    }),
+  ).toBe(0);
+  expect(calls).toHaveLength(5);
+  for (const args of calls) {
+    expect(args.slice(0, 3)).toStrictEqual([
+      '--experimental-sqlite',
+      '--test',
+      '--test-name-pattern=synthetic',
+    ]);
+    expect(args).not.toContain('--integration-only');
+    expect(args.some((arg) => arg.endsWith('.test.js'))).toBe(false);
+  }
+  expect(calls.flatMap((args) => args.filter((arg) => arg.endsWith('.js')))).toStrictEqual(
+    Object.values(suites)
+      .flat()
+      .filter((file) => file.endsWith('.integration'))
+      .map((file) => `packages/engine/dist/${file}.js`),
+  );
+});
+
+test('integration-only execution stops immediately when an integration fails', () => {
+  const calls: string[][] = [];
+  expect(
+    runTests('runtime', ['--integration-only'], (args) => {
+      calls.push(args);
+      return { status: 9 };
+    }),
+  ).toBe(9);
+  expect(calls).toHaveLength(1);
+  expect(calls[0].slice(0, 2)).toStrictEqual(['--experimental-sqlite', '--test']);
 });
 
 test('preserves a failed child exit code and does not run later stages', () => {

@@ -26,11 +26,7 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.22.1'
-          cache: npm
-      - run: npm ci --no-audit --no-fund
+      - uses: ./.github/actions/setup
       - name: Download the sealed credential-free Linux base
         env:
           GH_TOKEN: ${{ github.token }}

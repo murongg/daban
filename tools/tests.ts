@@ -143,6 +143,8 @@ export function runTests(
   execute: Run = (args) => spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit' }),
 ) {
   if (!Object.hasOwn(suites, suite)) throw new Error(`Unknown test suite: ${suite}`);
+  const integrationOnly = extra.includes('--integration-only');
+  const forwarded = extra.filter((arg) => arg !== '--integration-only');
   // Keep the original stage order and stop before starting later stages after a failure.
   const selected =
     suite === 'runtime' ? Object.values(suites) : [suites[suite as keyof typeof suites]];
@@ -153,7 +155,7 @@ export function runTests(
         'run',
         '--project',
         'node',
-        ...extra.map((arg) => arg.replace('--test-name-pattern', '--testNamePattern')),
+        ...forwarded.map((arg) => arg.replace('--test-name-pattern', '--testNamePattern')),
         ...files
           .filter((file) => file.endsWith('.test'))
           .map((file) => `packages/engine/dist/${file}.js`),
@@ -161,13 +163,13 @@ export function runTests(
       [
         '--experimental-sqlite',
         '--test',
-        ...extra,
+        ...forwarded,
         ...files
           .filter((file) => file.endsWith('.integration'))
           .map((file) => `packages/engine/dist/${file}.js`),
       ],
     ];
-    for (const args of commands) {
+    for (const args of integrationOnly ? commands.slice(1) : commands) {
       const result = execute(args);
       if (result.error) throw result.error;
       if (result.status !== 0) return result.status ?? 1;
