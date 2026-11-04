@@ -135,7 +135,7 @@ it('separates current-task purpose consent from allowing once and saving a rule'
   expect(await screen.findByRole('button', { name: '仅允许这一次' })).toBeVisible();
   expect(screen.getByRole('button', { name: '从此次请求创建精确规则' })).toBeVisible();
   const confirm = screen.getByRole('button', { name: '确认当前任务用途并允许' });
-  expect(screen.getByText('请为合成示例记录一个值。')).toBeVisible();
+  expect(within(confirm.closest('article')!).getByText('请为合成示例记录一个值。')).toBeVisible();
   expect(confirm).toHaveAccessibleDescription(/当前任务的这一轮/);
   await userEvent.click(confirm);
   expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({

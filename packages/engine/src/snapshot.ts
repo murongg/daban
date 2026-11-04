@@ -21,6 +21,7 @@ export interface WindowInfo {
   title: string;
 }
 export interface RawModelTask {
+  project?: import('@daban/protocol').ProjectScope;
   goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;

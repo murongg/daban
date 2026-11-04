@@ -1,4 +1,27 @@
 export * from './approval-rules.js';
+
+import {
+  type AutomationCommand,
+  type AutomationNotice,
+  type AutomationSource,
+  type AutomationView,
+  type FileTrigger,
+  isAutomationNotice,
+  isAutomationSource,
+  isAutomationView,
+  isFileTrigger,
+  isMonitorDecision,
+  type MonitorDecision,
+} from './automation.js';
+
+export * from './automation.js';
+
+import { isProjectFileRequest, isProjectScope } from './projects.js';
+
+export * from './projects.js';
+
+import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
+
 export * from './goals.js';
 
 import type {
@@ -1356,6 +1379,7 @@ export function isRunTurn(value: unknown): value is RunTurn {
   );
 }
 export interface RuntimeTask {
+  project?: ProjectScope;
   goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;
@@ -1383,6 +1407,7 @@ export interface RuntimeTask {
   inserts?: RunInsert[];
 }
 export interface RuntimeTaskSummary {
+  project?: ProjectScope;
   elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
@@ -1397,6 +1422,7 @@ export interface RuntimeTaskSummary {
   turns?: RunTurn[];
 }
 export type RuntimeNotice =
+  | AutomationNotice
   | {
       kind: 'task';
       id: string;
@@ -1411,6 +1437,7 @@ export interface RuntimeNoticeStatus {
   error?: string;
 }
 export function isRuntimeNotice(value: unknown): value is RuntimeNotice {
+  if (isAutomationNotice(value)) return true;
   if (
     !profileObject(value) ||
     !validAgentId(value.id) ||
@@ -1552,7 +1579,12 @@ export interface RuntimeSnapshot {
   browsers?: Partial<Record<RuntimeBot, BrowserState>>;
   groups?: { available: boolean; revision: number; items: Group[]; error?: string };
   knowledge?: { available: boolean; revision?: number; error?: string; documentParsing?: boolean };
-  schedules?: { available: boolean; items: Schedule[]; error?: string };
+  schedules?: {
+    available: boolean;
+    items: Schedule[];
+    error?: string;
+    automation?: { changes: boolean; files: boolean; error?: string };
+  };
   interactions?: Interaction[];
   software?: SoftwareState;
   phase: 'connecting' | 'ready' | 'offline' | 'unsupported';
@@ -1592,6 +1624,9 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'frame',
+    'projects.list',
+    'projects.status',
+    'projects.receipt',
     'files.list',
     'files.read',
     'files.download',
@@ -1637,6 +1672,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'group.receipt',
     'schedule.get',
     'schedule.preview',
+    'schedule.receipt',
     'mcp.list',
     'mcp.saved',
     'mcp.catalog',
@@ -1674,6 +1710,7 @@ export interface GroupCopyAck {
 }
 export type GroupCopyReceipt = GroupCopyAck | { request: GroupCopyRequest; state: 'unknown' };
 export interface Group extends GroupInput {
+  project?: ProjectScope;
   archived?: boolean;
   revision: number;
   createdAt: string;
@@ -1951,7 +1988,16 @@ export function isGroup(value: unknown): value is Group {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['id', 'name', 'members', 'revision', 'createdAt', 'updatedAt', 'archived'].includes(key),
+      [
+        'id',
+        'name',
+        'members',
+        'revision',
+        'createdAt',
+        'updatedAt',
+        'archived',
+        'project',
+      ].includes(key),
     ) &&
     isGroupInput({ id: value.id, name: value.name, members: value.members }) &&
     Number.isSafeInteger(value.revision) &&
@@ -1960,7 +2006,8 @@ export function isGroup(value: unknown): value is Group {
     Number.isFinite(Date.parse(value.createdAt)) &&
     typeof value.updatedAt === 'string' &&
     Number.isFinite(Date.parse(value.updatedAt)) &&
-    (value.archived === undefined || typeof value.archived === 'boolean')
+    (value.archived === undefined || typeof value.archived === 'boolean') &&
+    (value.project === undefined || isProjectScope(value.project))
   );
 }
 export function isGroupActionRequest(value: unknown): value is GroupActionRequest {
@@ -2050,6 +2097,7 @@ export function isChatPage(value: unknown): value is ChatPage {
         profileObject(item) &&
         Object.keys(item).every((key) =>
           [
+            'project',
             'chatRevision',
             'runId',
             'requestId',
@@ -2066,6 +2114,7 @@ export function isChatPage(value: unknown): value is ChatPage {
         item.chatRevision === value.revision &&
         validAgentId(item.runId) &&
         validAgentId(item.requestId) &&
+        (item.project === undefined || isProjectScope(item.project)) &&
         typeof item.phase === 'string' &&
         ['completed', 'failed', 'stopped', 'interrupted'].includes(item.phase) &&
         typeof item.prompt === 'string' &&
@@ -3080,6 +3129,7 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
   return value === 'ask' || value === 'auto' || value === 'full';
 }
 export interface TaskRequest {
+  project?: ProjectScope;
   approvalMode?: ApprovalMode;
   chatRevision?: number;
   requestId: string;
@@ -3236,7 +3286,7 @@ export function isAttachmentReceipt(value: unknown): value is AttachmentReceipt 
   const { content, ...ref } = value;
   return isAttachmentRef(ref) && isKnowledgeContent(content) && !!content.trim();
 }
-export interface RuntimeFile {
+export interface RuntimeFile extends ProjectFileRequest {
   path: string;
   name: string;
   size: number;
@@ -3246,7 +3296,8 @@ export interface RuntimeFile {
 export function isRuntimeFileMetadata(value: unknown): value is RuntimeFile {
   return (
     profileObject(value) &&
-    exactKeys(value, ['path', 'name', 'size', 'modified']) &&
+    exactKeys(value, ['path', 'name', 'size', 'modified', 'project', 'task']) &&
+    isProjectFileRequest(value) &&
     typeof value.path === 'string' &&
     value.path.length > 0 &&
     value.path.length <= 512 &&
@@ -3268,7 +3319,8 @@ export interface RuntimeDownload extends Omit<RuntimeFile, 'content'> {
 export function isRuntimeDownload(value: unknown): value is RuntimeDownload {
   return (
     profileObject(value) &&
-    exactKeys(value, ['path', 'name', 'size', 'modified', 'data', 'sha256']) &&
+    exactKeys(value, ['path', 'name', 'size', 'modified', 'data', 'sha256', 'project', 'task']) &&
+    isProjectFileRequest(value) &&
     typeof value.path === 'string' &&
     value.path.length > 0 &&
     value.path.length <= 512 &&
@@ -3501,6 +3553,7 @@ export function isKnowledgeVersion(value: unknown): value is KnowledgeVersion {
   );
 }
 export type ScheduleRule =
+  | FileTrigger
   | { kind: 'every'; everySeconds: number }
   | { kind: 'daily'; time: string; timeZone: string }
   | { kind: 'weekly'; time: string; timeZone: string; weekdays: number[] }
@@ -3516,6 +3569,8 @@ export interface ScheduleInput {
   locked?: boolean;
 }
 export interface ScheduleFiring {
+  source?: AutomationSource;
+  monitor?: MonitorDecision;
   id: string;
   occurrenceAt: string;
   createdAt: string;
@@ -3533,6 +3588,7 @@ export interface ScheduleFiring {
   error?: string;
 }
 export interface Schedule extends ScheduleInput {
+  automation?: AutomationView;
   revision: number;
   enabled: boolean;
   nextRunAt?: string;
@@ -3545,6 +3601,7 @@ export type SchedulePatch = Partial<
 >;
 export function isScheduleRule(value: unknown): value is ScheduleRule {
   if (!profileObject(value)) return false;
+  if (value.kind === 'file') return isFileTrigger(value);
   if (value.kind === 'every')
     return (
       exactKeys(value, ['kind', 'everySeconds']) &&
@@ -3612,8 +3669,20 @@ export function isSchedulePatch(value: unknown): value is SchedulePatch {
 export function isScheduleFiring(item: unknown): item is ScheduleFiring {
   return (
     profileObject(item) &&
-    exactKeys(item, ['id', 'requestId', 'occurrenceAt', 'createdAt', 'state', 'runId', 'error']) &&
+    exactKeys(item, [
+      'id',
+      'requestId',
+      'occurrenceAt',
+      'createdAt',
+      'state',
+      'runId',
+      'error',
+      'source',
+      'monitor',
+    ]) &&
     validAgentId(item.id) &&
+    (item.source === undefined || isAutomationSource(item.source)) &&
+    (item.monitor === undefined || isMonitorDecision(item.monitor)) &&
     boundedText(item.requestId, 100) &&
     [
       'pending',
@@ -3635,9 +3704,10 @@ export function isScheduleFiring(item: unknown): item is ScheduleFiring {
 }
 export function isSchedule(value: unknown): value is Schedule {
   if (!profileObject(value)) return false;
-  const { revision, nextRunAt, createdAt, updatedAt, history, ...input } = value;
+  const { revision, nextRunAt, createdAt, updatedAt, history, automation, ...input } = value;
   return (
     isScheduleInput(input) &&
+    (automation === undefined || isAutomationView(automation)) &&
     typeof value.enabled === 'boolean' &&
     Number.isSafeInteger(revision) &&
     Number(revision) > 0 &&
@@ -3989,6 +4059,8 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
 }
 export type RuntimeCommand =
   | ApprovalRulesCommand
+  | AutomationCommand
+  | ProjectCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4104,9 +4176,9 @@ export type RuntimeCommand =
       instance?: string;
       app: 'terminal' | 'files' | 'editor' | 'browser';
     }
-  | { type: 'files.list' }
-  | { type: 'files.read'; path: string }
-  | { type: 'files.download'; path: string };
+  | ({ type: 'files.list' } & ProjectFileRequest)
+  | ({ type: 'files.read'; path: string } & ProjectFileRequest)
+  | ({ type: 'files.download'; path: string } & ProjectFileRequest);
 export type RuntimeReply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 export interface RuntimeBridge {
   invoke<T = unknown>(command: RuntimeCommand): Promise<RuntimeReply<T>>;

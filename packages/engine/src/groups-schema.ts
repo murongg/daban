@@ -37,6 +37,7 @@ export const groupTurns = sqliteTable(
     created: text().notNull(),
     state: text().notNull(),
     inputs: text().notNull().default('[]'),
+    automation: text(),
   },
   (table) => [primaryKey({ columns: [table.grp, table.id] })],
 );

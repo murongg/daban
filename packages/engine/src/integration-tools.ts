@@ -39,7 +39,9 @@ const text = (value: string, isError = true): ToolResult => ({
 });
 function failure(error: unknown, fallback = 'MCP_CONNECTION_FAILED') {
   const code = errorCode(error) ?? '';
-  return /^(MCP_[A-Z_]+|APPROVAL_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(code)
+  return /^(MCP_[A-Z_]+|PROJECT_[A-Z_]+|APPROVAL_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(
+    code,
+  )
     ? code
     : fallback;
 }
@@ -129,9 +131,9 @@ export class IntegrationTools {
   private async remote(
     config: { endpoint: string; bearer?: string },
     onDispatch?: () => Promise<unknown>,
-    assertAuthority?: () => unknown,
+    authorize?: () => unknown,
   ) {
-    if (this.options.remote) return this.options.remote(config, { onDispatch, assertAuthority });
+    if (this.options.remote) return this.options.remote(config, { onDispatch, authorize });
     let upstream = process.env.DSH_NETWORK_PROXY;
     if (this.options.networkFile)
       try {
@@ -147,7 +149,7 @@ export class IntegrationTools {
       } catch (error) {
         if (errorCode(error) !== 'ENOENT') throw new Fault('MCP_NETWORK_CONFIG');
       }
-    return new McpRemote(config, { upstream, onDispatch, assertAuthority });
+    return new McpRemote(config, { upstream, onDispatch, authorize });
   }
   probe(connection: string, revision: number, caller?: AbortSignal) {
     if (this.closed) return Promise.reject(new Fault('MCP_CLOSED'));
@@ -189,6 +191,7 @@ export class IntegrationTools {
     name: string,
     args: Record<string, unknown>,
     wireId?: string,
+    authorize?: () => unknown,
   ): Promise<ToolResult> {
     try {
       if (this.closed || run.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
@@ -236,6 +239,7 @@ export class IntegrationTools {
         preview,
         id,
         controller,
+        authorize,
       ).finally(() => {
         this.active.delete(id);
       });
@@ -253,6 +257,7 @@ export class IntegrationTools {
     preview: string,
     id: string,
     controller: AbortController,
+    authorize?: () => unknown,
   ): Promise<ToolResult> {
     const signal = AbortSignal.any([run.abort.signal, controller.signal]);
     const approvalId = `mcp-${id.slice(0, 40)}`;
@@ -274,13 +279,18 @@ export class IntegrationTools {
         'ask',
         false,
       );
-      const assertAuthority = () => {
+      const assertPolicy = () => {
+        signal.throwIfAborted();
         if (policyDecision) this.options.policy!.assertCurrent(run, policyDecision);
         if (
           purposeScope &&
           approvalHash(this.options.purposeScope?.(run)) !== approvalHash(purposeScope)
         )
           throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+      };
+      const assertAuthority = () => {
+        authorize?.();
+        assertPolicy();
       };
       assertAuthority();
       if (policyDecision) await this.store.recordDecision(id, policyDecision);
@@ -334,10 +344,12 @@ export class IntegrationTools {
           dispatched = true;
         },
         () => {
+          // Keep the project's conservative unknown receipt if its grant is withdrawn after dispatch was claimed.
+          authorize?.();
           try {
             signal.throwIfAborted();
             this.store.assertLiveNow(run.bot, connection, operation);
-            assertAuthority();
+            assertPolicy();
           } catch (error) {
             dispatched = false;
             throw error;
@@ -352,6 +364,7 @@ export class IntegrationTools {
       }
       await this.store.assertLive(run.bot, connection, operation);
       signal.throwIfAborted();
+      authorize?.();
       const result = toolResult(await remote.call(operation, args, signal), secrets);
       signal.throwIfAborted();
       await this.store.finish(id, { phase: 'settled', result: JSON.stringify(result) });

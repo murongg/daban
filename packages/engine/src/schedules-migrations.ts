@@ -14,4 +14,23 @@ export const migrations: Migration[] = [
     hash: 'ea6e5ab6dd01b9dd6b2b10d05fd06d752b07a99eda98dc7ef4ccedbaaf08700e',
     name: '20261103131203_baseline',
   },
+  {
+    sql: [
+      'CREATE TABLE `automation_events` (\n\t`id` text PRIMARY KEY,\n\t`schedule` text NOT NULL,\n\t`configRevision` integer NOT NULL,\n\t`cursor` integer NOT NULL,\n\t`before` text NOT NULL,\n\t`after` text NOT NULL,\n\t`paths` text NOT NULL,\n\t`observed` text NOT NULL\n) STRICT;\n',
+      '\nCREATE TABLE `automations` (\n\t`schedule` text PRIMARY KEY,\n\t`configRevision` integer NOT NULL,\n\t`policy` text NOT NULL,\n\t`committed` text,\n\t`candidate` text,\n\t`consecutive` integer DEFAULT 0 NOT NULL,\n\t`cursor` integer DEFAULT 0 NOT NULL,\n\t`nextPoll` integer DEFAULT 0 NOT NULL,\n\t`observeError` text,\n\t`resultDigest` text,\n\t`resultError` text,\n\t`noticeRevision` integer DEFAULT 0 NOT NULL,\n\t`notice` text\n) STRICT;\n',
+      '\nALTER TABLE `firings` ADD `source` text;',
+      '\nALTER TABLE `firings` ADD `monitor` text;',
+    ],
+    bps: true,
+    folderMillis: 1793803176000,
+    hash: '933aad11cadb9f52a63f47e7a5004dd6e6a781c22993f36617cf5679e1203422',
+    name: '20261104143936_automation',
+  },
+  {
+    sql: ['ALTER TABLE `firings` ADD `unknownAck` integer DEFAULT 0 NOT NULL;'],
+    bps: true,
+    folderMillis: 1793805251000,
+    hash: '007de955d1533ac622477ad9a9216d2e626c67f8d76114c78394d2cd140a8531',
+    name: '20261104151411_automation-notices',
+  },
 ];

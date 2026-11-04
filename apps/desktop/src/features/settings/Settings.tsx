@@ -26,6 +26,7 @@ import { Integrations } from '../integrations/Integrations';
 import { Models } from '../models/Models';
 import { Notifications } from '../notifications/Notifications';
 import { LinuxSetup } from '../onboarding/LinuxSetup';
+import { Projects } from '../projects/Projects';
 import { AgentUpgradePanel } from './AgentUpgrade';
 import { Language } from './Language';
 import { UpdatesPanel } from './Updates';
@@ -118,6 +119,13 @@ export function Settings({
       icon: Waypoints,
       description: t('settings.connectModelServicesChooseWorkspacePerBot'),
       content: <Models />,
+    },
+    {
+      id: 'projects',
+      label: t('projects.title'),
+      icon: Database,
+      description: t('projects.boundary'),
+      content: <Projects state={state} dispatch={dispatch} />,
     },
     {
       id: 'computer',

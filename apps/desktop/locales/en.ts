@@ -15,7 +15,7 @@ export const english = {
     'Risk review was unavailable or invalid; automatic permission was not granted.',
   'rules.title': 'Approval rules',
   'rules.scopeHint':
-    'Rules apply only to the selected Bot. Project scope requires project service support. Deny takes priority; rules cannot expand tools, file access or control.',
+    'Rules apply only to the selected Bot. Project access still requires its existing grants. Deny takes priority; rules cannot expand tools, file access or control.',
   'rules.new': 'New rule',
   'rules.name': 'Rule name',
   'rules.exactHint':
@@ -87,6 +87,115 @@ export const english = {
   'rules.baselineAllowed': 'The current task’s approval and safety policy applies.',
   'rules.baselineAsked':
     'Existing policy still requires confirmation. An allow rule cannot replace risk or purpose checks.',
+  'automation.acceptedRevision': 'Accepted project grant revision: {0}',
+  'automation.scopeChanged':
+    'The project grant changed. Review and accept its current revision; saving other fields never upgrades the accepted scope.',
+  'automation.acceptScope': 'Accept current project grant',
+  'automation.savedActive': 'Saved. The schedule remains enabled.',
+  'automation.restoreAll': 'Restore standard notifications',
+  'automation.monitorUnavailable':
+    'Scoped result reads are unavailable; monitoring is paused. Update the executor and explicitly reenable, or restore standard notifications.',
+  'automation.deletedRule': 'Deleted rule',
+  'automation.deletedRuleAt': 'Deleted rule · {0}',
+  'automation.pending': 'Unconfirmed executions',
+  'automation.unknownHelp':
+    'These executions may already have produced effects. Checking or acknowledging never reruns them; deleting a rule preserves its original receipt.',
+  'automation.receiptStatus': 'Original execution receipt for {0}: {1}',
+  'automation.newFile': 'New file monitor',
+  'automation.settings': 'Monitoring settings',
+  'automation.title': 'Monitor name',
+  'automation.instructions': 'Saved task instructions',
+  'automation.project': 'Project and grant revision',
+  'automation.selectProject': 'Select an authorized project',
+  'automation.paths': 'Project-relative file paths, one per line',
+  'automation.pollSeconds': 'Polling interval (seconds)',
+  'automation.fileHelp':
+    'Monitor 1–20 explicit files, up to 1 MiB each and 4 MiB total. Two matching initial reads establish the baseline; later stable changes run the task. Polling may miss changes between samples and is not a file audit. Runs may incur model costs.',
+  'automation.filesUnavailable':
+    'File triggers require project authorization and scoped file reads in the execution environment. Ordinary time schedules remain available.',
+  'automation.saveFile': 'Save file monitor',
+  'automation.saved':
+    'Saved paused. Review the configuration and enable it explicitly. Running tasks retain their accepted snapshot.',
+  'automation.changesOnly': 'Notify only when results change',
+  'automation.signalPath': 'Result signal file',
+  'automation.signalHelp':
+    'Use one UTF-8 output file from this run, up to 64 KiB. The first successful result and equal results stay quiet. New failures, recovery and requests for attention still surface. OS delivery is not guaranteed; history and pending notices remain available.',
+  'automation.savePolicy': 'Save monitoring policy',
+  'automation.fileTiming': 'File changes · sample every {0} seconds',
+  'automation.observing':
+    'Baseline established; waiting for stable changes. Locking restricts Bot edits and does not pause observation or execution.',
+  'automation.baselinePending':
+    'Waiting for two matching samples after enabling; initial sampling does not run a task.',
+  'automation.cursors': 'Events {0}–{1}',
+  'automation.checkReceipt': 'Check original run receipt',
+  'automation.ack': 'Acknowledge notice',
+  'automation.noticeChanged': 'Monitoring result changed',
+  'automation.noticeFault': 'Monitor needs attention',
+  'automation.noticeRecovered': 'Monitoring recovered',
+  'automation.noticeBody': 'Open the original schedule, run history and pending notice.',
+  'automation.upgradeRequired': 'Update the execution service to use this monitoring capability.',
+  'automation.signalUnavailable':
+    'Result signal unavailable. Check this run’s output, file size and UTF-8 content. The previous successful baseline is retained.',
+  'automation.filesTooLarge':
+    'Monitored files exceed the 1 MiB per-file or 4 MiB total limit. Adjust the files before retrying.',
+  'automation.readFailed':
+    'File sampling failed. The committed baseline is unchanged; the next poll will retry.',
+  'automation.runFailed': 'The monitoring run failed. Check the original task history.',
+  'automation.result.all': 'Standard notifications',
+  'automation.result.baseline': 'Quiet: initial result baseline',
+  'automation.result.unchanged': 'Quiet: result unchanged',
+  'automation.result.changed': 'Result changed',
+  'automation.result.fault': 'Needs attention',
+  'automation.result.recovered': 'Recovered',
+  'projects.browserScope': 'Linux browser: {0}',
+  'projects.storeUnavailable':
+    'Project storage is unavailable. Original shared tasks and historical receipts remain available; check the environment before retrying project work.',
+  'projects.profileUnavailable':
+    'The browser profile could not be opened. Release its other browser instance or check the environment before retrying.',
+  'projects.browserDisabled': 'Browser access disabled',
+  'projects.legacyFilesLogin': 'Original shared files and website login',
+  'projects.fileMismatch':
+    'This file result belongs to a different project or task. Refresh the selected scope.',
+  'projects.resume': 'Resume original preparation',
+  'projects.title': 'Projects',
+  'projects.name': 'Project name',
+  'projects.create': 'New project',
+  'projects.save': 'Save project',
+  'projects.archive': 'Archive project',
+  'projects.archived': 'Archived',
+  'projects.browser': 'Browser identity',
+  'projects.privateBrowser': 'Private to each Bot',
+  'projects.sharedBrowser': 'Project shared login',
+  'projects.members': 'Explicit project members (up to 16)',
+  'projects.contentFor': 'Content access for {0}',
+  'projects.read': 'Read shared content',
+  'projects.write': 'Read and write shared content',
+  'projects.allowBrowser': 'Allow browser access',
+  'projects.none': 'None',
+  'projects.sharedMembers': 'These members will share website logins: {0}',
+  'projects.confirmShared': 'Confirm sharing browser identity with the authorized members above',
+  'projects.privateOutputs':
+    'Task inputs and outputs stay in a private task directory by default. Only write members can publish to the shared project directory.',
+  'projects.boundary':
+    'Content grants apply to managed file and knowledge ports. Browser identities apply to the managed Linux browser; local desktop grants keep their existing scope. The same Linux environment still shares its system, processes and full access commands; project scopes do not provide OS isolation.',
+  'projects.legacy': 'Original shared environment',
+  'projects.legacyHint':
+    'Existing shared files and logins stay in place. New projects do not copy old logins or private material.',
+  'projects.checkReceipt': 'Check change receipt',
+  'projects.scope': 'Task project scope',
+  'projects.projectFiles': 'Project shared files',
+  'projects.stale': 'This project scope is stale. Select the current revision again.',
+  'projects.busy':
+    'This project is in use. Wait for tasks and approvals; explicitly disconnect the current computer before changing its identity.',
+  'projects.denied': 'Access to this project resource is not authorized.',
+  'projects.preparing': 'Resource preparation is unconfirmed. Check the original change receipt.',
+  'projects.conflict': 'The project revision changed. Refresh before editing again.',
+  'projects.unavailable': 'Update and connect a Linux environment with project scope support.',
+  'projects.filesScope': 'Current file scope: {0}',
+  'projects.refresh': 'Refresh projects',
+  'projects.retry': 'Retry the original request',
+  'projects.unknown': 'No receipt was found. You can explicitly retry the original request.',
+
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',
