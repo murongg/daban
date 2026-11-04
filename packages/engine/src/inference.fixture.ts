@@ -11,7 +11,10 @@ export interface SyntheticRequest {
   messages: unknown[];
   tools?: { function: { name: string } }[];
 }
-export type SyntheticReply = string | { name: string; args: Record<string, unknown> }[];
+export type SyntheticReply =
+  | string
+  | { id?: string; name: string; args: Record<string, unknown> }[]
+  | { status: number; error: { message: string } };
 
 // Real SDK transport with synthetic model responses only; no external provider or user data is used.
 export async function inferenceFixture(
@@ -50,6 +53,11 @@ export async function inferenceFixture(
       res.once('close', () => abort.abort());
       const response = await answer(input, abort.signal);
       if (res.destroyed) return;
+      if (typeof response !== 'string' && !Array.isArray(response)) {
+        res.writeHead(response.status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: response.error }));
+        return;
+      }
       const delta =
         typeof response === 'string'
           ? { role: 'assistant', content: response }
@@ -57,7 +65,7 @@ export async function inferenceFixture(
               role: 'assistant',
               tool_calls: response.map((call, index) => ({
                 index,
-                id: `mock-call-${++calls}`,
+                id: call.id ?? `mock-call-${++calls}`,
                 type: 'function',
                 function: { name: call.name, arguments: JSON.stringify(call.args) },
               })),

@@ -339,3 +339,23 @@ test('legacy continuation history remains explicitly partial and cannot acquire 
       ),
     ).toThrow('BUDGET_HISTORY_UNMETERED');
   }));
+
+test('a repeated opaque tool claim stays idempotent across a ledger restart and cannot extend its cap', async () =>
+  fixture(async (store, _file, open) => {
+    const scope = store.ensure('synthetic-tool-receipt', { ...defaultBudgetPolicy, toolLimit: 1 });
+    store.tool(scope, 'synthetic-registry-execution');
+    store.tool(scope, 'synthetic-registry-execution');
+    expect(store.tools(scope.budgetId)).toBe(1);
+    store.close();
+    const recovered = await open();
+    try {
+      recovered.tool(scope, 'synthetic-registry-execution');
+      expect(recovered.tools(scope.budgetId)).toBe(1);
+      expect(() => recovered.tool(scope, 'synthetic-distinct-execution')).toThrow(
+        'BUDGET_TOOL_LIMIT',
+      );
+      expect(recovered.tools(scope.budgetId)).toBe(1);
+    } finally {
+      recovered.close();
+    }
+  }));

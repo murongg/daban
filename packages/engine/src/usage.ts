@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { BudgetScope, ModelApi, TokenUsage, UsagePurpose } from '@daban/protocol';
 import { type BridgeConfig, BridgeRejected, callBridge, callBudgetBridge } from './bridge.js';
 import { inferenceUsage } from './inference.js';
+import { cacheFetch } from './prompt-cache.js';
 
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
@@ -197,6 +198,7 @@ interface Context {
   effect(factory: () => () => Promise<unknown>): unknown;
 }
 export interface UsageConfig extends BridgeConfig {
+  cacheKey?: string;
   scope: BudgetScope;
   runId: string;
   modelAttemptId: string;
@@ -223,7 +225,7 @@ export function apply(ctx: Context, config: UsageConfig) {
       : config.api === 'anthropic-messages'
         ? '/v1/messages'
         : '/chat/completions');
-  const wrapped = usageFetch(
+  const metered = usageFetch(
     {
       api: config.api,
       begin: async (request) => {
@@ -292,6 +294,20 @@ export function apply(ctx: Context, config: UsageConfig) {
     },
     previous,
   );
+  if (config.cacheKey !== undefined && !/^daban-[a-f0-9]{48}$/.test(config.cacheKey))
+    throw new Error('INVALID_PROMPT_CACHE_ID');
+  const wrapped =
+    config.cacheKey === undefined
+      ? metered
+      : cacheFetch(
+          {
+            api: config.api,
+            baseURL: config.baseURL,
+            model: config.model,
+            key: config.cacheKey,
+          },
+          metered,
+        );
   globalThis.fetch = wrapped;
   ctx.on('llm/stream', async function* (options, next) {
     if (options.model !== config.model || options.provider !== config.provider)
@@ -337,13 +353,30 @@ export function usagePatch(patch: readonly unknown[], config?: UsageConfig) {
     );
     const index = entries.findIndex((entry) => object(entry) && entry.id === 'daban-prompt-cache');
     const at = Math.max(index, 0);
-    // Meter below cacheFetch: its unsupported-parameter downgrade is a second actual provider send.
+    const cache = entries[index];
+    let cacheKey: string | undefined;
+    if (object(cache)) {
+      if (
+        !object(cache.config) ||
+        typeof cache.config.key !== 'string' ||
+        cache.config.api !== config.api ||
+        cache.config.baseURL !== config.baseURL ||
+        cache.config.model !== config.model
+      )
+        throw new Error('INVALID_PROMPT_CACHE_CONFIG');
+      cacheKey = cache.config.key;
+    }
+    // SDK plugin loading does not serialize global fetch wrappers. One owner composes cache downgrade above metering.
     return {
       ...item,
       insert: [
         ...entries.slice(0, at),
-        { id: 'usage-bridge', name: new URL('./usage.js', import.meta.url).href, config },
-        ...entries.slice(at),
+        {
+          id: 'usage-bridge',
+          name: new URL('./usage.js', import.meta.url).href,
+          config: { ...config, ...(cacheKey === undefined ? {} : { cacheKey }) },
+        },
+        ...entries.slice(index < 0 ? at : at + 1),
       ],
     };
   });

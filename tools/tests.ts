@@ -74,6 +74,7 @@ export const suites = {
     'budgets-groups.test',
     'budget-goals.test',
     'budget-goals-loop.test',
+    'budget-tools-loop.test',
     'goals-loop.test',
     'delegation-loop.test',
     'budget-goals-groups.test',

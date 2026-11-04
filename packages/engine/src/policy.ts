@@ -5,6 +5,7 @@ import { type BridgeConfig, callBridge } from './bridge.js';
 export const name = 'daban-budget';
 export const inject = ['tools', 'approval', 'agents'];
 interface Execution {
+  readonly token?: symbol;
   signal: AbortSignal;
   name: string;
   arguments: unknown;
@@ -64,19 +65,20 @@ export function apply(
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
   let calls = 0;
-  const internalIds = new WeakMap<Execution, string>();
+  const executions = new Map<symbol, string>();
   // Search authority belongs to this accepted run and must not survive SDK session resumes.
   const urls = new Set(config.urls);
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
   ctx.on('tools/pre-execute', async (exec: Execution, next: () => Promise<unknown>) => {
     if (exec.signal.aborted) return { kind: 'cancel' };
-    const callId = exec.callId ?? internalIds.get(exec) ?? randomUUID();
-    if (!exec.callId) internalIds.set(exec, callId);
+    // Provider call IDs repeat across responses and children. The SDK registry owns this token for one execution.
+    let executionId = typeof exec.token === 'symbol' ? executions.get(exec.token) : undefined;
     const dispatch = async () => {
       if (config.budget) {
         try {
           const roots = ctx.agents?.roots();
-          if (!config.url || roots?.length !== 1) throw new Error('BUDGET_OWNER_UNAVAILABLE');
+          if (!config.url || roots?.length !== 1 || !executionId)
+            throw new Error('BUDGET_OWNER_UNAVAILABLE');
           const result = await callBridge(
             { ...config, url: config.url },
             'budget.tool',
@@ -84,7 +86,7 @@ export function apply(
               scope: config.budget,
               modelAttemptId: config.attemptId,
               sessionId: roots[0].session.id,
-              callId,
+              callId: executionId,
             },
             exec.signal,
           );
@@ -132,12 +134,20 @@ export function apply(
         };
       }
     }
-    if (++calls > config.limit)
-      return {
-        kind: 'deny',
-        reason: 'TOOL_LIMIT',
-        info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
-      };
+    if (!executionId) {
+      if (calls >= config.limit)
+        return {
+          kind: 'deny',
+          reason: 'TOOL_LIMIT',
+          info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
+        };
+      calls++;
+      // A lost Host acknowledgement can retry this token, but cannot consume another local or shared claim.
+      if (typeof exec.token === 'symbol') {
+        executionId = randomUUID();
+        executions.set(exec.token, executionId);
+      }
+    }
     if (
       ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete'].includes(exec.name)
     )
