@@ -7,6 +7,7 @@ import {
   ListBoxItem,
   Popover,
   SelectValue,
+  Text,
 } from 'react-aria-components';
 import { t, useLocale } from '../../i18n/locale';
 import './controls.css';
@@ -14,6 +15,7 @@ import './controls.css';
 export interface SelectOption {
   value: string;
   label: string;
+  description?: string;
   disabled?: boolean;
   icon?: ReactNode;
   detail?: ReactNode;
@@ -65,7 +67,12 @@ export function Select({
           {({ selectedText }) => (
             <span className="select-label">
               {selected?.icon}
-              <span className="select-text">{selectedText || t('select.selectOption')}</span>
+              <span className="select-copy">
+                <span className="select-text">{selectedText || t('select.selectOption')}</span>
+                {selected?.description && (
+                  <span className="select-description">{selected.description}</span>
+                )}
+              </span>
               {selected?.detail && <span className="select-detail">{selected.detail}</span>}
             </span>
           )}
@@ -90,7 +97,21 @@ export function Select({
             >
               <span className="select-label">
                 {option.icon}
-                <span className="select-text">{option.label}</span>
+                <span className="select-copy">
+                  {/* Without a separate description, rich detail content remains part of the option name. */}
+                  {option.description ? (
+                    <Text slot="label" className="select-text">
+                      {option.label}
+                    </Text>
+                  ) : (
+                    <span className="select-text">{option.label}</span>
+                  )}
+                  {option.description && (
+                    <Text slot="description" className="select-description">
+                      {option.description}
+                    </Text>
+                  )}
+                </span>
                 {option.detail && <span className="select-detail">{option.detail}</span>}
               </span>
               <Check aria-hidden="true" />

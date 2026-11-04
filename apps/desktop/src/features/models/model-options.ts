@@ -49,7 +49,8 @@ export function modelChoices(connections?: ModelConnection[], selected?: string)
       : connections.flatMap((connection) =>
           connection.models.map((model) => ({
             value: modelReference(connection.id, model.id),
-            label: `${connection.name} · ${model.name}`,
+            label: model.name,
+            description: connection.name,
             disabled: false,
             icon: createElement(ModelIcon, {
               id: model.id,

@@ -9,6 +9,29 @@ import { useDialogMotion } from './motion';
 // A closed native disclosure is still keyboard-focusable; result readers must not trap Tab before it.
 const focusable =
   'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], details > summary, [tabindex="0"]';
+function visible(element: HTMLElement) {
+  if (element.closest('[hidden], [aria-hidden="true"], [inert]')) return false;
+  const visibility = getComputedStyle(element).visibility;
+  if (visibility === 'hidden' || visibility === 'collapse') return false;
+  for (let ancestor: HTMLElement | null = element; ancestor; ancestor = ancestor.parentElement) {
+    if (getComputedStyle(ancestor).display === 'none') return false;
+    // Closed details expose only their first summary, even though descendants still match selectors.
+    if (ancestor instanceof HTMLDetailsElement && !ancestor.open) {
+      const summary = Array.from(ancestor.children).find((child) => child.tagName === 'SUMMARY');
+      if (!summary?.contains(element)) return false;
+    }
+  }
+  return true;
+}
+function tabStops(element: HTMLElement | null) {
+  return Array.from(element?.querySelectorAll<HTMLElement>(focusable) || []).filter(
+    // Custom controls retain hidden native form inputs; those must never become Tab endpoints.
+    (item) =>
+      visible(item) &&
+      !item.matches('input[type="hidden"]') &&
+      !(item.hasAttribute('tabindex') && item.tabIndex < 0),
+  );
+}
 const topDialog = (exclude?: HTMLElement | null) =>
   Array.from(document.querySelectorAll<HTMLElement>('[data-daban-dialog]'))
     .filter((element) => element !== exclude)
@@ -22,6 +45,7 @@ export function Dialog({
   className = '',
   active = true,
   motion = false,
+  closeDisabled = false,
 }: {
   title: string;
   onClose: () => unknown;
@@ -30,12 +54,16 @@ export function Dialog({
   className?: string;
   active?: boolean;
   motion?: boolean;
+  closeDisabled?: boolean;
 }) {
   useLocale();
   const label = useId();
   const ref = useRef<HTMLDivElement>(null);
   const backdrop = useRef<HTMLDivElement>(null);
-  const dismiss = useDialogMotion(ref, backdrop, motion, active, onClose);
+  const animateDismiss = useDialogMotion(ref, backdrop, motion, active, onClose);
+  const dismiss = useCallback(() => {
+    if (!closeDisabled) animateDismiss();
+  }, [closeDisabled, animateDismiss]);
   const previous = useRef<HTMLElement | null>(null);
   const attach = useCallback((element: HTMLDivElement | null) => {
     ref.current = element;
@@ -50,10 +78,8 @@ export function Dialog({
     const root = document.getElementById('root');
     if (root) root.inert = true;
     const element = ref.current;
-    (
-      element?.querySelector<HTMLElement>('[data-autofocus]') ||
-      element?.querySelector<HTMLElement>(focusable)
-    )?.focus();
+    const autofocus = element?.querySelector<HTMLElement>('[data-autofocus]');
+    (autofocus && visible(autofocus) ? autofocus : tabStops(element)[0])?.focus();
     function handle(event: KeyboardEvent) {
       if (topDialog() !== element) return;
       // Portalled controls own their keyboard layer until their popup has closed.
@@ -71,14 +97,7 @@ export function Dialog({
         close.current();
       }
       if (event.key !== 'Tab') return;
-      const items = Array.from(element?.querySelectorAll<HTMLElement>(focusable) || []).filter(
-        // Custom controls retain hidden native form inputs; those must never become Tab endpoints.
-        (el) =>
-          !el.hidden &&
-          !el.closest('[hidden], [aria-hidden="true"], [inert]') &&
-          !el.matches('input[type="hidden"]') &&
-          !(el.hasAttribute('tabindex') && el.tabIndex < 0),
-      );
+      const items = tabStops(element);
       const first = items[0],
         last = items.at(-1);
       if (event.shiftKey && document.activeElement === first) {
@@ -111,11 +130,7 @@ export function Dialog({
         )
           next.current = target;
       }
-      if (
-        target?.isConnected &&
-        !target.closest('[hidden], [inert], [aria-hidden="true"]') &&
-        (!remaining || remaining.contains(target))
-      )
+      if (target?.isConnected && visible(target) && (!remaining || remaining.contains(target)))
         target.focus();
     };
   }, [active]);
@@ -144,7 +159,7 @@ export function Dialog({
       >
         <header className="dialog-header">
           <h2 id={label}>{title}</h2>
-          <IconButton label={t('dialog.closeDialog')} onClick={dismiss}>
+          <IconButton label={t('dialog.closeDialog')} onClick={dismiss} disabled={closeDisabled}>
             <X />
           </IconButton>
         </header>

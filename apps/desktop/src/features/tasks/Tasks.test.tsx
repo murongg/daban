@@ -170,6 +170,27 @@ function connect(records: WorkItem[] = [], protocol = 36) {
 const tasks = async () =>
   userEvent.click(await screen.findByRole('button', { name: /^任务(?:\s|$)/ }));
 
+it('expands task details without losing the current edits or changing the saved layout', async () => {
+  const live = connect([item('mock-expand', '合成展开任务')]);
+  render(<App />);
+  await tasks();
+  await userEvent.click(await screen.findByRole('button', { name: '查看 合成展开任务' }));
+  const description = await screen.findByRole('textbox', { name: '任务说明' });
+  await userEvent.type(description, ' MOCK UNSAVED EXPANSION');
+  await userEvent.click(screen.getByRole('button', { name: '展开任务详情' }));
+  expect(screen.getByRole('button', { name: '收起任务详情' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(description.closest('.work-layout')).toHaveClass('editor-expanded');
+  expect(description).toHaveValue('MOCK SHARED DETAIL MOCK UNSAVED EXPANSION');
+  expect(restore(localStorage.getItem(storageKey)).work?.mode).toBe('list');
+  await userEvent.click(screen.getByRole('button', { name: '收起任务详情' }));
+  expect(description.closest('.work-layout')).not.toHaveClass('editor-expanded');
+  expect(description).toHaveValue('MOCK SHARED DETAIL MOCK UNSAVED EXPANSION');
+  expect(live.write).not.toHaveBeenCalled();
+});
+
 it('browses shared tasks in list and board without starting work or changing a conversation draft', async () => {
   const live = connect([
     item('mock-todo', '合成待办甲'),

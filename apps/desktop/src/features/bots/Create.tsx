@@ -1,5 +1,6 @@
 import { agentId, type BotProfileInput, type GroupInput, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
+import { Tab, TabList, TabPanel, Tabs } from 'react-aria-components';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, Color, State } from '../../app/state';
 import { Select } from '../../components/controls/Select';
@@ -60,235 +61,230 @@ export function Create({
   return (
     <>
       <p className="dialog-description">{t('create.nameDescribeWhatWantWorkTogether')}</p>
-      <div className="form-tabs" role="tablist" aria-label={t('create.creationType')}>
-        <button
-          type="button"
-          role="tab"
-          disabled={saving}
-          aria-selected={!isGroup}
-          onClick={() => {
-            setGroup(false);
-            setError('');
-          }}
-        >
-          {t('common.newBot')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          disabled={saving}
-          aria-selected={isGroup}
-          onClick={() => {
-            setGroup(true);
-            setError('');
-          }}
-        >
-          {t('common.createGroup')}
-        </button>
-        {onImport && (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={false}
-            disabled={
-              saving ||
-              !runtime.enabled ||
-              runtime.snapshot.phase !== 'ready' ||
-              runtime.snapshot.protocolVersion < 27
-            }
-            onClick={onImport}
-          >
-            {t('create.importFile')}
-          </button>
-        )}
-      </div>
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (!name.trim()) {
-            setError(t('create.enterName'));
-            return;
-          }
-          if (isGroup && (members.length < 2 || members.length > 8)) {
-            setError(t('create.selectBotsGroup'));
-            return;
-          }
-          if (saving) return;
-          setSaving(true);
+      <Tabs
+        selectedKey={isGroup ? 'group' : 'bot'}
+        onSelectionChange={(key) => {
+          setGroup(key === 'group');
           setError('');
-          try {
-            if (isGroup) {
-              if (runtime.enabled && runtime.snapshot.protocolVersion < 15)
-                throw new Error('RUNTIME_TOO_OLD');
-              await persistGroup?.({ id, name: name.trim(), members: members.map(agentId) });
-            }
-            if (!isGroup)
-              await persist?.({
-                id,
-                name: name.trim(),
-                instructions: role.trim(),
-                memory: '',
-                color,
-                ...(isModelId(model) ? { model } : {}),
-              });
-            if (!mounted.current) return;
-            dispatch({
-              type: 'create',
-              id,
-              name,
-              role,
-              color,
-              ...(isGroup ? { members } : {}),
-              ...(!isGroup && isModelId(model) ? { model } : {}),
-            });
-            dispatch({ type: 'select', bot: id });
-            close();
-            notify(isGroup ? t('create.groupCreated') : t('create.botCreatedCanStartChatting'));
-          } catch (error) {
-            if (mounted.current) setError(runtimeError(error));
-          } finally {
-            if (mounted.current) setSaving(false);
-          }
         }}
       >
-        <div className="form-stack">
-          <label className="field-label">
-            {t('common.name')}
-            <input
-              className="field"
-              data-autofocus
-              aria-label={t('common.name')}
-              disabled={saving}
-              required
-              value={name}
-              maxLength={30}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={
-                isGroup
-                  ? t('create.examplePrepareLaunchTogether')
-                  : t('create.exampleMyResearchCompanion')
+        <div className="form-tabs">
+          <TabList className="creation-tablist" aria-label={t('create.creationType')}>
+            <Tab id="bot" isDisabled={saving}>
+              {t('common.newBot')}
+            </Tab>
+            <Tab id="group" isDisabled={saving}>
+              {t('common.createGroup')}
+            </Tab>
+          </TabList>
+          {onImport && (
+            <button
+              type="button"
+              className="creation-import"
+              disabled={
+                saving ||
+                !runtime.enabled ||
+                runtime.snapshot.phase !== 'ready' ||
+                runtime.snapshot.protocolVersion < 27
               }
-            />
-          </label>
-          {isGroup ? (
-            <div className="field-label">
-              <span>{t('create.groupMembers')}</span>
-              <span className="field-help">{t('create.eachBotKeepsOwnComputerWorkMemory')}</span>
-              <div className="member-choices">
-                {state.bots
-                  .filter((b) => !b.members && !b.archived)
-                  .map((bot) => (
-                    <label className="member-choice" key={bot.id}>
-                      <Avatar bot={bot} />
-                      <span>{bot.name}</span>
-                      <input
-                        type="checkbox"
-                        disabled={saving}
-                        aria-label={t('common.choose', { 0: bot.name })}
-                        checked={members.includes(bot.id)}
-                        onChange={(e) =>
-                          setMembers((prev) =>
-                            e.target.checked
-                              ? [...prev, bot.id]
-                              : prev.filter((id) => id !== bot.id),
-                          )
-                        }
-                      />
-                    </label>
-                  ))}
-              </div>
-            </div>
-          ) : (
-            <>
+              onClick={onImport}
+            >
+              {t('create.importFile')}
+            </button>
+          )}
+        </div>
+        {/* TabPanel IDs are stable per instance; switching type needs the matching panel identity. */}
+        <TabPanel key={isGroup ? 'group' : 'bot'} id={isGroup ? 'group' : 'bot'}>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!name.trim()) {
+                setError(t('create.enterName'));
+                return;
+              }
+              if (isGroup && (members.length < 2 || members.length > 8)) {
+                setError(t('create.selectBotsGroup'));
+                return;
+              }
+              if (saving) return;
+              setSaving(true);
+              setError('');
+              try {
+                if (isGroup) {
+                  if (runtime.enabled && runtime.snapshot.protocolVersion < 15)
+                    throw new Error('RUNTIME_TOO_OLD');
+                  await persistGroup?.({ id, name: name.trim(), members: members.map(agentId) });
+                }
+                if (!isGroup)
+                  await persist?.({
+                    id,
+                    name: name.trim(),
+                    instructions: role.trim(),
+                    memory: '',
+                    color,
+                    ...(isModelId(model) ? { model } : {}),
+                  });
+                if (!mounted.current) return;
+                dispatch({
+                  type: 'create',
+                  id,
+                  name,
+                  role,
+                  color,
+                  ...(isGroup ? { members } : {}),
+                  ...(!isGroup && isModelId(model) ? { model } : {}),
+                });
+                dispatch({ type: 'select', bot: id });
+                close();
+                notify(isGroup ? t('create.groupCreated') : t('create.botCreatedCanStartChatting'));
+              } catch (error) {
+                if (mounted.current) setError(runtimeError(error));
+              } finally {
+                if (mounted.current) setSaving(false);
+              }
+            }}
+          >
+            <div className="form-stack">
               <label className="field-label">
-                {t('common.role')}
-                <textarea
+                {t('common.name')}
+                <input
                   className="field"
-                  aria-label={t('common.role')}
+                  data-autofocus
+                  aria-label={t('common.name')}
                   disabled={saving}
-                  rows={3}
-                  maxLength={4000}
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  placeholder={t('create.exampleFindSourcesOrganizeEvidenceBasedConclusions')}
+                  required
+                  value={name}
+                  maxLength={30}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={
+                    isGroup
+                      ? t('create.examplePrepareLaunchTogether')
+                      : t('create.exampleMyResearchCompanion')
+                  }
                 />
-                <span className="field-help">
-                  {t('create.canAddMoreInstructionsConversationLater')}
-                </span>
               </label>
-              <div className="field-label">
-                <span>{t('create.chooseColor')}</span>
-                <fieldset className="avatar-choices" aria-label={t('create.botColor')}>
-                  {(Object.keys(colors) as Color[]).map((value) => (
-                    <button
-                      type="button"
-                      className="avatar-choice"
+              {isGroup ? (
+                <div className="field-label">
+                  <span>{t('create.groupMembers')}</span>
+                  <span className="field-help">
+                    {t('create.eachBotKeepsOwnComputerWorkMemory')}
+                  </span>
+                  <div className="member-choices">
+                    {state.bots
+                      .filter((b) => !b.members && !b.archived)
+                      .map((bot) => (
+                        <label className="member-choice" key={bot.id}>
+                          <Avatar bot={bot} />
+                          <span>{bot.name}</span>
+                          <input
+                            type="checkbox"
+                            disabled={saving}
+                            aria-label={t('common.choose', { 0: bot.name })}
+                            checked={members.includes(bot.id)}
+                            onChange={(e) =>
+                              setMembers((prev) =>
+                                e.target.checked
+                                  ? [...prev, bot.id]
+                                  : prev.filter((id) => id !== bot.id),
+                              )
+                            }
+                          />
+                        </label>
+                      ))}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <label className="field-label">
+                    {t('common.role')}
+                    <textarea
+                      className="field"
+                      aria-label={t('common.role')}
                       disabled={saving}
-                      aria-label={t(colorNames[value])}
-                      aria-pressed={color === value}
-                      key={value}
-                      onClick={() => setColor(value)}
-                    >
-                      <Avatar bot={{ color: value }} />
-                    </button>
-                  ))}
-                </fieldset>
-              </div>
-              <div className="field-label">
-                {t('common.modelBot')}
-                <Select
-                  label={t('common.modelBot')}
-                  value={model}
-                  disabled={saving || !modelsAvailable}
-                  onValueChange={setModel}
-                  options={[
-                    {
-                      value: '',
-                      icon: modelIcon(
-                        runtime.snapshot.model.model,
-                        runtime.snapshot.model.connections,
-                      ),
-                      detail: modelInputs(
-                        runtime.snapshot.model.model,
-                        runtime.snapshot.model.connections,
-                      ),
-                      label: t('common.followNamedWorkspace', {
-                        0: modelName(
-                          runtime.snapshot.model.model,
-                          runtime.snapshot.model.connections,
-                        ),
-                      }),
-                    },
-                    ...modelChoices(runtime.snapshot.model.connections, model),
-                  ]}
-                />
-                <span className="field-help">
-                  {runtime.snapshot.protocolVersion >= 16
-                    ? t('create.usesSelectedProviderConnectionFullScreenObservation')
-                    : t('create.usesConfiguredWorkspaceConnectionCanChangeBot')}
-                </span>
-              </div>
-            </>
-          )}
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
-        <div className="dialog-actions">
-          <button className="text-button" type="button" onClick={close}>
-            {t('common.cancel')}
-          </button>
-          <button className="primary" type="submit" disabled={saving}>
-            {saving
-              ? t('create.creating')
-              : isGroup
-                ? t('common.createGroup')
-                : t('create.createBot')}
-          </button>
-        </div>
-      </form>
+                      rows={3}
+                      maxLength={4000}
+                      value={role}
+                      onChange={(e) => setRole(e.target.value)}
+                      placeholder={t('create.exampleFindSourcesOrganizeEvidenceBasedConclusions')}
+                    />
+                    <span className="field-help">
+                      {t('create.canAddMoreInstructionsConversationLater')}
+                    </span>
+                  </label>
+                  <div className="field-label">
+                    <span>{t('create.chooseColor')}</span>
+                    <fieldset className="avatar-choices" aria-label={t('create.botColor')}>
+                      {(Object.keys(colors) as Color[]).map((value) => (
+                        <button
+                          type="button"
+                          className="avatar-choice"
+                          disabled={saving}
+                          aria-label={t(colorNames[value])}
+                          aria-pressed={color === value}
+                          key={value}
+                          onClick={() => setColor(value)}
+                        >
+                          <Avatar bot={{ color: value }} />
+                        </button>
+                      ))}
+                    </fieldset>
+                  </div>
+                  <div className="field-label">
+                    {t('common.modelBot')}
+                    <Select
+                      label={t('common.modelBot')}
+                      value={model}
+                      disabled={saving || !modelsAvailable}
+                      onValueChange={setModel}
+                      options={[
+                        {
+                          value: '',
+                          icon: modelIcon(
+                            runtime.snapshot.model.model,
+                            runtime.snapshot.model.connections,
+                          ),
+                          detail: modelInputs(
+                            runtime.snapshot.model.model,
+                            runtime.snapshot.model.connections,
+                          ),
+                          label: modelName(
+                            runtime.snapshot.model.model,
+                            runtime.snapshot.model.connections,
+                          ),
+                          description: t('common.followWorkspace'),
+                        },
+                        ...modelChoices(runtime.snapshot.model.connections, model),
+                      ]}
+                    />
+                    <span className="field-help">
+                      {runtime.snapshot.protocolVersion >= 16
+                        ? t('create.usesSelectedProviderConnectionFullScreenObservation')
+                        : t('create.usesConfiguredWorkspaceConnectionCanChangeBot')}
+                    </span>
+                  </div>
+                </>
+              )}
+              {error && (
+                <p className="form-error" role="alert">
+                  {error}
+                </p>
+              )}
+            </div>
+            <div className="dialog-actions">
+              <button className="text-button" type="button" onClick={close}>
+                {t('common.cancel')}
+              </button>
+              <button className="primary" type="submit" disabled={saving}>
+                {saving
+                  ? t('create.creating')
+                  : isGroup
+                    ? t('common.createGroup')
+                    : t('create.createBot')}
+              </button>
+            </div>
+          </form>
+        </TabPanel>
+      </Tabs>
     </>
   );
 }

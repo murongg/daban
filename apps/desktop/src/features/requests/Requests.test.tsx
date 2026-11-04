@@ -19,6 +19,37 @@ import { App } from '../../app/App';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
 
+it('navigates inbox filters with arrow, Home and End keys and linked tab panels', async () => {
+  connect();
+  render(<App />);
+  await screen.findByText('等待你的回复');
+  await userEvent.click(screen.getByRole('button', { name: /收件箱/ }));
+  const list = screen.getByRole('tablist', { name: '收件箱筛选' });
+  const pending = within(list).getByRole('tab', { name: /待处理/ });
+  const done = within(list).getByRole('tab', { name: '已处理' });
+  expect(pending).toHaveAttribute('tabindex', '0');
+  expect(done).toHaveAttribute('tabindex', '-1');
+  pending.focus();
+  await userEvent.keyboard('{ArrowRight}');
+  expect(done).toHaveFocus();
+  expect(done).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('tabpanel', { name: '已处理' })).toHaveAttribute(
+    'id',
+    done.getAttribute('aria-controls'),
+  );
+  expect(screen.getByText('还没有处理记录')).toBeVisible();
+  await userEvent.keyboard('{Home}');
+  expect(pending).toHaveFocus();
+  expect(screen.getByRole('tabpanel', { name: /待处理/ })).toHaveAttribute(
+    'aria-labelledby',
+    pending.id,
+  );
+  await userEvent.keyboard('{ArrowLeft}');
+  expect(done).toHaveFocus();
+  await userEvent.keyboard('{Home}{End}');
+  expect(done).toHaveFocus();
+});
+
 it('shows the exact external connection, tool and argument preview before a scoped one-time approval', async () => {
   const request = {
     ...base,

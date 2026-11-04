@@ -9,6 +9,7 @@ import {
   Folder,
   Info,
   Maximize2,
+  Minimize2,
   Monitor,
   Plus,
   RotateCcw,
@@ -31,7 +32,7 @@ import { Knowledge } from '../features/knowledge/Knowledge';
 import { MemoryHistory } from '../features/memory/MemoryHistory';
 import { Notes } from '../features/notes/Notes';
 import { Schedules } from '../features/schedules/Schedules';
-import { t, useLocale } from '../i18n/locale';
+import { type MessageKey, t, useLocale } from '../i18n/locale';
 import { profileInput } from './profiles';
 import { runtimeError, useRuntime } from './Runtime';
 import {
@@ -61,6 +62,7 @@ export function Workspace({
   expand,
   openMember,
   onRecovery,
+  readOnly = false,
 }: {
   state: State;
   bot: Bot;
@@ -70,9 +72,22 @@ export function Workspace({
   expand: (view: ComputerSurface) => unknown;
   openMember?: (id: string) => unknown;
   onRecovery?: () => unknown;
+  readOnly?: boolean;
 }) {
   useLocale();
   const runtime = useRuntime();
+  const [expandedBot, setExpandedBot] = useState<string>();
+  const expanded = expandedBot === bot.id;
+  const restricted = (id: string) => readOnly && !['computer', 'files', 'notes'].includes(id);
+  const purposes: Record<Panel, MessageKey> = {
+    computer: 'workspace.computerPurpose',
+    files: 'workspace.filesPurpose',
+    knowledge: 'workspace.documentsPurpose',
+    skills: 'workspace.skillsPurpose',
+    memory: 'workspace.memoryPurpose',
+    notes: 'workspace.notesPurpose',
+    routines: 'workspace.schedulesPurpose',
+  };
   const tabs = bot.members
     ? allTabs.filter(([id]) => id === 'computer' || id === 'files')
     : allTabs;
@@ -106,18 +121,21 @@ export function Workspace({
   const human = state.controls[bot.id] === 'human';
   const memory = state.memoryDrafts[bot.id];
   function changeTab(panel: Panel) {
+    if (!panel || restricted(panel)) return;
     dispatch({ type: 'panel', panel });
   }
   function keyTab(e: KeyboardEvent, index: number) {
-    let next = index;
-    if (e.key === 'ArrowRight') next = (index + 1) % tabs.length;
-    else if (e.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+    const enabled = tabs.filter(([id]) => !restricted(id));
+    const current = enabled.findIndex(([id]) => id === tabs[index][0]);
+    let next = current;
+    if (e.key === 'ArrowRight') next = (current + 1) % enabled.length;
+    else if (e.key === 'ArrowLeft') next = (current + enabled.length - 1) % enabled.length;
     else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = tabs.length - 1;
+    else if (e.key === 'End') next = enabled.length - 1;
     else return;
     e.preventDefault();
-    changeTab(tabs[next][0]);
-    document.getElementById(`tab-${tabs[next][0]}`)?.focus();
+    changeTab(enabled[next][0]);
+    document.getElementById(`tab-${enabled[next][0]}`)?.focus();
   }
   useEffect(() => {
     document
@@ -125,7 +143,10 @@ export function Workspace({
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [panel]);
   return (
-    <aside className="workspace" aria-label={t('workspace.botWorkspace')}>
+    <aside
+      className={`workspace ${expanded ? 'expanded' : ''}`}
+      aria-label={t('workspace.botWorkspace')}
+    >
       <div className="workspace-tabs">
         <div
           className="workspace-tablist"
@@ -139,6 +160,7 @@ export function Workspace({
               key={id}
               role="tab"
               aria-selected={panel === id}
+              disabled={restricted(id)}
               aria-controls={`panel-${id}`}
               tabIndex={panel === id ? 0 : -1}
               className="workspace-tab"
@@ -151,12 +173,31 @@ export function Workspace({
           ))}
         </div>
         <IconButton
+          label={t(expanded ? 'workspace.collapsePanel' : 'workspace.expandPanel')}
+          aria-pressed={expanded}
+          onClick={() => setExpandedBot(expanded ? undefined : bot.id)}
+        >
+          {expanded ? <Minimize2 /> : <Maximize2 />}
+        </IconButton>
+        <IconButton
           label={t('workspace.closeWorkspacePanel')}
           onClick={() => dispatch({ type: 'panel', panel: null })}
         >
           <X />
         </IconButton>
       </div>
+      {panel && (
+        <div className="workspace-context">
+          <strong>
+            {panel === 'files'
+              ? t('workspace.sharedScope')
+              : panel === 'skills'
+                ? t('workspace.skillsScope', { 0: bot.name })
+                : t('workspace.botScope', { 0: bot.name })}
+          </strong>
+          <span>{t(purposes[panel])}</span>
+        </div>
+      )}
       <div
         className="workspace-body"
         id={`panel-${panel}`}
@@ -344,11 +385,7 @@ export function Workspace({
             </p>
             <div className="memory-intro">
               <Avatar bot={bot} />
-              <span>
-                {t('workspace.only')}
-                {bot.name}
-                {t('workspace.sWorkMemory')}
-              </span>
+              <span>{t('workspace.memoryPrivateHint', { 0: bot.name })}</span>
             </div>
             {memoryError && (
               <p className="form-error" role="alert">

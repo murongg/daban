@@ -23,13 +23,37 @@
   width: 14px;
   height: 14px;
   color: var(--muted);
+  flex-shrink: 0;
+}
+.select-trigger > .select-prefix {
+  flex: 0 0 auto;
+}
+.select-trigger > .select-value {
+  display: flex;
+  align-items: center;
+  flex: 1;
 }
 .select-label {
-  display: inline-flex;
+  display: flex;
   flex: 1;
   align-items: center;
   gap: 9px;
   min-width: 0;
+}
+.select-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+.select-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
 }
 .select-text {
   min-width: 0;

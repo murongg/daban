@@ -39,6 +39,8 @@ interface Draft {
   selected: string;
   preset: string;
   keys: string[];
+  // Empty and partial numeric edits remain drafts until save validates the complete connection.
+  limits: { contextWindow: string; maxTokens: string }[];
   // Keep the choice independent of the first model's still-editable upstream ID.
   defaultFirst: boolean;
 }
@@ -85,12 +87,28 @@ export function Providers({
             preset.baseURL && preset.baseURL === next.baseURL && preset.api === modelApi(next),
         )?.id || 'custom',
       keys: next.models.map(() => crypto.randomUUID()),
+      limits: next.models.map((entry) => ({
+        contextWindow: String(entry.contextWindow),
+        maxTokens: String(entry.maxTokens),
+      })),
       defaultFirst: !model.configured,
     };
   }
   const [draft, setDraft] = useState<Draft | undefined>(() =>
     mode === 'onboarding' ? createDraft() : undefined,
   );
+  const [editorOpen, setEditorOpen] = useState(mode === 'onboarding');
+  const [manualOpen, setManualOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(mode === 'settings');
+  const editor = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (editorOpen && available)
+      editor.current
+        ?.querySelector<HTMLElement>(
+          '.model-fields button:not([disabled]), .model-fields input:not([disabled])',
+        )
+        ?.focus();
+  }, [editorOpen, available]);
   const [selected, setSelected] = useState<string>();
   const [defaultRevision, setDefaultRevision] = useState<number>();
   const [pending, setPending] = useState<ModelUpdate>();
@@ -134,7 +152,8 @@ export function Providers({
     setDraft((current) => {
       if (!current || current.connection.models.some((entry) => entry.id === info.id))
         return current;
-      const empty = current.connection.models.findIndex((entry) => !entry.id.trim());
+      const single = mode === 'onboarding' && !advancedOpen;
+      const empty = single ? 0 : current.connection.models.findIndex((entry) => !entry.id.trim());
       if (empty < 0 && current.connection.models.length >= 50) return current;
       const entry: ModelDefinition = {
         ...newModel(),
@@ -148,8 +167,23 @@ export function Providers({
       return {
         ...current,
         keys: empty < 0 ? [...current.keys, crypto.randomUUID()] : current.keys,
+        limits:
+          empty < 0
+            ? [
+                ...current.limits,
+                { contextWindow: String(entry.contextWindow), maxTokens: String(entry.maxTokens) },
+              ]
+            : current.limits.map((limits, index) =>
+                index === empty
+                  ? {
+                      contextWindow: String(entry.contextWindow),
+                      maxTokens: String(entry.maxTokens),
+                    }
+                  : limits,
+              ),
         connection: {
           ...current.connection,
+          // The compact choice replaces its first row without discarding drafts added in advanced settings.
           models:
             empty < 0
               ? [...current.connection.models, entry]
@@ -168,6 +202,20 @@ export function Providers({
       if (!current || index < 0 || current.connection.models[index].id !== info.id) return current;
       return {
         ...current,
+        limits: current.limits.map((limits, position) =>
+          position === index && unchanged.limits && info.contextWindow !== undefined
+            ? {
+                contextWindow: String(info.contextWindow),
+                maxTokens: String(
+                  Math.min(
+                    Number(limits.maxTokens),
+                    info.maxTokens ?? Number(limits.maxTokens),
+                    info.contextWindow,
+                  ),
+                ),
+              }
+            : limits,
+        ),
         connection: {
           ...current.connection,
           models: current.connection.models.map((entry, position) =>
@@ -197,13 +245,14 @@ export function Providers({
   }
   function edit(connection?: ModelConnection) {
     setDraft(createDraft(connection));
+    setEditorOpen(true);
     setPending(undefined);
     setError('');
     setCode('');
     setNotice('');
   }
   async function save() {
-    if (!available || busy) return;
+    if (!available || busy || code === 'MODEL_SETTINGS_CONFLICT') return;
     let input = pending;
     if (!input) {
       if (draft) {
@@ -211,13 +260,20 @@ export function Providers({
           ...draft.connection,
           name: draft.connection.name.trim(),
           baseURL: draft.connection.baseURL.trim(),
-          models: draft.connection.models.map((entry) => ({
+          models: draft.connection.models.map((entry, index) => ({
             ...entry,
+            contextWindow: Number(draft.limits[index].contextWindow),
+            maxTokens: Number(draft.limits[index].maxTokens),
             id: entry.id.trim(),
             name: entry.name.trim() || entry.id.trim(),
           })),
         };
-        if (!isModelConnection(connection)) {
+        if (
+          draft.limits.some(
+            (limits) => !/^\d+$/.test(limits.contextWindow) || !/^\d+$/.test(limits.maxTokens),
+          ) ||
+          !isModelConnection(connection)
+        ) {
           setError(t('models.checkApiUrlModelConfigurationModelIds'));
           return;
         }
@@ -262,6 +318,7 @@ export function Providers({
       await runtime.command({ type: 'model.configure', input });
       if (mounted.current) {
         setDraft(undefined);
+        setEditorOpen(false);
         setSelected(undefined);
         setDefaultRevision(undefined);
         setPending(undefined);
@@ -321,7 +378,7 @@ export function Providers({
   }
   return (
     <div className="provider-settings">
-      {mode === 'settings' && (
+      {mode === 'settings' && !editorOpen && (
         <div className="setting-row">
           <div>
             <div className="setting-label">{t('models.providersModels')}</div>
@@ -329,17 +386,24 @@ export function Providers({
               {t('models.addCommonProviderCustomApiChooseModels')}
             </p>
           </div>
-          <button
-            className="secondary"
-            type="button"
-            disabled={!available || busy || !!draft || !!pending}
-            onClick={() => edit()}
-          >
-            {t('models.addProvider')}
-          </button>
+          {draft ? (
+            <button className="secondary" type="button" onClick={() => setEditorOpen(true)}>
+              {t('models.resumeProvider')}
+            </button>
+          ) : (
+            <button
+              className="secondary"
+              type="button"
+              disabled={!available || busy || !!pending}
+              onClick={() => edit()}
+            >
+              {t('models.addProvider')}
+            </button>
+          )}
         </div>
       )}
       {mode === 'settings' &&
+        !editorOpen &&
         connections.map((connection) => (
           <div className="setting-row provider-row" key={connection.id}>
             <div className="provider-identity">
@@ -374,17 +438,20 @@ export function Providers({
           {t('models.modelCatalogUnavailableUnsavedInputPendingOperations')}
         </p>
       )}
-      {mode === 'settings' && model.connections !== undefined && !connections.length && (
-        <p className="inline-note">{t('models.addProviderChoosingWorkspacePerBotModels')}</p>
-      )}
-      {!draft && catalog.length > 0 && (
+      {mode === 'settings' &&
+        !editorOpen &&
+        model.connections !== undefined &&
+        !connections.length && (
+          <p className="inline-note">{t('models.addProviderChoosingWorkspacePerBotModels')}</p>
+        )}
+      {!editorOpen && catalog.length > 0 && (
         <div className="provider-default">
           <div className="field-label">
             {t('models.workspaceDefault')}
             <Select
               label={t('models.workspaceDefault')}
               value={current}
-              disabled={!available || busy || !!pending}
+              disabled={!available || busy || !!pending || !!draft}
               onValueChange={(value) => {
                 setSelected(value);
                 setDefaultRevision(model.revision);
@@ -402,6 +469,7 @@ export function Providers({
               disabled={
                 !available ||
                 busy ||
+                !!draft ||
                 code === 'MODEL_SETTINGS_CONFLICT' ||
                 (!pending && current === model.model)
               }
@@ -416,7 +484,7 @@ export function Providers({
             <button
               className="text-button"
               type="button"
-              disabled={!available || busy || !!pending || !model.configured}
+              disabled={!available || busy || !!pending || !!draft || !model.configured}
               onClick={check}
             >
               {t('models.checkDefaultConnection')}
@@ -432,6 +500,7 @@ export function Providers({
               <button
                 className="secondary"
                 type="button"
+                disabled={!available}
                 onClick={() => {
                   setDefaultRevision(model.revision);
                   setCode('');
@@ -446,12 +515,24 @@ export function Providers({
       )}
       {draft && (
         <form
-          className="inline-form provider-editor"
+          ref={editor}
+          hidden={!editorOpen}
+          noValidate
+          className={`inline-form provider-editor${mode === 'onboarding' ? ' provider-editor-onboarding' : ''}`}
           onSubmit={async (event) => {
             event.preventDefault();
             await save();
           }}
         >
+          {mode === 'settings' && (
+            <button
+              className="text-button provider-back"
+              type="button"
+              onClick={() => setEditorOpen(false)}
+            >
+              {t('models.backToProviders')}
+            </button>
+          )}
           <fieldset className="model-fields" disabled={!available || busy || !!pending}>
             {draft.connection.id !== 'deepseek-official' && (
               <div className="field-label">
@@ -473,7 +554,13 @@ export function Providers({
                       ...draft,
                       preset: value,
                       // A first-use supplier change starts a fresh credential scope, never reusing another vendor's draft.
-                      ...(mode === 'onboarding' ? { apiKey: '', keys: [crypto.randomUUID()] } : {}),
+                      ...(mode === 'onboarding'
+                        ? {
+                            apiKey: '',
+                            keys: [crypto.randomUUID()],
+                            limits: [{ contextWindow: '128000', maxTokens: '8192' }],
+                          }
+                        : {}),
                       connection: {
                         ...draft.connection,
                         ...(preset.id === 'custom'
@@ -634,138 +721,190 @@ export function Providers({
             {model.inspection !== true && (
               <p className="field-help">{t('models.updateLocalAgentLoadModelsTestCalls')}</p>
             )}
-            {mode === 'settings' && (
-              <p className="field-help">{t('models.testingSendsFixedShortPromptMayIncur')}</p>
-            )}
-            <div className="provider-models">
-              {draft.connection.models.map((entry, index) => (
-                <fieldset className="provider-model" key={draft.keys[index]}>
-                  <legend>
-                    <ModelIcon id={entry.id} fallback={providerIdentity(draft.connection)} />
-                    {t('models.numberedModel', { 0: index + 1 })}
-                  </legend>
-                  <div className="provider-pair">
-                    <label className="field-label">
-                      {t('models.modelId')}
-                      <input
-                        className="field"
-                        aria-label={t('models.numberedModelId', { 0: index + 1 })}
-                        required
-                        maxLength={160}
-                        spellCheck={false}
-                        value={entry.id}
-                        onChange={(event) => updateModel(index, { id: event.target.value })}
-                      />
-                    </label>
-                    <label className="field-label">
-                      {t('models.displayName')}
-                      <input
-                        className="field"
-                        aria-label={t('models.modelName', { 0: index + 1 })}
-                        maxLength={120}
-                        value={entry.name}
-                        onChange={(event) => updateModel(index, { name: event.target.value })}
-                      />
-                    </label>
-                  </div>
-                  {query && (
-                    <ModelInspector
-                      query={query}
-                      model={entry}
-                      index={index}
-                      disabled={inspectDisabled}
-                      matchingDisabled={matchingDisabled}
-                      onMatch={(info, unchanged) => matchModel(draft.keys[index], info, unchanged)}
+
+            {mode === 'onboarding' && (
+              <div className="onboarding-model-choice">
+                {draft.connection.models[0].id && !manualOpen && (
+                  <p className="selected-model">
+                    <ModelIcon id={draft.connection.models[0].id} />
+                    <strong>
+                      {draft.connection.models[0].name || draft.connection.models[0].id}
+                    </strong>
+                  </p>
+                )}
+                <details
+                  open={manualOpen}
+                  onToggle={(event) => setManualOpen(event.currentTarget.open)}
+                >
+                  <summary>{t('models.enterModelManually')}</summary>
+                  <label className="field-label">
+                    {t('models.modelId')}
+                    <input
+                      className="field"
+                      aria-label={t('models.numberedModelId', { 0: 1 })}
+                      maxLength={160}
+                      spellCheck={false}
+                      value={draft.connection.models[0].id}
+                      onChange={(event) => updateModel(0, { id: event.target.value })}
                     />
-                  )}
-                  <ModelInputs
-                    input={entry.capabilities?.input}
-                    vision={entry.vision}
-                    label={t('models.modelSupportsImages', { 0: index + 1 })}
-                    disabled={!available || busy || !!pending}
-                    onVisionChange={(vision) => updateModel(index, { vision })}
-                  />
-                  <details className="provider-limits">
-                    <summary>{t('models.contextOutputLimits')}</summary>
-                    <div className="provider-pair">
-                      <div className="field-label">
-                        {t('models.contextWindow')}
-                        <NumberField
-                          label={t('models.modelContextWindow', { 0: index + 1 })}
-                          value={String(entry.contextWindow)}
-                          required
-                          min={4096}
-                          max={4000000}
-                          onValueChange={(value) =>
-                            updateModel(index, { contextWindow: Number(value) })
-                          }
-                        />
-                      </div>
-                      <div className="field-label">
-                        {t('models.maximumOutputTokens')}
-                        <NumberField
-                          label={t('models.modelMaximumOutput', { 0: index + 1 })}
-                          value={String(entry.maxTokens)}
-                          required
-                          min={128}
-                          max={262144}
-                          onValueChange={(value) =>
-                            updateModel(index, { maxTokens: Number(value) })
-                          }
-                        />
-                      </div>
-                    </div>
-                  </details>
-                  {draft.connection.models.length > 1 && (
-                    <button
-                      className="text-button"
-                      type="button"
-                      aria-label={t('models.removeNumberedModel', { 0: index + 1 })}
-                      onClick={() =>
-                        setDraft({
-                          ...draft,
-                          keys: draft.keys.filter((_, position) => position !== index),
-                          connection: {
-                            ...draft.connection,
-                            models: draft.connection.models.filter(
-                              (_, position) => position !== index,
-                            ),
-                          },
-                        })
-                      }
-                    >
-                      {t('models.removeThisModel')}
-                    </button>
-                  )}
-                </fieldset>
-              ))}
-            </div>
-            <button
-              className="secondary"
-              type="button"
-              disabled={draft.connection.models.length >= 50}
-              onClick={() =>
-                setDraft({
-                  ...draft,
-                  keys: [...draft.keys, crypto.randomUUID()],
-                  connection: {
-                    ...draft.connection,
-                    models: [...draft.connection.models, newModel()],
-                  },
-                })
-              }
+                  </label>
+                </details>
+              </div>
+            )}
+            <details
+              className="provider-advanced"
+              open={advancedOpen}
+              onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
             >
-              {t('models.addModel')}
-            </button>
-            <label className="provider-default-choice">
-              <input
-                type="checkbox"
-                checked={draft.defaultFirst}
-                disabled={!model.configured}
-                onChange={(event) => setDraft({ ...draft, defaultFirst: event.target.checked })}
-              />
-              {t('models.setFirstModelWorkspaceDefault')}
-            </label>
+              <summary>{t('models.advancedSettings')}</summary>
+              <p className="field-help">{t('models.testingSendsFixedShortPromptMayIncur')}</p>
+              <div className="provider-models">
+                {draft.connection.models.map((entry, index) => (
+                  <fieldset className="provider-model" key={draft.keys[index]}>
+                    <legend>
+                      <ModelIcon id={entry.id} fallback={providerIdentity(draft.connection)} />
+                      {t('models.numberedModel', { 0: index + 1 })}
+                    </legend>
+                    <div className="provider-pair">
+                      {(mode === 'settings' || index > 0) && (
+                        <label className="field-label">
+                          {t('models.modelId')}
+                          <input
+                            className="field"
+                            aria-label={t('models.numberedModelId', { 0: index + 1 })}
+                            required
+                            maxLength={160}
+                            spellCheck={false}
+                            value={entry.id}
+                            onChange={(event) => updateModel(index, { id: event.target.value })}
+                          />
+                        </label>
+                      )}
+                      <label className="field-label">
+                        {t('models.displayName')}
+                        <input
+                          className="field"
+                          aria-label={t('models.modelName', { 0: index + 1 })}
+                          maxLength={120}
+                          value={entry.name}
+                          onChange={(event) => updateModel(index, { name: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                    {query && (
+                      <ModelInspector
+                        query={query}
+                        model={entry}
+                        limitDraft={draft.limits[index]}
+                        index={index}
+                        disabled={inspectDisabled}
+                        matchingDisabled={matchingDisabled}
+                        onMatch={(info, unchanged) =>
+                          matchModel(draft.keys[index], info, unchanged)
+                        }
+                      />
+                    )}
+                    <ModelInputs
+                      input={entry.capabilities?.input}
+                      vision={entry.vision}
+                      label={t('models.modelSupportsImages', { 0: index + 1 })}
+                      disabled={!available || busy || !!pending}
+                      onVisionChange={(vision) => updateModel(index, { vision })}
+                    />
+                    <details className="provider-limits">
+                      <summary>{t('models.contextOutputLimits')}</summary>
+                      <div className="provider-pair">
+                        <div className="field-label">
+                          {t('models.contextWindow')}
+                          <NumberField
+                            label={t('models.modelContextWindow', { 0: index + 1 })}
+                            value={draft.limits[index].contextWindow}
+                            required
+                            min={4096}
+                            max={4000000}
+                            onValueChange={(value) =>
+                              setDraft({
+                                ...draft,
+                                limits: draft.limits.map((limits, position) =>
+                                  position === index ? { ...limits, contextWindow: value } : limits,
+                                ),
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="field-label">
+                          {t('models.maximumOutputTokens')}
+                          <NumberField
+                            label={t('models.modelMaximumOutput', { 0: index + 1 })}
+                            value={draft.limits[index].maxTokens}
+                            required
+                            min={128}
+                            max={262144}
+                            onValueChange={(value) =>
+                              setDraft({
+                                ...draft,
+                                limits: draft.limits.map((limits, position) =>
+                                  position === index ? { ...limits, maxTokens: value } : limits,
+                                ),
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </details>
+                    {draft.connection.models.length > 1 && (
+                      <button
+                        className="text-button"
+                        type="button"
+                        aria-label={t('models.removeNumberedModel', { 0: index + 1 })}
+                        onClick={() =>
+                          setDraft({
+                            ...draft,
+                            keys: draft.keys.filter((_, position) => position !== index),
+                            limits: draft.limits.filter((_, position) => position !== index),
+                            connection: {
+                              ...draft.connection,
+                              models: draft.connection.models.filter(
+                                (_, position) => position !== index,
+                              ),
+                            },
+                          })
+                        }
+                      >
+                        {t('models.removeThisModel')}
+                      </button>
+                    )}
+                  </fieldset>
+                ))}
+              </div>
+              <button
+                className="secondary"
+                type="button"
+                disabled={draft.connection.models.length >= 50}
+                onClick={() =>
+                  setDraft({
+                    ...draft,
+                    keys: [...draft.keys, crypto.randomUUID()],
+                    limits: [...draft.limits, { contextWindow: '128000', maxTokens: '8192' }],
+                    connection: {
+                      ...draft.connection,
+                      models: [...draft.connection.models, newModel()],
+                    },
+                  })
+                }
+              >
+                {t('models.addModel')}
+              </button>
+              <label className="provider-default-choice">
+                <input
+                  type="checkbox"
+                  checked={draft.defaultFirst}
+                  disabled={!model.configured}
+                  onChange={(event) => setDraft({ ...draft, defaultFirst: event.target.checked })}
+                />
+                {t('models.setFirstModelWorkspaceDefault')}
+              </label>
+            </details>
           </fieldset>
           {pending && !busy && (
             <p className="inline-note">
@@ -778,7 +917,7 @@ export function Providers({
               <button
                 className="secondary"
                 type="button"
-                disabled={model.revision === draft.revision}
+                disabled={!available || model.revision === draft.revision}
                 onClick={() => {
                   setDraft({ ...draft, revision: model.revision! });
                   setCode('');
@@ -797,6 +936,7 @@ export function Providers({
                 disabled={busy}
                 onClick={() => {
                   setDraft(undefined);
+                  setEditorOpen(false);
                   setPending(undefined);
                   setCode('');
                   setError('');
@@ -805,7 +945,11 @@ export function Providers({
                 {t('models.cancelEditing')}
               </button>
             )}
-            <button className="primary" type="submit" disabled={!available || busy}>
+            <button
+              className="primary"
+              type="submit"
+              disabled={!available || busy || code === 'MODEL_SETTINGS_CONFLICT'}
+            >
               {busy
                 ? t('models.verifyingSaving')
                 : pending

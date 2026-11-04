@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type FormEvent, useCallback, useState } from 'react';
 import { expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import { Dialog } from './Dialog';
 import { NumberField } from './NumberField';
 import { Select } from './Select';
 import { TimeField } from './TimeField';
+import { Tooltip } from './Tooltip';
 
 function NumberFixture() {
   const [value, setValue] = useState('2');
@@ -120,6 +121,32 @@ it('routes Escape only to the topmost active dialog while local layer signals se
   expect(child).toHaveBeenCalledTimes(1);
 });
 
+it('disables every dialog dismissal route while its owner is waiting', async () => {
+  const close = vi.fn();
+  const content = <button type="button">Synthetic waiting action</button>;
+  const view = render(
+    <Dialog title="Synthetic waiting dialog" onClose={close} closeDisabled>
+      {content}
+    </Dialog>,
+  );
+  const closeButton = screen.getByRole('button', { name: '关闭对话框' });
+  expect(closeButton).toBeDisabled();
+  await userEvent.click(closeButton);
+  await userEvent.keyboard('{Escape}');
+  fireEvent.mouseDown(screen.getByRole('dialog').parentElement!);
+  expect(close).not.toHaveBeenCalled();
+  view.rerender(
+    <Dialog title="Synthetic waiting dialog" onClose={close}>
+      {content}
+    </Dialog>,
+  );
+  expect(closeButton).toBeEnabled();
+  await userEvent.click(closeButton);
+  await userEvent.keyboard('{Escape}');
+  fireEvent.mouseDown(screen.getByRole('dialog').parentElement!);
+  expect(close).toHaveBeenCalledTimes(3);
+});
+
 function ReplacementFixture({ backgroundFocus }: { backgroundFocus: () => unknown }) {
   const [first, setFirst] = useState(false);
   const [second, setSecond] = useState(false);
@@ -203,6 +230,50 @@ it('keeps icon-decorated selection labels searchable and keyboard-selectable', a
   expect(screen.getByRole('option', { name: 'Beta model' })).toBeVisible();
   await userEvent.keyboard('b{Enter}');
   expect(change).toHaveBeenCalledWith('beta');
+});
+
+it('shows a secondary selection description without changing the option label', async () => {
+  const change = vi.fn();
+  render(
+    <Select
+      label="Synthetic model"
+      value="alpha"
+      options={[
+        { value: 'alpha', label: 'Synthetic Alpha', description: 'Synthetic connection A' },
+        { value: 'beta', label: 'Synthetic Beta', description: 'Synthetic connection B' },
+      ]}
+      onValueChange={change}
+    />,
+  );
+  const trigger = screen.getByRole('button', { name: /Synthetic model$/ });
+  expect(within(trigger).getByText('Synthetic connection A')).toBeVisible();
+  await userEvent.click(trigger);
+  const beta = screen.getByRole('option', { name: 'Synthetic Beta' });
+  expect(within(beta).getByText('Synthetic connection B')).toBeVisible();
+  expect(beta).toHaveAccessibleDescription('Synthetic connection B');
+  await userEvent.keyboard('{End}{Enter}');
+  expect(change).toHaveBeenCalledWith('beta');
+});
+
+it('retains the existing accessible option details when no secondary description is supplied', async () => {
+  render(
+    <Select
+      label="Synthetic mode"
+      value="ask"
+      options={[
+        {
+          value: 'ask',
+          label: 'Synthetic Ask',
+          detail: <span>Synthetic important detail</span>,
+        },
+      ]}
+      onValueChange={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: /Synthetic mode$/ }));
+  expect(
+    screen.getByRole('option', { name: /Synthetic Ask\s*Synthetic important detail/ }),
+  ).toBeVisible();
 });
 
 it('opens a prefixed select from its visible label without changing option names or keyboard selection', async () => {
@@ -356,6 +427,53 @@ it('renders an app-owned tooltip instead of a browser title bubble', async () =>
   expect(await screen.findByRole('tooltip')).toHaveTextContent('合成提示');
 });
 
+it('keeps a tooltip open while the pointer transfers to its content, then dismisses after leaving both', async () => {
+  const user = userEvent.setup();
+  render(
+    <Tooltip label="Synthetic hover detail">
+      <button type="button">Synthetic trigger</button>
+    </Tooltip>,
+  );
+  await user.hover(screen.getByRole('button', { name: 'Synthetic trigger' }));
+  const tooltip = await screen.findByRole('tooltip');
+  await user.hover(tooltip);
+  expect(screen.getByRole('tooltip')).toBeVisible();
+  await user.unhover(tooltip);
+  await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+});
+
+it('preserves a keyboard tooltip through pointer exit and leaves remote Escape ownership intact', async () => {
+  const remoteKey = vi.fn();
+  render(
+    <Tooltip label="Synthetic keyboard detail">
+      <button type="button" data-remote-keyboard="true" onKeyDown={remoteKey}>
+        Synthetic keyboard trigger
+      </button>
+    </Tooltip>,
+  );
+  const trigger = screen.getByRole('button', { name: 'Synthetic keyboard trigger' });
+  // jsdom does not track the browser's keyboard modality for :focus-visible.
+  const matches = trigger.matches.bind(trigger);
+  vi.spyOn(trigger, 'matches').mockImplementation(
+    (selector) => selector === ':focus-visible' || matches(selector),
+  );
+  await userEvent.tab();
+  expect(trigger).toHaveFocus();
+  expect(screen.getByRole('tooltip')).toBeVisible();
+  await userEvent.hover(trigger);
+  await userEvent.unhover(trigger);
+  expect(screen.getByRole('tooltip')).toBeVisible();
+  const escapeKey = new KeyboardEvent('keydown', {
+    key: 'Escape',
+    bubbles: true,
+    cancelable: true,
+  });
+  fireEvent(trigger, escapeKey);
+  expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  expect(remoteKey).toHaveBeenCalledTimes(1);
+  expect(escapeKey.defaultPrevented).toBe(false);
+});
+
 it('keeps the dialog Tab loop on visible controls instead of hidden form projections', async () => {
   render(
     <Dialog title="合成焦点" onClose={vi.fn()}>
@@ -368,6 +486,52 @@ it('keeps the dialog Tab loop on visible controls instead of hidden form project
   expect(screen.getByRole('button', { name: '关闭对话框' })).toHaveFocus();
   await userEvent.tab({ shift: true });
   expect(trigger).toHaveFocus();
+});
+
+it('wraps dialog focus around a closed native disclosure without entering its hidden descendants', async () => {
+  render(
+    <Dialog title="Synthetic disclosure" onClose={vi.fn()}>
+      <details>
+        <summary>Synthetic disclosure toggle</summary>
+        <button type="button">Synthetic closed action</button>
+      </details>
+    </Dialog>,
+  );
+  const close = screen.getByRole('button', { name: '关闭对话框' });
+  const summary = screen.getByText('Synthetic disclosure toggle');
+  summary.focus();
+  await userEvent.tab();
+  expect(close).toHaveFocus();
+  await userEvent.tab({ shift: true });
+  expect(summary).toHaveFocus();
+  await userEvent.click(summary);
+  await userEvent.tab();
+  expect(screen.getByRole('button', { name: 'Synthetic closed action' })).toHaveFocus();
+});
+
+it('excludes CSS-hidden controls from dialog focus endpoints and autofocus', async () => {
+  render(
+    <Dialog title="Synthetic visibility" onClose={vi.fn()}>
+      <div style={{ display: 'none' }}>
+        <input aria-label="Synthetic hidden autofocus" data-autofocus />
+      </div>
+      <button type="button">Synthetic visible action</button>
+      <div style={{ display: 'none' }}>
+        <button type="button">Synthetic display hidden</button>
+      </div>
+      <button type="button" style={{ visibility: 'hidden' }}>
+        Synthetic visibility hidden
+      </button>
+    </Dialog>,
+  );
+  const close = screen.getByRole('button', { name: '关闭对话框' });
+  expect(close).toHaveFocus();
+  const visible = screen.getByRole('button', { name: 'Synthetic visible action' });
+  visible.focus();
+  await userEvent.tab();
+  expect(close).toHaveFocus();
+  await userEvent.tab({ shift: true });
+  expect(visible).toHaveFocus();
 });
 
 it('keeps a fractional edit visible and reports the integer error without changing its meaning', async () => {

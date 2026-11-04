@@ -19,12 +19,8 @@ import {
 } from '@daban/protocol';
 import {
   Archive as ArchiveIcon,
-  BookOpen,
-  Brain,
   Check,
-  Clock3,
   Download,
-  Folder,
   History,
   Info,
   Menu,
@@ -32,7 +28,6 @@ import {
   Monitor,
   Moon,
   Pencil,
-  StickyNote,
   Sun,
 } from 'lucide-react';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
@@ -64,6 +59,7 @@ import { GroupChat } from '../features/groups/GroupChat';
 import { GroupEditor } from '../features/groups/GroupEditor';
 import { useGroups } from '../features/groups/groups';
 import { Inbox } from '../features/inbox/Inbox';
+import { ModelPicker } from '../features/models/ModelPicker';
 import { useNotices } from '../features/notifications/notices';
 import { Onboarding } from '../features/onboarding/Onboarding';
 import { AgentUpgradeNotice } from '../features/settings/AgentUpgrade';
@@ -73,6 +69,7 @@ import { UpdateProvider, useUpdateSave } from '../features/settings/update';
 import { Tasks } from '../features/tasks/Tasks';
 import { useWork } from '../features/tasks/work';
 import { syncLocale, t, useLocale } from '../i18n/locale';
+import { Actions } from './Actions';
 import { useAttention } from './attention';
 import { clientCache } from './cache';
 import { profileInput, useProfiles } from './profiles';
@@ -87,7 +84,6 @@ import {
   mergeAttachments,
   messageQueue,
   messageQueueLimit,
-  type Panel,
   type QueuedTask,
   reduce,
   type WorkspaceFile,
@@ -111,6 +107,7 @@ type Modal =
   | { type: 'group-copy'; group?: string }
   | { type: 'create'; group: boolean; preset?: BotPreset }
   | { type: 'profile'; bot: string }
+  | { type: 'model'; bot: string }
   | { type: 'archive'; bot: string }
   | { type: 'recovery' }
   | { type: 'group'; bot: string }
@@ -281,6 +278,8 @@ function Workbench() {
     : undefined;
   const pendingGroup = bot ? state.groupActions[bot.id] : undefined;
   const historyOnly = !!bot?.archived || !!pendingLifecycle || !!pendingGroup;
+  const workspaceVisible =
+    !!state.panel && (!historyOnly || ['computer', 'files', 'notes'].includes(state.panel));
   const chatVersion = bot ? chatRevision(state, bot.id, runtime.snapshot.chats) : 0;
   useEffect(() => {
     if (runtime.snapshot.chats?.available)
@@ -773,9 +772,6 @@ function Workbench() {
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
   }, [modal, dispatch]);
-  function panel(next: Panel) {
-    dispatch({ type: 'panel', panel: state.panel === next ? null : next });
-  }
   const computerBot =
     modal?.type === 'computer' ? state.bots.find((b) => b.id === modal.bot) : undefined;
   return (
@@ -816,132 +812,94 @@ function Workbench() {
               <span className="spacer" />
               <div className="header-actions">
                 {!bot.members && (
-                  <>
-                    <IconButton
-                      label={t('app.notesPanel')}
-                      className={`header-optional ${state.panel === 'notes' ? 'active' : ''}`}
-                      aria-pressed={state.panel === 'notes'}
-                      onClick={() => panel('notes')}
-                    >
-                      <StickyNote />
-                    </IconButton>
-                    <IconButton
-                      label={
-                        state.chatRequests[bot.id]
-                          ? t('common.verifyConversationAction')
-                          : t('common.newConversation')
-                      }
-                      disabled={
-                        !runtime.enabled ||
-                        runtime.snapshot.protocolVersion < 29 ||
-                        (historyOnly && !state.chatRequests[bot.id])
-                      }
-                      onClick={() => setModal({ type: 'chat', bot: bot.id })}
-                    >
-                      <MessageSquarePlus />
-                    </IconButton>
-                    <IconButton
-                      label={t('chat.conversationHistory')}
-                      disabled={
-                        !runtime.enabled || runtime.snapshot.protocolVersion < 29 || !chatVersion
-                      }
-                      onClick={() => setModal({ type: 'chat-history', bot: bot.id })}
-                    >
-                      <History />
-                    </IconButton>
-                  </>
-                )}
-                {bot.members && (
-                  <>
-                    <IconButton
-                      label={t('app.editGroup')}
-                      disabled={historyOnly}
-                      onClick={() => setModal({ type: 'group', bot: bot.id })}
-                    >
-                      <Pencil />
-                    </IconButton>
-                    <IconButton
-                      label={
-                        pendingGroup
-                          ? t('app.verifyGroupAction')
-                          : bot.archived
-                            ? t('common.restoreGroup')
-                            : t('common.archiveGroup')
-                      }
-                      disabled={!runtime.enabled || runtime.snapshot.protocolVersion < 28}
-                      onClick={() => setModal({ type: 'archive', bot: bot.id })}
-                    >
-                      <ArchiveIcon />
-                    </IconButton>
-                  </>
-                )}
-                {!bot.members && (
-                  <IconButton
-                    label={t('app.editBotProfile')}
-                    disabled={historyOnly}
-                    onClick={() => setModal({ type: 'profile', bot: bot.id })}
+                  <button
+                    type="button"
+                    className="header-action"
+                    aria-label={
+                      state.chatRequests[bot.id]
+                        ? t('common.verifyConversationAction')
+                        : t('common.newConversation')
+                    }
+                    disabled={
+                      !runtime.enabled ||
+                      runtime.snapshot.protocolVersion < 29 ||
+                      (historyOnly && !state.chatRequests[bot.id])
+                    }
+                    onClick={() => setModal({ type: 'chat', bot: bot.id })}
                   >
-                    <Pencil />
-                  </IconButton>
+                    <MessageSquarePlus aria-hidden="true" />
+                    <span>{t('common.newConversation')}</span>
+                  </button>
                 )}
-                <IconButton
-                  label={t('app.computerPanel')}
-                  className={state.panel === 'computer' ? 'active' : ''}
-                  aria-pressed={state.panel === 'computer'}
-                  onClick={() => panel('computer')}
-                >
-                  <Monitor />
-                </IconButton>
-                <IconButton
-                  label={t('app.filesPanel')}
-                  className={state.panel === 'files' ? 'active' : ''}
-                  aria-pressed={state.panel === 'files'}
-                  onClick={() => panel('files')}
-                >
-                  <Folder />
-                </IconButton>
-                {!bot.members && (
-                  <>
-                    <IconButton
-                      label={t('app.documentsPanel')}
-                      disabled={historyOnly}
-                      className={state.panel === 'knowledge' ? 'active' : ''}
-                      aria-pressed={state.panel === 'knowledge'}
-                      onClick={() => panel('knowledge')}
-                    >
-                      <BookOpen />
-                    </IconButton>
-                    <IconButton
-                      label={t('app.memoryPanel')}
-                      disabled={historyOnly}
-                      className={`header-optional ${state.panel === 'memory' ? 'active' : ''}`}
-                      aria-pressed={state.panel === 'memory'}
-                      onClick={() => panel('memory')}
-                    >
-                      <Brain />
-                    </IconButton>
-                    <IconButton
-                      label={t('app.schedulesPanel')}
-                      disabled={historyOnly}
-                      className={`header-optional ${state.panel === 'routines' ? 'active' : ''}`}
-                      aria-pressed={state.panel === 'routines'}
-                      onClick={() => panel('routines')}
-                    >
-                      <Clock3 />
-                    </IconButton>
-                  </>
-                )}
-                <span className="header-divider" />
-                <IconButton
-                  label={
-                    state.theme === 'light' ? t('app.switchDarkTheme') : t('app.switchLightTheme')
-                  }
+                <button
+                  type="button"
+                  className={`header-action ${workspaceVisible ? 'active' : ''}`}
+                  aria-pressed={workspaceVisible}
                   onClick={() =>
-                    dispatch({ type: 'theme', theme: state.theme === 'light' ? 'dark' : 'light' })
+                    dispatch({ type: 'panel', panel: workspaceVisible ? null : 'computer' })
                   }
                 >
-                  {state.theme === 'light' ? <Moon /> : <Sun />}
-                </IconButton>
+                  <Monitor aria-hidden="true" />
+                  <span>{t('app.workspace')}</span>
+                </button>
+                <Actions
+                  key={bot.id}
+                  items={[
+                    ...(bot.members
+                      ? [
+                          {
+                            id: 'edit-group',
+                            label: t('app.editGroup'),
+                            icon: <Pencil />,
+                            disabled: historyOnly,
+                            onSelect: () => setModal({ type: 'group', bot: bot.id }),
+                          },
+                          {
+                            id: 'archive-group',
+                            label: pendingGroup
+                              ? t('app.verifyGroupAction')
+                              : bot.archived
+                                ? t('common.restoreGroup')
+                                : t('common.archiveGroup'),
+                            icon: <ArchiveIcon />,
+                            disabled: !runtime.enabled || runtime.snapshot.protocolVersion < 28,
+                            onSelect: () => setModal({ type: 'archive', bot: bot.id }),
+                          },
+                        ]
+                      : [
+                          {
+                            id: 'history',
+                            label: t('chat.conversationHistory'),
+                            icon: <History />,
+                            disabled:
+                              !runtime.enabled ||
+                              runtime.snapshot.protocolVersion < 29 ||
+                              !chatVersion,
+                            onSelect: () => setModal({ type: 'chat-history', bot: bot.id }),
+                          },
+                          {
+                            id: 'profile',
+                            label: t('app.editBotProfile'),
+                            icon: <Pencil />,
+                            disabled: historyOnly,
+                            onSelect: () => setModal({ type: 'profile', bot: bot.id }),
+                          },
+                        ]),
+                    {
+                      id: 'theme',
+                      label:
+                        state.theme === 'light'
+                          ? t('app.switchDarkTheme')
+                          : t('app.switchLightTheme'),
+                      icon: state.theme === 'light' ? <Moon /> : <Sun />,
+                      onSelect: () =>
+                        dispatch({
+                          type: 'theme',
+                          theme: state.theme === 'light' ? 'dark' : 'light',
+                        }),
+                    },
+                  ]}
+                />
               </div>
             </>
           ) : (
@@ -1051,24 +1009,24 @@ function Workbench() {
                   pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
                   onModel={() => {
                     if (!bot.members && runtime.snapshot.protocolVersion >= 14)
-                      setModal({ type: 'profile', bot: bot.id });
+                      setModal({ type: 'model', bot: bot.id });
                     else dispatch({ type: 'view', view: 'settings' });
                   }}
                 />
               )}
-              {state.panel &&
-                (!historyOnly || ['computer', 'files', 'notes'].includes(state.panel)) && (
-                  <Workspace
-                    state={state}
-                    bot={bot}
-                    dispatch={dispatch}
-                    notify={notify}
-                    preview={previewFile}
-                    expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
-                    openMember={(id) => setModal({ type: 'computer', bot: id })}
-                    onRecovery={() => setModal({ type: 'recovery' })}
-                  />
-                )}
+              {state.panel && workspaceVisible && (
+                <Workspace
+                  state={state}
+                  bot={bot}
+                  readOnly={historyOnly}
+                  dispatch={dispatch}
+                  notify={notify}
+                  preview={previewFile}
+                  expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
+                  openMember={(id) => setModal({ type: 'computer', bot: id })}
+                  onRecovery={() => setModal({ type: 'recovery' })}
+                />
+              )}
             </div>
           ) : (
             <Welcome
@@ -1147,6 +1105,19 @@ function Workbench() {
             bot={state.bots.find((bot) => bot.id === modal.bot)!}
             dispatch={dispatch}
             close={closeModal}
+          />
+        </Dialog>
+      )}
+      {modal?.type === 'model' && (
+        <Dialog title={t('models.chooseModel')} onClose={closeModal}>
+          <ModelPicker
+            key={modal.bot}
+            bot={state.bots.find((bot) => bot.id === modal.bot)!}
+            memory={state.memories[modal.bot]}
+            version={state.profileRevisions[agentId(modal.bot)]}
+            dispatch={dispatch}
+            close={closeModal}
+            notify={notify}
           />
         </Dialog>
       )}

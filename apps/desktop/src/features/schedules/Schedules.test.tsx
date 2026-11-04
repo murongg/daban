@@ -15,11 +15,12 @@ import {
   type Schedule,
   type ScheduleInput,
 } from '@daban/protocol';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { parseCommand } from '../../../electron/ipc';
 import { App } from '../../app/App';
+import { workspaceTab } from '../../test/navigation.fixture';
 import { mockViewport } from '../../test/viewport';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
@@ -88,6 +89,84 @@ function connect(
   return invoke;
 }
 
+it('requires a named confirmation before deleting a schedule and cancels without sending a command', async () => {
+  const item = record({
+    id: 'mock-delete-cancel',
+    bot: 'a',
+    title: '合成取消删除日程',
+    prompt: 'MOCK SCHEDULE PROMPT',
+    rule: { kind: 'every', everySeconds: 3600 },
+  });
+  const invoke = connect(undefined, [item]);
+  render(<App />);
+  await workspaceTab(userEvent, '定时');
+  await userEvent.click(screen.getByRole('button', { name: '删除定时任务 合成取消删除日程' }));
+  const dialog = screen.getByRole('dialog', { name: '删除定时任务' });
+  expect(within(dialog).getByText(/合成取消删除日程/)).toBeVisible();
+  expect(invoke.mock.calls.some(([command]) => command.type === 'schedule.remove')).toBe(false);
+  await userEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+  expect(screen.queryByRole('dialog', { name: '删除定时任务' })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command.type === 'schedule.remove')).toBe(false);
+});
+
+it('deletes the captured schedule revision once and keeps confirmation controls disabled while waiting', async () => {
+  const item = record({
+    id: 'mock-delete-revision',
+    bot: 'a',
+    title: '合成版本删除日程',
+    prompt: 'MOCK SCHEDULE PROMPT',
+    rule: { kind: 'every', everySeconds: 3600 },
+  });
+  let finish!: (reply: RuntimeReply) => unknown;
+  const invoke = connect(undefined, [item], async (command) =>
+    command.type === 'schedule.remove'
+      ? new Promise<RuntimeReply>((resolve) => (finish = resolve))
+      : undefined,
+  );
+  render(<App />);
+  await workspaceTab(userEvent, '定时');
+  await userEvent.click(screen.getByRole('button', { name: '删除定时任务 合成版本删除日程' }));
+  const dialog = screen.getByRole('dialog', { name: '删除定时任务' });
+  // A later catalog update must not silently extend consent to a revision never reviewed.
+  item.revision = 2;
+  await userEvent.click(within(dialog).getByRole('button', { name: '确认删除' }));
+  expect(invoke.mock.calls.filter(([command]) => command.type === 'schedule.remove')).toEqual([
+    [{ type: 'schedule.remove', id: item.id, revision: 1 }],
+  ]);
+  expect(within(dialog).getByRole('button', { name: '确认删除' })).toBeDisabled();
+  expect(within(dialog).getByRole('button', { name: '取消' })).toBeDisabled();
+  expect(within(dialog).getByRole('button', { name: '关闭对话框' })).toBeDisabled();
+  await userEvent.keyboard('{Escape}');
+  expect(dialog).toBeInTheDocument();
+  await act(async () => finish({ ok: true, value: {} }));
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: '删除定时任务' })).not.toBeInTheDocument(),
+  );
+});
+
+it('keeps a failed deletion visible for review without replacing its captured revision', async () => {
+  const item = record({
+    id: 'mock-delete-conflict',
+    bot: 'a',
+    title: '合成冲突删除日程',
+    prompt: 'MOCK SCHEDULE PROMPT',
+    rule: { kind: 'every', everySeconds: 3600 },
+  });
+  const invoke = connect(undefined, [item], async (command) =>
+    command.type === 'schedule.remove' ? { ok: false, error: 'SCHEDULE_CONFLICT' } : undefined,
+  );
+  render(<App />);
+  await workspaceTab(userEvent, '定时');
+  await userEvent.click(screen.getByRole('button', { name: '删除定时任务 合成冲突删除日程' }));
+  const dialog = screen.getByRole('dialog', { name: '删除定时任务' });
+  await userEvent.click(within(dialog).getByRole('button', { name: '确认删除' }));
+  expect(await within(dialog).findByRole('alert')).toHaveTextContent(/定时任务已更新/);
+  expect(within(dialog).getByRole('button', { name: '确认删除' })).toBeEnabled();
+  expect(invoke.mock.calls.filter(([command]) => command.type === 'schedule.remove')).toEqual([
+    [{ type: 'schedule.remove', id: item.id, revision: 1 }],
+  ]);
+});
+
 it('locks a schedule for Bot edits while retaining human management and exact backend revision', async () => {
   const item = record({
     id: 'mock-lock',
@@ -98,7 +177,7 @@ it('locks a schedule for Bot edits while retaining human management and exact ba
   });
   const invoke = connect(undefined, [item]);
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+  await workspaceTab(userEvent, '定时');
   await userEvent.click(screen.getByRole('button', { name: '锁定定时任务 合成锁定日程' }));
   expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
     type: 'schedule.update',
@@ -121,7 +200,7 @@ it('saves a real per-Bot schedule and preserves another Bot form while acknowled
     return new Promise<Schedule>((done) => (resolve = done));
   });
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+  await workspaceTab(userEvent, '定时');
   expect(screen.queryByText('已启用 · 演示')).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成研究日程');
@@ -148,7 +227,7 @@ it('saves a real per-Bot schedule and preserves another Bot form while acknowled
 it('keeps the form usable while a timezone is incomplete', async () => {
   connect();
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+  await workspaceTab(userEvent, '定时');
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await screen.findByText('接下来');
   const zone = screen.getByRole('textbox', { name: '时区' });
@@ -170,7 +249,7 @@ it('lets users correct a definitely rejected schedule without losing the draft o
     return undefined;
   });
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+  await workspaceTab(userEvent, '定时');
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成校验日程');
   await userEvent.type(screen.getByRole('textbox', { name: '需要 Bot 做什么' }), '只处理合成输入');
@@ -219,7 +298,7 @@ it('reads the current backend revision on edit conflict and preserves the local 
     return undefined;
   });
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+  await workspaceTab(userEvent, '定时');
   await userEvent.click(screen.getByRole('button', { name: '编辑定时任务 合成旧任务' }));
   await userEvent.clear(screen.getByRole('textbox', { name: '任务名称' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成本地草稿');
@@ -244,7 +323,7 @@ it('keeps an ambiguous create payload and ID intact for an exact retry', async (
     return record(input);
   });
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+  await workspaceTab(userEvent, '定时');
   await userEvent.click(screen.getByRole('button', { name: '新建定时任务' }));
   await userEvent.type(screen.getByRole('textbox', { name: '任务名称' }), '合成重试日程');
   await userEvent.type(screen.getByRole('textbox', { name: '需要 Bot 做什么' }), '只处理合成输入');
@@ -268,7 +347,7 @@ it('keeps schedule rule values and instructions stable while editing in English'
   });
   await setLocale('en');
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: 'Schedules' }));
+  await workspaceTab(userEvent, 'Schedules');
   await userEvent.click(screen.getByRole('button', { name: 'New scheduled task' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Task name' }), 'SYNTHETIC-WEEKDAY');
   await userEvent.type(
@@ -305,7 +384,7 @@ it('retains an existing weekly rule when opening its editor in English', async (
   const invoke = connect(undefined, [original]);
   await setLocale('en');
   render(<App />);
-  await userEvent.click(await screen.findByRole('tab', { name: 'Schedules' }));
+  await workspaceTab(userEvent, 'Schedules');
   await userEvent.click(
     screen.getByRole('button', { name: 'Edit scheduled task SYNTHETIC WEEKLY' }),
   );
@@ -337,7 +416,7 @@ it('bounds a large schedule list while keeping the native management controls', 
       ),
     );
     render(<App />);
-    await userEvent.click(await screen.findByRole('tab', { name: '定时' }));
+    await workspaceTab(userEvent, '定时');
     await screen.findByText('SYNTHETIC SCHEDULE 0');
     expect(screen.queryAllByText(/^SYNTHETIC SCHEDULE/).length).toBeLessThan(80);
   } finally {

@@ -27,6 +27,7 @@ import { RuntimeProvider } from '../../app/Runtime';
 import { reduce } from '../../app/state';
 import { restore, serialize, storageKey } from '../../app/storage';
 import { demoState as initialState } from '../../test/fixtures';
+import { workspaceTab } from '../../test/navigation.fixture';
 import { Notes } from './Notes';
 
 afterEach(() => {
@@ -201,6 +202,24 @@ const fixture = () =>
       </RuntimeProvider>
     </StrictMode>,
   );
+
+it('keeps note saving before the fields and presents saved and unsaved state beside it', async () => {
+  const live = connect([item('a', 'mock-heading', '合成标题便笺')]);
+  fixture();
+  await userEvent.click(await screen.findByRole('button', { name: '查看便笺 合成标题便笺' }));
+  const title = await screen.findByRole('textbox', { name: '便笺标题' });
+  const save = screen.getByRole('button', { name: '保存便笺' });
+  expect(title.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  expect(save.closest('header')).toHaveTextContent('已保存到便笺');
+  expect(save).toBeDisabled();
+  await userEvent.type(title, ' MOCK EDIT');
+  expect(save.closest('header')).toHaveTextContent('修改保留在本机，尚未保存到便笺');
+  expect(save).toBeEnabled();
+  await userEvent.click(save);
+  await waitFor(() => expect(live.write).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(save.closest('header')).toHaveTextContent('已保存到便笺'));
+  expect(save).toBeDisabled();
+});
 
 it('keeps private lists, unsent drafts and search separate across Bots without starting tasks', async () => {
   const live = connect([item('a', 'mock-a', '合成甲便笺'), item('b', 'mock-b', '合成乙便笺')]);
@@ -383,14 +402,30 @@ it('allows archived/recovery reads and retains editors while blocking all writes
   expect(live.write).not.toHaveBeenCalled();
 });
 
+it('keeps archived Bot notes reachable through the Workspace while blocking note writes', async () => {
+  const live = connect([item('a', 'mock-workspace-history', '合成工作区历史便笺')]);
+  live.snapshot.profiles.find((row) => row.id === 'a')!.archived = true;
+  const state = restore(localStorage.getItem(storageKey));
+  state.bots.find((row) => row.id === 'research')!.archived = true;
+  localStorage.setItem(storageKey, serialize(state));
+  render(<App />);
+  await workspaceTab(userEvent, '便笺');
+  expect(screen.getByRole('tab', { name: '便笺' })).toBeEnabled();
+  expect(screen.getByRole('tab', { name: '定时' })).toBeDisabled();
+  await userEvent.click(await screen.findByRole('button', { name: '查看便笺 合成工作区历史便笺' }));
+  expect(await screen.findByRole('textbox', { name: '便笺正文' })).toHaveAttribute('readonly');
+  expect(screen.getByRole('button', { name: '保存便笺' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '新建便笺' })).toBeDisabled();
+  expect(live.write).not.toHaveBeenCalled();
+});
+
 it('gates old runtimes and exposes the panel only for an individual Bot', async () => {
   const live = connect([], 36);
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '便笺面板' }));
+  await workspaceTab(userEvent, '便笺');
   expect(await screen.findByText('需要更新运行环境')).toBeVisible();
   expect(live.calls.some((call) => call.type.startsWith('notes.'))).toBe(false);
   await userEvent.click(screen.getByRole('button', { name: '周报协作' }));
-  expect(screen.queryByRole('button', { name: '便笺面板' })).not.toBeInTheDocument();
   expect(screen.queryByRole('tab', { name: '便笺' })).not.toBeInTheDocument();
 });
 

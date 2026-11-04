@@ -1,6 +1,7 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from '../../app/storage';
 import { demoState as seedDemoState } from '../../test/fixtures';
+import { appAction } from '../../test/navigation.fixture';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
 
@@ -123,7 +124,7 @@ it('starts a new model conversation, retains and reads the old transcript, and s
   expect(screen.queryByText('SYNTHETIC CACHED ANSWER')).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC FUTURE DRAFT');
   expect(invoke.mock.calls.some(([command]) => command.type === 'task.start')).toBe(false);
-  await userEvent.click(screen.getByRole('button', { name: '历史对话' }));
+  await appAction(userEvent, '历史对话');
   expect(await screen.findByText('SYNTHETIC OLD ANSWER')).toBeVisible();
   await userEvent.click(screen.getByText('本机旧缓存（可能与后端记录重复）'));
   expect(screen.getByText('SYNTHETIC LOCAL ONLY')).toBeVisible();

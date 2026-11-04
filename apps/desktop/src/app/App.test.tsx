@@ -1,5 +1,6 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { demoState as seedDemoState } from '../test/fixtures';
+import { appAction, workspaceTab } from '../test/navigation.fixture';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from './storage';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
@@ -32,7 +33,7 @@ describe('daban client', () => {
     });
     render(<App />);
     await waitFor(() => expect(setTheme).toHaveBeenLastCalledWith('dark'));
-    await userEvent.click(screen.getByRole('button', { name: '切换浅色主题' }));
+    await appAction(userEvent, '切换浅色主题');
     await waitFor(() => expect(setTheme).toHaveBeenLastCalledWith('light'));
     expect(document.documentElement.dataset.theme).toBe('light');
   });
@@ -109,7 +110,7 @@ describe('daban client', () => {
     await userEvent.clear(memory);
     await userEvent.type(memory, '合成的未保存记忆');
     await userEvent.click(screen.getByRole('button', { name: '关闭工作区面板' }));
-    await userEvent.click(screen.getByRole('button', { name: '记忆面板' }));
+    await workspaceTab(userEvent, '记忆');
     expect(screen.getByRole('textbox', { name: '工作偏好' })).toHaveValue('合成的未保存记忆');
   });
   it('does not send a message while a Chinese input composition is active', async () => {
@@ -490,7 +491,7 @@ it('edits the backend Bot persona instead of only changing a client label', asyn
     </StrictMode>,
   );
   expect(await screen.findByRole('heading', { name: '合成研究助理' })).toBeVisible();
-  await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
+  await appAction(userEvent, '编辑 Bot 资料');
   const dialog = screen.getByRole('dialog');
   const name = within(dialog).getByRole('textbox', { name: '名称' });
   await userEvent.clear(name);
@@ -669,7 +670,7 @@ it('retries a profile conflict in the same form with the original edits intact',
   const backend = profileRuntime();
   render(<App />);
   await screen.findByRole('heading', { name: '合成助理' });
-  await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
+  await appAction(userEvent, '编辑 Bot 资料');
   const dialog = screen.getByRole('dialog');
   const name = within(dialog).getByRole('textbox', { name: '名称' });
   await userEvent.clear(name);
@@ -728,7 +729,7 @@ it('does not silently use a new backend version when the profile editor opened b
   const backend = profileRuntime();
   backend.snapshot.profiles = [];
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '编辑 Bot 资料' }));
+  await appAction(userEvent, '编辑 Bot 资料');
   const dialog = screen.getByRole('dialog');
   const name = within(dialog).getByRole('textbox', { name: '名称' });
   await userEvent.clear(name);
@@ -810,7 +811,7 @@ it('uses the acknowledged profile version when editing again before the next run
   render(<App />);
   await screen.findByRole('heading', { name: '合成助理' });
   for (const value of ['合成编辑甲', '合成编辑乙']) {
-    await userEvent.click(screen.getByRole('button', { name: '编辑 Bot 资料' }));
+    await appAction(userEvent, '编辑 Bot 资料');
     const dialog = screen.getByRole('dialog');
     const name = within(dialog).getByRole('textbox', { name: '名称' });
     await userEvent.clear(name);

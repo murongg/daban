@@ -195,7 +195,7 @@ export function Sidebar({
       else if (connection?.phase === 'connecting') preview = t('common.connectingComputer');
       else if (connection?.phase === 'stopping') preview = t('common.stoppingComputer');
       else if (computer) preview = t('sidebar.localLinuxIndependentDesktop');
-      else preview = t('sidebar.chatAvailableNoComputerConnected');
+      else preview = bot.role || t('sidebar.readyToChat');
     }
     if (local?.bot === agentId(bot.id) && !agentTask(runtime.snapshot, bot.id)?.running)
       preview = local.owner === 'human' ? t('localComputer.paused') : t('localComputer.connected');

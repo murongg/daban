@@ -1,6 +1,7 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from '../../app/storage';
 import { demoState as seedDemoState } from '../../test/fixtures';
+import { appAction, workspaceTab } from '../../test/navigation.fixture';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
 
@@ -149,7 +150,7 @@ function connect({
   return invoke;
 }
 async function archiveDialog() {
-  await userEvent.click(await screen.findByRole('button', { name: '编辑 Bot 资料' }));
+  await appAction(userEvent, '编辑 Bot 资料');
   await userEvent.click(await screen.findByRole('button', { name: '归档 Bot' }));
   return screen.findByRole('dialog', { name: '归档 Bot' });
 }
@@ -170,9 +171,15 @@ it('archives and restores a Bot without discarding its draft/history or silently
   ).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC-UNSENT-DRAFT');
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveAttribute('readonly');
-  expect(screen.getByRole('button', { name: '编辑 Bot 资料' })).toBeDisabled();
-  for (const name of ['资料面板', '记忆面板', '定时任务面板'])
-    expect(screen.getByRole('button', { name })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '更多操作' }));
+  expect(screen.getByRole('menuitem', { name: '编辑 Bot 资料' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  await userEvent.keyboard('{Escape}');
+  await workspaceTab(userEvent, '电脑');
+  for (const name of ['资料', '记忆', '定时'])
+    expect(screen.getByRole('tab', { name })).toBeDisabled();
   expect(screen.getByRole('button', { name: /^Bot 模型：/ })).toBeDisabled();
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
   expect(screen.getByText('SYNTHETIC-RETAINED-HISTORY')).toBeVisible();

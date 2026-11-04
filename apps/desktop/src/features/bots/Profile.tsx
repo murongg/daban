@@ -129,9 +129,8 @@ export function Profile({
                   runtime.snapshot.model.model,
                   runtime.snapshot.model.connections,
                 ),
-                label: t('common.followNamedWorkspace', {
-                  0: modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections),
-                }),
+                label: modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections),
+                description: t('common.followWorkspace'),
               },
               ...modelChoices(runtime.snapshot.model.connections, model),
             ]}

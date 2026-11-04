@@ -5,11 +5,22 @@ import {
   type WorkSummary,
   workStates,
 } from '@daban/protocol';
-import { Columns3, List, MessageSquare, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
+import {
+  Columns3,
+  List,
+  Maximize2,
+  MessageSquare,
+  Minimize2,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+} from 'lucide-react';
 import { type Dispatch, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
+import { IconButton } from '../../components/controls/Button';
 import { Select } from '../../components/controls/Select';
 import { Tooltip } from '../../components/controls/Tooltip';
 import { getLocale, t, useLocale } from '../../i18n/locale';
@@ -55,6 +66,7 @@ export function Tasks({
     draft = cache.draft;
   const board = cache.mode === 'board' && cache.filter !== 'trash';
   const [confirm, setConfirm] = useState<{ key: string; id: string; revision: number }>();
+  const [expanded, setExpanded] = useState(false);
   // A saved revision change invalidates consent, including a trash/restore round trip.
   const confirming =
     !!draft?.base &&
@@ -118,8 +130,9 @@ export function Tasks({
             </span>
           )}
           <span className="task-meta">
-            {author(item.updatedBy)}
-            {t('tasks.updated')} <time dateTime={item.updatedAt}>{time(item.updatedAt)}</time>
+            <time dateTime={item.updatedAt}>
+              {t('tasks.updatedByAt', { 0: author(item.updatedBy), 1: time(item.updatedAt) })}
+            </time>
           </span>
         </button>
       </li>
@@ -216,10 +229,10 @@ export function Tasks({
         {pending && (
           <div className="work-pending" role="status">
             <strong>
-              {work.working
-                ? t('tasks.verifyingOperation')
-                : t('tasks.operationResultAwaitingConfirmation')}{' '}
-              · {pending.draft.title || pending.draft.base?.title}
+              {t(
+                work.working ? 'tasks.verifyingOperationTitle' : 'tasks.unconfirmedOperationTitle',
+                { 0: pending.draft.title || pending.draft.base?.title || '' },
+              )}
             </strong>
             <p>{t('tasks.originalRequestRetainedReopeningChecksResultWithout')}</p>
             {work.operationError && (
@@ -267,12 +280,15 @@ export function Tasks({
         )}
         {draft && !work.editorVisible && (
           <button type="button" className="text-button" onClick={() => work.setEditorVisible(true)}>
-            {t('tasks.continueEditing')}
-            {draft.title ? `「${draft.title}」` : t('tasks.taskDraft')}
+            {draft.title
+              ? t('tasks.continueDraft', { 0: draft.title })
+              : t('tasks.continueUntitledDraft')}
           </button>
         )}
       </div>
-      <div className={`work-layout ${hasEditor ? 'has-editor' : ''}`}>
+      <div
+        className={`work-layout ${hasEditor ? 'has-editor' : ''} ${hasEditor && expanded ? 'editor-expanded' : ''}`}
+      >
         <div className="work-collection">
           {!work.available ? (
             <div className="task-empty">
@@ -322,10 +338,9 @@ export function Tasks({
           ) : (
             <>
               <p className="task-count">
-                {t('tasks.loaded')}
-                {work.items.length}
-                {t('tasks.items')}
-                {work.next !== undefined ? t('tasks.moreTasksAvailable') : ''}
+                {t(work.next !== undefined ? 'tasks.loadedCountMore' : 'tasks.loadedCount', {
+                  0: work.items.length,
+                })}
               </p>
               {board ? (
                 <div className="task-board">
@@ -374,9 +389,22 @@ export function Tasks({
           )}
         </div>
         {hasEditor && (
-          <aside className="task-editor" aria-label={t('tasks.taskDetails')}>
+          <aside
+            id="task-detail-editor"
+            className="task-editor"
+            aria-label={t('tasks.taskDetails')}
+          >
             <div className="task-editor-heading">
               <h2>{draft?.base ? t('tasks.taskDetails') : t('tasks.newTask')}</h2>
+              <IconButton
+                label={t(expanded ? 'tasks.collapseEditor' : 'tasks.expandEditor')}
+                className="task-expand"
+                aria-pressed={expanded}
+                aria-controls="task-detail-editor"
+                onClick={() => setExpanded((current) => !current)}
+              >
+                {expanded ? <Minimize2 /> : <Maximize2 />}
+              </IconButton>
               {draft?.base && !work.reading && (
                 <Tooltip label={t('tasks.viewDiscussion')}>
                   <button
@@ -402,7 +430,10 @@ export function Tasks({
               <button
                 type="button"
                 className="text-button"
-                onClick={() => work.setEditorVisible(false)}
+                onClick={() => {
+                  setExpanded(false);
+                  work.setEditorVisible(false);
+                }}
               >
                 {t('tasks.backTasks')}
               </button>
@@ -510,8 +541,12 @@ export function Tasks({
                     <div className="task-conflict">
                       <h3>{t('tasks.currentServerContent')}</h3>
                       <p>
-                        {latest.title} · {t(states[latest.status])}
-                        {latest.deleted ? t('common.trashSuffix') : ''}
+                        {t(
+                          latest.deleted
+                            ? 'tasks.currentDeletedRevisionSummary'
+                            : 'tasks.currentRevisionSummary',
+                          { 0: latest.title, 1: t(states[latest.status]) },
+                        )}
                       </p>
                       <details>
                         <summary>{t('tasks.viewServerDescriptionProgress')}</summary>
@@ -557,17 +592,20 @@ export function Tasks({
                 {draft.base && (
                   <div className="task-history">
                     <p className="task-meta">
-                      {t('common.by')}
-                      {author(draft.base.createdBy)}
-                      {t('tasks.createdLastUpdated')}
-                      {author(draft.base.updatedBy)}
-                      {t('tasks.update')}
+                      {t('tasks.createdUpdatedBy', {
+                        0: author(draft.base.createdBy),
+                        1: author(draft.base.updatedBy),
+                      })}
                     </p>
                     <p className="task-meta">
-                      <time dateTime={draft.base.updatedAt}>{time(draft.base.updatedAt)}</time>
-                      {draft.base.completedAt
-                        ? t('tasks.completed', { 0: time(draft.base.completedAt) })
-                        : ''}
+                      <time dateTime={draft.base.updatedAt}>
+                        {draft.base.completedAt
+                          ? t('tasks.updatedAndCompletedAt', {
+                              0: time(draft.base.updatedAt),
+                              1: time(draft.base.completedAt),
+                            })
+                          : t('tasks.updatedAt', { 0: time(draft.base.updatedAt) })}
+                      </time>
                     </p>
                     {draft.base.deleted ? (
                       <button
@@ -580,11 +618,7 @@ export function Tasks({
                       </button>
                     ) : confirming ? (
                       <div className="task-confirm">
-                        <p>
-                          {t('tasks.move')}
-                          {draft.base.title}
-                          {t('tasks.trashContentRetainedCanRestored')}
-                        </p>
+                        <p>{t('tasks.confirmMoveTrashTitle', { 0: draft.base.title })}</p>
                         <div className="task-actions">
                           <button
                             type="button"

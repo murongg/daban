@@ -13,6 +13,7 @@ import {
 import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { DateField } from '../../components/controls/DateField';
+import { Dialog } from '../../components/controls/Dialog';
 import { NumberField } from '../../components/controls/NumberField';
 import { Select } from '../../components/controls/Select';
 import { TimeField } from '../../components/controls/TimeField';
@@ -127,6 +128,7 @@ export function Schedules({
     error: '',
   });
   const [requests] = useState(() => new Map<string, string>());
+  const [removal, setRemoval] = useState<{ bot: string; item: Schedule }>();
   const status = statuses[bot.id] || {};
   const change = (draft: Partial<RoutineDraft>) =>
     dispatch({ type: 'routine-draft', bot: bot.id, draft });
@@ -151,8 +153,11 @@ export function Schedules({
   }, [available, form.open, signature, bot.id, runtime.command]);
   const feedback = (target: string, value: (typeof statuses)[string]) =>
     setStatuses((current) => ({ ...current, [target]: value }));
-  async function operate(item: Schedule, action: 'toggle' | 'remove' | 'run' | 'lock') {
-    const target = bot.id;
+  async function operate(
+    item: Schedule,
+    action: 'toggle' | 'remove' | 'run' | 'lock',
+    target = bot.id,
+  ) {
     feedback(target, { busy: true });
     try {
       if (action === 'run') {
@@ -171,8 +176,10 @@ export function Schedules({
           patch: action === 'lock' ? { locked: !item.locked } : { enabled: !item.enabled },
         });
       feedback(target, {});
+      return true;
     } catch (error) {
       feedback(target, { error: runtimeError(error) });
+      return false;
     }
   }
   function edit(item: Schedule) {
@@ -224,11 +231,13 @@ export function Schedules({
               : runtimeError(new Error(catalog?.error || 'SCHEDULE_UNAVAILABLE'))}
         </p>
       )}
-      {status.error && !(form.open && status.error === preview.error) && (
-        <p className="form-error" role="alert">
-          {status.error}
-        </p>
-      )}
+      {status.error &&
+        removal?.bot !== bot.id &&
+        !(form.open && status.error === preview.error) && (
+          <p className="form-error" role="alert">
+            {status.error}
+          </p>
+        )}
       <WindowList
         scope={bot.id}
         items={items}
@@ -300,7 +309,10 @@ export function Schedules({
               <IconButton
                 label={t('common.deleteSchedule', { 0: item.title })}
                 disabled={!available || !!status.busy}
-                onClick={() => operate(item, 'remove')}
+                onClick={() => {
+                  // Consent belongs to the reviewed revision, even if a new catalog arrives meanwhile.
+                  setRemoval({ bot: bot.id, item: { ...item } });
+                }}
               >
                 <Trash2 />
               </IconButton>
@@ -327,6 +339,42 @@ export function Schedules({
           </div>
         )}
       />
+      {removal?.bot === bot.id && (
+        <Dialog
+          title={t('schedules.confirmDeleteTitle')}
+          closeDisabled={!!status.busy}
+          onClose={() => setRemoval(undefined)}
+        >
+          <p>{t('schedules.confirmDeleteDescription', { 0: removal.item.title })}</p>
+          {status.error && (
+            <p className="form-error" role="alert">
+              {status.error}
+            </p>
+          )}
+          <div className="dialog-actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={!!status.busy}
+              onClick={() => setRemoval(undefined)}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="primary danger-text"
+              disabled={!available || !!status.busy}
+              onClick={async () => {
+                const captured = removal;
+                if (await operate(captured.item, 'remove', captured.bot))
+                  setRemoval((current) => (current === captured ? undefined : current));
+              }}
+            >
+              {t('schedules.confirmDelete')}
+            </button>
+          </div>
+        </Dialog>
+      )}
       {!items.length && !form.open && available && (
         <div className="empty-panel">
           <Clock3 />
