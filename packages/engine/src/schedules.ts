@@ -55,8 +55,8 @@ function legacy(client: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS firing_pending ON firings(state,created);`);
 }
 
-// SQLite's implicit insertion order breaks ties between firings created in the same millisecond.
-const inserted = sql`rowid`;
+// Host-created rowids persist the enqueue order even when clocks repeat or move backwards.
+const inserted = sql<number>`rowid`;
 const encoded = (value: unknown) =>
   JSON.stringify(value, [
     'id',
@@ -172,7 +172,13 @@ export class Schedules {
   }
   private state(id: string) {
     const state = this.db.select().from(automations).where(eq(automations.schedule, id)).get();
-    if (state && !isAutomationView(this.automationView(state))) throw new Fault('SCHEDULE_CORRUPT');
+    if (
+      state &&
+      (!isAutomationView(this.automationView(state)) ||
+        !Number.isSafeInteger(state.resultFloor) ||
+        state.resultFloor < 0)
+    )
+      throw new Fault('SCHEDULE_CORRUPT');
     return state;
   }
   private automationView(state: Automation) {
@@ -228,6 +234,7 @@ export class Schedules {
           observeError: null,
           resultDigest: null,
           resultError: null,
+          resultFloor: 0,
           notice: null,
         },
       })
@@ -264,10 +271,20 @@ export class Schedules {
     if (!state) return;
     // Both callers commit the pause and notice in their existing immediate owner transaction.
     const code = 'AUTOMATION_MONITOR_UNAVAILABLE';
+    const latest = this.db
+      .select({ order: inserted })
+      .from(firings)
+      .where(eq(firings.schedule, row.id))
+      .orderBy(desc(inserted))
+      .get();
     if (state.resultError !== code) this.notice(row, state, 'fault', code);
     this.db
       .update(automations)
-      .set({ resultError: code })
+      // Capability recovery needs a newly accepted firing, even if an old receipt arrives after it returns.
+      .set({
+        resultError: code,
+        resultFloor: Math.max(state.resultFloor, (latest?.order ?? 0) + 1),
+      })
       .where(eq(automations.schedule, row.id))
       .run();
     const { input } = this.decode(row);
@@ -1047,7 +1064,7 @@ export class Schedules {
   private async monitorResults() {
     const rows = await this.exclusive(() =>
       this.db
-        .select()
+        .select({ firing: firings, order: inserted })
         .from(firings)
         .where(
           and(
@@ -1056,11 +1073,11 @@ export class Schedules {
             inArray(firings.state, ['completed', 'failed', 'interrupted']),
           ),
         )
-        .orderBy(asc(firings.created), asc(inserted))
+        .orderBy(asc(inserted))
         .limit(100)
         .all(),
     );
-    for (const firing of rows) {
+    for (const { firing, order } of rows) {
       const source = this.source(firing)!;
       let hash: string | undefined;
       let code: string | undefined;
@@ -1096,7 +1113,14 @@ export class Schedules {
               .where(eq(schedules.id, firing.schedule))
               .get();
             const state = this.state(firing.schedule);
-            if (!row || row.deleted || !state || state.configRevision !== source.configRevision) {
+            // This floor survives receipt reconciliation; equal order lets a firing settle its own unknown.
+            if (
+              !row ||
+              row.deleted ||
+              !state ||
+              state.configRevision !== source.configRevision ||
+              order < state.resultFloor
+            ) {
               this.db
                 .update(firings)
                 .set({ monitor: 'unchanged' })
@@ -1114,11 +1138,11 @@ export class Schedules {
                     ? 'changed'
                     : 'unchanged';
             // All-mode runs must also settle a recorded unknown outcome and any ensuing failure.
-            if (
+            const monitored =
               source.policy.kind === 'changes' ||
               code === 'SCHEDULE_OUTCOME_UNKNOWN' ||
-              state.resultError !== null
-            ) {
+              state.resultError !== null;
+            if (monitored) {
               if (
                 (code && code !== 'SCHEDULE_OUTCOME_UNKNOWN' && code !== state.resultError) ||
                 (!code &&
@@ -1132,12 +1156,17 @@ export class Schedules {
                   code,
                   firing.run ?? undefined,
                 );
-              this.db
-                .update(automations)
-                .set({ resultError: code ?? null, ...(hash ? { resultDigest: hash } : {}) })
-                .where(eq(automations.schedule, row.id))
-                .run();
             }
+            this.db
+              .update(automations)
+              .set({
+                resultFloor: order,
+                ...(monitored
+                  ? { resultError: code ?? null, ...(hash ? { resultDigest: hash } : {}) }
+                  : {}),
+              })
+              .where(eq(automations.schedule, row.id))
+              .run();
             this.db
               .update(firings)
               .set({

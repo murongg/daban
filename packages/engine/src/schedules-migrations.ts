@@ -33,4 +33,15 @@ export const migrations: Migration[] = [
     hash: '007de955d1533ac622477ad9a9216d2e626c67f8d76114c78394d2cd140a8531',
     name: '20261104151411_automation-notices',
   },
+  {
+    sql: [
+      'ALTER TABLE `automations` ADD `resultFloor` integer DEFAULT 0 NOT NULL;\n',
+      "\n-- Old files have no ownership checkpoint; a pending receipt may already have cleared its monitor.\nUPDATE automations SET resultFloor = COALESCE((\n  SELECT MAX(firings.rowid) FROM firings\n  WHERE firings.schedule = automations.schedule\n    AND json_extract(firings.source, '$.configRevision') = automations.configRevision\n    AND (firings.monitor IS NOT NULL OR (\n      automations.resultError IS NOT NULL\n      AND firings.state IN ('claimed', 'running', 'completed', 'failed', 'interrupted')\n    ))\n), 0);\n",
+      "\n-- A capability fault requires a firing accepted after the fault, even when the executor returns.\nUPDATE automations SET resultFloor = COALESCE((\n  SELECT MAX(firings.rowid) FROM firings\n  WHERE firings.schedule = automations.schedule\n    AND json_extract(firings.source, '$.configRevision') = automations.configRevision\n), 0) + 1\nWHERE resultError = 'AUTOMATION_MONITOR_UNAVAILABLE';\n",
+    ],
+    bps: true,
+    folderMillis: 1793821248000,
+    hash: '25fe683bc2f6e16a6f4140833d69137eaa220c58ac8d6c86b62da53ae37964ec',
+    name: '20261104194048_result-floor',
+  },
 ];
