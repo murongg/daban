@@ -33,6 +33,10 @@ interface Signing {
   keychain?: string;
 }
 type Run = typeof run;
+export interface NotaryReceipt {
+  id: string;
+  status: 'Accepted';
+}
 
 export function signingDiagnostics(error: unknown) {
   if (!error || typeof error !== 'object') return [];
@@ -43,6 +47,30 @@ export function signingDiagnostics(error: unknown) {
       ? [`${stream}:\n${output.trim().slice(-16000)}`]
       : [];
   });
+}
+
+async function stapleTicket(file: string, command: Run = run) {
+  const backoff = [5000, 15000];
+  const networkCodes = [-1001, -1003, -1004, -1005, -1006, -1009];
+  for (const action of ['staple', 'validate']) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await command('/usr/bin/xcrun', ['stapler', action, file]);
+        break;
+      } catch (error) {
+        // Apple reports transport failures on stdout too; a nonzero exit alone is not retryable.
+        const network = /\bNSURLErrorDomain\s+Code=(-\d+)\b/.exec(
+          signingDiagnostics(error).join('\n'),
+        );
+        if (attempt >= backoff.length || !network || !networkCodes.includes(Number(network[1])))
+          throw error;
+        console.warn(
+          `Apple ticket ${action}: transient network failure; attempt ${attempt + 2}/${backoff.length + 1} in ${backoff[attempt]} ms.`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoff[attempt]));
+      }
+    }
+  }
 }
 
 export function isMachO(bytes: Buffer) {
@@ -208,16 +236,31 @@ export async function signRuntime(
   await dependencies.run('/usr/bin/codesign', [...args, app]);
   await dependencies.run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
 }
+export async function prepareComponent(
+  app: string,
+  archive: string,
+  options: Signing,
+  dependencies: {
+    sign: typeof signRuntime;
+    submit: (file: string, options: Signing) => Promise<NotaryReceipt>;
+    run: Run;
+  } = { sign: signRuntime, submit: notarize, run },
+) {
+  await dependencies.sign(app, options);
+  // Keep the exact submitted ZIP so ticket retries in another job never need to sign or submit again.
+  await dependencies.run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, archive]);
+  return dependencies.submit(archive, options);
+}
+export async function finishComponent(app: string, archive: string, command: Run = run) {
+  await stapleTicket(app, command);
+  await command('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
+  await command('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, archive]);
+}
 export async function signComponent(app: string, archive: string, options: Signing) {
-  await signRuntime(app, options);
   const temporary = archive + '.submit.zip';
   try {
-    await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, temporary]);
-    await notarize(temporary, options);
-    await run('/usr/bin/xcrun', ['stapler', 'staple', app]);
-    await run('/usr/bin/xcrun', ['stapler', 'validate', app]);
-    await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
-    await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, archive]);
+    await prepareComponent(app, temporary, options);
+    await finishComponent(app, archive);
   } finally {
     await rm(temporary, { force: true });
   }
@@ -245,6 +288,9 @@ async function notarize(file: string, options: Signing) {
     ),
   );
   assert.equal(result.status, 'Accepted', `NOTARIZATION_REJECTED:${String(result.id)}`);
+  assert.ok(typeof result.id === 'string', 'NOTARIZATION_RECEIPT');
+  assert.match(result.id, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i, 'NOTARIZATION_RECEIPT');
+  return { id: result.id as string, status: 'Accepted' as const };
 }
 export async function notarizeDistribution(
   app: string,
@@ -257,12 +303,14 @@ export async function notarizeDistribution(
 ) {
   // The outer DMG submission issues tickets for its nested app too; keep its signed payload unchanged.
   await dependencies.submit(dmg, options);
+  await finishDistribution(app, dmg, dependencies.run);
+}
+export async function finishDistribution(app: string, dmg: string, command: Run = run) {
   for (const file of [app, dmg]) {
-    await dependencies.run('/usr/bin/xcrun', ['stapler', 'staple', file]);
-    await dependencies.run('/usr/bin/xcrun', ['stapler', 'validate', file]);
+    await stapleTicket(file, command);
   }
-  await dependencies.run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
-  await dependencies.run('/usr/sbin/spctl', [
+  await command('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
+  await command('/usr/sbin/spctl', [
     '--assess',
     '--type',
     'open',
@@ -271,18 +319,17 @@ export async function notarizeDistribution(
     dmg,
   ]);
 }
-async function main() {
-  assert.equal(process.platform, 'darwin');
-  const [input, output] = process.argv.slice(2);
-  assert.ok(input && output, 'Usage: tools/sign.ts <Daban.app> <new-artifacts-directory>');
-  const app = await import('node:fs/promises').then((fs) => fs.realpath(input));
-  assert.equal(path.basename(app), 'Daban.app');
-  const options = {
-    identity: process.env.MACOS_SIGNING_IDENTITY ?? '',
-    keychain: process.env.MACOS_KEYCHAIN,
-  };
+export async function prepareDistribution(
+  app: string,
+  output: string,
+  options: Signing,
+  dependencies: {
+    sign: typeof signApplication;
+    submit: (file: string, options: Signing) => Promise<NotaryReceipt>;
+    run: Run;
+  } = { sign: signApplication, submit: notarize, run },
+) {
   signingArguments(options);
-  assert.ok(process.env.MACOS_NOTARY_PROFILE, 'MACOS_NOTARY_PROFILE_REQUIRED');
   await mkdir(output);
   const host = await import('node:fs/promises').then((fs) =>
     fs.access(path.join(app, 'Contents/Resources/agent')).then(
@@ -292,7 +339,7 @@ async function main() {
   );
   if (host) await signLima(path.join(app, 'Contents/Resources'), options);
   console.log('Signing nested application code and sealing the host package.');
-  await signApplication(app, options, undefined, host);
+  await dependencies.sign(app, options, undefined, host);
   const version = JSON.parse(
     await readFile(path.join(app, 'Contents/Resources/app/package.json'), 'utf8'),
   ).version;
@@ -307,7 +354,7 @@ async function main() {
       mode: constants.COPYFILE_FICLONE,
     });
     await symlink('/Applications', path.join(staging, 'Applications'));
-    await run('/usr/bin/hdiutil', [
+    await dependencies.run('/usr/bin/hdiutil', [
       'create',
       '-volname',
       'Daban',
@@ -318,12 +365,27 @@ async function main() {
       'UDZO',
       dmg,
     ]);
-    await run('/usr/bin/codesign', [...signingArguments(options), dmg]);
+    await dependencies.run('/usr/bin/codesign', [...signingArguments(options), dmg]);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
   console.log('Submitting the signed disk image for Apple notarization.');
-  await notarizeDistribution(app, dmg, options);
+  const receipt = await dependencies.submit(dmg, options);
+  return { dmg, receipt };
+}
+async function main() {
+  assert.equal(process.platform, 'darwin');
+  const [input, output] = process.argv.slice(2);
+  assert.ok(input && output, 'Usage: tools/sign.ts <Daban.app> <new-artifacts-directory>');
+  const app = await import('node:fs/promises').then((fs) => fs.realpath(input));
+  assert.equal(path.basename(app), 'Daban.app');
+  const options = {
+    identity: process.env.MACOS_SIGNING_IDENTITY ?? '',
+    keychain: process.env.MACOS_KEYCHAIN,
+  };
+  assert.ok(process.env.MACOS_NOTARY_PROFILE, 'MACOS_NOTARY_PROFILE_REQUIRED');
+  const prepared = await prepareDistribution(app, output, options);
+  await finishDistribution(app, prepared.dmg);
   await packageMacUpdate(app, path.resolve(output));
   await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
   console.log('Developer ID signing, notarization, stapling and Gatekeeper assessment passed.');

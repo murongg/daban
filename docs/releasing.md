@@ -76,7 +76,13 @@ npm run release -- --release 0.1.4
 
 版本同步由 `bump.config.ts` 的执行步骤处理，保留独立部署的 `file:` 路径和第三方依赖版本。不要手工改版本或用 `git tag` 绕过此流程。`npm run release` 会推送提交和标签，确认前应检查目标版本与当前分支。
 
-也可在 Actions 手动运行 `Release`，输入**已有**标签。任何检查、公证或日志生成失败都会阻止发布。重试不会覆盖已经发布的版本；修改版本内容应创建新版本。
+macOS 的客户端和独立运行包共用票据重试策略：`stapler staple` 或 `validate` 遇到明确的 `NSURLErrorDomain` 瞬时网络错误时，每项操作最多尝试 3 次，重试前分别等待 5 秒、15 秒。已成功的操作与公证提交不重复执行。非网络错误或重试耗尽会阻止发布；签名、公证接受状态、票据验证和 Gatekeeper 检查仍须全部通过。
+
+Mac 流水线分为运行包准备、运行包附票验证、客户端准备、客户端附票验证四个 job。准备阶段保存已签名且公证状态为 `Accepted` 的归档，附票阶段从这些固定字节恢复；票据请求重试耗尽后，在同一次运行中选择 **Re-run failed jobs**，即可继续附票、验证和打包，无需重新签名、构建或提交该归档。运行包优先复用相同源码指纹的已发布不可变包，同次运行已验证的运行包另存 Actions 缓存；命中时跳过运行包构建和公证。
+
+检查点只包含分发归档、公证请求 ID 和校验元数据，不包含钥匙串或凭据。下载后检查提交、源码指纹、版本、文件清单、长度和 SHA-256，并核对客户端内嵌的运行包引用。发布 job 使用各 job 返回的确切 artifact ID，避免重跑时混用不同批次的运行包和客户端。artifact 保留 7 天；缓存可能被淘汰，artifact 已过期时需重新运行完整流程。
+
+也可在 Actions 手动运行 `Release`，输入**已有**标签。任何检查、公证或日志生成失败都会阻止发布。最后的 CI job 创建私有草稿、上传并逐项校验全部附件，再公开 Release；中途上传失败后重跑该 job 会继续同一草稿并复用摘要一致的附件。已公开的版本保持不可变，修改版本内容应创建新版本。新流程只适用于包含这些改动的标签；旧 Actions 运行的重跑仍使用旧版工作流。
 
 生成产物：
 
@@ -113,6 +119,12 @@ Configure the secrets listed above. Apple secrets must contain a Developer ID Ap
 Upload the four verified, credential-free environment files above to the same repository's `environment-v38` release, or configure `MACOS_ENVIRONMENT_TAG`. The pinned base image and component checks must pass. Never distribute a used VM or modify expected hashes to accept an unverified image.
 
 After merging the changes to release, use a clean, up-to-date main checkout, run `npm ci`, then `npm run release`. bumpp prompts for a version and confirmation; use `npm run release -- --release 0.1.4` or `npm run release -- --release 0.1.4-beta.1` for an explicit version. The configuration synchronizes all six package versions, internal dependency pins, the root lockfile, and both standalone lockfiles, preserving vendored `file:` paths and third-party versions. bumpp creates a `chore(release): v<version>` commit and an annotated `v<version>` tag, then pushes both to trigger `Release`. Use this command instead of manually editing versions or creating tags. An existing tag can also be selected via manual dispatch.
+
+The macOS client and standalone runtime share ticket retries. Each `stapler staple` or `validate` operation gets up to three attempts for recognized transient `NSURLErrorDomain` transport failures, waiting 5 and 15 seconds before retries. Successful operations and notarization submissions are not repeated. Other failures or exhausted retries block publication; signing, notarization acceptance, ticket validation and Gatekeeper checks must all pass.
+
+Four Mac jobs separate runtime preparation, runtime ticket validation, client preparation, and client ticket validation. Preparation checkpoints preserve signed archives with accepted notarization receipts. After exhausted ticket retries, choose **Re-run failed jobs** in the same run to resume tickets, validation and packaging without rebuilding, resigning or resubmitting those archives. A published immutable runtime with the same source fingerprint is reused first; a verified runtime from the same run is also cached. Cache hits skip runtime builds and notarization.
+
+Checkpoints include only distribution archives, notarization request IDs and validation metadata, never keychains or credentials. Consumers verify the commit, source fingerprint, version, allowed files, sizes, SHA-256 hashes and embedded client/runtime reference. Publishing downloads exact artifact IDs returned by the producing jobs, preventing mixed retry cohorts. Artifacts expire after seven days, and caches may be evicted; restart the full workflow if required artifacts have expired. CI uploads into a private draft, verifies every attachment, then publishes it. Retrying an interrupted upload resumes that draft and skips matching assets. This behavior applies to tags containing the new workflow; rerunning an older Actions run still uses its original workflow.
 
 Downloads include notarized Apple Silicon DMG/ZIP files, a Windows x64 portable ZIP, both language changelogs, and SHA-256 checksums. Release notes include both languages and the original change links. Existing releases are not overwritten. Windows signing and Intel Mac builds are not included. Installed clients support stable in-app updates; publish the NSIS installer, Mac ZIP, update manifests and blockmaps together. Portable Windows builds remain separate. Mac update configuration is embedded before signing, and ZIP packaging preserves the signed application.
 

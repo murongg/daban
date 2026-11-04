@@ -7,6 +7,13 @@ on:
       ref:
         type: string
         required: false
+    outputs:
+      runtime_artifact:
+        value: ${{ jobs.runtime.outputs.artifact_id }}
+        description: Verified runtime cohort artifact
+      client_artifact:
+        value: ${{ jobs.macos.outputs.artifact_id }}
+        description: Verified client cohort artifact
 
 permissions:
   contents: read
@@ -16,18 +23,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  macos:
-    permissions:
-      contents: read
+  runtime_prepare:
     runs-on: macos-15
     timeout-minutes: 90
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      cache_hit: ${{ steps.saved.outputs.cache-hit }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
+      - run: npm run build:engine
+      - uses: actions/cache/restore@v4
+        id: saved
+        with:
+          path: ${{ runner.temp }}/runtime-cache
+          key: release-runtime-${{ github.run_id }}
+      - name: Reuse a completed run checkpoint or published immutable runtime
+        id: cached
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_CACHE: ${{ steps.saved.outputs.cache-hit == 'true' && format('{0}/runtime-cache', runner.temp) || '' }}
+        run: node --experimental-strip-types tools/macos.ts runtime-cache "$RUNNER_TEMP/runtime-input"
+      - name: Build host and Linux execution services only on a cache miss
+        if: steps.cached.outputs.cached != 'true'
+        run: |
+          npm run build --workspace @daban/agent
+          npm run build --workspace @daban/runtime
       - name: Download the sealed credential-free Linux base
+        if: steps.cached.outputs.cached != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ENVIRONMENT_TAG: ${{ vars.MACOS_ENVIRONMENT_TAG || 'environment-v38' }}
@@ -36,6 +62,7 @@ jobs:
           mkdir "$RUNNER_TEMP/environment"
           gh release download "$ENVIRONMENT_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/environment" --pattern manifest.json --pattern lima.tar.gz --pattern COMPONENTS.md
       - name: Download official standalone Node for the host
+        if: steps.cached.outputs.cached != 'true'
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
@@ -45,99 +72,149 @@ jobs:
           test -n "$expected"
           printf '%s  node.tar.gz\n' "$expected" | shasum -a 256 --check
           tar -xzf node.tar.gz
-      - run: npm run build
-      - name: Reuse an immutable runtime when its sources are unchanged
-        id: runtime
+      - uses: ./.github/actions/macos-signing
+        id: signing
+        if: steps.cached.outputs.cached != 'true'
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          app-password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      - name: Prepare signed and accepted runtime bytes
+        if: steps.cached.outputs.cached != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node --experimental-strip-types tools/component.ts fetch "$RUNNER_TEMP/runtime"
-      - name: Import Developer ID and notarization credentials into an ephemeral keychain
-        id: signing
-        env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-        run: |
-          set -euo pipefail
-          : "${MACOS_CERTIFICATE:?Missing MACOS_CERTIFICATE}"
-          : "${MACOS_CERTIFICATE_PASSWORD:?Missing MACOS_CERTIFICATE_PASSWORD}"
-          : "${APPLE_ID:?Missing APPLE_ID}"
-          : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
-          : "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}"
-          keychain="$RUNNER_TEMP/daban-signing.keychain-db"
-          keychain_password=$(openssl rand -hex 32)
-          echo "::add-mask::$keychain_password"
-          umask 077
-          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/daban-certificate.p12"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 7200 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          # codesign also resolves private keys through the user search list.
-          security list-keychains -d user -s "$keychain"
-          security import "$RUNNER_TEMP/daban-certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -k "$keychain" -t cert -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
-          identity=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)".*/\1/p' | grep -F "($APPLE_TEAM_ID)")
-          test "$(printf '%s\n' "$identity" | wc -l | tr -d ' ')" = 1
-          cp /usr/bin/true "$RUNNER_TEMP/daban-signing-probe"
-          codesign --force --sign "$identity" --timestamp --options runtime --keychain "$keychain" "$RUNNER_TEMP/daban-signing-probe"
-          codesign --verify --strict "$RUNNER_TEMP/daban-signing-probe"
-          printf 'identity=%s\n' "$identity" >> "$GITHUB_OUTPUT"
-          xcrun notarytool store-credentials daban-release --keychain "$keychain" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"
-      - name: Build, sign and notarize the separate runtime
-        if: steps.runtime.outputs.cached != 'true'
-        env:
           MACOS_SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
           MACOS_KEYCHAIN: ${{ runner.temp }}/daban-signing.keychain-db
           MACOS_NOTARY_PROFILE: daban-release
-        run: node --experimental-strip-types tools/component.ts build "$RUNNER_TEMP/runtime" "$RUNNER_TEMP/node-v24.22.1-darwin-arm64" "$RUNNER_TEMP/environment"
-      - name: Pin the runtime and assemble the small client
-        run: |
-          node --experimental-strip-types tools/component.ts reference "$RUNNER_TEMP/runtime/Daban-runtime-macos-arm64.zip" "$RUNNER_TEMP/runtime/runtime-macos-arm64.json"
-          node --experimental-strip-types tools/desktop.ts "$RUNNER_TEMP/runtime/runtime-macos-arm64.json" "$RUNNER_TEMP/bundle"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Daban-runtime-macos-arm64
-          path: |
-            ${{ runner.temp }}/runtime/Daban-runtime-macos-arm64.zip
-            ${{ runner.temp }}/runtime/runtime-macos-arm64.json
-            ${{ runner.temp }}/runtime/Daban-lima-macos-arm64.tar.gz
-            ${{ runner.temp }}/runtime/Daban-executor-linux-arm64.tar.gz
-            ${{ runner.temp }}/runtime/linux.json
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
-      - name: Sign nested code, notarize, staple and verify Gatekeeper
-        env:
-          MACOS_SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
-          MACOS_KEYCHAIN: ${{ runner.temp }}/daban-signing.keychain-db
-          MACOS_NOTARY_PROFILE: daban-release
-        run: node --experimental-strip-types tools/sign.ts "$RUNNER_TEMP/bundle/Daban.app" "$RUNNER_TEMP/release"
-      - name: Verify the extracted runtime against the signed client publisher
-        run: node --experimental-strip-types tools/component.ts validate "$RUNNER_TEMP/bundle/Daban.app" "$RUNNER_TEMP/runtime/Daban-runtime-macos-arm64.zip" "$RUNNER_TEMP/runtime/runtime-macos-arm64.json"
-      - name: Remove credentials
+        run: node --experimental-strip-types tools/macos.ts runtime-prepare "$RUNNER_TEMP/node-v24.22.1-darwin-arm64" "$RUNNER_TEMP/runtime-input" "$RUNNER_TEMP/environment"
+      - name: Remove signing credentials
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/daban-signing.keychain-db" || true
           rm -f "$RUNNER_TEMP/daban-certificate.p12" "$RUNNER_TEMP/daban-signing-probe"
-      - name: Retain the failed disk image for validation diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Daban-macos-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/release/Daban-*.dmg
-          if-no-files-found: ignore
-          compression-level: 0
-          retention-days: 1
       - uses: actions/upload-artifact@v4
+        id: upload
         with:
-          name: Daban-macos-arm64
-          path: |
-            ${{ runner.temp }}/release/Daban-*.dmg
-            ${{ runner.temp }}/release/Daban-*.zip
-            ${{ runner.temp }}/release/*.blockmap
-            ${{ runner.temp }}/release/latest*.yml
+          name: Daban-macos-runtime-prepared-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-input
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  runtime:
+    needs: runtime_prepare
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: npm run build:engine
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.runtime_prepare.outputs.artifact_id }}
+          path: ${{ runner.temp }}/runtime-input
+          merge-multiple: true
+      - name: Restore, staple and validate the accepted runtime
+        run: node --experimental-strip-types tools/macos.ts runtime-finish "$RUNNER_TEMP/runtime-input" "$RUNNER_TEMP/runtime-ready"
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: Daban-runtime-macos-arm64-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-ready
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/cache/save@v4
+        if: needs.runtime_prepare.outputs.cache_hit != 'true'
+        with:
+          path: ${{ runner.temp }}/runtime-ready
+          key: release-runtime-${{ github.run_id }}
+
+  client_prepare:
+    needs: runtime
+    runs-on: macos-15
+    timeout-minutes: 60
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.runtime.outputs.artifact_id }}
+          path: ${{ runner.temp }}/runtime-ready
+          merge-multiple: true
+      - uses: ./.github/actions/macos-signing
+        id: signing
+        with:
+          certificate: ${{ secrets.MACOS_CERTIFICATE }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          app-password: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      - name: Prepare signed and accepted client bytes
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
+          MACOS_KEYCHAIN: ${{ runner.temp }}/daban-signing.keychain-db
+          MACOS_NOTARY_PROFILE: daban-release
+        run: node --experimental-strip-types tools/macos.ts client-prepare "$RUNNER_TEMP/runtime-ready" "$RUNNER_TEMP/client-input"
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/daban-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/daban-certificate.p12" "$RUNNER_TEMP/daban-signing-probe"
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: Daban-macos-client-prepared-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/client-input
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  macos:
+    needs: [runtime, client_prepare]
+    runs-on: macos-15
+    timeout-minutes: 40
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: |
+          npm run build:engine
+          npm run build --workspace @daban/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.runtime.outputs.artifact_id }}
+          path: ${{ runner.temp }}/runtime-ready
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.client_prepare.outputs.artifact_id }}
+          path: ${{ runner.temp }}/client-input
+          merge-multiple: true
+      - name: Resume tickets, Gatekeeper, packaging and runtime publisher validation
+        run: node --experimental-strip-types tools/macos.ts client-finish "$RUNNER_TEMP/runtime-ready" "$RUNNER_TEMP/client-input" "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: Daban-macos-arm64-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
