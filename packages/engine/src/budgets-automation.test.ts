@@ -1,4 +1,6 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   type AutomationSource,
@@ -7,6 +9,8 @@ import {
   type TaskRequest,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
+import { RemoteExecutor } from './execution.js';
+import { startExecutor } from './executor.js';
 import { GroupTools } from './group-tools.js';
 import { type GroupRunner, Groups } from './groups.js';
 import { inferenceFixture } from './inference.fixture.js';
@@ -14,7 +18,7 @@ import type { ModelRuns } from './model.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { Schedules } from './schedules.js';
 
-const source = {
+const source: AutomationSource = {
   scheduleId: 'synthetic-budget-schedule',
   firingId: 'synthetic-budget-firing',
   configRevision: 1,
@@ -77,45 +81,52 @@ test('automation provenance is part of request deduplication and never accepted 
   }
 });
 
-test('a Human retry retains saved automation provenance and the original unknown budget occupancy', {
-  timeout: 60000,
-}, async () => {
-  const fixture = await inferenceFixture(() => 'SYNTHETIC AUTOMATION RESULT');
-  try {
-    await start(fixture.models, {
-      requestId: 'synthetic-auto-before-retry',
-      prompt: 'SYNTHETIC AUTOMATION TASK',
-    });
-    const first = fixture.models.jobs.get('mock-bot')!;
-    await first.done;
-    await fixture.models.startHuman('mock-bot', {
-      requestId: 'synthetic-auto-human-retry',
-      retryOf: first.id,
-      prompt: 'SYNTHETIC AUTOMATION TASK',
-    });
-    const next = fixture.models.jobs.get('mock-bot')!;
-    await next.done;
-    expect(next.automation).toEqual(source);
-    expect(next.budget?.budgetId).toBe(first.budget!.budgetId);
-    const view = fixture.models.budgets.view(first.budget!.budgetId);
-    expect(view.requests).toBe(2);
-    expect(view.unknownCount).toBe(2);
-    await expect(
-      start(
-        fixture.models,
-        {
-          requestId: 'synthetic-auto-wrong-origin-retry',
-          retryOf: next.id,
-          prompt: 'SYNTHETIC AUTOMATION TASK',
-        },
-        { ...source, firingId: 'synthetic-new-firing' },
-      ),
-    ).rejects.toMatchObject({ code: 'INVALID_AUTOMATION_SOURCE' });
-    expect(fixture.models.budgets.view(first.budget!.budgetId).requests).toBe(2);
-  } finally {
-    await fixture.close();
-  }
-});
+test.each(['ask', 'full'] as const)(
+  'a Human retry retains saved provenance, approval policy and unknown occupancy (mode=%s)',
+  {
+    timeout: 60000,
+  },
+  async (mode) => {
+    const fixture = await inferenceFixture(() => 'SYNTHETIC AUTOMATION RESULT');
+    try {
+      await start(fixture.models, {
+        requestId: 'synthetic-auto-before-retry',
+        approvalMode: mode,
+        prompt: 'SYNTHETIC AUTOMATION TASK',
+      });
+      const first = fixture.models.jobs.get('mock-bot')!;
+      await first.done;
+      await fixture.restart();
+      await fixture.models.startHuman('mock-bot', {
+        requestId: 'synthetic-auto-human-retry',
+        retryOf: first.id,
+        prompt: 'SYNTHETIC AUTOMATION TASK',
+      });
+      const next = fixture.models.jobs.get('mock-bot')!;
+      await next.done;
+      expect(next.automation).toEqual(source);
+      expect(next.task?.approvalMode).toBe(mode);
+      expect(next.budget?.budgetId).toBe(first.budget!.budgetId);
+      const view = fixture.models.budgets.view(first.budget!.budgetId);
+      expect(view.requests).toBe(2);
+      expect(view.unknownCount).toBe(2);
+      await expect(
+        start(
+          fixture.models,
+          {
+            requestId: 'synthetic-auto-wrong-origin-retry',
+            retryOf: next.id,
+            prompt: 'SYNTHETIC AUTOMATION TASK',
+          },
+          { ...source, firingId: 'synthetic-new-firing' },
+        ),
+      ).rejects.toMatchObject({ code: 'INVALID_AUTOMATION_SOURCE' });
+      expect(fixture.models.budgets.view(first.budget!.budgetId).requests).toBe(2);
+    } finally {
+      await fixture.close();
+    }
+  },
+);
 
 test('automation metadata and a quota increase cannot arm a Goal; the named Human path retains provenance', {
   timeout: 60000,
@@ -365,3 +376,123 @@ test('a real firing and reopened group deliveries retain one budget, immutable p
     await fixture.close();
   }
 });
+
+test.each([false, true])(
+  'Human Goal continuation preserves scoped provenance and does not claim unsupported run contracts (project=%s)',
+  { timeout: 60000 },
+  async (scoped) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-auto-goal-executor-'));
+    const service = await startExecutor({
+      directory: path.join(root, 'guest'),
+      port: 0,
+      boot: 'mock-auto-goal-boot',
+    });
+    const execution = new RemoteExecutor({
+      url: `${service.origin}/exec`,
+      token: (await readFile(path.join(root, 'guest/token'), 'utf8')).trim(),
+    });
+    await execution.ready;
+    let sends = 0;
+    const fixture = await inferenceFixture(
+      () =>
+        ++sends === 1
+          ? [
+              {
+                name: 'create_goal',
+                args: { objective: 'SYNTHETIC SCOPED AUTOMATED GOAL', max_goal_rounds: 3 },
+              },
+            ]
+          : 'SYNTHETIC GOAL PROGRESS',
+      execution,
+    );
+    try {
+      const models = fixture.models;
+      await models.ready;
+      const project = scoped ? { projectId: 'mock-alpha', revision: 1 } : undefined;
+      if (project) {
+        await models.profiles.register({
+          id: 'mock-bot',
+          name: 'Synthetic Goal bot',
+          instructions: '',
+          memory: '',
+          color: 'mint',
+        });
+        for (const projectId of ['mock-alpha', 'mock-beta'])
+          await models.projects.write({
+            action: 'create',
+            requestId: `synthetic-create-${projectId}`,
+            projectId,
+            expectedRevision: 0,
+            value: { name: projectId, grants: [{ bot: 'mock-bot' }] },
+          });
+      }
+      const origin = { ...source, ...(project ? { scope: project } : {}) };
+      const owner = { bot: 'mock-bot', chatRevision: 0, ...(project ? { project } : {}) };
+      models.budgets.configure(
+        0,
+        { ...defaultBudgetPolicy, mode: 'strict', maxRequests: 2 },
+        [],
+        'synthetic-scoped-goal-policy',
+      );
+      await start(
+        models,
+        {
+          requestId: 'synthetic-scoped-auto-goal',
+          prompt: '/goal SYNTHETIC SCOPED AUTOMATED GOAL',
+          chatRevision: 0,
+          ...(project ? { project } : {}),
+        },
+        origin,
+      );
+      const first = models.jobs.get('mock-bot')!;
+      await first.done;
+      expect(sends).toBe(2);
+      expect(first.goal?.id).toEqual(expect.any(String));
+      if (project)
+        await expect(
+          models.goalTarget({ ...owner, project: { projectId: 'mock-beta', revision: 1 } }),
+        ).rejects.toMatchObject({ code: 'GOAL_TARGET_UNAVAILABLE' });
+      const raised = models.budgets.increase(
+        first.budget!.budgetId,
+        1,
+        { ...defaultBudgetPolicy, mode: 'strict', maxRequests: 12, toolLimit: 1001 },
+        'synthetic-scoped-quota',
+      );
+      const target = await models.goalTarget(owner);
+      expect(target.owner).toEqual(owner);
+      const task = {
+        requestId: 'synthetic-scoped-human-resume',
+        prompt: '/goal resume',
+        chatRevision: 0,
+        goalResume: target,
+        ...(project ? { project } : {}),
+      };
+      const epoch = models.budgets.goals.epoch(owner),
+        runs = models.budgets.runs(raised.scope.budgetId);
+      const capabilities = execution.snapshot!.capabilities;
+      capabilities.splice(capabilities.indexOf('task-run-v1'), 1);
+      await expect(
+        models.startHuman('mock-bot', task, undefined, raised.scope),
+      ).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
+      expect(sends).toBe(2);
+      expect(models.budgets.goals.epoch(owner)).toBe(epoch);
+      expect(models.budgets.runs(raised.scope.budgetId)).toEqual(runs);
+      expect(models.budgets.view(raised.scope.budgetId).state).toBe('stopped');
+      capabilities.push('task-run-v1');
+      await models.startHuman('mock-bot', task, undefined, raised.scope);
+      const resumed = models.jobs.get('mock-bot')!;
+      await resumed.done;
+      expect(resumed.automation).toEqual(origin);
+      expect(resumed.project).toEqual(project);
+      expect(resumed.budget).toEqual(raised.scope);
+      expect(resumed.goal?.id).toBe(first.goal!.id);
+      expect(resumed.goal?.rounds).toBe(3);
+      expect(sends).toBeGreaterThan(2);
+      expect(models.budgets.view(raised.scope.budgetId).unknownCount).toBe(sends);
+    } finally {
+      await fixture.close();
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

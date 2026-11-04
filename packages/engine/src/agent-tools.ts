@@ -8,11 +8,12 @@ import {
   browserTaskCapability,
   documentLimit,
   isTaskFileName,
+  legacyExecutionToolLimit,
   type ModelId,
   modelExecutionCapability,
   modelHasVision,
-  projectTaskRunCapability,
   type TaskRequest,
+  taskRunCapability,
 } from '@daban/protocol';
 import { BrowserTools } from './browser-tools.js';
 import type { CatalogTools } from './catalog.js';
@@ -289,8 +290,9 @@ export class AgentTools {
     if (!id) throw new Fault('EXECUTION_INVALID_REQUEST');
     const separateTask = run.project && id !== run.id;
     if (
-      separateTask &&
-      (!run.id || !this.options.execution.snapshot?.capabilities.includes(projectTaskRunCapability))
+      (separateTask && !run.id) ||
+      ((separateTask || run.limit > legacyExecutionToolLimit) &&
+        !this.options.execution.snapshot?.capabilities.includes(taskRunCapability))
     )
       throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
     const opened = this.opened.get(run);

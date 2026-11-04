@@ -1332,6 +1332,7 @@ export async function startPrototype({
                     prompt: command.goalResume ? '/goal resume' : record.prompt,
                     chatRevision: command.scope.chatRevision,
                     ...(record.project ? { project: record.project } : {}),
+                    ...(record.approvalMode ? { approvalMode: record.approvalMode } : {}),
                   },
                   undefined,
                   command.budget,

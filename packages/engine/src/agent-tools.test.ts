@@ -809,7 +809,7 @@ test('project attempts retain a separate accepted task identity and refuse older
   };
   await expect(tools.open(run)).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
   expect(calls).toHaveLength(0);
-  execution.snapshot.capabilities.push('project-task-run-v1');
+  execution.snapshot.capabilities.push('task-run-v1');
   await tools.open(run);
   expect(calls).toEqual([
     expect.objectContaining({
@@ -822,3 +822,36 @@ test('project attempts retain a separate accepted task identity and refuse older
   expect(isExecutionParams('tools.open', calls[0])).toBe(true);
   expect(isExecutionParams('tools.open', { ...calls[0], taskRunId: '../foreign-run' })).toBe(false);
 });
+
+test.each([1001, 10000])(
+  'large accepted budgets use the task-run contract without weakening old guests (limit=%s)',
+  async (limit) => {
+    const calls: Record<string, unknown>[] = [];
+    const execution = {
+      snapshot: { capabilities: ['model-capabilities-v1'] },
+      call: async (_method: string, params: Record<string, unknown>) => {
+        calls.push(params);
+        return { tools: [] };
+      },
+    };
+    const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), { execution });
+    const run: AgentToolRun = {
+      id: 'synthetic-large-run',
+      bot: 'mock-bot',
+      abort: new AbortController(),
+      workdir: '/mock/task',
+      canonicalRoot: '/mock/task',
+      toolCount: 0,
+      limit,
+      seen: {},
+      trace: [],
+    };
+    await expect(tools.open(run)).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
+    expect(calls).toHaveLength(0);
+    execution.snapshot.capabilities.push('task-run-v1');
+    await tools.open(run);
+    expect(calls[0].limit).toBe(limit);
+    expect(isExecutionParams('tools.open', calls[0])).toBe(true);
+    expect(isExecutionParams('tools.open', { ...calls[0], limit: 10001 })).toBe(false);
+  },
+);

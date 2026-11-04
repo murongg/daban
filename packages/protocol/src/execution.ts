@@ -20,7 +20,9 @@ import { isSkillPackage, skillPackageCapability } from './skills.js';
 export const executionVersion = 1;
 export const modelExecutionCapability = 'model-capabilities-v1';
 export const browserTaskCapability = 'browser-task-v1';
-export const projectTaskRunCapability = 'project-task-run-v1';
+// These peers distinguish task directories from attempt leases and accept captured tool budgets up to 10000.
+export const taskRunCapability = 'task-run-v1';
+export const legacyExecutionToolLimit = 1000;
 export const executionCapabilities = [
   'workspace',
   'tools',
@@ -168,7 +170,7 @@ export function isExecutionRun(value: unknown): value is ExecutionRun {
     (value.prompt === undefined || (text(value.prompt, 12000) && !!value.prompt.trim())) &&
     integer(value.limit) &&
     Number(value.limit) >= 1 &&
-    Number(value.limit) <= 1000
+    Number(value.limit) <= 10000
   );
 }
 export function isExecutionParams(
@@ -344,7 +346,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         browserTaskCapability,
         projectCapability,
         fileObservationCapability,
-        projectTaskRunCapability,
+        taskRunCapability,
       ].includes(capability),
     ) ||
     !executionCapabilities.every(

@@ -165,6 +165,7 @@ test('native Host HTTP quota continuation is scoped, durable and single-effect w
     assert.equal(sends, 0);
     await agent.models.start('mock-bot', {
       requestId: 'synthetic-task',
+      approvalMode: 'ask',
       prompt: 'Read the synthetic memory, then finish.',
     });
     const first = agent.models.jobs.get('mock-bot')!;
@@ -191,6 +192,11 @@ test('native Host HTTP quota continuation is scoped, durable and single-effect w
     const last = agent.models.jobs.get('mock-bot')!;
     await last.done;
     assert.equal(last.phase, 'completed', last.error);
+    assert.equal(
+      last.task?.approvalMode,
+      'ask',
+      'Increasing a budget cannot widen the accepted approval policy',
+    );
     assert.equal(last.budget!.budgetId, first.budget!.budgetId);
     assert.equal(sends, 2);
     const repeated = await call('continue', continued);

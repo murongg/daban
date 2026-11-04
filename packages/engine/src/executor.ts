@@ -26,8 +26,8 @@ import {
   type ProjectScope,
   projectCapability,
   projectReduction,
-  projectTaskRunCapability,
   skillPackageCapability,
+  taskRunCapability,
   validAgentId,
 } from '@daban/protocol';
 import type { AgentToolRun } from './agent-tools.js';
@@ -604,8 +604,9 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           modelExecutionCapability,
           skillPackageCapability,
           browserTaskCapability,
+          taskRunCapability,
           fileObservationCapability,
-          ...(projects.available() ? [projectCapability, projectTaskRunCapability] : []),
+          ...(projects.available() ? [projectCapability] : []),
         ],
         computer: {
           mode: raw.mode,

@@ -48,14 +48,15 @@ import {
   isTaskInsert,
   isTaskPlan,
   isTokenUsage,
+  legacyExecutionToolLimit,
   modelHasVision,
   modelReference,
   type ProjectFileRequest,
   type ProjectScope,
   projectCapability,
-  projectTaskRunCapability,
   replyLimit,
   sameProjectScope,
+  taskRunCapability,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
@@ -1085,7 +1086,7 @@ export class ModelRuns {
       if (
         !this.monitoringAvailable() ||
         !this.execution?.snapshot?.capabilities.includes(projectCapability) ||
-        !this.execution.snapshot.capabilities.includes(projectTaskRunCapability)
+        !this.execution.snapshot.capabilities.includes(taskRunCapability)
       )
         throw new Fault('AUTOMATION_FILES_UNAVAILABLE');
       return this.projects.assertScope(bot, scope, 'read');
@@ -1094,7 +1095,7 @@ export class ModelRuns {
       available: () =>
         this.monitoringAvailable() &&
         this.projectStatus().execution &&
-        !!this.execution?.snapshot?.capabilities.includes(projectTaskRunCapability),
+        !!this.execution?.snapshot?.capabilities.includes(taskRunCapability),
       authorize,
       read: async (
         bot: string,
@@ -1931,6 +1932,7 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
+        approvalMode: job.task ? (job.task.approvalMode ?? 'auto') : undefined,
         budget: job.budget,
         activeMs:
           job.activeMs === undefined ? undefined : job.activeMs - (job.activityBase?.activeMs ?? 0),
@@ -2073,9 +2075,11 @@ export class ModelRuns {
     if (task?.goalResume && (!human || !resumingGoal)) throw new Fault('INVALID_GOAL_TARGET', 400);
     // A continuation retains canonical provenance, but only the named Human entry authorizes native resume.
     if (task?.retryOf || task?.goalResume) {
-      const recorded = task.retryOf
-        ? (await this.journal.read(bot, task.retryOf))?.automation
-        : this.goalAutomation(task.goalResume!);
+      const prior = task.retryOf ? await this.journal.read(bot, task.retryOf) : undefined;
+      const recorded = task.retryOf ? prior?.automation : this.goalAutomation(task.goalResume!);
+      // Raising a quota never widens the accepted approval policy; legacy records without it remain unspecified.
+      if (task.retryOf && task.approvalMode === undefined && prior?.approvalMode)
+        task.approvalMode = prior.approvalMode;
       if (trustedSource && !isDeepStrictEqual(trustedSource, recorded))
         throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
       trustedSource = recorded ? structuredClone(recorded) : undefined;
@@ -2170,7 +2174,7 @@ export class ModelRuns {
       this.projects.assertScope(bot, task.project, 'read');
       if (
         !this.execution?.snapshot?.capabilities.includes(projectCapability) ||
-        !this.execution.snapshot.capabilities.includes(projectTaskRunCapability)
+        !this.execution.snapshot.capabilities.includes(taskRunCapability)
       )
         throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
     }
@@ -2366,6 +2370,13 @@ export class ModelRuns {
         job.budget.revision !== acceptedBudget.revision)
     )
       throw new Fault('BUDGET_REVISION_CONFLICT', 409);
+    // Negotiate the expanded run contract before binding a run or recording a Human Goal grant.
+    if (
+      this.execution &&
+      this.budgets.view(job.budget.budgetId).policy.toolLimit > legacyExecutionToolLimit &&
+      !this.execution.snapshot?.capabilities.includes(taskRunCapability)
+    )
+      throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
     if (task?.goalResume) {
       await this.reconcileGoalHistory(job.budget);
       // Reconciliation awaits journal I/O. A competing request may have published while this one waited.

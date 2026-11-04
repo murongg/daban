@@ -1,6 +1,7 @@
 import { lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
+  ApprovalMode,
   BotProfile,
   BudgetScope,
   GoalProgress,
@@ -265,6 +266,7 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  approvalMode?: ApprovalMode;
   budget?: BudgetScope;
   activeMs?: number;
   attemptSummary?: ModelAttempt[];
@@ -395,6 +397,7 @@ export class TaskJournal {
           !/^[a-zA-Z0-9_-]+$/.test(task.runId) ||
           !phases.has(task.phase) ||
           (task.project !== undefined && !isProjectScope(task.project)) ||
+          (task.approvalMode !== undefined && !isApprovalMode(task.approvalMode)) ||
           (task.conversationId !== undefined && !validAgentId(task.conversationId)) ||
           (task.chatRevision !== undefined &&
             (!Number.isSafeInteger(task.chatRevision) || task.chatRevision < 0))
@@ -493,6 +496,8 @@ export class TaskJournal {
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
       throw new Fault('INVALID_GOAL_STATE', 400);
+    if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode))
+      throw new Fault('INVALID_TASK_RECORD', 400);
     if (value.project !== undefined && !isProjectScope(value.project))
       throw new Fault('INVALID_TASK_RECORD', 400);
     if (value.planning !== undefined && typeof value.planning !== 'boolean')
@@ -515,6 +520,7 @@ export class TaskJournal {
       'attemptSummary',
       'automation',
       'automationOutput',
+      'approvalMode',
       'bot',
       'chatRevision',
       'conversationId',

@@ -74,6 +74,7 @@ export const suites = {
     'budget.test',
     'budgets.test',
     'budgets-model.test',
+    'budgets-automation.test',
     'budgets-api.test',
     'budgets-groups.test',
     'budget-goals.test',
