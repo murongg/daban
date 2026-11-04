@@ -12,11 +12,11 @@ import {
   type NoteWrite,
   noteKey,
 } from '@daban/protocol';
-import { count } from 'drizzle-orm';
+import { count, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test, vi } from 'vitest';
 import { Notes } from './notes.js';
-import { noteItems, noteOperations } from './notes-schema.js';
+import { noteItems, noteMeta, noteOperations } from './notes-schema.js';
 import { privateMetadata, secureDirectory } from './private-files.js';
 
 const alpha = 'mock-alpha',
@@ -643,16 +643,60 @@ test('a failed initial schema transaction stays retryable without partially publ
 test('retained-item capacity includes trash while other Bot metadata remains scoped', async () => {
   const f = await fixture();
   try {
-    for (let n = 0; n < 1000; n++)
-      await f.store.write(alpha, create(`mock-card-${n}`, `mock-create-${n}`), human);
+    await f.store.write(alpha, create('mock-card-0', 'mock-create-0'), human);
+    const db = drizzle({ client: new DatabaseSync(f.file) });
+    try {
+      const item = db.select().from(noteItems).get()!,
+        operation = db.select().from(noteOperations).get()!;
+      // Seed bulk capacity in one transaction; boundary mutations still use real durable Notes writes.
+      db.transaction((tx) => {
+        for (let n = 1; n < 999; n++) {
+          const request = create(`mock-card-${n}`, `mock-create-${n}`);
+          tx.insert(noteItems)
+            .values({ ...item, seq: undefined, id: request.note })
+            .run();
+          tx.insert(noteOperations)
+            .values({
+              ...operation,
+              id: request.id,
+              note: request.note,
+              signature: createHash('sha256')
+                .update(noteKey(alpha, request, human))
+                .digest('hex'),
+            })
+            .run();
+        }
+        tx.update(noteMeta).set({ revision: 999 }).where(eq(noteMeta.bot, alpha)).run();
+      });
+    } finally {
+      db.$client.close();
+    }
+    await f.reopen();
+    expect(await f.store.status(alpha)).toStrictEqual({
+      available: true,
+      revision: 999,
+      count: 999,
+    });
+    await f.store.write(alpha, create('mock-card-999', 'mock-create-999'), human);
+    expect(await f.store.status(alpha)).toStrictEqual({
+      available: true,
+      revision: 1000,
+      count: 1000,
+    });
     await f.store.write(
       alpha,
       { id: 'mock-trash-capacity', note: 'mock-card-0', action: 'trash', revision: 1 },
       human,
     );
     await expect(f.store.write(beta, create(), human)).rejects.toThrowError(/NOTE_LIMIT/);
+    await expect(f.store.write(alpha, create(), human)).rejects.toThrowError(/NOTE_LIMIT/);
+    expect((await f.store.receipt(beta, create(), human)).state).toBe('unknown');
     expect(await f.store.status(beta)).toStrictEqual({ available: true, revision: 0, count: 0 });
-    expect((await f.store.status(alpha)).available).toBe(true);
+    expect(await f.store.status(alpha)).toStrictEqual({
+      available: true,
+      revision: 1001,
+      count: 1000,
+    });
     await f.reopen();
     expect((await f.store.list(alpha, { filter: 'trash' })).items.length).toBe(1);
   } finally {
