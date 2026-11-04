@@ -1,3 +1,10 @@
+import {
+  isBudgetCommand,
+  isBudgetConfigure,
+  isBudgetPolicy,
+  isTranscriptScope,
+  type BudgetIncreaseRequest,
+} from '@daban/protocol';
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -120,6 +127,8 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/budgets/settings',
+  '/api/budgets/read',
   '/api/model/saved',
   '/api/notes/status',
   '/api/notes/list',
@@ -1106,6 +1115,127 @@ export async function startPrototype({
               throw new Fault('INVALID_MEMORY_QUERY', 400);
             return json(res, await models.profiles.history(data.bot, data.query));
           }
+          if (url.pathname.startsWith('/api/budgets/') && req.method === 'POST') {
+            if (!models) throw new Fault('BUDGET_UNAVAILABLE', 503);
+            const data = await body(req);
+            try {
+              if (url.pathname === '/api/budgets/settings' && Object.keys(data).length === 0)
+                return json(res, models.budgets.settings());
+              if (url.pathname === '/api/budgets/configure' && isBudgetConfigure(data))
+                return json(
+                  res,
+                  models.budgets.configure(
+                    data.revision,
+                    data.policy,
+                    data.prices,
+                    data.id,
+                    data.scope,
+                  ),
+                );
+              if (url.pathname === '/api/budgets/read' && isTranscriptQuery(data))
+                return json(res, await models.budget(data.scope));
+              if (
+                url.pathname === '/api/budgets/increase' &&
+                Object.keys(data).every((k) =>
+                  ['budgetId', 'id', 'scope', 'revision', 'policy'].includes(k),
+                ) &&
+                validAgentId(data.id) &&
+                isTranscriptScope(data.scope) &&
+                Number.isSafeInteger(data.revision) &&
+                isBudgetPolicy(data.policy)
+              ) {
+                const input = data as unknown as BudgetIncreaseRequest;
+                const current = await models.budget(input.scope);
+                if (!current) throw new Fault('BUDGET_NOT_FOUND', 404);
+                if (current.scope.budgetId !== input.budgetId)
+                  throw new Fault('BUDGET_OWNER_CONFLICT', 403);
+                const view = models.budgets.increase(
+                  current.scope.budgetId,
+                  input.revision,
+                  input.policy,
+                  input.id,
+                  () =>
+                    ![...models!.jobs.values()].some(
+                      (job) =>
+                        job.budget?.budgetId === current.scope.budgetId && models!.running(job.bot),
+                    ),
+                  input.scope,
+                );
+                return json(res, { ...view, owner: input.scope });
+              }
+              if (url.pathname === '/api/budgets/continue') {
+                if (Object.hasOwn(data, 'type')) throw new Fault('INVALID_BUDGET_REQUEST', 400);
+                const command = { type: 'budget.continue', ...data };
+                if (!isBudgetCommand(command) || command.type !== 'budget.continue')
+                  throw new Fault('INVALID_BUDGET_REQUEST', 400);
+                const current = await models.budget(command.scope);
+                if (!current || current.scope.budgetId !== command.budget.budgetId)
+                  throw new Fault('BUDGET_OWNER_CONFLICT', 403);
+                models.budgets.continuationReceipt(command.budget, command.id, command.scope);
+                if (groups && (await groups.budgetResume(command.budget, command.id)))
+                  return json(res, {
+                    budget: command.budget,
+                    owner: command.scope,
+                    id: command.id,
+                    queued: true,
+                  });
+                const accepted = models.findRequest(command.scope.bot, `budget-${command.id}`);
+                if (!accepted && current.scope.revision !== command.budget.revision)
+                  throw new Fault('BUDGET_CONTINUE_STALE', 409);
+                const record = await models.journal.read(command.scope.bot, command.scope.runId);
+                if (!accepted) {
+                  if (record?.goalSession) throw new Fault('BUDGET_GOAL_CONTINUE_UNAVAILABLE', 409);
+                  models.budgets.activate(command.budget, command.id, command.scope);
+                  if (groups && (await groups.resumeBudget(command.budget, command.id)))
+                    return json(res, {
+                      budget: command.budget,
+                      owner: command.scope,
+                      id: command.id,
+                      queued: true,
+                    });
+                }
+                if (!record || record.conversationId)
+                  throw new Fault('BUDGET_CONTINUE_UNAVAILABLE', 409);
+                const receipt = await models.start(
+                  command.scope.bot,
+                  {
+                    requestId: `budget-${command.id}`,
+                    retryOf: command.scope.runId,
+                    prompt: record.prompt,
+                    chatRevision: command.scope.chatRevision,
+                  },
+                  undefined,
+                  command.budget,
+                );
+                return json(res, {
+                  budget: command.budget,
+                  owner: command.scope,
+                  id: command.id,
+                  queued: false,
+                  runId: receipt.runId,
+                });
+              }
+              throw new Fault('INVALID_BUDGET_REQUEST', 400);
+            } catch (error) {
+              if (error instanceof Fault) throw error;
+              const code =
+                error instanceof Error && /^(?:BUDGET|INVALID_BUDGET)[A-Z_]*$/.test(error.message)
+                  ? error.message
+                  : 'BUDGET_UNAVAILABLE';
+              throw new Fault(
+                code,
+                ['BUDGET_OWNER_CONFLICT', 'BUDGET_CONTINUE_UNACCEPTED'].includes(code)
+                  ? 403
+                  : /NOT_FOUND/.test(code)
+                    ? 404
+                    : /CONFLICT|INCREASE_REQUIRED|TASK_RUNNING|IMMUTABLE|CONTINUE_STALE/.test(code)
+                      ? 409
+                      : /INVALID|STRICT_UNAVAILABLE/.test(code)
+                        ? 400
+                        : 503,
+              );
+            }
+          }
           if (url.pathname.startsWith('/api/transcripts/') && req.method === 'POST') {
             if (!models) throw new Fault('TRANSCRIPT_UNAVAILABLE', 503);
             const data = await body(req);
@@ -2030,6 +2160,7 @@ export async function startPrototype({
           interactions: models.interactions,
           review: new Risk({
             settings,
+            meter: (request, api, fetcher) => models!.meterReview(request, api, fetcher),
             resolve: async (request) => models?.reviewModel(request.bot, request.runId) ?? null,
           }).review,
           assertLive: (run) => {
@@ -2067,6 +2198,13 @@ export async function startPrototype({
           member: (bot) => models!.profiles.get(bot),
           directory: () => models!.profiles.list(),
           source: (bot, runId, group) => models!.groupSource(bot, runId, group),
+          budget: (group, source) => models!.groupBudget(group, source),
+          budgetResumeIssue: (bot, runId) => {
+            const record = models!.journal.records.get(runId);
+            return record?.bot === bot && record.goalSession
+              ? 'BUDGET_GOAL_CONTINUE_UNAVAILABLE'
+              : undefined;
+          },
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),

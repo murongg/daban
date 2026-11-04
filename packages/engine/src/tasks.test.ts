@@ -252,3 +252,28 @@ test('restart retains a durable clean fence for explicit recovery while interrup
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a corrupt authoritative budget identity cannot be loaded as a legacy unmetered task', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-budget-journal-'));
+  try {
+    const task = {
+      bot: 'mock-bot',
+      runId: 'synthetic-budget-run',
+      requestId: 'synthetic-request',
+      prompt: 'SYNTHETIC TASK',
+      kind: 'chat',
+      phase: 'completed',
+      running: false,
+      result: 'SYNTHETIC RESULT',
+      error: '',
+      trace: [],
+      budget: { budgetId: 'synthetic-budget', revision: -1 },
+    };
+    await writeFile(path.join(root, `${task.runId}.json`), JSON.stringify({ version: 1, task }));
+    const journal = new TaskJournal(root);
+    await journal.load();
+    expect(journal.findRequest(task.bot, task.requestId)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

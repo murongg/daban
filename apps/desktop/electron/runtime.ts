@@ -1,3 +1,4 @@
+import { isBudgetSettings, isBudgetView, isBudgetScope, isTranscriptScope } from '@daban/protocol';
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
@@ -755,6 +756,62 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (command.type.startsWith('budget.')) {
+      const captured = structuredClone(command);
+      let value: unknown;
+      if (captured.type === 'budget.settings') value = await this.api('/api/budgets/settings', {});
+      else if (captured.type === 'budget.configure')
+        value = await this.api('/api/budgets/configure', captured.request);
+      else if (captured.type === 'budget.read')
+        value = await this.api('/api/budgets/read', captured.query);
+      else if (captured.type === 'budget.increase')
+        value = await this.api('/api/budgets/increase', captured.request);
+      else if (captured.type === 'budget.continue') {
+        const reply: unknown = await this.api('/api/budgets/continue', {
+          scope: captured.scope,
+          budget: captured.budget,
+          id: captured.id,
+        });
+        if (
+          !reply ||
+          typeof reply !== 'object' ||
+          !('budget' in reply) ||
+          !isBudgetScope(reply.budget) ||
+          reply.budget.budgetId !== captured.budget.budgetId ||
+          reply.budget.revision !== captured.budget.revision ||
+          !('owner' in reply) ||
+          !isTranscriptScope(reply.owner) ||
+          !sameTranscriptScope(reply.owner, captured.scope) ||
+          !('id' in reply) ||
+          reply.id !== captured.id ||
+          !('queued' in reply) ||
+          typeof reply.queued !== 'boolean'
+        )
+          throw new Error('INVALID_BUDGET_CONTINUATION');
+        return reply;
+      } else throw new Error('INVALID_COMMAND');
+      if (captured.type === 'budget.settings' || captured.type === 'budget.configure') {
+        if (!isBudgetSettings(value)) throw new Error('INVALID_BUDGET_SETTINGS');
+      } else if (value !== null) {
+        if (!isBudgetView(value)) throw new Error('INVALID_BUDGET_VIEW');
+        const owner =
+          captured.type === 'budget.read'
+            ? captured.query.scope
+            : captured.type === 'budget.increase'
+              ? captured.request.scope
+              : undefined;
+        if (!owner || !value.owner || !sameTranscriptScope(value.owner, owner))
+          throw new Error('INVALID_BUDGET_OWNER');
+        if (
+          captured.type === 'budget.increase' &&
+          (value.scope.budgetId !== captured.request.budgetId ||
+            value.scope.revision !== captured.request.revision + 1)
+        )
+          throw new Error('INVALID_BUDGET_ACK');
+      }
+      return value;
+    }
+
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
       const value = await this.api('/api/host/recovery', captured);

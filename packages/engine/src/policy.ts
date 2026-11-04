@@ -1,4 +1,5 @@
-import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
+import { randomUUID } from 'node:crypto';
+import { type BudgetScope, type ApprovalMode, isTaskPlan } from '@daban/protocol';
 import { type BridgeConfig, callBridge } from './bridge.js';
 
 export const name = 'daban-budget';
@@ -57,16 +58,54 @@ export function apply(
     urls: string[];
     approvalMode?: ApprovalMode;
     attemptId?: string;
+    budget?: BudgetScope;
   } & Partial<BridgeConfig>,
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
   let calls = 0;
+  const internalIds = new WeakMap<Execution, string>();
   // Search authority belongs to this accepted run and must not survive SDK session resumes.
   const urls = new Set(config.urls);
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
   ctx.on('tools/pre-execute', async (exec: Execution, next: () => Promise<unknown>) => {
     if (exec.signal.aborted) return { kind: 'cancel' };
+    const callId = exec.callId ?? internalIds.get(exec) ?? randomUUID();
+    if (!exec.callId) internalIds.set(exec, callId);
+    const dispatch = async () => {
+      if (config.budget) {
+        try {
+          const roots = ctx.agents?.roots();
+          if (!config.url || roots?.length !== 1) throw new Error('BUDGET_OWNER_UNAVAILABLE');
+          const result = await callBridge(
+            { ...config, url: config.url },
+            'budget.tool',
+            {
+              scope: config.budget,
+              modelAttemptId: config.attemptId,
+              sessionId: roots[0].session.id,
+              callId,
+            },
+            exec.signal,
+          );
+          if (
+            !result ||
+            typeof result !== 'object' ||
+            !('accepted' in result) ||
+            result.accepted !== true
+          )
+            throw new Error('BUDGET_TOOL_LIMIT');
+        } catch {
+          return {
+            kind: 'deny',
+            reason: 'BUDGET_TOOL_LIMIT',
+            info: { name: 'BudgetError', code: 'BUDGET_TOOL_LIMIT' },
+          };
+        }
+      }
+      return next();
+    };
+
     if (config.attemptId) {
       try {
         const roots = ctx.agents?.roots();
@@ -136,7 +175,7 @@ export function apply(
           reason: JSON.stringify({ url }),
           signal: exec.signal,
         });
-        if (decision === 'allowed-once' && !exec.signal.aborted) return next();
+        if (decision === 'allowed-once' && !exec.signal.aborted) return dispatch();
         return {
           kind: 'deny',
           reason:
@@ -164,7 +203,7 @@ export function apply(
           info: { name: 'WebPolicyError', code: 'WEB_URL_NOT_AUTHORIZED' },
         };
     }
-    return next();
+    return dispatch();
   });
   ctx.on(
     'tools/post-execute',

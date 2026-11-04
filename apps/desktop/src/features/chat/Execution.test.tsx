@@ -408,9 +408,13 @@ it('loads metadata only after opening and pages full tool content and later even
   expect(await screen.findByText('第 2 条')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.statistics', 'transcript.list', 'transcript.content'].includes(
-        command.type,
-      ),
+      [
+        'status',
+        'transcript.statistics',
+        'transcript.list',
+        'transcript.content',
+        'budget.read',
+      ].includes(command.type),
     ),
   ).toBe(true);
 });
@@ -439,7 +443,7 @@ it('refreshes from an accessible icon without closing the history or rerunning a
   expect(reads).toBe(2);
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.statistics', 'transcript.list'].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list', 'budget.read'].includes(command.type),
     ),
   ).toBe(true);
 });

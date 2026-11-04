@@ -6,10 +6,12 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   BotProfile,
+  BudgetScope,
   GoalProgress,
   ModelAttempt,
   ModelAttemptFence,
   ModelId,
+  ModelApi,
   ModelReference,
   ReplyStream,
   RunInsert,
@@ -25,6 +27,8 @@ import {
   type ChatPage,
   imageMime,
   isAttachmentId,
+  isBudgetScope,
+  isTokenUsage,
   isChatPage,
   isGoalProgress,
   isInteractionInput,
@@ -41,10 +45,13 @@ import {
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
+import { usageFetch, usagePatch } from './usage.js';
+import { Budgets } from './budgets.js';
 import { AgentTools } from './agent-tools.js';
 import { Attachments } from './attachments.js';
 import { BotBundles, type BundleDocuments } from './bundles.js';
 import { CatalogTools } from './catalog.js';
+import type { CommandReview } from './commands.js';
 import { Chats } from './chats.js';
 import { CheckpointTracker, type ConversationCheckpoint, recoveryContext } from './checkpoint.js';
 import type { ToolRun } from './computer-tools.js';
@@ -557,6 +564,8 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  budget?: BudgetScope;
+  routeRevision?: number;
   activeMs?: number;
   attemptId?: string;
   attemptActive?: boolean;
@@ -667,6 +676,7 @@ export class ModelRuns {
   readonly dir: string;
   readonly tools: AgentTools;
   readonly jobs = new Map<string, ModelJob>();
+  readonly budgets: Budgets;
   readonly journal: TaskJournal;
   readonly transcripts: Transcripts;
   readonly knowledge: Knowledge;
@@ -757,6 +767,7 @@ export class ModelRuns {
     this.tools.localComputer = localComputer;
     if (localComputer)
       localComputer.modelRevision = async () => (await this.settings.status()).revision ?? 0;
+    this.budgets = new Budgets(path.join(dir, 'budgets.sqlite'));
     this.journal = new TaskJournal(path.join(dir, 'task-journal'));
     this.transcripts = new Transcripts(path.join(dir, 'transcripts.sqlite'));
     this.tools.history = new HistoryTools(this.journal, this.transcripts);
@@ -918,6 +929,7 @@ export class ModelRuns {
     this.ready = this.restore();
   }
   private async restore() {
+    await this.budgets.ready;
     await this.chats.ready;
     await this.transcripts.ready;
     await this.journal.load();
@@ -934,6 +946,7 @@ export class ModelRuns {
       const latest = records.at(-1);
       if (!latest) continue;
       const job: ModelJob = {
+        budget: latest.budget,
         attemptSummary: latest.attemptSummary,
         fence: 'unknown',
         attemptActive: false,
@@ -1071,6 +1084,19 @@ export class ModelRuns {
   async transcript(scope: TranscriptScope, after = 0) {
     await this.transcriptOwner(scope);
     return this.transcripts.page(scope, after);
+  }
+  async budget(scope: TranscriptScope) {
+    await this.transcriptOwner(scope);
+    const record = await this.journal.read(scope.bot, scope.runId);
+    return record?.budget
+      ? {
+          ...this.budgets.view(record.budget.budgetId),
+          owner: structuredClone(scope),
+          ...(record.goalSession
+            ? { continuationIssue: 'BUDGET_GOAL_CONTINUE_UNAVAILABLE' as const }
+            : {}),
+        }
+      : null;
   }
   async statistics(scope: TranscriptScope) {
     await this.transcriptOwner(scope);
@@ -1312,11 +1338,80 @@ export class ModelRuns {
     if (index < 0) return;
     job.inserts.splice(index, 1);
   }
+  meterReview(
+    request: CommandReview,
+    api: ModelApi,
+    fetcher: (url: string, init: RequestInit) => Promise<Response>,
+  ) {
+    const job = this.jobs.get(request.bot);
+    const scope = job?.budget;
+    if (!job || !scope || !job.route) throw new Fault('BUDGET_OWNER_UNAVAILABLE');
+    const route = job.route;
+    const auth = createHash('sha256').update(`Bearer ${job.token}`).digest('hex');
+    const wire = usageFetch(
+      {
+        api,
+        begin: async (wireRequest) => {
+          const requestHash = createHash('sha256')
+            .update(Buffer.from(await wireRequest.clone().arrayBuffer()))
+            .digest('hex');
+          if (
+            !job.running ||
+            job.abort.signal.aborted ||
+            job.id !== request.runId ||
+            job.sessionId !== request.sessionId ||
+            this.jobs.get(job.bot) !== job
+          )
+            throw new Fault('BUDGET_OWNER_UNAVAILABLE');
+          const attemptId = randomBytes(16).toString('hex');
+          this.budgets.reserve(scope, {
+            attemptId,
+            runId: job.id,
+            modelAttemptId: job.attemptId!,
+            rootSessionId: job.sessionId!,
+            sessionId: job.sessionId!,
+            purpose: 'review',
+            requestHash,
+            routeKey: JSON.stringify([
+              route.provider,
+              route.api,
+              route.apiModel,
+              job.routeRevision ?? 0,
+            ]),
+            auth,
+            reservedTokens: route.contextWindow + 128,
+          });
+          if (
+            !this.budgets.dispatch(scope, attemptId, {
+              runId: job.id,
+              modelAttemptId: job.attemptId!,
+              auth,
+            })
+          )
+            throw new Fault('BUDGET_SEND_UNCONFIRMED');
+          return attemptId;
+        },
+        report: async (id, usage) => this.budgets.report(id, usage, job.id, auth, scope),
+      },
+      async (input, init) => {
+        if (typeof input !== 'string') throw new Error('INVALID_REVIEW_REQUEST');
+        return fetcher(input, init ?? {});
+      },
+    );
+    return (url: string, init: RequestInit) => wire(url, init);
+  }
   reviewModel(bot: string, runId: string) {
     const job = this.jobs.get(bot);
     return job?.id === runId && job.running && !job.abort.signal.aborted
       ? (job.route ?? null)
       : null;
+  }
+  groupBudget(group: string, sourceId: string) {
+    return this.budgets.ensure(
+      createHash('sha256')
+        .update(JSON.stringify(['group', group, sourceId]))
+        .digest('hex'),
+    );
   }
   groupRunning(group: string) {
     return Array.from(this.jobs.values()).some(
@@ -1335,7 +1430,7 @@ export class ModelRuns {
     )
       return undefined;
     // Model-owned intent survives retries; tool arguments must never choose a new collaboration identity.
-    return { intentId: job.intentId || job.id };
+    return { intentId: job.intentId || job.id, ...(job.budget ? { budget: job.budget } : {}) };
   }
   admit(bot: string) {
     return this.admission() && this.botAdmission(bot) && this.profiles.admit(bot);
@@ -1399,6 +1494,7 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
+        budget: job.budget,
         activeMs: job.activeMs,
         ...(job.attemptSummary ? { attemptSummary: job.attemptSummary } : {}),
         elapsedMs: job.elapsedMs,
@@ -1456,7 +1552,19 @@ export class ModelRuns {
     job.writing = pending.catch(() => {});
     return pending;
   }
-  async start(bot: string, input?: unknown, conversation?: ConversationScope) {
+  async start(
+    bot: string,
+    input?: unknown,
+    conversation?: ConversationScope,
+    budget?: BudgetScope,
+  ) {
+    const acceptedBudget = budget
+      ? structuredClone(budget)
+      : conversation?.budget
+        ? structuredClone(conversation.budget)
+        : undefined;
+    if (acceptedBudget && !isBudgetScope(acceptedBudget))
+      throw new Fault('INVALID_BUDGET_SCOPE', 400);
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
     if (
@@ -1468,7 +1576,11 @@ export class ModelRuns {
         typeof conversation.context !== 'string' ||
         conversation.context.length > 32000 ||
         conversation.context.includes('\0') ||
-        Object.keys(conversation).some((key) => !['id', 'context'].includes(key)))
+        (conversation.budget !== undefined && !isBudgetScope(conversation.budget)) ||
+        (conversation.sourceId !== undefined && !validAgentId(conversation.sourceId)) ||
+        Object.keys(conversation).some(
+          (key) => !['id', 'context', 'budget', 'sourceId'].includes(key),
+        ))
     )
       throw new Fault('INVALID_CONVERSATION', 400);
     const scope = conversation ? structuredClone(conversation) : undefined;
@@ -1504,6 +1616,7 @@ export class ModelRuns {
     }
     let cachedInputs: TaskRequest['files'];
     let intentId: string | undefined;
+    let priorBudget: BudgetScope | undefined;
     let continuedInserts: RunInsert[] = [];
     let continuedTools = 0;
     let continuedMs = 0;
@@ -1516,6 +1629,7 @@ export class ModelRuns {
       )
         throw new Fault('INVALID_RETRY', 400);
       if (modelRecoveryBlocked(prior)) throw new Fault('TASK_OUTCOME_UNKNOWN');
+      priorBudget = prior.budget;
       continuedTools = prior.toolCount ?? prior.executedCount ?? 0;
       continuedMs = prior.activeMs ?? prior.elapsedMs ?? 0;
       if (
@@ -1655,6 +1769,39 @@ export class ModelRuns {
     // Admission and publication must stay in one synchronous turn, so attachment cannot change a task's authority mid-start.
     if (this.tools.computer?.runtime.admit?.(bot) === false) throw new Fault('COMPUTER_CHANGING');
     if (!this.admission() || !this.botAdmission(bot)) throw new Fault('COMPUTER_CHANGING');
+    if (acceptedBudget && priorBudget && acceptedBudget.budgetId !== priorBudget.budgetId)
+      throw new Fault('BUDGET_OWNER_CONFLICT', 403);
+    const inherited = acceptedBudget ?? priorBudget;
+    try {
+      job.budget = inherited
+        ? this.budgets.view(inherited.budgetId).scope
+        : this.budgets.ensure(
+            createHash('sha256')
+              .update(
+                JSON.stringify(
+                  scope?.sourceId ? ['group', scope.id, scope.sourceId] : [bot, job.intentId],
+                ),
+              )
+              .digest('hex'),
+            undefined,
+            !!task?.retryOf || !!scope?.sourceId,
+          );
+    } catch (error) {
+      if (error instanceof Error && error.message === 'BUDGET_HISTORY_UNMETERED')
+        throw new Fault('BUDGET_HISTORY_UNMETERED', 400);
+      throw error;
+    }
+    // A slow preparation must not upgrade a stale continuation or queued group stage into a later human revision.
+    if (
+      acceptedBudget &&
+      (job.budget.budgetId !== acceptedBudget.budgetId ||
+        job.budget.revision !== acceptedBudget.revision)
+    )
+      throw new Fault('BUDGET_REVISION_CONFLICT', 409);
+    this.budgets.bind(job.budget, job.id);
+    const budgetView = this.budgets.view(job.budget.budgetId);
+    if (budgetView.state !== 'active') throw new Fault('BUDGET_LIMIT_REACHED', 409);
+    job.limit = budgetView.policy.toolLimit;
     this.jobs.set(bot, job);
     let inputDirectory: TaskDirectory | undefined;
     try {
@@ -1666,7 +1813,13 @@ export class ModelRuns {
       job.persona = personaKey(job.profile);
       // Per-Bot choice is captured with the task; it never edits the shared credential or a running job.
       const captured = await this.settings.capture(job.profile?.model);
+      job.routeRevision = captured.revision;
       const config = captured.primary;
+      if (
+        budgetView.policy.mode === 'strict' &&
+        !['openai-completions', 'openai-responses'].includes(config.api)
+      )
+        throw new Fault('BUDGET_STRICT_UNAVAILABLE', 400);
       job.fallback = captured.fallback;
       job.attemptSummary = [
         {
@@ -1799,6 +1952,7 @@ export class ModelRuns {
       if (job.skills) this.skills.release(job.skills);
       this.tools.skills?.release(job);
       job.imageInputs = undefined;
+      this.budgets.finishRun(job.id);
       job.running = false;
       job.phase = job.abort.signal.aborted ? 'stopped' : 'failed';
       job.error = job.abort.signal.aborted
@@ -1870,31 +2024,66 @@ export class ModelRuns {
         ? `computer-${job.attemptId}.patch.yml`
         : 'computer.patch.yml',
     );
+    if (
+      job.budget &&
+      this.budgets.view(job.budget.budgetId).policy.mode === 'strict' &&
+      !['openai-completions', 'openai-responses'].includes(config.api)
+    )
+      throw new Fault('BUDGET_STRICT_UNAVAILABLE', 400);
+    this.budgets.coverage(job.id, job.attemptId!, false);
     await writeFile(
       file,
       JSON.stringify(
-        sdkPatch(
-          this.origin,
-          job.bot,
-          job.token,
-          job.task ? { ...job.task, planning: job.planning } : undefined,
-          job.limit - job.toolCount,
-          config.model,
-          job.skills,
-          this.bridge,
-          config,
-          this.sdkFile,
-          promptCacheId({
-            workspace: this.dir,
-            provider: config.provider,
-            model: config.apiModel,
-            bot: job.bot,
-            conversationId: job.conversationId,
-            chatRevision: job.chatRevision,
-          }),
-          path.join(job.privateDir, 'turn.json'),
-          office,
-          job.attemptId,
+        usagePatch(
+          sdkPatch(
+            this.origin,
+            job.bot,
+            job.token,
+            job.task ? { ...job.task, planning: job.planning } : undefined,
+            job.limit - job.toolCount,
+            config.model,
+            job.skills,
+            this.bridge,
+            config,
+            this.sdkFile,
+            promptCacheId({
+              workspace: this.dir,
+              provider: config.provider,
+              model: config.apiModel,
+              bot: job.bot,
+              conversationId: job.conversationId,
+              chatRevision: job.chatRevision,
+            }),
+            path.join(job.privateDir, 'turn.json'),
+            office,
+            job.attemptId,
+          ),
+          job.budget
+            ? {
+                url: `${this.origin}/mcp/${job.bot}`,
+                capability: job.token,
+                ...(this.bridge
+                  ? {
+                      socketPath: this.bridge.socketPath,
+                      certificateFile: this.bridge.certificateFile,
+                    }
+                  : {}),
+                scope: job.budget,
+                runId: job.id,
+                modelAttemptId: job.attemptId!,
+                routeKey: JSON.stringify([
+                  config.provider,
+                  config.api,
+                  config.apiModel,
+                  job.routeRevision ?? 0,
+                ]),
+                strict: this.budgets.view(job.budget.budgetId).policy.mode === 'strict',
+                api: config.api,
+                baseURL: config.baseURL,
+                model: config.apiModel,
+                provider: sdkProvider(config),
+              }
+            : undefined,
         ),
       ),
       { mode: 0o600 },
@@ -2294,9 +2483,16 @@ export class ModelRuns {
     };
     job.onInteraction = refreshWait;
     job.onComputerWait = refreshWait;
+    const logicalTimeLimit = job.budget
+      ? this.budgets.view(job.budget.budgetId).policy.activeMs
+      : timeLimit;
+    const totalActive = () =>
+      job.budget
+        ? this.budgets.time(job.id, Math.max(0, activeUsed() - priorActiveMs), priorActiveMs)
+        : activeUsed();
     const timeout = setInterval(() => {
       refreshWait();
-      if (activeUsed() >= timeLimit)
+      if (totalActive() >= logicalTimeLimit)
         this.stop(job.bot, 'timeout').catch(() => {
           job.error = 'MODEL_STOP_FAILED';
         });
@@ -2315,6 +2511,7 @@ export class ModelRuns {
       );
     const startup = { initialized: false, stage: 'sdk-loading', log: diagnostic };
     try {
+      totalActive();
       for (;;) {
         const attempt = job.attemptSummary!.at(-1)!;
         job.attemptActive = true;
@@ -2357,7 +2554,10 @@ export class ModelRuns {
                 !!job.goalSession ||
                 !!goalCommand(job.task?.prompt || ''),
               eligible,
-              budgetAvailable: job.toolCount < job.limit && activeUsed() < timeLimit,
+              budgetAvailable:
+                job.toolCount < job.limit &&
+                totalActive() < logicalTimeLimit &&
+                (!job.budget || this.budgets.view(job.budget.budgetId).state === 'active'),
             });
           if (
             !fallback ||
@@ -2435,6 +2635,7 @@ export class ModelRuns {
       // Keep queue receipts and admission active until artifacts and the final journal record are complete.
       job.finalizing = true;
       job.activeMs = activeUsed();
+      totalActive();
       job.attemptActive = false;
       job.insertable = false;
       clearInterval(timeout);
@@ -2509,6 +2710,7 @@ export class ModelRuns {
           job.phase === 'completed' ? 'completed' : job.abort.signal.aborted ? 'stopped' : 'failed';
         currentAttempt.finishedAt = new Date().toISOString();
       }
+      this.budgets.finishRun(job.id);
       job.running = false;
       job.imageInputs = undefined;
       job.token = '';
@@ -2616,17 +2818,132 @@ export class ModelRuns {
       throw new Fault('INVALID_RPC', 400);
     const rpc = value as Rpc,
       job = this.jobs.get(bot);
+    if (rpc.method === 'budget.report') {
+      const { scope, runId, attemptId, usage, ...extra } = rpc.params ?? {};
+      if (
+        !isBudgetScope(scope) ||
+        typeof runId !== 'string' ||
+        typeof attemptId !== 'string' ||
+        !isTokenUsage(usage) ||
+        Object.keys(extra).length ||
+        !authorization?.startsWith('Bearer ')
+      )
+        throw new Fault('INVALID_BUDGET_REPORT', 403);
+      const receipt = this.budgets.report(
+        attemptId,
+        usage,
+        runId,
+        createHash('sha256').update(authorization).digest('hex'),
+        scope,
+      );
+      if (receipt.scope.budgetId !== scope.budgetId || receipt.scope.revision !== scope.revision)
+        throw new Fault('INVALID_BUDGET_REPORT', 403);
+      return { jsonrpc: '2.0', id: rpc.id, result: { accepted: true } };
+    }
     // Stop may still receive its final observation-only drain acknowledgement; it never permits another tool.
     if (
       !job?.running ||
-      (job.abort.signal.aborted && rpc.method !== 'attempt.closed') ||
+      (job.abort.signal.aborted &&
+        rpc.method !== 'attempt.closed' &&
+        rpc.method !== 'budget.coverage') ||
       !job.token ||
       authorization !== `Bearer ${job.token}`
     )
       throw new Fault('UNAUTHORIZED', 403);
     if (rpc.id === undefined) return null;
     let result: unknown;
-    if (rpc.method === 'attempt.closed') {
+    if (rpc.method === 'budget.coverage') {
+      const { scope, modelAttemptId, complete, ...extra } = rpc.params ?? {};
+      if (
+        !isBudgetScope(scope) ||
+        !job.budget ||
+        scope.budgetId !== job.budget.budgetId ||
+        scope.revision !== job.budget.revision ||
+        modelAttemptId !== job.attemptId ||
+        typeof complete !== 'boolean' ||
+        Object.keys(extra).length
+      )
+        throw new Fault('INVALID_BUDGET_COVERAGE', 403);
+      this.budgets.coverage(job.id, job.attemptId!, complete);
+      result = { accepted: true };
+    } else if (rpc.method === 'budget.tool') {
+      const { scope, modelAttemptId, sessionId, callId, ...extra } = rpc.params ?? {};
+      if (
+        !isBudgetScope(scope) ||
+        !job.budget ||
+        scope.budgetId !== job.budget.budgetId ||
+        scope.revision !== job.budget.revision ||
+        modelAttemptId !== job.attemptId ||
+        sessionId !== job.sessionId ||
+        typeof callId !== 'string' ||
+        callId.length > 1024 ||
+        Object.keys(extra).length ||
+        !job.attemptActive
+      )
+        throw new Fault('INVALID_BUDGET_TOOL', 403);
+      this.budgets.tool(
+        scope,
+        createHash('sha256')
+          .update(JSON.stringify([scope.budgetId, modelAttemptId, callId]))
+          .digest('hex'),
+      );
+      result = { accepted: true };
+    } else if (rpc.method === 'budget.reserve' || rpc.method === 'budget.dispatched') {
+      const { scope, modelAttemptId, attemptId, ...rest } = rpc.params ?? {};
+      if (
+        !isBudgetScope(scope) ||
+        !job.budget ||
+        scope.budgetId !== job.budget.budgetId ||
+        scope.revision !== job.budget.revision ||
+        modelAttemptId !== job.attemptId ||
+        !job.attemptActive ||
+        typeof attemptId !== 'string'
+      )
+        throw new Fault('INVALID_BUDGET_ATTEMPT', 403);
+      if (rpc.method === 'budget.reserve') {
+        const { rootSessionId, sessionId, purpose, requestHash, ...extra } = rest;
+        if (
+          typeof requestHash !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(requestHash) ||
+          rootSessionId !== job.sessionId ||
+          typeof sessionId !== 'string' ||
+          !['main', 'subtask', 'compaction', 'session-title'].includes(String(purpose)) ||
+          Object.keys(extra).length ||
+          !job.route
+        )
+          throw new Fault('INVALID_BUDGET_OWNER', 403);
+        this.budgets.reserve(scope, {
+          attemptId,
+          requestHash,
+          runId: job.id,
+          modelAttemptId: job.attemptId!,
+          rootSessionId: job.sessionId!,
+          sessionId,
+          purpose:
+            purpose === 'main' && job.attemptSummary!.length > 1
+              ? 'fallback'
+              : (purpose as 'main' | 'subtask' | 'compaction' | 'session-title'),
+          routeKey: JSON.stringify([
+            job.route.provider,
+            job.route.api,
+            job.route.apiModel,
+            job.routeRevision ?? 0,
+          ]),
+          auth: createHash('sha256').update(authorization!).digest('hex'),
+          reservedTokens: job.route.contextWindow + job.route.maxTokens,
+        });
+        result = { accepted: true };
+      } else {
+        if (Object.keys(rest).length) throw new Fault('INVALID_BUDGET_ATTEMPT', 403);
+        result = {
+          send: this.budgets.dispatch(scope, attemptId, {
+            runId: job.id,
+            modelAttemptId: job.attemptId!,
+            auth: createHash('sha256').update(authorization!).digest('hex'),
+          }),
+        };
+      }
+    } else if (rpc.method === 'attempt.closed') {
       const { sessionId, attemptId, fence, ...extra } = rpc.params || {};
       if (
         sessionId !== job.sessionId ||
@@ -2762,7 +3079,11 @@ export class ModelRuns {
         error: { code: -32601, message: 'Method not supported' },
       };
     // A human wait can outlive the run that authenticated it; never release a grant after stop.
-    if (job.abort.signal.aborted && rpc.method !== 'attempt.closed')
+    if (
+      job.abort.signal.aborted &&
+      rpc.method !== 'attempt.closed' &&
+      rpc.method !== 'budget.coverage'
+    )
       throw new Fault('MODEL_CANCELLED');
     return { jsonrpc: '2.0', id: rpc.id, result };
   }
@@ -2778,6 +3099,7 @@ export class ModelRuns {
     // Each store must close even when another owner fails, including unavailable optional services.
     if (![...this.jobs.values()].some((job) => job.running)) this.releaseModelReferences();
     for (const owner of [
+      this.budgets,
       this.tools.integrations,
       this.work,
       this.notes,

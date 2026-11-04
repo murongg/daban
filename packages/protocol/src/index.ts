@@ -1,3 +1,4 @@
+import type { BudgetCommand } from './budgets.js';
 export * from './goals.js';
 export * from './model-access.js';
 
@@ -1619,6 +1620,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
+    'budget.settings',
+    'budget.read',
     'transcript.statistics',
     'transcript.list',
     'transcript.content',
@@ -3983,6 +3986,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | BudgetCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4434,3 +4438,5 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
     (value.cancelRequested === undefined || typeof value.cancelRequested === 'boolean')
   );
 }
+
+export * from './budgets.js';

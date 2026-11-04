@@ -1,3 +1,4 @@
+import { isBudgetCommand } from '@daban/protocol';
 import {
   isApprovalMode,
   isAttachmentId,
@@ -94,6 +95,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     value.type === 'skill.resource'
   )
     return isSkillPackageCommand(value) ? value : fail();
+  if (value.type.startsWith('budget.')) return isBudgetCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
     'work.list': ['type', 'query'],

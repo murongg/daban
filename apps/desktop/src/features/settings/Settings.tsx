@@ -22,6 +22,7 @@ import { Diagnostics } from '../computer/Diagnostics';
 import { RecoveryEntry } from '../computer/Recovery';
 import { download } from '../files/files';
 import { Integrations } from '../integrations/Integrations';
+import { Budgets } from '../budgets/Budgets';
 import { Models } from '../models/Models';
 import { Notifications } from '../notifications/Notifications';
 import { LinuxSetup } from '../onboarding/LinuxSetup';
@@ -116,7 +117,12 @@ export function Settings({
       label: t('models.title'),
       icon: Waypoints,
       description: t('settings.connectModelServicesChooseWorkspacePerBot'),
-      content: <Models />,
+      content: (
+        <>
+          <Models />
+          <Budgets />
+        </>
+      ),
     },
     {
       id: 'computer',

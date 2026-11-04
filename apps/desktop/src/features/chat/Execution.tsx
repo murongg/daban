@@ -1,3 +1,4 @@
+import { Usage } from '../budgets/Usage';
 import {
   type GoalProgress,
   isModelAttempts,
@@ -357,6 +358,7 @@ function Reader({
         <RefreshCw />
       </IconButton>
       <Statistics scope={target} refresh={page} />
+      <Usage scope={target} running={page?.state === 'recording'} />
       {page?.state === 'unavailable' && (
         <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}

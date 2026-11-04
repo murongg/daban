@@ -22,6 +22,7 @@ test.each([false, true])(
     });
     let rootCalls = 0,
       childCalls = 0,
+      wireCalls = 0,
       refused = false;
     const server = createServer(async (req, res) => {
       try {
@@ -38,6 +39,7 @@ test.each([false, true])(
           res.end(JSON.stringify({ data: [{ id: 'mock-reader' }] }));
           return;
         }
+        wireCalls++;
         const isRoot = JSON.stringify(input.messages).includes('SYNTHETIC ROOT TASK');
         if (!isRoot && cancel) {
           entered();
@@ -45,7 +47,7 @@ test.each([false, true])(
         }
         let name: string | undefined;
         let args: unknown;
-        if (isRoot && ++rootCalls === 1) {
+        if (isRoot && ++rootCalls <= 2) {
           name = 'subagent';
           args = {
             description: 'Synthetic read-only check',
@@ -66,7 +68,7 @@ test.each([false, true])(
               tool_calls: [
                 {
                   index: 0,
-                  id: `mock-call-${isRoot ? 'root' : 'child'}`,
+                  id: `mock-call-${isRoot ? `root-${rootCalls}` : `child-${childCalls}`}`,
                   type: 'function',
                   function: { name, arguments: JSON.stringify(args) },
                 },
@@ -131,10 +133,18 @@ test.each([false, true])(
         await job.done;
         expect(job.phase).toBe('stopped');
         expect(job.running).toBe(false);
+        expect(models.budgets.view(job.budget!.budgetId).requests).toBe(wireCalls);
         return;
       }
       await job.done;
       expect(job.phase, job.error).toBe('completed');
+      const budget = models.budgets.view(job.budget!.budgetId);
+      expect(budget.requests).toBe(wireCalls);
+      expect(budget.unknownCount).toBe(wireCalls);
+      expect(
+        new Set(budget.receipts.filter((r) => r.purpose === 'subtask').map((r) => r.sessionId))
+          .size,
+      ).toBe(2);
       expect(childCalls).toBeGreaterThanOrEqual(2);
       expect(refused).toBe(true);
       expect(job.result).toContain('SYNTHETIC ROOT COMPLETE');

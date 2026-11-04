@@ -386,3 +386,56 @@ test('attempt policy waits for durable Host fence acknowledgement before native 
     vi.unstubAllGlobals();
   }
 });
+
+test('logical tool admission is shared and a refusal prevents the tool body', async () => {
+  const { vi } = await import('vitest');
+  const methods: string[] = [];
+  let bodies = 0;
+  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+    const value = JSON.parse(String(init?.body)) as { method: string };
+    methods.push(value.method);
+    return Response.json(
+      value.method === 'budget.tool' ? { error: { code: -1 } } : { result: { accepted: true } },
+    );
+  });
+  let pre: (
+    exec: { signal: AbortSignal; name: string; arguments: unknown; callId?: string },
+    next: () => Promise<unknown>,
+  ) => Promise<unknown> = async () => undefined;
+  const config = {
+    limit: 60,
+    urls: [],
+    attemptId: 'synthetic-attempt',
+    url: 'http://127.0.0.1:12345/mcp/mock-bot',
+    capability: 'synthetic-token',
+    budget: { budgetId: 'synthetic-budget', revision: 1 },
+  };
+  apply(
+    {
+      agents: { roots: () => [{ session: { id: 'synthetic-root' } }] },
+      on: (...hook) => {
+        if (hook[0] === 'tools/pre-execute') pre = hook[1];
+      },
+    },
+    config,
+  );
+  try {
+    const result = await pre(
+      {
+        signal: new AbortController().signal,
+        name: 'todo_write',
+        callId: 'synthetic-tool',
+        arguments: { todos: [{ content: 'Synthetic step', status: 'pending' }] },
+      },
+      async () => {
+        bodies++;
+        return { kind: 'allow' };
+      },
+    );
+    expect(methods).toContain('budget.tool');
+    expect(result).toMatchObject({ kind: 'deny' });
+    expect(bodies).toBe(0);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
