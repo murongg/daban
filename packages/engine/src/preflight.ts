@@ -103,6 +103,7 @@ interface Entry {
   bytes: number;
   pending?: Promise<PreflightReport>;
   report?: PreflightReport;
+  profileStamp?: PreflightStamp['stamp'];
   package?: PreflightPackage;
 }
 const hash = (value: unknown) => createHash('sha256').update(preflightJson(value)).digest('hex');
@@ -443,10 +444,9 @@ export class Preflight {
   }
   private async build(entry: Entry, profile: PreflightProfile, deadline: number) {
     const before = await this.sample(entry.query, deadline);
-    const [after, current] = await Promise.all([
-      this.sample(entry.query, deadline, before),
-      this.authorize(entry.query.bot, deadline),
-    ]);
+    const after = await this.sample(entry.query, deadline, before);
+    // Source I/O can outlast a model/profile revision, even while the Bot stays authorized.
+    const current = await this.authorize(entry.query.bot, deadline);
     this.assertOpen();
     if (this.sources.scope() !== entry.scope) throw new Fault('PREFLIGHT_REPORT_EXPIRED', 410);
     const versions = this.stamps(profile, before),
@@ -497,6 +497,8 @@ export class Preflight {
     entry.bytes += bytes;
     entry.expires = Date.parse(report.expiresAt);
     entry.report = report;
+    // Report versions retain before-facts; publication must match the final sampled profile.
+    entry.profileStamp = next.find((row) => row.source === 'profile')!.stamp;
     return report;
   }
   async inspect(input: PreflightQuery): Promise<PreflightReport> {
@@ -539,8 +541,13 @@ export class Preflight {
         });
     }
     const report = await entry.pending!;
-    await this.authorize(query.bot, deadline);
+    const authorized = await this.authorize(query.bot, deadline);
     if (scope !== this.sources.scope()) throw new Fault('PREFLIGHT_REPORT_EXPIRED', 410);
+    if (
+      this.stamps(authorized, {}).find((row) => row.source === 'profile')!.stamp !==
+      entry.profileStamp
+    )
+      throw new Fault('PREFLIGHT_AUTHORITY_CHANGED', 409);
     return structuredClone(report);
   }
   private async revalidate(entry: Entry, deadline: number) {

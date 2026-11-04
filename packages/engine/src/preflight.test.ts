@@ -18,6 +18,13 @@ import {
 
 const alias = 'ext_0123456789abcdef0123';
 const digest = 'a'.repeat(64);
+function deferred() {
+  let resolve: () => unknown = () => undefined;
+  const promise = new Promise<undefined>((done) => {
+    resolve = () => done(undefined);
+  });
+  return { promise, resolve: () => resolve() };
+}
 function fixture() {
   let now = Date.parse('2026-01-01T00:00:00.000Z');
   const profile: PreflightProfile = { revision: 1 };
@@ -605,4 +612,101 @@ test('a trusted local transport failure on the second observation remains unknow
     reason: 'OWNER_UNAVAILABLE',
     evidence: 'unavailable',
   });
+});
+
+test.each(['unchanged', 'model', 'archive'] as const)(
+  'a deferred second model observation respects the %s profile at completion',
+  async (change) => {
+    const f = fixture();
+    const entered = deferred(),
+      gate = deferred();
+    const read = f.sources.model;
+    let reads = 0;
+    f.model.models.push({ id: 'mock-new', vision: false, contextWindow: 16000, maxTokens: 1000 });
+    f.sources.model = async () => {
+      if (++reads === 2) {
+        entered.resolve();
+        await gate.promise;
+      }
+      return read();
+    };
+    const result = f.owner.inspect({
+      ...f.query,
+      requirements: [{ kind: 'model', vision: true, tools: false }],
+    });
+    await entered.promise;
+    if (change === 'model') {
+      f.profile.revision++;
+      f.profile.model = 'mock-new';
+    }
+    if (change === 'archive') f.revoke();
+    gate.resolve();
+    if (change === 'archive') {
+      await expect(result).rejects.toMatchObject({ code: 'BOT_ARCHIVED' });
+    } else {
+      const report = await result;
+      expect(report.checks[0]).toMatchObject({
+        state: change === 'model' ? 'stale' : 'ready',
+        reason: change === 'model' ? 'CONFIG_CHANGED' : 'CONFIG_PRESENT',
+      });
+      expect(report.summary).toBe(change === 'model' ? 'attention' : 'ready');
+    }
+    expect(reads).toBe(2);
+    expect(f.calls.mcp + f.calls.local + f.calls.runtime).toBe(0);
+  },
+);
+
+test('the last authorization cannot publish a report made with an older profile', async () => {
+  const f = fixture();
+  const authorize = f.sources.authorize;
+  let reads = 0;
+  f.model.models.push({ id: 'mock-new', vision: false, contextWindow: 16000, maxTokens: 1000 });
+  f.sources.authorize = async (bot) => {
+    if (++reads === 3) {
+      f.profile.revision++;
+      f.profile.model = 'mock-new';
+    }
+    return authorize(bot);
+  };
+  const query: PreflightQuery = {
+    ...f.query,
+    requirements: [{ kind: 'model', vision: true, tools: false }],
+  };
+  await expect(f.owner.inspect(query)).rejects.toMatchObject({
+    code: 'PREFLIGHT_AUTHORITY_CHANGED',
+  });
+  await expect(f.owner.inspect(query)).rejects.toMatchObject({
+    code: 'PREFLIGHT_AUTHORITY_CHANGED',
+  });
+});
+
+test('a late profile change does not relabel a timed-out source as ready or a config fact', async () => {
+  const f = fixture();
+  const entered = deferred(),
+    gate = deferred();
+  const read = f.sources.model;
+  let reads = 0;
+  f.sources.model = async () => {
+    if (++reads === 2) {
+      entered.resolve();
+      await gate.promise;
+    }
+    return read();
+  };
+  const result = f.owner.inspect(f.query);
+  await entered.promise;
+  f.profile.revision++;
+  try {
+    const report = await result;
+    expect(report.checks[0]).toMatchObject({
+      state: 'unknown',
+      reason: 'CHECK_TIMED_OUT',
+      evidence: 'unavailable',
+    });
+    expect(report.summary).toBe('attention');
+    expect(reads).toBe(2);
+  } finally {
+    gate.resolve();
+    f.owner.close();
+  }
 });
