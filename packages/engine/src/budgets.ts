@@ -621,14 +621,17 @@ export class Budgets {
   private warn(id: string) {
     const view = this.view(id),
       p = view.policy;
+    // Known reservations can reach the warning before settlement; unknown costs remain absent in the view.
     const ratio = Math.max(
       p.maxRequests ? view.requests / p.maxRequests : 0,
       p.maxTokens
         ? (view.reported.inputTokens + view.reported.outputTokens + view.reservedTokens) /
             p.maxTokens
         : 0,
-      p.money && view.currency === p.money.currency && view.estimatedMicros !== undefined
-        ? (view.estimatedMicros + (view.reservedMicros ?? 0)) / p.money.limitMicros
+      p.money &&
+        view.currency === p.money.currency &&
+        (view.estimatedMicros !== undefined || view.reservedMicros !== undefined)
+        ? ((view.estimatedMicros ?? 0) + (view.reservedMicros ?? 0)) / p.money.limitMicros
         : 0,
     );
     if (!view.warned && ratio >= 0.8)

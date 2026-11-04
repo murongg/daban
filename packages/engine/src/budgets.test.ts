@@ -233,6 +233,117 @@ test('known reservation prices do not turn an unknown provider result into a kno
     expect(view.unknownCostCount).toBe(1);
   }));
 
+test.each([
+  ['reserved', 125, true],
+  ['unknown', 125, true],
+  ['reserved', 126, false],
+  ['unknown', 126, false],
+] as const)(
+  'money warning counts known %s occupancy against %i micros',
+  async (phase, limit, warned) =>
+    fixture(async (store) => {
+      store.configure(
+        0,
+        { ...defaultBudgetPolicy, money: { currency: 'USD', limitMicros: limit } },
+        [
+          {
+            id: 'synthetic-price',
+            routeKey: request.routeKey,
+            currency: 'USD',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            input: 1000000,
+            output: 1000000,
+            cacheRead: 1000000,
+            cacheWrite: 1000000,
+          },
+        ],
+        'synthetic-money-config',
+      );
+      const scope = store.ensure('synthetic-money');
+      store.reserve(scope, request);
+      if (phase === 'unknown') {
+        store.dispatch(scope, request.attemptId);
+        store.report(
+          request.attemptId,
+          { state: 'unknown', reason: 'SYNTHETIC_DISCONNECT' },
+          request.runId,
+          request.auth,
+        );
+      }
+      const view = store.view(scope.budgetId);
+      expect(view.reservedMicros).toBe(100);
+      expect(view.estimatedMicros).toBeUndefined();
+      expect(view.unknownCount).toBe(phase === 'unknown' ? 1 : 0);
+      expect(view.unknownCostCount).toBe(phase === 'unknown' ? 1 : 0);
+      expect(view.warned).toBe(warned);
+    }),
+);
+
+test('money warning stays latched once across repeated reads, late settlement and restart', async () =>
+  fixture(async (store, _file, open) => {
+    store.configure(
+      0,
+      { ...defaultBudgetPolicy, money: { currency: 'USD', limitMicros: 125 } },
+      [
+        {
+          id: 'synthetic-price',
+          routeKey: request.routeKey,
+          currency: 'USD',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          input: 1000000,
+          output: 1000000,
+          cacheRead: 1000000,
+          cacheWrite: 1000000,
+        },
+      ],
+      'synthetic-money-config',
+    );
+    const scope = store.ensure('synthetic-money');
+    const flags = [store.view(scope.budgetId).warned];
+    store.reserve(scope, { ...request, reservedTokens: 99 });
+    store.dispatch(scope, request.attemptId);
+    store.report(
+      request.attemptId,
+      { state: 'unknown', reason: 'SYNTHETIC_DISCONNECT' },
+      request.runId,
+      request.auth,
+    );
+    flags.push(store.view(scope.budgetId).warned);
+    const next = { ...request, attemptId: 'synthetic-next', reservedTokens: 1 };
+    store.reserve(scope, next);
+    flags.push(store.view(scope.budgetId).warned);
+    store.reserve(scope, next);
+    flags.push(store.view(scope.budgetId).warned, store.view(scope.budgetId).warned);
+    store.report(
+      request.attemptId,
+      {
+        state: 'reported',
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      request.runId,
+      request.auth,
+    );
+    const settled = store.view(scope.budgetId);
+    expect(settled.estimatedMicros).toBe(0);
+    expect(settled.reservedMicros).toBe(1);
+    expect(settled.requests).toBe(2);
+    flags.push(settled.warned);
+    store.close();
+    const reopened = await open();
+    try {
+      flags.push(reopened.view(scope.budgetId).warned);
+      reopened.reserve(scope, { ...next, attemptId: 'synthetic-after-restart' });
+      flags.push(reopened.view(scope.budgetId).warned);
+      expect(flags).toEqual([false, false, true, true, true, true, true, true]);
+      expect(flags.filter((warned, index) => warned && !flags[index - 1])).toHaveLength(1);
+    } finally {
+      reopened.close();
+    }
+  }));
+
 test('snapshot identity is immutable even after removing an active manual price', async () =>
   fixture(async (store) => {
     const price: BudgetPrice = {
