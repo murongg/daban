@@ -53,6 +53,7 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
     setUnavailable(false);
     setCanReload(false);
     setOpen(false);
+    setValue(undefined);
     setError('');
     pending.current = undefined;
     setBusy(false);
@@ -127,9 +128,12 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
     }
     pending.current = request;
     setBusy(true);
+    setCanReload(false);
     setError('');
+    let increasing = true;
     try {
       const result = await runtime.command({ type: 'budget.increase', request });
+      increasing = false;
       if (ticket !== epoch.current) return;
       if (
         !isBudgetView(result) ||
@@ -157,15 +161,53 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
       }
     } catch (error) {
       if (ticket === epoch.current) {
+        const rejected =
+          increasing &&
+          error instanceof Error &&
+          ['BUDGET_REVISION_CONFLICT', 'BUDGET_INCREASE_REQUIRED'].includes(error.message);
+        // Only an increase rejected before its transaction took effect can release the captured write identity.
+        if (rejected) {
+          clearPending(key);
+          pending.current = undefined;
+        }
         setError(
           t(
-            error instanceof Error && error.message === 'BUDGET_CONTINUE_STALE'
-              ? 'budgets.staleContinue'
-              : 'budgets.continueFailed',
+            rejected
+              ? 'budgets.increaseRejected'
+              : error instanceof Error && error.message === 'BUDGET_CONTINUE_STALE'
+                ? 'budgets.staleContinue'
+                : 'budgets.continueFailed',
           ),
         );
-        setCanReload(error instanceof Error && error.message === 'BUDGET_CONTINUE_STALE');
+        setCanReload(
+          rejected || (error instanceof Error && error.message === 'BUDGET_CONTINUE_STALE'),
+        );
       }
+    } finally {
+      if (ticket === epoch.current) setBusy(false);
+    }
+  };
+  const reloadBudget = async () => {
+    if (!view || busy || !canReload) return;
+    const ticket = epoch.current;
+    setBusy(true);
+    try {
+      const result = await runtime.command({ type: 'budget.read', query: { scope: target } });
+      if (ticket !== epoch.current) return;
+      if (
+        !isBudgetView(result) ||
+        !result.owner ||
+        !sameTranscriptScope(result.owner, target) ||
+        result.scope.budgetId !== view.scope.budgetId
+      )
+        throw new Error('INVALID_BUDGET_OWNER');
+      clearPending(`budget-continue:${view.scope.budgetId}:${JSON.stringify(target)}`);
+      pending.current = undefined;
+      setView(result);
+      // Refresh keeps both the draft and the read button, preserving edits and keyboard focus.
+      setError('');
+    } catch {
+      if (ticket === epoch.current) setError(t('budgets.unavailable'));
     } finally {
       if (ticket === epoch.current) setBusy(false);
     }
@@ -265,7 +307,9 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
           className="text-button"
           disabled={running}
           onClick={() => {
-            setValue(draft(pending.current?.policy ?? view.policy));
+            setValue((value) =>
+              pending.current ? draft(pending.current.policy) : (value ?? draft(view.policy)),
+            );
             setOpen(true);
           }}
         >
@@ -295,17 +339,13 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
             <fieldset className="model-fields" disabled={busy || !!pending.current}>
               <Fields value={value} change={setValue} increase />
             </fieldset>
-            {pending.current && canReload && (
+            {canReload && (
               <button
                 type="button"
                 className="text-button"
-                disabled={busy}
-                onClick={() => {
-                  clearPending(`budget-continue:${view.scope.budgetId}:${JSON.stringify(target)}`);
-                  pending.current = undefined;
-                  setOpen(false);
-                  setReload((value) => value + 1);
-                }}
+                // The busy guard blocks repeated reads while this control retains keyboard focus.
+                aria-disabled={busy}
+                onClick={() => reloadBudget().catch(() => setError(t('budgets.unavailable')))}
               >
                 {t('budgets.reload')}
               </button>

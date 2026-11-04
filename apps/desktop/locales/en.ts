@@ -3406,6 +3406,8 @@ export const english = {
   'budgets.increase': 'Increase budget and continue',
   'budgets.increaseHelp':
     'Keeps the same logical task and usage. Continuing accepts conservative occupancy for unknown requests and never resends a request to recover metering.',
+  'budgets.increaseRejected':
+    'This increase was not applied. Edit the draft or reload the current budget before submitting again.',
   'budgets.continueFailed':
     'Continuation is unconfirmed. The original increase is retained; retrying does not reset usage or increase the budget twice.',
   'budgets.purpose.main': 'Main model',

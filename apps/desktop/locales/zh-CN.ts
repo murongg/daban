@@ -3074,6 +3074,7 @@ export const chinese = {
   'budgets.increase': '增加额度并继续',
   'budgets.increaseHelp':
     '沿用同一逻辑任务和原用量。继续将保留未知请求的保守占用，不会自动补发来恢复计量。',
+  'budgets.increaseRejected': '本次加额未生效。请修正草稿，或重新读取当前预算后再提交。',
   'budgets.continueFailed': '继续未确认。原加额请求已保留；重试不会清零或重复加额。',
   'budgets.purpose.main': '主模型',
   'budgets.purpose.subtask': '临时子任务',
