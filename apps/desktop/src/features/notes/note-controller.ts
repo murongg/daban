@@ -12,7 +12,7 @@ import {
   recoveryBlocked,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { clientCache } from '../../app/cache';
+import { useCache } from '../../app/CacheProvider';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { type Action, type Bot, lifecycleRequest, reduce, type State } from '../../app/state';
 import { serialize, storageKey } from '../../app/storage';
@@ -48,6 +48,7 @@ export function useNotes(
   dispatch: Dispatch<Action>,
   notify: (text: string) => unknown,
 ) {
+  const storage = useCache();
   const runtime = useRuntime();
   const scope = agentId(bot.id);
   const keyOf = useCallback(
@@ -253,7 +254,7 @@ export function useNotes(
     if (!saved || keyOf(saved.request) !== keyOf(input.request)) return;
     try {
       // The exact Bot-bound intent must survive a crash before any remote side effect is sent.
-      clientCache().setItem(storageKey, serialize(updated));
+      storage.setItem(storageKey, serialize(updated));
     } catch {
       (resuming ? setOperationError : setError)(
         t('common.operationRecordsCouldNotSavedLocallyFree'),

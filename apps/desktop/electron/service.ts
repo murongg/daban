@@ -10,6 +10,7 @@ import {
   isGroupPage,
   isLocalComputerCommand,
   isRebootStatus,
+  isRemoteSnapshot,
   modelCatalog,
   modelHasVision,
   type RebootStatus,
@@ -18,6 +19,7 @@ import {
   type RuntimeSnapshot,
   recoveryBlocked,
   recoveryReader,
+  remoteDeviceId,
   type SetupStatus,
 } from '@daban/protocol';
 import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron';
@@ -61,6 +63,7 @@ export function runtimeService(
   agent?: AgentConfig,
   local?: LocalComputer,
   platform: NodeJS.Platform = process.platform,
+  remote?: { request(command: RuntimeCommand, host: string): Promise<unknown> },
 ) {
   const dataRoot = agent?.dataRoot ?? join(userData, 'agent');
   const vmConfig = agent?.vmConfig ?? join(userData, 'runtime.json');
@@ -602,6 +605,15 @@ export function runtimeService(
       if (command.type === 'local.status') return local.status();
       if (command.type === 'local.permissions') return local.requestPermissions();
       if (command.type === 'local.preview') return local.preview(command.session, command.revision);
+      if (command.type === 'local.observe')
+        return local.observeHuman(command.session, command.revision);
+      if (command.type === 'local.input')
+        return local.inputHuman(
+          command.session,
+          command.revision,
+          command.observation,
+          command.input,
+        );
       if (command.type === 'local.connect') {
         await refresh();
         const profile = state.profiles.find((profile) => profile.id === command.bot);
@@ -780,7 +792,7 @@ export function runtimeService(
       await refresh();
     return result;
   }
-  ipcMain.handle('daban:runtime', async (event, value): Promise<RuntimeReply> => {
+  ipcMain.handle('daban:runtime', async (event, value, target: unknown): Promise<RuntimeReply> => {
     const frame = event.senderFrame;
     if (
       !trustedSender(
@@ -794,7 +806,19 @@ export function runtimeService(
     )
       return { ok: false, error: 'UNTRUSTED_SENDER' };
     try {
-      return { ok: true, value: await dispatch(parseCommand(value)) };
+      const command = parseCommand(value);
+      if (target !== undefined && target !== null) {
+        if (!remoteDeviceId(target)) throw Error('REMOTE_INVALID_HOST');
+        // These human UI actions belong to the controller even when its workspace is remote.
+        if (command.type === 'clipboard.write' || command.type === 'link.open')
+          return { ok: true, value: await dispatch(command) };
+        if (!remote) throw Error('REMOTE_UNAVAILABLE');
+        const result = await remote.request(command, target);
+        if ((command.type === 'status' || command.type === 'connect') && !isRemoteSnapshot(result))
+          throw Error('INVALID_RUNTIME_STATE');
+        return { ok: true, value: result };
+      }
+      return { ok: true, value: await dispatch(command) };
     } catch (error) {
       return {
         ok: false,
@@ -858,6 +882,13 @@ export function runtimeService(
     }
   }
   return {
+    invokeLocal: dispatch,
+    localSnapshot: () => state,
+    publishRemote(value: unknown, host: string) {
+      if (closed || !remoteDeviceId(host) || !isRemoteSnapshot(value)) return;
+      for (const window of BrowserWindow.getAllWindows())
+        window.webContents.send('daban:runtime-state', value, host);
+    },
     connect,
     releaseInputs,
     async prepareUpdate() {

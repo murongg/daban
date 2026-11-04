@@ -1,0 +1,21 @@
+{
+  "name": "@daban/connect",
+  "version": "0.1.7",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node ../../dist-connect/main.js"
+  },
+  "dependencies": {
+    "@daban/engine": "0.1.7",
+    "@daban/protocol": "0.1.7",
+    "ws": "8.22.1"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2",
+    "vitest": "5.0.5"
+  },
+  "license": "AGPL-3.0-only"
+}

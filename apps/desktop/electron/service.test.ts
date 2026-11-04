@@ -137,6 +137,46 @@ import { controlSocket, prepareSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
 
 const roots = new Set<string>();
+it('routes an explicitly captured host without falling back to the local computer', async () => {
+  const frame = { url: 'file:///synthetic/index.html' };
+  const sender = { send: vi.fn(), mainFrame: frame };
+  mocks.windows.push({ webContents: sender });
+  const remoteSnapshot = disconnected('unsupported', 'synthetic-remote');
+  const request = vi.fn(async () => remoteSnapshot);
+  const service = runtimeService(
+    '/mock/remote-routing',
+    frame.url,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'darwin',
+    { request },
+  );
+  try {
+    const handler = mocks.handlers.get('daban:runtime')!;
+    expect(
+      await handler({ sender, senderFrame: frame }, { type: 'status' }, 'a'.repeat(64)),
+    ).toEqual({ ok: true, value: remoteSnapshot });
+    expect(request).toHaveBeenCalledWith({ type: 'status' }, 'a'.repeat(64));
+    expect(await handler({ sender, senderFrame: frame }, { type: 'status' }, '../other')).toEqual({
+      ok: false,
+      error: 'REMOTE_INVALID_HOST',
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(
+      await handler(
+        { sender, senderFrame: frame },
+        { type: 'clipboard.write', text: 'SYNTHETIC COPY' },
+        'a'.repeat(64),
+      ),
+    ).toEqual({ ok: true, value: { copied: true } });
+    expect(mocks.writeClipboard).toHaveBeenCalledWith('SYNTHETIC COPY');
+    expect(request).toHaveBeenCalledTimes(1);
+  } finally {
+    await service.close();
+  }
+});
 afterEach(async () => {
   vi.useRealTimers();
   mocks.daemonProgress = undefined;

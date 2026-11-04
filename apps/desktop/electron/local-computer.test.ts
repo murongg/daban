@@ -38,6 +38,55 @@ const binding = (controller: LocalComputer) => ({
   ...bound,
   session: controller.status().session?.id || 'mock-missing-session',
 });
+
+it('allows human input only after handoff with a fresh matching observation', async () => {
+  const { controller, actions } = fixture();
+  const initial = await controller.connect(connect);
+  const session = initial.session!;
+  await expect(controller.observeHuman(session.id, session.revision)).rejects.toThrow(
+    'LOCAL_NOT_HUMAN',
+  );
+  const paused = await controller.pause(session.id, session.revision);
+  const lease = paused.session!;
+  const frame = await controller.observeHuman(lease.id, lease.revision);
+  await controller.inputHuman(lease.id, lease.revision, frame.observation, {
+    type: 'text',
+    text: 'SYNTHETIC HUMAN TEXT',
+  });
+  expect(actions).toEqual([{ type: 'text', text: 'SYNTHETIC HUMAN TEXT' }]);
+  await expect(
+    controller.inputHuman(lease.id, lease.revision, frame.observation, {
+      type: 'click',
+      x: 10,
+      y: 10,
+    }),
+  ).rejects.toThrow('LOCAL_OBSERVATION_STALE');
+  const next = await controller.observeHuman(lease.id, lease.revision);
+  await controller.resume(lease.id, lease.revision);
+  await expect(
+    controller.inputHuman(lease.id, lease.revision, next.observation, {
+      type: 'click',
+      x: 10,
+      y: 10,
+    }),
+  ).rejects.toThrow();
+});
+
+it('rejects human input if focus changes after its observed frame', async () => {
+  const { controller, actions, driver } = fixture();
+  const initial = await controller.connect(connect);
+  const paused = await controller.pause(initial.session!.id, initial.session!.revision);
+  const lease = paused.session!;
+  const frame = await controller.observeHuman(lease.id, lease.revision);
+  driver.context = async () => 'synthetic-other-window';
+  await expect(
+    controller.inputHuman(lease.id, lease.revision, frame.observation, {
+      type: 'text',
+      text: 'MUST NOT TYPE',
+    }),
+  ).rejects.toThrow('LOCAL_SCREEN_CHANGED');
+  expect(actions).toEqual([]);
+});
 it('requires explicit consent, enforces a single Bot, and rejects model changes or stale observations', async () => {
   const { controller, actions } = fixture();
   await expect(controller.capture(binding(controller))).rejects.toThrow('LOCAL_NOT_CONNECTED');

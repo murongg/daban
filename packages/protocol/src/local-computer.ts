@@ -9,7 +9,7 @@ export interface LocalComputerSession {
   modelRevision: number;
 }
 export interface LocalComputerStatus {
-  platform: 'darwin' | 'win32' | 'unsupported';
+  platform: 'darwin' | 'win32' | 'linux' | 'unsupported';
   available: boolean;
   permissions: { screen: boolean; accessibility: boolean };
   shortcut: boolean;
@@ -36,9 +36,16 @@ export type LocalComputerCommand =
   | { type: 'local.permissions' }
   | { type: 'local.connect'; id: string; bot: string; model: string; modelRevision: number }
   | {
-      type: 'local.pause' | 'local.resume' | 'local.disconnect' | 'local.preview';
+      type: 'local.pause' | 'local.resume' | 'local.disconnect' | 'local.preview' | 'local.observe';
       session: string;
       revision: number;
+    }
+  | {
+      type: 'local.input';
+      session: string;
+      revision: number;
+      observation: string;
+      input: LocalComputerInput;
     };
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -68,7 +75,7 @@ export function isLocalComputerStatus(value: unknown): value is LocalComputerSta
   return (
     record(value) &&
     exact(value, ['available', 'permissions', 'shortcut', 'session', 'error', 'platform']) &&
-    ['darwin', 'win32', 'unsupported'].includes(String(value.platform)) &&
+    ['darwin', 'win32', 'linux', 'unsupported'].includes(String(value.platform)) &&
     typeof value.available === 'boolean' &&
     typeof value.shortcut === 'boolean' &&
     record(value.permissions) &&
@@ -92,8 +99,16 @@ export function isLocalComputerCommand(value: unknown): value is LocalComputerCo
       model(value.model) &&
       revision(value.modelRevision)
     );
+  if (value.type === 'local.input')
+    return (
+      exact(value, ['type', 'session', 'revision', 'observation', 'input']) &&
+      validAgentId(value.session) &&
+      revision(value.revision, 1) &&
+      validAgentId(value.observation) &&
+      isLocalComputerInput(value.input)
+    );
   return (
-    ['local.pause', 'local.resume', 'local.disconnect', 'local.preview'].includes(
+    ['local.pause', 'local.resume', 'local.disconnect', 'local.preview', 'local.observe'].includes(
       String(value.type),
     ) &&
     exact(value, ['type', 'session', 'revision']) &&

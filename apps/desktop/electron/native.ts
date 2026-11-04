@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { access } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import {
@@ -52,6 +54,10 @@ export function desktopDriver(
   load?: () => unknown,
 ): LocalDriver {
   let loaded: Automation | undefined;
+  const wayland =
+    platform === 'linux' &&
+    (process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY);
+  const x11 = platform === 'linux' && !!process.env.DISPLAY && !wayland;
   const pressed = new Set<string>();
   const native = () => {
     if (loaded) return loaded;
@@ -59,7 +65,11 @@ export function desktopDriver(
     const value: unknown = load
       ? load()
       : require(
-          platform === 'darwin' ? '@computer-use/libnut-darwin' : '@computer-use/libnut-win32',
+          platform === 'darwin'
+            ? '@computer-use/libnut-darwin'
+            : platform === 'linux'
+              ? '@computer-use/libnut-linux'
+              : '@computer-use/libnut-win32',
         );
     const names = [
       'getActiveWindow',
@@ -89,9 +99,11 @@ export function desktopDriver(
   const permissions = () => ({
     screen:
       platform === 'win32' ||
+      x11 ||
       (platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') === 'granted'),
     accessibility:
       platform === 'win32' ||
+      x11 ||
       (platform === 'darwin' && systemPreferences.isTrustedAccessibilityClient(false)),
   });
   const point = (frame: LocalCapture, x: number, y: number) => {
@@ -104,8 +116,18 @@ export function desktopDriver(
     return platform === 'win32' ? screen.dipToScreenPoint(result) : result;
   };
   return {
-    supported: ['darwin', 'win32'].includes(platform),
-    platform: platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'unsupported',
+    supported: ['darwin', 'win32'].includes(platform) || x11,
+    platform:
+      platform === 'darwin'
+        ? 'darwin'
+        : platform === 'win32'
+          ? 'win32'
+          : platform === 'linux'
+            ? 'linux'
+            : 'unsupported',
+    ...(platform === 'linux' && !x11
+      ? { reason: wayland ? 'LOCAL_WAYLAND_UNAVAILABLE' : 'LOCAL_DISPLAY_UNAVAILABLE' }
+      : {}),
     permissions,
     prepare() {
       native();
@@ -187,7 +209,7 @@ export function desktopDriver(
           last = parts.pop()!;
         const key = keys[last] || last;
         const mods = parts.map((value) =>
-          value === 'controlormeta' && platform === 'win32'
+          value === 'controlormeta' && platform !== 'darwin'
             ? 'control'
             : modifiers[value === 'win' ? 'super' : value],
         );
@@ -236,6 +258,38 @@ export function desktopDriver(
       check();
     },
     async openApp(name) {
+      if (platform === 'linux') {
+        const programs: Record<string, string[]> = {
+          terminal: ['/usr/bin/x-terminal-emulator', '/usr/bin/gnome-terminal', '/usr/bin/konsole'],
+          files: ['/usr/bin/nautilus', '/usr/bin/thunar', '/usr/bin/dolphin'],
+          editor: [
+            '/usr/bin/gnome-text-editor',
+            '/usr/bin/gedit',
+            '/usr/bin/mousepad',
+            '/usr/bin/kate',
+          ],
+          browser: ['/usr/bin/x-www-browser', '/usr/bin/chromium', '/usr/bin/firefox'],
+        };
+        for (const program of programs[name] ?? []) {
+          if (
+            !(await access(program).then(
+              () => true,
+              () => false,
+            ))
+          )
+            continue;
+          await new Promise<undefined>((resolve, reject) => {
+            const child = spawn(program, [], { stdio: 'ignore', detached: true });
+            child.once('error', () => reject(Error('LOCAL_APP_UNAVAILABLE')));
+            child.once('spawn', () => {
+              child.unref();
+              resolve(undefined);
+            });
+          });
+          return;
+        }
+        throw Error('LOCAL_APP_UNAVAILABLE');
+      }
       if (platform === 'win32') {
         const system = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
         const result =
