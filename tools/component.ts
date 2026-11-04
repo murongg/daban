@@ -33,12 +33,13 @@ import {
   assembleComponent,
   assembleLinux,
   componentSourceId,
+  referenceComponent,
   verifyLinux,
   withComponentStage,
 } from './components.ts';
 import { hashAsset } from './environment.ts';
 import { materializeHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
-import { signComponent, signLinux } from './sign.ts';
+import { prepareComponent, signComponent, signLinux } from './sign.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const [action, input, nodeDirectory, environmentDirectory] = process.argv.slice(2);
@@ -88,8 +89,9 @@ else if (action === 'fetch') {
     files.push(path.join(input, linuxFilename(kind)));
   files.push(path.join(input, 'linux.json'));
   await publishComponent(componentTag(id), process.env.EXPECTED_COMMIT, files);
-} else if (action === 'build') {
+} else if (action === 'build' || action === 'prepare') {
   assert.ok(input && nodeDirectory, 'COMPONENT_ARGUMENTS');
+  if (action === 'prepare') assert.equal(platform, 'darwin', 'COMPONENT_PLATFORM');
   const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const signing = {
     identity: process.env.MACOS_SIGNING_IDENTITY ?? '',
@@ -130,12 +132,23 @@ else if (action === 'fetch') {
         await copyFile(path.join(linuxDirectory, name), path.join(input, name));
     }
     if (process.platform === 'darwin') {
-      if (process.env.MACOS_SIGNING_IDENTITY)
-        await signComponent(result.directory, archive, {
+      if (process.env.MACOS_SIGNING_IDENTITY) {
+        const options = {
           identity: process.env.MACOS_SIGNING_IDENTITY,
           keychain: process.env.MACOS_KEYCHAIN,
-        });
-      else throw Error('DEVELOPER_ID_REQUIRED');
+        };
+        if (action === 'prepare') {
+          const receipt = await prepareComponent(
+            result.directory,
+            path.join(input, 'runtime-signed.zip'),
+            options,
+          );
+          await writeFile(path.join(input, 'notarization.json'), JSON.stringify(receipt), {
+            flag: 'wx',
+            mode: 0o600,
+          });
+        } else await signComponent(result.directory, archive, options);
+      } else throw Error('DEVELOPER_ID_REQUIRED');
     } else {
       // Seal after materialization so the archive includes every dependency independently of build-machine links.
       console.time('runtime:materialize');
@@ -201,20 +214,7 @@ else if (action === 'fetch') {
 } else if (action === 'reference') {
   assert.ok(input && nodeDirectory, 'COMPONENT_ARGUMENTS');
   const archive = path.resolve(input);
-  const reference = componentIndex(
-    {
-      version: 1,
-      id,
-      assets: [
-        {
-          ...asset,
-          bytes: (await stat(archive)).size,
-          sha256: (await hashAsset(archive, 'sha256')).digest,
-        },
-      ],
-    },
-    id,
-  );
+  const reference = await referenceComponent(archive, id, platform, arch);
   await mkdir(path.dirname(path.resolve(nodeDirectory)), { recursive: true });
   await writeFile(path.resolve(nodeDirectory), JSON.stringify(reference, null, 2) + '\n');
 } else throw Error('COMPONENT_ACTION');

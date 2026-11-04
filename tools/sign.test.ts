@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
+import * as signing from './sign.ts';
 import {
   isMachO,
   notarizeDistribution,
@@ -156,6 +157,108 @@ test('submits only the outer disk image and validates tickets for both download 
     expect.assert(events.includes(`stapler validate ${file}`));
     expect.assert(events.some((event) => event.startsWith('--assess') && event.endsWith(file)));
   }
+});
+
+test('runtime preparation freezes accepted signed bytes before any ticket request', async () => {
+  const prepare = Reflect.get(signing, 'prepareComponent') as typeof signing.prepareComponent;
+  expect(
+    prepare,
+    'runtime signing must have an independently reusable preparation phase',
+  ).toBeTypeOf('function');
+  const receipt = { id: '00000000-0000-4000-8000-000000000001', status: 'Accepted' as const };
+  const commands: string[] = [];
+  const sign = vi.fn(async () => undefined);
+  const submit = vi.fn(async (_file: string) => receipt);
+  const result = await prepare(
+    '/synthetic/MockRuntime.app',
+    '/synthetic/signed.zip',
+    {
+      identity: 'Developer ID Application: Synthetic (TESTTEAM01)',
+    },
+    {
+      sign,
+      submit,
+      run: async (_program, args) => {
+        commands.push(args.join(' '));
+        return '';
+      },
+    },
+  );
+  expect(result).toStrictEqual(receipt);
+  expect(sign).toHaveBeenCalledTimes(1);
+  expect(submit).toHaveBeenCalledTimes(1);
+  expect(submit.mock.calls[0]?.[0]).toBe('/synthetic/signed.zip');
+  expect(commands).toStrictEqual([
+    '-c -k --keepParent /synthetic/MockRuntime.app /synthetic/signed.zip',
+  ]);
+});
+
+test('runtime ticket completion can resume without a signing identity or another notarization submission', async () => {
+  const finish = Reflect.get(signing, 'finishComponent') as typeof signing.finishComponent;
+  expect(finish, 'runtime tickets must be recoverable independently of signing').toBeTypeOf(
+    'function',
+  );
+  const failure = new Error('SYNTHETIC_TICKET_UNAVAILABLE');
+  const failedCommands: string[] = [];
+  await expect(
+    finish('/synthetic/MockRuntime.app', '/synthetic/ready.zip', async (_program, args) => {
+      failedCommands.push(args.join(' '));
+      if (args[0] === 'stapler') throw failure;
+      return '';
+    }),
+  ).rejects.toBe(failure);
+  expect(
+    failedCommands.some((command) => command.startsWith('--assess') || command.startsWith('-c')),
+  ).toBe(false);
+  const completed: string[] = [];
+  await finish('/synthetic/MockRuntime.app', '/synthetic/ready.zip', async (_program, args) => {
+    completed.push(args.join(' '));
+    return '';
+  });
+  expect(completed).toStrictEqual([
+    'stapler staple /synthetic/MockRuntime.app',
+    'stapler validate /synthetic/MockRuntime.app',
+    '--assess --type execute --verbose=2 /synthetic/MockRuntime.app',
+    '-c -k --keepParent /synthetic/MockRuntime.app /synthetic/ready.zip',
+  ]);
+});
+
+test('client preparation persists the accepted disk image without stapling or packaging an update', async (t) => {
+  const prepare = Reflect.get(signing, 'prepareDistribution') as typeof signing.prepareDistribution;
+  expect(prepare, 'client preparation must finish before the recoverable ticket phase').toBeTypeOf(
+    'function',
+  );
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-client-preparation-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const app = path.join(root, 'Daban.app');
+  await mkdir(path.join(app, 'Contents/Resources/app'), { recursive: true });
+  await writeFile(
+    path.join(app, 'Contents/Resources/app/package.json'),
+    JSON.stringify({ version: '1.2.3' }),
+  );
+  const receipt = { id: '00000000-0000-4000-8000-000000000002', status: 'Accepted' as const };
+  const commands: string[] = [];
+  const sign = vi.fn(async () => undefined);
+  const submit = vi.fn(async (_file: string) => receipt);
+  const prepared = await prepare(
+    app,
+    path.join(root, 'prepared'),
+    { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
+    {
+      sign,
+      submit,
+      run: async (_program, args) => {
+        commands.push(args.join(' '));
+        if (args[0] === 'create') await writeFile(args.at(-1)!, 'SYNTHETIC SIGNED IMAGE');
+        return '';
+      },
+    },
+  );
+  expect(prepared.receipt).toStrictEqual(receipt);
+  expect(await readFile(prepared.dmg, 'utf8')).toBe('SYNTHETIC SIGNED IMAGE');
+  expect(sign).toHaveBeenCalledTimes(1);
+  expect(submit.mock.calls[0]?.[0]).toBe(prepared.dmg);
+  expect(commands.some((command) => /stapler|--assess/.test(command))).toBe(false);
 });
 
 test.each(['stdout', 'stderr'] as const)(

@@ -51,6 +51,8 @@ jobs:
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     permissions:
       # GitHub's generate-notes API requires write permission even though it does not save a release.
       contents: write
@@ -72,6 +74,7 @@ jobs:
           CHANGELOG_MODEL: ${{ secrets.CHANGELOG_MODEL }}
         run: node --experimental-strip-types tools/changelog.ts
       - uses: actions/upload-artifact@v4
+        id: upload
         with:
           name: release-notes
           path: outputs/release-notes/*.md
@@ -112,11 +115,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node --experimental-strip-types tools/qemu-release.ts verify
+      - name: Require exact validated artifact cohorts
+        env:
+          MAC_RUNTIME: ${{ needs.macos.outputs.runtime_artifact }}
+          MAC_CLIENT: ${{ needs.macos.outputs.client_artifact }}
+          WINDOWS_RUNTIME: ${{ needs.windows.outputs.runtime_artifact }}
+          WINDOWS_CLIENT: ${{ needs.windows.outputs.client_artifact }}
+          WINDOWS_INSTALLER: ${{ needs.windows.outputs.installer_artifact }}
+          NOTES: ${{ needs.notes.outputs.artifact_id }}
+        run: |
+          for artifact in "$MAC_RUNTIME" "$MAC_CLIENT" "$WINDOWS_RUNTIME" "$WINDOWS_CLIENT" "$WINDOWS_INSTALLER" "$NOTES"; do
+            [[ "$artifact" =~ ^[1-9][0-9]*$ ]] || exit 1
+          done
       - uses: actions/download-artifact@v4
         with:
-          pattern: Daban-runtime-*
+          artifact-ids: ${{ needs.windows.outputs.runtime_artifact }}
           path: components
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.macos.outputs.runtime_artifact }}
+          path: macos-runtime
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.macos.outputs.client_artifact }}
+          path: macos-client
+          merge-multiple: true
+      - name: Verify source, digests and the Mac client/runtime binding
+        run: node --experimental-strip-types tools/macos.ts stage macos-runtime macos-client components release
       - name: Publish immutable runtime components before the client becomes available
         env:
           GH_TOKEN: ${{ github.token }}
@@ -124,20 +151,19 @@ jobs:
         run: node --experimental-strip-types tools/component.ts publish components
       - uses: actions/download-artifact@v4
         with:
-          name: Daban-macos-arm64
-          path: release
-      - uses: actions/download-artifact@v4
-        with:
-          name: Daban-windows-x64
+          artifact-ids: ${{ needs.windows.outputs.client_artifact }}
           path: windows
+          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          name: Daban-windows-installer
+          artifact-ids: ${{ needs.windows.outputs.installer_artifact }}
           path: release
+          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          name: release-notes
+          artifact-ids: ${{ needs.notes.outputs.artifact_id }}
           path: notes
+          merge-multiple: true
       - name: Create Windows archive and checksums
         env:
           VERSION: ${{ needs.prepare.outputs.version }}

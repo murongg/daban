@@ -1,0 +1,59 @@
+name: Prepare macOS signing credentials
+description: Import release credentials into a job-local keychain; the caller removes it with an always step.
+inputs:
+  certificate:
+    required: true
+    description: Base64 Developer ID certificate
+  certificate-password:
+    required: true
+    description: Certificate export password
+  apple-id:
+    required: true
+    description: Apple account
+  team-id:
+    required: true
+    description: Developer team
+  app-password:
+    required: true
+    description: App-specific password
+outputs:
+  identity:
+    value: ${{ steps.signing.outputs.identity }}
+    description: Verified Developer ID identity
+runs:
+  using: composite
+  steps:
+    - id: signing
+      shell: bash
+      env:
+        MACOS_CERTIFICATE: ${{ inputs.certificate }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+        APPLE_ID: ${{ inputs.apple-id }}
+        APPLE_TEAM_ID: ${{ inputs.team-id }}
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ inputs.app-password }}
+      run: |
+        set +x
+        set -euo pipefail
+        umask 077
+        : "${MACOS_CERTIFICATE:?Missing MACOS_CERTIFICATE}"
+        : "${MACOS_CERTIFICATE_PASSWORD:?Missing MACOS_CERTIFICATE_PASSWORD}"
+        : "${APPLE_ID:?Missing APPLE_ID}"
+        : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+        : "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}"
+        keychain="$RUNNER_TEMP/daban-signing.keychain-db"
+        keychain_password=$(openssl rand -hex 32)
+        echo "::add-mask::$keychain_password"
+        security create-keychain -p "$keychain_password" "$keychain"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p "$keychain_password" "$keychain"
+        printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/daban-certificate.p12"
+        security import "$RUNNER_TEMP/daban-certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -k "$keychain" -t cert -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+        security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db" /Library/Keychains/System.keychain
+        identity=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)".*/\1/p' | grep -F "($APPLE_TEAM_ID)")
+        test "$(printf '%s\n' "$identity" | wc -l | tr -d ' ')" = 1
+        cp /usr/bin/true "$RUNNER_TEMP/daban-signing-probe"
+        codesign --force --sign "$identity" --timestamp --options runtime --keychain "$keychain" "$RUNNER_TEMP/daban-signing-probe"
+        codesign --verify --strict "$RUNNER_TEMP/daban-signing-probe"
+        printf 'identity=%s\n' "$identity" >> "$GITHUB_OUTPUT"
+        xcrun notarytool store-credentials daban-release --keychain "$keychain" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD"

@@ -14,7 +14,13 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { componentTag, type LinuxIndex, linuxFilename, linuxIndex } from '@daban/engine/component';
+import {
+  componentIndex,
+  componentTag,
+  type LinuxIndex,
+  linuxFilename,
+  linuxIndex,
+} from '@daban/engine/component';
 import { environmentImage } from '@daban/protocol';
 import { environmentAssets, hashAsset, verifyAsset } from './environment.ts';
 import { macVersion } from './release.ts';
@@ -132,6 +138,19 @@ export async function withComponentStage(operation: (directory: string) => Promi
     // Windows may briefly retain the just-executed Node image. Persistent cleanup failures still reject.
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
   }
+}
+
+export async function referenceComponent(
+  archive: string,
+  id: string,
+  platform: 'darwin' | 'win32',
+  arch: 'arm64' | 'x64',
+) {
+  const file = await hashAsset(archive, 'sha256');
+  return componentIndex(
+    { version: 1, id, assets: [{ platform, arch, bytes: file.bytes, sha256: file.digest }] },
+    id,
+  );
 }
 
 async function copyVmTools(source: string, target: string) {

@@ -6,6 +6,16 @@ on:
       ref:
         type: string
         required: false
+    outputs:
+      runtime_artifact:
+        value: ${{ jobs.package.outputs.runtime_artifact }}
+        description: Validated Windows runtime artifact
+      client_artifact:
+        value: ${{ jobs.package.outputs.client_artifact }}
+        description: Validated Windows portable artifact
+      installer_artifact:
+        value: ${{ jobs.package.outputs.installer_artifact }}
+        description: Validated Windows installer artifact
   push:
     branches: [main]
   pull_request:
@@ -20,6 +30,10 @@ jobs:
     name: Windows package
     runs-on: windows-latest
     timeout-minutes: 40
+    outputs:
+      runtime_artifact: ${{ steps.runtime_upload.outputs.artifact-id }}
+      client_artifact: ${{ steps.client_upload.outputs.artifact-id }}
+      installer_artifact: ${{ steps.installer_upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,6 +116,7 @@ jobs:
           node --experimental-strip-types tools/windows.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/runtime/runtime-windows-x64.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
+        id: runtime_upload
         with:
           name: Daban-runtime-windows-x64
           path: |
@@ -118,12 +133,14 @@ jobs:
       - name: Build per-user Windows installer and update metadata
         run: node --experimental-strip-types tools/installer.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/Daban-installer"
       - uses: actions/upload-artifact@v4
+        id: client_upload
         with:
           name: Daban-windows-x64
           path: ${{ runner.temp }}/Daban-win-x64
           retention-days: 7
           include-hidden-files: true
       - uses: actions/upload-artifact@v4
+        id: installer_upload
         with:
           name: Daban-windows-installer
           path: |
