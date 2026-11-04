@@ -498,3 +498,111 @@ test('unavailable options pages obey the same total byte budget as successful pa
     code: 'PREFLIGHT_LIMIT',
   });
 });
+
+test.each(['archive', 'profile', 'scope', 'tools'] as const)(
+  'options reject %s changes while the final MCP read is pending',
+  async (change) => {
+    const f = fixture();
+    let release: () => unknown = () => undefined;
+    let entered: () => unknown = () => undefined;
+    const waiting = new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const started = new Promise<undefined>((resolve) => {
+      entered = () => resolve(undefined);
+    });
+    const read = f.sources.mcp;
+    let reads = 0;
+    f.sources.mcp = async (bot) => {
+      if (++reads === 2) {
+        entered();
+        await waiting;
+      }
+      return read(bot);
+    };
+    const result = f.owner.options({ bot: f.query.bot });
+    await started;
+    if (change === 'archive') f.revoke();
+    if (change === 'profile') f.profile.revision++;
+    if (change === 'scope') f.move();
+    if (change === 'tools') {
+      f.mcp.connections[0].enabled = false;
+      f.mcp.revision++;
+    }
+    release();
+    await expect(result).rejects.toMatchObject({
+      code: change === 'archive' ? 'BOT_ARCHIVED' : 'PREFLIGHT_OPTIONS_STALE',
+    });
+    expect(reads).toBe(2);
+    expect(f.calls.model + f.calls.runtime + f.calls.local).toBe(0);
+  },
+);
+
+test.each(['timeout', 'error', 'source-change'] as const)(
+  'a second model observation reports %s without inventing a revision change',
+  async (failure) => {
+    const f = fixture();
+    let reads = 0;
+    f.sources.model = async () => {
+      if (++reads === 1) return structuredClone(f.model);
+      if (failure === 'timeout') return new Promise<PreflightModel>(() => {});
+      if (failure === 'source-change') throw new Fault('PREFLIGHT_SOURCE_CHANGED');
+      throw Error('SYNTHETIC-PRIVATE-SECOND-READ');
+    };
+    try {
+      const report = await f.owner.inspect({
+        ...f.query,
+        requirements: [
+          { kind: 'model', vision: false, tools: false },
+          { kind: 'search' },
+          { kind: 'office' },
+        ],
+      });
+      const expected = {
+        state: failure === 'source-change' ? 'stale' : 'unknown',
+        reason:
+          failure === 'timeout'
+            ? 'CHECK_TIMED_OUT'
+            : failure === 'source-change'
+              ? 'CONFIG_CHANGED'
+              : 'OWNER_UNAVAILABLE',
+        evidence: 'unavailable',
+      };
+      expect(report.checks[0]).toMatchObject(expected);
+      expect(report.checks[1]).toMatchObject(expected);
+      expect(report.checks[2]).toMatchObject({
+        state: 'unsupported',
+        reason: 'CAPABILITY_UNSUPPORTED',
+      });
+      expect(report.externalProbe).toBe('not-run');
+      expect(JSON.stringify(report)).not.toContain('SYNTHETIC-PRIVATE');
+    } finally {
+      f.owner.close();
+    }
+  },
+);
+
+test('a trusted local transport failure on the second observation remains unknown', async () => {
+  const f = fixture();
+  const read = f.sources.local;
+  let reads = 0;
+  f.sources.local = async () =>
+    ++reads === 1
+      ? read()
+      : {
+          platform: 'unsupported',
+          available: false,
+          permissions: { screen: false, accessibility: false },
+          shortcut: false,
+          error: 'LOCAL_CLIENT_UNAVAILABLE',
+        };
+  const report = await f.owner.inspect({
+    ...f.query,
+    requirements: [{ kind: 'computer', mode: 'local', access: 'observe' }],
+  });
+  expect(report.checks[0]).toMatchObject({
+    state: 'unknown',
+    reason: 'OWNER_UNAVAILABLE',
+    evidence: 'unavailable',
+  });
+});

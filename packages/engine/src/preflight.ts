@@ -453,6 +453,10 @@ export class Preflight {
       next = this.stamps(current, after);
     const checks = entry.query.requirements.map((requirement, index) => {
       const row = this.check(requirement, index, entry.query.bot, profile, before);
+      const latest = this.check(requirement, index, entry.query.bot, current, after);
+      // A failed reread cannot prove a revision change; retain its actual cause and evidence.
+      if (['CHECK_TIMED_OUT', 'OWNER_UNAVAILABLE', 'CONFIG_CHANGED'].includes(latest.reason))
+        return latest;
       const relevant = this.affected(requirement);
       if (
         relevant.some(
@@ -653,10 +657,13 @@ export class Preflight {
     if (bytes > preflightByteLimit) throw new Fault('PREFLIGHT_LIMIT');
     this.reserve(bytes);
     try {
-      const [current, after] = await Promise.all([
-        this.authorize(query.bot, deadline),
-        this.read(`mcp:${query.bot}`, () => this.sources.mcp(query.bot), deadline),
-      ]);
+      const after = await this.read(
+        `mcp:${query.bot}`,
+        () => this.sources.mcp(query.bot),
+        deadline,
+      );
+      // Source I/O can outlast the Bot's authority; authorize after it before publishing labels.
+      const current = await this.authorize(query.bot, deadline);
       if (
         this.sources.scope() !== scope ||
         current.revision !== profile.revision ||
