@@ -1,4 +1,53 @@
 export const english = {
+  'projects.browserScope': 'Linux browser: {0}',
+  'projects.storeUnavailable':
+    'Project storage is unavailable. Original shared tasks and historical receipts remain available; check the environment before retrying project work.',
+  'projects.profileUnavailable':
+    'The browser profile could not be opened. Release its other browser instance or check the environment before retrying.',
+  'projects.browserDisabled': 'Browser access disabled',
+  'projects.legacyFilesLogin': 'Original shared files and website login',
+  'projects.fileMismatch':
+    'This file result belongs to a different project or task. Refresh the selected scope.',
+  'projects.resume': 'Resume original preparation',
+  'projects.title': 'Projects',
+  'projects.name': 'Project name',
+  'projects.create': 'New project',
+  'projects.save': 'Save project',
+  'projects.archive': 'Archive project',
+  'projects.archived': 'Archived',
+  'projects.browser': 'Browser identity',
+  'projects.privateBrowser': 'Private to each Bot',
+  'projects.sharedBrowser': 'Project shared login',
+  'projects.members': 'Explicit project members (up to 16)',
+  'projects.contentFor': 'Content access for {0}',
+  'projects.read': 'Read shared content',
+  'projects.write': 'Read and write shared content',
+  'projects.allowBrowser': 'Allow browser access',
+  'projects.none': 'None',
+  'projects.sharedMembers': 'These members will share website logins: {0}',
+  'projects.confirmShared': 'Confirm sharing browser identity with the authorized members above',
+  'projects.privateOutputs':
+    'Task inputs and outputs stay in a private task directory by default. Only write members can publish to the shared project directory.',
+  'projects.boundary':
+    'Content grants apply to managed file and knowledge ports. Browser identities apply to the managed Linux browser; local desktop grants keep their existing scope. The same Linux environment still shares its system, processes and full access commands; project scopes do not provide OS isolation.',
+  'projects.legacy': 'Original shared environment',
+  'projects.legacyHint':
+    'Existing shared files and logins stay in place. New projects do not copy old logins or private material.',
+  'projects.checkReceipt': 'Check change receipt',
+  'projects.scope': 'Task project scope',
+  'projects.projectFiles': 'Project shared files',
+  'projects.stale': 'This project scope is stale. Select the current revision again.',
+  'projects.busy':
+    'This project is in use. Wait for tasks and approvals; explicitly disconnect the current computer before changing its identity.',
+  'projects.denied': 'Access to this project resource is not authorized.',
+  'projects.preparing': 'Resource preparation is unconfirmed. Check the original change receipt.',
+  'projects.conflict': 'The project revision changed. Refresh before editing again.',
+  'projects.unavailable': 'Update and connect a Linux environment with project scope support.',
+  'projects.filesScope': 'Current file scope: {0}',
+  'projects.refresh': 'Refresh projects',
+  'projects.retry': 'Retry the original request',
+  'projects.unknown': 'No receipt was found. You can explicitly retry the original request.',
+
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',

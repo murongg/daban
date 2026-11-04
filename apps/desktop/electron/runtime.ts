@@ -63,6 +63,7 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
@@ -96,10 +97,10 @@ import {
   noteKey,
   noteQueryKey,
   parseBotJSON,
+  projectFileMatches,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
-  type RuntimeFile,
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
@@ -180,6 +181,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
+    ...(isProjectScope(task.project) ? { project: task.project } : {}),
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
@@ -205,6 +207,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       : {}),
     history: (task.history || []).map((item) => ({
       chatRevision: item.chatRevision,
+      ...(isProjectScope(item.project) ? { project: item.project } : {}),
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       runId: item.runId,
       requestId: item.requestId,
@@ -1758,13 +1761,53 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
     }
-    if (command.type === 'files.list') return this.api('/api/files') as Promise<RuntimeFile[]>;
-    if (command.type === 'files.read') return this.api('/api/files/read', { path: command.path });
+    if (command.type === 'projects.status') return this.api('/api/projects/status', {});
+    if (command.type === 'projects.select')
+      return this.api('/api/projects/select', {
+        bot: command.bot,
+        ...(command.scope ? { scope: command.scope } : {}),
+      });
+    if (command.type === 'projects.list') return this.api('/api/projects/list', {});
+    if (command.type === 'projects.write')
+      return this.api('/api/projects/write', { request: command.request });
+    if (command.type === 'projects.resume')
+      return this.api('/api/projects/resume', { requestId: command.requestId });
+    if (command.type === 'projects.receipt')
+      return this.api('/api/projects/receipt', { requestId: command.requestId });
+    if (command.type === 'files.list') {
+      const result = await (command.project
+        ? this.api('/api/files/list', {
+            project: command.project,
+            ...(command.task ? { task: command.task } : {}),
+          })
+        : this.api('/api/files'));
+      if (
+        (command.project && !Array.isArray(result)) ||
+        (Array.isArray(result) &&
+          !result.every((file: unknown) => projectFileMatches(file, command)))
+      )
+        throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
+    if (command.type === 'files.read') {
+      const result = await this.api('/api/files/read', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
     if (command.type === 'files.download') {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 11) throw new Error('RUNTIME_TOO_OLD');
-      const result = await this.api('/api/files/download', { path: command.path });
+      const result = await this.api('/api/files/download', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
       if (
         !isRuntimeDownload(result) ||
         result.path !== command.path ||
