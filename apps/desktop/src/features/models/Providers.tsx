@@ -318,14 +318,17 @@ export function Providers({
     }
     setPending(input);
     if (!pending && model.modelAccess) {
+      const edited = input.connection;
+      const prospective = edited
+        ? [...connections.filter((connection) => connection.id !== edited.id), edited]
+        : connections;
+      // The Host receipt follows the selected model, which can belong to a different provider than the edit.
       const connection =
-        input.connection?.id ||
-        connections.find((connection) =>
+        prospective.find((connection) =>
           connection.models.some(
             (entry) => modelReference(connection.id, entry.id) === input.model,
           ),
-        )?.id ||
-        'deepseek-official';
+        )?.id || 'deepseek-official';
       pendingQuery.current = {
         scope: model.modelAccess.scope,
         requestId: input.requestId,

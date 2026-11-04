@@ -35,19 +35,17 @@ import {
   isTaskInsert,
   isTaskPlan,
   modelHasVision,
-  modelRecoveryBlocked,
   modelReference,
   replyLimit,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
-import { AgentTools } from './agent-tools.js';
+import { type AgentToolRun, AgentTools, executionAttemptId } from './agent-tools.js';
 import { Attachments } from './attachments.js';
 import { BotBundles, type BundleDocuments } from './bundles.js';
 import { CatalogTools } from './catalog.js';
 import { Chats } from './chats.js';
 import { CheckpointTracker, type ConversationCheckpoint, recoveryContext } from './checkpoint.js';
-import type { ToolRun } from './computer-tools.js';
 import { type ComputerFacade, computerToolList } from './computer-tools.js';
 import { contextBudget, contextEstimate, recoveryBudget } from './context.js';
 import { errorCode, errorMessage, Fault } from './control.js';
@@ -556,7 +554,8 @@ interface HarnessOptions {
   env: NodeJS.ProcessEnv;
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
-interface ModelJob extends ToolRun {
+interface ModelJob extends AgentToolRun {
+  activityBase?: { toolCount: number; activeMs: number };
   activeMs?: number;
   attemptId?: string;
   attemptActive?: boolean;
@@ -933,7 +932,17 @@ export class ModelRuns {
       const records = (await this.journal.all(bot)).sort((a, b) => a.runId.localeCompare(b.runId));
       const latest = records.at(-1);
       if (!latest) continue;
+      // Legacy history remains readable if accounting is damaged; continuation revalidates the root and fails closed.
+      const recovery = await this.journal.recovery(bot, latest.runId).catch(() => undefined);
       const job: ModelJob = {
+        ...(recovery
+          ? {
+              activityBase: {
+                toolCount: recovery.toolCount - recovery.contribution.toolCount,
+                activeMs: recovery.activeMs - recovery.contribution.activeMs,
+              },
+            }
+          : {}),
         attemptSummary: latest.attemptSummary,
         fence: 'unknown',
         attemptActive: false,
@@ -982,11 +991,11 @@ export class ModelRuns {
         canonicalRoot: latest.outputDirectory || '',
         createdAt: latest.createdAt || '',
         elapsedMs: latest.elapsedMs,
-        activeMs: latest.activeMs,
+        activeMs: recovery?.activeMs ?? latest.activeMs,
         files: latest.files || [],
         prompt: latest.prompt,
         abort: new AbortController(),
-        toolCount: latest.toolCount || 0,
+        toolCount: recovery?.toolCount ?? (latest.toolCount || 0),
         limit: toolLimit,
         seen: {},
         trace: [],
@@ -1399,7 +1408,8 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
-        activeMs: job.activeMs,
+        activeMs:
+          job.activeMs === undefined ? undefined : job.activeMs - (job.activityBase?.activeMs ?? 0),
         ...(job.attemptSummary ? { attemptSummary: job.attemptSummary } : {}),
         elapsedMs: job.elapsedMs,
         chatRevision: job.chatRevision,
@@ -1435,7 +1445,8 @@ export class ModelRuns {
             }
           : {}),
         outputDirectory: job.workdir,
-        toolCount: job.toolCount,
+        // In-memory limits use root totals; history stores this run's contribution so ancestors are not charged twice.
+        toolCount: job.toolCount - (job.activityBase?.toolCount ?? 0),
         executedCount: job.trace.filter((t) => t.phase === 'settled').length,
         trace: job.trace.slice(-80),
         createdAt: job.createdAt,
@@ -1455,6 +1466,17 @@ export class ModelRuns {
     });
     job.writing = pending.catch(() => {});
     return pending;
+  }
+  private async continuation(bot: string, runId: string) {
+    const recovery = await this.journal.recovery(bot, runId);
+    if (!recovery?.record.outputDirectory) throw new Fault('RETRY_NOT_FOUND', 404);
+    if (recovery.blocked) throw new Fault('TASK_OUTCOME_UNKNOWN');
+    if (recovery.toolCount >= toolLimit) throw new Fault('TOOL_LIMIT');
+    if (recovery.activeMs >= timeLimit) throw new Fault('MODEL_TIME_LIMIT');
+    return {
+      ...recovery,
+      record: { ...recovery.record, outputDirectory: recovery.record.outputDirectory },
+    };
   }
   async start(bot: string, input?: unknown, conversation?: ConversationScope) {
     await this.ready;
@@ -1508,25 +1530,15 @@ export class ModelRuns {
     let continuedTools = 0;
     let continuedMs = 0;
     if (task?.retryOf) {
-      const prior = await this.journal.read(bot, task.retryOf);
-      if (!prior?.outputDirectory) throw new Fault('RETRY_NOT_FOUND', 404);
+      const recovery = await this.continuation(bot, task.retryOf);
+      const prior = recovery.record;
       if (
         prior.conversationId !== scope?.id ||
         (!scope && (prior.chatRevision ?? 0) !== (task.chatRevision ?? 0))
       )
         throw new Fault('INVALID_RETRY', 400);
-      if (modelRecoveryBlocked(prior)) throw new Fault('TASK_OUTCOME_UNKNOWN');
-      continuedTools = prior.toolCount ?? prior.executedCount ?? 0;
-      continuedMs = prior.activeMs ?? prior.elapsedMs ?? 0;
-      if (
-        !Number.isSafeInteger(continuedTools) ||
-        continuedTools < 0 ||
-        !Number.isSafeInteger(continuedMs) ||
-        continuedMs < 0
-      )
-        throw new Fault('INVALID_RETRY', 400);
-      if (continuedTools >= toolLimit) throw new Fault('TOOL_LIMIT');
-      if (continuedMs >= timeLimit) throw new Fault('MODEL_TIME_LIMIT');
+      continuedTools = recovery.toolCount;
+      continuedMs = recovery.activeMs;
       // Retries get a new writable directory, but retain identity for durable side effects such as schedules.
       if (task.retryTurn) {
         const turns = prior.turns ?? [];
@@ -1548,7 +1560,7 @@ export class ModelRuns {
           .map((insert) => ({ ...insert }));
         if (continuedInserts.length + 1 > turnLimit) throw new Fault('INVALID_RETRY', 400);
       }
-      intentId = prior.intentId || prior.runId;
+      intentId = recovery.intentId;
       const root = await this.workspace.base(),
         directory = await this.workspace.scope(prior.outputDirectory).base();
       if (!directory.startsWith(root + this.workspacePaths.sep))
@@ -1589,6 +1601,13 @@ export class ModelRuns {
         cachedInputs.push({ name, content: file.content || '' });
       }
     }
+    if (task?.retryOf) {
+      // Input reads can await I/O; refresh the canonical root immediately before synchronous admission.
+      const recovery = await this.continuation(bot, task.retryOf);
+      if (recovery.intentId !== intentId) throw new Fault('INVALID_RETRY', 400);
+      continuedTools = recovery.toolCount;
+      continuedMs = recovery.activeMs;
+    }
     // Recovery may begin during retry reads; fence immediately before publishing a new job.
     if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
     this.profiles.assertActive(bot);
@@ -1598,13 +1617,16 @@ export class ModelRuns {
     if (this.running(bot)) throw new Fault('MODEL_ALREADY_RUNNING');
     if (!this.Harness && !existsSync(this.sdkFile)) throw new Fault('DSH_NOT_INSTALLED', 503);
     const id = `${Date.now()}-${randomBytes(4).toString('hex')}`;
+    const attemptId = randomBytes(16).toString('hex');
     let prepared!: () => unknown;
     const preparing = new Promise<unknown>((resolve) => {
       prepared = () => resolve(undefined);
     });
     const job: ModelJob = {
+      activityBase: { toolCount: continuedTools, activeMs: continuedMs },
       activeMs: continuedMs,
-      attemptId: randomBytes(16).toString('hex'),
+      attemptId,
+      executionId: executionAttemptId(id, attemptId),
       fence: 'clean',
       attemptActive: false,
       chatRevision,
@@ -2330,18 +2352,22 @@ export class ModelRuns {
           attempt.failure = modelFailure(error);
           attempt.finishedAt = new Date().toISOString();
           const fallback = job.fallback;
-          const qualification = fallback
-            ? fallbackIssue(fallback, {
-                vision: !!(
-                  job.imageInputs?.length ||
-                  this.tools.hasComputer(job.bot, config.model, job.vision)
-                ),
-                tools: this.tools.list(job.bot, fallback.model, job.conversationId, job).length > 0,
-                contextTokens:
-                  contextEstimate(job.prompt || job.task?.prompt || '') +
-                  (job.imageInputs?.length || 0) * 8192,
-              })
-            : undefined;
+          // Local desktop grants bind the original model/run; switching must wait for explicit human reauthorization.
+          const qualification = this.tools.localSelected(job.bot, job)
+            ? 'LOCAL_MODEL_CHANGED'
+            : fallback
+              ? fallbackIssue(fallback, {
+                  vision: !!(
+                    job.imageInputs?.length ||
+                    this.tools.hasComputer(job.bot, config.model, job.vision)
+                  ),
+                  tools:
+                    this.tools.list(job.bot, fallback.model, job.conversationId, job).length > 0,
+                  contextTokens:
+                    contextEstimate(job.prompt || job.task?.prompt || '') +
+                    (job.imageInputs?.length || 0) * 8192,
+                })
+              : undefined;
           const eligible = !!fallback && !qualification;
           const gate = (closed: boolean) =>
             canFallback({
@@ -2392,6 +2418,8 @@ export class ModelRuns {
             throw new Fault('MODEL_FALLBACK_UNAVAILABLE');
           this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
           job.attemptId = randomBytes(16).toString('hex');
+          // Guest run retirement is permanent; each attempt has a lease derived from this same logical task.
+          job.executionId = executionAttemptId(job.id, job.attemptId);
           job.attemptDrained = false;
           job.token = randomBytes(32).toString('hex');
           const previousRedact = job.redact!;
@@ -2418,8 +2446,11 @@ export class ModelRuns {
             usage: 'unknown',
           });
           config = fallback;
-          patchFile = await this.writePatch(job, fallback);
+          // Persist the attempt/root mapping before opening its lease or dispatching its SDK.
           await this.persist(job);
+          job.abort.signal.throwIfAborted();
+          await this.tools.open(job);
+          patchFile = await this.writePatch(job, fallback);
         }
       }
     } catch (error) {

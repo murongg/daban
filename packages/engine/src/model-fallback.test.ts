@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { canFallback, type FallbackInput, fallbackIssue } from './model-fallback.js';
 
 const clean: FallbackInput = {
@@ -35,8 +35,10 @@ test('one fallback requires every clean-failure gate and never becomes a retry l
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { LocalComputerClient } from './local-computer.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
+import type { TaskRecord } from './tasks.js';
 
 async function runScenario(
   scenario:
@@ -50,6 +52,7 @@ async function runScenario(
     | 'shutdown'
     | 'two-failures'
     | 'revoked'
+    | 'local-selection'
     | 'unknown-capability',
   plan?: ('plan' | 'text' | 'tool' | 'failure')[],
   plannedModel: 'mock-primary' | 'mock-fallback' = 'mock-primary',
@@ -242,12 +245,20 @@ async function runScenario(
       requestId: 'mock-fallback-config',
       model: 'provider:mock-provider:mock-fallback',
     });
+    const localComputer =
+      scenario === 'local-selection' ? new LocalComputerClient(root) : undefined;
+    if (localComputer) {
+      vi.spyOn(localComputer, 'selected').mockReturnValue(true);
+      vi.spyOn(localComputer, 'prepare').mockResolvedValue(true);
+      vi.spyOn(localComputer, 'cancel').mockResolvedValue(undefined);
+    }
     models = new ModelRuns({
       settings,
       Harness,
       dir: path.join(root, 'model'),
       workspace: path.join(root, 'workspace'),
       origin: 'http://127.0.0.1:12345',
+      localComputer,
     });
     const accepted = await models.start('mock-bot', {
       requestId: 'mock-fallback-request',
@@ -325,6 +336,13 @@ test('two failed providers produce at most two attempts and one failed task', as
   expect(result.starts).toEqual(['mock-primary', 'mock-fallback']);
   expect(result.result.phase).toBe('failed');
   expect(result.result.runId).toBe(result.accepted.runId);
+});
+
+test('a model-bound local desktop grant prevents automatic model switching', async () => {
+  const result = await runScenario('local-selection');
+  expect(result.starts).toEqual(['mock-primary']);
+  expect(result.result).toMatchObject({ phase: 'failed', error: 'LOCAL_MODEL_CHANGED' });
+  expect(result.record?.attemptSummary).toHaveLength(1);
 });
 
 for (const activity of ['text', 'tool'] as const)
@@ -515,3 +533,137 @@ test('fallback qualification explains the exact missing input, context or tool c
     'MODEL_FALLBACK_TOOLS_UNKNOWN',
   );
 });
+
+for (const scenario of [
+  { name: 'tool budget', following: { toolCount: 60 }, error: 'TOOL_LIMIT' },
+  {
+    name: 'legacy trace activity',
+    following: {
+      toolCount: undefined,
+      executedCount: undefined,
+      trace: Array.from({ length: 58 }, () => ({
+        name: 'write_file',
+        surface: 'workspace',
+        phase: 'settled',
+        at: '2026-01-01T00:00:00.000Z',
+      })),
+    },
+    error: 'TOOL_LIMIT',
+  },
+  { name: 'active time', following: { activeMs: 300001 }, error: 'MODEL_TIME_LIMIT' },
+  { name: 'chat scope', following: {}, renew: true, error: 'CHAT_REVISION_REQUIRED' },
+  {
+    name: 'unknown effect',
+    following: {
+      trace: [
+        {
+          name: 'mock-effect',
+          surface: 'integration',
+          phase: 'rejected',
+          code: 'MCP_OUTCOME_UNKNOWN',
+          at: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    },
+    error: 'TASK_OUTCOME_UNKNOWN',
+  },
+  { name: 'known contributions', following: {} },
+] satisfies { name: string; following: Partial<TaskRecord>; error?: string; renew?: boolean }[])
+  test(`canonical root retains ${scenario.name} when retryOf names an older ancestor`, async () => {
+    const { mkdir } = await import('node:fs/promises');
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-canonical-root-'));
+    const settings = new ModelSettings(path.join(root, 'credentials.json'));
+    class Harness {
+      async start() {}
+      async close() {}
+      session(id = 'mock-root-session') {
+        return {
+          id,
+          run: async () => ({ sessionId: id, finalResponse: 'Synthetic continued reply' }),
+        };
+      }
+      async resumeSession(id: string) {
+        return this.session(id);
+      }
+    }
+    const options = {
+      settings,
+      Harness,
+      dir: path.join(root, 'model'),
+      workspace: path.join(root, 'workspace'),
+      origin: 'http://127.0.0.1:12345',
+    };
+    let models = new ModelRuns(options);
+    try {
+      await settings.save({ apiKey: 'synthetic-canonical-key' });
+      await models.ready;
+      const directory = async (id: string) => {
+        const target = path.join(root, 'workspace', 'model-runs', id, 'mock-bot');
+        await mkdir(target, { recursive: true });
+        return target;
+      };
+      const prior: TaskRecord = {
+        bot: 'mock-bot',
+        runId: '1700000000000-root',
+        intentId: '1700000000000-root',
+        prompt: 'Synthetic root input',
+        phase: 'failed',
+        running: false,
+        result: '',
+        error: '',
+        trace: [],
+        inputs: [],
+        toolCount: 2,
+        activeMs: 100,
+        outputDirectory: await directory('1700000000000-root'),
+      };
+      await models.journal.put(prior);
+      await models.journal.put({
+        ...prior,
+        runId: '1700000000001-descendant',
+        toolCount: 3,
+        activeMs: 200,
+        outputDirectory: await directory('1700000000001-descendant'),
+        ...scenario.following,
+      });
+      const request = {
+        requestId: 'mock-old-ancestor',
+        prompt: prior.prompt,
+        retryOf: prior.runId,
+      };
+      if ('renew' in scenario)
+        await models.chats.renew({ id: 'mock-new-chat', bot: 'mock-bot', revision: 0 });
+      if ('error' in scenario) {
+        await expect(models.start('mock-bot', request)).rejects.toMatchObject({
+          code: scenario.error,
+        });
+        expect(models.jobs.size).toBe(0);
+      } else {
+        const accepted = await models.start('mock-bot', request);
+        const first = models.jobs.get('mock-bot')!;
+        await first.done;
+        expect(first.toolCount).toBe(5);
+        expect(first.intentId).toBe(prior.intentId);
+        expect((await models.journal.read('mock-bot', first.id))?.toolCount).toBe(0);
+        expect((await models.start('mock-bot', request)).runId).toBe(accepted.runId);
+        await models.start('mock-bot', { ...request, requestId: 'mock-another-ancestor' });
+        const second = models.jobs.get('mock-bot')!;
+        await second.done;
+        expect(second.toolCount).toBe(5);
+        expect(second.activeMs).toBeGreaterThanOrEqual(300);
+        expect(second.intentId).toBe(prior.intentId);
+        await models.close();
+        models = new ModelRuns(options);
+        await models.ready;
+        expect(models.jobs.get('mock-bot')?.toolCount).toBe(5);
+        await models.start('mock-bot', { ...request, requestId: 'mock-restarted-ancestor' });
+        const restarted = models.jobs.get('mock-bot')!;
+        await restarted.done;
+        expect(restarted.toolCount).toBe(5);
+        expect(restarted.intentId).toBe(prior.intentId);
+      }
+    } finally {
+      await models.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });

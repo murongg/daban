@@ -51,6 +51,7 @@ export const suites = {
     'model-access-api.test',
     'model-failure.test',
     'model-fallback.test',
+    'model-executor.test',
     'model-fallback.integration',
     'discovery.test',
     'inference.test',
