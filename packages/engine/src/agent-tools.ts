@@ -872,7 +872,9 @@ export class AgentTools {
           throw new Fault('INVALID_TOOL_ARGS', 400);
         trace = { name, surface, phase: 'running', at: new Date().toISOString() };
         run.trace.push(trace);
-        const result = await this.integrations!.invoke(run, name, args, wireId);
+        const result = await this.integrations!.invoke(run, name, args, wireId, () =>
+          this.checkProject(run),
+        );
         trace.phase = result.isError ? 'rejected' : 'settled';
         return result;
       }
