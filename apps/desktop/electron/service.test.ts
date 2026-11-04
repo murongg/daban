@@ -1328,7 +1328,7 @@ it('keeps first-use native model setup usable without probing an uninstalled VM 
   }
 });
 
-it('publishes Linux startup progress while the background service is still connecting', async () => {
+it('publishes macOS Linux startup progress while the background service is still connecting', async () => {
   const f = await agentFixture();
   const states: RuntimeSnapshot[] = [];
   let finish: () => unknown = () => {};
@@ -1346,6 +1346,8 @@ it('publishes Linux startup progress while the background service is still conne
       states.push(state);
     },
     { ...f.config, nativeFirst: true },
+    undefined,
+    'darwin',
   );
   const connecting = service.connect();
   try {
