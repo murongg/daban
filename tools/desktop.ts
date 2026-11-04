@@ -5,7 +5,6 @@ import {
   copyFile,
   cp,
   mkdir,
-  readdir,
   readFile,
   realpath,
   rename,
@@ -17,6 +16,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { componentIndex } from '@daban/engine/component';
+import { verifyBundleLinks } from './bundle.ts';
 import { writeIcon } from './icon.ts';
 import { writeUpdateConfig } from './installer.ts';
 import { packageNative } from './native.ts';
@@ -55,11 +55,7 @@ await cp(source, target, {
     /^(?:en(?:_|\.lproj)|zh_CN(?:_|\.lproj)|Base\.lproj)/.test(path.basename(file)),
 });
 // Preserve framework links verbatim: Node's default copy otherwise points back into node_modules.
-for (const entry of await readdir(target, { recursive: true, withFileTypes: true })) {
-  if (!entry.isSymbolicLink()) continue;
-  const resolved = await realpath(path.join(entry.parentPath, entry.name));
-  assert.ok(resolved.startsWith(target + path.sep), 'APP_LINK_ESCAPES_BUNDLE');
-}
+await verifyBundleLinks(target);
 await rename(
   path.join(target, 'Contents/MacOS/Electron'),
   path.join(target, 'Contents/MacOS/daban'),
