@@ -25,6 +25,38 @@ test('runs compiled unit tests with Vitest and keeps Linux integrations on Node'
   );
 });
 
+test('Linux upload acceptance stages its deployed guest once and refuses to continue after staging failure', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const calls: string[][] = [];
+  try {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+    expect(
+      runTests('runtime', ['--integration-only'], (args) => {
+        calls.push(args);
+        return { status: 0 };
+      }),
+    ).toBe(0);
+    expect(calls[0]).toStrictEqual([
+      '--experimental-strip-types',
+      'tools/project-memory-upload.ts',
+    ]);
+    expect(calls.filter((args) => args.includes('tools/project-memory-upload.ts'))).toHaveLength(1);
+    expect(calls[1]).toContain('packages/engine/dist/project-memory-upload.integration.js');
+    const failed: string[][] = [];
+    expect(
+      runTests('runtime', ['--integration-only'], (args) => {
+        failed.push(args);
+        return { status: 7 };
+      }),
+    ).toBe(7);
+    expect(failed).toStrictEqual([
+      ['--experimental-strip-types', 'tools/project-memory-upload.ts'],
+    ]);
+  } finally {
+    Object.defineProperty(process, 'platform', platform);
+  }
+});
+
 test('runs the complete runtime suite in its existing stage order', () => {
   const calls: string[][] = [];
   expect(
@@ -33,7 +65,8 @@ test('runs the complete runtime suite in its existing stage order', () => {
       return { status: 0 };
     }),
   ).toBe(0);
-  expect(calls.length).toBe(10);
+  expect(calls.length).toBe(process.platform === 'linux' ? 11 : 10);
+  const units = calls.filter((args) => args[0] === 'node_modules/vitest/vitest.mjs');
   for (const [index, name] of [
     'agent-server',
     'network',
@@ -41,7 +74,7 @@ test('runs the complete runtime suite in its existing stage order', () => {
     'diagnostics',
     'recovery',
   ].entries())
-    expect.assert(calls[index * 2].includes(`packages/engine/dist/${name}.test.js`));
+    expect.assert(units[index].includes(`packages/engine/dist/${name}.test.js`));
 });
 
 test('runs every Linux integration once without repeating completed unit tests', () => {
@@ -52,8 +85,9 @@ test('runs every Linux integration once without repeating completed unit tests',
       return { status: 0 };
     }),
   ).toBe(0);
-  expect(calls).toHaveLength(5);
-  for (const args of calls) {
+  expect(calls).toHaveLength(process.platform === 'linux' ? 6 : 5);
+  const integrations = calls.filter((args) => args[0] === '--experimental-sqlite');
+  for (const args of integrations) {
     expect(args.slice(0, 3)).toStrictEqual([
       '--experimental-sqlite',
       '--test',
@@ -62,7 +96,7 @@ test('runs every Linux integration once without repeating completed unit tests',
     expect(args).not.toContain('--integration-only');
     expect(args.some((arg) => arg.endsWith('.test.js'))).toBe(false);
   }
-  expect(calls.flatMap((args) => args.filter((arg) => arg.endsWith('.js')))).toStrictEqual(
+  expect(integrations.flatMap((args) => args.filter((arg) => arg.endsWith('.js')))).toStrictEqual(
     Object.values(suites)
       .flat()
       .filter((file) => file.endsWith('.integration'))
@@ -75,11 +109,11 @@ test('integration-only execution stops immediately when an integration fails', (
   expect(
     runTests('runtime', ['--integration-only'], (args) => {
       calls.push(args);
-      return { status: 9 };
+      return { status: args[0] === '--experimental-strip-types' ? 0 : 9 };
     }),
   ).toBe(9);
-  expect(calls).toHaveLength(1);
-  expect(calls[0].slice(0, 2)).toStrictEqual(['--experimental-sqlite', '--test']);
+  expect(calls).toHaveLength(process.platform === 'linux' ? 2 : 1);
+  expect(calls.at(-1)!.slice(0, 2)).toStrictEqual(['--experimental-sqlite', '--test']);
 });
 
 test('preserves a failed child exit code and does not run later stages', () => {
