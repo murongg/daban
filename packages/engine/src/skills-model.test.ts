@@ -6,7 +6,7 @@ import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
-test('captured Bot skills use native plugins, change only the next task, and fence resumed sessions without losing chat', async () => {
+test('captured Bot skills use native plugins, change only the next task, and fence resumed sessions without losing chat', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-skills-model-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   const patches: { bot: string; rows: Record<string, unknown>[] }[] = [],
@@ -16,6 +16,15 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     release!: () => unknown,
     entered!: () => unknown;
   let gate = Promise.resolve();
+  let stage = 'setup',
+    activeBot = 'mock-a',
+    turns = 0,
+    harnessStarts = 0,
+    harnessRuns = 0,
+    gateEntered = false,
+    gateReleased = false,
+    observations = 0;
+  const startedAt = Date.now();
   class Harness {
     constructor(options: { patches: string[] }) {
       const patch = JSON.parse(readFileSync(options.patches[0], 'utf8'));
@@ -27,7 +36,9 @@ test('captured Bot skills use native plugins, change only the next task, and fen
         .at(-1)!;
       patches.push({ bot, rows });
     }
-    async start() {}
+    async start() {
+      harnessStarts++;
+    }
     async close() {
       release?.();
     }
@@ -35,7 +46,10 @@ test('captured Bot skills use native plugins, change only the next task, and fen
       return {
         id,
         run: async () => {
+          harnessRuns++;
           if (hold) {
+            gateEntered = true;
+            observe('gate-entered');
             entered();
             await gate;
           }
@@ -56,17 +70,74 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     Harness,
   };
   let models = new ModelRuns(options);
+  function observe(event: string) {
+    if (observations >= 64) return;
+    observations++;
+    const job = models.jobs.get(activeBot);
+    const phase = job?.phase ?? 'absent';
+    const error = job?.error ?? '';
+    // Capture only fixed fixture stages, public state/error codes and counts, never job objects or task content.
+    console.info(
+      '[skills-model-stage]',
+      JSON.stringify({
+        event,
+        stage,
+        elapsedMs: Date.now() - startedAt,
+        turns,
+        harnessStarts,
+        harnessRuns,
+        gateEntered,
+        gateReleased,
+        resumed: resumed.length,
+        patches: patches.length,
+        phase: [
+          'absent',
+          'starting',
+          'running',
+          'paused',
+          'waiting',
+          'completed',
+          'failed',
+          'stopped',
+          'interrupted',
+        ].includes(phase)
+          ? phase
+          : 'unrecognized',
+        errorCode: /^[A-Z][A-Z0-9_]{0,79}$/.test(error) ? error : error ? 'NON_CODE_ERROR' : '',
+        running: job?.running ?? false,
+        preparing: !!job?.preparing,
+        finalizing: job?.finalizing ?? false,
+        aborted: job?.abort.signal.aborted ?? false,
+        toolCount: job?.toolCount ?? 0,
+        files: job?.files.length ?? 0,
+      }),
+    );
+  }
+  function mark(next: string) {
+    stage = next;
+    observe('phase');
+  }
+  const heartbeat = setInterval(() => observe('waiting'), 2000);
+  t.onTestFailed(() => observe('test-failed'));
+  t.onTestFinished(() => clearInterval(heartbeat));
   async function turn(bot: string, requestId: string, prompt: string) {
+    turns++;
+    activeBot = bot;
+    mark('turn-start');
     await models.start(bot, { requestId, prompt });
     const job = models.jobs.get(bot)!;
+    mark('turn-terminal-wait');
     await job.done;
+    mark('turn-terminal');
     expect(job.phase).toBe('completed');
     return job.sessionId;
   }
   const document = (body: string) =>
     `---\nname: mock-summary\ndescription: 合成汇总\n---\n${body}\n`;
   try {
+    mark('settings-save');
     await settings.save({ apiKey: 'synthetic-skills-key' });
+    mark('owner-ready');
     await models.ready;
     const released: unknown[] = [],
       tools = models.tools.skills!,
@@ -78,7 +149,9 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     });
     const plain = await turn('mock-a', 'mock-no-skills', '合成普通问候');
     expect(released.length, 'Completed jobs must release task-owned package buffers').toBe(1);
+    mark('skill-import');
     const skill = await models.skills.import(document('SYNTHETIC-ORIGINAL'));
+    mark('skill-bind');
     await models.skills.bind('mock-a', {
       id: skill.id,
       revision: skill.revision,
@@ -89,15 +162,33 @@ test('captured Bot skills use native plugins, change only the next task, and fen
       entered = () => resolve(undefined);
     });
     gate = new Promise<undefined>((resolve) => {
-      release = () => resolve(undefined);
+      release = () => {
+        gateReleased = true;
+        resolve(undefined);
+      };
     });
     hold = true;
+    mark('held-start');
     await models.start('mock-a', {
       requestId: 'mock-skill-held',
       prompt: '/mock-summary 合成汇总',
     });
-    await ready;
     const held = models.jobs.get('mock-a')!;
+    expect.assert(held.done);
+    mark('held-gate-wait');
+    // An early task terminal must surface before the test's 30s deadline instead of hiding behind an unopened gate.
+    const outcome = await Promise.race([
+      ready.then(() => 'entered' as const),
+      held.done.then(
+        () => 'terminal' as const,
+        () => 'terminal' as const,
+      ),
+    ]);
+    observe(outcome === 'terminal' ? 'terminal-before-gate' : 'gate-ready');
+    expect(
+      outcome,
+      'Held task terminated before the synthetic Harness run gate; see bounded phase trace',
+    ).toBe('entered');
     expect(held.sessionId).not.toBe(plain);
     const row = patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!;
     expect.assert(row);
@@ -111,6 +202,7 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     expect(
       patches.at(-1)!.rows.some((item) => item.name === '@deepseek-ai/dsh-skill-filesystem'),
     ).toBe(false);
+    mark('skill-update');
     const edited = await models.skills.update(
       skill.id,
       skill.revision,
@@ -120,8 +212,10 @@ test('captured Bot skills use native plugins, change only the next task, and fen
       'SYNTHETIC-ORIGINAL',
     );
     hold = false;
+    mark('held-release');
     release();
     await held.done;
+    mark('held-terminal');
     await turn('mock-b', 'mock-other-no-skills', '合成其他 Bot 问候');
     expect(
       (
@@ -133,11 +227,14 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     const changed = await turn('mock-a', 'mock-skill-updated', '按启用技能处理合成记录');
     expect(changed).not.toBe(held.sessionId);
     expect(resumed.includes(held.sessionId!)).toBe(false);
+    mark('owner-close');
     await models.close();
+    mark('owner-restart');
     models = new ModelRuns(options);
     await models.ready;
     expect(await turn('mock-a', 'mock-skill-restart', '合成后续任务')).toBe(changed);
     expect.assert(resumed.includes(changed!));
+    mark('skill-disable');
     await models.skills.bind('mock-a', {
       id: skill.id,
       revision: edited.revision,
@@ -155,10 +252,16 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     ).toStrictEqual(['find-skills']);
     expect(models.journal.history('mock-a').length).toBe(5);
   } finally {
+    mark('cleanup-close');
     hold = false;
     release?.();
-    await models.close();
-    await rm(root, { recursive: true, force: true });
+    try {
+      await models.close();
+      mark('cleanup-remove');
+      await rm(root, { recursive: true, force: true });
+    } finally {
+      clearInterval(heartbeat);
+    }
   }
 });
 
