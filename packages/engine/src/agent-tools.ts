@@ -126,6 +126,9 @@ const text = (value: unknown): ToolResult => ({
   content: [{ type: 'text', text: JSON.stringify(value) }],
 });
 const inside = (root: string, file: string) => file === root || file.startsWith(root + path.sep);
+// Workspace paths are protocol values, including when the host filesystem uses backslashes.
+const workspacePath = (root: string, file: string) =>
+  path.relative(root, file).split(path.sep).join('/');
 
 export class AgentTools {
   readonly browser?: BrowserTools;
@@ -456,7 +459,7 @@ export class AgentTools {
   private async browserInput(run: AgentToolRun, value: unknown) {
     run.abort.signal.throwIfAborted();
     const { root, file } = await this.target(run, value);
-    const source = await this.workspace.download(path.relative(root, file));
+    const source = await this.workspace.download(workspacePath(root, file));
     run.abort.signal.throwIfAborted();
     const types: Record<string, string> = {
       pdf: 'application/pdf',
@@ -863,7 +866,7 @@ export class AgentTools {
           )
             throw new Fault('INVALID_FILE', 400);
           if (name === 'read_image') {
-            const source = await this.workspace.download(path.relative(root, file));
+            const source = await this.workspace.download(workspacePath(root, file));
             const image = imageInput(source);
             run.abort.signal.throwIfAborted();
             trace.phase = 'settled';
@@ -883,7 +886,7 @@ export class AgentTools {
               Number(limit) > 64000
             )
               throw new Fault('INVALID_TOOL_ARGS', 400);
-            const actual = await this.workspace.read(path.relative(root, file)),
+            const actual = await this.workspace.read(workspacePath(root, file)),
               content = actual.content || '';
             const end = Number(offset) + Number(limit);
             result = {

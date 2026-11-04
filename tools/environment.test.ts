@@ -25,25 +25,28 @@ import {
   verifyAsset,
 } from './environment.ts';
 
-test('a runtime-image build exclusively owns a new root and cannot adopt an existing data directory', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'mock-environment-'));
-  try {
-    const fresh = join(root, 'new-image');
-    const build = await admitBuild(fresh);
-    expect(build.versions.protocol).toBe(managedProtocol);
-    expect(build.output).toBe(fresh);
-    expect((await stat(fresh)).mode & 0o777).toBe(0o700);
-    expect.assert(build.limaHome.startsWith('/tmp/daban-image-'));
-    await rm(build.limaHome, { recursive: true, force: true });
-    const old = join(root, 'existing-user');
-    await mkdir(old);
-    await writeFile(join(old, 'runtime.json'), 'SYNTHETIC EXISTING DATA');
-    await expect(admitBuild(old)).rejects.toMatchObject({ code: 'EEXIST' });
-    expect(await readFile(join(old, 'runtime.json'), 'utf8')).toBe('SYNTHETIC EXISTING DATA');
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+test.skipIf(process.platform === 'win32')(
+  'a runtime-image build exclusively owns a new root and cannot adopt an existing data directory',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mock-environment-'));
+    try {
+      const fresh = join(root, 'new-image');
+      const build = await admitBuild(fresh);
+      expect(build.versions.protocol).toBe(managedProtocol);
+      expect(build.output).toBe(fresh);
+      expect((await stat(fresh)).mode & 0o777).toBe(0o700);
+      expect.assert(build.limaHome.startsWith('/tmp/daban-image-'));
+      await rm(build.limaHome, { recursive: true, force: true });
+      const old = join(root, 'existing-user');
+      await mkdir(old);
+      await writeFile(join(old, 'runtime.json'), 'SYNTHETIC EXISTING DATA');
+      await expect(admitBuild(old)).rejects.toMatchObject({ code: 'EEXIST' });
+      expect(await readFile(join(old, 'runtime.json'), 'utf8')).toBe('SYNTHETIC EXISTING DATA');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test('the guest build helper loads outside the repository without workspace packages or VM effects', async () => {
   const root = await mkdtemp(join(tmpdir(), 'mock-standalone-image-helper-'));
