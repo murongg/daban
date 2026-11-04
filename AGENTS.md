@@ -50,11 +50,29 @@ Biome preserves existing non-null assertions, CSS cascade ordering, and necessar
 - Root commands build in this order: protocol package, implementation library, then applications. Preserve compatibility with existing build entry points and user data paths.
 - `apps/runtime/standalone-lock.json` supports standalone Linux deployment; `apps/agent/standalone-lock.json` supports host service deployment. When updating dependencies, synchronize the root lockfile and the corresponding standalone lockfiles. Do not depend on development-machine workspace links.
 
-## Releases
+## Version Management and Releases
 
-- Use `npm run release` (bumpp) from a clean, up-to-date `main` checkout after merging the changes to release. For an explicit version, use `npm run release -- --release <version>`; stable and prerelease versions are supported.
-- Keep the root package, all five workspaces, internal dependency versions, `package-lock.json`, and both standalone lockfiles synchronized through `bump.config.ts` and `tools/bump.ts`. Preserve standalone `file:` dependency paths and unrelated third-party versions.
-- bumpp creates the `chore(release): v<version>` commit, an annotated `v<version>` tag, and pushes both. Do not replace this flow with manual version edits or `git tag` commands. The tag triggers the existing `.github/workflows/release.yml`; its main-ancestry, version, signing, and changelog checks remain required. See `docs/releasing.md` for the full procedure.
+### Semantic Versioning
+
+- Follow [Semantic Versioning 2.0.0](https://semver.org/): use `MAJOR.MINOR.PATCH` with non-negative integers and no leading zeroes. The `v` prefix belongs to Git tag names, not package versions.
+- From `1.0.0`, increment PATCH for backward-compatible fixes, MINOR for backward-compatible features or public API deprecations, and MAJOR for incompatible public API changes. Choose the highest required increment across all changes included in the release, and reset lower components when incrementing MINOR or MAJOR.
+- Prereleases append a suffix such as `-beta.1` or `-rc.1` and sort below the stable version with the same base. Increment the numeric suffix for successive versions in the same prerelease stage; remove the entire prerelease suffix when promoting the base version to stable.
+
+### Project Conventions
+
+- Use one release version for the entire project. The root `package.json` is the source of truth; all five workspaces must use the same version and must not be versioned independently. Read the version from package metadata in code and tooling instead of adding duplicated version constants.
+- Assess compatibility against public APIs and protocols, documented commands and configuration, and supported user data and upgrade paths. Judge the release by its shipped behavior and compatibility impact, not the size of a refactor or a commit prefix. A version increment does not authorize removing existing compatibility safeguards.
+- During `0.x`, the project's policy is PATCH for compatible fixes and internal maintenance, and MINOR for new functionality or breaking changes. Explicitly document breaking changes and any required migration. This is a project convention; SemVer itself does not prescribe these increments before `1.0.0`.
+- Plan `1.0.0` when the compatibility contract is documented and the project is ready to maintain it, with verified upgrade paths for supported existing user data. Do not infer readiness from the number of releases or promote to `1.0.0` automatically.
+- Change the project version only as part of an explicitly requested release or version bump. Ordinary feature, fix, refactor, dependency, and documentation work must retain the current project version; do not add a version bump to each PR. Documentation-only changes need no release; if compatible maintenance is intentionally released, use PATCH. Classify dependency updates by their effect on the shipped product.
+- Use numbered prerelease stages such as `alpha.N`, `beta.N`, and `rc.N` as needed; stages may be skipped. Keep independently managed protocol, database schema, and environment package versions separate from the project release version.
+
+### Release Workflow
+
+- After merging the changes to release, use a clean, up-to-date `main` checkout, run `npm ci`, and ensure the relevant checks pass. Run `npm run release` (bumpp), or `npm run release -- --release <version>` for an explicit target. Derive the increment from all changes since the preceding release, or since the preceding stable release when starting a prerelease cycle. Verify an explicitly requested target against this policy instead of silently substituting another version. Confirm the target is newer than the previous release in its channel and its tag is unused before proceeding; the command commits, tags, and pushes.
+- Synchronize the root package, all five workspaces, internal dependency versions, `package-lock.json`, and both standalone lockfiles through `bump.config.ts` and `tools/bump.ts`. Preserve standalone `file:` dependency paths and unrelated third-party versions. Review the resulting release commit for synchronized versions and unrelated changes.
+- bumpp creates the `chore(release): v<version>` commit and an annotated `v<version>` tag, then pushes both. Do not bypass this flow with manual version edits, `npm version`, or `git tag` commands. The tag triggers `.github/workflows/release.yml`; its main-ancestry, version, signing, and changelog checks remain required.
+- Published versions and tags are immutable: do not move, delete, or reuse them to replace release content. Retry a failed workflow with the same existing tag when the source is unchanged; source changes require a new version. See `docs/releasing.md` for the full procedure.
 
 ## Verification Artifacts and Disk Usage
 
