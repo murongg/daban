@@ -1,15 +1,25 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { MemoryCandidate, ProjectDocument, ProjectScope } from '@daban/protocol';
-import { expect, test, vi } from 'vitest';
+import {
+  executionVersion,
+  isExecutionRequest,
+  isProjectFileScope,
+  type MemoryCandidate,
+  modelExecutionCapability,
+  type ProjectDocument,
+  type ProjectScope,
+  projectCapability,
+  validAgentId,
+} from '@daban/protocol';
+import { expect, type TestContext, test, vi } from 'vitest';
 import type { AgentToolRun } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
-import { RemoteExecutor } from './execution.js';
-import { startExecutor } from './executor.js';
+import * as guest from './executor.js';
 import { GroupTools } from './group-tools.js';
 import { Groups } from './groups.js';
 import { ModelRuns } from './model.js';
+import type { WorkspaceExecutor } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 
 function output<T>(result: ToolResult): T {
@@ -19,18 +29,73 @@ function output<T>(result: ToolResult): T {
   return JSON.parse(block.text) as T;
 }
 const scope = { projectId: 'mock-project', revision: 1 };
-async function fixture() {
+async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-memory-model-'));
-  const service = await startExecutor({
-    directory: path.join(root, 'guest'),
-    port: 0,
-    boot: 'mock-boot',
+  const owners: { models?: ModelRuns; groups?: Groups } = {};
+  t.onTestFinished(async () => {
+    try {
+      await owners.groups?.close();
+    } finally {
+      try {
+        await owners.models?.close();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
   });
-  const execution = new RemoteExecutor({
-    url: `${service.origin}/exec`,
-    token: (await readFile(path.join(root, 'guest/token'), 'utf8')).trim(),
-  });
-  await execution.ready;
+  let handles = 0;
+  // The host consumes a POSIX guest protocol even on Windows; its memory policy needs no host-side guest daemon.
+  const execution = {
+    snapshot: { capabilities: [projectCapability, modelExecutionCapability] },
+    async call(method: string, params: Record<string, unknown>, signal?: AbortSignal) {
+      signal?.throwIfAborted();
+      const request = {
+        role: 'executor',
+        version: executionVersion,
+        id: 'mock-execution',
+        method,
+        params,
+      };
+      if (!isExecutionRequest(request)) throw Error(`MOCK_INVALID_EXECUTION_REQUEST:${method}`);
+      const binding = isProjectFileScope(params.project) ? params.project : undefined;
+      const base =
+        typeof params.root === 'string'
+          ? params.root
+          : binding
+            ? `/mock-guest/projects/${binding.resourceId}`
+            : '/mock-guest/shared';
+      switch (request.method) {
+        case 'workspace.base':
+          return base;
+        case 'workspace.create': {
+          const parts: unknown = params.parts;
+          if (!Array.isArray(parts) || !parts.every(validAgentId))
+            throw Error('MOCK_INVALID_TASK_PARTS');
+          const directory = path.posix.join(base, ...parts);
+          return {
+            root: base,
+            path: directory,
+            canonical: directory,
+            handleId: `mock-handle-${++handles}`,
+          };
+        }
+        case 'workspace.list':
+          return [];
+        case 'tools.open':
+          return { tools: [] };
+        case 'projects.bind':
+          return { bot: params.bot, ...(params.scope ? { scope: params.scope } : {}) };
+        case 'projects.sync':
+        case 'workspace.verify':
+        case 'workspace.close':
+        case 'tools.cancel':
+        case 'tools.drain':
+          return { ok: true };
+        default:
+          throw Error(`MOCK_UNEXPECTED_EXECUTION_METHOD:${request.method}`);
+      }
+    },
+  } satisfies WorkspaceExecutor;
   let activeBot = 'mock-alpha',
     sequence = 0;
   let action: (run: AgentToolRun) => Promise<unknown> = async () => undefined;
@@ -57,9 +122,10 @@ async function fixture() {
     settings,
     execution,
     dir: path.join(root, 'model'),
-    origin: service.origin,
+    origin: 'http://127.0.0.1:12345',
     Harness,
   });
+  owners.models = models;
   await models.ready;
   const dispatches: string[] = [];
   const groups = new Groups(path.join(root, 'groups.sqlite'), {
@@ -75,6 +141,7 @@ async function fixture() {
     },
     stopRequest: async () => undefined,
   });
+  owners.groups = groups;
   await groups.ready;
   models.tools.groups = new GroupTools(groups);
   await settings.save({ apiKey: 'synthetic-model-key' });
@@ -134,18 +201,11 @@ async function fixture() {
       }
       return job;
     },
-    async close() {
-      await groups.close();
-      await models.close();
-      await service.close();
-      await rm(root, { recursive: true, force: true });
-    },
   };
 }
 
 test('project tools require an accepted scope and real reads; proposal authorship stays bound to its run', async (t) => {
-  const f = await fixture();
-  t.onTestFinished(() => f.close());
+  const f = await fixture(t);
   let candidate: MemoryCandidate | undefined;
   await f.run(
     'mock-alpha',
@@ -235,8 +295,7 @@ test('project tools require an accepted scope and real reads; proposal authorshi
 });
 
 test('a scoped group request cannot publish project text to an otherwise available nonmember', async (t) => {
-  const f = await fixture();
-  t.onTestFinished(() => f.close());
+  const f = await fixture(t);
   await f.run('mock-alpha', async (run) => {
     const result = await f.models.tools.invoke(run, 'group_create', {
       name: 'Synthetic scoped group',
@@ -251,8 +310,7 @@ test('a scoped group request cannot publish project text to an otherwise availab
 });
 
 test('revocation after asynchronous catalog capture fences the model send', async (t) => {
-  const f = await fixture();
-  t.onTestFinished(() => f.close());
+  const f = await fixture(t);
   const capture = f.models.knowledge.project.context.bind(f.models.knowledge.project);
   vi.spyOn(f.models.knowledge.project, 'context').mockImplementation(async (project, bot) => {
     const context = await capture(project, bot);
@@ -272,8 +330,7 @@ test('revocation after asynchronous catalog capture fences the model send', asyn
 });
 
 test('revocation during an asynchronous document read prevents its body from reaching the model', async (t) => {
-  const f = await fixture();
-  t.onTestFinished(() => f.close());
+  const f = await fixture(t);
   const read = f.models.knowledge.project.read.bind(f.models.knowledge.project);
   vi.spyOn(f.models.knowledge.project, 'read').mockImplementation(
     async (project, reference, bot) => {
@@ -303,4 +360,18 @@ test('revocation during an asynchronous document read prevents its body from rea
   expect(result?.isError).toBe(true);
   expect(JSON.stringify(result)).toContain('PROJECT_SCOPE_STALE');
   expect(JSON.stringify(result)).not.toContain(f.document.content);
+});
+
+test('memory model coverage does not start the POSIX guest service on its host', async (t) => {
+  const start = vi
+    .spyOn(guest, 'startExecutor')
+    .mockRejectedValue(new Error('MOCK_POSIX_GUEST_UNAVAILABLE'));
+  const f = await fixture(t);
+  await f.run('mock-alpha', async (run) => {
+    const document = output<ProjectDocument>(
+      await f.models.tools.invoke(run, 'project_memory_read', { id: f.document.id, revision: 1 }),
+    );
+    expect(document.content).toBe(f.document.content);
+  });
+  expect(start).not.toHaveBeenCalled();
 });
