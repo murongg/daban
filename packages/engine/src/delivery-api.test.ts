@@ -3,11 +3,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { Delivery } from './delivery.js';
+import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 import { WorkspaceFiles } from './workspace.js';
 
 test('human checklist creation is CAS-bound, durable, idempotent and never starts a model', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-delivery-'));
+  // Production Host bootstrap establishes this private root before publishing control credentials.
+  await secureDirectory(root);
   const options = { profileDir: path.join(root, 'profile'), port: 0, computers: true as const };
   let app = await startPrototype(options);
   const call = async (route: string, input: unknown) => {
@@ -72,6 +75,7 @@ import type { RunReceipt } from './tasks.js';
 
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-delivery-flow-'));
+  await secureDirectory(root);
   const app = await startPrototype({
     profileDir: path.join(root, 'profile'),
     port: 0,
