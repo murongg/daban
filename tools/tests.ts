@@ -4,6 +4,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const suites = {
   runtime: [
+    'host-vm.test',
+    'reboot-private.test',
+    'vm-config.test',
     'environment-api.test',
     'setup-status.test',
     'component-files.test',

@@ -84,6 +84,7 @@ export async function componentSourceId(root: string) {
     'LICENSE',
     'tools/components.ts',
     'tools/roles.ts',
+    'tools/sdk.ts',
     'tools/sign.ts',
     'tools/environment.ts',
     'apps/agent/package.json',

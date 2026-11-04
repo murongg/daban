@@ -2,19 +2,25 @@ import { execFile } from 'node:child_process';
 import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { qemuFilename } from '@daban/engine/component';
 import { hashAsset } from './environment.ts';
 
 type Run = (args: string[]) => Promise<string>;
 const execute = promisify(execFile);
+// The independently published Windows environment is about 1.6 GiB; ordinary uplinks can take over 20 minutes.
 const gh: Run = async (args) =>
-  (await execute('gh', args, { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: 120000 })).stdout;
+  (await execute('gh', args, { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: 60 * 60 * 1000 }))
+    .stdout;
 interface Release {
+  draft: boolean;
   assets: { name: string; digest: string; size: number }[];
 }
 const releaseAsset =
   /^(?:Daban-runtime-(?:macos-arm64|windows-x64)\.zip|Daban-lima-macos-arm64\.tar\.gz|Daban-executor-linux-arm64\.tar\.gz|linux\.json)$/;
+const allowedAsset = (tag: string, name: string) =>
+  tag.startsWith('qemu-') ? name === qemuFilename() : releaseAsset.test(name);
 async function release(tag: string, run: Run): Promise<Release | undefined> {
-  if (!/^runtime-[a-f0-9]{24}$/.test(tag)) throw Error('COMPONENT_RELEASE_TAG');
+  if (!/^(?:runtime|qemu)-[a-f0-9]{24}$/.test(tag)) throw Error('COMPONENT_RELEASE_TAG');
   let text: string;
   try {
     text = await run(['api', `repos/murongg/daban/releases/tags/${tag}`]);
@@ -26,8 +32,14 @@ async function release(tag: string, run: Run): Promise<Release | undefined> {
       typeof error.stderr === 'string' &&
       /HTTP 404/.test(error.stderr)
     )
-      return undefined;
-    throw error;
+      text = await run([
+        'api',
+        'repos/murongg/daban/releases?per_page=100',
+        '--jq',
+        `.[] | select(.draft == true and .tag_name == "${tag}")`,
+      ]);
+    else throw error;
+    if (!text.trim()) return undefined;
   }
   const value: unknown = JSON.parse(text);
   if (!value || typeof value !== 'object' || !('assets' in value) || !Array.isArray(value.assets))
@@ -47,7 +59,7 @@ async function release(tag: string, run: Run): Promise<Release | undefined> {
       throw Error('COMPONENT_RELEASE_RESPONSE');
     assets.push({ name: asset.name, digest: asset.digest, size: asset.size });
   }
-  return { assets };
+  return { draft: 'draft' in value && value.draft === true, assets };
 }
 export async function fetchComponent(
   tag: string,
@@ -55,8 +67,11 @@ export async function fetchComponent(
   directory: string,
   run: Run = gh,
 ) {
-  if (!releaseAsset.test(filename)) throw Error('COMPONENT_RELEASE_ASSET');
-  const found = (await release(tag, run))?.assets.find((asset) => asset.name === filename);
+  if (!allowedAsset(tag, filename)) throw Error('COMPONENT_RELEASE_ASSET');
+  const current = await release(tag, run);
+  const found = current?.draft
+    ? undefined
+    : current?.assets.find((asset) => asset.name === filename);
   if (!found) return false;
   if (
     !/^sha256:[a-f0-9]{64}$/.test(found.digest) ||
@@ -101,7 +116,7 @@ export async function publishComponent(
   const current = await release(tag, run);
   const additions: string[] = [];
   for (const file of files) {
-    if (!releaseAsset.test(path.basename(file))) throw Error('COMPONENT_RELEASE_ASSET');
+    if (!allowedAsset(tag, path.basename(file))) throw Error('COMPONENT_RELEASE_ASSET');
     const saved = current?.assets.find((asset) => asset.name === path.basename(file));
     if (saved) {
       // Public runtime assets are immutable, including retries of a desktop release.
@@ -119,7 +134,9 @@ export async function publishComponent(
       '--target',
       commit,
       '--title',
-      `Daban runtime ${tag.slice(8)}`,
+      tag.startsWith('qemu-')
+        ? `Daban Linux for Windows ${tag.slice(5)}`
+        : `Daban runtime ${tag.slice(8)}`,
       '--notes',
       'Runtime components downloaded by Daban when needed. / Daban 按需下载的运行组件。',
       '--prerelease',
@@ -128,7 +145,7 @@ export async function publishComponent(
     ]);
   else if (additions.length)
     await run(['release', 'upload', tag, '--repo', 'murongg/daban', ...additions]);
-  if (additions.length) {
+  if (additions.length || current?.draft) {
     const published = await release(tag, run);
     for (const file of files) {
       const asset = published?.assets.find((item) => item.name === path.basename(file));
@@ -140,4 +157,32 @@ export async function publishComponent(
         throw Error('COMPONENT_RELEASE_INTEGRITY');
     }
   }
+  // gh creates a draft while uploading. Retry that same draft and publish only after every pinned asset verifies.
+  if (current?.draft) {
+    await run([
+      'release',
+      'edit',
+      tag,
+      '--repo',
+      'murongg/daban',
+      '--draft=false',
+      '--prerelease',
+      '--latest=false',
+    ]);
+    const published = await release(tag, run);
+    if (!published || published.draft) throw Error('COMPONENT_RELEASE_INTEGRITY');
+  }
+}
+
+export async function verifyPublishedComponent(
+  tag: string,
+  filename: string,
+  expected: { bytes: number; sha256: string },
+  run: Run = gh,
+) {
+  if (!allowedAsset(tag, filename)) throw Error('COMPONENT_RELEASE_ASSET');
+  const current = await release(tag, run);
+  const asset = current?.draft ? undefined : current?.assets.find((item) => item.name === filename);
+  if (!asset || asset.size !== expected.bytes || asset.digest !== 'sha256:' + expected.sha256)
+    throw Error('COMPONENT_RELEASE_INTEGRITY');
 }

@@ -13,7 +13,8 @@ import { privateClientOptions } from './private-channel.js';
 test('optional environment setup is host-authenticated and blocks app replacement only while busy', {
   timeout: 20000,
 }, async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-environment-api-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-environment-api-'));
+  const root = path.join(temporary, 'private');
   const scope = createHash('sha256').update(root).digest('hex');
   const socketPath =
     process.platform === 'win32'
@@ -21,11 +22,18 @@ test('optional environment setup is host-authenticated and blocks app replacemen
       : path.join(root, 's');
   let busy = false,
     started = 0,
+    enabled = 0,
+    requestedMode: unknown,
     updated: () => unknown = () => {};
   const handoff = new Promise<unknown>((resolve) => {
     updated = () => resolve(undefined);
   });
-  let state: SetupStatus = { required: true, target: 'linux', phase: 'available' };
+  let state: SetupStatus = {
+    required: true,
+    target: 'linux',
+    phase: 'available',
+    windows: { acceleration: 'disabled', memoryMiB: 6144, diskGiB: 64 },
+  };
   const app = await startNativeAgent({
     dataRoot: root,
     socketPath,
@@ -38,7 +46,8 @@ test('optional environment setup is host-authenticated and blocks app replacemen
         return busy;
       },
       status: async () => state,
-      start: async () => {
+      start: async (mode?: unknown) => {
+        requestedMode = mode;
         started++;
         busy = true;
         state = {
@@ -54,6 +63,10 @@ test('optional environment setup is host-authenticated and blocks app replacemen
       cancel: async () => {
         busy = false;
         state = { required: true, target: 'linux', phase: 'cancelled' };
+        return state;
+      },
+      enable: async () => {
+        enabled++;
         return state;
       },
     },
@@ -113,9 +126,18 @@ test('optional environment setup is host-authenticated and blocks app replacemen
       'available',
     );
     expect(started).toBe(0);
-    expect((await call('/api/host/environment', { scope, action: 'start' })).value.phase).toBe(
-      'downloading',
-    );
+    expect((await call('/api/host/environment', { scope, action: 'enable' })).status).toBe(400);
+    expect(
+      (await call('/api/host/environment', { scope, action: 'enable', confirmed: true })).status,
+    ).toBe(200);
+    expect(enabled).toBe(1);
+    expect(
+      (await call('/api/host/environment', { scope, action: 'start', mode: 'untrusted' })).status,
+    ).toBe(400);
+    expect(
+      (await call('/api/host/environment', { scope, action: 'start', mode: 'tcg' })).value.phase,
+    ).toBe('downloading');
+    expect(requestedMode).toBe('tcg');
     expect(started).toBe(1);
     expect((await call('/api/host/update', { scope })).status).toBe(409);
     expect((await call('/api/host/environment', { scope, action: 'cancel' })).value.phase).toBe(
@@ -127,6 +149,6 @@ test('optional environment setup is host-authenticated and blocks app replacemen
     expect(started).toBe(1);
   } finally {
     await app.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });

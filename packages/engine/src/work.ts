@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, open } from 'node:fs/promises';
+import { chmod, lstat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -54,7 +54,7 @@ import { drizzle } from 'drizzle-orm/node-sqlite';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { errorCode, Fault } from './control.js';
 import { configure, type Database, migrate, tables, unwrap } from './database.js';
-import { privateMetadata } from './private-files.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 import { migrations } from './work-migrations.js';
 import { workComments, workItems, workMeta, workOperations } from './work-schema.js';
 
@@ -136,7 +136,8 @@ export class Work {
     this.ready.catch(() => {});
   }
   private async load() {
-    await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+    // Establish the private ACL root before validating an existing Windows database.
+    await secureDirectory(path.dirname(this.file));
     const existing = await lstat(this.file).catch((error) => {
       if (errorCode(error) !== 'ENOENT') throw error;
       return undefined;

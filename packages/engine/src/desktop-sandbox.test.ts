@@ -35,6 +35,16 @@ test('desktop commands use an isolated PID/mount namespace, pinned desktop roots
   expect(command.args[command.args.indexOf('--proc') + 1]).toBe('/proc');
 });
 
+test('the isolated helper retains the Debian amd64 dynamic loader alias', () => {
+  const command = desktopCommand(
+    { directory: '/mock/a', root: '/mock', rootFd: 3, tempFd: 4, display: ':71', env: {} },
+    '/engine/bin/node',
+    ['/app/files.mjs'],
+  );
+  expect(command.args).toContain('/lib64');
+  expect(command.args[command.args.indexOf('/lib64') - 1]).toBe('usr/lib64');
+});
+
 test('private session mounts cannot overlap the shared desktop in either direction', async () => {
   const { DesktopSandbox } = await import('./desktop-sandbox.js');
   for (const privateRoot of [

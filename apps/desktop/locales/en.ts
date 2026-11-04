@@ -1,4 +1,49 @@
 export const english = {
+  'vm.managed':
+    'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
+  'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',
+  'setup.windowsSpace': 'At least {0} GB free space needed · {1} GB available',
+  'setup.windowsAuthorization':
+    'Windows will ask for administrator permission to enable hardware acceleration. A one-time restart may be needed.',
+  'setup.windowsRestartNeeded':
+    'Windows needs to restart to finish enabling acceleration. Reopen Daban after restarting and installation will continue.',
+  'setup.windowsRestart': 'Restart Windows…',
+  'setup.windowsRestartTitle': 'Restart this computer?',
+  'setup.windowsRestartConfirm':
+    'Save your work in other apps first. This restarts Windows. Reopen Daban afterward to continue installation. Running tasks must finish before restarting.',
+  'setup.windowsRestartNow': 'Restart Windows',
+  'setup.windowsRestartLater': 'Not now',
+  'setup.windowsAlternatives': 'Other installation options',
+  'setup.windowsCompatibility':
+    'Compatibility mode can run without a Windows restart. Desktop and browser operations will be slower and use more CPU.',
+  'setup.windowsUseCompatibility': 'Use compatibility mode (slower)',
+  'setup.windowsFirmware':
+    'Hardware virtualization is turned off in this computer’s firmware. Enable it there, or use compatibility mode.',
+  'setup.windowsUnsupported':
+    'This environment package supports 64-bit Intel and AMD Windows computers. Chat and workspace files remain available.',
+  'setup.windowsDiskSpace':
+    'There is not enough free disk space. Free up space and continue installation.',
+  'setup.windowsVerifying': 'Checking the environment and Windows requirements…',
+  'setup.windowsExtracting': 'Extracting the Linux environment…',
+  'setup.windowsDownloadSize':
+    'Downloads about {0} GB after you click install. You can pause and resume.',
+  'setup.windowsDownloadProgress': '{0} GB / {1} GB · {2}%',
+  'setup.windowsDownloadFailed':
+    'Download interrupted. Check your connection and continue; downloaded files are retained.',
+  'setup.windowsCreating': 'Preparing your Linux computer…',
+  'setup.windowsStarting': 'Starting Linux…',
+  'setup.windowsConnecting': 'Connecting and checking the execution service…',
+  'setup.windowsCancelling': 'Pausing installation…',
+  'setup.windowsFailed':
+    'Installation could not finish. Existing files have been retained. Reopen Daban and retry.',
+  'setup.windowsBundleMissing':
+    'The Linux environment is unavailable. Continue setup to download it again.',
+  'setup.windowsIntegrity':
+    'The environment files failed verification. Retry installation to download them again.',
+  'setup.windowsUncertain':
+    'The Linux computer’s state could not be confirmed. Reopen Daban to reconnect. It will not create a duplicate computer.',
+  'setup.windowsEnableFailed':
+    'Windows could not enable acceleration. Retry and approve the Windows permission prompt, or choose compatibility mode.',
   'approval.mode': 'Approval mode',
   'approval.ask': 'Request approval',
   'approval.auto': 'Approve for me',
@@ -67,6 +112,24 @@ export const english = {
   'agentUpgrade.required': 'Update the legacy Agent in runtime settings before retrying.',
   'agentUpgrade.open': 'Review Agent upgrade',
 
+  'vm.native': 'Return to native mode',
+  'vm.connected': 'Connected to the Linux VM.',
+  'vm.configured':
+    'The Linux computer is not connected yet. Daban will try to reconnect automatically.',
+  'vm.invalid': 'The Linux computer connection is invalid. Reopen Daban and retry.',
+  'vm.unsafe':
+    'The VM settings or private key location could not be verified. Existing files have been retained.',
+  'vm.busy':
+    'Tasks, recovery or a connection are still active. Wait for them to finish before switching execution mode.',
+  'vm.unsupported': 'These Linux computer settings are available on Windows only.',
+  'vm.hostKeyChanged':
+    'The Linux computer identity could not be verified. Reopen Daban to reconnect; existing files are retained.',
+  'vm.sshAuth':
+    'SSH authentication failed. Check the username, private key permissions and passwordless login.',
+  'vm.unavailable':
+    'The Linux VM connection is unavailable. Check the VM, SSH access and Daban executor service.',
+  'vm.targetChanged':
+    'The selected VM does not match this workspace’s saved execution identity. Restore the original connection or use a separate workspace.',
   'setup.agentTitle': 'Prepare Daban',
   'setup.agentWorking': 'Getting Daban ready',
   'setup.agentDescription':

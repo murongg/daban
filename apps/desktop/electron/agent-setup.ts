@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, type Stats } from 'node:fs';
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import type { SetupStatus } from '@daban/protocol';
 import { Daemon, type DaemonConfig } from './daemon';
 
@@ -88,24 +89,22 @@ export class AgentSetup {
     return { ...this.value };
   }
   private async directory() {
-    const root = this.options.config.dataRoot;
-    await fs.mkdir(root, { recursive: true, mode: 0o700 });
-    const info = await fs.lstat(root);
-    if (
-      !info.isDirectory() ||
-      info.isSymbolicLink() ||
-      info.uid !== process.getuid?.() ||
-      (info.mode & 0o777) !== 0o700
-    )
+    try {
+      await secureDirectory(this.options.config.dataRoot);
+    } catch {
       throw new Error('SETUP_STORE');
+    }
   }
   private async read(name: string) {
+    const entry = join(this.options.config.dataRoot, name);
+    let identity: Stats;
     let file: Awaited<ReturnType<typeof fs.open>>;
     try {
-      file = await fs.open(
-        join(this.options.config.dataRoot, name),
-        constants.O_RDONLY | constants.O_NOFOLLOW,
-      );
+      // Windows ignores O_NOFOLLOW. Bind the handle to the regular, single-link entry inspected here.
+      identity = await fs.lstat(entry);
+      if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1)
+        throw new Error('SETUP_STORE');
+      file = await fs.open(entry, constants.O_RDONLY | constants.O_NOFOLLOW);
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
         return undefined;
@@ -114,12 +113,13 @@ export class AgentSetup {
     try {
       const info = await file.stat();
       // An atomic progress replacement unlinks the old observation; discard it without trusting its contents.
-      if (name === 'progress.json' && info.nlink === 0) return undefined;
+      const replaced = identity.dev !== info.dev || identity.ino !== info.ino;
+      if (name === 'progress.json' && (info.nlink === 0 || replaced)) return undefined;
       if (
         !info.isFile() ||
-        info.uid !== process.getuid?.() ||
+        replaced ||
         info.nlink !== 1 ||
-        (info.mode & 0o777) !== 0o600 ||
+        !(await privateMetadata(entry, info, 0o600)) ||
         info.size > 16384
       )
         throw new Error('SETUP_STORE');

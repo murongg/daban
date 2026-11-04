@@ -10,6 +10,18 @@ const config = {
   entry: path.resolve('runtime-new/main.js'),
   executable: path.resolve('runtime-new/node'),
 };
+it('requires an idle authenticated handoff for an explicit VM settings change even when the execution mode is unchanged', async () => {
+  const handoff = vi.fn(async () => {});
+  expect(
+    await reconcileAgent(config, true, {
+      identity: async () => ({ role: 'agent', ...config }),
+      execution: async () => 'local-workspace',
+      handoff,
+      restart: true,
+    }),
+  ).toBe(true);
+  expect(handoff).toHaveBeenCalledTimes(1);
+});
 it('hands off only a matching host whose execution mode or immutable runtime files changed', async () => {
   let identity = { role: 'agent', ...config };
   const handoff = vi.fn(async () => {});

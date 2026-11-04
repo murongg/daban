@@ -17,6 +17,7 @@ import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test, vi } from 'vitest';
 import { Notes } from './notes.js';
 import { noteItems, noteOperations } from './notes-schema.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 const alpha = 'mock-alpha',
   beta = 'mock-beta';
@@ -35,7 +36,8 @@ const create = (note = 'mock-note', id = 'mock-create'): NoteWrite => ({
   value: { title: '合成独立便笺', body: 'MOCK PRIVATE DETAIL', status: 'open' },
 });
 async function fixture() {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-notes-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-notes-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'notes.sqlite');
   let store = new Notes(file);
   await store.ready;
@@ -52,13 +54,14 @@ async function fixture() {
     },
     async close() {
       await store.close();
-      await rm(root, { recursive: true, force: true });
+      await rm(temporary, { recursive: true, force: true });
     },
   };
 }
 
 test('a pre-ORM version 1 notes file keeps its notes and receipts after the schema baseline', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-notes-legacy-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-notes-legacy-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'notes.sqlite');
   const at = '2026-01-01T00:00:00.000Z',
     request = create(),
@@ -114,7 +117,7 @@ test('a pre-ORM version 1 notes file keeps its notes and receipts after the sche
     expect((await store.list(alpha)).items.map((item) => item.id)).toStrictEqual([request.note]);
   } finally {
     await store.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -421,7 +424,8 @@ test('corrupt note ownership refuses to appear empty', async () => {
 });
 
 test('private note files reject symbolic and hard links', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-note-links-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-note-links-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   try {
     const source = path.join(root, 'source.sqlite');
     await writeFile(source, 'MOCK NOT A DATABASE', { mode: 0o600 });
@@ -435,9 +439,9 @@ test('private note files reject symbolic and hard links', async () => {
       await expect(store.ready).rejects.toThrowError(/NOTES_CORRUPT/);
       await store.close();
     }
-    expect((await lstat(source)).mode & 0o777).toBe(0o600);
+    expect(await privateMetadata(source, await lstat(source), 0o600)).toBe(true);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -522,7 +526,8 @@ test('caller mutation and patch property order cannot alter scope or defeat exac
 });
 
 test('unknown or unrelated databases remain intact instead of being converted to notes', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-note-schema-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-note-schema-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   try {
     for (const version of [0, 1, 2]) {
       const file = path.join(root, `schema-${version}.sqlite`),
@@ -538,7 +543,7 @@ test('unknown or unrelated databases remain intact instead of being converted to
       expect(await readFile(file)).toStrictEqual(bytes);
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -592,7 +597,8 @@ test('malformed receipts are refused as corruption before their fingerprint is c
 });
 
 test('a failed initial schema transaction stays retryable without partially published tables', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-note-init-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-note-init-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'notes.sqlite'),
     prepare = DatabaseSync.prototype.prepare;
   let injected = false;
@@ -630,7 +636,7 @@ test('a failed initial schema transaction stays retryable without partially publ
   } finally {
     vi.restoreAllMocks();
     await failed.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 

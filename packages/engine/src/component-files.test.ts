@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { verifyComponentTree, verifyHostFiles } from './component-files.js';
+import { secureDirectory } from './private-files.js';
 
 async function payload() {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-host-files-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-host-files-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   await mkdir(path.join(root, 'node'), { mode: 0o700 });
   const files: Record<string, string> = {};
   for (const name of [
@@ -19,11 +21,11 @@ async function payload() {
     await writeFile(path.join(root, name), bytes, { mode: 0o600 });
     files[name] = createHash('sha256').update(bytes).digest('hex');
   }
-  return { root, manifest: { node: '0.0.0-synthetic', dsh: '0.0.0-synthetic', files } };
+  return { root, temporary, manifest: { node: '0.0.0-synthetic', dsh: '0.0.0-synthetic', files } };
 }
 
 test('verifies independent host files concurrently with at most four open handles', async () => {
-  const { root, manifest } = await payload();
+  const { root, temporary, manifest } = await payload();
   const original = fs.open;
   const active = new Set<Awaited<ReturnType<typeof fs.open>>>();
   let peak = 0;
@@ -51,12 +53,12 @@ test('verifies independent host files concurrently with at most four open handle
   } finally {
     vi.restoreAllMocks();
     syncBuiltinESMExports();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
 test('waits for in-flight file handles to close before reporting an integrity failure', async () => {
-  const { root, manifest } = await payload();
+  const { root, temporary, manifest } = await payload();
   manifest.files['main.js'] = '0'.repeat(64);
   const original = fs.open;
   const active = new Set<Awaited<ReturnType<typeof fs.open>>>();
@@ -81,13 +83,13 @@ test('waits for in-flight file handles to close before reporting an integrity fa
   } finally {
     vi.restoreAllMocks();
     syncBuiltinESMExports();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
 test('preserves hard-link rejection and cancellation during host verification', async (t) => {
-  const { root, manifest } = await payload();
-  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const { root, temporary, manifest } = await payload();
+  t.onTestFinished(() => rm(temporary, { recursive: true, force: true }));
   const cancellation = new AbortController();
   cancellation.abort(Error('synthetic cancellation'));
   await expect(verifyHostFiles(root, manifest, cancellation.signal)).rejects.toThrowError(
@@ -98,8 +100,9 @@ test('preserves hard-link rejection and cancellation during host verification', 
 });
 
 test('verifies materialized host files against the trusted archive manifest, not the mutable cache manifest', async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-component-files-'));
-  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-component-files-'));
+  t.onTestFinished(() => rm(temporary, { recursive: true, force: true }));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   // Fixtures must remain private even when the shell permits group-writable files.
   await mkdir(path.join(root, 'node'), { mode: 0o700 });
   const main = 'SYNTHETIC MAIN',

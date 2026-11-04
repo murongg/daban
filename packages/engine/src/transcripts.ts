@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { mkdir, open } from 'node:fs/promises';
+import { lstat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -16,8 +16,9 @@ import {
   transcriptPageLimit,
 } from '@daban/protocol';
 import { and, asc, eq, gt, max, sql } from 'drizzle-orm';
-import { Fault } from './control.js';
+import { errorCode, Fault } from './control.js';
 import { configure, type Database, migrate } from './database.js';
+import { secureDirectory } from './private-files.js';
 import { migrations } from './transcripts-migrations.js';
 import { transcriptEvents, transcriptRuns } from './transcripts-schema.js';
 
@@ -247,7 +248,14 @@ export class Transcripts {
     this.ready.catch(() => {});
   }
   private async load() {
-    await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+    await secureDirectory(path.dirname(this.file));
+    const existing = await lstat(this.file).catch((error) => {
+      if (errorCode(error) !== 'ENOENT') throw error;
+      return undefined;
+    });
+    // Windows ignores O_NOFOLLOW; reject linked entries and verify the handle's identity explicitly.
+    if (existing && (!existing.isFile() || existing.isSymbolicLink() || existing.nlink !== 1))
+      throw new Fault('TRANSCRIPT_UNAVAILABLE');
     const handle = await open(
       this.file,
       constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW,
@@ -255,7 +263,12 @@ export class Transcripts {
     );
     try {
       const stat = await handle.stat();
-      if (!stat.isFile() || stat.nlink !== 1) throw new Fault('TRANSCRIPT_UNAVAILABLE');
+      if (
+        !stat.isFile() ||
+        stat.nlink !== 1 ||
+        (existing && (stat.dev !== existing.dev || stat.ino !== existing.ino))
+      )
+        throw new Fault('TRANSCRIPT_UNAVAILABLE');
     } finally {
       await handle.close();
     }

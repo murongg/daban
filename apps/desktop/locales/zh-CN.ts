@@ -1,6 +1,42 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'vm.managed': '这台 Linux 电脑由搭伴自动管理，无需填写或修改连接参数。',
+  'setup.windowsResources': '运行时使用 {0} GB 内存 · {1} GB 虚拟磁盘，按实际使用增长',
+  'setup.windowsSpace': '至少需要 {0} GB 可用空间 · 当前可用 {1} GB',
+  'setup.windowsAuthorization': 'Windows 将请求管理员授权以启用硬件加速，首次可能需要重启一次。',
+  'setup.windowsRestartNeeded':
+    'Windows 需要重启才能完成加速配置。重启后打开搭伴，将自动继续安装。',
+  'setup.windowsRestart': '重启 Windows…',
+  'setup.windowsRestartTitle': '重启这台电脑？',
+  'setup.windowsRestartConfirm':
+    '请先保存其他应用中的工作。这会重启整台电脑，重启后打开搭伴即可继续安装。有任务运行时，需要先等待任务结束。',
+  'setup.windowsRestartNow': '重启 Windows',
+  'setup.windowsRestartLater': '暂不重启',
+  'setup.windowsAlternatives': '其他安装方式',
+  'setup.windowsCompatibility':
+    '兼容模式无需重启 Windows，但桌面和浏览器操作会更慢，CPU 占用也会更高。',
+  'setup.windowsUseCompatibility': '使用兼容模式（较慢）',
+  'setup.windowsFirmware': '这台电脑尚未在固件设置中开启硬件虚拟化。可以前往开启，或使用兼容模式。',
+  'setup.windowsUnsupported':
+    '此环境包支持 Intel 和 AMD 的 64 位 Windows 电脑。聊天和工作区文件仍可使用。',
+  'setup.windowsDiskSpace': '磁盘可用空间不足，请释放空间后继续安装。',
+  'setup.windowsVerifying': '正在检查环境文件和 Windows 配置…',
+  'setup.windowsExtracting': '正在解压 Linux 环境…',
+  'setup.windowsDownloadSize': '点击安装后下载约 {0} GB，可暂停并继续下载。',
+  'setup.windowsDownloadProgress': '{0} GB / {1} GB · {2}%',
+  'setup.windowsDownloadFailed': '下载中断，请检查网络后继续，已下载的文件会保留。',
+  'setup.windowsCreating': '正在准备你的 Linux 电脑…',
+  'setup.windowsStarting': '正在启动 Linux…',
+  'setup.windowsConnecting': '正在连接并检查执行服务…',
+  'setup.windowsCancelling': '正在暂停安装…',
+  'setup.windowsFailed': '安装未完成，现有文件已保留。请重新打开搭伴后重试。',
+  'setup.windowsBundleMissing': 'Linux 环境文件不可用，请继续安装以重新下载。',
+  'setup.windowsIntegrity': '环境文件未通过校验，请重试安装以重新下载。',
+  'setup.windowsUncertain':
+    '暂时无法确认 Linux 电脑的状态，请重新打开搭伴以连接现有电脑。应用不会重复创建电脑。',
+  'setup.windowsEnableFailed':
+    'Windows 未能启用硬件加速。请重试并允许 Windows 授权提示，或选择兼容模式。',
   'approval.mode': '审批模式',
   'approval.ask': '请求批准',
   'approval.auto': '帮我批准',
@@ -57,6 +93,17 @@ export const chinese = {
   'agentUpgrade.required': '旧后台需要升级，请在运行环境设置中完成升级后重试。',
   'agentUpgrade.open': '查看后台升级',
 
+  'vm.native': '返回本机模式',
+  'vm.connected': '已连接 Linux 虚拟机。',
+  'vm.configured': 'Linux 电脑尚未连接，搭伴会自动尝试重新连接。',
+  'vm.invalid': 'Linux 电脑连接信息无效，请重新打开搭伴后重试。',
+  'vm.unsafe': '无法确认虚拟机配置或私钥位置的安全性，现有文件已保留。',
+  'vm.busy': '后台任务、恢复或连接操作尚未结束，请等待完成后再切换运行模式。',
+  'vm.unsupported': '此 Linux 电脑设置仅适用于 Windows。',
+  'vm.hostKeyChanged': '无法确认 Linux 电脑的身份，请重新打开搭伴以重新连接，现有文件会保留。',
+  'vm.sshAuth': 'SSH 身份验证失败，请检查用户名、私钥权限和免密码登录配置。',
+  'vm.unavailable': 'Linux 虚拟机连接不可用，请检查虚拟机、SSH 连接和 Daban 执行服务。',
+  'vm.targetChanged': '所选虚拟机与工作区保存的执行端身份不一致，请恢复原连接，或使用独立工作区。',
   'setup.agentTitle': '准备 Daban',
   'setup.agentWorking': '正在准备 Daban',
   'setup.agentDescription':

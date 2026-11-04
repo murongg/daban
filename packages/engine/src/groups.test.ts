@@ -943,6 +943,7 @@ test('retained input payloads count against group storage and rejected uploads r
     ).toBe(0);
   } finally {
     await groups.close();
+    await uploads.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

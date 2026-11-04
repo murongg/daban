@@ -10,7 +10,8 @@
       "dependencies": {
         "@daban/engine": "file:./vendor/engine",
         "@daban/protocol": "file:./vendor/protocol",
-        "@deepseek-ai/dsh-sdk-client": "0.2.1-rc.3"
+        "@deepseek-ai/dsh-sdk-client": "0.2.1-rc.3",
+        "selfsigned": "5.5.0"
       },
       "license": "AGPL-3.0-only"
     },

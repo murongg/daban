@@ -28,6 +28,7 @@ import { LinuxSetup } from '../onboarding/LinuxSetup';
 import { AgentUpgradePanel } from './AgentUpgrade';
 import { Language } from './Language';
 import { UpdatesPanel } from './Updates';
+import { VirtualMachine } from './VirtualMachine';
 import '../../styles/settings.css';
 
 export function Settings({
@@ -187,6 +188,7 @@ export function Settings({
           </div>
           <AgentUpgradePanel onDialogChange={setConnectionDialog} />
           <LinuxSetup />
+          <VirtualMachine />
           {!nativeOnly && (
             <div className="settings-section">
               <h2>{t('settings.runtime')}</h2>

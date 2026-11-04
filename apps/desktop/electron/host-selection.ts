@@ -12,6 +12,7 @@ export async function reconcileAgent(
     identity?: () => Promise<unknown>;
     execution?: () => Promise<string | undefined>;
     handoff?: () => Promise<unknown>;
+    restart?: boolean;
   } = {},
 ) {
   if (!dependencies.identity) {
@@ -88,6 +89,7 @@ export async function reconcileAgent(
     })
   )();
   const changed =
+    dependencies.restart ||
     !('entry' in value) ||
     value.entry !== config.entry ||
     !('executable' in value) ||

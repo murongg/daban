@@ -2,7 +2,9 @@ import { type FileHandle, lstat, mkdtemp, open, readFile, rm, writeFile } from '
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
+import * as durability from './durability.js';
 import { Interactions } from './interactions.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 test('health keeps corrupt interaction records private and retained', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'mock-interaction-health-'));
@@ -164,13 +166,15 @@ test('question records retain authoritative conversation provenance across resta
   }
 });
 test('questions persist before waiting, accept one exact answer and reject conflicting or foreign replies', async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'mock-interactions-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-interactions-'));
+  const directory = await secureDirectory(path.join(root, 'private'));
   try {
     const store = new Interactions(directory);
     await store.ready;
     const opened = await store.open('mock-bot', 'mock-run', question);
     expect(opened.status).toBe('pending');
-    expect((await lstat(path.join(directory, 'mock-question.json'))).mode & 0o777).toBe(0o600);
+    const file = path.join(directory, 'mock-question.json');
+    expect(await privateMetadata(file, await lstat(file), 0o600)).toBe(true);
     expect(await store.open('mock-bot', 'mock-run', question)).toStrictEqual(opened);
     await expect(
       store.open('mock-bot', 'mock-run', {
@@ -212,7 +216,7 @@ test('questions persist before waiting, accept one exact answer and reject confl
       code: 'INTERACTION_CLOSED',
     });
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 test('one-shot approvals are interrupted on restart and cannot be granted by late replies', async () => {
@@ -338,7 +342,7 @@ test('a stop during asynchronous decision persistence never publishes the permis
   }
 });
 
-test('an approval syncs its temporary file and renamed parent directory before publishing or releasing a waiter', async () => {
+test('an approval flushes its file and awaits the platform directory barrier before publishing or releasing a waiter', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-approval-sync-order-'));
   const events: string[] = [];
   const store = new Interactions(directory, (item) => {
@@ -361,15 +365,24 @@ test('an approval syncs its temporary file and renamed parent directory before p
     const mocked = vi.spyOn(prototype, 'sync').mockImplementation(async function (
       this: FileHandle,
     ) {
-      const kind = (await this.stat()).isDirectory() ? 'directory' : 'file';
+      if ((await this.stat()).isDirectory()) return sync.call(this);
       const saved = JSON.parse(await readFile(path.join(directory, `${input.id}.json`), 'utf8'));
-      expect(saved.request.status).toBe(kind === 'file' ? 'pending' : 'resolved');
+      expect(saved.request.status).toBe('pending');
       expect(store.pending('mock-bot', 'mock-run')).toBe(true);
       await sync.call(this);
-      events.push(`${kind}-synced`);
+      events.push('file-synced');
+    });
+    const syncParent = durability.syncDirectory;
+    const parent = vi.spyOn(durability, 'syncDirectory').mockImplementation(async (handle) => {
+      const saved = JSON.parse(await readFile(path.join(directory, `${input.id}.json`), 'utf8'));
+      expect(saved.request.status).toBe('resolved');
+      expect(store.pending('mock-bot', 'mock-run')).toBe(true);
+      await syncParent(handle);
+      events.push('directory-barrier');
     });
     restore = () => {
       mocked.mockRestore();
+      parent.mockRestore();
       return undefined;
     };
     const waiting = store.wait('mock-bot', 'mock-run', input.id).then((item) => {
@@ -378,7 +391,7 @@ test('an approval syncs its temporary file and renamed parent directory before p
     });
     await store.reply('mock-bot', 'mock-run', input.id, { kind: 'decision', allow: true });
     expect((await waiting).status).toBe('resolved');
-    expect(events).toStrictEqual(['file-synced', 'directory-synced', 'published', 'waiter']);
+    expect(events).toStrictEqual(['file-synced', 'directory-barrier', 'published', 'waiter']);
   } finally {
     restore();
     await store.endRun('mock-bot', 'mock-run');
@@ -414,11 +427,17 @@ for (const failedKind of ['file', 'directory']) {
         this: FileHandle,
       ) {
         const kind = (await this.stat()).isDirectory() ? 'directory' : 'file';
-        if (kind === failedKind) throw new Error('MOCK_APPROVAL_SYNC_FAILED');
+        if (kind === 'file' && failedKind === 'file') throw new Error('MOCK_APPROVAL_SYNC_FAILED');
         return sync.call(this);
+      });
+      const syncParent = durability.syncDirectory;
+      const parent = vi.spyOn(durability, 'syncDirectory').mockImplementation(async (handle) => {
+        if (failedKind === 'directory') throw new Error('MOCK_APPROVAL_SYNC_FAILED');
+        return syncParent(handle);
       });
       restore = () => {
         mocked.mockRestore();
+        parent.mockRestore();
         return undefined;
       };
       let released = false;
@@ -471,20 +490,15 @@ test.each([false, true])(
     try {
       await store.ready;
       if (!automatic) await store.open('mock-bot', 'mock-run', input);
-      const probe = await open(path.join(directory, 'mock-probe'), 'w');
-      const prototype: FileHandle = Object.getPrototypeOf(probe);
-      const sync = prototype.sync;
-      await probe.close();
+      const syncParent = durability.syncDirectory;
       let intercepted = false;
-      const mocked = vi.spyOn(prototype, 'sync').mockImplementation(async function (
-        this: FileHandle,
-      ) {
-        if ((await this.stat()).isDirectory() && !intercepted) {
+      const mocked = vi.spyOn(durability, 'syncDirectory').mockImplementation(async (handle) => {
+        if (!intercepted) {
           intercepted = true;
           entered();
           await held;
         }
-        return sync.call(this);
+        return syncParent(handle);
       });
       restore = () => {
         mocked.mockRestore();

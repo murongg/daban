@@ -9,11 +9,14 @@ import {
   startAgent,
   startNativeAgent,
 } from '@daban/engine/agent';
+import { readVmConnection, vmConnectionTarget } from '@daban/engine/host';
+import { secureDirectory } from '@daban/engine/local-computer';
 import type {
   ExecutionSnapshot,
   RebootStatus,
   RecoveryReview,
   RuntimeCommand,
+  VmConnection,
 } from '@daban/protocol';
 import { type BootstrapOptions, bootstrapAgent, writeSetupRecord } from './bootstrap.js';
 import { ExecutionConnection } from './connection.js';
@@ -21,6 +24,8 @@ import { Environment } from './environment.js';
 import { startupErrorCode, writeStartupFailure } from './failure.js';
 import { linuxAssets } from './linux.js';
 import { HostPower, type PowerOptions } from './power.js';
+import { QemuLink } from './qemu.js';
+import { QemuSetup } from './qemu-setup.js';
 import { resolveSdk } from './sdk.js';
 import {
   assertSetupRunning,
@@ -36,6 +41,7 @@ export interface AgentArguments {
   socketPath: string;
   vmConfigFile: string;
   mode?: 'native';
+  qemuBundle?: string;
 }
 interface Assets {
   packDirectory: string;
@@ -70,6 +76,7 @@ interface Power {
 }
 export interface MainDependencies {
   platform?: NodeJS.Platform;
+  qemu?: (config: VmConnection, directory: string) => Link;
   native?: (
     options: Parameters<typeof startNativeAgent>[0],
   ) => Promise<{ close(): Promise<unknown> }>;
@@ -106,7 +113,7 @@ export function parseAgentArguments(args: string[]): AgentArguments {
     const flag = args[index],
       value = args[index + 1];
     if (
-      !['--data', '--socket', '--vm-config', '--mode'].includes(flag) ||
+      !['--data', '--socket', '--vm-config', '--mode', '--qemu-bundle'].includes(flag) ||
       values.has(flag) ||
       !value ||
       value.startsWith('--') ||
@@ -118,7 +125,7 @@ export function parseAgentArguments(args: string[]): AgentArguments {
     values.set(flag, flag === '--mode' ? value : path.resolve(value));
   }
   if (
-    ![3, 4].includes(values.size) ||
+    ![3, 4, 5].includes(values.size) ||
     !values.has('--data') ||
     !values.has('--socket') ||
     !values.has('--vm-config')
@@ -129,6 +136,7 @@ export function parseAgentArguments(args: string[]): AgentArguments {
     socketPath: values.get('--socket')!,
     vmConfigFile: values.get('--vm-config')!,
     ...(values.has('--mode') ? { mode: 'native' as const } : {}),
+    ...(values.has('--qemu-bundle') ? { qemuBundle: values.get('--qemu-bundle')! } : {}),
   };
 }
 export function agentScope(dataRoot: string, configFile: string) {
@@ -181,6 +189,43 @@ async function assets(dataRoot: string, signal?: AbortSignal): Promise<Assets> {
     restoreHelper: fileURLToPath(new URL('./restore-worker.mjs', import.meta.url)),
   };
 }
+async function executionTarget(
+  options: AgentArguments,
+  factory: MainDependencies,
+  signal?: AbortSignal,
+) {
+  if ((factory.platform ?? process.platform) === 'win32') {
+    await secureDirectory(options.dataRoot);
+    const config = await readVmConnection(options.vmConfigFile);
+    if (!config?.enabled) throw new Error('EXECUTOR_VM_NOT_CONFIGURED');
+    signal?.throwIfAborted();
+    return {
+      target: vmConnectionTarget(config),
+      link: factory.qemu?.(config, options.dataRoot) ?? new QemuLink(config, options.dataRoot),
+    };
+  }
+  const payload = factory.assets ?? (await assets(options.dataRoot, signal));
+  const limactl = await factory.tools({
+    dataRoot: options.dataRoot,
+    vmConfigFile: options.vmConfigFile,
+    packDirectory: payload.packDirectory,
+    archive: payload.limaArchive,
+    digest: payload.limaDigest,
+  });
+  signal?.throwIfAborted();
+  const config = await factory.bootstrap({
+    ...payload,
+    dataRoot: options.dataRoot,
+    vmConfigFile: options.vmConfigFile,
+    limactl,
+    signal,
+  });
+  signal?.throwIfAborted();
+  return {
+    target: agentVmTarget(config),
+    link: factory.link(config, path.join(options.dataRoot, 'executor-tunnel.sock')),
+  };
+}
 export async function startAgentProcess(
   options: AgentArguments,
   factory: MainDependencies = dependencies,
@@ -207,7 +252,20 @@ export async function startAgentProcess(
               return factory.bootstrap({ ...payload, ...options, limactl, signal: installSignal });
             },
           })
-        : undefined;
+        : (factory.platform ?? process.platform) === 'win32'
+          ? new QemuSetup({
+              dataRoot: options.dataRoot,
+              vmConfigFile: options.vmConfigFile,
+              // Windows startup must remain independent of the Mac-only download manifest.
+              bundleDirectory:
+                options.qemuBundle ??
+                path.join(
+                  factory.assets?.packDirectory ??
+                    fileURLToPath(new URL('../environment', import.meta.url)),
+                  'qemu',
+                ),
+            })
+          : undefined;
     const native = await (factory.native ?? startNativeAgent)({
       environment,
       identity: {
@@ -268,30 +326,15 @@ export async function startAgentProcess(
   };
   try {
     signal?.throwIfAborted();
+    if ((factory.platform ?? process.platform) === 'win32') await secureDirectory(options.dataRoot);
     await assertSetupRunning(options.dataRoot);
-    const payload = factory.assets ?? (await assets(options.dataRoot, signal));
-    const limactl = await factory.tools({
-      dataRoot: options.dataRoot,
-      vmConfigFile: options.vmConfigFile,
-      packDirectory: payload.packDirectory,
-      archive: payload.limaArchive,
-      digest: payload.limaDigest,
-    });
-    signal?.throwIfAborted();
-    const config = await factory.bootstrap({
-      ...payload,
-      dataRoot: options.dataRoot,
-      vmConfigFile: options.vmConfigFile,
-      limactl,
-      signal,
-    });
-    signal?.throwIfAborted();
-    const target = agentVmTarget(config),
+    const prepared = await executionTarget(options, factory, signal);
+    link = prepared.link;
+    const target = prepared.target,
       scope = agentScope(options.dataRoot, options.vmConfigFile);
     const powerFile = path.join(options.dataRoot, 'host-recovery.json'),
       cacheFile = path.join(options.dataRoot, 'execution-snapshot.json');
     const policy = await readStartupPolicy({ target, powerFile, cacheFile });
-    link = factory.link(config, path.join(options.dataRoot, 'executor-tunnel.sock'));
     connection = factory.connection(link, {
       attachOnly: policy.attachOnly,
       ...(policy.attachOnly && policy.initialSnapshot

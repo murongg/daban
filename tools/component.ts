@@ -22,6 +22,7 @@ import {
   linuxFilename,
   linuxIndex,
 } from '@daban/engine/component';
+import { secureDirectory } from '@daban/engine/local-computer';
 import {
   componentPaths,
   extractComponent,
@@ -163,8 +164,10 @@ else if (action === 'fetch') {
   assert.equal((await stat(archive)).size, expected.bytes);
   assert.equal((await hashAsset(archive, 'sha256')).digest, expected.sha256);
   console.timeEnd('runtime:archive-integrity');
-  await withComponentStage(async (stage) => {
+  await withComponentStage(async (temporary) => {
     console.time('runtime:extract');
+    // Extraction must inherit private ACLs rather than the Windows shared temp permissions.
+    const stage = await secureDirectory(path.join(temporary, 'private'));
     await extractComponent(archive, stage, platform);
     console.timeEnd('runtime:extract');
     console.time('runtime:verify');

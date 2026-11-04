@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { secureDirectory } from '@daban/engine/local-computer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { componentPaths, verifyComponent } from './component-install';
 
@@ -13,6 +14,7 @@ async function fixture() {
   roots.push(directory);
   const root = path.join(directory, 'DabanRuntime.app'),
     resources = path.join(root, 'Contents/Resources');
+  await secureDirectory(root);
   await mkdir(path.join(root, 'Contents/MacOS'), { recursive: true });
   await mkdir(path.join(resources, 'agent'), { recursive: true });
   await writeFile(path.join(root, 'Contents/MacOS/agent'), 'SYNTHETIC NODE', { mode: 0o700 });

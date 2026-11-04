@@ -24,3 +24,27 @@ test('validates legacy and optional-runtime preparation progress without accepti
   ])
     expect(isSetupStatus(status)).toBe(false);
 });
+
+test('Windows setup carries bounded user-facing resources and acceleration state without private connection details', () => {
+  const windows = {
+    acceleration: 'restart',
+    memoryMiB: 6144,
+    diskGiB: 64,
+    requiredBytes: 8 * 1024 ** 3,
+    availableBytes: 32 * 1024 ** 3,
+  };
+  const status = { required: true, target: 'linux', phase: 'available', windows };
+  expect(isSetupStatus(status)).toBe(true);
+  expect(isSetupStatus({ ...status, windows: { ...windows, availableBytes: 4 * 1024 ** 4 } })).toBe(
+    true,
+  );
+  for (const patch of [
+    { acceleration: 'invented' },
+    { mode: 'untrusted' },
+    { memoryMiB: -1 },
+    { requiredBytes: Number.NaN },
+    { identityFile: 'SYNTHETIC PRIVATE PATH' },
+    { token: 'SYNTHETIC SECRET' },
+  ])
+    expect(isSetupStatus({ ...status, windows: { ...windows, ...patch } })).toBe(false);
+});

@@ -232,8 +232,9 @@ export interface HostComposition {
   environment?: {
     readonly busy: boolean;
     status(): Promise<SetupStatus>;
-    start(): Promise<SetupStatus>;
+    start(mode?: import('@daban/protocol').QemuMode): Promise<SetupStatus>;
     cancel(): Promise<SetupStatus>;
+    enable?(): Promise<SetupStatus>;
   };
   localComputer?: import('./local-computer.js').LocalComputerClient;
   nativeWorkspace?: string;
@@ -555,14 +556,34 @@ export async function startPrototype({
           if (req.method !== 'POST' || url.search) throw new Fault('INVALID_SETUP_REQUEST', 400);
           if (!ready || !host.environment) throw new Fault('SETUP_UNAVAILABLE', 503);
           const request = await body(req),
-            action = request.action;
+            action = request.action,
+            mode = request.mode;
+          const fields =
+            action === 'enable'
+              ? ['scope', 'action', 'confirmed']
+              : action === 'start'
+                ? ['scope', 'action', 'mode']
+                : ['scope', 'action'];
           if (
-            Object.keys(request).length !== 2 ||
+            Object.keys(request).some((key) => !fields.includes(key)) ||
             request.scope !== host.scope ||
-            (action !== 'status' && action !== 'start' && action !== 'cancel')
+            !['status', 'start', 'cancel', 'enable'].includes(String(action)) ||
+            (action === 'enable' && request.confirmed !== true) ||
+            (mode !== undefined && mode !== 'whpx' && mode !== 'tcg')
           )
             throw new Fault('INVALID_SETUP_REQUEST', 400);
-          const value = await host.environment[action]();
+          if (mode !== undefined && !(await host.environment.status()).windows)
+            throw new Fault('INVALID_SETUP_REQUEST', 400);
+          if (action === 'enable' && !host.environment.enable)
+            throw new Fault('SETUP_UNAVAILABLE', 503);
+          const value =
+            action === 'enable'
+              ? await host.environment.enable!()
+              : action === 'start'
+                ? await host.environment.start(mode)
+                : action === 'cancel'
+                  ? await host.environment.cancel()
+                  : await host.environment.status();
           if (!isSetupStatus(value)) throw new Fault('SETUP_STORE', 500);
           return json(res, value);
         }

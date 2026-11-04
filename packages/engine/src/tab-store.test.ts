@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 interface Registry {
   tabs: { id: string; bot: string; url: string; title: string }[];
@@ -110,14 +111,15 @@ const state: Registry = {
 };
 test('private tab state and command receipts survive reopening without replaying a claimed effect', async () => {
   const { TabStore } = await load();
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-tab-store-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-tab-store-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'tabs.sqlite');
   let store = new TabStore(file, ['a', 'b']);
   try {
     await store.ready;
     expect(await store.read()).toBe(undefined);
     await store.save(state);
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect(await privateMetadata(file, await stat(file), 0o600)).toBe(true);
     expect(await store.claim('mock-claimed', 'a', 'a'.repeat(64))).toBe('new');
     expect(await store.claim('mock-claimed', 'a', 'a'.repeat(64))).toBe('claimed');
     await expect(store.claim('mock-claimed', 'b', 'a'.repeat(64))).rejects.toMatchObject({
@@ -147,7 +149,7 @@ test('private tab state and command receipts survive reopening without replaying
     expect(await store.claim('mock-old-0', 'a', 'd'.repeat(64))).toBe('settled');
   } finally {
     await store.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 test('invalid metadata, symlinks and corrupt tab storage fail closed without replacing the saved bytes', async () => {

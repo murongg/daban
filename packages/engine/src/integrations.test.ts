@@ -4,6 +4,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
 import { Integrations } from './integrations.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 const save = {
   requestId: 'mock-create',
@@ -26,14 +27,15 @@ const tools = [
   },
 ];
 async function fixture() {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-integrations-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-integrations-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const store = new Integrations(path.join(root, 'integrations.sqlite'));
   return {
     root,
     store,
     close: async () => {
       await store.close();
-      await rm(root, { recursive: true, force: true });
+      await rm(temporary, { recursive: true, force: true });
     },
   };
 }
@@ -217,7 +219,8 @@ test('private MCP settings never echo endpoint parameters or credentials; exact 
       bearer: null,
     });
     expect((await f.store.privateConfig(save.id)).bearer).toBe(undefined);
-    expect((await stat(path.join(f.root, 'integrations.sqlite'))).mode & 0o777).toBe(0o600);
+    const file = path.join(f.root, 'integrations.sqlite');
+    expect(await privateMetadata(file, await stat(file), 0o600)).toBe(true);
   } finally {
     await f.close();
   }

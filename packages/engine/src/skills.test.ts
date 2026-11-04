@@ -4,6 +4,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
 import { tables } from './database.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 import { parseSkill, Skills } from './skills.js';
 
 const markdown = (name = 'mock-summary', body = '只整理用户提供的合成记录。') =>
@@ -87,7 +88,8 @@ test('SKILL.md parsing keeps the original document and native invocation policy 
 });
 
 test('import is disabled, content-preserving and idempotent; edits are CAS and never overwrite a conflicting name', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-skills-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-skills-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const store = new Skills(path.join(root, 'skills.sqlite'));
   try {
     const first = await store.import(markdown());
@@ -113,10 +115,11 @@ test('import is disabled, content-preserving and idempotent; edits are CAS and n
       code: 'SKILL_NAME_CONFLICT',
     });
     expect((await store.read(first.id)).content).toBe(changed.content);
-    expect((await stat(path.join(root, 'skills.sqlite'))).mode & 0o777).toBe(0o600);
+    const file = path.join(root, 'skills.sqlite');
+    expect(await privateMetadata(file, await stat(file), 0o600)).toBe(true);
   } finally {
     await store.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 

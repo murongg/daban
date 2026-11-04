@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import type { SetupStatus } from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentSetup } from './agent-setup';
@@ -21,7 +22,7 @@ async function fixture() {
     entry: join(root, 'agent.js'),
     executable: join(root, 'node'),
   };
-  await fs.mkdir(config.dataRoot, { mode: 0o700 });
+  await secureDirectory(config.dataRoot);
   await fs.writeFile(config.entry, 'SYNTHETIC ENTRY', { mode: 0o600 });
   await fs.writeFile(config.executable, 'SYNTHETIC EXECUTABLE', { mode: 0o700 });
   return { root, config };
@@ -53,9 +54,10 @@ it.each(['progress.json', 'cancel.json'])(
       const handle = await open(target, flags, mode);
       if (target === file && !replaced) {
         replaced = true;
-        await fs.writeFile(file + '.replacement', content, { mode: 0o600 });
-        await fs.rename(file + '.replacement', file);
-        expect((await handle.stat()).nlink).toBe(0);
+        const info = await handle.stat();
+        // Windows locks open entries against replacement; model the unlinked observation at its IO boundary.
+        info.nlink = 0;
+        vi.spyOn(handle, 'stat').mockResolvedValue(info);
       }
       return handle;
     });
@@ -84,6 +86,38 @@ it('still rejects a live hard-linked progress file', async () => {
     await setup.close();
   }
 });
+
+it.each(['progress.json', 'cancel.json'])(
+  'does not trust a named entry swapped before opening (%s)',
+  async (name) => {
+    const f = await fixture();
+    const setup = new AgentSetup({ config: f.config });
+    await setup.status();
+    const file = join(f.config.dataRoot, name);
+    const content =
+      name === 'progress.json'
+        ? JSON.stringify({ required: true, phase: 'verifying' })
+        : JSON.stringify({ cancelled: true });
+    await fs.writeFile(file, content, { mode: 0o600 });
+    await fs.writeFile(file + '.replacement', content, { mode: 0o600 });
+    const open = fs.open.bind(fs);
+    let swapped = false;
+    vi.spyOn(fs, 'open').mockImplementation(async (target, flags, mode) => {
+      if (target === file && !swapped) {
+        swapped = true;
+        await fs.rename(file + '.replacement', file);
+      }
+      return open(target, flags, mode);
+    });
+    try {
+      const read = Reflect.get(setup, 'read') as (file: string) => Promise<unknown>;
+      if (name === 'progress.json') await expect(read.call(setup, name)).resolves.toBeUndefined();
+      else await expect(read.call(setup, name)).rejects.toThrow('SETUP_STORE');
+    } finally {
+      await setup.close();
+    }
+  },
+);
 
 it('a progress read begun before readiness cannot revert completion or start another supervisor', async () => {
   const f = await fixture();
@@ -206,6 +240,7 @@ it('a delayed VM-existence check cannot start observation after an explicit star
 it('offers setup without starting anything and reports progress until the daemon is actually ready', async () => {
   const f = await fixture();
   const updates: SetupStatus[] = [];
+  const progressWritten = deferred();
   let release: () => unknown = () => {};
   const owner = {
     close: vi.fn(async () => {}),
@@ -215,6 +250,7 @@ it('offers setup without starting anything and reports progress until the daemon
         JSON.stringify({ required: true, phase: 'extracting', progress: 42 }),
         { mode: 0o600 },
       );
+      progressWritten.resolve();
       await new Promise<unknown>((done) => {
         release = () => done(undefined);
       });
@@ -225,22 +261,24 @@ it('offers setup without starting anything and reports progress until the daemon
   const setup = new AgentSetup({
     config: f.config,
     daemon: factory,
-    pollMs: 5,
+    // Observe committed fixture writes explicitly; a 5ms timer races Windows file replacement under CI load.
+    pollMs: 60000,
     onChange: (value) => updates.push(value),
   });
   try {
     expect(await setup.status()).toEqual({ required: true, phase: 'available' });
     expect(factory).not.toHaveBeenCalled();
     expect(await setup.start()).toMatchObject({ required: true, phase: 'verifying' });
-    await vi.waitFor(() =>
-      expect(updates).toContainEqual({ required: true, phase: 'extracting', progress: 42 }),
-    );
+    await progressWritten.promise;
+    await Reflect.apply(Reflect.get(setup, 'poll'), setup, []);
+    expect(updates).toContainEqual({ required: true, phase: 'extracting', progress: 42 });
     await fs.writeFile(
       join(f.config.dataRoot, 'progress.json'),
       JSON.stringify({ required: true, phase: 'complete' }),
       { mode: 0o600 },
     );
-    await vi.waitFor(() => expect(updates).toContainEqual({ required: true, phase: 'connecting' }));
+    await Reflect.apply(Reflect.get(setup, 'poll'), setup, []);
+    expect(updates).toContainEqual({ required: true, phase: 'connecting' });
     expect(updates.some((value) => value.phase === 'complete')).toBe(false);
     release();
     await setup.settled;
@@ -253,6 +291,7 @@ it('offers setup without starting anything and reports progress until the daemon
 
 it('pauses by marker even after a partial VM configuration exists and resumes without deleting trusted data', async () => {
   const f = await fixture();
+  const partialWritten = deferred();
   const privateFile = join(f.config.dataRoot, 'private-record.json');
   await fs.writeFile(privateFile, 'SYNTHETIC PRIVATE RECORD', { mode: 0o600 });
   let release: () => unknown = () => {};
@@ -264,27 +303,32 @@ it('pauses by marker even after a partial VM configuration exists and resumes wi
       ensure: vi.fn(async () => {
         starts++;
         await fs.writeFile(f.config.vmConfig, '{"synthetic":"partial"}', { mode: 0o600 });
-        if (starts === 1)
+        if (starts === 1) {
+          partialWritten.resolve();
           await new Promise<unknown>((done) => {
             release = () => done(undefined);
           });
+        }
       }),
     };
     owners.push(owner);
     return owner;
   });
-  const setup = new AgentSetup({ config: f.config, daemon: factory, pollMs: 5 });
+  // This checks persisted pause/resume, not polling: commit the partial write before creating another observer.
+  const setup = new AgentSetup({ config: f.config, daemon: factory, pollMs: 60000 });
   try {
     await setup.start();
-    await vi.waitFor(() => expect(starts).toBe(1));
+    await partialWritten.promise;
+    expect(starts).toBe(1);
     expect(await setup.cancel()).toMatchObject({ required: true, phase: 'cancelled' });
     expect(JSON.parse(await fs.readFile(join(f.config.dataRoot, 'cancel.json'), 'utf8'))).toEqual({
       cancelled: true,
     });
-    expect((await fs.lstat(join(f.config.dataRoot, 'cancel.json'))).mode & 0o777).toBe(0o600);
+    const marker = join(f.config.dataRoot, 'cancel.json');
+    expect(await privateMetadata(marker, await fs.lstat(marker), 0o600)).toBe(true);
     await setup.settled;
     expect(owners[0].close).toHaveBeenCalled();
-    const reopened = new AgentSetup({ config: f.config, daemon: factory, pollMs: 5 });
+    const reopened = new AgentSetup({ config: f.config, daemon: factory, pollMs: 60000 });
     expect(await reopened.status()).toMatchObject({ required: true, phase: 'cancelled' });
     expect(starts).toBe(1);
     await reopened.start();

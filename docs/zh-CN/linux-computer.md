@@ -2,7 +2,7 @@
 
 [使用文档](README.md) · [English](../en/linux-computer.md)
 
-适用：配有本地 Linux 环境的 Apple 芯片 Mac。Windows 当前提供[本机桌面](local-computer.md)，不提供这套独立 Linux 桌面。
+适用：配有本地 Linux 环境的 Apple 芯片 Mac，或按需下载 [QEMU 环境](../windows-vm.md)的 Windows x64。Windows 在点击安装后下载、创建并自动接入 Linux 电脑，默认采用 WHPX 硬件加速，另有主动选择的较慢兼容模式。本机桌面仍可单独授权使用。
 
 ## 连接 Bot 的电脑
 

@@ -6,6 +6,7 @@ import type { TranscriptScope } from '@daban/protocol';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
+import { secureDirectory } from './private-files.js';
 import { redact } from './redaction.js';
 import {
   projectInteraction,
@@ -28,7 +29,8 @@ const call = (seq = 1, text = '{"path":"/workspace/synthetic.txt"}') =>
   });
 
 test('thinking is an owned, redacted record separate from assistant text and survives restart', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-thinking-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-thinking-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'transcripts.sqlite');
   const event = note(7, 'assistant/message', {
     turn: 1,
@@ -66,12 +68,13 @@ test('thinking is an owned, redacted record separate from assistant text and sur
     expect(log.content(scope, 1).text).toBe(thinking.text);
   } finally {
     await log.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
 test('a pre-ORM transcript file keeps its events, interrupts open runs and keeps numbering', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-transcripts-legacy-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-transcripts-legacy-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'transcripts.sqlite');
   const legacy = { ...scope, runId: 'mock-legacy-run' };
   const text = 'SYNTHETIC LEGACY RESULT';
@@ -116,7 +119,7 @@ test('a pre-ORM transcript file keeps its events, interrupts open runs and keeps
     expect(log.page(scope).items.map((item) => item.seq)).toStrictEqual([1, 2]);
   } finally {
     await log.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -152,7 +155,8 @@ test('a non-compaction tool-result correction stays visible in execution records
 });
 
 test('tool result recovery requires its persisted transcript owner even if orphaned events remain', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-result-owner-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-result-owner-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'transcripts.sqlite'),
     log = new Transcripts(file);
   try {
@@ -176,7 +180,7 @@ test('tool result recovery requires its persisted transcript owner even if orpha
     );
   } finally {
     await log.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
@@ -344,7 +348,8 @@ test('JSON-escaped credentials are removed from tool arguments, results and dura
 });
 
 test('durable transcript pages retain every event beyond the status window and page full long content', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-transcripts-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-transcripts-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'transcripts.sqlite');
   let log = new Transcripts(file);
   try {
@@ -394,12 +399,13 @@ test('durable transcript pages retain every event beyond the status window and p
     expect(joined).toBe(text);
   } finally {
     await log.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
 test('transcript scope, append identity and close boundaries cannot be rebound or silently replayed', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-transcript-scope-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-transcript-scope-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const log = new Transcripts(path.join(root, 'transcripts.sqlite'));
   try {
     await log.ready;
@@ -443,12 +449,13 @@ test('transcript scope, append identity and close boundaries cannot be rebound o
     expect(log.page(scope).items.length).toBe(1);
   } finally {
     await log.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
 test('legacy missing transcripts and crash prefixes stay distinguishable from a complete empty run', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-transcript-crash-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-transcript-crash-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const file = path.join(root, 'transcripts.sqlite');
   let log = new Transcripts(file);
   try {
@@ -472,12 +479,13 @@ test('legacy missing transcripts and crash prefixes stay distinguishable from a 
     expect(log.page(empty).items).toStrictEqual([]);
   } finally {
     await log.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 
 test('transcript storage refuses a symlink without modifying its target', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'mock-transcript-link-'));
+  const temporary = await mkdtemp(path.join(tmpdir(), 'mock-transcript-link-'));
+  const root = await secureDirectory(path.join(temporary, 'private'));
   const original = path.join(root, 'original.sqlite');
   const first = new Transcripts(original);
   await first.ready;
@@ -490,7 +498,7 @@ test('transcript storage refuses a symlink without modifying its target', async 
     expect(await readFile(original)).toStrictEqual(before);
   } finally {
     await linked.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(temporary, { recursive: true, force: true });
   }
 });
 

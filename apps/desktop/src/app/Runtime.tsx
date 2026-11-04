@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { vmErrorKey } from '../../shared/vm';
 import { type MessageKey, t, useLocale } from '../i18n/locale';
 import { taskErrorKey } from '../i18n/tasks';
 
@@ -123,6 +124,8 @@ export function useRuntime() {
 }
 export function runtimeError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
+  const vmKey = vmErrorKey(error);
+  if (vmKey) return t(vmKey);
   return runtimeMessage(code, t('errors.operationUnconfirmedCheckConnectionTaskStateRetrying'));
 }
 export function runtimeMessage(code: string, fallback = code) {

@@ -652,6 +652,10 @@ export class ModelRuns {
   private readonly workspace: AgentWorkspace;
   private readonly sdkFile: string;
   private readonly execution?: WorkspaceExecutor;
+  private get workspacePaths() {
+    // Guest paths remain POSIX even when the model host and its private DSH files are on Windows.
+    return this.execution ? path.posix : path;
+  }
   private readonly bridge?: { socketPath: string; stdioEntry: string; certificateFile?: string };
   private readonly botAdmission: (bot: string) => boolean;
   private readonly sessions = new Map<
@@ -1449,7 +1453,8 @@ export class ModelRuns {
       intentId = prior.intentId || prior.runId;
       const root = await this.workspace.base(),
         directory = await this.workspace.scope(prior.outputDirectory).base();
-      if (!directory.startsWith(root + path.sep)) throw new Fault('INVALID_RETRY', 400);
+      if (!directory.startsWith(root + this.workspacePaths.sep))
+        throw new Fault('INVALID_RETRY', 400);
       cachedInputs = [];
       const documents = prior.documentInputs || [];
       if (
@@ -1477,7 +1482,12 @@ export class ModelRuns {
           ['.', '..'].includes(name)
         )
           throw new Fault('INVALID_RETRY', 400);
-        const file = await this.workspace.read(path.relative(root, path.join(directory, name)));
+        const file = await this.workspace.read(
+          this.workspacePaths
+            .relative(root, this.workspacePaths.join(directory, name))
+            .split(this.workspacePaths.sep)
+            .join('/'),
+        );
         cachedInputs.push({ name, content: file.content || '' });
       }
     }
@@ -2209,10 +2219,14 @@ export class ModelRuns {
   }
   private async collectFiles(job: ModelJob) {
     const inputs = new Set(job.inputs),
-      prefix = path.relative(this.workspace.root, job.workdir);
+      paths = this.workspacePaths,
+      prefix = paths.relative(this.workspace.root, job.workdir).split(paths.sep).join('/');
     job.files = (await this.workspace.scope(job.workdir, job.canonicalRoot).list())
       .filter((file) => !inputs.has(file.path))
-      .map((file) => ({ ...file, path: path.join(prefix, file.path) }));
+      .map((file) => ({
+        ...file,
+        path: path.posix.join(prefix, file.path.split(paths.sep).join('/')),
+      }));
     job.verification.passed =
       job.phase === 'completed' &&
       job.files.length > 0 &&

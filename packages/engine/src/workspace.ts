@@ -108,7 +108,8 @@ export class WorkspaceFiles implements AgentWorkspace {
         if (info.isDirectory()) await walk(canonical, depth + 1);
         else if (info.isFile())
           result.push({
-            path: path.relative(root, canonical),
+            // Public workspace references use '/', including when their storage lives on a Windows host.
+            path: path.relative(root, canonical).split(path.sep).join('/'),
             name,
             size: info.size,
             modified: info.mtime.toISOString(),

@@ -6,10 +6,11 @@
   "dependencies": {
     "@daban/engine": "0.1.4",
     "@daban/protocol": "0.1.4",
-    "@deepseek-ai/dsh-sdk-client": "0.2.1-rc.3"
+    "@deepseek-ai/dsh-sdk-client": "0.2.1-rc.3",
+    "selfsigned": "5.5.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node --experimental-strip-types ../../tools/sdk.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "license": "AGPL-3.0-only",

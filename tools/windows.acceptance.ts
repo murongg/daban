@@ -57,7 +57,7 @@ await withComponentStage(async (inspect) => {
   console.timeEnd('acceptance:inspect-extract');
   const cache = path.join(root, 'components/downloads');
   await mkdir(cache, { recursive: true });
-  await copyFile(archive, path.join(cache, reference.assets[0].sha256 + '.zip'));
+  await copyFile(archive, path.join(cache, `${reference.assets[0].sha256}.zip`));
   const agent = path.join(inspect, 'DabanRuntime/agent'),
     smokes = ['native-loop.test.js', 'calendar.test.js'].map((name) => path.join(agent, name));
   for (const smoke of smokes)
@@ -103,7 +103,7 @@ let spawnFailure: unknown;
 child.once('error', (error) => {
   spawnFailure = error;
 });
-async function state() {
+async function state(route = '/api/state', body?: Record<string, string>) {
   const token = (await readFile(path.join(dataRoot, 'model/control-token'), 'utf8')).trim();
   assert.match(token, /^[a-f0-9]{64}$/);
   const tls = await privateClientOptions(path.join(dataRoot, 'model/control-certificate.pem'));
@@ -112,8 +112,13 @@ async function state() {
       {
         ...tls,
         socketPath,
-        path: '/api/state',
-        headers: { host: '127.0.0.1:8766', 'x-prototype-token': token },
+        path: route,
+        method: body ? 'POST' : 'GET',
+        headers: {
+          host: '127.0.0.1:8766',
+          'x-prototype-token': token,
+          ...(body ? { 'content-type': 'application/json' } : {}),
+        },
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -135,8 +140,10 @@ async function state() {
       },
     );
     call.on('error', reject);
-    call.setTimeout(2000, () => call.destroy(new Error('SMOKE_TIMEOUT')));
-    call.end();
+    // Cold CIM/WHPX detection needs the same budget as Electron's EnvironmentClient.
+    const timeout = route === '/api/host/environment' ? 8000 : 2000;
+    call.setTimeout(timeout, () => call.destroy(new Error(`SMOKE_TIMEOUT:${route}`)));
+    call.end(body ? JSON.stringify(body) : undefined);
   });
 }
 try {
@@ -165,6 +172,9 @@ try {
       assert.deepEqual(value.profiles, []);
       assert.equal((value.knowledge as { documentParsing?: boolean }).documentParsing, false);
       assert.equal((value.schedules as { available?: boolean }).available, true);
+      const setup = await state('/api/host/environment', { scope, action: 'status' });
+      assert.equal(setup.phase, 'available');
+      assert.ok((setup.windows as { downloadBytes?: number }).downloadBytes);
       ready = true;
       console.log(`Runtime ready after ${Date.now() - preparationStarted} ms.`);
       break;
@@ -178,9 +188,20 @@ try {
     `Packaged client failed first-use startup: ${lastError instanceof Error ? lastError.message : 'not ready'}`,
   );
   console.log(
-    'Packaged Windows first-use startup verified: no VM, empty workspace, desktop control disabled.',
+    'Packaged Windows first-use startup verified: optional Linux download available, no VM, empty workspace, desktop control disabled.',
   );
 } finally {
+  // Only fixed preflight codes and durations are public diagnostics; other daemon logs can contain private context.
+  const diagnostics = await readFile(path.join(dataRoot, 'agent.log'), 'utf8').catch(() => '');
+  for (const line of diagnostics.split(/\r?\n/))
+    if (
+      /^\[windows-probe\] \d+ (ready|disabled|restart|firmware|unsupported|QEMU_HOST_UNAVAILABLE)$/.test(
+        line,
+      ) ||
+      /^\[windows-probe-stage\] (module|cpu|feature|capability|launch)$/.test(line) ||
+      /^\[windows-probe-cim\] ([0-9]|[1-5][0-9]|6[0-4])$/.test(line)
+    )
+      console.log(line);
   for (const line of launchOutput.split(/\r?\n/))
     if (/^\[agent-components\] [a-z]+(?: [A-Z_]+)?\s*$/.test(line)) console.log(line);
   if (child.pid && child.exitCode === null && child.signalCode === null)
