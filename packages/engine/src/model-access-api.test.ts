@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isModelSaved, isModelStatus, managedProtocol } from '@daban/protocol';
 import { expect, test } from 'vitest';
+import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
 function deferred() {
@@ -15,6 +16,8 @@ function deferred() {
 }
 test('model HTTP owns credentials, exact receipts and an accepted probe after its client disconnects', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-model-http-'));
+  // Match Host startup: Windows control tokens require an ACL-validated root.
+  await secureDirectory(root);
   const entered = deferred();
   const gate = deferred();
   let directoryCalls = 0;
