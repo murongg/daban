@@ -583,10 +583,18 @@ export class TaskJournal {
         phase: task.phase as 'completed' | 'failed' | 'interrupted',
       }));
   }
-  async read(bot: string, runId: string) {
-    await this.writing;
+  private saved(bot: string, runId: string) {
     const record = this.records.get(runId);
     return record?.bot === bot ? structuredClone(record) : undefined;
+  }
+  async read(bot: string, runId: string) {
+    await this.writing;
+    return this.saved(bot, runId);
+  }
+  async readCommitted(bot: string, runId: string) {
+    // Diagnostics can retain durable evidence after failure; put/read still reject for authoritative callers.
+    await this.writing.catch(() => undefined);
+    return this.saved(bot, runId);
   }
 }
 
