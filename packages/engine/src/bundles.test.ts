@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type BotBundle, botBundleText, isBotBundle } from '@daban/protocol';
 import { expect, test } from 'vitest';
-import { BotBundles } from './bundles.js';
+import { BotBundles, isBundleRecord } from './bundles.js';
 import { Fault } from './control.js';
 import { Knowledge } from './knowledge.js';
 import { BotProfiles } from './profiles.js';
@@ -31,6 +31,26 @@ const header = (value: BotBundle, id = 'mock-operation') => ({
   id,
   sha256: createHash('sha256').update(botBundleText(value)).digest('hex'),
   size: Buffer.byteLength(botBundleText(value)),
+});
+
+test.each([
+  [{ dev: 1, ino: 47 }, true],
+  [{ dev: '1', ino: '18446744073709551615' }, true],
+  [{ dev: 1, ino: '18446744073709551616' }, false],
+  [{ dev: 1, ino: '01' }, false],
+  [{ dev: 1, ino: '-1' }, false],
+  [{ dev: 1, ino: Number.MAX_SAFE_INTEGER + 1 }, false],
+])('import metadata preserves exact file identity: %j', (payload, valid) => {
+  expect(
+    isBundleRecord({
+      version: 1,
+      header: header(bundle()),
+      target: 'mock-target',
+      state: 'awaiting',
+      applying: false,
+      payload,
+    }),
+  ).toBe(valid);
 });
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-bot-bundles-'));

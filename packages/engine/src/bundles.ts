@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
+import { lstat, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type BotBundle,
@@ -19,11 +19,11 @@ import { errorCode, Fault } from './control.js';
 import { Documents } from './documents.js';
 import { syncDirectory } from './durability.js';
 import type { Knowledge } from './knowledge.js';
-import { privateMetadata } from './private-files.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 import type { BotProfiles } from './profiles.js';
 import { parseSkill, type Skills } from './skills.js';
 
-type PayloadRef = { dev: number; ino: number };
+type PayloadRef = { dev: number | string; ino: number | string };
 export type BundleDocuments = Pick<Documents, 'extract'>;
 interface RecordData {
   version: 1;
@@ -49,6 +49,14 @@ interface Options {
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+const fileIdentity = (value: unknown) =>
+  typeof value === 'number'
+    ? Number.isSafeInteger(value) && value >= 0
+    : typeof value === 'string' &&
+      /^(?:0|[1-9][0-9]{0,19})$/.test(value) &&
+      BigInt(value) <= 18446744073709551615n;
+const identityField = (value: bigint) =>
+  value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
 const knownFailure = (error: unknown) => {
   const code = errorCode(error) ?? 'BOT_IMPORT_FAILED';
   return /^[A-Z_]{1,100}$/.test(code) ? code : 'BOT_IMPORT_FAILED';
@@ -85,8 +93,8 @@ function validRecord(value: unknown): value is RecordData {
     value.payload !== undefined &&
     (!object(value.payload) ||
       Object.keys(value.payload).some((key) => !['dev', 'ino'].includes(key)) ||
-      !Number.isSafeInteger(value.payload.dev) ||
-      !Number.isSafeInteger(value.payload.ino))
+      !fileIdentity(value.payload.dev) ||
+      !fileIdentity(value.payload.ino))
   )
     return false;
   if (value.state !== 'cancelled' && !value.payload) return false;
@@ -132,7 +140,7 @@ export class BotBundles {
     return this.reading || !!this.active;
   }
   private async load() {
-    await mkdir(this.options.directory, { recursive: true, mode: 0o700 });
+    await secureDirectory(this.options.directory);
     const info = await lstat(this.options.directory);
     if (
       !info.isDirectory() ||
@@ -237,6 +245,7 @@ export class BotBundles {
     );
     try {
       const info = await handle.stat();
+      const identity = await handle.stat({ bigint: true });
       if (
         !record.payload ||
         !info.isFile() ||
@@ -246,8 +255,8 @@ export class BotBundles {
           info,
           info.mode & 0o700,
         )) ||
-        info.dev !== record.payload.dev ||
-        info.ino !== record.payload.ino ||
+        identity.dev.toString() !== String(record.payload.dev) ||
+        identity.ino.toString() !== String(record.payload.ino) ||
         info.size > record.header.size
       )
         throw new Fault('BOT_IMPORT_STORE');
@@ -351,8 +360,9 @@ export class BotBundles {
       );
       let ref: PayloadRef;
       try {
-        const info = await handle.stat();
-        ref = { dev: info.dev, ino: info.ino };
+        // NTFS file ids can exceed 2^53; keep old safe-number records readable without rounding new ids.
+        const info = await handle.stat({ bigint: true });
+        ref = { dev: identityField(info.dev), ino: identityField(info.ino) };
         await handle.sync();
       } finally {
         await handle.close();

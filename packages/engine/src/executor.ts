@@ -68,7 +68,7 @@ const processToolList = [
   {
     name: 'process_start',
     description:
-      'Start a persistent Bash command in the Linux guest. Full guest files, network and passwordless sudo are available. Returns a process id; poll it rather than starting the command again.',
+      'Start a persistent Bash command in the Linux guest, with the actual task directory as cwd. Use relative output paths or the actual task directory from the request; /workspace and /shared are file-tool aliases and are not mounted here. Full guest files, network and passwordless sudo are available. Returns a process id; poll it rather than starting the command again. When using noclobber, create and write a new file in one step; do not precreate it before >, or bypass an existing-file conflict.',
     inputSchema: {
       type: 'object',
       properties: { command: { type: 'string', maxLength: 64000 } },
@@ -412,7 +412,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           ? {
               ...tool,
               description:
-                'Execute a Bash command in the Linux guest with full guest filesystem/network access and passwordless sudo. This tool waits for completion; use process_start for long-running or interactive work. Host files, keys and trusted controls are outside this guest.',
+                'Execute a Bash command in the Linux guest with full guest filesystem/network access and passwordless sudo. The actual task directory is cwd; use relative output paths or the actual path from the request. /workspace and /shared are file-tool aliases, not mounts for this command. This tool waits for completion; use process_start for long-running or interactive work. Host files, keys and trusted controls are outside this guest.',
             }
           : tool,
       ),
