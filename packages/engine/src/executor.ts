@@ -176,10 +176,12 @@ export async function startExecutor(options: ExecutorOptions = {}) {
   const nonce = randomUUID();
   const authority = new Authority(path.join(directory, 'token'));
   const viewers = new ViewerGrants();
-  const projects = new ProjectResources(
-    path.join(directory, 'projects'),
-    (profile) => machine.checkProfile(profile, computers.control),
-    (previous, next) => {
+  const workspace = new WorkspaceFiles(shared);
+  const legacyRoot = await workspace.base();
+  const projects = new ProjectResources(path.join(directory, 'projects'), {
+    legacyRoot,
+    prepare: (profile) => machine.checkProfile(profile, computers.control),
+    changing: (previous, next) => {
       if (!previous || projectReduction(previous.project, next.project)) return;
       const bots = new Set(
         [...previous.project.grants, ...next.project.grants].map((grant) => grant.bot),
@@ -200,11 +202,9 @@ export async function startExecutor(options: ExecutorOptions = {}) {
       )
         throw new Fault('PROJECT_BUSY');
     },
-  );
+  });
   // Legacy receipts remain available even when the project mirror fails closed.
   await projects.ready.catch(() => undefined);
-  const workspace = new WorkspaceFiles(shared);
-  await workspace.base();
   const processes = new ProcessManager({ directory: path.join(directory, 'processes'), boot });
   const documents = new Documents();
   const runs = new Map<string, GuestRun>();

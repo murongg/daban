@@ -21,6 +21,51 @@ async function fixture(t: TestContext) {
   return { root, service, token, client };
 }
 
+test.for(['parent', 'child'] as const)(
+  'a %s legacy workspace cannot overlap managed project resources',
+  async (relation, t) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-overlap-'));
+    const shared = relation === 'parent' ? root : path.join(root, 'projects', 'legacy');
+    await mkdir(shared, { recursive: true, mode: 0o700 });
+    await writeFile(path.join(shared, 'legacy.txt'), 'SYNTHETIC LEGACY');
+    const service = await startExecutor({
+      directory: root,
+      workspace: shared,
+      port: 0,
+      boot: 'mock-boot',
+    });
+    t.onTestFinished(async () => {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    });
+    const client = new RemoteExecutor({
+      url: `${service.origin}/exec`,
+      token: (await readFile(path.join(root, 'token'), 'utf8')).trim(),
+    });
+    await client.ready;
+    expect(client.snapshot?.capabilities).not.toContain('project-scope-v1');
+    expect(await client.call('workspace.read', { path: 'legacy.txt' })).toMatchObject({
+      content: 'SYNTHETIC LEGACY',
+    });
+    const resources: ProjectResources = {
+      project: {
+        id: 'mock-project',
+        name: 'SYNTHETIC',
+        revision: 1,
+        status: 'active',
+        grants: [],
+        environment: { files: 'project', browser: 'private' },
+      },
+      files: 'mock-files',
+      sharedProfile: 'mock-shared-profile',
+      profiles: {},
+    };
+    await expect(
+      client.call('projects.sync', resources as unknown as Record<string, unknown>),
+    ).rejects.toMatchObject({ code: 'PROJECT_WORKSPACE_OVERLAP' });
+  },
+);
+
 test('an unavailable project mirror fences project execution without disabling legacy files and receipts', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-mirror-'));
   await mkdir(path.join(root, 'projects'), { recursive: true, mode: 0o700 });

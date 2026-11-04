@@ -13,6 +13,12 @@ import { errorCode, Fault } from './control.js';
 import { secureDirectory } from './private-files.js';
 import { WorkspaceFiles } from './workspace.js';
 
+interface ResourceOptions {
+  legacyRoot?: string;
+  prepare?: (profile: string) => Promise<unknown>;
+  changing?: (previous: Resources | undefined, next: Resources) => unknown;
+}
+
 export class ProjectResources {
   readonly ready: Promise<unknown>;
   private readonly entries = new Map<string, Resources>();
@@ -21,13 +27,29 @@ export class ProjectResources {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(
     readonly directory: string,
-    private readonly prepare?: (profile: string) => Promise<unknown>,
-    private readonly changing?: (previous: Resources | undefined, next: Resources) => unknown,
+    private readonly options: ResourceOptions = {},
   ) {
     this.ready = this.load();
     this.ready.catch(() => {});
   }
   private async load() {
+    if (this.options.legacyRoot) {
+      const legacy = await realpath(this.options.legacyRoot);
+      const planned = path.join(
+        await realpath(path.dirname(this.directory)),
+        path.basename(this.directory),
+      );
+      const contains = (parent: string, child: string) => {
+        const relative = path.relative(parent, child);
+        return (
+          relative === '' ||
+          (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+        );
+      };
+      // The legacy port can read any descendant by path; hiding a directory from its list cannot protect project content.
+      if (contains(legacy, planned) || contains(planned, legacy))
+        throw new Fault('PROJECT_WORKSPACE_OVERLAP');
+    }
     await secureDirectory(this.directory);
     this.root = await realpath(this.directory);
     try {
@@ -68,7 +90,7 @@ export class ProjectResources {
           throw new Fault('PROJECT_RESOURCE_CONFLICT');
         if (previous?.project.revision === resources.project.revision)
           return { projectId: resources.project.id, revision: resources.project.revision };
-        this.changing?.(previous, resources);
+        this.options.changing?.(previous, resources);
         const identifiers = [
           resources.files,
           resources.sharedProfile,
@@ -107,7 +129,7 @@ export class ProjectResources {
         const existingProfiles = new Set(enabled(previous));
         for (const profile of new Set(enabled(resources))) {
           if (!existingProfiles.has(profile))
-            await this.prepare?.(path.join(this.root, profile, 'profile'));
+            await this.options.prepare?.(path.join(this.root, profile, 'profile'));
         }
         const replacement = new Map(this.entries);
         replacement.set(resources.project.id, resources);
