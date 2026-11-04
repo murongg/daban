@@ -45,6 +45,30 @@ export function signingDiagnostics(error: unknown) {
   });
 }
 
+async function stapleTicket(file: string, command: Run = run) {
+  const backoff = [5000, 15000];
+  const networkCodes = [-1001, -1003, -1004, -1005, -1006, -1009];
+  for (const action of ['staple', 'validate']) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await command('/usr/bin/xcrun', ['stapler', action, file]);
+        break;
+      } catch (error) {
+        // Apple reports transport failures on stdout too; a nonzero exit alone is not retryable.
+        const network = /\bNSURLErrorDomain\s+Code=(-\d+)\b/.exec(
+          signingDiagnostics(error).join('\n'),
+        );
+        if (attempt >= backoff.length || !network || !networkCodes.includes(Number(network[1])))
+          throw error;
+        console.warn(
+          `Apple ticket ${action}: transient network failure; attempt ${attempt + 2}/${backoff.length + 1} in ${backoff[attempt]} ms.`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoff[attempt]));
+      }
+    }
+  }
+}
+
 export function isMachO(bytes: Buffer) {
   return [
     'feedface',
@@ -214,8 +238,7 @@ export async function signComponent(app: string, archive: string, options: Signi
   try {
     await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, temporary]);
     await notarize(temporary, options);
-    await run('/usr/bin/xcrun', ['stapler', 'staple', app]);
-    await run('/usr/bin/xcrun', ['stapler', 'validate', app]);
+    await stapleTicket(app);
     await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
     await run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, archive]);
   } finally {
@@ -258,8 +281,7 @@ export async function notarizeDistribution(
   // The outer DMG submission issues tickets for its nested app too; keep its signed payload unchanged.
   await dependencies.submit(dmg, options);
   for (const file of [app, dmg]) {
-    await dependencies.run('/usr/bin/xcrun', ['stapler', 'staple', file]);
-    await dependencies.run('/usr/bin/xcrun', ['stapler', 'validate', file]);
+    await stapleTicket(file, dependencies.run);
   }
   await dependencies.run('/usr/sbin/spctl', ['--assess', '--type', 'execute', '--verbose=2', app]);
   await dependencies.run('/usr/sbin/spctl', [

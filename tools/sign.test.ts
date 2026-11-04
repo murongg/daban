@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import {
   isMachO,
   notarizeDistribution,
@@ -156,6 +156,178 @@ test('submits only the outer disk image and validates tickets for both download 
     expect.assert(events.includes(`stapler validate ${file}`));
     expect.assert(events.some((event) => event.startsWith('--assess') && event.endsWith(file)));
   }
+});
+
+test.each(['stdout', 'stderr'] as const)(
+  'retries transient Apple ticket failures from %s without resubmitting or repeating successful commands',
+  async (stream) => {
+    vi.useFakeTimers({ now: 0 });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const app = '/synthetic/Mock.app';
+    const dmg = '/synthetic/Mock.dmg';
+    const pending = new Set([`stapler staple ${app}`, `stapler validate ${dmg}`]);
+    const failure = Object.assign(new Error('SYNTHETIC_TICKET_TRANSPORT_FAILURE'), {
+      code: 68,
+      [stream]: 'Error Domain=NSURLErrorDomain Code=-1005 "SYNTHETIC_PRIVATE_DIAGNOSTIC"',
+    });
+    const submit = vi.fn(async () => undefined);
+    const run = vi.fn(async (_program: string, args: string[]) => {
+      if (pending.delete(args.join(' '))) throw failure;
+      return '';
+    });
+    try {
+      const outcome = notarizeDistribution(
+        app,
+        dmg,
+        { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
+        { submit, run },
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await vi.runAllTimersAsync();
+      expect(await outcome).toBeUndefined();
+      expect(submit).toHaveBeenCalledExactlyOnceWith(dmg, {
+        identity: 'Developer ID Application: Synthetic (TESTTEAM01)',
+      });
+      const commands = run.mock.calls.map(([, args]) => args.join(' '));
+      expect(commands.filter((command) => command === `stapler staple ${app}`)).toHaveLength(2);
+      expect(commands.filter((command) => command === `stapler validate ${app}`)).toHaveLength(1);
+      expect(commands.filter((command) => command === `stapler staple ${dmg}`)).toHaveLength(1);
+      expect(commands.filter((command) => command === `stapler validate ${dmg}`)).toHaveLength(2);
+      const assessments = commands.slice(commands.lastIndexOf(`stapler validate ${dmg}`) + 1);
+      expect(assessments).toHaveLength(2);
+      expect(assessments.every((command) => command.startsWith('--assess'))).toBe(true);
+      expect(Date.now()).toBe(10000);
+      expect(warning).toHaveBeenCalledTimes(2);
+      expect(warning.mock.calls.flat().every((value) => typeof value === 'string')).toBe(true);
+      expect(warning.mock.calls.flat().join(' ')).not.toContain('SYNTHETIC_PRIVATE_DIAGNOSTIC');
+    } finally {
+      warning.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
+test.each([-1001, -1003, -1004, -1005, -1006, -1009])(
+  'bounds Apple transport retries for code %i and preserves the final failure',
+  async (code) => {
+    vi.useFakeTimers({ now: 0 });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const failure = Object.assign(new Error('SYNTHETIC_TRANSPORT_UNAVAILABLE'), {
+      code: 68,
+      stdout: `Error Domain=NSURLErrorDomain Code=${code} "Synthetic network failure"`,
+    });
+    const attempts: number[] = [];
+    const submit = vi.fn(async () => undefined);
+    const run = vi.fn(async () => {
+      attempts.push(Date.now());
+      throw failure;
+    });
+    try {
+      const outcome = notarizeDistribution(
+        '/synthetic/Mock.app',
+        '/synthetic/Mock.dmg',
+        { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
+        { submit, run },
+      ).catch((error: unknown) => error);
+      await vi.runAllTimersAsync();
+      expect(await outcome).toBe(failure);
+      expect(attempts).toStrictEqual([0, 5000, 20000]);
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      warning.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
+
+test.each([
+  { code: 68, stdout: 'Synthetic invalid ticket data' },
+  { code: 65, stderr: 'Synthetic ticket missing' },
+  { code: 68, stdout: 'Error Domain=NSURLErrorDomain Code=-1202 "Synthetic certificate error"' },
+  { code: 'ENOENT', stderr: 'Synthetic missing executable' },
+])('fails permanent ticket errors immediately (%j)', async (diagnostic) => {
+  vi.useFakeTimers({ now: 0 });
+  const failure = Object.assign(new Error('SYNTHETIC_PERMANENT_FAILURE'), diagnostic);
+  const run = vi.fn(async () => {
+    throw failure;
+  });
+  try {
+    const outcome = notarizeDistribution(
+      '/synthetic/Mock.app',
+      '/synthetic/Mock.dmg',
+      { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
+      { submit: async () => undefined, run },
+    ).catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    expect(await outcome).toBe(failure);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(Date.now()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('ticket validation exhaustion stops before Gatekeeper assessments', async () => {
+  vi.useFakeTimers({ now: 0 });
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const failure = Object.assign(new Error('SYNTHETIC_TICKET_VALIDATION_UNAVAILABLE'), {
+    code: 68,
+    stdout: 'Error Domain=NSURLErrorDomain Code=-1005 "Synthetic network failure"',
+  });
+  const run = vi.fn(async (_program: string, args: string[]) => {
+    if (args[0] === 'stapler' && args[1] === 'validate') throw failure;
+    return '';
+  });
+  try {
+    const outcome = notarizeDistribution(
+      '/synthetic/Mock.app',
+      '/synthetic/Mock.dmg',
+      { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' },
+      { submit: async () => undefined, run },
+    ).catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    expect(await outcome).toBe(failure);
+    expect(run.mock.calls.map(([, args]) => args[1])).toStrictEqual([
+      'staple',
+      'validate',
+      'validate',
+      'validate',
+    ]);
+  } finally {
+    warning.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+test('notarization rejection and Gatekeeper failures are not ticket retries', async () => {
+  const failure = Object.assign(new Error('SYNTHETIC_SECURITY_GATE_FAILURE'), {
+    stdout: 'Error Domain=NSURLErrorDomain Code=-1005 "Synthetic network failure"',
+  });
+  const options = { identity: 'Developer ID Application: Synthetic (TESTTEAM01)' };
+  const run = vi.fn(async () => '');
+  const submit = vi.fn(async () => {
+    throw failure;
+  });
+  await expect(
+    notarizeDistribution('/synthetic/Mock.app', '/synthetic/Mock.dmg', options, { submit, run }),
+  ).rejects.toBe(failure);
+  expect(submit).toHaveBeenCalledTimes(1);
+  expect(run).not.toHaveBeenCalled();
+  const commands = vi.fn(async (program: string) => {
+    if (program === '/usr/sbin/spctl') throw failure;
+    return '';
+  });
+  await expect(
+    notarizeDistribution('/synthetic/Mock.app', '/synthetic/Mock.dmg', options, {
+      submit: async () => undefined,
+      run: commands,
+    }),
+  ).rejects.toBe(failure);
+  expect(commands.mock.calls.filter(([program]) => program === '/usr/sbin/spctl')).toHaveLength(1);
 });
 
 test('reports bounded signing command output without dumping unrelated process metadata', async () => {

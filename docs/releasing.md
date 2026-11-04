@@ -76,6 +76,8 @@ npm run release -- --release 0.1.4
 
 版本同步由 `bump.config.ts` 的执行步骤处理，保留独立部署的 `file:` 路径和第三方依赖版本。不要手工改版本或用 `git tag` 绕过此流程。`npm run release` 会推送提交和标签，确认前应检查目标版本与当前分支。
 
+macOS 的客户端和独立运行包共用票据重试策略：`stapler staple` 或 `validate` 遇到明确的 `NSURLErrorDomain` 瞬时网络错误时，每项操作最多尝试 3 次，重试前分别等待 5 秒、15 秒。已成功的操作与公证提交不重复执行。非网络错误或重试耗尽会阻止发布；签名、公证接受状态、票据验证和 Gatekeeper 检查仍须全部通过。
+
 也可在 Actions 手动运行 `Release`，输入**已有**标签。任何检查、公证或日志生成失败都会阻止发布。重试不会覆盖已经发布的版本；修改版本内容应创建新版本。
 
 生成产物：
@@ -113,6 +115,8 @@ Configure the secrets listed above. Apple secrets must contain a Developer ID Ap
 Upload the four verified, credential-free environment files above to the same repository's `environment-v38` release, or configure `MACOS_ENVIRONMENT_TAG`. The pinned base image and component checks must pass. Never distribute a used VM or modify expected hashes to accept an unverified image.
 
 After merging the changes to release, use a clean, up-to-date main checkout, run `npm ci`, then `npm run release`. bumpp prompts for a version and confirmation; use `npm run release -- --release 0.1.4` or `npm run release -- --release 0.1.4-beta.1` for an explicit version. The configuration synchronizes all six package versions, internal dependency pins, the root lockfile, and both standalone lockfiles, preserving vendored `file:` paths and third-party versions. bumpp creates a `chore(release): v<version>` commit and an annotated `v<version>` tag, then pushes both to trigger `Release`. Use this command instead of manually editing versions or creating tags. An existing tag can also be selected via manual dispatch.
+
+The macOS client and standalone runtime share ticket retries. Each `stapler staple` or `validate` operation gets up to three attempts for recognized transient `NSURLErrorDomain` transport failures, waiting 5 and 15 seconds before retries. Successful operations and notarization submissions are not repeated. Other failures or exhausted retries block publication; signing, notarization acceptance, ticket validation and Gatekeeper checks must all pass.
 
 Downloads include notarized Apple Silicon DMG/ZIP files, a Windows x64 portable ZIP, both language changelogs, and SHA-256 checksums. Release notes include both languages and the original change links. Existing releases are not overwritten. Windows signing and Intel Mac builds are not included. Installed clients support stable in-app updates; publish the NSIS installer, Mac ZIP, update manifests and blockmaps together. Portable Windows builds remain separate. Mac update configuration is embedded before signing, and ZIP packaging preserves the signed application.
 
