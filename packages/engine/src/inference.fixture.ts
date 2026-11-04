@@ -4,9 +4,8 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { Executor } from './execution.js';
 import { ModelRuns } from './model.js';
-import { RemoteWorkspace } from './remote-workspace.js';
+import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 
 export interface SyntheticRequest {
@@ -24,7 +23,7 @@ export async function inferenceFixture(
     request: SyntheticRequest,
     signal: AbortSignal,
   ) => SyntheticReply | Promise<SyntheticReply>,
-  execution?: Executor,
+  execution?: WorkspaceExecutor,
 ) {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-inference-'));
   let models!: ModelRuns;

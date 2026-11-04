@@ -1,20 +1,25 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   type AutomationSource,
   type BudgetScope,
   defaultBudgetPolicy,
+  executionVersion,
+  isExecutionRequest,
+  isProjectFileScope,
+  modelExecutionCapability,
+  projectCapability,
   type TaskRequest,
+  taskRunCapability,
+  validAgentId,
 } from '@daban/protocol';
-import { expect, test } from 'vitest';
-import { RemoteExecutor } from './execution.js';
-import { startExecutor } from './executor.js';
+import { expect, onTestFinished, test, vi } from 'vitest';
+import * as guest from './executor.js';
 import { GroupTools } from './group-tools.js';
 import { type GroupRunner, Groups } from './groups.js';
 import { inferenceFixture } from './inference.fixture.js';
 import type { ModelRuns } from './model.js';
+import type { WorkspaceExecutor } from './remote-workspace.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { Schedules } from './schedules.js';
 
@@ -25,6 +30,67 @@ const source: AutomationSource = {
   trigger: 'manual' as const,
   policy: { kind: 'all' as const },
 };
+
+function goalExecution() {
+  let sequence = 0,
+    opened = 0;
+  const handles = new Set<string>();
+  // The real Host/SDK consume a POSIX guest protocol; this unit fixture must not boot a POSIX daemon on Windows.
+  const execution = {
+    snapshot: { capabilities: [projectCapability, modelExecutionCapability, taskRunCapability] },
+    async call(method: string, params: Record<string, unknown>, signal?: AbortSignal) {
+      signal?.throwIfAborted();
+      const request = {
+        role: 'executor',
+        version: executionVersion,
+        id: `synthetic-goal-rpc-${++sequence}`,
+        method,
+        params,
+      };
+      if (!isExecutionRequest(request)) throw Error(`SYNTHETIC_INVALID_GOAL_RPC:${method}`);
+      const project = isProjectFileScope(params.project) ? params.project : undefined;
+      const base =
+        typeof params.root === 'string'
+          ? params.root
+          : project
+            ? `/mock-guest/projects/${project.resourceId}/runs`
+            : '/mock-guest/shared';
+      switch (request.method) {
+        case 'workspace.base':
+          return base;
+        case 'workspace.create': {
+          const parts = params.parts;
+          if (!Array.isArray(parts) || !parts.every(validAgentId))
+            throw Error('SYNTHETIC_INVALID_GOAL_DIRECTORY');
+          const directory = path.posix.join(base, ...parts),
+            handleId = `synthetic-goal-handle-${sequence}`;
+          handles.add(handleId);
+          return { root: base, path: directory, canonical: directory, handleId };
+        }
+        case 'workspace.verify':
+          if (!handles.has(String(params.handleId))) throw Error('SYNTHETIC_UNKNOWN_GOAL_HANDLE');
+          return { ok: true };
+        case 'workspace.close':
+          handles.delete(String(params.handleId));
+          return { ok: true };
+        case 'workspace.list':
+          return [];
+        case 'tools.open':
+          opened++;
+          return { tools: [] };
+        case 'projects.bind':
+          return { bot: params.bot, ...(params.scope ? { scope: params.scope } : {}) };
+        case 'projects.sync':
+        case 'tools.cancel':
+        case 'tools.drain':
+          return { ok: true };
+        default:
+          throw Error(`SYNTHETIC_UNEXPECTED_GOAL_RPC:${request.method}`);
+      }
+    },
+  } satisfies WorkspaceExecutor;
+  return { execution, opened: () => opened };
+}
 function start(models: ModelRuns, task: TaskRequest, origin = source) {
   return models.start('mock-bot', task, undefined, origin);
 }
@@ -381,17 +447,12 @@ test.each([false, true])(
   'Human Goal continuation preserves scoped provenance and does not claim unsupported run contracts (project=%s)',
   { timeout: 60000 },
   async (scoped) => {
-    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-auto-goal-executor-'));
-    const service = await startExecutor({
-      directory: path.join(root, 'guest'),
-      port: 0,
-      boot: 'mock-auto-goal-boot',
-    });
-    const execution = new RemoteExecutor({
-      url: `${service.origin}/exec`,
-      token: (await readFile(path.join(root, 'guest/token'), 'utf8')).trim(),
-    });
-    await execution.ready;
+    const unavailable = vi
+      .spyOn(guest, 'startExecutor')
+      .mockRejectedValue(new Error('SYNTHETIC_POSIX_GUEST_UNAVAILABLE'));
+    onTestFinished(() => unavailable.mockRestore());
+    const port = goalExecution();
+    const execution = port.execution;
     let sends = 0;
     const fixture = await inferenceFixture(
       () =>
@@ -469,12 +530,14 @@ test.each([false, true])(
       };
       const epoch = models.budgets.goals.epoch(owner),
         runs = models.budgets.runs(raised.scope.budgetId);
+      const opened = port.opened();
       const capabilities = execution.snapshot!.capabilities;
       capabilities.splice(capabilities.indexOf('task-run-v1'), 1);
       await expect(
         models.startHuman('mock-bot', task, undefined, raised.scope),
       ).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
       expect(sends).toBe(2);
+      expect(port.opened()).toBe(opened);
       expect(models.budgets.goals.epoch(owner)).toBe(epoch);
       expect(models.budgets.runs(raised.scope.budgetId)).toEqual(runs);
       expect(models.budgets.view(raised.scope.budgetId).state).toBe('stopped');
@@ -489,10 +552,9 @@ test.each([false, true])(
       expect(resumed.goal?.rounds).toBe(3);
       expect(sends).toBeGreaterThan(2);
       expect(models.budgets.view(raised.scope.budgetId).unknownCount).toBe(sends);
+      expect(unavailable).not.toHaveBeenCalled();
     } finally {
       await fixture.close();
-      await service.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
