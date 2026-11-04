@@ -43,28 +43,33 @@ export function contextSources(
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
 export function isContextArchive(value: unknown, scope?: TranscriptScope): value is ContextArchive {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    Object.keys(record).every((key) => ['version', 'nextRevision', 'captures'].includes(key)) &&
-    record.version === 1 &&
-    Number.isSafeInteger(record.nextRevision) &&
-    Number(record.nextRevision) >= 1 &&
-    Array.isArray(record.captures) &&
-    record.captures.length <= 20 &&
-    bytes(record) <= 65536 &&
-    record.captures.every(
-      (capture, index, all) =>
-        isContextCapture(capture) &&
-        bytes(capture) <= 6144 &&
-        capture.revision < Number(record.nextRevision) &&
-        (index === 0 || capture.revision > all[index - 1].revision) &&
-        (!scope ||
-          capture.sources.every((source) =>
-            source.refs.every((ref) => sameContextConversation(scope, ref.scope)),
-          )),
-    )
-  );
+  // Only this optional diagnostic field is quarantined when malformed structure or encoding fails.
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return (
+      Object.keys(record).every((key) => ['version', 'nextRevision', 'captures'].includes(key)) &&
+      record.version === 1 &&
+      Number.isSafeInteger(record.nextRevision) &&
+      Number(record.nextRevision) >= 1 &&
+      Array.isArray(record.captures) &&
+      record.captures.length <= 20 &&
+      record.captures.every(
+        (capture, index, all) =>
+          isContextCapture(capture) &&
+          bytes(capture) <= 6144 &&
+          capture.revision < Number(record.nextRevision) &&
+          (index === 0 || capture.revision > all[index - 1].revision) &&
+          (!scope ||
+            capture.sources.every((source) =>
+              source.refs.every((ref) => sameContextConversation(scope, ref.scope)),
+            )),
+      ) &&
+      bytes(record) <= 65536
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function captureContext(

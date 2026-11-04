@@ -1042,16 +1042,28 @@ export class ModelRuns {
         : {}),
     }));
   }
-  private async transcriptOwner(scope: TranscriptScope) {
-    await this.ready;
-    const record = await this.journal.read(scope.bot, scope.runId);
+  private assertTranscriptOwner(scope: TranscriptScope, record: TaskRecord | undefined) {
     if (
       !record ||
+      record.bot !== scope.bot ||
+      record.runId !== scope.runId ||
       record.kind === 'acceptance' ||
       record.conversationId !== scope.conversationId ||
       (!scope.conversationId && (record.chatRevision ?? 0) !== scope.chatRevision)
     )
       throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
+    return record;
+  }
+  private async transcriptOwner(scope: TranscriptScope) {
+    await this.ready;
+    return this.assertTranscriptOwner(scope, await this.journal.read(scope.bot, scope.runId));
+  }
+  private async contextOwner(scope: TranscriptScope) {
+    await this.ready;
+    return this.assertTranscriptOwner(
+      scope,
+      await this.journal.readCommitted(scope.bot, scope.runId),
+    );
   }
   async transcript(scope: TranscriptScope, after = 0) {
     await this.transcriptOwner(scope);
@@ -1068,8 +1080,7 @@ export class ModelRuns {
   }
   async inspectContext(query: ContextQuery) {
     if (!isContextQuery(query)) throw new Fault('INVALID_CONTEXT_QUERY', 400);
-    await this.transcriptOwner(query.scope);
-    const record = await this.journal.read(query.scope.bot, query.scope.runId);
+    const record = await this.contextOwner(query.scope);
     const active = this.jobs.get(query.scope.bot);
     const failed =
       record?.contextCaptureFailed || (active?.id === query.scope.runId && active.context?.failed);
@@ -1089,7 +1100,7 @@ export class ModelRuns {
       throw new Fault('CONTEXT_SOURCE_UNAVAILABLE', 404);
     // Capturing a ref grants no future access: recheck its current owner and saved kind before reading any body.
     try {
-      await this.transcriptOwner(query.ref.scope);
+      await this.contextOwner(query.ref.scope);
       const item = this.transcripts.item(query.ref.scope, query.ref.seq);
       if (!['call', 'result', 'assistant', 'plan'].includes(item.kind))
         throw new Fault('CONTEXT_SOURCE_UNAVAILABLE', 404);

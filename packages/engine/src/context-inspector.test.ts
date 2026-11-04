@@ -1,6 +1,11 @@
 import { type ContextCapture, isContextCapture } from '@daban/protocol';
 import { expect, test } from 'vitest';
-import { captureContext, contextSources, emptyContextArchive } from './context-inspector.js';
+import {
+  captureContext,
+  contextSources,
+  emptyContextArchive,
+  isContextArchive,
+} from './context-inspector.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 const input = (): Omit<ContextCapture, 'revision'> => ({
@@ -13,6 +18,31 @@ const input = (): Omit<ContextCapture, 'revision'> => ({
   configuredOutput: 1024,
   sources: contextSources({ request: 'abc合😀', preferences: '', images: null }),
   gaps: ['sdk-envelope', 'images'],
+});
+
+test('rejects deep malformed archives before encoding and contains diagnostic serialization exceptions', () => {
+  const encoded =
+    '{"version":1,"nextRevision":2,"captures":[{"toJSON":null,"x":' +
+    '['.repeat(12000) +
+    '0' +
+    ']'.repeat(12000) +
+    '}]}';
+  const malformed: unknown = JSON.parse(encoded);
+  expect(Buffer.byteLength(encoded)).toBeLessThan(65536);
+  expect(() => isContextArchive(malformed, scope)).not.toThrow();
+  expect(isContextArchive(malformed, scope)).toBe(false);
+  const valid = captureContext(emptyContextArchive(), input());
+  const hostile: unknown = Object.setPrototypeOf(
+    { ...valid },
+    {
+      toJSON() {
+        throw new Error('SYNTHETIC DIAGNOSTIC SERIALIZATION FAILURE');
+      },
+    },
+  );
+  expect(() => isContextArchive(hostile, scope)).not.toThrow();
+  expect(isContextArchive(hostile, scope)).toBe(false);
+  expect(isContextArchive(valid, scope)).toBe(true);
 });
 
 test('estimates only known Host materials without persisting their private content', () => {

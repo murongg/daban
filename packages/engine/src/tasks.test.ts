@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
@@ -20,6 +20,103 @@ test('full guest instructions describe VM sudo and host approval without exposin
 import { captureContext, contextSources, emptyContextArchive } from './context-inspector.js';
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
+
+test('deep invalid optional archives never hide a valid core task or rescue an invalid core', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-deep-context-journal-'));
+  const core = {
+    bot: 'mock-bot',
+    runId: 'mock-run',
+    kind: 'chat',
+    chatRevision: 0,
+    phase: 'completed',
+    running: false,
+    prompt: 'SYNTHETIC REQUEST',
+    result: 'SYNTHETIC PRESERVED RESULT',
+    error: '',
+    trace: [],
+  };
+  const archive =
+    '{"version":1,"nextRevision":2,"captures":[{"toJSON":null,"x":' +
+    '['.repeat(12000) +
+    '0' +
+    ']'.repeat(12000) +
+    '}]}';
+  const encode = (phase: string) => {
+    const task = JSON.stringify({ ...core, phase });
+    return `{"version":1,"task":${task.slice(0, -1)},"contextCaptures":${archive}}}`;
+  };
+  const file = path.join(root, 'mock-run.json');
+  try {
+    expect(Buffer.byteLength(encode('completed'))).toBeLessThan(65536);
+    await writeFile(file, encode('completed'));
+    const journal = new TaskJournal(root);
+    await journal.load();
+    expect(await journal.read(core.bot, core.runId)).toMatchObject({
+      ...core,
+      contextCaptureFailed: true,
+    });
+    expect(await journal.read(core.bot, core.runId)).not.toHaveProperty('contextCaptures');
+    await writeFile(file, encode('mock-invalid'));
+    const invalid = new TaskJournal(root);
+    await invalid.load();
+    expect(await invalid.read(core.bot, core.runId)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('authoritative journal failures stay visible while diagnostic reads retain only durable records', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-context-write-queue-'));
+  const journal = new TaskJournal(root);
+  const record = {
+    bot: 'mock-bot',
+    runId: 'mock-run',
+    requestId: 'mock-request',
+    kind: 'chat' as const,
+    chatRevision: 0,
+    phase: 'completed',
+    running: false,
+    prompt: 'SYNTHETIC REQUEST',
+    result: 'SYNTHETIC COMMITTED RESULT',
+    error: '',
+    trace: [],
+  };
+  const next = { ...record, result: 'SYNTHETIC UNCOMMITTED RESULT' };
+  const blocked = path.join(root, `${record.runId}.json.tmp`);
+  try {
+    await journal.put(record);
+    await expect(journal.put({ ...record, trace: [1n] })).rejects.toMatchObject({
+      name: 'TypeError',
+    });
+    await mkdir(blocked);
+    let failure: unknown;
+    try {
+      await journal.put(next);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ code: expect.stringMatching(/^(EISDIR|EPERM|EACCES)$/) });
+    await expect(journal.read(record.bot, record.runId)).rejects.toBe(failure);
+    await expect(journal.all(record.bot)).rejects.toBe(failure);
+    const diagnostic = await journal.readCommitted(record.bot, record.runId);
+    expect(diagnostic).toEqual(record);
+    expect(await journal.readCommitted('mock-foreign', record.runId)).toBeUndefined();
+    expect(await journal.readCommitted(record.bot, 'mock-uncommitted')).toBeUndefined();
+    expect.assert(diagnostic);
+    diagnostic.result = 'SYNTHETIC LOCAL COPY EDIT';
+    expect(await journal.readCommitted(record.bot, record.runId)).toEqual(record);
+    await expect(journal.read(record.bot, record.runId)).rejects.toBe(failure);
+    expect(journal.findRequest(record.bot, record.requestId)).toEqual(record);
+    expect(
+      JSON.parse(await readFile(path.join(root, `${record.runId}.json`), 'utf8')).task,
+    ).toEqual(record);
+    await rm(blocked, { recursive: true, force: true });
+    await journal.put(next);
+    expect(await journal.read(record.bot, record.runId)).toEqual(next);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('journal preserves bounded captures across restart and isolates a corrupt archive', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-context-journal-'));

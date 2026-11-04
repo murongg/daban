@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
@@ -209,6 +209,121 @@ test('a capture persistence failure does not stop or fail an otherwise successfu
     );
   } finally {
     spy.mockRestore();
+    await value.models.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('an actual capture write-queue failure keeps only committed revisions readable without hiding authoritative errors', async () => {
+  const observed: {
+    view?: unknown;
+    viewError?: unknown;
+    source?: unknown;
+    sourceError?: unknown;
+    pendingError?: unknown;
+    foreignError?: unknown;
+    groupError?: unknown;
+    coreError?: unknown;
+  } = {};
+  const value = await fixture(async (observe, sessionId) => {
+    const job = value.models.jobs.get('a')!;
+    const scope = { bot: 'a', runId: job.id, chatRevision: 0 };
+    const event = (type: string, seq: number, data: unknown) =>
+      observe({
+        method: 'session.event',
+        params: { sessionId, event: { type, seq, time: 1800000000000 + seq, data } },
+      });
+    event('tool/call', 1, { callId: 'mock-call', name: 'mock_read', arguments: '{}' });
+    event('tool/result', 2, {
+      message: {
+        toolCallId: 'mock-call',
+        content: [{ type: 'text', text: 'SYNTHETIC SAVED SOURCE' }],
+      },
+    });
+    const update = (seq: number, pressureTokens: number) =>
+      value.models.rpc('a', `Bearer ${job.token}`, {
+        id: seq,
+        method: 'context.update',
+        params: {
+          sessionId,
+          turnId: 'mock-queue-turn',
+          key: 'contextPressure',
+          seq,
+          value: { pressureTokens },
+        },
+      });
+    await update(0, 80);
+    const before = await value.models.inspectContext({ scope });
+    expect.assert(before.state === 'captured');
+    const ref = before.selected.sources.find((source) => source.category === 'toolResults')!
+      .refs[1];
+    const blocked = path.join(value.models.journal.dir, `${job.id}.json.tmp`);
+    await mkdir(blocked);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await update(1, 90);
+      try {
+        observed.view = await value.models.inspectContext({ scope });
+      } catch (error) {
+        observed.viewError = error;
+      }
+      try {
+        observed.source = await value.models.contextSource({
+          scope,
+          revision: before.selected.revision,
+          ref,
+        });
+      } catch (error) {
+        observed.sourceError = error;
+      }
+      try {
+        await value.models.inspectContext({ scope, revision: before.selected.revision + 1 });
+      } catch (error) {
+        observed.pendingError = error;
+      }
+      try {
+        await value.models.inspectContext({ scope: { ...scope, bot: 'mock-foreign' } });
+      } catch (error) {
+        observed.foreignError = error;
+      }
+      try {
+        await value.models.inspectContext({
+          scope: { bot: scope.bot, runId: scope.runId, conversationId: 'mock-foreign-group' },
+        });
+      } catch (error) {
+        observed.groupError = error;
+      }
+      try {
+        await value.models.journal.read(scope.bot, scope.runId);
+      } catch (error) {
+        observed.coreError = error;
+      }
+    } finally {
+      await rm(blocked, { recursive: true, force: true });
+    }
+  });
+  try {
+    await value.models.start('a', { requestId: 'mock-queue-turn', prompt: 'SYNTHETIC REQUEST' });
+    const job = value.models.jobs.get('a')!;
+    await job.done;
+    expect(job.phase).toBe('completed');
+    expect(value.prompts).toHaveLength(1);
+    expect(observed.viewError).toBeUndefined();
+    expect(observed.sourceError).toBeUndefined();
+    expect(observed.view).toMatchObject({
+      state: 'captured',
+      health: 'capture-failed',
+      revisions: [1, 2],
+      selected: { revision: 2, pressure: { pressureTokens: 80 } },
+    });
+    expect(observed.source).toMatchObject({ text: 'SYNTHETIC SAVED SOURCE' });
+    expect(observed.pendingError).toMatchObject({ code: 'CONTEXT_CAPTURE_EXPIRED' });
+    expect(observed.foreignError).toMatchObject({ code: 'TRANSCRIPT_NOT_FOUND' });
+    expect(observed.groupError).toMatchObject({ code: 'TRANSCRIPT_NOT_FOUND' });
+    expect(observed.coreError).toMatchObject({
+      code: expect.stringMatching(/^(EISDIR|EPERM|EACCES)$/),
+    });
+  } finally {
     await value.models.close();
     await rm(value.root, { recursive: true, force: true });
   }
