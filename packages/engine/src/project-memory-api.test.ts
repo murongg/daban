@@ -1,8 +1,14 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { eq } from 'drizzle-orm';
 import { expect, test, vi } from 'vitest';
+import { migrate } from './database.js';
 import { Documents } from './documents.js';
+import { migrations } from './knowledge-migrations.js';
+import { projectMemoryOperations } from './knowledge-schema.js';
 import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
@@ -45,8 +51,10 @@ async function fixture() {
       const value: unknown = await response.json();
       return { status: response.status, value };
     },
-    async reopen() {
+    async reopen(edit?: (file: string) => unknown) {
+      const file = app.models!.knowledge.file;
       await app.close();
+      await edit?.(file);
       app = await startPrototype(options);
     },
     async close() {
@@ -58,6 +66,54 @@ async function fixture() {
 
 const scope = { projectId: 'mock-project-a', revision: 1 };
 const source = { kind: 'text', title: 'Synthetic guide', content: 'SYNTHETIC SHARED TEXT' };
+
+test('receipt ownership is projected from the accepted Host fingerprint and rejects another intent', async (t) => {
+  const f = await fixture();
+  t.onTestFinished(() => f.close());
+  const preview = await f.call('preview', { scope, source });
+  const request = {
+    requestId: 'mock-bound-receipt',
+    scope,
+    action: 'publish',
+    source,
+    digest: record(preview.value).digest,
+  };
+  const expected = createHash('sha256')
+    .update(
+      JSON.stringify(request, (_key, item: unknown) =>
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? Object.fromEntries(
+              Object.entries(item).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+            )
+          : item,
+      ),
+    )
+    .digest('hex');
+  const accepted = await f.call('write', { request });
+  expect(accepted.status).toBe(200);
+  expect(record(accepted.value).signature).toBe(expected);
+  await f.reopen((file) => {
+    const client = new DatabaseSync(file);
+    try {
+      const db = migrate(client, migrations);
+      const { signature: _signature, ...legacy } = record(accepted.value);
+      db.update(projectMemoryOperations)
+        .set({ result: JSON.stringify(legacy) })
+        .where(eq(projectMemoryOperations.request, request.requestId))
+        .run();
+    } finally {
+      client.close();
+    }
+  });
+  expect(
+    await f.call('receipt', { scope, requestId: request.requestId, signature: expected }),
+  ).toStrictEqual(accepted);
+  expect(
+    await f.call('receipt', { scope, requestId: request.requestId, signature: 'f'.repeat(64) }),
+  ).toMatchObject({ status: 409, value: { error: 'PROJECT_MEMORY_REQUEST_REUSED' } });
+  expect((await f.call('list', { scope })).value).toHaveLength(1);
+  expect(f.app.models!.jobs.size).toBe(0);
+});
 
 test('explicit human publication previews members, isolates projects and recovers one persisted receipt', async (t) => {
   const f = await fixture();

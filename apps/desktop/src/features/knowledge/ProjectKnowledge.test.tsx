@@ -1,14 +1,17 @@
+import { webcrypto } from 'node:crypto';
 import {
   agentId,
   disconnected,
   knowledgeLimit,
   type Project,
   type ProjectDocument,
+  projectMemoryFingerprint,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeReply,
+  type RuntimeSnapshot,
 } from '@daban/protocol';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { RuntimeProvider } from '../../app/Runtime';
@@ -16,6 +19,7 @@ import { demoState } from '../../test/fixtures';
 import { Knowledge } from './Knowledge';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
+Object.defineProperty(crypto, 'subtle', { configurable: true, value: webcrypto.subtle });
 function fixture(available = true, loseReply = false, rejectWrite = false) {
   const state = demoState(),
     bot = state.bots.find((item) => !item.members)!;
@@ -80,6 +84,7 @@ function fixture(available = true, loseReply = false, rejectWrite = false) {
         scope,
         state: 'complete',
         operation: 'write',
+        signature: await projectMemoryFingerprint(command.request),
         document,
       };
       if (loseReply) throw Error('SYNTHETIC LOST RESPONSE');
@@ -92,9 +97,15 @@ function fixture(available = true, loseReply = false, rejectWrite = false) {
       };
     return { ok: true, value: {} };
   });
+  let publish: ((state: RuntimeSnapshot) => unknown) | undefined;
   const bridge: RuntimeBridge = {
     invoke: async <T,>(command: RuntimeCommand) => (await invoke(command)) as RuntimeReply<T>,
-    subscribe: () => () => {},
+    subscribe: (listener) => {
+      publish = listener;
+      return () => {
+        publish = undefined;
+      };
+    },
   };
   Object.defineProperty(window, 'daban', {
     configurable: true,
@@ -105,7 +116,7 @@ function fixture(available = true, loseReply = false, rejectWrite = false) {
       <Knowledge state={state} bot={bot} dispatch={vi.fn()} notify={vi.fn()} />
     </RuntimeProvider>,
   );
-  return { state, bot, project, invoke, view };
+  return { state, bot, project, invoke, view, publish: (next: RuntimeSnapshot) => publish?.(next) };
 }
 
 test('publication previews exact text and members, cancellation writes nothing and Escape restores focus', async () => {
@@ -150,6 +161,111 @@ test('a lost publication response queries its receipt without replaying the writ
     f.invoke.mock.calls.filter(([command]) => command.type === 'projectMemory.write'),
   ).toHaveLength(1);
 });
+
+test('manual receipt checks preserve the draft when a legacy receipt cannot prove its intent', async () => {
+  const f = fixture(true, true);
+  const original = f.invoke.getMockImplementation()!;
+  let queries = 0;
+  f.invoke.mockImplementation(async (command) => {
+    const reply = await original(command);
+    if (command.type !== 'projectMemory.receipt' || !reply.ok) return reply;
+    if (++queries === 1)
+      return {
+        ok: true,
+        value: { scope: command.scope, requestId: command.requestId, state: 'unknown' },
+      };
+    const { signature: _signature, ...legacy } = reply.value as Record<string, unknown>;
+    return { ok: true, value: legacy };
+  });
+  await userEvent.click(await screen.findByRole('button', { name: '项目资料与记忆' }));
+  const dialog = screen.getByRole('dialog', { name: '项目资料与记忆' });
+  await userEvent.type(within(dialog).getByLabelText('资料标题'), 'Synthetic uncertain draft');
+  await userEvent.type(within(dialog).getByLabelText('资料正文'), 'SYNTHETIC RETAINED DRAFT');
+  await userEvent.click(within(dialog).getByRole('button', { name: '预览共享内容' }));
+  await userEvent.click(within(dialog).getByRole('button', { name: '发布到项目' }));
+  await userEvent.click(await within(dialog).findByRole('button', { name: '查询操作结果' }));
+  await waitFor(() => expect(queries).toBe(2));
+  expect(within(dialog).getByRole('button', { name: '查询操作结果' })).toBeVisible();
+  expect(within(dialog).getByLabelText('资料正文')).toHaveValue('SYNTHETIC RETAINED DRAFT');
+  expect(
+    f.invoke.mock.calls.filter(([command]) => command.type === 'projectMemory.write'),
+  ).toHaveLength(1);
+});
+
+test('a Host receipt fingerprint conflict keeps the human draft and requires a new explicit preview', async () => {
+  const f = fixture();
+  const original = f.invoke.getMockImplementation()!;
+  f.invoke.mockImplementation(async (command) => {
+    if (command.type === 'projectMemory.write') throw Error('SYNTHETIC LOST REFUSAL');
+    if (command.type === 'projectMemory.receipt')
+      return { ok: false, error: 'PROJECT_MEMORY_REQUEST_REUSED' };
+    return original(command);
+  });
+  await userEvent.click(await screen.findByRole('button', { name: '项目资料与记忆' }));
+  const dialog = screen.getByRole('dialog', { name: '项目资料与记忆' });
+  await userEvent.type(within(dialog).getByLabelText('资料标题'), 'Synthetic conflicting request');
+  await userEvent.type(within(dialog).getByLabelText('资料正文'), 'SYNTHETIC RETAINED B');
+  await userEvent.click(within(dialog).getByRole('button', { name: '预览共享内容' }));
+  await userEvent.click(within(dialog).getByRole('button', { name: '发布到项目' }));
+  await within(dialog).findByText(/范围、来源或目标版本已变更/);
+  expect(within(dialog).getByLabelText('资料正文')).toHaveValue('SYNTHETIC RETAINED B');
+  expect(within(dialog).getByRole('button', { name: '预览共享内容' })).toBeEnabled();
+  expect(
+    f.invoke.mock.calls.filter(([command]) => command.type === 'projectMemory.write'),
+  ).toHaveLength(1);
+});
+
+test.each(['project', 'bot', 'connection'] as const)(
+  'a lost write response after changing %s cannot start recovery in the new panel',
+  async (change) => {
+    const f = fixture();
+    const original = f.invoke.getMockImplementation()!;
+    let reject: ((reason: Error) => unknown) | undefined;
+    f.invoke.mockImplementation((command) =>
+      command.type === 'projectMemory.write'
+        ? new Promise((_resolve, refuse) => {
+            reject = refuse;
+          })
+        : original(command),
+    );
+    await userEvent.click(await screen.findByRole('button', { name: '项目资料与记忆' }));
+    const dialog = screen.getByRole('dialog', { name: '项目资料与记忆' });
+    await userEvent.type(within(dialog).getByLabelText('资料标题'), 'Synthetic previous owner');
+    await userEvent.type(within(dialog).getByLabelText('资料正文'), 'SYNTHETIC PREVIOUS OWNER');
+    await userEvent.click(within(dialog).getByRole('button', { name: '预览共享内容' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: '发布到项目' }));
+    await waitFor(() => expect(reject).toBeDefined());
+    if (change === 'connection') {
+      act(() => {
+        f.publish(disconnected('connecting'));
+      });
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: '项目资料与记忆' })).not.toBeInTheDocument(),
+      );
+    } else {
+      const bot = change === 'bot' ? { ...f.bot, id: 'mock-next-bot' } : f.bot;
+      const nextScope = {
+        projectId: change === 'project' ? 'mock-next-project' : f.project.id,
+        revision: 1,
+      };
+      const state = { ...f.state, projectScopes: { [bot.id]: nextScope } };
+      f.view.rerender(
+        <RuntimeProvider>
+          <Knowledge state={state} bot={bot} dispatch={vi.fn()} notify={vi.fn()} />
+        </RuntimeProvider>,
+      );
+    }
+    await act(async () => {
+      reject!(Error('SYNTHETIC LOST OLD OWNER RESPONSE'));
+    });
+    expect(
+      f.invoke.mock.calls.filter(([command]) => command.type === 'projectMemory.write'),
+    ).toHaveLength(1);
+    expect(f.invoke.mock.calls.some(([command]) => command.type === 'projectMemory.receipt')).toBe(
+      false,
+    );
+  },
+);
 
 test('an older service leaves the private knowledge panel usable without a project entry', async () => {
   const f = fixture(false);
@@ -230,6 +346,7 @@ test('a human edits a pending candidate and explicitly chooses acceptance withou
           scope: command.request.scope,
           state: 'complete',
           operation: 'decide',
+          signature: await projectMemoryFingerprint(command.request),
           candidate: {
             ...candidate,
             state: 'accepted',

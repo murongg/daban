@@ -26,6 +26,7 @@ import {
   type ProjectScope,
   type ProposalState,
   projectMemoryCapability,
+  projectMemoryText,
   validAgentId,
 } from '@daban/protocol';
 import { and, count, desc, eq, lt, sum } from 'drizzle-orm';
@@ -51,17 +52,7 @@ type Row = typeof documents.$inferSelect;
 type Revision = typeof revisions.$inferSelect;
 type CandidateRow = typeof candidates.$inferSelect;
 export const memoryDigest = (value: unknown) =>
-  createHash('sha256')
-    .update(
-      JSON.stringify(value, (_key, item: unknown) =>
-        item && typeof item === 'object' && !Array.isArray(item)
-          ? Object.fromEntries(
-              Object.entries(item).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-            )
-          : item,
-      ),
-    )
-    .digest('hex');
+  createHash('sha256').update(projectMemoryText(value)).digest('hex');
 
 export class ProjectMemory {
   constructor(
@@ -271,14 +262,15 @@ export class ProjectMemory {
     if (signature && signature !== row.signature) throw new Fault('PROJECT_MEMORY_REQUEST_REUSED');
     const result: unknown = JSON.parse(row.result);
     if (!isProjectMemoryReceipt(result)) throw new Fault('PROJECT_MEMORY_UNAVAILABLE', 503);
-    return result;
+    // Legacy result JSON omitted the signature; its accepted intent still lives in this row.
+    return result.state === 'complete' ? { ...result, signature: row.signature } : result;
   }
-  receipt(scope: ProjectScope, requestId: string) {
+  receipt(scope: ProjectScope, requestId: string, signature?: string) {
     return this.storage.run((db) => {
       this.authorize(scope);
       if (!validAgentId(requestId)) throw new Fault('INVALID_PROJECT_MEMORY', 400);
       return (
-        this.previous(db, scope, 'human', requestId) ?? {
+        this.previous(db, scope, 'human', requestId, signature) ?? {
           scope,
           requestId,
           state: 'unknown' as const,
@@ -292,16 +284,17 @@ export class ProjectMemory {
     signature: string,
     receipt: ProjectMemoryReceipt,
   ) {
+    const result = { ...receipt, ...(receipt.state === 'complete' ? { signature } : {}) };
     db.insert(operations)
       .values({
         project: receipt.scope.projectId,
         actor,
         request: receipt.requestId,
         signature,
-        result: JSON.stringify(receipt),
+        result: JSON.stringify(result),
       })
       .run();
-    return receipt;
+    return result;
   }
   private commit(
     db: Database,

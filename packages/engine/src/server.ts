@@ -843,7 +843,10 @@ export async function startPrototype({
             if (command.type === 'projectMemory.versions')
               return json(res, await store.versions(command.scope, command.id, command.before));
             if (command.type === 'projectMemory.receipt')
-              return json(res, await store.receipt(command.scope, command.requestId));
+              return json(
+                res,
+                await store.receipt(command.scope, command.requestId, command.signature),
+              );
             if (command.type === 'projectMemory.candidates')
               return json(res, await store.candidates(command.scope, command.state));
             if (command.type === 'projectMemory.candidate')

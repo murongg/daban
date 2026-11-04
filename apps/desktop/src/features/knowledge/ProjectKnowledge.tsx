@@ -8,7 +8,6 @@ import {
   isProjectDocumentInfo,
   isProjectDocumentVersion,
   isProjectMemoryAvailability,
-  isProjectMemoryReceipt,
   isProjectPublicationPreview,
   isProposalState,
   type KnowledgeFile,
@@ -31,7 +30,13 @@ import { runtimeError, useRuntime } from '../../app/Runtime';
 import { Dialog } from '../../components/controls/Dialog';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { documentUpload, knowledgeAccept, readUtf8 } from '../files/files';
-import { applyProjectMemory, type MemoryMutation, memoryRequestRejected } from './project-memory';
+import {
+  applyProjectMemory,
+  type MemoryCommand,
+  type MemoryMutation,
+  memoryRequestRejected,
+  queryProjectMemoryReceipt,
+} from './project-memory';
 import './project-memory.css';
 
 const stateKeys: Record<ProposalState, MessageKey> = {
@@ -43,7 +48,8 @@ const stateKeys: Record<ProposalState, MessageKey> = {
 const failure = (error: unknown) =>
   error instanceof Error && error.message === 'PROJECT_MEMORY_UPLOAD_LIMIT'
     ? t('projectMemory.uploadLimits')
-    : error instanceof Error && /CONFLICT|SOURCE_CHANGED|SCOPE_STALE/.test(error.message)
+    : error instanceof Error &&
+        /CONFLICT|SOURCE_CHANGED|SCOPE_STALE|REQUEST_REUSED/.test(error.message)
       ? t('projectMemory.conflict')
       : runtimeError(error);
 
@@ -142,6 +148,13 @@ function Review({
     ticket === sequence.current &&
     runtime.command === latest.current.command &&
     sameProjectScope(reviewed, latest.current.scope);
+  const memoryCommand =
+    (ticket: number): MemoryCommand =>
+    async (command) => {
+      // A lost response must not start receipt recovery after this panel or connection was replaced.
+      if (!current(ticket)) throw Error('PROJECT_MEMORY_RESULT_UNKNOWN');
+      return runtime.command(command);
+    };
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -283,7 +296,7 @@ function Review({
     setBusy(true);
     setError('');
     try {
-      await applyProjectMemory(runtime.command, mutation);
+      await applyProjectMemory(memoryCommand(ticket), mutation);
       if (current(ticket)) {
         setPending(undefined);
         setPreview(undefined);
@@ -311,18 +324,7 @@ function Review({
     setBusy(true);
     setError('');
     try {
-      const value = await runtime.command<unknown>({
-        type: 'projectMemory.receipt',
-        scope: reviewed,
-        requestId: pending.request.requestId,
-      });
-      if (
-        !isProjectMemoryReceipt(value) ||
-        value.requestId !== pending.request.requestId ||
-        value.scope.projectId !== reviewed.projectId ||
-        value.state !== 'complete'
-      )
-        throw Error('PROJECT_MEMORY_RESULT_UNKNOWN');
+      await queryProjectMemoryReceipt(memoryCommand(ticket), pending, reviewed);
       if (current(ticket)) {
         setPending(undefined);
         setPreview(undefined);

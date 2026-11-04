@@ -102,10 +102,12 @@ import {
   isWorkList,
   isWorkReceipt,
   isWorkStatus,
+  matchesProjectMemoryReceipt,
   noteKey,
   noteQueryKey,
   parseBotJSON,
   projectFileMatches,
+  projectMemoryFingerprint,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
@@ -1771,7 +1773,12 @@ export class RuntimeClient {
       return profile;
     }
     if (isProjectMemoryCommand(command)) {
-      const { type, ...payload } = command;
+      const captured = structuredClone(command);
+      const signature =
+        captured.type === 'projectMemory.write' || captured.type === 'projectMemory.decide'
+          ? await projectMemoryFingerprint(captured.request)
+          : undefined;
+      const { type, ...payload } = captured;
       const value = await this.api(
         `/api/project-memory/${type.slice('projectMemory.'.length)}`,
         payload,
@@ -1779,14 +1786,14 @@ export class RuntimeClient {
       const invalid = () => {
         throw new Error('INVALID_PROJECT_MEMORY_RESPONSE');
       };
-      if (command.type === 'projectMemory.status') {
+      if (captured.type === 'projectMemory.status') {
         if (!isProjectMemoryAvailability(value)) invalid();
       } else {
-        const scope = 'scope' in command ? command.scope : command.request.scope;
-        if (command.type === 'projectMemory.preview') {
+        const scope = 'scope' in captured ? captured.scope : captured.request.scope;
+        if (captured.type === 'projectMemory.preview') {
           if (!isProjectPublicationPreview(value) || !sameProjectScope(value.scope, scope))
             invalid();
-        } else if (command.type === 'projectMemory.list') {
+        } else if (captured.type === 'projectMemory.list') {
           if (
             !Array.isArray(value) ||
             value.length > 100 ||
@@ -1795,15 +1802,15 @@ export class RuntimeClient {
             )
           )
             invalid();
-        } else if (command.type === 'projectMemory.read') {
+        } else if (captured.type === 'projectMemory.read') {
           if (
             !isProjectDocument(value) ||
             value.projectId !== scope.projectId ||
-            value.id !== command.document.id ||
-            value.revision !== command.document.revision
+            value.id !== captured.document.id ||
+            value.revision !== captured.document.revision
           )
             invalid();
-        } else if (command.type === 'projectMemory.versions') {
+        } else if (captured.type === 'projectMemory.versions') {
           if (
             !Array.isArray(value) ||
             value.length > 20 ||
@@ -1811,19 +1818,19 @@ export class RuntimeClient {
               (item) =>
                 isProjectDocumentVersion(item) &&
                 item.projectId === scope.projectId &&
-                item.id === command.id &&
-                (command.before === undefined || item.revision < command.before),
+                item.id === captured.id &&
+                (captured.before === undefined || item.revision < captured.before),
             )
           )
             invalid();
-        } else if (command.type === 'projectMemory.candidate') {
+        } else if (captured.type === 'projectMemory.candidate') {
           if (
             !isMemoryCandidate(value) ||
             value.projectId !== scope.projectId ||
-            value.id !== command.id
+            value.id !== captured.id
           )
             invalid();
-        } else if (command.type === 'projectMemory.candidates') {
+        } else if (captured.type === 'projectMemory.candidates') {
           if (
             !Array.isArray(value) ||
             value.length > 200 ||
@@ -1831,15 +1838,15 @@ export class RuntimeClient {
               (item) =>
                 isMemoryCandidate(item) &&
                 item.projectId === scope.projectId &&
-                item.state === (command.state ?? 'pending'),
+                item.state === (captured.state ?? 'pending'),
             )
           )
             invalid();
         } else {
           const requestId =
-            command.type === 'projectMemory.receipt'
-              ? command.requestId
-              : command.request.requestId;
+            captured.type === 'projectMemory.receipt'
+              ? captured.requestId
+              : captured.request.requestId;
           if (
             !isProjectMemoryReceipt(value) ||
             value.requestId !== requestId ||
@@ -1847,17 +1854,21 @@ export class RuntimeClient {
           )
             invalid();
           if (
-            command.type !== 'projectMemory.receipt' &&
+            captured.type === 'projectMemory.receipt' &&
+            captured.signature !== undefined &&
             isProjectMemoryReceipt(value) &&
-            (value.state !== 'complete' || !sameProjectScope(value.scope, scope))
+            value.state === 'complete' &&
+            value.signature !== captured.signature
           )
             invalid();
           if (
-            command.type === 'projectMemory.decide' &&
-            isProjectMemoryReceipt(value) &&
-            value.state === 'complete' &&
-            (value.candidate?.id !== command.request.candidateId ||
-              (command.request.action === 'accept' && !value.document))
+            captured.type !== 'projectMemory.receipt' &&
+            !matchesProjectMemoryReceipt(
+              value,
+              captured.type === 'projectMemory.write' ? 'write' : 'decide',
+              captured.request,
+              signature!,
+            )
           )
             invalid();
         }

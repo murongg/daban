@@ -1,6 +1,11 @@
 import { validAgentId } from './id.js';
 import { type DocumentUpload, isDocumentUpload, isKnowledgeContent } from './index.js';
-import { isProjectScope, type ProjectGrant, type ProjectScope } from './projects.js';
+import {
+  isProjectScope,
+  type ProjectGrant,
+  type ProjectScope,
+  sameProjectScope,
+} from './projects.js';
 
 export const projectMemoryCapability = 'project-memory-v1';
 export interface ProjectMemoryAvailability {
@@ -94,6 +99,8 @@ export type ProjectMemoryReceipt = {
   | {
       state: 'complete';
       operation: 'write' | 'propose' | 'decide';
+      // Legacy stored receipts omit this; completing a pending intent requires an exact signature.
+      signature?: string;
       document?: ProjectDocument;
       candidate?: MemoryCandidate;
     }
@@ -108,7 +115,22 @@ export type ProjectMemoryCommand =
   | { type: 'projectMemory.candidate'; scope: ProjectScope; id: string }
   | { type: 'projectMemory.write'; request: ProjectMemoryWrite }
   | { type: 'projectMemory.decide'; request: MemoryDecision }
-  | { type: 'projectMemory.receipt'; scope: ProjectScope; requestId: string };
+  | { type: 'projectMemory.receipt'; scope: ProjectScope; requestId: string; signature?: string };
+
+// Keep the canonical bytes stable: existing durable operation signatures use this encoding.
+export const projectMemoryText = (value: unknown) =>
+  JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : item,
+  );
+export async function projectMemoryFingerprint(request: ProjectMemoryWrite | MemoryDecision) {
+  const hash = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(projectMemoryText(request)),
+  );
+  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -254,8 +276,9 @@ export function isProjectMemoryCommand(value: unknown): value is ProjectMemoryCo
     return keys(value, ['type', 'scope', 'id']) && validAgentId(value.id);
   return (
     value.type === 'projectMemory.receipt' &&
-    keys(value, ['type', 'scope', 'requestId']) &&
-    validAgentId(value.requestId)
+    keys(value, ['type', 'scope', 'requestId', 'signature']) &&
+    validAgentId(value.requestId) &&
+    (value.signature === undefined || digest(value.signature))
   );
 }
 export function isProjectDocumentInfo(value: unknown): value is ProjectDocumentInfo {
@@ -375,13 +398,75 @@ export function isProjectMemoryReceipt(value: unknown): value is ProjectMemoryRe
   if (value.state === 'unknown') return keys(value, ['requestId', 'scope', 'state']);
   return (
     value.state === 'complete' &&
-    keys(value, ['requestId', 'scope', 'state', 'operation', 'document', 'candidate']) &&
+    keys(value, [
+      'requestId',
+      'scope',
+      'state',
+      'operation',
+      'signature',
+      'document',
+      'candidate',
+    ]) &&
     ['write', 'propose', 'decide'].includes(String(value.operation)) &&
+    (value.signature === undefined || digest(value.signature)) &&
     (value.document === undefined ||
       (isProjectDocument(value.document) && value.document.projectId === value.scope.projectId)) &&
     (value.candidate === undefined ||
       (isMemoryCandidate(value.candidate) &&
         value.candidate.projectId === value.scope.projectId)) &&
     (value.operation === 'write' ? value.document !== undefined : value.candidate !== undefined)
+  );
+}
+
+export function matchesProjectMemoryReceipt(
+  value: unknown,
+  operation: 'write' | 'decide',
+  request: ProjectMemoryWrite | MemoryDecision,
+  signature: string,
+): value is Extract<ProjectMemoryReceipt, { state: 'complete' }> {
+  if (
+    !isProjectMemoryReceipt(value) ||
+    value.state !== 'complete' ||
+    value.requestId !== request.requestId ||
+    !sameProjectScope(value.scope, request.scope) ||
+    value.operation !== operation ||
+    value.signature !== signature
+  )
+    return false;
+  if (isMemoryDecision(request)) {
+    if (
+      value.candidate?.id !== request.candidateId ||
+      value.candidate.revision !== request.candidateRevision + 1 ||
+      value.candidate.content !== request.content ||
+      value.candidate.state !== (request.action === 'accept' ? 'accepted' : 'rejected')
+    )
+      return false;
+    return request.action === 'reject'
+      ? !value.document
+      : !!value.document &&
+          value.document.kind === 'confirmed-memory' &&
+          !value.document.deleted &&
+          value.document.content === request.content &&
+          (request.target
+            ? value.document.id === request.target.id &&
+              value.document.revision === request.target.revision + 1
+            : value.document.revision === 1);
+  }
+  const document = value.document;
+  if (!document) return false;
+  if (request.action === 'publish')
+    return (
+      document.revision === 1 &&
+      document.kind === 'reference' &&
+      !document.deleted &&
+      (request.source.kind !== 'text' ||
+        (document.title === request.source.title && document.content === request.source.content))
+    );
+  return (
+    document.id === request.document.id &&
+    document.revision === request.document.revision + 1 &&
+    document.deleted === (request.action === 'withdraw') &&
+    (request.action !== 'update' ||
+      (document.title === request.title && document.content === request.content))
   );
 }

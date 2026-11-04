@@ -1,8 +1,10 @@
 import {
-  isProjectMemoryReceipt,
   type MemoryDecision,
+  matchesProjectMemoryReceipt,
   type ProjectMemoryReceipt,
   type ProjectMemoryWrite,
+  type ProjectScope,
+  projectMemoryFingerprint,
   type RuntimeCommand,
 } from '@daban/protocol';
 
@@ -29,32 +31,58 @@ const rejected = new Set([
 export const memoryRequestRejected = (error: unknown) =>
   error instanceof Error && rejected.has(error.message);
 
-function receipt(value: unknown, mutation: MemoryMutation): ProjectMemoryReceipt {
+function receipt(
+  value: unknown,
+  mutation: MemoryMutation,
+  signature: string,
+): ProjectMemoryReceipt {
   if (
-    !isProjectMemoryReceipt(value) ||
-    value.requestId !== mutation.request.requestId ||
-    value.scope.projectId !== mutation.request.scope.projectId ||
-    value.state !== 'complete'
+    !matchesProjectMemoryReceipt(
+      value,
+      mutation.type === 'projectMemory.write' ? 'write' : 'decide',
+      mutation.request,
+      signature,
+    )
   )
     throw Error('PROJECT_MEMORY_RESULT_UNKNOWN');
   return value;
 }
+export async function queryProjectMemoryReceipt(
+  command: MemoryCommand,
+  mutation: MemoryMutation,
+  scope: ProjectScope = mutation.request.scope,
+) {
+  const frozen = structuredClone(mutation);
+  const signature = await projectMemoryFingerprint(frozen.request);
+  // Current scope authorizes the lookup; the result must still belong to the original frozen scope.
+  return receipt(
+    await command({
+      type: 'projectMemory.receipt',
+      scope,
+      requestId: frozen.request.requestId,
+      signature,
+    }),
+    frozen,
+    signature,
+  );
+}
 export async function applyProjectMemory(command: MemoryCommand, mutation: MemoryMutation) {
+  const frozen = structuredClone(mutation);
+  const signature = await projectMemoryFingerprint(frozen.request);
   try {
-    return receipt(await command(mutation), mutation);
+    return receipt(await command(frozen), frozen, signature);
   } catch (error) {
     if (memoryRequestRejected(error)) throw error;
     // A lost acknowledgement is resolved through the durable receipt, never by replaying edited text.
     try {
-      return receipt(
-        await command({
-          type: 'projectMemory.receipt',
-          scope: mutation.request.scope,
-          requestId: mutation.request.requestId,
-        }),
-        mutation,
-      );
-    } catch {
+      return await queryProjectMemoryReceipt(command, frozen);
+    } catch (recoveryError) {
+      // A fingerprint conflict proves this receipt belongs to another intent; scope errors do not prove a failed commit.
+      if (
+        recoveryError instanceof Error &&
+        recoveryError.message === 'PROJECT_MEMORY_REQUEST_REUSED'
+      )
+        throw recoveryError;
       throw error;
     }
   }
