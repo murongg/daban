@@ -479,30 +479,42 @@ export class Integrations {
     token: Pick<OAuthGrant, 'accessToken' | 'refreshToken' | 'expiresAt' | 'scope'>,
   ) {
     await this.ready;
-    const db = this.available(),
-      row = this.row(connection),
-      grant = await this.oauthGrant(connection);
-    if (
-      !grant ||
-      grant.epoch !== epoch ||
-      row.credentialEpoch !== epoch ||
-      row.deleted ||
-      grant.state !== 'refreshing'
-    )
-      throw new Fault('OAUTH_CONFLICT');
-    const changed = grant.scope !== token.scope;
+    const db = this.available();
+    let changed = false;
     this.transaction(() => {
-      db.update(oauthGrants)
+      // No await may separate these authority reads from the write: revocation must fence old tokens.
+      const row = this.row(connection),
+        grant = db.select().from(oauthGrants).where(eq(oauthGrants.connection, connection)).get();
+      if (
+        !grant ||
+        grant.epoch !== epoch ||
+        row.credentialEpoch !== epoch ||
+        row.deleted ||
+        row.authKind !== 'oauth' ||
+        grant.state !== 'refreshing'
+      )
+        throw new Fault('OAUTH_CONFLICT');
+      changed = grant.scope !== token.scope;
+      const updatedGrant = db
+        .update(oauthGrants)
         .set({
           ...token,
           refreshToken: token.refreshToken ?? null,
           state: 'connected',
           epoch: epoch + Number(changed),
         })
-        .where(eq(oauthGrants.connection, connection))
+        .where(
+          and(
+            eq(oauthGrants.connection, connection),
+            eq(oauthGrants.epoch, epoch),
+            eq(oauthGrants.state, 'refreshing'),
+          ),
+        )
         .run();
+      if (Number(updatedGrant.changes) !== 1) throw new Fault('OAUTH_CONFLICT');
       if (changed) {
-        db.update(integrations)
+        const updatedConnection = db
+          .update(integrations)
           .set({
             revision: sql`${integrations.revision} + 1`,
             credentialEpoch: epoch + 1,
@@ -511,8 +523,16 @@ export class Integrations {
             digest: null,
             checked: null,
           })
-          .where(eq(integrations.id, connection))
+          .where(
+            and(
+              eq(integrations.id, connection),
+              eq(integrations.revision, row.revision),
+              eq(integrations.credentialEpoch, epoch),
+              eq(integrations.deleted, 0),
+            ),
+          )
           .run();
+        if (Number(updatedConnection.changes) !== 1) throw new Fault('OAUTH_CONFLICT');
         db.update(integrationBindings)
           .set({ enabled: 0, revision: sql`${integrationBindings.revision} + 1` })
           .where(eq(integrationBindings.connection, connection))

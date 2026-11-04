@@ -140,6 +140,68 @@ test('grant commit preserves old public contracts, fences Bearer edits and disco
   }
 });
 
+test.each(['disconnect', 'archive', 'revoke'] as const)(
+  'a concurrent %s fences an older refresh without restoring credentials or rolling back its epoch',
+  async (action) => {
+    const root = await secureDirectory(
+      await mkdtemp(path.join(tmpdir(), 'synthetic-oauth-refresh-fence-')),
+    );
+    const file = path.join(root, 'integrations.sqlite');
+    let store = new Integrations(file);
+    try {
+      const operation = await store.beginOAuth(input, Date.now() + 600000);
+      await store.oauthPhase(target, operation.attempt, 'waiting');
+      await store.oauthPhase(target, operation.attempt, 'exchanging');
+      await store.oauthCommit(target, operation.attempt, grant);
+      await store.oauthRefreshBegin(input.connection, 1);
+      const tokens = {
+        accessToken: 'synthetic-rotated-access',
+        refreshToken: 'synthetic-rotated-refresh',
+        expiresAt: Date.now() + 600000,
+        scope: grant.scope,
+      };
+      const refreshing = store.oauthRefreshCommit(input.connection, 1, tokens);
+      // This normal yield exposed a grant read that could outlive disconnect or revocation.
+      await Promise.resolve();
+      const revoking =
+        action === 'disconnect'
+          ? store.disconnectOAuth({ ...target, revision: 1 }, 'mock-disconnect')
+          : action === 'archive'
+            ? store.archive(input.connection, 1, input.bot)
+            : store.oauthReconnectRequired(input.connection, 1);
+      const outcomes = await Promise.allSettled([refreshing, revoking]);
+      expect(outcomes[1].status).toBe('fulfilled');
+      const expectedState = action === 'revoke' ? 'reconnect-required' : 'disconnected';
+      const expectedEpoch = action === 'revoke' ? 1 : 2;
+      const saved = await store.oauthGrant(input.connection);
+      expect(saved).toMatchObject({
+        state: expectedState,
+        epoch: expectedEpoch,
+        accessToken: '',
+        refreshToken: null,
+      });
+      if (action !== 'revoke') expect(saved?.clientSecret).toBe(null);
+      expect((await store.read(input.connection, input.bot)).revision).toBe(expectedEpoch);
+      await expect(store.oauthRefreshCommit(input.connection, 1, tokens)).rejects.toMatchObject({
+        code: 'OAUTH_CONFLICT',
+      });
+      expect(await store.oauthGrant(input.connection)).toEqual(saved);
+      if (action === 'disconnect') {
+        expect(
+          await store.disconnectOAuth({ ...target, revision: 1 }, 'mock-disconnect'),
+        ).toMatchObject({ disconnected: true, revision: 1 });
+      }
+      await store.close();
+      store = new Integrations(file);
+      expect((await store.status()).available).toBe(true);
+      expect(await store.oauthGrant(input.connection)).toEqual(saved);
+    } finally {
+      await store.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test('archive and cancellation defeat late exchange, and OAuth secrets cannot enter catalogs', async () => {
   const root = await secureDirectory(await mkdtemp(path.join(tmpdir(), 'synthetic-oauth-race-')));
   const store = new Integrations(path.join(root, 'integrations.sqlite'));
