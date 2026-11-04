@@ -1,6 +1,7 @@
 import { agentId, type Interaction, matchesReply, type UserReply } from '@daban/protocol';
 import { Braces, Check, ChevronDown, Inbox, X } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
+import { Tab, TabList, TabPanel, Tabs } from 'react-aria-components';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
 import { Tooltip } from '../../components/controls/Tooltip';
@@ -415,27 +416,6 @@ export function Requests({
           );
   const content = (
     <>
-      {!bot && !runs && !focus && (
-        <div className="filter-tabs" role="tablist" aria-label={t('common.inboxFilter')}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filter === 'pending'}
-            onClick={() => setFilter('pending')}
-          >
-            {t('common.do')}
-            {pending.length ? `· ${pending.length}` : ''}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filter === 'done'}
-            onClick={() => setFilter('done')}
-          >
-            {t('common.handled')}
-          </button>
-        </div>
-      )}
       {entries.map((item) => (
         <Request key={item.id} request={item} state={state} dispatch={dispatch} notify={notify} />
       ))}
@@ -452,14 +432,34 @@ export function Requests({
       )}
     </>
   );
+  const filteredContent =
+    !bot && !runs && !focus ? (
+      <Tabs
+        selectedKey={filter}
+        onSelectionChange={(key) => setFilter(key === 'done' ? 'done' : 'pending')}
+      >
+        <TabList className="filter-tabs" aria-label={t('common.inboxFilter')}>
+          <Tab id="pending">
+            {t('common.do')}
+            {pending.length ? `· ${pending.length}` : ''}
+          </Tab>
+          <Tab id="done">{t('common.handled')}</Tab>
+        </TabList>
+        <TabPanel key={filter} id={filter}>
+          {content}
+        </TabPanel>
+      </Tabs>
+    ) : (
+      content
+    );
   return bot || runs ? (
-    <div className="request-list">{content}</div>
+    <div className="request-list">{filteredContent}</div>
   ) : (
     <section className="full-page" aria-label={t('common.inbox')}>
       <div className="page-inner">
         <h2 className="page-heading">{t('common.needsAttention')}</h2>
         <p className="page-subtitle">{t('requests.answerQuestionApproveOneOperationLetBot')}</p>
-        {content}
+        {filteredContent}
       </div>
     </section>
   );

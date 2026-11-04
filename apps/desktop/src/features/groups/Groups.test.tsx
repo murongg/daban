@@ -1,6 +1,7 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from '../../app/storage';
 import { demoState as seedDemoState } from '../../test/fixtures';
+import { appAction } from '../../test/navigation.fixture';
 import { findSelectControl, selectControl, selectOption } from '../../test/select.fixture.ts';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
@@ -338,7 +339,7 @@ it('archives a group from its header, keeps history and drafts readable, and res
   seed('SYNTHETIC GROUP DRAFT');
   const backend = connect(false, false, 28);
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '归档群聊' }));
+  await appAction(userEvent, '归档群聊');
   await userEvent.click(screen.getByRole('button', { name: '确认归档' }));
   expect(await screen.findByText('已归档 · 历史只读')).toBeVisible();
   expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe(
@@ -348,7 +349,12 @@ it('archives a group from its header, keeps history and drafts readable, and res
     'aria-readonly',
     'true',
   );
-  expect(screen.getByRole('button', { name: '编辑群聊' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '更多操作' }));
+  expect(screen.getByRole('menuitem', { name: '编辑群聊' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  await userEvent.keyboard('{Escape}');
   expect(screen.getByRole('button', { name: '添加附件' })).toBeDisabled();
   expect(screen.getByText('群聊已归档，历史和草稿保留。恢复后可发送新协作。')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
@@ -536,7 +542,7 @@ it('creates a real group before selecting it and saves member edits against the 
   const backend = connect();
   render(<App />);
   await findSelectControl('发送给');
-  await userEvent.click(screen.getByRole('button', { name: '编辑群聊' }));
+  await appAction(userEvent, '编辑群聊');
   let dialog = screen.getByRole('dialog', { name: '编辑群聊' });
   await userEvent.clear(within(dialog).getByRole('textbox', { name: '群聊名称' }));
   await userEvent.type(within(dialog).getByRole('textbox', { name: '群聊名称' }), '合成双人协作');

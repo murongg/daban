@@ -71,7 +71,7 @@ export function Comments({
             renderItem={(comment) => (
               <li key={comment.id}>
                 <div className="comment-meta">
-                  <strong>{author(comment.createdBy)}</strong>
+                  <strong className="comment-author">{author(comment.createdBy)}</strong>
                   <time dateTime={comment.createdAt}>{time(comment.createdAt)}</time>
                 </div>
                 <p>{comment.body}</p>
@@ -119,8 +119,7 @@ export function Comments({
       </label>
       {body.length >= 9000 && (
         <p className="field-help">
-          {body.length.toLocaleString()}
-          {t('comments.characters')}
+          {t('comments.characterCount', { 0: body.length.toLocaleString(getLocale()) })}
         </p>
       )}
       {item.deleted && (
@@ -200,10 +199,7 @@ export function Comments({
       tabIndex={-1}
     >
       <div className="comment-heading">
-        <h3>
-          {t('comments.discussion')}
-          {item.title}
-        </h3>
+        <h3>{t('comments.discussionTitle', { 0: item.title })}</h3>
         <button
           type="button"
           className="text-button"

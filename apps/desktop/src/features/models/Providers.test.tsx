@@ -481,7 +481,7 @@ it('requires a fresh key when changing a saved connection protocol and preserves
 it('lists configured suppliers and changes the workspace default without copying a key', async () => {
   const { writes } = connect();
   mount();
-  expect(await screen.findByText('示例供应商')).toBeVisible();
+  expect(await screen.findByRole('button', { name: '编辑 示例供应商' })).toBeVisible();
   await selectOption(
     userEvent,
     selectControl('工作区默认模型'),
@@ -568,12 +568,15 @@ it('keeps the reserved official DeepSeek endpoint fixed while allowing model and
   expect(screen.getByLabelText('API Key')).toBeEnabled();
 });
 
-it('does not change the intent after a storage failure with an unknown save outcome', async () => {
+it('does not change the intent after a storage failure and a return to the provider list', async () => {
   const { writes } = connect('MODEL_CONFIG_UNAVAILABLE');
   mount();
   await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
   await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
-  await userEvent.click(await screen.findByRole('button', { name: '核对并重试保存' }));
+  await screen.findByRole('button', { name: '核对并重试保存' });
+  await userEvent.click(screen.getByRole('button', { name: '返回供应商列表' }));
+  await userEvent.click(screen.getByRole('button', { name: '继续编辑供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '核对并重试保存' }));
   expect(writes).toHaveLength(2);
   expect(writes[1]).toEqual(writes[0]);
 });
@@ -647,7 +650,7 @@ it.each([
 it('requires explicit review before rebasing a conflicting workspace-default edit', async () => {
   const { writes } = connect('MODEL_SETTINGS_CONFLICT');
   mount();
-  await screen.findByText('示例供应商');
+  await screen.findByRole('button', { name: '编辑 示例供应商' });
   await selectOption(
     userEvent,
     selectControl('工作区默认模型'),
@@ -668,4 +671,129 @@ it('retains a configured model route when reopening a workspace without the prov
   Object.assign(state.bots[0], { model: 'provider:synthetic-provider:model-alpha' });
   const reopened = restore(serialize(state));
   expect(reopened.bots[0].model).toBe('provider:synthetic-provider:model-alpha');
+});
+
+it('retains empty numeric drafts until a valid save boundary and preserves them when returning to the list', async () => {
+  const backend = connect();
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  expect(selectControl('供应商类型')).toHaveFocus();
+  await userEvent.click(screen.getAllByText('上下文与输出上限')[0]);
+  const context = screen.getByRole('textbox', { name: '模型 1 上下文窗口' });
+  await userEvent.clear(context);
+  expect(context).toHaveValue('');
+  expect(screen.queryByRole('button', { name: '添加供应商' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '返回供应商列表' }));
+  expect(await screen.findByRole('button', { name: '继续编辑供应商' })).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '继续编辑供应商' }));
+  expect(screen.getByRole('textbox', { name: '模型 1 上下文窗口' })).toHaveValue('');
+  await userEvent.type(screen.getByRole('textbox', { name: '模型 1 上下文窗口' }), '96000');
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  expect(backend.writes[0]).toMatchObject({
+    type: 'model.configure',
+    input: { connection: { models: [{ contextWindow: 96000 }, { contextWindow: 64000 }] } },
+  });
+});
+
+it('starts onboarding with one model selection and keeps advanced model controls in a native disclosure', async () => {
+  const backend = connect();
+  backend.snapshot.model.configured = false;
+  backend.snapshot.model.inspection = true;
+  render(
+    <RuntimeProvider>
+      <Models mode="onboarding" />
+    </RuntimeProvider>,
+  );
+  await vi.waitFor(() => expect(selectControl('供应商类型')).toBeEnabled());
+  expect(screen.getByRole('button', { name: '加载模型列表' })).toBeVisible();
+  expect(screen.getByLabelText('模型 1 ID')).not.toBeVisible();
+  expect(screen.getByLabelText('测试模型 1')).not.toBeVisible();
+  expect(screen.getByRole('button', { name: '添加模型', hidden: true })).not.toBeVisible();
+  expect(screen.getByRole('button', { name: '验证并保存供应商' })).toBeVisible();
+  await userEvent.click(screen.getByText('手动输入模型 ID'));
+  await userEvent.type(
+    screen.getByRole('textbox', { name: '模型 1 ID' }),
+    'synthetic-onboarding-model',
+  );
+  await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-onboarding-key');
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  expect(backend.writes[0]).toMatchObject({
+    input: { connection: { models: [{ id: 'synthetic-onboarding-model' }] } },
+  });
+});
+
+it('requires review before retrying a conflicting provider edit and retains the review when returning to the list', async () => {
+  const backend = connect('MODEL_SETTINGS_CONFLICT');
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await screen.findByRole('alert');
+  expect(screen.getByRole('button', { name: '验证并保存供应商' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '返回供应商列表' }));
+  await userEvent.click(screen.getByRole('button', { name: '继续编辑供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '保留输入，按当前版本重试' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  expect(backend.writes[1]).toMatchObject({ input: { revision: 4 } });
+});
+
+it('keeps a conflicting provider revision unavailable for review while offline', async () => {
+  const backend = connect('MODEL_SETTINGS_CONFLICT');
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await screen.findByRole('alert');
+  backend.disconnect();
+  expect(screen.getByRole('button', { name: '保留输入，按当前版本重试' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '验证并保存供应商' })).toBeDisabled();
+});
+
+it('preserves additional model drafts when the compact onboarding choice changes after closing advanced settings', async () => {
+  const backend = connect();
+  backend.snapshot.model.configured = false;
+  backend.snapshot.model.inspection = true;
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'model.inspect'
+      ? {
+          ok: true,
+          value:
+            command.input.kind === 'list'
+              ? {
+                  kind: 'list',
+                  revision: 3,
+                  models: [
+                    { id: 'synthetic-one', name: 'Synthetic One' },
+                    { id: 'synthetic-two', name: 'Synthetic Two' },
+                  ],
+                }
+              : {
+                  kind: 'limits',
+                  revision: 3,
+                  model: {
+                    id: command.input.model,
+                    name: command.input.model,
+                    contextWindow: 128000,
+                    source: 'provider',
+                  },
+                },
+        }
+      : invoke(command),
+  );
+  render(
+    <RuntimeProvider>
+      <Models mode="onboarding" />
+    </RuntimeProvider>,
+  );
+  await vi.waitFor(() => expect(selectControl('供应商类型')).toBeEnabled());
+  await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-onboarding-key');
+  await userEvent.click(screen.getByRole('button', { name: '加载模型列表' }));
+  await userEvent.click(await screen.findByRole('button', { name: '添加 synthetic-one' }));
+  await userEvent.click(screen.getByText('高级设置'));
+  await userEvent.click(screen.getByRole('button', { name: '添加模型' }));
+  await userEvent.type(screen.getByLabelText('模型 2 ID'), 'synthetic-extra');
+  await userEvent.click(screen.getByText('高级设置'));
+  await userEvent.click(screen.getByRole('button', { name: '添加 synthetic-two' }));
+  await userEvent.click(screen.getByText('高级设置'));
+  expect(screen.getByLabelText('模型 2 ID')).toHaveValue('synthetic-extra');
+  expect(backend.writes).toHaveLength(0);
 });

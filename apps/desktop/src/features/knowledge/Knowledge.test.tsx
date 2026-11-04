@@ -1,6 +1,7 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from '../../app/storage';
 import { demoState as seedDemoState } from '../../test/fixtures';
+import { workspaceTab } from '../../test/navigation.fixture';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
 
@@ -167,7 +168,7 @@ it('opens the document panel directly from the conversation header after closing
   connect();
   render(<App />);
   await userEvent.click(await screen.findByRole('button', { name: '关闭工作区面板' }));
-  await userEvent.click(screen.getByRole('button', { name: '资料面板' }));
+  await workspaceTab(userEvent, '资料');
   expect(await screen.findByRole('heading', { name: '长期资料' })).toBeVisible();
 });
 

@@ -214,6 +214,7 @@ export function ModelInspector({
   index,
   disabled,
   matchingDisabled,
+  limitDraft,
   onMatch,
 }: {
   query: Query;
@@ -221,6 +222,7 @@ export function ModelInspector({
   index: number;
   disabled: boolean;
   matchingDisabled: boolean;
+  limitDraft?: { contextWindow: string; maxTokens: string };
   onMatch: (model: DiscoveredModel, unchanged: { vision: boolean; limits: boolean }) => unknown;
 }) {
   useLocale();
@@ -228,14 +230,17 @@ export function ModelInspector({
   const identity = tool.identity;
   const [result, setResult] = useState<{ identity: string; value: ModelInspection }>();
   const [automaticError, setAutomaticError] = useState<{ identity: string; error: string }>();
-  const edits = useRef({ model, vision: 0, limits: 0 });
+  const edits = useRef({ model, limitDraft, vision: 0, limits: 0 });
   if (edits.current.model.vision !== model.vision) edits.current.vision++;
   if (
     edits.current.model.contextWindow !== model.contextWindow ||
-    edits.current.model.maxTokens !== model.maxTokens
+    edits.current.model.maxTokens !== model.maxTokens ||
+    edits.current.limitDraft?.contextWindow !== limitDraft?.contextWindow ||
+    edits.current.limitDraft?.maxTokens !== limitDraft?.maxTokens
   )
     edits.current.limits++;
   edits.current.model = model;
+  edits.current.limitDraft = limitDraft;
   async function run(
     kind: 'limits' | 'metadata' | 'test',
     version = { vision: edits.current.vision, limits: edits.current.limits },

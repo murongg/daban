@@ -3,7 +3,12 @@
   align-items: center;
   gap: 16px;
   justify-content: space-between;
-  margin-bottom: 20px;
+  padding: 20px 22px 0;
+  margin-bottom: 0;
+}
+.capabilities-heading > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .capabilities-heading p {
   margin: 6px 0 0;

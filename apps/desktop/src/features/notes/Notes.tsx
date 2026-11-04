@@ -64,11 +64,7 @@ export function Notes({
       <header className="notes-heading">
         <div>
           <h2>{t('common.notes')}</h2>
-          <p>
-            {t('notes.only')}
-            {bot.name}
-            {t('notes.viewEdit')}
-          </p>
+          <p>{t('notes.privateHint', { 0: bot.name })}</p>
         </div>
         <div className="notes-actions">
           <IconButton
@@ -92,7 +88,7 @@ export function Notes({
           </button>
         </div>
       </header>
-      <p className="inline-note">{t('notes.notesRecordItemsSavingMarkingThemDone')}</p>
+      {!editor && <p className="inline-note">{t('notes.notesRecordItemsSavingMarkingThemDone')}</p>}
       {!notes.available && (
         <div className="notes-notice" role="status">
           <strong>
@@ -168,25 +164,61 @@ export function Notes({
           {notes.reading && <p role="status">{t('notes.loadingNotes')}</p>}
           {draft && (
             <>
-              <div className="note-meta" role="status">
-                {sealed
-                  ? t('notes.awaitingConfirmationOriginalTextLocked')
-                  : noteDirty(draft)
-                    ? t('notes.changesLocalHaveNotBeenSavedNote')
-                    : draft.base
-                      ? t('notes.savedNotes')
-                      : t('notes.notEntered')}
-                {draft.base && (
-                  <span>
-                    {draft.base.deleted
-                      ? t('notes.alreadyTrash')
-                      : t('common.numberedRevision', { 0: draft.base.revision })}{' '}
-                    · {draft.base.updatedBy.kind === 'human' ? t('common.you') : bot.name}
-                    {t('notes.updated')}{' '}
-                    <time dateTime={draft.base.updatedAt}>{time(draft.base.updatedAt)}</time>
-                  </span>
-                )}
-              </div>
+              <header className="note-editor-heading">
+                <div className="note-meta" role="status">
+                  {sealed
+                    ? t('notes.awaitingConfirmationOriginalTextLocked')
+                    : noteDirty(draft)
+                      ? t('notes.changesLocalHaveNotBeenSavedNote')
+                      : draft.base
+                        ? t('notes.savedNotes')
+                        : t('notes.notEntered')}
+                  {draft.base && (
+                    <span>
+                      {draft.base.deleted
+                        ? t('notes.alreadyTrash')
+                        : t('common.numberedRevision', { 0: draft.base.revision })}{' '}
+                      ·{' '}
+                      <time dateTime={draft.base.updatedAt}>
+                        {t('notes.updatedByAt', {
+                          0: draft.base.updatedBy.kind === 'human' ? t('common.you') : bot.name,
+                          1: time(draft.base.updatedAt),
+                        })}
+                      </time>
+                    </span>
+                  )}
+                </div>
+                <div className="notes-actions note-save">
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={
+                      readOnly ||
+                      notes.blocked ||
+                      !!pending ||
+                      !noteDirty(draft) ||
+                      !!draft.base?.deleted ||
+                      !!latest
+                    }
+                    onClick={() => run(notes.save())}
+                  >
+                    {t('notes.saveNote')}
+                  </button>
+                  {noteDirty(draft) && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={sealed || notes.reading}
+                      onClick={() => {
+                        setConfirm(undefined);
+                        notes.discard();
+                      }}
+                    >
+                      {t('notes.discardChanges')}
+                    </button>
+                  )}
+                </div>
+              </header>
               <label className="field-label">
                 {t('notes.noteTitle')}
                 <input
@@ -225,8 +257,9 @@ export function Notes({
               </div>
               {draft.base?.completedAt && (
                 <p className="inline-note">
-                  {t('notes.completed')}{' '}
-                  <time dateTime={draft.base.completedAt}>{time(draft.base.completedAt)}</time>
+                  <time dateTime={draft.base.completedAt}>
+                    {t('notes.completedAt', { 0: time(draft.base.completedAt) })}
+                  </time>
                 </p>
               )}
               {latest && (
@@ -240,17 +273,17 @@ export function Notes({
                     tabIndex={0}
                     aria-label={t('notes.originalLatestNoteContent')}
                   >
-                    <h4>
-                      {t('notes.editsRevision')}
-                      {draft.base?.revision}
-                    </h4>
+                    <h4>{t('notes.beforeEditsRevision', { 0: draft.base?.revision ?? '' })}</h4>
                     <strong>{draft.base?.title}</strong>
                     <p>{draft.base?.body || t('notes.noContent')}</p>
                     <p>{draft.base && t(states[draft.base.status])}</p>
                     <h4>
-                      {t('notes.latestRevision')}
-                      {latest.revision}
-                      {latest.deleted ? t('notes.alreadyInTrashSuffix') : ''}
+                      {t(
+                        latest.deleted
+                          ? 'notes.latestDeletedRevision'
+                          : 'notes.latestRevisionNumber',
+                        { 0: latest.revision },
+                      )}
                     </h4>
                     <strong>{latest.title}</strong>
                     <p>{latest.body || t('notes.noContent')}</p>
@@ -276,36 +309,6 @@ export function Notes({
                   </div>
                 </section>
               )}
-              <div className="notes-actions note-save">
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={
-                    readOnly ||
-                    notes.blocked ||
-                    !!pending ||
-                    !noteDirty(draft) ||
-                    !!draft.base?.deleted ||
-                    !!latest
-                  }
-                  onClick={() => run(notes.save())}
-                >
-                  {t('notes.saveNote')}
-                </button>
-                {noteDirty(draft) && (
-                  <button
-                    type="button"
-                    className="text-button"
-                    disabled={sealed || notes.reading}
-                    onClick={() => {
-                      setConfirm(undefined);
-                      notes.discard();
-                    }}
-                  >
-                    {t('notes.discardChanges')}
-                  </button>
-                )}
-              </div>
               {draft.base && (
                 <div className="note-maintenance">
                   <button
@@ -391,8 +394,7 @@ export function Notes({
               className="text-button note-resume"
               onClick={() => notes.setEditorVisible(true)}
             >
-              {t('notes.continue')}
-              {noteDirty(draft) ? t('notes.unsavedEdits') : t('notes.lastViewedNotes')}
+              {t(noteDirty(draft) ? 'notes.continueUnsavedEdits' : 'notes.continueLastViewed')}
             </button>
           )}
           <div className="notes-filters">

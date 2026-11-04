@@ -4,7 +4,6 @@ import {
   ArrowUpToLine,
   ChevronDown,
   CornerDownRight,
-  Mic,
   Paperclip,
   Pencil,
   Plus,
@@ -157,7 +156,6 @@ export function Conversation({
       : t('chat.chooseModel');
   const nextModelName = displayModel(configuredModel, runtime.snapshot.model.connections);
   let modelLabel = modelPicker ? modelName : t('chat.chooseModel');
-  if (modelPicker && shownModel === 'deepseek-flash') modelLabel = 'Flash';
   if (modelPicker && shownModel === 'deepseek-v4-pro') modelLabel = 'V4 Pro';
   let modelCaption = t('chat.uiDemoNoModelConnected');
   if (runtime.enabled) {
@@ -341,11 +339,7 @@ export function Conversation({
       content: (
         <div className="empty-chat">
           <Avatar bot={bot} size="large" />
-          <h2>
-            {t('common.and')}
-            {bot.name}
-            {t('chat.startCollaboration')}
-          </h2>
+          <h2>{t('chat.collaborateWith', { 0: bot.name })}</h2>
           <p>{bot.role || t('chat.giveBotGoalStartFirstMessage')}</p>
           <div className="suggestions">
             {[
@@ -706,12 +700,6 @@ export function Conversation({
               />
             )}
             <span className="spacer" />
-            <IconButton
-              label={t('chat.voiceInputNotConnectedYet')}
-              onClick={() => notify(t('chat.voiceInputNotConnectedYetCanType'))}
-            >
-              <Mic />
-            </IconButton>
             <button
               type="submit"
               className="send-button"

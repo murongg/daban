@@ -302,12 +302,11 @@ export function Knowledge({
         </IconButton>
       </div>
       <p className="panel-description">
-        {t('knowledge.only')}
-        {bot.name}
         {t(
           canParseDocuments(runtime.snapshot)
-            ? 'knowledge.sLongTermReferenceDocumentsSupportsText'
-            : 'knowledge.textOnlyReference',
+            ? 'knowledge.privateDocumentHint'
+            : 'knowledge.privateTextHint',
+          { 0: bot.name },
         )}
       </p>
       {!available && (

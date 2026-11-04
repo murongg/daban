@@ -1,6 +1,7 @@
 import { beforeEach as seedBeforeEach } from 'vitest';
 import { serialize as seedSerialize, storageKey as seedStorageKey } from '../../app/storage';
 import { demoState as seedDemoState } from '../../test/fixtures';
+import { appAction } from '../../test/navigation.fixture';
 
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
 
@@ -160,7 +161,7 @@ it('opens the exact read-only task result and never submits a model task or appr
 it('defers notification navigation while an editor dialog owns unsaved input', async () => {
   const backend = connect();
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '编辑 Bot 资料' }));
+  await appAction(userEvent, '编辑 Bot 资料');
   const dialog = screen.getByRole('dialog'),
     name = within(dialog).getByRole('textbox', { name: '名称' });
   await userEvent.clear(name);

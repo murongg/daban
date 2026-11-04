@@ -21,8 +21,6 @@
   width: 21px;
   height: 21px;
   flex-shrink: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
   color: var(--muted);
 }
 .model-input-icon > svg {
@@ -48,6 +46,10 @@
   border: 1px dashed var(--line-strong);
   border-radius: 6px;
   color: var(--muted);
+}
+.model-input-toggle:hover {
+  border-color: var(--ink);
+  color: var(--ink);
 }
 .model-input-toggle[aria-pressed="true"] {
   border-style: solid;

@@ -23,12 +23,20 @@ export function Tooltip({ label, children }: { label?: string; children: Trigger
   const trigger = useRef<HTMLElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const keyboardFocus = useRef(false);
+  const hovered = useRef(false);
   const id = useId();
   const disabled = !label || children.props.disabled === true;
   const close = useCallback(() => {
     clearTimeout(timer.current);
     setOpen(false);
   }, []);
+  const leave = () => {
+    hovered.current = false;
+    clearTimeout(timer.current);
+    // A small gap separates the portalled hint from its trigger; keep it reachable by pointer.
+    if (!keyboardFocus.current) timer.current = setTimeout(close, 150);
+  };
   const { overlayProps } = useOverlayPosition({
     targetRef: trigger,
     overlayRef: overlay,
@@ -70,12 +78,15 @@ export function Tooltip({ label, children }: { label?: string; children: Trigger
             .join(' ') || undefined,
         onPointerEnter(event) {
           children.props.onPointerEnter?.(event);
-          if (!disabled && event.pointerType !== 'touch')
+          if (!disabled && event.pointerType !== 'touch') {
+            hovered.current = true;
+            clearTimeout(timer.current);
             timer.current = setTimeout(() => setOpen(true), 500);
+          }
         },
         onPointerLeave(event) {
           children.props.onPointerLeave?.(event);
-          close();
+          leave();
         },
         onPointerDown(event) {
           children.props.onPointerDown?.(event);
@@ -83,17 +94,33 @@ export function Tooltip({ label, children }: { label?: string; children: Trigger
         },
         onFocus(event) {
           children.props.onFocus?.(event);
-          if (!disabled && event.currentTarget.matches(':focus-visible')) setOpen(true);
+          keyboardFocus.current = event.currentTarget.matches(':focus-visible');
+          if (!disabled && keyboardFocus.current) {
+            clearTimeout(timer.current);
+            setOpen(true);
+          }
         },
         onBlur(event) {
           children.props.onBlur?.(event);
-          close();
+          keyboardFocus.current = false;
+          if (!hovered.current) close();
         },
       })}
       {open &&
         !disabled &&
         createPortal(
-          <div {...overlayProps} ref={overlay} id={id} role="tooltip" className="control-tooltip">
+          <div
+            {...overlayProps}
+            ref={overlay}
+            id={id}
+            role="tooltip"
+            className="control-tooltip"
+            onPointerEnter={() => {
+              hovered.current = true;
+              clearTimeout(timer.current);
+            }}
+            onPointerLeave={leave}
+          >
             {label}
           </div>,
           document.body,
