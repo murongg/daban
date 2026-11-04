@@ -13,6 +13,7 @@ import {
   isDeliveryReceipt,
   isWorkItem,
   recoveryBlocked,
+  validAgentId,
   type WorkItem,
 } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -25,16 +26,52 @@ interface Draft {
   pending?: Mutation;
 }
 const storageKey = (workId: string) => `daban.delivery.v1.${workId}`;
+function draftCriterion(value: unknown): value is DeliveryCriterion {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 4 &&
+    'id' in value &&
+    validAgentId(value.id) &&
+    'text' in value &&
+    typeof value.text === 'string' &&
+    value.text.length <= 600 &&
+    !value.text.includes('\0') &&
+    'kind' in value &&
+    (value.kind === 'text' || value.kind === 'file') &&
+    'required' in value &&
+    typeof value.required === 'boolean'
+  );
+}
+function draftChecklist(value: unknown): value is DeliveryChecklist {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !('items' in value) ||
+    !Array.isArray(value.items)
+  )
+    return false;
+  // Incomplete editor text must survive reopening; only the wire/save path requires valid acceptance text.
+  if (
+    !isDeliveryChecklist({ ...value, items: [] }) ||
+    value.items.length > 20 ||
+    !value.items.every(draftCriterion)
+  )
+    return false;
+  return new Set(value.items.map((item) => item.id)).size === value.items.length;
+}
 function restore(workId: string, cache: ClientCache): Draft | undefined {
-  const raw = cache.getItem(storageKey(workId));
-  if (!raw) return undefined;
   try {
+    const raw = cache.getItem(storageKey(workId));
+    if (!raw) return undefined;
     const value: unknown = JSON.parse(raw);
     if (
       !value ||
       typeof value !== 'object' ||
       !('checklist' in value) ||
-      !isDeliveryChecklist(value.checklist) ||
+      !draftChecklist(value.checklist) ||
       value.checklist.workId !== workId
     )
       return undefined;

@@ -277,3 +277,23 @@ test('accepted history displays the recorded checks without asking to review a h
   expect(checkbox).toBeDisabled();
   expect(screen.queryByRole('button', { name: '重新核对当前交付版本' })).toBeNull();
 });
+
+test('incomplete checklist edits retain blank rows and other edits when the panel reopens', async () => {
+  const f = fixture();
+  f.page().checklist = {
+    workId: item.id,
+    revision: 1,
+    items: [
+      { id: 'mock-first', text: 'Synthetic first', kind: 'text', required: true },
+      { id: 'mock-second', text: 'Synthetic second', kind: 'text', required: true },
+    ],
+  };
+  const view = render(<Delivery item={item} observe={() => {}} />);
+  await userEvent.clear(await screen.findByRole('textbox', { name: '验收项 1' }));
+  await userEvent.type(screen.getByRole('textbox', { name: '验收项 2' }), ' edited');
+  view.unmount();
+  render(<Delivery item={item} observe={() => {}} />);
+  expect(await screen.findByRole('textbox', { name: '验收项 1' })).toHaveValue('');
+  expect(screen.getByRole('textbox', { name: '验收项 2' })).toHaveValue('Synthetic second edited');
+  expect(screen.getByRole('button', { name: '保存验收清单' })).toBeDisabled();
+});
