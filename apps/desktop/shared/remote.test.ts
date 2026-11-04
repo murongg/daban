@@ -120,9 +120,10 @@ describe('remote wire boundary', () => {
 
   it('roundtrips an invitation without depending on the relay to supply the host key', () => {
     const invitation = {
-      version: 1 as const,
+      version: 2 as const,
       host: identity,
-      server: 'https://connect.example.test',
+      server: 'https://127.0.0.1:45678',
+      certificate: '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n',
       code: 'synthetic-pairing-secret-0123456789',
       expiresAt: 1_900_000_300_000,
     };
@@ -134,18 +135,23 @@ describe('remote wire boundary', () => {
     ).toThrow();
   });
 
-  it('requires encrypted signaling except for explicit loopback development', () => {
+  it('requires a pinned certificate and encrypted LAN address', () => {
     const invitation = {
-      version: 1 as const,
+      version: 2 as const,
       host: identity,
       server: 'http://connect.example.test',
+      certificate: '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n',
       code: 'synthetic-pairing-secret-0123456789',
       expiresAt: 1_900_000_300_000,
     };
     expect(() => remoteInvitation(invitation)).toThrow();
+    expect(() => remoteInvitation({ ...invitation, server: 'http://127.0.0.1:12345' })).toThrow();
     expect(() =>
-      remoteInvitation({ ...invitation, server: 'http://127.0.0.1:12345' }),
+      remoteInvitation({ ...invitation, server: 'https://127.0.0.1:45678' }),
     ).not.toThrow();
+    expect(() =>
+      remoteInvitation({ ...invitation, server: 'https://connect.example.test' }),
+    ).toThrow();
     expect(() =>
       remoteInvitation({ ...invitation, server: 'https://user:secret@example.test' }),
     ).toThrow();

@@ -41,7 +41,6 @@ test('the CLI emits release outputs only for a matching tag whose commit belongs
     'apps/desktop',
     'apps/agent',
     'apps/runtime',
-    'apps/connect',
     'packages/engine',
     'packages/protocol',
   ];
@@ -50,10 +49,7 @@ test('the CLI emits release outputs only for a matching tag whose commit belongs
       await mkdir(path.join(directory, location), { recursive: true });
       await writeFile(
         path.join(directory, location, 'package.json'),
-        JSON.stringify({
-          version: value,
-          ...(location === '.' ? { workspaces: packages.slice(1) } : {}),
-        }),
+        JSON.stringify({ version: value }),
       );
     }
   };

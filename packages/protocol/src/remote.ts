@@ -1,7 +1,7 @@
 import { parseRuntimeCommand } from './command.js';
 import { validAgentId } from './index.js';
 
-export const remoteVersion = 1;
+export const remoteVersion = 2;
 export const remoteMessageLimit = 256 * 1024;
 export const remoteFileChunk = 48 * 1024;
 
@@ -11,11 +11,13 @@ export interface RemoteIdentity {
   name: string;
 }
 export interface RemoteInvitation {
-  version: 1;
+  version: 2;
   host: RemoteIdentity;
   server: string;
   code: string;
   expiresAt: number;
+  certificate: string;
+  alternatives?: string[];
 }
 export interface RemoteIceServer {
   urls: string[];
@@ -23,13 +25,17 @@ export interface RemoteIceServer {
   credential?: string;
 }
 export type RemoteSignalPayload =
-  | { type: 'connect' }
+  | { type: 'connect'; signature: string }
+  | { type: 'connected'; signature: string }
+  | { type: 'data'; data: string }
+  | { type: 'frame'; data: string }
   | { type: 'pair'; code: string }
   | { type: 'paired'; accepted: boolean; signature: string; workspace: string; platform: string }
   | { type: 'offer' | 'answer'; sdp: string; signature: string }
   | { type: 'candidate'; candidate: string; mid: string | null; line: number | null }
   | { type: 'close'; error: string };
 export type RemoteSignal =
+  | { type: 'left'; identity: RemoteIdentity }
   | { type: 'challenge'; nonce: string }
   | { type: 'register'; identity: RemoteIdentity; signature: string }
   | { type: 'ready'; iceServers: RemoteIceServer[] }
@@ -76,6 +82,8 @@ export type RemoteRpcReply =
   | { type: 'reply'; id: string; host: string; workspace: string; ok: false; error: string };
 
 export interface RemoteHost {
+  certificate?: string;
+  alternatives?: string[];
   identity: RemoteIdentity;
   server: string;
   workspace: string;
@@ -116,7 +124,7 @@ export type RemoteCommand =
   | { type: 'view'; host: string; request: RemoteMediaRequest }
   | { type: 'view.close'; id: string }
   | { type: 'status' }
-  | { type: 'host'; enabled: boolean; server: string }
+  | { type: 'host'; enabled: boolean }
   | { type: 'invite' }
   | { type: 'pair'; invitation: string }
   | { type: 'approve'; id: string; accepted: boolean }
@@ -166,9 +174,17 @@ export function isRemoteIdentity(value: unknown): value is RemoteIdentity {
 }
 export function remoteServer(value: string) {
   const url = new URL(value);
+  const parts = url.hostname.split('.').map(Number);
+  const local =
+    parts.length === 4 &&
+    parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+    (parts[0] === 10 ||
+      parts[0] === 127 ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31));
   if (
-    !['https:', 'http:'].includes(url.protocol) ||
-    (url.protocol !== 'https:' && !['127.0.0.1', '[::1]'].includes(url.hostname)) ||
+    url.protocol !== 'https:' ||
+    !local ||
     url.username ||
     url.password ||
     url.search ||
@@ -176,13 +192,22 @@ export function remoteServer(value: string) {
     !['', '/'].includes(url.pathname) ||
     value.length > 2048
   )
-    throw new Error('REMOTE_INVALID_SERVER');
+    throw Error('REMOTE_INVALID_SERVER');
   return url.origin;
 }
+
 function invitation(value: unknown): value is RemoteInvitation {
   if (
     !record(value) ||
-    !exact(value, ['version', 'host', 'server', 'code', 'expiresAt']) ||
+    !exact(value, [
+      'version',
+      'host',
+      'server',
+      'code',
+      'expiresAt',
+      'certificate',
+      'alternatives',
+    ]) ||
     value.version !== remoteVersion ||
     !isRemoteIdentity(value.host) ||
     !text(value.server, 2048) ||
@@ -192,7 +217,16 @@ function invitation(value: unknown): value is RemoteInvitation {
   )
     return false;
   try {
-    return remoteServer(value.server) === value.server;
+    return (
+      remoteServer(value.server) === value.server &&
+      isRemoteCertificate(value.certificate) &&
+      (value.alternatives === undefined ||
+        (Array.isArray(value.alternatives) &&
+          value.alternatives.length <= 8 &&
+          value.alternatives.every(
+            (server) => typeof server === 'string' && remoteLanServer(server),
+          )))
+    );
   } catch {
     return false;
   }
@@ -223,7 +257,18 @@ function payload(value: unknown): value is RemoteSignalPayload {
   if (!record(value)) return false;
   switch (value.type) {
     case 'connect':
-      return exact(value, ['type']);
+      return exact(value, ['type', 'signature']) && text(value.signature, 86, 86);
+    case 'connected':
+      return exact(value, ['type', 'signature']) && text(value.signature, 86, 86);
+    case 'data':
+      return exact(value, ['type', 'data']) && text(value.data, remoteFileChunk);
+    case 'frame':
+      return (
+        exact(value, ['type', 'data']) &&
+        text(value.data, 65560) &&
+        value.data.length % 4 === 0 &&
+        /^[A-Za-z0-9+/]+={0,2}$/.test(value.data)
+      );
     case 'pair':
       return exact(value, ['type', 'code']) && text(value.code, 128, 32);
     case 'paired':
@@ -257,6 +302,8 @@ function payload(value: unknown): value is RemoteSignalPayload {
 }
 export function isRemoteSignal(value: unknown): value is RemoteSignal {
   if (!record(value)) return false;
+  if (value.type === 'left')
+    return exact(value, ['type', 'identity']) && isRemoteIdentity(value.identity);
   if (value.type === 'challenge')
     return exact(value, ['type', 'nonce']) && text(value.nonce, 64, 64);
   if (value.type === 'register')
@@ -270,7 +317,7 @@ export function isRemoteSignal(value: unknown): value is RemoteSignal {
     return (
       exact(value, ['type', 'iceServers']) &&
       Array.isArray(value.iceServers) &&
-      value.iceServers.length <= 8 &&
+      value.iceServers.length === 0 &&
       value.iceServers.every(
         (server) =>
           record(server) &&
@@ -329,19 +376,8 @@ export function isRemoteCommand(value: unknown): value is RemoteCommand {
     case 'status':
     case 'invite':
       return exact(value, ['type']);
-    case 'host': {
-      if (
-        !exact(value, ['type', 'enabled', 'server']) ||
-        typeof value.enabled !== 'boolean' ||
-        !text(value.server, 2048)
-      )
-        return false;
-      try {
-        return remoteServer(value.server) === value.server;
-      } catch {
-        return false;
-      }
-    }
+    case 'host':
+      return exact(value, ['type', 'enabled']) && typeof value.enabled === 'boolean';
     case 'pair':
       return exact(value, ['type', 'invitation']) && text(value.invitation, 8192);
     case 'approve':
@@ -357,4 +393,21 @@ export function isRemoteCommand(value: unknown): value is RemoteCommand {
     default:
       return false;
   }
+}
+
+export function remoteLanServer(value: string) {
+  try {
+    return remoteServer(value) === value;
+  } catch {
+    return false;
+  }
+}
+export function isRemoteCertificate(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 8192 &&
+    /^-----BEGIN CERTIFICATE-----\r?\n[A-Za-z0-9+/=\r\n]+-----END CERTIFICATE-----\r?\n?$/.test(
+      value,
+    )
+  );
 }

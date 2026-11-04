@@ -125,3 +125,18 @@ it('takes fresh observations instead of persisting and replaying cached screens'
   expect(await f.store.run(f.keys.identity.id, request, async () => ++frame)).toBe(1);
   expect(await f.store.run(f.keys.identity.id, request, async () => ++frame)).toBe(2);
 });
+
+it('rejects a certificate paired with a public or malformed endpoint', async () => {
+  const f = await fixture();
+  const certificate = '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n';
+  expect(() =>
+    f.store.pair(f.keys.identity, 'host', { server: 'https://connect.example.test', certificate }),
+  ).toThrow('REMOTE_INVALID_CONNECTION');
+  expect(() =>
+    f.store.pair(f.keys.identity, 'host', {
+      server: 'https://127.0.0.1:45678',
+      certificate,
+      alternatives: ['https://outside.example.test'],
+    }),
+  ).toThrow('REMOTE_INVALID_CONNECTION');
+});

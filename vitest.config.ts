@@ -24,7 +24,6 @@ export default defineConfig({
             'dist-agent/**/*.test.js',
             'packages/engine/dist/**/*.test.js',
             'tools/**/*.test.ts',
-            'apps/connect/src/**/*.test.ts',
           ],
           environment: 'node',
           setupFiles: ['./tools/testing/node.ts'],

@@ -52,6 +52,7 @@ import { pendingInserts } from '../features/chat/response';
 import { Computer, type ComputerSurface } from '../features/computer/Computer';
 import { Desktop } from '../features/computer/Desktop';
 import { Recovery, RecoveryNotice } from '../features/computer/Recovery';
+import { RemoteButton } from '../features/computer/Remote';
 import { download, downloadBlob, taskFile } from '../features/files/files';
 import { CopyGroup } from '../features/groups/CopyGroup';
 import { GroupArchive } from '../features/groups/GroupArchive';
@@ -163,7 +164,7 @@ export function App() {
           <RemoteWorkspace>
             <UpdateNotice />
             <AgentUpgradeNotice />
-            <Onboarding>
+            <Onboarding actions={<RemoteButton label={t('remote.connectAnother')} />}>
               <Workbench />
             </Onboarding>
           </RemoteWorkspace>

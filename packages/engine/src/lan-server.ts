@@ -1,50 +1,71 @@
-import { createHmac, randomBytes } from 'node:crypto';
-import { createServer } from 'node:http';
-import { remoteProof, validRemoteIdentity, verifyRemoteProof } from '@daban/engine/connect';
+import { randomBytes } from 'node:crypto';
+import type { RequestListener } from 'node:http';
+import { createServer as createSecureServer } from 'node:https';
 import {
   isRemoteSignal,
   type RemoteIdentity,
   type RemoteSignal,
+  remoteLanServer,
   remoteMessageLimit,
 } from '@daban/protocol';
 import WebSocket, { WebSocketServer } from 'ws';
+import { remoteProof, validRemoteIdentity, verifyRemoteProof } from './remote-crypto.js';
 
-export interface ConnectOptions {
-  host?: string;
-  port?: number;
-  maxConnections?: number;
-  allowedDevices?: readonly string[];
-  turn?: { urls: string[]; secret: string };
+export interface LanServerOptions {
+  port: number;
+  tls: { key: string; cert: string };
+  owner: string;
 }
-export async function startConnect(options: ConnectOptions = {}) {
-  if (
-    options.turn &&
-    (options.turn.secret.length < 32 ||
-      options.turn.urls.length > 4 ||
-      !options.turn.urls.every((url) => /^(stun|turn|turns):[^\s]{1,1000}$/.test(url)))
-  )
-    throw Error('CONNECT_INVALID_TURN');
+export async function startLanSignal(options: LanServerOptions) {
+  if (!/^[a-f0-9]{64}$/.test(options.owner)) throw Error('REMOTE_LAN_CONFIG_INVALID');
   const alive = new WeakSet<WebSocket>();
   const peers = new Map<string, { socket: WebSocket; identity: RemoteIdentity }>();
+  const left = (identity: RemoteIdentity) => {
+    for (const peer of peers.values()) {
+      const target =
+        identity.id === options.owner
+          ? peer.identity.id !== options.owner
+          : peer.identity.id === options.owner;
+      if (!target) continue;
+      if (
+        peer.socket.readyState === WebSocket.OPEN &&
+        peer.socket.bufferedAmount < remoteMessageLimit * 8
+      )
+        peer.socket.send(JSON.stringify({ type: 'left', identity }));
+      else peer.socket.terminate();
+    }
+  };
   const origins = new Map<string, { attempts: number; expires: number }>();
-  const server = createServer((request, response) => {
+  const listener: RequestListener = (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     if (request.method === 'GET' && request.url === '/health') {
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ service: 'daban-connect', version: 1 }));
+      response.end(JSON.stringify({ service: 'daban-lan', version: 2 }));
     } else {
       response.writeHead(404);
       response.end();
     }
-  });
+  };
+  const server = createSecureServer(
+    { ...options.tls, minVersion: 'TLSv1.2', handshakeTimeout: 10000 },
+    listener,
+  );
+  server.maxConnections = 32;
+  server.requestTimeout = 5000;
+  server.headersTimeout = 5000;
   const sockets = new WebSocketServer({
     noServer: true,
     maxPayload: remoteMessageLimit,
     perMessageDeflate: false,
   });
   server.on('upgrade', (request, socket, head) => {
-    if (request.url !== '/v1/signal' || sockets.clients.size >= (options.maxConnections ?? 1000)) {
+    const address = (request.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+    if (!remoteLanServer(`https://${address}`)) {
+      socket.destroy();
+      return;
+    }
+    if (request.url !== '/v1/signal' || sockets.clients.size >= 16) {
       socket.destroy();
       return;
     }
@@ -92,7 +113,7 @@ export async function startConnect(options: ConnectOptions = {}) {
           period = Date.now();
           count = 0;
         }
-        if (++count > 256) return refuse('REMOTE_RATE_LIMIT');
+        if (++count > 4096) return refuse('REMOTE_RATE_LIMIT');
         const value: unknown = JSON.parse(bytes.toString());
         if (!isRemoteSignal(value)) return refuse('REMOTE_INVALID_MESSAGE');
         if (!identity) {
@@ -106,37 +127,30 @@ export async function startConnect(options: ConnectOptions = {}) {
             )
           )
             return refuse('REMOTE_UNAUTHORIZED');
-          if (options.allowedDevices && !options.allowedDevices.includes(value.identity.id))
-            return refuse('REMOTE_DEVICE_NOT_ENROLLED');
           identity = value.identity;
           clearTimeout(timeout);
-          peers.get(identity.id)?.socket.close(1000, 'replaced');
+          const previous = peers.get(identity.id);
+          if (previous) {
+            // Retire old sessions before the replacement connection can send a new handshake.
+            left(previous.identity);
+            previous.socket.close(1000, 'replaced');
+          }
           peers.set(identity.id, { identity, socket });
-          const username = `${Math.floor(Date.now() / 1000) + 600}:${identity.id}`;
-          send({
-            type: 'ready',
-            iceServers: options.turn
-              ? [
-                  {
-                    urls: options.turn.urls,
-                    username,
-                    credential: createHmac('sha1', options.turn.secret)
-                      .update(username)
-                      .digest('base64'),
-                  },
-                ]
-              : [],
-          });
+          send({ type: 'ready', iceServers: [] });
           return;
         }
         if (value.type !== 'signal' || !('to' in value)) return refuse('REMOTE_INVALID_MESSAGE');
+        // A LAN listener belongs to one Host; it cannot relay another device's workspace.
+        if (value.to !== options.owner && identity.id !== options.owner)
+          return refuse('REMOTE_LAN_ONLY');
         const target = peers.get(value.to);
         if (!target || target.socket.readyState !== WebSocket.OPEN) {
           send({ type: 'error', error: 'REMOTE_PEER_OFFLINE' });
           return;
         }
-        if (target.socket.bufferedAmount >= remoteMessageLimit * 2)
+        if (target.socket.bufferedAmount >= remoteMessageLimit * 8)
           return refuse('REMOTE_BACKPRESSURE');
+        socket.pause();
         target.socket.send(
           JSON.stringify({
             type: 'signal',
@@ -144,6 +158,10 @@ export async function startConnect(options: ConnectOptions = {}) {
             session: value.session,
             payload: value.payload,
           }),
+          (error) => {
+            socket.resume();
+            if (error) socket.terminate();
+          },
         );
       } catch {
         refuse('REMOTE_INVALID_MESSAGE');
@@ -151,8 +169,15 @@ export async function startConnect(options: ConnectOptions = {}) {
     });
     socket.once('close', () => {
       clearTimeout(timeout);
-      if (identity && peers.get(identity.id)?.socket === socket) peers.delete(identity.id);
+      if (identity && peers.get(identity.id)?.socket === socket) {
+        peers.delete(identity.id);
+        left(identity);
+      }
     });
+  });
+  await new Promise<undefined>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(options.port, '0.0.0.0', () => resolve(undefined));
   });
   const sweep = setInterval(() => {
     for (const [ip, rate] of origins) if (rate.expires < Date.now()) origins.delete(ip);
@@ -164,16 +189,13 @@ export async function startConnect(options: ConnectOptions = {}) {
       alive.delete(socket);
       socket.ping();
     }
-  }, 30_000);
+  }, 5_000);
   sweep.unref();
-  await new Promise<undefined>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(options.port ?? 8787, options.host ?? '127.0.0.1', () => resolve(undefined));
-  });
   const address = server.address();
   if (!address || typeof address === 'string') throw Error('CONNECT_LISTEN_FAILED');
   return {
-    origin: `http://127.0.0.1:${address.port}`,
+    origin: `https://127.0.0.1:${address.port}`,
+    port: address.port,
     async close() {
       clearInterval(sweep);
       for (const socket of sockets.clients) socket.terminate();

@@ -20,11 +20,11 @@
   white-space: nowrap;
 }
 .dialog.remote-dialog {
-  width: 700px;
+  width: 560px;
 }
 .remote-panel {
   display: grid;
-  gap: 14px;
+  gap: 18px;
 }
 .remote-panel p {
   margin: 5px 0;
@@ -117,4 +117,81 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+.remote-main-action {
+  width: 100%;
+  justify-content: center;
+  min-height: 38px;
+}
+.remote-share-action {
+  justify-self: center;
+}
+.remote-back {
+  justify-self: start;
+  margin-bottom: 4px;
+}
+.remote-device-row > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.remote-device-row button {
+  flex-shrink: 0;
+}
+.remote-device-row p {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.remote-devices .remote-device-row:last-child {
+  border-bottom: 0;
+}
+.remote-sharing-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 0;
+  font-size: 12px;
+}
+.remote-advanced {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.remote-advanced summary,
+.remote-pair-request summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+.remote-advanced > .remote-device-row {
+  font-size: 12px;
+}
+.remote-advanced .remote-device-row code {
+  display: block;
+  color: var(--muted);
+}
+.remote-pair-request > svg {
+  color: var(--muted);
+}
+.onboarding-remote {
+  position: fixed;
+  top: 56px;
+  right: 24px;
+  z-index: 5;
+  width: 230px;
+}
+.onboarding-remote .remote-selector {
+  width: 100%;
+  margin: 0;
+  background: var(--canvas);
+}
+@media (max-width: 760px) {
+  .onboarding-remote {
+    top: 48px;
+    right: 16px;
+    width: 200px;
+  }
+  .remote-device-row {
+    flex-wrap: wrap;
+  }
 }

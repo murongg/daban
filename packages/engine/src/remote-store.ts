@@ -2,7 +2,13 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { isRemoteRpcRequest, type RemoteIdentity, type RemoteRpcRequest } from '@daban/protocol';
+import {
+  isRemoteCertificate,
+  isRemoteRpcRequest,
+  type RemoteIdentity,
+  type RemoteRpcRequest,
+  remoteLanServer,
+} from '@daban/protocol';
 import { and, eq } from 'drizzle-orm';
 import { configure, type Database, migrate } from './database.js';
 import { privateMetadata, secureDirectory } from './private-files.js';
@@ -16,6 +22,8 @@ export interface RemoteDevice {
   server: string;
   workspace: string;
   platform: string;
+  certificate?: string;
+  alternatives?: string[];
 }
 
 const observations = new Set([
@@ -74,6 +82,21 @@ const observations = new Set([
   'skill.read',
 ]);
 
+function validConnection(value: { server?: string; certificate?: string; alternatives?: unknown }) {
+  if (value.certificate === undefined) return value.alternatives === undefined;
+  return (
+    isRemoteCertificate(value.certificate) &&
+    typeof value.server === 'string' &&
+    remoteLanServer(value.server) &&
+    (value.alternatives === undefined ||
+      (Array.isArray(value.alternatives) &&
+        value.alternatives.length <= 8 &&
+        value.alternatives.every(
+          (server) => typeof server === 'string' && remoteLanServer(server),
+        )))
+  );
+}
+
 export class RemoteStore {
   readonly ready: Promise<unknown>;
   private db?: Database;
@@ -128,12 +151,20 @@ export class RemoteStore {
         const identity = { id: row.id, publicKey: row.publicKey, name: row.name };
         if (!validRemoteIdentity(identity) || !['host', 'controller'].includes(row.role))
           throw Error('REMOTE_STORE_UNAVAILABLE');
+        const connection = {
+          server: row.server,
+          certificate: row.certificate ?? undefined,
+          alternatives: row.alternatives ? (JSON.parse(row.alternatives) as unknown) : undefined,
+        };
+        if (!validConnection(connection)) throw Error('REMOTE_STORE_UNAVAILABLE');
         return {
           identity,
           role: row.role as RemoteDevice['role'],
           server: row.server,
           workspace: row.workspace,
           platform: row.platform,
+          ...(row.certificate ? { certificate: row.certificate } : {}),
+          ...(row.alternatives ? { alternatives: JSON.parse(row.alternatives) as string[] } : {}),
         };
       });
   }
@@ -143,8 +174,15 @@ export class RemoteStore {
   pair(
     identity: RemoteIdentity,
     role: RemoteDevice['role'],
-    metadata: { server?: string; workspace?: string; platform?: string } = {},
+    metadata: {
+      server?: string;
+      workspace?: string;
+      platform?: string;
+      certificate?: string;
+      alternatives?: string[];
+    } = {},
   ) {
+    if (!validConnection(metadata)) throw Error('REMOTE_INVALID_CONNECTION');
     if (!validRemoteIdentity(identity)) throw Error('REMOTE_INVALID_IDENTITY');
     const previous = this.device(identity.id);
     if (previous && (previous.role !== role || previous.identity.publicKey !== identity.publicKey))
@@ -155,6 +193,8 @@ export class RemoteStore {
       server: metadata.server ?? '',
       workspace: metadata.workspace ?? '',
       platform: metadata.platform ?? '',
+      certificate: metadata.certificate ?? null,
+      alternatives: metadata.alternatives ? JSON.stringify(metadata.alternatives) : null,
     };
     this.available()
       .insert(remoteDevices)
@@ -165,11 +205,11 @@ export class RemoteStore {
   revoke(id: string) {
     this.available().delete(remoteDevices).where(eq(remoteDevices.id, id)).run();
   }
-  setting(key: 'server' | 'hosting' | 'selected') {
+  setting(key: 'hosting' | 'selected' | 'lan.port') {
     return this.available().select().from(remoteSettings).where(eq(remoteSettings.key, key)).get()
       ?.value;
   }
-  saveSetting(key: 'server' | 'hosting' | 'selected', value: string) {
+  saveSetting(key: 'hosting' | 'selected' | 'lan.port', value: string) {
     this.available()
       .insert(remoteSettings)
       .values({ key, value })

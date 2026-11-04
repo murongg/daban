@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { RemoteAccess } from '@daban/engine/remote';
-import { app } from 'electron';
+import type { RemoteIceServer } from '@daban/protocol';
+import { app, BrowserWindow } from 'electron';
 import { PeerWorker } from '../electron/peer';
 
 const root = process.env.DABAN_REMOTE_TEST_ROOT;
-const origin = process.env.DABAN_REMOTE_TEST_ORIGIN;
+const ice: RemoteIceServer[] = JSON.parse(process.env.DABAN_REMOTE_TEST_ICE ?? '[]');
 const project = process.env.DABAN_REMOTE_TEST_PROJECT;
-assert.ok(root && origin && project);
+assert.ok(root && project);
+const clientBuild = process.env.DABAN_REMOTE_TEST_BUILD ?? project;
 assert.equal(path.dirname(root), path.join(project, 'outputs/remote'));
 app.setPath('userData', path.join(root, 'electron'));
 app.setName('Daban remote synthetic verification');
@@ -16,17 +19,40 @@ app.on('window-all-closed', () => {});
 
 async function verify() {
   await app.whenReady();
-  const makePeer = () =>
-    new PeerWorker({
-      page: path.join(project!, 'dist/peer.html'),
-      preload: path.join(project!, 'dist-electron/peer-preload.cjs'),
-      renderer: '',
-      window: () => undefined,
+  const receiving = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(clientBuild, 'dist-electron/peer-preload.cjs'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: 'synthetic-controller',
+      backgroundThrottling: false,
+    },
+  });
+  const makePeer = (controller = false) => {
+    const peer = new PeerWorker({
+      page: path.join(clientBuild, 'dist/peer.html'),
+      preload: path.join(clientBuild, 'dist-electron/peer-preload.cjs'),
+      renderer: pathToFileURL(path.join(clientBuild, 'dist/peer.html')).href,
+      window: () => (controller ? receiving : undefined),
       allowCapture: async () => true,
       diagnostic: (message) => console.info(message),
     });
+    const open = peer.open.bind(peer);
+    // TURN belongs only to this synthetic media test; LAN workspace traffic uses its pinned TLS connection.
+    peer.open = (session, initiator, _servers, media) => open(session, initiator, ice, media);
+    return peer;
+  };
   const hostPeer = makePeer(),
-    controllerPeer = makePeer();
+    controllerPeer = makePeer(true);
+  receiving.webContents.session.setPermissionCheckHandler((contents, permission) =>
+    controllerPeer.permission(contents, permission),
+  );
+  receiving.webContents.session.setPermissionRequestHandler((contents, permission, callback) =>
+    callback(controllerPeer.permission(contents, permission)),
+  );
+  await receiving.loadFile(path.join(clientBuild, 'dist/peer.html'));
   for (const [name, peer] of [
     ['host', hostPeer],
     ['controller', controllerPeer],
@@ -133,7 +159,7 @@ async function verify() {
   });
   try {
     await Promise.all([host.ready, controller.ready]);
-    await host.command({ type: 'host', enabled: true, server: origin });
+    await host.command({ type: 'host', enabled: true });
     const invitation = (await host.command({ type: 'invite' })).invitation;
     assert.ok(invitation);
     const pairing = controller.command({ type: 'pair', invitation });
@@ -147,8 +173,6 @@ async function verify() {
     console.info('synthetic-rtc', 'selected');
     const connected = controller.state().hosts[0];
     assert.equal(connected.state, 'connected');
-    const receiving = controllerPeer.companionWindow;
-    assert.ok(receiving);
     const watch = () => {
       window.addEventListener('daban:remote-track', (event) => {
         const detail = (event as CustomEvent<{ session: string; stream?: MediaStream }>).detail;
@@ -214,7 +238,8 @@ async function verify() {
           realChromium: true,
           realWebRtc: true,
           pairedWithHostApproval: true,
-          transport: connected.transport,
+          transport: 'pinned-tls',
+          turnUsedOnlyForSyntheticVideo: true,
           unicodeChunkRoundtrip: true,
           syntheticVideoRendered: true,
           separateMediaConnection: true,
@@ -232,6 +257,7 @@ async function verify() {
     await host.close();
     await controllerPeer.dispose();
     await hostPeer.dispose();
+    receiving.destroy();
   }
 }
 verify()

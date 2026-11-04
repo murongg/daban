@@ -8,6 +8,8 @@ export const remoteDevices = sqliteTable('remote_devices', {
   server: text().notNull(),
   workspace: text().notNull(),
   platform: text().notNull(),
+  certificate: text(),
+  alternatives: text(),
 });
 export const remoteSettings = sqliteTable('remote_settings', {
   key: text().primaryKey(),

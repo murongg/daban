@@ -1,4 +1,41 @@
 export const english = {
+  'remote.previewHint': 'Synthetic preview. No real computer is connected.',
+  'remote.back': 'Back',
+  'remote.lanIntro': 'Connect computers on the same network. Each keeps its own workspace.',
+  'remote.connectAnother': 'Connect another computer',
+  'remote.allowThisComputer': 'Allow connections to this computer',
+  'remote.joinHint':
+    'Enable connections on the other computer, copy its connection link, and paste it here.',
+  'remote.shareHint':
+    'Share a connection link with another computer on your network. You approve each new device.',
+  'remote.linkPlaceholder': 'Paste the other computer’s connection link',
+  'remote.connect': 'Connect',
+  'remote.waitingApproval': 'Waiting for approval…',
+  'remote.waitingHint':
+    'Approve the connection on the other computer. Closing this dialog cancels automatic navigation.',
+  'remote.available': 'Connections enabled',
+  'remote.notSharing': 'Connections disabled',
+  'remote.copyLink': 'Copy connection link',
+  'remote.enableAndCopy': 'Enable and copy link',
+  'remote.preparing': 'Preparing…',
+  'remote.linkCopied': 'Copied. Paste it on the other computer.',
+  'remote.linkHint':
+    'The link expires in five minutes. Paired devices can reconnect from the list.',
+  'remote.requestFrom': '“{0}” wants to connect',
+  'remote.approvalHint':
+    'Approval grants workspace access. Desktop control still needs separate permission.',
+  'remote.deviceDetails': 'Device information',
+  'remote.manageDevices': 'Devices and access',
+  'remote.address': 'Local connection address:',
+  'remote.authorizedDevice': 'Authorized to access this computer',
+  'remote.connected': 'Connected',
+  'remote.linkInvalid': 'The link is invalid or expired. Copy a new link on the other computer.',
+  'remote.networkUnavailable':
+    'No local network is available. Connect to Wi-Fi or Ethernet and try again.',
+  'remote.repairRequired':
+    'Connection details changed. Update both apps and add this computer again.',
+  'remote.connectionFailed':
+    'This computer is unreachable. Check both are on the same network with connections enabled, then retry.',
   'remote.startVideo': 'Live video',
   'remote.stopVideo': 'Stop video',
   'remote.waitingVideo': 'Waiting for host approval and video…',
@@ -16,7 +53,7 @@ export const english = {
   'localComputer.waylandUnavailable':
     'Native input is not verified for this Wayland session. Use a supported X11 session.',
   'localComputer.displayUnavailable':
-    'No graphical user session is available. A cloud host can use a separate Linux workspace desktop.',
+    'No graphical desktop is available. Start Daban in a signed-in desktop session.',
   'remote.viewTitle': 'Allow remote desktop viewing?',
   'remote.viewConfirm':
     'A paired device requests to view the primary display, including visible apps and content.',
@@ -24,43 +61,20 @@ export const english = {
   'remote.local': 'This computer',
   'remote.current': 'Current computer: {0}',
   'remote.unavailable': 'Remote computers are unavailable. The local workspace is still available.',
-  'remote.platformMac': 'macOS',
-  'remote.platformWindows': 'Windows',
-  'remote.platformLinux': 'Linux',
   'remote.title': 'Remote computers',
-  'remote.intro':
-    'Each computer has its own workspace. Switching computers keeps accepted tasks running.',
   'remote.openWorkspace': 'Open workspace',
   'remote.offline': 'Offline',
   'remote.connecting': 'Connecting',
-  'remote.direct': 'Direct',
-  'remote.relay': 'Relayed',
   'remote.remove': 'Remove connection',
-  'remote.add': 'Add a remote computer',
-  'remote.addDescription':
-    'Enable remote access on the other computer and obtain its invitation. Pairing requires approval there.',
-  'remote.invitation': 'Invitation link',
-  'remote.requestPair': 'Request pairing',
-  'remote.working': 'Waiting for a response…',
-  'remote.hostTitle': 'Make this computer available remotely',
-  'remote.hostDescription':
-    'Allow paired devices to access this workspace. Desktop viewing and control require separate authorization. The connection service can be self-hosted.',
-  'remote.server': 'Connection service URL',
-  'remote.enableHost': 'Enable remote access',
+  'remote.invitation': 'Connection link',
   'remote.disableHost': 'Disable remote access',
-  'remote.createInvitation': 'Create invitation',
   'remote.fingerprint': 'Host fingerprint',
-  'remote.verifyPair':
-    'Verify the controller fingerprint. Approval grants access to this workspace.',
   'remote.allowPair': 'Approve pairing',
   'remote.rejectPair': 'Decline',
   'remote.revoke': 'Revoke access',
-  'remote.invitationExpired': 'The invitation has expired. Create a new one on the host.',
   'remote.pairRefused': 'The host declined the pairing request.',
   'remote.outcomeUnknown':
     'The outcome is unconfirmed. Reconnect and check the task record before repeating the operation.',
-  'remote.operationFailed':
-    'The operation could not finish. Check the connection service, host availability and invitation expiry.',
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',

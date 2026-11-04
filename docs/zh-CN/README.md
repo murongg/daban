@@ -30,7 +30,7 @@
 
 | 功能 | 内容 |
 | --- | --- |
-| [远程电脑](remote-computers.md) | 闲置电脑、云端桌面、配对和独立后台任务 |
+| [远程电脑](remote-computers.md) | 局域网电脑、配对和独立后台任务 |
 | [Linux 电脑](linux-computer.md) | 独立屏幕、接管交还、共享环境 |
 | [本机 Mac / Windows](local-computer.md) | 主显示器、系统权限、暂停和临时授权 |
 | [浏览器](browser.md) | 标签、登录、网页交互与恢复 |

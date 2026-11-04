@@ -30,7 +30,7 @@ const startupLabels: Partial<Record<SetupPhase, MessageKey>> = {
   starting: 'setup.startingLinuxWillConnectAutomaticallyWhenReady',
   connecting: 'setup.connectingLocalServicesOpeningWorkspace',
 };
-export function Onboarding({ children }: { children: ReactNode }) {
+export function Onboarding({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
   useLocale();
   const runtime = useRuntime();
   const snapshot = runtime.snapshot;
@@ -91,16 +91,45 @@ export function Onboarding({ children }: { children: ReactNode }) {
     }
   }
   if (stage === 'workspace') return children;
-  if (stage === 'models')
-    return (
+  const content =
+    stage === 'models' ? (
       <ModelSetup
         onComplete={() => setStage('workspace')}
         reconnect={reconnect}
         retrying={retrying}
         error={error}
       />
+    ) : snapshot.setup?.required && snapshot.setup.target !== 'linux' ? (
+      <Setup />
+    ) : (
+      <StartupStatus
+        snapshot={snapshot}
+        retrying={retrying}
+        error={error}
+        reconnect={reconnect}
+        enter={() => setStage('workspace')}
+      />
     );
-  if (snapshot.setup?.required && snapshot.setup.target !== 'linux') return <Setup />;
+  return (
+    <>
+      {actions && <div className="onboarding-remote">{actions}</div>}
+      {content}
+    </>
+  );
+}
+function StartupStatus({
+  snapshot,
+  retrying,
+  error,
+  reconnect,
+  enter,
+}: {
+  snapshot: ReturnType<typeof useRuntime>['snapshot'];
+  retrying: boolean;
+  error: string;
+  reconnect(): Promise<unknown>;
+  enter(): unknown;
+}) {
   const offline = snapshot.phase === 'offline';
   const startup = snapshot.setup?.target === 'linux' ? snapshot.setup : undefined;
   const label = startup && startupLabels[startup.phase];
@@ -162,7 +191,7 @@ export function Onboarding({ children }: { children: ReactNode }) {
               <RefreshCw size={15} />
               {t('settings.reconnect')}
             </button>
-            <button className="text-button" type="button" onClick={() => setStage('workspace')}>
+            <button className="text-button" type="button" onClick={enter}>
               {t('onboarding.offlineWorkspace')}
             </button>
           </div>

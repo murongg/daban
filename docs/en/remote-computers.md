@@ -1,72 +1,45 @@
-# Remote computers
+# LAN computer access
 
-A remote computer is a separate Daban workspace. Its Bot, model configuration, files, approvals and accepted tasks live on the host. Closing the controller or losing its network connection leaves accepted tasks running on the host. Keep the host powered, online and signed into its desktop session.
+The first version connects computers on the same local network. Install matching Daban builds on both devices. Keep the host powered, signed into its desktop and running Daban. The connection service is built into the client; no server deployment, SSH forwarding or TURN setup is required.
 
-## Connect an idle computer
+## First connection
 
-1. Install matching builds with remote support on both computers.
-2. Open **Remote computers** in each sidebar and record both full device fingerprints.
-3. Deploy your Connect service as described below. On the host, enter its HTTPS origin, enable remote access and create an invitation.
-4. Paste the invitation on the controller. Verify its fingerprint on the host before approving. Invitations expire after five minutes and do not authorize access on their own.
-5. Open the host workspace, configure its model, create a Bot and start a task.
-6. Connecting a Bot to the native desktop requires separate host approval of the Bot, model and screenshot recipient. macOS screen recording and accessibility permissions must be granted on the host.
+1. On the host, open **Remote computers → Allow connections to this computer**, then **Enable and copy link**.
+2. On the controller, open **Remote computers → Connect another computer**, paste the link and connect. This entry is available during onboarding, without configuring a local model first.
+3. Verify the requesting device on the host and approve it. The controller opens its workspace automatically.
 
-After enabling remote access, the host window can be closed. Add Daban to the operating system’s login startup items to reconnect after reboot. Quitting Daban or signing out disconnects desktop access.
+Links expire after five minutes and pair one new device. They contain public identity and certificate information plus a high-entropy, single-use pairing secret. Send the link directly to your own other device. Private keys remain on their owner.
 
-Device keys and pairing records are stored in private host directories. Revoking a device disconnects its sessions. Connect enrollment does not replace host approval.
+The operating system may request private-network or local-network permission. Both computers must be mutually reachable; guest Wi-Fi and network isolation may prevent access.
 
-## View and take control
+## Later use
 
-Native desktops use a separate WebRTC video connection. Start live video and approve viewing on the host. Human input still passes through Daban's ownership and fresh-observation checks. After taking control, use the screen or text input. Escape returns keyboard focus to the text field; Alt+Escape sends a remote Escape.
+Paired computers remain in the device list. Open their workspace from the list. The selected workspace reconnects after temporary network loss. Models, files, approvals and accepted tasks belong to the host; disconnecting the controller does not cancel accepted work.
 
-Authorized screenshots remain available when video fails. Closing video or disconnecting does not automatically return control to the Bot. Returning to Daban on the host, Ctrl+Alt+Escape, or a received lock/suspend event pauses native control and clears temporary consent. Linux lock-screen integration has not completed physical-device acceptance.
+Configure the host model, create a Bot, then authorize its native desktop. Desktop tools require a vision-capable model and separate host approval. macOS screen recording and accessibility permissions remain operating-system grants on the host.
 
-Existing Linux VM workspaces retain their executor and screenshot preview. This implementation streams native desktops, including the dedicated cloud desktop below.
+Human input checks the device, Bot, session revision and fresh observation. Disconnecting releases that session’s input and leaves human control paused. It does not automatically return control to the Bot. Escape returns keyboard focus to the text field; Alt+Escape sends a remote Escape.
 
-## Linux cloud server
+Native live video uses a separate WebRTC connection. Workspace operations use pinned TLS WebSockets and do not depend on ICE or video success. Authorized screenshot control remains available after taking control when video fails. Existing Linux VMs retain their executor and screenshot preview; VM video is outside this change.
 
-`apps/desktop/compose.cloud.yml` runs a dedicated X11 desktop and Daban Host without a main window. It uses the native control path, with no nested VM or mounted server desktop. A named volume retains the workspace.
+## Manage access
 
-From the repository root:
+**Devices and access** contains full fingerprints, the read-only listening address and saved devices.
 
-```sh
-export DABAN_CONNECT_SERVER=https://connect.example.com
-docker compose -f apps/desktop/compose.cloud.yml up -d --build
-docker compose -f apps/desktop/compose.cloud.yml exec computer node --experimental-strip-types tools/remote.ts --data /data/daban status
-```
+- Removing a computer on the controller removes its local connection record.
+- Revoking a controller on the host disconnects its sessions, releases input and refuses future access.
+- Disabling connections closes the LAN listener without deleting workspace data.
 
-This entry requires Linux x86-64, Docker and a working Chromium sandbox. Rootless Docker is recommended. A prebuilt cloud image has not been published. Do not disable the Chromium sandbox to bypass installation failures.
+The host window can be closed while connections are enabled. Quitting Daban, signing out or suspension affects desktop access. Add Daban to system login items if needed after reboot. Returning to Daban, Ctrl+Alt+Escape or received lock/suspend events pauses native control. Linux lock-screen integration has not completed physical-device acceptance.
 
-Alternatively, run `tools/cloud.ts` as a dedicated Linux user without nested container sandboxing. Install the desktop dependencies listed in the Dockerfile, the pinned Node/npm dependencies, and build Agent and desktop. `apps/desktop/cloud.service` is a systemd user-service template, assuming `/opt/daban` and `/usr/local/bin/node`; adjust those paths. In that user's `~/.config/daban/host.env`, set `DABAN_CONNECT_SERVER`, `DABAN_CLOUD_DATA` (an absolute private directory owned by this user), `DABAN_AGENT_NODE` and `DABAN_AGENT_ENTRY`. Enable the user service and have an administrator enable lingering for that dedicated user to survive SSH logout. Keep unrelated server credentials outside this native desktop user's account.
+## Compatibility and limits
 
-Use the following commands through SSH, prefixed with the `compose exec computer` command above. Administration uses a private, owner-only Unix socket with no network management port:
+- Earlier test links require updating both apps and copying a new LAN link. Existing identities, models, files and workspace data are retained. Old connection records prompt re-pairing.
+- The supported network is a mutually reachable IPv4 LAN. Initial pairing uses a copied link; there is no automatic discovery, account system or short numeric code.
+- Public-network access, external Connect/TURN services and unattended cloud deployment are outside version one.
+- Existing macOS/Windows native drivers are reused. Linux currently supports X11/x86-64; Wayland is unsupported.
+- Automated verification uses synthetic content. Two physical devices and native input still require corresponding hardware acceptance.
 
-```sh
-node --experimental-strip-types tools/remote.ts --data /data/daban invite
-node --experimental-strip-types tools/remote.ts --data /data/daban status
-node --experimental-strip-types tools/remote.ts --data /data/daban approve PAIR_REQUEST_ID
-node --experimental-strip-types tools/remote.ts --data /data/daban grant APPROVAL_ID
-node --experimental-strip-types tools/remote.ts --data /data/daban pause
-node --experimental-strip-types tools/remote.ts --data /data/daban revoke DEVICE_FINGERPRINT
-```
+## Developer verification
 
-`host.remote.pending` contains pairing requests, handled with `approve` / `reject`. Top-level `approvals` contains native-control and video requests, including the device, Bot, model and available recipient details. Use `grant` / `deny` within 25 seconds. Keep an SSH status view ready before requesting access on the controller. `pause` denies pending approvals, stops video and releases input.
-
-## Connect and TURN
-
-`apps/connect/compose.yml` provides Connect, Caddy TLS and coturn. You need a signaling domain and a public TURN address reachable by both devices.
-
-1. Copy `apps/connect/turnserver.example.conf` to a private file outside the repository. Replace its realm, shared random secret and, when needed, public/private IP mapping. Keep this secret only on Connect and coturn.
-2. Set `CONNECT_DOMAIN`, `CONNECT_DEVICES` (both full fingerprints, comma-separated), `TURN_SECRET`, `TURN_URLS` and `TURN_CONFIG` (the absolute config path). For example: `TURN_URLS=stun:turn.example.com:3478,turn:turn.example.com:3478?transport=udp,turn:turn.example.com:3478?transport=tcp`.
-3. Run `docker compose -f apps/connect/compose.yml up -d --build`. Allow TCP 80/443, UDP/TCP 3478 and UDP 49160–49200. The sample limits allocations and bandwidth; it does not provide TURN TLS.
-4. Update enrollment and recreate Connect when adding devices. Each host still requires its own pairing approval.
-
-Connect forwards signed signaling and issues ten-minute TURN credentials. It does not execute Bot commands. Business traffic and video use separate encrypted WebRTC connections, with direct transport when possible and TURN when needed. Keep plain Connect HTTP, private Agent / Runtime endpoints and administration sockets off the public network.
-
-See the [official coturn configuration](https://github.com/coturn/coturn/blob/master/examples/etc/turnserver.conf).
-
-## Verification limits
-
-- Automated checks cover pairing, revocation, request deduplication, lease fencing, Host-scoped caches, real Chromium + coturn transport, chunked messages, synthetic video rendering and synthetic task completion after controller shutdown.
-- Native macOS / Windows drivers are reused. Linux adds X11 support; Wayland is unsupported and the distributed Linux native binary currently targets x86-64.
-- The cloud image build was blocked by a full local Docker disk. Sandbox, desktop startup and restart acceptance remain unverified. No real personal desktop was operated in this run. Native input on all three platforms and two-machine public-network acceptance still require corresponding test devices. Verify on dedicated test computers before using a daily desktop.
+`npm run test:remote` exercises real TLS workspace traffic and synthetic video. Its local coturn is a media-test fixture only; the running client does not need coturn. After `npm run dev:web`, `/preview/remote.html` shows the synthetic interface; use `lang=en` and `theme=dark` for language/theme checks.

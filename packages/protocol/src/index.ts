@@ -4392,6 +4392,7 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
   );
 }
 export * from './command.js';
+export * from './frames.js';
 export * from './peer.js';
 export * from './receipt.js';
 export * from './remote.js';

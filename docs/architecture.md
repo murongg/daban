@@ -23,7 +23,6 @@ apps/
     public/                Icons, avatars and provider assets
   agent/                   Host service, model credentials, DSH, approvals and VM management
   runtime/                 Linux execution-service entry point
-  connect/                 Device-proof signaling and temporary TURN credential service
 packages/
   engine/                  Implementations with separate host and executor entry graphs
   protocol/                Public types, wire contracts and validation
@@ -40,7 +39,7 @@ Feature-specific tests and styles stay beside their feature. Tests that cover se
 Applications depend on the public exports of `@daban/engine` and `@daban/protocol`. They do not import one another. The engine retains separate public host and executor entry points and its verified deployment layout; organizing renderer files does not move model credentials or approvals into the VM.
 
 
-Remote access uses the public `@daban/engine/remote` and `@daban/protocol` contracts. Device identities, pairing ACLs and mutation receipts remain in the trusted host. Sandboxed Electron peers carry business data and a separate native video stream; native consent, input ownership and fresh observations remain host checks. The Connect service imports only the small `@daban/engine/connect` crypto entry, with no task-execution endpoint. The dedicated Linux cloud entry reuses the native Host and X11 desktop, while the existing VM executor remains separate. See [remote computers](zh-CN/remote-computers.md) for deployment and current verification limits.
+LAN access uses the public `@daban/engine/remote` and `@daban/protocol` contracts. Desktop main owns the embedded TLS listener, device keys, pairing ACLs and mutation receipts. A copied link pins the Host certificate and identity. Reliable workspace traffic passes through the existing ownership gateway; sandboxed browser peers are used only for native video. No external signaling or TURN deployment is part of the first version. See [LAN access](zh-CN/remote-computers.md).
 
 The root `vitest.config.ts` owns all unit tests: the `desktop` project uses jsdom, while the `node` project runs compiled agent/engine tests and TypeScript tooling tests. Linux and browser integration tests retain the Node test runner. `apps/desktop/vite.config.ts` owns the renderer build, and `apps/desktop/electron/vite.config.ts` owns main/preload bundling. Root scripts continue building protocol, engine and applications in dependency order.
 

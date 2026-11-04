@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { builtinModules, createRequire } from 'node:module';
@@ -8,14 +8,15 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rolldown } from 'rolldown';
-import { startConnect } from '../apps/connect/src/server.ts';
 
 const project = fileURLToPath(new URL('..', import.meta.url));
 const output = path.join(project, 'outputs/remote');
+const clientBuild = process.env.DABAN_REMOTE_CLIENT_BUILD
+  ? path.resolve(process.env.DABAN_REMOTE_CLIENT_BUILD)
+  : project;
 await mkdir(output, { recursive: true });
 const root = await mkdtemp(path.join(output, 'rtc-'));
 let turn: ChildProcess | undefined;
-let server: Awaited<ReturnType<typeof startConnect>> | undefined;
 try {
   await rm(path.join(output, 'webrtc.json'), { force: true });
   const bundle = await rolldown({
@@ -85,13 +86,16 @@ try {
     if (!available) await new Promise((resolve) => setTimeout(resolve, 50));
   }
   assert.ok(available, 'A local coturn binary is required for the real relay test');
-  server = await startConnect({
-    port: 0,
-    turn: { urls: [`turn:127.0.0.1:${port}?transport=tcp`], secret },
-  });
+  const username = `${Math.floor(Date.now() / 1000) + 120}:synthetic-video`;
+  const ice = [
+    {
+      urls: [`turn:127.0.0.1:${port}?transport=tcp`],
+      username,
+      credential: createHmac('sha1', secret).update(username).digest('base64'),
+    },
+  ];
   const require = createRequire(path.join(project, 'apps/desktop/package.json'));
   const electron: string = require('electron');
-  const origin = server.origin;
   const status = await new Promise<number | null>((resolve, reject) => {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
@@ -103,7 +107,8 @@ try {
         ...env,
         DABAN_REMOTE_TEST_ROOT: root,
         DABAN_REMOTE_TEST_PROJECT: project,
-        DABAN_REMOTE_TEST_ORIGIN: origin,
+        DABAN_REMOTE_TEST_BUILD: clientBuild,
+        DABAN_REMOTE_TEST_ICE: JSON.stringify(ice),
       },
     });
     child.once('error', reject);
@@ -115,7 +120,6 @@ try {
     report && typeof report === 'object' && 'verified' in report && report.verified === true,
   );
 } finally {
-  await server?.close();
   if (turn?.pid && turn.exitCode === null && turn.signalCode === null) {
     turn.kill('SIGTERM');
     await once(turn, 'close');

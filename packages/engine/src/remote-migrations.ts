@@ -13,4 +13,14 @@ export const migrations: Migration[] = [
     hash: '4139e9a4897d33bc052542754902ccb20a1a4b3da84459610c631333833835ab',
     name: '20261104062332_baseline',
   },
+  {
+    sql: [
+      'ALTER TABLE `remote_devices` ADD `certificate` text;',
+      '\nALTER TABLE `remote_devices` ADD `alternatives` text;',
+    ],
+    bps: true,
+    folderMillis: 1793791705000,
+    hash: '057f787461780d6d110ef5aae677a10dc799adb1dae97455f146a68d7024706d',
+    name: '20261104112825_lan',
+  },
 ];

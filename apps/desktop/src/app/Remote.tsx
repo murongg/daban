@@ -20,7 +20,15 @@ export function RemoteProvider({ children }: { children: ReactNode }) {
   const command = useCallback(
     async (value: RemoteCommand) => {
       if (!bridge) throw Error('REMOTE_UNAVAILABLE');
-      const next = await bridge.invoke(value);
+      let next: RemoteState;
+      try {
+        next = await bridge.invoke(value);
+      } catch (cause) {
+        // Electron wraps rejected IPC messages; expose only the bounded domain code to the UI.
+        const code =
+          cause instanceof Error ? cause.message.match(/\bREMOTE_[A-Z_]{1,80}\b/)?.[0] : undefined;
+        throw Error(code ?? 'REMOTE_OPERATION_FAILED');
+      }
       setState(next);
       setError(false);
       return next;

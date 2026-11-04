@@ -1,6 +1,8 @@
 import {
   disconnected,
   managedProtocol,
+  type RemoteBridge,
+  type RemoteState,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeReply,
@@ -288,4 +290,26 @@ it('bypasses onboarding for configured users and does not remount their workspac
   backend.publish(disconnected('offline'));
   expect(screen.getByRole('button', { name: '自定义 Bot' })).toBeVisible();
   expect(screen.queryByRole('heading', { name: '连接你的第一个模型' })).not.toBeInTheDocument();
+});
+
+it('offers remote connection before configuring a local model', async () => {
+  const local = connect(snapshot());
+  const state: RemoteState = {
+    selected: null,
+    identity: { id: 'a'.repeat(64), publicKey: 'A'.repeat(59), name: 'Synthetic controller' },
+    hosting: false,
+    server: '',
+    hosts: [],
+    pending: [],
+  };
+  const remote: RemoteBridge = { invoke: async () => state, subscribe: () => () => {} };
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { ...window.daban, remote },
+  });
+  render(<App />);
+  await screen.findByRole('heading', { name: '连接你的第一个模型' });
+  await userEvent.click(await screen.findByRole('button', { name: '连接另一台电脑' }));
+  expect(screen.getByRole('dialog', { name: '远程电脑' })).toBeVisible();
+  expect(local.writes).toHaveLength(0);
 });

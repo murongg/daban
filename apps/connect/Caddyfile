@@ -1,3 +1,0 @@
-{$CONNECT_DOMAIN} {
-    reverse_proxy connect:8787
-}

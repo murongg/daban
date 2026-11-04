@@ -1,8 +1,8 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
-import { isRemoteIdentity, type RemoteIdentity } from '@daban/protocol';
+import { isRemoteIdentity, type RemoteIdentity, remoteVersion } from '@daban/protocol';
 
 export function remoteProof(purpose: string, fields: readonly string[]) {
-  return JSON.stringify(['daban-remote-v1', purpose, ...fields]);
+  return JSON.stringify([`daban-lan-v${remoteVersion}`, purpose, ...fields]);
 }
 export function remotePublicKey(publicKey: string) {
   if (!/^[A-Za-z0-9_-]{59}$/.test(publicKey)) throw new Error('REMOTE_INVALID_KEY');

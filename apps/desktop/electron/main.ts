@@ -16,7 +16,6 @@ import {
 } from 'electron';
 import { type MessageKey, type Parameters, translate } from '../shared/locale';
 import { Components, readComponentReference } from './components';
-import { HostAdmin } from './host-admin';
 import { trustedSender } from './ipc';
 import { LocalComputer } from './local-computer';
 import { localServer } from './local-server';
@@ -29,7 +28,6 @@ import { Notifications } from './notifications';
 import { PeerWorker } from './peer';
 import { nativeMediaCurrent, RemoteConsent } from './remote-consent';
 import { runtimeService } from './service';
-import { controlSocket } from './socket';
 import { titlebarIpc, titlebarOptions } from './titlebar';
 import { updateIpc } from './update-ipc';
 import { UpdateSave } from './update-save';
@@ -56,9 +54,6 @@ let closeLocalServer: (() => Promise<unknown>) | undefined;
 let remoteAccess: RemoteAccess | undefined;
 let peerWorker: PeerWorker | undefined;
 let remoteConsent: RemoteConsent | undefined;
-let hostAdmin: HostAdmin | undefined;
-const hostOnly = app.commandLine.hasSwitch('host-only');
-if (hostOnly && process.platform !== 'linux') throw Error('REMOTE_HOST_PLATFORM');
 const localShortcut = 'Control+Alt+Escape';
 app.on('ready', (_event, launchInfo) => {
   const value: unknown = launchInfo;
@@ -198,7 +193,7 @@ if (primary) {
             ?.stopMedia('native')
             .catch(() => console.error('Remote viewing pause failed'));
           localComputer?.interrupt().catch(() => console.error('Local computer pause failed'));
-          if (!hostOnly) focusWindow();
+          focusWindow();
         });
       localComputer = new LocalComputer(
         desktopDriver(() => mainWindow ?? peerWorker?.companionWindow),
@@ -222,40 +217,33 @@ if (primary) {
         }
       }
       const reference = await readComponentReference(join(process.resourcesPath, 'runtime.json'));
-      const agentSource = hostOnly
+      const agentSource = reference
         ? {
-            entry: resolve(
-              process.env.DABAN_AGENT_ENTRY ?? join(__dirname, '..', 'dist-agent/main.js'),
-            ),
-            executable: resolve(process.env.DABAN_AGENT_NODE ?? '/usr/local/bin/node'),
+            runtime: new Components({
+              directory: join(app.getPath('userData'), 'components'),
+              reference,
+              platform: process.platform,
+              arch: process.arch,
+              publisher:
+                process.platform === 'darwin'
+                  ? join(process.resourcesPath, '../..')
+                  : app.getPath('exe'),
+              ...(process.platform === 'win32' &&
+              (await access(join(process.resourcesPath, 'runtime.zip')).then(
+                () => true,
+                () => false,
+              ))
+                ? { bundledArchive: join(process.resourcesPath, 'runtime.zip') }
+                : {}),
+            }),
           }
-        : reference
-          ? {
-              runtime: new Components({
-                directory: join(app.getPath('userData'), 'components'),
-                reference,
-                platform: process.platform,
-                arch: process.arch,
-                publisher:
-                  process.platform === 'darwin'
-                    ? join(process.resourcesPath, '../..')
-                    : app.getPath('exe'),
-                ...(process.platform === 'win32' &&
-                (await access(join(process.resourcesPath, 'runtime.zip')).then(
-                  () => true,
-                  () => false,
-                ))
-                  ? { bundledArchive: join(process.resourcesPath, 'runtime.zip') }
-                  : {}),
-              }),
-            }
-          : {
-              entry: join(agentDirectory, 'main.js'),
-              executable:
-                process.platform === 'win32'
-                  ? join(agentDirectory, 'node/node.exe')
-                  : join(agentDirectory, 'node/bin/node'),
-            };
+        : {
+            entry: join(agentDirectory, 'main.js'),
+            executable:
+              process.platform === 'win32'
+                ? join(agentDirectory, 'node/node.exe')
+                : join(agentDirectory, 'node/bin/node'),
+          };
       service = runtimeService(
         app.getPath('userData'),
         pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href,
@@ -282,7 +270,6 @@ if (primary) {
           const permissions = localComputer?.status().permissions;
           if (!permissions?.screen) return false;
           if (localComputer?.status().session?.owner === 'agent') await localComputer.interrupt();
-          if (hostOnly) return true;
           const answer = await dialog.showMessageBox({
             type: 'question',
             title: text('remote.viewTitle'),
@@ -307,16 +294,6 @@ if (primary) {
             } catch {}
           }
           if (localComputer?.status().session?.owner === 'agent') await localComputer.interrupt();
-          if (hostOnly)
-            return (
-              hostAdmin?.review({
-                kind: 'native',
-                device: device.id,
-                bot: scope.bot,
-                model: scope.model,
-                recipient,
-              }) ?? false
-            );
           const answer = await dialog.showMessageBox({
             type: 'question',
             title: text('remote.nativeTitle'),
@@ -369,16 +346,6 @@ if (primary) {
             session: request.session,
             revision: request.revision,
           });
-          if (
-            hostOnly &&
-            !(await hostAdmin?.review({
-              kind: 'view',
-              device: device.id,
-              bot: current.bot,
-              model: current.model,
-            }))
-          )
-            throw Error('REMOTE_CAPTURE_NOT_ALLOWED');
           return peerWorker;
         },
         currentMedia: (request) => {
@@ -403,7 +370,6 @@ if (primary) {
         // Pairing state must never prevent the existing local workspace from opening.
         await remoteAccess.close().catch(() => {});
         remoteAccess = undefined;
-        if (hostOnly) throw Error('REMOTE_HOST_UNAVAILABLE');
         console.error(
           'Remote device state could not be opened. Local workspace remains available.',
         );
@@ -436,34 +402,7 @@ if (primary) {
       session.defaultSession.setPermissionCheckHandler(
         (contents, permission) => peerWorker?.permission(contents, permission) ?? false,
       );
-      if (hostOnly) {
-        if (!remoteAccess) throw Error('REMOTE_HOST_UNAVAILABLE');
-        hostAdmin = new HostAdmin({
-          socket: controlSocket(
-            join(app.getPath('userData'), 'remote', 'admin.sock'),
-            'remote-admin',
-          ),
-          command: (command) => remoteAccess!.command(command),
-          status: () => ({
-            remote: remoteAccess!.state(),
-            computer: localComputer?.status(),
-            runtime: service?.localSnapshot().phase,
-          }),
-          pause: async () => {
-            remoteConsent?.pause();
-            await remoteAccess!.stopMedia();
-            return localComputer?.interrupt();
-          },
-        });
-        await hostAdmin.listen();
-        await remoteAccess
-          .command({
-            type: 'host',
-            enabled: true,
-            server: app.commandLine.getSwitchValue('connect-server'),
-          })
-          .catch(() => console.error('Remote signaling unavailable; Host will reconnect.'));
-      } else createWindow();
+      createWindow();
       const updateSupported =
         app.isPackaged &&
         ['darwin', 'win32'].includes(process.platform) &&
@@ -513,10 +452,6 @@ if (primary) {
     })
     .catch(() => {
       console.error('Daban initialization failed');
-      if (hostOnly) {
-        app.quit();
-        return;
-      }
       dialog.showErrorBox(
         text('app.dabanCouldNotStart'),
         text('app.reopenAppSavedTasksFilesWillNot'),
@@ -533,7 +468,6 @@ if (primary) {
     exiting = true;
     try {
       globalShortcut.unregister(localShortcut);
-      await hostAdmin?.close();
       await closeLocalServer?.();
       closeNoticeIpc?.();
       closeLocaleIpc?.();

@@ -1,11 +1,13 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual, X509Certificate } from 'node:crypto';
 import path from 'node:path';
 import {
+  disconnected,
   isRemoteCommand,
   isRemoteMediaRequest,
   isRemoteRpcRequest,
   type PeerEvent,
   parseRemoteInvitation,
+  RemoteFrames,
   type RemoteHost,
   type RemoteIdentity,
   type RemoteInvitation,
@@ -18,10 +20,13 @@ import {
   type RemoteState,
   type RemoteViewer,
   type RuntimeCommand,
+  remoteFileChunk,
+  remoteFrames,
   remoteInvitation,
-  remoteServer,
+  remoteTransferLimit,
   validAgentId,
 } from '@daban/protocol';
+import { startLan } from './lan.js';
 import { remoteProof, validRemoteIdentity, verifyRemoteProof } from './remote-crypto.js';
 import { RemoteGateway } from './remote-gateway.js';
 import { RemoteKeys } from './remote-identity.js';
@@ -35,6 +40,8 @@ interface Session {
   workspace: string;
   role: 'host' | 'controller';
   connected: boolean;
+  frames?: RemoteFrames;
+  sending?: Promise<unknown>;
   purpose?: 'media';
   parent?: string;
   peer?: RemotePeerPort;
@@ -83,6 +90,11 @@ export class RemoteAccess {
   private selected: string | null = null;
   private enabled = false;
   private server = '';
+  private lan?: Awaited<ReturnType<typeof startLan>>;
+  private lanStarting?: Promise<unknown>;
+  private hostOperation: Promise<unknown> = Promise.resolve();
+  private readonly certificates = new Map<string, string>();
+  private reserved = 0;
   private invitation?: RemoteInvitation;
   private sequence = 0;
   private stopped = false;
@@ -130,27 +142,29 @@ export class RemoteAccess {
         : undefined,
     );
     this.enabled = this.store.setting('hosting') === 'true';
-    this.server = this.store.setting('server') ?? '';
-    for (const device of this.store.devices('host'))
+    for (const device of this.store.devices('host')) {
+      if (device.certificate)
+        for (const server of [device.server, ...(device.alternatives ?? [])])
+          this.pin(server, device.certificate);
       this.hosts.set(device.identity.id, {
         identity: device.identity,
         server: device.server,
         workspace: device.workspace,
         platform: device.platform,
+        certificate: device.certificate,
+        alternatives: device.alternatives,
         state: 'offline',
         transport: 'unknown',
       });
+    }
     this.unsubscribe = this.options.peer.subscribe((event) => {
       this.event(event).catch(() => {});
     });
     this.poll = setInterval(() => {
-      this.publishSnapshot().catch(() => {});
+      this.maintain().catch(() => {});
     }, 1000);
     this.poll.unref();
-    if (this.enabled && this.server)
-      this.connection(this.server)
-        .start()
-        .catch(() => this.changed());
+    if (this.enabled) await this.ensureLan().catch(() => {});
   }
   state(): RemoteState {
     if (!this.keys) throw Error('REMOTE_NOT_READY');
@@ -186,20 +200,49 @@ export class RemoteAccess {
     const state = this.state();
     for (const listener of this.listeners) listener(state);
   }
+  private pin(server: string, certificate: string) {
+    const previous = this.certificates.get(server);
+    if (previous && previous !== certificate) {
+      const connection = this.signals.get(server);
+      this.signals.delete(server);
+      connection?.close();
+      for (const session of [...this.sessions.values()])
+        if (session.server === server)
+          this.drop(session.id, false, 'REMOTE_CERTIFICATE_CHANGED').catch(() => {});
+    }
+    this.certificates.set(server, certificate);
+  }
   private connection(server: string) {
     const existing = this.signals.get(server);
     if (existing) return existing;
+    const certificate = this.certificates.get(server);
+    if (!certificate) throw Error('REMOTE_REPAIR_REQUIRED');
     if (this.signals.size >= 16) throw Error('REMOTE_SERVER_LIMIT');
     const connection = new SignalConnection({
       server,
       keys: this.keys,
+      certificate,
       signal: (message) => {
+        if (this.signals.get(server) !== connection) return;
         this.signalTail = this.signalTail
           .catch(() => {})
           .then(() => this.signal(server, message))
           .catch(() => {});
       },
-      changed: () => this.changed(),
+      left: (identity) => {
+        if (this.signals.get(server) !== connection) return;
+        for (const session of [...this.sessions.values()])
+          if (session.server === server && session.device.id === identity.id)
+            this.drop(session.id, false).catch(() => {});
+      },
+      changed: (connected) => {
+        if (this.signals.get(server) !== connection) return;
+        if (!connected)
+          for (const session of [...this.sessions.values()])
+            if (session.purpose !== 'media' && session.server === server)
+              this.drop(session.id, false).catch(() => {});
+        this.changed();
+      },
     });
     this.signals.set(server, connection);
     return connection;
@@ -208,6 +251,13 @@ export class RemoteAccess {
     await this.ready;
     if (this.stopped) throw Error('REMOTE_CONNECTION_CLOSED');
     if (!isRemoteCommand(command)) throw Error('REMOTE_INVALID_COMMAND');
+    if (command.type === 'host') {
+      const operation = this.hostOperation.catch(() => {}).then(() => this.configureHost(command));
+      this.hostOperation = operation;
+      await operation;
+      this.changed();
+      return this.state();
+    }
     switch (command.type) {
       case 'view': {
         if (this.selected !== command.host) throw Error('REMOTE_WRONG_TARGET');
@@ -257,25 +307,16 @@ export class RemoteAccess {
       }
       case 'status':
         break;
-      case 'host': {
-        this.server = remoteServer(command.server);
-        this.enabled = command.enabled;
-        this.store.saveSetting('server', this.server);
-        this.store.saveSetting('hosting', String(this.enabled));
-        if (this.enabled) await this.connection(this.server).start();
-        else {
-          this.invitation = undefined;
-          this.pending.clear();
-          for (const session of [...this.sessions.values()])
-            if (session.role === 'host') await this.drop(session.id);
-        }
-        break;
-      }
       case 'invite': {
-        if (!this.enabled || !this.server) throw Error('REMOTE_HOST_DISABLED');
+        if (!this.enabled) throw Error('REMOTE_HOST_DISABLED');
+        await this.ensureLan();
+        const lan = this.lan;
+        if (!lan) throw Error('REMOTE_LAN_NETWORK_UNAVAILABLE');
         await this.connection(this.server).start();
         this.invitation = {
-          version: 1,
+          version: 2,
+          certificate: lan.certificate,
+          alternatives: lan.origins.slice(1),
           host: this.keys.identity,
           server: this.server,
           code: randomBytes(32).toString('base64url'),
@@ -309,12 +350,108 @@ export class RemoteAccess {
         this.hosts.delete(command.device);
         if (this.selected === command.device) this.selected = null;
         for (const session of [...this.sessions.values()])
-          if (session.device.id === command.device) await this.drop(session.id);
+          if (session.device.id === command.device)
+            await this.drop(session.id, true, 'REMOTE_UNAUTHORIZED');
         break;
       }
     }
     this.changed();
     return this.state();
+  }
+  private async configureHost(command: { type: 'host'; enabled: boolean }) {
+    if (this.enabled && command.enabled) {
+      await this.ensureLan();
+      return;
+    }
+    this.enabled = command.enabled;
+    this.invitation = undefined;
+    this.pending.clear();
+    if (!this.enabled) {
+      for (const session of [...this.sessions.values()])
+        if (session.role === 'host') await this.drop(session.id);
+      if (this.lan) {
+        this.signals.get(this.server)?.close();
+        this.signals.delete(this.server);
+        await this.lan.close();
+        this.lan = undefined;
+        this.server = '';
+      }
+    }
+    this.store.saveSetting('hosting', String(this.enabled));
+    try {
+      if (this.enabled) await this.ensureLan();
+    } catch (error) {
+      this.enabled = false;
+      this.store.saveSetting('hosting', 'false');
+      throw error;
+    }
+  }
+  private ensureLan(): Promise<unknown> {
+    if (this.lan) return Promise.resolve(this.lan);
+    this.lanStarting ??= (async () => {
+      const preferred = Number(this.store.setting('lan.port') ?? '0');
+      if (!Number.isInteger(preferred) || preferred < 0 || preferred > 65535)
+        throw Error('REMOTE_LAN_CONFIG_INVALID');
+      const lan = await startLan(this.options.directory, this.keys.identity.id, preferred);
+      this.lan = lan;
+      this.server = lan.origins[0];
+      this.store.saveSetting('lan.port', String(lan.port));
+      for (const server of lan.origins) this.pin(server, lan.certificate);
+      await this.connection(this.server).start();
+    })().finally(() => {
+      this.lanStarting = undefined;
+    });
+    return this.lanStarting;
+  }
+  private async reachable(server: string, alternatives: string[] = []) {
+    let failure: unknown = Error('REMOTE_SIGNAL_UNAVAILABLE');
+    for (const address of [...new Set([server, ...alternatives])]) {
+      try {
+        await this.connection(address).start();
+        return address;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    throw failure;
+  }
+  private async maintain() {
+    if (this.stopped) return;
+    if (this.enabled && !this.lan) await this.ensureLan().catch(() => {});
+    if (
+      this.selected &&
+      this.hosts.get(this.selected)?.error !== 'REMOTE_UNAUTHORIZED' &&
+      !this.hostConnections.has(this.selected) &&
+      ![...this.sessions.values()].some(
+        (session) =>
+          session.role === 'controller' &&
+          session.purpose !== 'media' &&
+          session.connected &&
+          session.device.id === this.selected,
+      )
+    )
+      this.connect(this.selected).catch(() => {});
+    await this.publishSnapshot();
+  }
+  private async send(session: Session, data: string, channel?: 'events') {
+    if (session.purpose === 'media') return this.port(session).send(session.id, data, channel);
+    const connection = this.connection(session.server);
+    if (Buffer.byteLength(data) <= remoteFileChunk)
+      return connection.data(session.device.id, session.id, { type: 'data', data });
+    const next = (session.sending ?? Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        for (const frame of remoteFrames(data)) {
+          if (this.sessions.get(session.id) !== session) throw Error('REMOTE_SESSION_CLOSED');
+          await connection.data(session.device.id, session.id, {
+            type: 'frame',
+            data: Buffer.from(frame).toString('base64'),
+          });
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      });
+    session.sending = next;
+    await next;
   }
   private wait<T>(map: Map<string, Waiting<T>>, id: string, timeout: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -329,8 +466,16 @@ export class RemoteAccess {
   private async pair(text: string) {
     const invitation = parseRemoteInvitation(text);
     if (!validRemoteIdentity(invitation.host)) throw Error('REMOTE_INVALID_IDENTITY');
-    const connection = this.connection(invitation.server);
-    await connection.start();
+    if (invitation.host.id === this.keys.identity.id) throw Error('REMOTE_SELF_PAIR');
+    if (invitation.certificate) {
+      if (new X509Certificate(invitation.certificate).subject !== `CN=${invitation.host.id}`)
+        throw Error('REMOTE_CERTIFICATE_CHANGED');
+      for (const server of [invitation.server, ...(invitation.alternatives ?? [])])
+        this.pin(server, invitation.certificate);
+    }
+    const server = await this.reachable(invitation.server, invitation.alternatives);
+    invitation.server = server;
+    const connection = this.connection(server);
     const id = randomUUID();
     const result = new Promise<undefined>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -391,12 +536,15 @@ export class RemoteAccess {
     );
     if (active) return active;
     const host = this.hosts.get(hostId);
+    if (host?.error === 'REMOTE_UNAUTHORIZED') throw Error('REMOTE_UNAUTHORIZED');
+    if (host && !host.certificate) throw Error('REMOTE_REPAIR_REQUIRED');
     if (!host) throw Error('REMOTE_UNKNOWN_HOST');
     host.state = 'connecting';
     delete host.error;
     this.changed();
+    host.server = await this.reachable(host.server, host.alternatives);
     const signal = this.connection(host.server);
-    const ice = await signal.start();
+    await signal.start();
     const id = randomUUID();
     const session: Session = {
       id,
@@ -409,7 +557,13 @@ export class RemoteAccess {
     this.sessions.set(id, session);
     const ready = this.wait(this.connecting, id, 30_000);
     try {
-      await this.options.peer.open(id, true, ice);
+      signal.send(hostId, id, {
+        type: 'connect',
+        signature: this.keys.sign(
+          remoteProof('socket', [id, this.keys.identity.id, hostId, host.workspace]),
+        ),
+      });
+
       await ready;
       return session;
     } catch (error) {
@@ -477,16 +631,53 @@ export class RemoteAccess {
         server,
         workspace: payload.workspace,
         platform: payload.platform,
+        certificate: pending.invitation.certificate,
+        alternatives: pending.invitation.alternatives,
       });
       this.hosts.set(from.id, {
         identity: pending.invitation.host,
         server,
         workspace: payload.workspace,
         platform: payload.platform,
+        certificate: pending.invitation.certificate,
+        alternatives: pending.invitation.alternatives,
         state: 'offline',
         transport: 'unknown',
       });
       pending.resolve(undefined);
+      this.changed();
+      return;
+    }
+    if (payload.type === 'connect' && this.lan && server === this.server && this.enabled) {
+      if (
+        !payload.signature ||
+        !verifyRemoteProof(
+          from,
+          remoteProof('socket', [id, from.id, this.keys.identity.id, this.keys.identity.id]),
+          payload.signature,
+        )
+      )
+        return;
+      if (!this.store.device(from.id, 'controller')) {
+        this.connection(server).send(from.id, id, { type: 'close', error: 'REMOTE_UNAUTHORIZED' });
+        return;
+      }
+      if (this.sessions.has(id) || this.sessions.size >= 16) return;
+      const direct: Session = {
+        id,
+        device: from,
+        server,
+        workspace: this.keys.identity.id,
+        role: 'host',
+        connected: true,
+      };
+      this.sessions.set(id, direct);
+      this.connection(server).send(from.id, id, {
+        type: 'connected',
+        signature: this.keys.sign(
+          remoteProof('connected', [id, from.id, this.keys.identity.id, direct.workspace]),
+        ),
+      });
       this.changed();
       return;
     }
@@ -496,6 +687,7 @@ export class RemoteAccess {
       if (
         !this.enabled ||
         payload.type !== 'offer' ||
+        !plan ||
         server !== this.server ||
         !this.store.device(from.id, 'controller')
       )
@@ -532,10 +724,50 @@ export class RemoteAccess {
       if (plan) plan.expires = Number.MAX_SAFE_INTEGER;
     }
     if (session.device.id !== from.id || session.server !== server) return;
+    if (session.purpose !== 'media') {
+      if (payload.type === 'connected' && session.role === 'controller') {
+        if (
+          !verifyRemoteProof(
+            from,
+            remoteProof('connected', [id, this.keys.identity.id, from.id, session.workspace]),
+            payload.signature,
+          )
+        )
+          return;
+        await this.event({ type: 'state', session: id, state: 'connected', transport: 'direct' });
+        return;
+      }
+      if (payload.type === 'data' || payload.type === 'frame') {
+        if (!session.connected || !this.certificates.has(server)) return;
+        try {
+          let data: string | undefined;
+          if (payload.type === 'data') data = payload.data;
+          else {
+            session.frames ??= new RemoteFrames((size) => {
+              if (this.reserved + size > remoteTransferLimit) throw Error('REMOTE_TRANSFER_LIMIT');
+              this.reserved += size;
+              return () => {
+                this.reserved -= size;
+              };
+            });
+            const bytes = Buffer.from(payload.data, 'base64');
+            if (bytes.toString('base64') !== payload.data) throw Error('REMOTE_INVALID_FRAME');
+            data = session.frames.push(bytes);
+          }
+          // Do not hold the signaling queue while a domain request waits for local approval.
+          if (data !== undefined) this.message(session, data).catch(() => this.drop(id));
+        } catch {
+          await this.drop(id, true, 'REMOTE_INVALID_FRAME');
+        }
+        return;
+      }
+    }
+
     if (payload.type === 'close') {
       await this.drop(id, false, payload.error);
       return;
     }
+    if (session.purpose !== 'media') return;
     if (payload.type === 'offer' || payload.type === 'answer') {
       if (
         !verifyRemoteProof(
@@ -704,7 +936,7 @@ export class RemoteAccess {
         };
       }
       if (this.sessions.get(session.id) === session)
-        await this.port(session).send(session.id, JSON.stringify(reply));
+        await this.send(session, JSON.stringify(reply));
     } else if (
       value.type === 'reply' &&
       session.role === 'controller' &&
@@ -764,7 +996,7 @@ export class RemoteAccess {
       this.requests.set(request.id, { resolve, reject, timer, session: session.id });
     });
     try {
-      await this.port(session).send(session.id, JSON.stringify(request));
+      await this.send(session, JSON.stringify(request));
     } catch (error) {
       const pending = this.requests.get(request.id);
       if (pending) {
@@ -805,8 +1037,8 @@ export class RemoteAccess {
           !this.store.device(session.device.id, 'controller')
         )
           continue;
-        await this.options.peer.send(
-          session.id,
+        await this.send(
+          session,
           JSON.stringify({
             type: 'snapshot',
             host: this.keys.identity.id,
@@ -824,6 +1056,7 @@ export class RemoteAccess {
     const session = this.sessions.get(id);
     if (!session) return;
     this.sessions.delete(id);
+    session.frames?.close();
     if (session.purpose !== 'media') {
       for (const [mediaId, plan] of [...this.mediaPlans])
         if (plan.parent === id) {
@@ -849,17 +1082,24 @@ export class RemoteAccess {
         });
       } catch {}
     }
-    await this.port(session)
-      .close(id)
-      .catch(() => {});
+    if (session.purpose === 'media')
+      await this.port(session)
+        .close(id)
+        .catch(() => {});
     const host = this.hosts.get(session.device.id);
-    if (host && session.role === 'controller' && session.purpose !== 'media')
+    if (host && session.role === 'controller' && session.purpose !== 'media') {
       host.state = 'offline';
+      if (error === 'REMOTE_UNAUTHORIZED') host.error = error;
+      this.options.snapshot?.(
+        disconnected('offline', 'errors.runtimeConnectionUnavailable'),
+        host.identity.id,
+      );
+    }
     const connecting = this.connecting.get(id);
     if (connecting) {
       clearTimeout(connecting.timer);
       this.connecting.delete(id);
-      connecting.reject(Error('REMOTE_SESSION_CLOSED'));
+      connecting.reject(Error(error));
     }
     for (const [key, pending] of this.requests)
       if (pending.session === id) {
@@ -872,6 +1112,7 @@ export class RemoteAccess {
   async close() {
     await this.ready;
     if (this.stopped) return;
+    await this.hostOperation.catch(() => {});
     this.stopped = true;
     clearInterval(this.poll);
     this.unsubscribe?.();
@@ -884,6 +1125,7 @@ export class RemoteAccess {
     this.pairing.clear();
     for (const unsubscribe of this.extraPorts.values()) unsubscribe();
     this.extraPorts.clear();
+    await this.lan?.close();
     this.store.close();
   }
 }

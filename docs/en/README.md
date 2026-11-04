@@ -30,7 +30,7 @@ For a first session, read Getting started, Models & providers, and Create Bots. 
 
 | Feature | Contents |
 | --- | --- |
-| [Remote computers](remote-computers.md) | Idle PCs, cloud desktops, pairing and independent tasks |
+| [Remote computers](remote-computers.md) | LAN computers, pairing and independent tasks |
 | [Linux computers](linux-computer.md) | Independent screens, takeover, handback, and shared environment |
 | [Native Mac / Windows](local-computer.md) | Primary display, OS permissions, pause, and temporary consent |
 | [Browser](browser.md) | Tabs, sign-ins, website interaction, and restored pages |
