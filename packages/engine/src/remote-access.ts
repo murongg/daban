@@ -4,6 +4,7 @@ import {
   isRemoteCommand,
   isRemoteMediaRequest,
   isRemoteRpcRequest,
+  isRemoteSnapshotCapabilities,
   type PeerEvent,
   parseRemoteInvitation,
   type RemoteHost,
@@ -20,6 +21,9 @@ import {
   type RuntimeCommand,
   remoteInvitation,
   remoteServer,
+  remoteSnapshotFor,
+  type SnapshotAccept,
+  supportedSnapshotCapabilities,
   validAgentId,
 } from '@daban/protocol';
 import { remoteProof, validRemoteIdentity, verifyRemoteProof } from './remote-crypto.js';
@@ -39,6 +43,8 @@ interface Session {
   parent?: string;
   peer?: RemotePeerPort;
   captureRequested?: boolean;
+  snapshotAccept?: SnapshotAccept;
+  snapshotHintSent?: true;
 }
 interface MediaPlan {
   parent: string;
@@ -604,6 +610,21 @@ export class RemoteAccess {
       if (session.role === 'controller' && host) {
         host.state = 'connected';
         host.transport = event.transport ?? 'unknown';
+        if (!session.snapshotHintSent) {
+          session.snapshotHintSent = true;
+          // This is a parser hint on this connection only; no acknowledgement or permission is implied.
+          await this.port(session)
+            .send(
+              session.id,
+              JSON.stringify({
+                type: 'snapshot-capabilities',
+                host: session.device.id,
+                workspace: session.workspace,
+                accept: supportedSnapshotCapabilities,
+              }),
+            )
+            .catch(() => undefined);
+        }
       }
       const pending = this.connecting.get(session.id);
       if (pending) {
@@ -662,6 +683,19 @@ export class RemoteAccess {
       return;
     }
     if (!record(value)) return;
+    if (value.type === 'snapshot-capabilities') {
+      if (
+        session.role === 'host' &&
+        session.connected &&
+        this.sessions.get(session.id) === session &&
+        this.store.device(session.device.id, 'controller') &&
+        isRemoteSnapshotCapabilities(value) &&
+        value.host === this.keys.identity.id &&
+        value.workspace === session.workspace
+      )
+        session.snapshotAccept = structuredClone(value.accept);
+      return;
+    }
     if (value.type === 'request' && session.role === 'host' && isRemoteRpcRequest(value)) {
       let reply: RemoteRpcReply;
       try {
@@ -691,7 +725,10 @@ export class RemoteAccess {
           host: this.keys.identity.id,
           workspace: session.workspace,
           ok: true,
-          value: result,
+          value:
+            value.method === 'status' || value.method === 'connect'
+              ? remoteSnapshotFor(result, session.snapshotAccept)
+              : result,
         };
       } catch (error) {
         reply = {
@@ -811,7 +848,7 @@ export class RemoteAccess {
             type: 'snapshot',
             host: this.keys.identity.id,
             workspace: session.workspace,
-            value,
+            value: remoteSnapshotFor(value, session.snapshotAccept),
           }),
           'events',
         );

@@ -19,6 +19,8 @@ export interface RemoteDevice {
 }
 
 const observations = new Set([
+  'context.inspect',
+  'context.source',
   'local.status',
   'local.connect',
   'local.pause',

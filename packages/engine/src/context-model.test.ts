@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { ModelRuns, sdkPatch } from './model.js';
 import { ModelSettings, type ResolvedModel } from './settings.js';
 
@@ -99,6 +99,199 @@ async function fixture(
   await settings.save({ apiKey: 'mock-context-key' });
   return { root, settings, prompts, options, models: new ModelRuns(options) };
 }
+
+test('captures each accepted turn and settled state without storing source bodies', async () => {
+  const value = await fixture();
+  try {
+    await value.models.start('a', {
+      requestId: 'mock-context-turn',
+      prompt: 'SYNTHETIC PRIVATE REQUEST',
+    });
+    const job = value.models.jobs.get('a')!;
+    await job.done;
+    const record = await value.models.journal.read('a', job.id);
+    expect(record?.contextCaptures?.captures.map((capture) => capture.reason)).toEqual([
+      'turn',
+      'settled',
+    ]);
+    const source = record?.contextCaptures?.captures[0].sources[0];
+    expect(source).toMatchObject({ evidence: 'estimated', membership: 'host-injected' });
+    expect(source?.hostTokens).toBeGreaterThan(0);
+    expect(record?.contextCaptures?.captures[0].sources[3].hostTokens).toBe(0);
+    expect(record?.contextCaptures?.captures[0].sources[9].hostTokens).toBeGreaterThan(0);
+    expect(JSON.stringify(record?.contextCaptures)).not.toMatch(
+      /SYNTHETIC PRIVATE REQUEST|mock-context-key/,
+    );
+    expect(job.phase).toBe('completed');
+  } finally {
+    await value.models.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('accepts only current turn numeric projections and deduplicates each key independently', async () => {
+  const replies: unknown[] = [];
+  const value = await fixture(async (_observe, sessionId) => {
+    const job = value.models.jobs.get('a')!;
+    const params = {
+      sessionId,
+      turnId: 'mock-context-turn',
+      key: 'contextPressure',
+      seq: 0,
+      value: { pressureTokens: 80, projectedTokens: 100 },
+    };
+    const update = (params: unknown, authorization = `Bearer ${job.token}`) =>
+      value.models.rpc('a', authorization, { id: 1, method: 'context.update', params });
+    replies.push(await update(params));
+    replies.push(await update(params));
+    replies.push(
+      await update({
+        ...params,
+        key: 'contextBreakdown',
+        value: { systemTokens: 2, toolsTokens: 3, messageTokens: 4 },
+      }),
+    );
+    for (const invalid of [
+      { ...params, turnId: 'mock-old-turn' },
+      { ...params, sessionId: 'mock-child' },
+      { ...params, rawOutput: 'SYNTHETIC PRIVATE' },
+      { ...params, value: { pressureTokens: -1 } },
+    ])
+      await expect(update(invalid)).rejects.toMatchObject({ code: 'INVALID_CONTEXT_UPDATE' });
+    await expect(update(params, 'Bearer mock-old-token')).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+  });
+  try {
+    await value.models.start('a', { requestId: 'mock-context-turn', prompt: 'SYNTHETIC REQUEST' });
+    const job = value.models.jobs.get('a')!;
+    await job.done;
+    expect(replies).toMatchObject([
+      { result: { accepted: true } },
+      { result: { accepted: false } },
+      { result: { accepted: true } },
+    ]);
+    expect(job.phase).toBe('completed');
+    const last = (await value.models.journal.read('a', job.id))?.contextCaptures?.captures.at(-1);
+    expect(last).toMatchObject({
+      pressure: { seq: 0, projectedTokens: 100 },
+      breakdown: { seq: 0, messageTokens: 4 },
+    });
+  } finally {
+    await value.models.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('a capture persistence failure does not stop or fail an otherwise successful task', async () => {
+  const value = await fixture();
+  const put = value.models.journal.put.bind(value.models.journal);
+  let rejected = false;
+  const spy = vi.spyOn(value.models.journal, 'put').mockImplementation(async (record) => {
+    if (!rejected && record.contextCaptures?.captures.length) {
+      rejected = true;
+      throw new Error('SYNTHETIC CAPTURE WRITE FAILURE');
+    }
+    await put(record);
+  });
+  try {
+    await value.models.start('a', {
+      requestId: 'mock-capture-failure',
+      prompt: 'SYNTHETIC REQUEST',
+    });
+    const job = value.models.jobs.get('a')!;
+    await job.done;
+    expect(rejected).toBe(true);
+    expect(job.phase).toBe('completed');
+    expect(await value.models.journal.read('a', job.id)).toHaveProperty(
+      'contextCaptureFailed',
+      true,
+    );
+  } finally {
+    spy.mockRestore();
+    await value.models.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('stopping while the turn capture is saving cannot start a later SDK run', async () => {
+  const value = await fixture();
+  const put = value.models.journal.put.bind(value.models.journal);
+  let entered: () => unknown = () => {};
+  let release: () => unknown = () => {};
+  const waiting = new Promise((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  const paused = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const spy = vi.spyOn(value.models.journal, 'put').mockImplementation(async (record) => {
+    if (record.contextCaptures?.captures.at(-1)?.reason === 'turn') {
+      entered();
+      await paused;
+    }
+    await put(record);
+  });
+  try {
+    await value.models.start('a', {
+      requestId: 'mock-stop-during-capture',
+      prompt: 'SYNTHETIC REQUEST',
+    });
+    await waiting;
+    const job = value.models.jobs.get('a')!;
+    const stopping = value.models.stop('a');
+    await vi.waitFor(() => expect(job.abort.signal.aborted).toBe(true));
+    release();
+    await stopping;
+    expect(value.prompts).toHaveLength(0);
+    expect(job.phase).toBe('stopped');
+  } finally {
+    release();
+    spy.mockRestore();
+    await value.models.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('compaction notifications delivered after cancellation cannot advertise a successful boundary', async () => {
+  const value = await fixture(async (observe, sessionId) => {
+    value.models.jobs.get('a')!.abort.abort();
+    const event = (type: string, seq: number, data: unknown, extra: object = {}) =>
+      observe({
+        method: 'session.event',
+        params: { sessionId, event: { type, seq, data, ...extra } },
+      });
+    event('compaction/start', 10, { compactionId: 'mock-cancelled', turn: 1 });
+    event('compaction/summary', 11, {
+      compactionId: 'mock-cancelled',
+      summary: [{ type: 'text', text: 'SYNTHETIC SUMMARY' }],
+      shadowedRange: { start: 1, end: 2 },
+      shadowedSeqs: [1, 2],
+    });
+    event(
+      'user/message',
+      12,
+      {},
+      { surfaceOp: { op: 'replace', startSeq: 1, endSeq: 2 }, sourceEventSeqs: [10, 11] },
+    );
+    event('compaction/end', 13, { compactionId: 'mock-cancelled', turn: 1 });
+  });
+  try {
+    await value.models.start('a', {
+      requestId: 'mock-cancelled-boundary',
+      prompt: 'SYNTHETIC REQUEST',
+    });
+    const job = value.models.jobs.get('a')!;
+    await job.done;
+    const record = await value.models.journal.read('a', job.id);
+    expect(record?.checkpoint).toBeUndefined();
+    expect(record?.contextCaptures?.captures.at(-1)?.boundary).toBeUndefined();
+    expect(job.phase).toBe('stopped');
+  } finally {
+    await value.models.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
 
 test('model changes and restart recover an initial constraint beyond the last three turns', async () => {
   const value = await fixture();

@@ -25,6 +25,36 @@ import {
   validAgentId,
 } from './index.js';
 
+export const snapshotCapabilityKeys = ['contextInspector', 'preflight', 'fileReview'] as const;
+export type SnapshotAccept = Partial<Record<(typeof snapshotCapabilityKeys)[number], 1>>;
+export interface RemoteSnapshotCapabilities {
+  type: 'snapshot-capabilities';
+  host: string;
+  workspace: string;
+  accept: SnapshotAccept;
+}
+export const supportedSnapshotCapabilities: SnapshotAccept = { contextInspector: 1 };
+export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSnapshotCapabilities {
+  return (
+    object(value) &&
+    exact(value, ['type', 'host', 'workspace', 'accept']) &&
+    value.type === 'snapshot-capabilities' &&
+    typeof value.host === 'string' &&
+    /^[a-f0-9]{64}$/.test(value.host) &&
+    validAgentId(value.workspace) &&
+    object(value.accept) &&
+    exact(value.accept, [...snapshotCapabilityKeys]) &&
+    Object.values(value.accept).every((version) => version === 1)
+  );
+}
+export function remoteSnapshotFor(value: unknown, accept: SnapshotAccept = {}): unknown {
+  if (!object(value)) return value;
+  const wire = { ...value };
+  // Only negotiated additions are omitted. Unknown fields still reach the strict consumer validator and are rejected.
+  for (const key of snapshotCapabilityKeys) if (accept[key] !== 1) delete wire[key];
+  return wire;
+}
+
 function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -113,6 +143,7 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
     !object(value) ||
     !exact(value, [
       'phase',
+      'contextInspector',
       'error',
       'protocolVersion',
       'model',
@@ -146,6 +177,7 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
     return false;
   if (
     !['connecting', 'ready', 'offline', 'unsupported'].includes(String(value.phase)) ||
+    (value.contextInspector !== undefined && value.contextInspector !== 1) ||
     !integer(value.protocolVersion) ||
     !optional(value.error, (error) => text(error, 512)) ||
     typeof value.sharedLogin !== 'boolean' ||

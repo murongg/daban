@@ -784,7 +784,12 @@ export function runtimeService(
       if (recoveryBlocked({ ...state, reboot })) throw new Error('RUNTIME_RECOVERY_PENDING');
     }
     const epoch = connection;
-    const transcript = command.type === 'transcript.list' || command.type === 'transcript.content';
+    const transcript = [
+      'transcript.list',
+      'transcript.content',
+      'context.inspect',
+      'context.source',
+    ].includes(command.type);
     const result = await client.invoke(command);
     // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.
     if (transcript && (closed || epoch !== connection)) throw new Error('RUNTIME_OFFLINE');

@@ -1516,6 +1516,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  contextInspector?: 1;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1601,6 +1602,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'chat.receipt',
     'chat.history',
     'transcript.statistics',
+    'context.inspect',
+    'context.source',
     'transcript.list',
     'transcript.content',
     'memory.history',
@@ -3951,6 +3954,8 @@ export type RuntimeCommand =
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
   | { type: 'transcript.statistics'; query: TranscriptQuery }
+  | { type: 'context.inspect'; query: import('./context-inspector.js').ContextQuery }
+  | { type: 'context.source'; query: import('./context-inspector.js').ContextSourceQuery }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }
@@ -4392,6 +4397,7 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
   );
 }
 export * from './command.js';
+export * from './context-inspector.js';
 export * from './peer.js';
 export * from './receipt.js';
 export * from './remote.js';

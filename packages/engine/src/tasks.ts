@@ -26,6 +26,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { isConversationCheckpoint } from './checkpoint.js';
+import { type ContextArchive, isContextArchive } from './context-inspector.js';
 import { Fault } from './control.js';
 
 export function validateTask(input: unknown): TaskRequest {
@@ -247,6 +248,8 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  contextCaptures?: ContextArchive;
+  contextCaptureFailed?: true;
   goalSession?: boolean;
   goal?: GoalProgress;
   planning?: boolean;
@@ -411,6 +414,20 @@ export class TaskJournal {
           delete task.turns;
         if (task.checkpoint !== undefined && !isConversationCheckpoint(task.checkpoint))
           delete task.checkpoint;
+        if (task.contextCaptureFailed !== true) delete task.contextCaptureFailed;
+        if (
+          task.contextCaptures !== undefined &&
+          !isContextArchive(
+            task.contextCaptures,
+            task.conversationId
+              ? { bot: task.bot, runId: task.runId, conversationId: task.conversationId }
+              : { bot: task.bot, runId: task.runId, chatRevision: task.chatRevision ?? 0 },
+          )
+        ) {
+          delete task.contextCaptures;
+          // A damaged archive is quarantined; this run must never reuse its old capture revisions.
+          task.contextCaptureFailed = true;
+        }
         this.records.set(task.runId, task);
       } catch {
         /* An incomplete journal must not prevent access to other saved tasks and files. */
@@ -418,6 +435,17 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (
+      (value.contextCaptureFailed !== undefined && value.contextCaptureFailed !== true) ||
+      (value.contextCaptures !== undefined &&
+        !isContextArchive(
+          value.contextCaptures,
+          value.conversationId
+            ? { bot: value.bot, runId: value.runId, conversationId: value.conversationId }
+            : { bot: value.bot, runId: value.runId, chatRevision: value.chatRevision ?? 0 },
+        ))
+    )
+      throw new Fault('INVALID_CONTEXT_CAPTURE', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
@@ -475,6 +503,8 @@ export class TaskJournal {
       'goal',
       'goalSession',
       'stats',
+      'contextCaptures',
+      'contextCaptureFailed',
     ];
     const task = Object.fromEntries(
       fields

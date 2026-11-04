@@ -17,6 +17,8 @@ import {
   isBrowserInput,
   isChatRequest,
   isComputerRequest,
+  isContextQuery,
+  isContextSourceQuery,
   isDocumentUpload,
   isGroupActionRequest,
   isGroupCopyRequest,
@@ -127,6 +129,8 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     'chat.receipt': ['type', 'bot', 'id'],
     'chat.history': ['type', 'bot', 'revision', 'before', 'runId'],
     'transcript.statistics': ['type', 'query'],
+    'context.inspect': ['type', 'query'],
+    'context.source': ['type', 'query'],
     'transcript.list': ['type', 'query'],
     'transcript.content': ['type', 'query'],
     'group.action': ['type', 'request'],
@@ -262,6 +266,8 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   )
     return fail();
   if (v.type === 'transcript.content' && !isTranscriptContentQuery(v.query)) return fail();
+  if (v.type === 'context.inspect' && !isContextQuery(v.query)) return fail();
+  if (v.type === 'context.source' && !isContextSourceQuery(v.query)) return fail();
   if (v.type === 'chat.receipt' && (!validAgentId(v.bot) || !validAgentId(v.id))) return fail();
   if (
     v.type === 'chat.history' &&

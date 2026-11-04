@@ -17,8 +17,69 @@ test('full guest instructions describe VM sudo and host approval without exposin
   expect(agentInstructionsFor(false)).toMatch(/installation requires software_install/);
 });
 
+import { captureContext, contextSources, emptyContextArchive } from './context-inspector.js';
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
+
+test('journal preserves bounded captures across restart and isolates a corrupt archive', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-context-journal-'));
+  const captures = captureContext(emptyContextArchive(), {
+    at: '2026-01-01T00:00:00.000Z',
+    reason: 'turn',
+    coverage: 'partial',
+    turnId: 'mock-turn',
+    estimator: 'daban-text-v1',
+    configuredWindow: 16384,
+    configuredOutput: 1024,
+    sources: contextSources({ request: 'SYNTHETIC REQUEST' }),
+    gaps: ['sdk-envelope'],
+  });
+  const record = {
+    bot: 'mock-bot',
+    runId: 'mock-run',
+    chatRevision: 0,
+    kind: 'chat' as const,
+    phase: 'completed',
+    running: false,
+    prompt: 'SYNTHETIC REQUEST',
+    result: 'SYNTHETIC RESULT',
+    error: '',
+    trace: [],
+    contextCaptures: captures,
+  };
+  try {
+    const journal = new TaskJournal(root);
+    await journal.put(record);
+    expect(await journal.read(record.bot, record.runId)).toHaveProperty(
+      'contextCaptures',
+      captures,
+    );
+    const loaded = new TaskJournal(root);
+    await loaded.load();
+    expect(await loaded.read(record.bot, record.runId)).toHaveProperty('contextCaptures', captures);
+    await writeFile(
+      path.join(root, `${record.runId}.json`),
+      JSON.stringify({
+        version: 1,
+        task: {
+          ...record,
+          contextCaptures: { ...captures, nextRevision: 0 },
+        },
+      }),
+    );
+    const corrupt = new TaskJournal(root);
+    await corrupt.load();
+    expect(await corrupt.read(record.bot, record.runId)).toMatchObject({
+      result: record.result,
+      contextCaptureFailed: true,
+    });
+    expect(await corrupt.read(record.bot, record.runId)).not.toHaveProperty('contextCaptures');
+    const invalid = { ...record, contextCaptures: { ...captures, nextRevision: 0 } };
+    await expect(journal.put(invalid)).rejects.toMatchObject({ code: 'INVALID_CONTEXT_CAPTURE' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('task approval mode accepts only the three explicit user policies', () => {
   const task = { requestId: 'mock-policy-request', prompt: 'Synthetic task' };

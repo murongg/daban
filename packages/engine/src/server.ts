@@ -23,6 +23,8 @@ import {
   isBrowserInput,
   isChatRequest,
   isComputerRequest,
+  isContextQuery,
+  isContextSourceQuery,
   isDocumentUpload,
   isExecutionSnapshot,
   isGroupCopyRequest,
@@ -138,6 +140,8 @@ const recoveryReads = new Set([
   '/api/chats/receipt',
   '/api/chats/history',
   '/api/transcripts/statistics',
+  '/api/context/inspect',
+  '/api/context/source',
   '/api/transcripts/list',
   '/api/transcripts/content',
   '/api/memory/history',
@@ -1116,6 +1120,15 @@ export async function startPrototype({
               return json(res, await models.transcriptContent(data.scope, data.seq, data.offset));
             throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
           }
+          if (url.pathname.startsWith('/api/context/') && req.method === 'POST') {
+            if (!models) throw new Fault('CONTEXT_CAPTURE_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (url.pathname === '/api/context/inspect' && isContextQuery(data))
+              return json(res, await models.inspectContext(data));
+            if (url.pathname === '/api/context/source' && isContextSourceQuery(data))
+              return json(res, await models.contextSource(data));
+            throw new Fault('INVALID_CONTEXT_QUERY', 400);
+          }
           if (url.pathname.startsWith('/api/chats/') && req.method === 'POST') {
             if (!models) throw new Fault('CHAT_UNAVAILABLE', 503);
             const data = await body(req);
@@ -1534,6 +1547,7 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
+              ...(models ? { contextInspector: 1 } : {}),
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
               // Capability metadata stays outside saved-model status so older clients can still validate that status.

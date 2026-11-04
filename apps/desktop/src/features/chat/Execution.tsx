@@ -18,6 +18,7 @@ import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app
 import { IconButton } from '../../components/controls/Button';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { taskPhase } from '../../i18n/tasks';
+import { ContextInspector } from './ContextInspector';
 
 const tools: Record<string, MessageKey> = {
   group_directory: 'execution.groupDirectory',
@@ -531,14 +532,17 @@ export function Execution(props: {
   useLocale();
   const { scope } = props;
   return (
-    <Disclosure
-      key={JSON.stringify([
-        scope.bot,
-        scope.runId,
-        scope.chatRevision ?? null,
-        scope.conversationId ?? null,
-      ])}
-      {...props}
-    />
+    <>
+      <Disclosure
+        key={JSON.stringify([
+          scope.bot,
+          scope.runId,
+          scope.chatRevision ?? null,
+          scope.conversationId ?? null,
+        ])}
+        {...props}
+      />
+      <ContextInspector scope={scope} />
+    </>
   );
 }

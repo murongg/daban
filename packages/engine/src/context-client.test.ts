@@ -1,0 +1,88 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { disconnected, type RuntimeSnapshot } from '@daban/protocol';
+import { expect, test, vi } from 'vitest';
+import { RuntimeClient } from './client.js';
+import { startPrototype } from './server.js';
+
+const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+
+test('real Host state normalization retains capability and reads legacy records without starting work', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-context-client-'));
+  const app = await startPrototype({
+    port: 0,
+    computers: true,
+    profileDir: path.join(root, 'profile'),
+  });
+  try {
+    expect.assert(app.models);
+    await app.models.journal.put({
+      ...scope,
+      kind: 'chat',
+      phase: 'completed',
+      running: false,
+      prompt: 'SYNTHETIC REQUEST',
+      result: 'SYNTHETIC RESULT',
+      error: '',
+      trace: [],
+    });
+    const client = new RuntimeClient({ origin: app.url, tokenProvider: async () => app.token });
+    expect(await client.status()).toMatchObject({ phase: 'ready', contextInspector: 1 });
+    expect(await client.invoke({ type: 'context.inspect', query: { scope } })).toEqual({
+      scope,
+      state: 'unavailable',
+      reason: 'legacy',
+    });
+    expect(app.models.jobs.size).toBe(0);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('missing capability sends no query even on a high protocol; requests freeze scope before status yields', async () => {
+  let body = '';
+  let reply: unknown = { scope, state: 'unavailable', reason: 'legacy' };
+  const fetcher = vi.fn(async (_url: string, options?: RequestInit) => {
+    body = String(options?.body);
+    return Response.json(reply);
+  });
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  const status = vi
+    .spyOn(client, 'status')
+    .mockResolvedValue({ ...disconnected('ready'), protocolVersion: 999 });
+  await expect(client.invoke({ type: 'context.inspect', query: { scope } })).rejects.toThrow(
+    'CONTEXT_UNSUPPORTED',
+  );
+  expect(fetcher).not.toHaveBeenCalled();
+  let resolve: (state: RuntimeSnapshot) => unknown = () => {};
+  status.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  const query = { scope: { ...scope } };
+  const pending = client.invoke({ type: 'context.inspect', query });
+  query.scope.runId = 'mock-mutated';
+  resolve({ ...disconnected('ready'), contextInspector: 1 });
+  expect(await pending).toEqual(reply);
+  expect(JSON.parse(body)).toEqual({ scope });
+  status.mockResolvedValue({ ...disconnected('ready'), contextInspector: 1 });
+  reply = { scope: { ...scope, bot: 'mock-other' }, state: 'unavailable', reason: 'legacy' };
+  await expect(client.invoke({ type: 'context.inspect', query: { scope } })).rejects.toThrow(
+    'INVALID_CONTEXT_VIEW',
+  );
+  reply = { ...scope, seq: 2, offset: 0, total: 0, text: '' };
+  await expect(
+    client.invoke({
+      type: 'context.source',
+      query: { scope, revision: 1, ref: { scope, seq: 1 } },
+    }),
+  ).rejects.toThrow('INVALID_CONTEXT_SOURCE');
+});
