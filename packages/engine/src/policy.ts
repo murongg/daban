@@ -5,9 +5,10 @@ import {
   type PolicyDecision,
 } from '@daban/protocol';
 import { type BridgeConfig, type BridgeFetch, callBridge } from './bridge.js';
+import { readOwner } from './delegation.js';
 
 export const name = 'daban-budget';
-export const inject = ['tools', 'approval'];
+export const inject = ['tools', 'approval', 'agents'];
 interface Execution {
   signal: AbortSignal;
   name: string;
@@ -17,6 +18,7 @@ interface Execution {
 }
 
 interface Context {
+  agents?: Parameters<typeof readOwner>[0];
   on: (
     ...hook:
       | ['tools/pre-execute', (exec: Execution, next: () => Promise<unknown>) => Promise<unknown>]
@@ -102,16 +104,15 @@ export function apply(
           ? normalizedUrl(value.url)
           : undefined;
       let hostDecision: PolicyDecision | undefined;
-      const agent = exec.agent;
-      const sessionId =
-        agent &&
-        typeof agent === 'object' &&
-        'session' in agent &&
-        agent.session &&
-        typeof agent.session === 'object' &&
-        'id' in agent.session
-          ? agent.session.id
-          : undefined;
+      const owner =
+        config.bridge && ctx.agents ? readOwner(ctx.agents, exec.agent, exec.name) : undefined;
+      const sessionId = owner?.session?.id;
+      const ownsRead = () =>
+        !config.bridge ||
+        (!!sessionId &&
+          !!ctx.agents &&
+          readOwner(ctx.agents, exec.agent, exec.name) === owner &&
+          owner?.session?.id === sessionId);
       const blocked = () => ({
         kind: 'deny',
         reason:
@@ -119,6 +120,7 @@ export function apply(
         info: { name: 'WebPolicyError', code: 'APPROVAL_POLICY_CHANGED' },
       });
       if (config.bridge) {
+        if (!ownsRead()) return blocked();
         try {
           const decision = await callBridge(
             config.bridge,
@@ -128,6 +130,7 @@ export function apply(
             request,
           );
           if (
+            !ownsRead() ||
             !isPolicyDecision(decision) ||
             decision.selector.kind !== 'url' ||
             decision.selector.url !== url ||
@@ -139,7 +142,10 @@ export function apply(
           return blocked();
         }
       }
+      const needsApproval =
+        hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !url || !urls.has(url);
       const dispatch = async () => {
+        if (!ownsRead()) return blocked();
         if (hostDecision && config.bridge) {
           try {
             const checked = await callBridge(
@@ -161,16 +167,14 @@ export function apply(
           }
         }
         if (exec.signal.aborted) return { kind: 'cancel' };
+        // Approval and Host checks can wait while the child is removed or the root task changes.
+        if (!ownsRead()) return blocked();
         return next();
       };
       // Page text cannot authorize another destination or append private data to an approved URL.
-      if (
-        url &&
-        (hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !urls.has(url)) &&
-        exec.agent &&
-        ctx.approval
-      ) {
+      if (url && needsApproval && exec.agent && ctx.approval) {
         const decision = await ctx.approval.request({
+          // The child keeps its own native approval pin and turn-enclosed audit.
           agent: exec.agent,
           toolName: 'web_fetch',
           callId: exec.callId,

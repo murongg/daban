@@ -32,6 +32,7 @@ test('a supplied URL still consults Host deny and rechecks a captured decision i
           : { error: { code: 'APPROVAL_POLICY_CHANGED' } },
       );
     };
+    const root = { id: 'mock-agent', session: { id: 'mock-session' } };
     const config = {
       limit: 10,
       urls: [selector.url],
@@ -39,6 +40,11 @@ test('a supplied URL still consults Host deny and rechecks a captured decision i
     };
     Reflect.apply(apply, undefined, [
       {
+        agents: {
+          roots: () => [root],
+          get: (id: string) => (id === root.id ? root : undefined),
+          isOwnedBy: () => false,
+        },
         on: (...hook: unknown[]) => {
           if (hook[0] === 'tools/pre-execute') listener = hook[1] as typeof listener;
         },
@@ -51,7 +57,7 @@ test('a supplied URL still consults Host deny and rechecks a captured decision i
         signal: new AbortController().signal,
         name: 'web_fetch',
         arguments: { url: selector.url },
-        agent: { session: { id: 'mock-session' } },
+        agent: root,
       },
       async () => {
         effects++;
@@ -104,6 +110,183 @@ test('ask mode requests approval even for a URL supplied in the accepted task', 
 
 test('the policy declares approval as a required Cordis capability', () => {
   expect.assert(inject.includes('approval'));
+});
+
+test('owned read-only children use the accepted root session for exact web rules without borrowing native approval', async () => {
+  let listener: (
+    exec: { signal: AbortSignal; name: string; arguments: unknown; agent?: unknown },
+    next: () => Promise<unknown>,
+  ) => Promise<unknown> = async () => undefined;
+  const root = { id: 'mock-root', session: { id: 'mock-root-session' } };
+  const child = { id: 'mock-child', session: { id: 'mock-child-session' } };
+  let effects = 0;
+  const sessions: unknown[] = [];
+  const scope = { kind: 'bot' as const, bot: 'mock-bot' };
+  const selector = { kind: 'url' as const, url: 'https://example.test/mock-child-read' };
+  const context: Parameters<typeof apply>[0] = {
+    agents: {
+      roots: () => [root],
+      get: (id) => (id === root.id ? root : id === child.id ? child : undefined),
+      isOwnedBy: (id, owner) => id === child.id && owner === root,
+    },
+    on: (...hook) => {
+      if (hook[0] === 'tools/pre-execute') listener = hook[1];
+    },
+    approval: {
+      request: async (input) => {
+        expect(input.agent).toBe(child);
+        throw new Error('An authorized task URL must not request native approval');
+      },
+    },
+  };
+  const request = async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    sessions.push(body.params.sessionId);
+    if (body.params.sessionId !== root.session.id)
+      return Response.json({ error: { code: 'INVALID_INTERACTION' } });
+    return Response.json({
+      result:
+        body.method === 'approval.web.check'
+          ? { current: true }
+          : {
+              effect: 'allow',
+              source: 'risk',
+              reasonCode: 'baselineAllowed',
+              matchedRules: [],
+              policyRevision: 0,
+              requestHash: approvalHash([scope, 'interactive', selector]),
+              scope,
+              trigger: 'interactive',
+              selector,
+            },
+    });
+  };
+  apply(
+    context,
+    {
+      limit: 10,
+      urls: [selector.url],
+      bridge: { url: 'http://127.0.0.1/mcp/mock-bot', capability: 'synthetic-capability' },
+    },
+    request,
+  );
+  await listener(
+    {
+      signal: new AbortController().signal,
+      name: 'web_fetch',
+      arguments: { url: selector.url },
+      agent: child,
+    },
+    async () => {
+      effects++;
+      return { kind: 'allow' };
+    },
+  );
+  expect(effects).toBe(1);
+  expect(sessions).toEqual([root.session.id, root.session.id]);
+});
+
+test.each([
+  'foreign',
+  'lookalike',
+  'removed-after-approval',
+  'root-replaced-after-check',
+  'native-never',
+] as const)('web rules refuse an unowned or stale agent (%s)', async (scenario) => {
+  let listener: (
+    exec: { signal: AbortSignal; name: string; arguments: unknown; agent?: unknown },
+    next: () => Promise<unknown>,
+  ) => Promise<unknown> = async () => undefined;
+  const root = { id: 'mock-root', session: { id: 'mock-root-session' } };
+  const child = { id: 'mock-child', session: { id: 'mock-child-session' } };
+  const foreign = { id: 'mock-foreign', session: root.session, root };
+  const registered = new Map([
+    [root.id, root],
+    [child.id, child],
+    [foreign.id, foreign],
+  ]);
+  let currentRoot = root;
+  let effects = 0;
+  const methods: string[] = [];
+  const selector = { kind: 'url' as const, url: 'https://example.test/mock-read' };
+  const scope = { kind: 'bot' as const, bot: 'mock-bot' };
+  const context: Parameters<typeof apply>[0] = {
+    agents: {
+      roots: () => [currentRoot],
+      get: (id) => registered.get(id),
+      isOwnedBy: (id, owner) => id === child.id && owner === root,
+    },
+    on: (...hook) => {
+      if (hook[0] === 'tools/pre-execute') listener = hook[1];
+    },
+    approval: {
+      request: async (input) => {
+        expect(input.agent).toBe(child);
+        if (scenario === 'native-never') return 'rejected';
+        if (scenario === 'removed-after-approval') registered.delete(child.id);
+        return 'allowed-once';
+      },
+    },
+  };
+  const request = async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    methods.push(body.method);
+    if (body.method === 'approval.web.check') {
+      if (scenario === 'root-replaced-after-check')
+        currentRoot = { id: 'mock-next-root', session: { id: 'mock-next-session' } };
+      return Response.json({ result: { current: true } });
+    }
+    return Response.json({
+      result: {
+        effect: 'ask',
+        source: 'rule',
+        reasonCode: 'ruleAsked',
+        matchedRules: [],
+        policyRevision: 0,
+        requestHash: approvalHash([scope, 'interactive', selector]),
+        scope,
+        trigger: 'interactive',
+        selector,
+      },
+    });
+  };
+  apply(
+    context,
+    {
+      limit: 10,
+      urls: [selector.url],
+      bridge: { url: 'http://127.0.0.1/mcp/mock-bot', capability: 'synthetic-capability' },
+    },
+    request,
+  );
+  const agent =
+    scenario === 'foreign'
+      ? foreign
+      : scenario === 'lookalike'
+        ? { ...child, session: root.session }
+        : child;
+  expect(
+    await listener(
+      {
+        signal: new AbortController().signal,
+        name: 'web_fetch',
+        arguments: { url: selector.url },
+        agent,
+      },
+      async () => {
+        effects++;
+        return { kind: 'allow' };
+      },
+    ),
+  ).toMatchObject({ kind: 'deny' });
+  expect(effects).toBe(0);
+  expect(methods).toEqual(
+    scenario === 'foreign' || scenario === 'lookalike'
+      ? []
+      : scenario === 'root-replaced-after-check'
+        ? ['approval.web', 'approval.web.check']
+        : ['approval.web'],
+  );
 });
 
 test('native session-bound schedules cannot bypass the product schedule service', async () => {
