@@ -114,7 +114,8 @@ export function isAutomationSource(value: unknown): value is AutomationSource {
     validAgentId(value.scheduleId) &&
     validAgentId(value.firingId) &&
     integer(value.configRevision, 1) &&
-    ['time', 'manual', 'file'].includes(String(value.trigger)) &&
+    typeof value.trigger === 'string' &&
+    ['time', 'manual', 'file'].includes(value.trigger) &&
     isMonitorPolicy(value.policy) &&
     (value.scope === undefined || isProjectScope(value.scope)) &&
     (value.paths === undefined ||
@@ -189,8 +190,10 @@ export function isAutomationNotice(value: unknown): value is AutomationNotice {
     validAgentId(value.id) &&
     validAgentId(value.bot) &&
     validAgentId(value.schedule) &&
-    ['completed', 'failed', 'interrupted'].includes(String(value.phase)) &&
-    ['changed', 'fault', 'recovered'].includes(String(value.reason)) &&
+    typeof value.phase === 'string' &&
+    ['completed', 'failed', 'interrupted'].includes(value.phase) &&
+    typeof value.reason === 'string' &&
+    ['changed', 'fault', 'recovered'].includes(value.reason) &&
     (value.runId === undefined || validAgentId(value.runId)) &&
     (value.code === undefined || isAutomationCode(value.code)) &&
     (value.firing === undefined || validAgentId(value.firing)) &&

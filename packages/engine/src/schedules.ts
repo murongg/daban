@@ -1113,7 +1113,12 @@ export class Schedules {
                   : hash !== state.resultDigest
                     ? 'changed'
                     : 'unchanged';
-            if (source.policy.kind === 'changes' || code === 'SCHEDULE_OUTCOME_UNKNOWN') {
+            // All-mode runs must also settle a recorded unknown outcome and any ensuing failure.
+            if (
+              source.policy.kind === 'changes' ||
+              code === 'SCHEDULE_OUTCOME_UNKNOWN' ||
+              state.resultError !== null
+            ) {
               if (
                 (code && code !== 'SCHEDULE_OUTCOME_UNKNOWN' && code !== state.resultError) ||
                 (!code &&

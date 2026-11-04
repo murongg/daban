@@ -253,9 +253,11 @@ function Workbench() {
     if (target.kind === 'automation') {
       dispatch({ type: 'select', bot: targetBot.id });
       dispatch({ type: 'panel', panel: 'routines' });
-      runtime
-        .command({ type: 'schedule.ack', id: target.schedule, notice: target.id })
-        .catch((error) => notify(runtimeError(error)));
+      // Unknown notices retain the original receipt lookup even after their rule is deleted.
+      if (target.code !== 'SCHEDULE_OUTCOME_UNKNOWN')
+        runtime
+          .command({ type: 'schedule.ack', id: target.schedule, notice: target.id })
+          .catch((error) => notify(runtimeError(error)));
       return true;
     }
     if (target.chatRevision > chatRevision(state, targetBot.id, runtime.snapshot.chats)) {

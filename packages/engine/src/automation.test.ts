@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isScheduleInput } from '@daban/protocol';
+import { isAutomationNotice, isAutomationSource, isScheduleInput } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { sampleFiles, signalDigest } from './automation.js';
 import { secureDirectory } from './private-files.js';
@@ -101,6 +101,95 @@ const input = (value: unknown) => ({
   prompt: 'Inspect synthetic data only',
   enabled: false,
   rule: value,
+});
+
+const invalidEnums: unknown[] = [
+  ['file'],
+  ['manual'],
+  ['completed'],
+  ['changed'],
+  [],
+  null,
+  false,
+  1,
+  { toString: null, valueOf: null },
+];
+test.each(invalidEnums)(
+  'rejects non-string automation triggers without coercion or exceptions %#',
+  (value) => {
+    const source = {
+      scheduleId: 'mock-rule',
+      firingId: 'mock-firing',
+      configRevision: 1,
+      trigger: value,
+      policy: { kind: 'all' },
+    };
+    expect(isAutomationSource(source)).toBe(false);
+  },
+);
+test.each(invalidEnums)(
+  'rejects non-string automation phases without coercion or exceptions %#',
+  (value) => {
+    const notice = {
+      kind: 'automation',
+      id: 'mock-notice',
+      bot: 'mock-bot',
+      schedule: 'mock-rule',
+      phase: 'completed',
+      reason: 'changed',
+    };
+    expect(isAutomationNotice({ ...notice, phase: value })).toBe(false);
+  },
+);
+test.each(invalidEnums)(
+  'rejects non-string automation reasons without coercion or exceptions %#',
+  (value) => {
+    const notice = {
+      kind: 'automation',
+      id: 'mock-notice',
+      bot: 'mock-bot',
+      schedule: 'mock-rule',
+      phase: 'completed',
+      reason: 'changed',
+    };
+    expect(isAutomationNotice({ ...notice, reason: value })).toBe(false);
+  },
+);
+
+test('retains valid original enum strings and mandatory file-source evidence', () => {
+  const source = {
+    scheduleId: 'mock-rule',
+    firingId: 'mock-firing',
+    configRevision: 1,
+    policy: { kind: 'all' },
+  };
+  for (const trigger of ['time', 'manual'])
+    expect(isAutomationSource({ ...source, trigger })).toBe(true);
+  expect(isAutomationSource({ ...source, trigger: 'file' })).toBe(false);
+  expect(
+    isAutomationSource({
+      ...source,
+      trigger: 'file',
+      scope: { projectId: 'mock-project', revision: 1 },
+      paths: ['mock.txt'],
+      fromCursor: 1,
+      toCursor: 2,
+      before: 'a'.repeat(64),
+      after: 'b'.repeat(64),
+    }),
+  ).toBe(true);
+  for (const phase of ['completed', 'failed', 'interrupted'])
+    for (const reason of ['changed', 'fault', 'recovered'])
+      expect(
+        isAutomationNotice({
+          kind: 'automation',
+          id: 'mock-notice',
+          bot: 'mock-bot',
+          schedule: 'mock-rule',
+          phase,
+          reason,
+        }),
+      ).toBe(true);
 });
 
 test.each([60, 86400])('accepts a paused file rule at %i seconds', (pollSeconds) => {
@@ -290,6 +379,97 @@ test('an unknown accepted outcome is only reconciled by its original receipt, ne
     await f.store.tick();
     expect(attempts).toBe(1);
     expect((await f.store.notices())[0].reason).toBe('recovered');
+  } finally {
+    await f.close();
+  }
+});
+
+test.each(['all', 'changes'] as const)(
+  'original completed receipts clear %s-mode unknown state without replay',
+  async (kind) => {
+    const f = await fixture();
+    let attempts = 0;
+    Object.assign(f.options.runner, {
+      start: async () => {
+        attempts++;
+        throw new Error('synthetic acknowledgement lost');
+      },
+      signal: async () => Buffer.from('Synthetic result'),
+    });
+    try {
+      let item = await f.store.create(input(rule));
+      if (kind === 'changes')
+        item = await f.store.monitor(item.id, item.revision, { kind, signalPath: 'mock.txt' });
+      const firing = await f.store.run(item.id, 'mock-original-receipt');
+      await f.store.tick();
+      await f.reopen();
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBe('SCHEDULE_OUTCOME_UNKNOWN');
+      expect(
+        (await f.store.notices()).some((notice) => notice.code === 'SCHEDULE_OUTCOME_UNKNOWN'),
+      ).toBe(true);
+      expect(attempts).toBe(1);
+      f.receipts.set(firing.requestId, { runId: 'mock-confirmed-run', phase: 'completed' });
+      expect(await f.store.receipt(item.id, firing.id)).toMatchObject({
+        state: 'completed',
+        runId: 'mock-confirmed-run',
+      });
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+      expect((await f.store.get(item.id)).history[0].state).toBe('completed');
+      const notice = (await f.store.notices())[0];
+      expect(notice.reason).toBe('recovered');
+      await f.reopen();
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+      expect((await f.store.notices())[0].id).toBe(notice.id);
+      expect(attempts).toBe(1);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('an all-mode failed original receipt reports failure rather than recovery and later success clears it', async () => {
+  const f = await fixture();
+  let attempts = 0;
+  Object.assign(f.options.runner, {
+    start: async () => {
+      attempts++;
+      throw new Error('synthetic acknowledgement lost');
+    },
+  });
+  try {
+    const item = await f.store.create(input(rule));
+    const firing = await f.store.run(item.id, 'mock-failed-original');
+    await f.store.tick();
+    f.receipts.set(firing.requestId, {
+      runId: 'mock-failed-run',
+      phase: 'failed',
+      error: 'AUTOMATION_RUN_FAILED',
+    });
+    expect(await f.store.receipt(item.id, firing.id)).toMatchObject({ state: 'failed' });
+    await f.store.tick();
+    expect((await f.store.get(item.id)).automation?.error).toBe('AUTOMATION_RUN_FAILED');
+    expect((await f.store.notices())[0]).toMatchObject({
+      reason: 'fault',
+      phase: 'failed',
+      code: 'AUTOMATION_RUN_FAILED',
+    });
+    await f.reopen();
+    await f.store.tick();
+    expect(attempts).toBe(1);
+    Object.assign(f.options.runner, {
+      start: async (_bot: string, task: { requestId: string }) => {
+        attempts++;
+        f.receipts.set(task.requestId, { runId: 'mock-next-run', phase: 'completed' });
+      },
+    });
+    await f.store.run(item.id, 'mock-next-result');
+    await f.store.tick();
+    expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+    expect((await f.store.notices())[0].reason).toBe('recovered');
+    expect(attempts).toBe(2);
   } finally {
     await f.close();
   }
