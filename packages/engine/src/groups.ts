@@ -4,6 +4,8 @@ import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  type DeliveryReference,
+  deliveryReferenceKey,
   type Group,
   type GroupActionAck,
   type GroupActionReceipt,
@@ -15,6 +17,7 @@ import {
   type GroupPage,
   type GroupSend,
   groupCopyKey,
+  isDeliveryReference,
   isGroup,
   isGroupActionReceipt,
   isGroupActionRequest,
@@ -52,12 +55,21 @@ export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
   directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
-  source?(bot: string, runId: string, conversationId?: string): { intentId: string } | undefined;
+  source?(
+    bot: string,
+    runId: string,
+    conversationId?: string,
+  ): { intentId: string; delivery?: DeliveryReference } | undefined;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
   findRequest(bot: string, requestId: string): GroupReceipt | undefined;
-  start(bot: string, task: TaskRequest, scope: ConversationScope): Promise<unknown>;
+  start(
+    bot: string,
+    task: TaskRequest,
+    scope: ConversationScope,
+    delivery?: DeliveryReference,
+  ): Promise<unknown>;
   stopRequest(bot: string, requestId: string, conversationId: string): Promise<unknown>;
 }
 export interface GroupSource {
@@ -373,6 +385,37 @@ export class Groups {
       ...(rows.length > limit ? { nextBefore: messages[0].sequence } : {}),
     };
   }
+  private deliveryReference(group: string, source: string) {
+    const row = this.db
+      .select()
+      .from(groupCollaborations)
+      .where(and(eq(groupCollaborations.grp, group), eq(groupCollaborations.turn, source)))
+      .get();
+    if (!row?.delivery) return undefined;
+    const value: unknown = JSON.parse(row.delivery);
+    if (!isDeliveryReference(value)) throw new Fault('GROUP_STORAGE_FAILED');
+    return value;
+  }
+  deliveryProgress(reference: DeliveryReference) {
+    if (!isDeliveryReference(reference))
+      return Promise.reject(new Fault('INVALID_DELIVERY_REFERENCE', 400));
+    return this.exclusive(() =>
+      this.db
+        .select()
+        .from(groupCollaborations)
+        .where(eq(groupCollaborations.delivery, deliveryReferenceKey(reference)))
+        .all()
+        .map((row) => {
+          const turn = this.turn(row.grp, row.turn);
+          return {
+            groupId: row.grp,
+            sourceId: row.turn,
+            state: turn.state,
+            stages: this.stages(row.grp, row.turn).map((stage) => this.delivery(stage)),
+          };
+        }),
+    );
+  }
   read(id: string, before?: number, limit?: number) {
     return this.exclusive(() => this.page(id, before, limit));
   }
@@ -542,7 +585,15 @@ export class Groups {
           // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
           this.db
             .insert(groupCollaborations)
-            .values({ source: identity, grp: id, turn: sourceId, signature })
+            .values({
+              source: identity,
+              grp: id,
+              turn: sourceId,
+              signature,
+              delivery: this.runner.source?.(source.bot, source.runId)?.delivery
+                ? deliveryReferenceKey(this.runner.source(source.bot, source.runId)!.delivery!)
+                : null,
+            })
             .run();
           return { group, sourceId, reused: false };
         },
@@ -1152,6 +1203,7 @@ export class Groups {
               files: this.inputs(group.id, String(turn.id)),
             },
             { id: group.id, context },
+            this.deliveryReference(group.id, String(turn.id)),
           );
           this.reconcile(row, true);
         } catch (error) {

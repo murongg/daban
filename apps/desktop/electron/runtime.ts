@@ -5,6 +5,8 @@ import {
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  deliveryAction,
+  deliveryKey,
   disconnected,
   groupCopyKey,
   imageProtocol,
@@ -27,6 +29,10 @@ import {
   isChatStatus,
   isComputerAck,
   isComputerStatus,
+  isDeliveryChecklist,
+  isDeliveryCommand,
+  isDeliveryPage,
+  isDeliveryReceipt,
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
@@ -103,6 +109,7 @@ import {
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  recoveryReader,
   sameTranscriptScope,
   unavailableLocalComputer,
   validAgentId,
@@ -381,6 +388,7 @@ export class RuntimeClient {
           documentParsing?: unknown;
         };
         work?: unknown;
+        delivery?: unknown;
         notes?: unknown;
         mode?: string;
         computerError?: unknown;
@@ -457,6 +465,9 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      if (raw.delivery !== undefined && raw.delivery !== true)
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (raw.delivery === true) snapshot.delivery = true;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
       if (this.agent && raw.localComputer !== undefined)
@@ -721,6 +732,64 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (isDeliveryCommand(command)) {
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.delivery !== true) throw new Error('RUNTIME_TOO_OLD');
+      if (recoveryBlocked(state) && !recoveryReader(captured))
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      const action = captured.type.slice(9);
+      const route =
+        (
+          {
+            'checklist.get': 'checklist/get',
+            'checklist.write': 'checklist/write',
+            'checklist.receipt': 'checklist/receipt',
+            'file.bind': 'file/bind',
+            'file.bind-receipt': 'file/bind-receipt',
+          } as Record<string, string>
+        )[action] ?? action;
+      const value = await this.workApi(
+        `/api/delivery/${route}`,
+        'query' in captured ? captured.query : captured.request,
+        state.protocolVersion,
+      );
+      if (captured.type === 'delivery.get') {
+        if (
+          !isDeliveryPage(value) ||
+          value.workId !== captured.query.workId ||
+          value.attempts.length > (captured.query.limit ?? 20) ||
+          (captured.query.before !== undefined &&
+            value.attempts.some((attempt) => attempt.sequence >= captured.query.before!))
+        )
+          throw new Error('INVALID_DELIVERY_PAGE');
+      } else if (captured.type === 'delivery.checklist.get') {
+        if (!isDeliveryChecklist(value) || value.workId !== captured.query.workId)
+          throw new Error('INVALID_DELIVERY_CHECKLIST');
+      } else {
+        const owner = deliveryAction(action);
+        if (
+          !isDeliveryReceipt(value) ||
+          deliveryKey(owner, value.request) !== deliveryKey(owner, captured.request) ||
+          (!action.endsWith('receipt') && value.state !== 'complete')
+        )
+          throw new Error('INVALID_DELIVERY_RECEIPT');
+        if (value.state === 'complete' && 'attempt' in value) {
+          if (
+            ('attemptId' in captured.request &&
+              value.attempt.attemptId !== captured.request.attemptId) ||
+            (owner === 'start' &&
+              (value.attempt.requestId !== captured.request.requestId ||
+                !('bot' in captured.request) ||
+                value.attempt.bot !== captured.request.bot))
+          )
+            throw new Error('INVALID_DELIVERY_RECEIPT');
+        }
+      }
+      return value;
+    }
+
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
       const value = await this.api('/api/host/recovery', captured);

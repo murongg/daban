@@ -15,7 +15,9 @@ import type {
   TaskTrace,
 } from '@daban/protocol';
 import {
+  type DeliveryReference,
   isApprovalMode,
+  isDeliveryReference,
   isGoalProgress,
   isReplyStream,
   isRunInsert,
@@ -247,6 +249,7 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  delivery?: DeliveryReference;
   goalSession?: boolean;
   goal?: GoalProgress;
   planning?: boolean;
@@ -329,6 +332,7 @@ export interface ConversationScope {
   context: string;
 }
 export interface RunReceipt {
+  delivery?: DeliveryReference;
   runId: string;
   phase: string;
   conversationId?: string;
@@ -378,6 +382,8 @@ export class TaskJournal {
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.delivery !== undefined && !isDeliveryReference(task.delivery))
+          delete task.delivery;
         if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
           delete task.goalSession;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
@@ -418,6 +424,8 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.delivery !== undefined && !isDeliveryReference(value.delivery))
+      throw new Fault('INVALID_DELIVERY_REFERENCE', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
@@ -437,6 +445,7 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'delivery',
       'bot',
       'chatRevision',
       'conversationId',

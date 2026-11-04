@@ -23,6 +23,7 @@ import {
   isBrowserInput,
   isChatRequest,
   isComputerRequest,
+  isDeliveryCommand,
   isDocumentUpload,
   isExecutionSnapshot,
   isGroupCopyRequest,
@@ -64,6 +65,7 @@ import { Authority, ViewerGrants } from './authority.js';
 import { Commands } from './commands.js';
 import { Computers } from './computers.js';
 import { errorCode, Fault } from './control.js';
+import { Delivery } from './delivery.js';
 import { createDesktop, Desktop, type DesktopOptions } from './desktop.js';
 import { Diagnostics, desktopDependencies } from './diagnostics.js';
 import { Documents } from './documents.js';
@@ -124,6 +126,13 @@ const recoveryReads = new Set([
   '/api/notes/list',
   '/api/notes/read',
   '/api/notes/receipt',
+  '/api/delivery/get',
+  '/api/delivery/receipt',
+  '/api/delivery/checklist/get',
+  '/api/delivery/checklist/receipt',
+  '/api/delivery/file/bind-receipt',
+  '/api/delivery/decision-receipt',
+  '/api/delivery/stop-receipt',
   '/api/work/list',
   '/api/work/read',
   '/api/work/receipt',
@@ -309,6 +318,7 @@ export async function startPrototype({
   let models: ModelRuns | undefined;
   let schedules: Schedules | undefined;
   let groups: Groups | undefined;
+  let delivery: Delivery | undefined;
   let lifecycle: BotLifecycle | undefined;
   let recovery: Recovery | undefined;
   let commands: Commands | undefined;
@@ -838,6 +848,36 @@ export async function startPrototype({
                 ? await models.notes.write(command.bot, command.request, { kind: 'human' })
                 : await models.notes.receipt(command.bot, command.request, { kind: 'human' }),
             );
+          }
+          if (url.pathname.startsWith('/api/delivery/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_DELIVERY_REQUEST', 400);
+            if (!models) throw new Fault('WORK_UNAVAILABLE', 503);
+            const data = await body(req);
+            const action = (
+              {
+                '/api/delivery/get': 'get',
+                '/api/delivery/start': 'start',
+                '/api/delivery/receipt': 'receipt',
+                '/api/delivery/decide': 'decide',
+                '/api/delivery/decision-receipt': 'decision-receipt',
+                '/api/delivery/stop': 'stop',
+                '/api/delivery/stop-receipt': 'stop-receipt',
+                '/api/delivery/checklist/get': 'checklist.get',
+                '/api/delivery/checklist/write': 'checklist.write',
+                '/api/delivery/checklist/receipt': 'checklist.receipt',
+                '/api/delivery/file/bind': 'file.bind',
+                '/api/delivery/file/bind-receipt': 'file.bind-receipt',
+              } as Record<string, string>
+            )[url.pathname];
+            if (!action) throw new Fault('INVALID_DELIVERY_REQUEST', 400);
+            const command: unknown = {
+              type: `delivery.${action}`,
+              ...(['get', 'checklist.get'].includes(action) ? { query: data } : { request: data }),
+            };
+            if (!isDeliveryCommand(command)) throw new Fault('INVALID_DELIVERY_REQUEST', 400);
+            if (!delivery) throw new Fault('DELIVERY_UNAVAILABLE', 503);
+            return json(res, await delivery.command(command));
           }
           if (url.pathname.startsWith('/api/work/')) {
             if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -1521,6 +1561,7 @@ export async function startPrototype({
                   ? { computers: runtime.status() }
                   : {}),
               groups: await groupStatus(groups, modernGroups),
+              ...(delivery ? { delivery: true } : {}),
               work: models
                 ? await models.work.status()
                 : { available: false, error: 'WORK_UNAVAILABLE' },
@@ -2037,11 +2078,12 @@ export async function startPrototype({
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
-          start: (bot, task, scope) => models!.start(bot, task, scope),
+          start: (bot, task, scope, reference) => models!.start(bot, task, scope, reference),
           stopRequest: (bot, id, group) => models!.stopRequest(bot, id, group),
         },
         models.attachments,
       );
+      delivery = new Delivery(models, groups, files);
       models.attachmentPinned = (owner, id) => groups!.inputBusy(owner, id);
       try {
         await groups.ready;

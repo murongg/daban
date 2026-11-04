@@ -20,9 +20,11 @@ import type {
 } from '@daban/protocol';
 import {
   type ChatPage,
+  type DeliveryReference,
   imageMime,
   isAttachmentId,
   isChatPage,
+  isDeliveryReference,
   isGoalProgress,
   isInteractionInput,
   isModelId,
@@ -33,6 +35,7 @@ import {
   isTaskPlan,
   modelHasVision,
   replyLimit,
+  sameDeliveryReference,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
@@ -534,6 +537,7 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  delivery?: DeliveryReference;
   goalCreated?: boolean;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -916,6 +920,7 @@ export class ModelRuns {
         requestId: latest.requestId || latest.runId,
         fingerprint: latest.fingerprint || '',
         token: '',
+        delivery: latest.delivery,
         running: false,
         phase: latest.phase,
         workdir: latest.outputDirectory || '',
@@ -1263,7 +1268,10 @@ export class ModelRuns {
     )
       return undefined;
     // Model-owned intent survives retries; tool arguments must never choose a new collaboration identity.
-    return { intentId: job.intentId || job.id };
+    return {
+      intentId: job.intentId || job.id,
+      ...(job.delivery ? { delivery: job.delivery } : {}),
+    };
   }
   admit(bot: string) {
     return this.admission() && this.botAdmission(bot) && this.profiles.admit(bot);
@@ -1276,6 +1284,7 @@ export class ModelRuns {
     if (!source) return undefined;
     // Queue owners receive a public receipt, never private session paths, capabilities or fingerprints.
     return {
+      ...(source.delivery ? { delivery: source.delivery } : {}),
       runId: current ? current.id : saved!.runId,
       phase:
         current?.finalizing ||
@@ -1291,7 +1300,7 @@ export class ModelRuns {
       model: current?.model || (isModelId(saved?.sessionModel) ? saved.sessionModel : undefined),
     };
   }
-  async stopRequest(bot: string, requestId: string, conversationId: string) {
+  async stopRequest(bot: string, requestId: string, conversationId: string | undefined) {
     const current = this.jobs.get(bot);
     if (
       current &&
@@ -1317,6 +1326,7 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
+        delivery: job.delivery,
         elapsedMs: job.elapsedMs,
         chatRevision: job.chatRevision,
         conversationId: job.conversationId,
@@ -1372,7 +1382,15 @@ export class ModelRuns {
     job.writing = pending.catch(() => {});
     return pending;
   }
-  async start(bot: string, input?: unknown, conversation?: ConversationScope) {
+  async start(
+    bot: string,
+    input?: unknown,
+    conversation?: ConversationScope,
+    delivery?: DeliveryReference,
+  ) {
+    if (delivery !== undefined && !isDeliveryReference(delivery))
+      throw new Fault('INVALID_DELIVERY_REFERENCE', 400);
+    delivery = delivery ? structuredClone(delivery) : undefined;
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
     if (
@@ -1395,6 +1413,7 @@ export class ModelRuns {
     if (scope && task?.chatRevision !== undefined) throw new Fault('INVALID_CONVERSATION', 400);
     const data = task
       ? {
+          ...(delivery ? { delivery } : {}),
           prompt: task.prompt,
           memory: task.memory || '',
           files: task.files || [],
@@ -1423,6 +1442,14 @@ export class ModelRuns {
     let continuedInserts: RunInsert[] = [];
     if (task?.retryOf) {
       const prior = await this.journal.read(bot, task.retryOf);
+      if (prior?.delivery) {
+        // A terminal delivery cannot acquire new effects through an ordinary chat retry.
+        // A new card execution needs its own durable Work claim; internal retries retain trusted ownership.
+        if (!delivery) throw new Fault('DELIVERY_START_REQUIRED');
+        if (delivery && !sameDeliveryReference(delivery, prior.delivery))
+          throw new Fault('INVALID_RETRY', 400);
+        delivery = prior.delivery;
+      }
       if (!prior?.outputDirectory) throw new Fault('RETRY_NOT_FOUND', 404);
       if (
         prior.conversationId !== scope?.id ||
@@ -1505,6 +1532,7 @@ export class ModelRuns {
       prepared = () => resolve(undefined);
     });
     const job: ModelJob = {
+      delivery,
       chatRevision,
       conversationId: scope?.id,
       conversationContext: scope?.context,

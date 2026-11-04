@@ -21,4 +21,11 @@ export const migrations: Migration[] = [
     hash: '8705404575e4b0f0e81e16dea21658f37cfb03c39412f39a4b53e991ccfb6999',
     name: '20261103131026_baseline',
   },
+  {
+    sql: ['ALTER TABLE `group_collaborations` ADD `delivery` text;'],
+    bps: true,
+    folderMillis: 1793790495000,
+    hash: 'c2725ed1a22a373fa6331400c96f8caf3dc2bed8417eda602708f07b4ccaa345',
+    name: '20261104110815_delivery-reference',
+  },
 ];

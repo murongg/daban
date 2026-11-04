@@ -301,3 +301,23 @@ test('the maximum shared summary remains a valid executable task without truncat
     await f.close();
   }
 });
+
+test('delivery progress retains its trusted root across restart and excludes later unrelated turns', async () => {
+  const f = await fixture();
+  try {
+    const reference = { workId: 'mock-work', attemptId: 'mock-attempt', requestId: 'mock-request' };
+    f.runtime.source = () => ({ intentId: 'mock-intent', delivery: reference });
+    const created = await f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request);
+    await f.reopen();
+    const progress = Reflect.get(f.groups, 'deliveryProgress') as
+      | ((root: typeof reference) => Promise<unknown>)
+      | undefined;
+    expect(progress).toBeTypeOf('function');
+    expect(await progress!.call(f.groups, reference)).toMatchObject([
+      { groupId: created.group.id, sourceId: created.sourceId, state: 'pending' },
+    ]);
+    expect(await progress!.call(f.groups, { ...reference, attemptId: 'mock-other' })).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});

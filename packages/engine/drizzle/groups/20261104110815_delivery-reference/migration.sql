@@ -1,0 +1,1 @@
+ALTER TABLE `group_collaborations` ADD `delivery` text;

@@ -17,6 +17,7 @@ import {
   isBrowserInput,
   isChatRequest,
   isComputerRequest,
+  isDeliveryCommand,
   isDocumentUpload,
   isGroupActionRequest,
   isGroupCopyRequest,
@@ -78,6 +79,7 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('delivery.')) return isDeliveryCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();

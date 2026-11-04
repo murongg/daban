@@ -1,3 +1,7 @@
+export * from './delivery.js';
+
+import type { DeliveryCommand } from './delivery.js';
+
 export * from './goals.js';
 
 import type { GoalProgress } from './goals.js';
@@ -1516,6 +1520,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  delivery?: true;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1589,6 +1594,13 @@ export function recoveryReader(command: RuntimeCommand) {
     'bot.receipt',
     'bot.copy.receipt',
     'group.copy.receipt',
+    'delivery.get',
+    'delivery.receipt',
+    'delivery.checklist.get',
+    'delivery.checklist.receipt',
+    'delivery.file.bind-receipt',
+    'delivery.decision-receipt',
+    'delivery.stop-receipt',
     'work.list',
     'work.read',
     'work.receipt',
@@ -3944,6 +3956,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | DeliveryCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand

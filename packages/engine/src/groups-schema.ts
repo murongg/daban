@@ -88,6 +88,7 @@ export const groupHandoffs = sqliteTable('group_handoffs', {
 });
 
 export const groupCollaborations = sqliteTable('group_collaborations', {
+  delivery: text(),
   source: text().primaryKey(),
   grp: text().notNull(),
   turn: text().notNull(),
