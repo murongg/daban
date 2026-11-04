@@ -33,6 +33,7 @@ import type { KnowledgeTools } from './knowledge-tools.js';
 import type { LocalComputerPort } from './local-computer.js';
 import type { MemoryTools } from './memory.js';
 import type { NotesTools } from './notes-tools.js';
+import type { ProjectMemoryTools } from './project-memory-tools.js';
 import type { ProjectResources } from './project-resources.js';
 import type { WorkspaceExecutor } from './remote-workspace.js';
 import { scheduleToolList } from './schedule-catalog.js';
@@ -44,6 +45,7 @@ import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  projectDocuments?: import('@daban/protocol').ProjectDocumentRef[];
   project?: ProjectScope;
   vision?: boolean;
   skills?: SkillSnapshot;
@@ -142,6 +144,7 @@ export class AgentTools {
   memory?: MemoryTools;
   history?: HistoryTools;
   knowledge?: KnowledgeTools;
+  projectMemory?: ProjectMemoryTools;
   work?: WorkTools;
   notes?: NotesTools;
   catalog?: CatalogTools;
@@ -249,6 +252,7 @@ export class AgentTools {
       ...(this.memory?.list || []),
       ...(this.history?.list || []),
       ...(this.knowledge?.list || []),
+      ...(run?.project ? this.projectMemory?.list || [] : []),
       ...(this.work?.list || []),
       ...(this.notes?.list || []),
       ...(this.software?.list || []),
@@ -846,6 +850,7 @@ export class AgentTools {
         : { isError: true, content: [{ type: 'text', text: 'COMPUTER_NOT_CONNECTED' }] };
     }
     const dataTool = [
+      run.project ? this.projectMemory : undefined,
       this.memory,
       this.history,
       this.knowledge,

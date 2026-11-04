@@ -18,6 +18,7 @@ import type {
 import {
   isApprovalMode,
   isGoalProgress,
+  isProjectDocumentRef,
   isProjectScope,
   isReplyStream,
   isRunInsert,
@@ -253,7 +254,13 @@ const phases = new Set([
   'stopped',
   'interrupted',
 ]);
+const projectReads = (value: unknown) =>
+  Array.isArray(value) &&
+  value.length <= 100 &&
+  value.every(isProjectDocumentRef) &&
+  new Set(value.map((item) => item.id)).size === value.length;
 export interface TaskRecord {
+  projectDocuments?: import('@daban/protocol').ProjectDocumentRef[];
   project?: ProjectScope;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -389,6 +396,11 @@ export class TaskJournal {
         }
         if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
           delete task.goalSession;
+        if (
+          task.projectDocuments !== undefined &&
+          (!task.project || !projectReads(task.projectDocuments))
+        )
+          delete task.projectDocuments;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
         if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
@@ -427,6 +439,11 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (
+      value.projectDocuments !== undefined &&
+      (!value.project || !projectReads(value.projectDocuments))
+    )
+      throw new Fault('INVALID_PROJECT_MEMORY', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
@@ -448,6 +465,7 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'projectDocuments',
       'bot',
       'chatRevision',
       'conversationId',

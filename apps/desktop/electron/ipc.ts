@@ -31,6 +31,7 @@ import {
   isNoteCommand,
   isProjectCommand,
   isProjectFileRequest,
+  isProjectMemoryCommand,
   isProjectScope,
   isRecoveryRequest,
   isScheduleInput,
@@ -81,6 +82,8 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('projectMemory.'))
+    return isProjectMemoryCommand(value) ? value : fail();
   if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();

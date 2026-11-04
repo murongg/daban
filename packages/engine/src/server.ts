@@ -35,6 +35,7 @@ import {
   isNoteCommand,
   isProjectCommand,
   isProjectFileRequest,
+  isProjectMemoryCommand,
   isRebootStatus,
   isRecoveryRequest,
   isSetupStatus,
@@ -123,6 +124,14 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/project-memory/status',
+  '/api/project-memory/preview',
+  '/api/project-memory/list',
+  '/api/project-memory/read',
+  '/api/project-memory/versions',
+  '/api/project-memory/candidates',
+  '/api/project-memory/candidate',
+  '/api/project-memory/receipt',
   '/api/projects/list',
   '/api/projects/status',
   '/api/projects/receipt',
@@ -814,6 +823,50 @@ export async function startPrototype({
             } finally {
               if (action) changing.delete(bot!);
             }
+          }
+          if (url.pathname.startsWith('/api/project-memory/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search || !models) throw new Fault('INVALID_PROJECT_MEMORY', 400);
+            const data = await body(req);
+            const command = {
+              ...data,
+              type: `projectMemory.${url.pathname.slice('/api/project-memory/'.length)}`,
+            };
+            if (Object.hasOwn(data, 'type') || !isProjectMemoryCommand(command))
+              throw new Fault('INVALID_PROJECT_MEMORY', 400);
+            const store = models.knowledge.project;
+            if (command.type === 'projectMemory.status') return json(res, await store.status());
+            if (command.type === 'projectMemory.list')
+              return json(res, await store.list(command.scope, command.includeDeleted));
+            if (command.type === 'projectMemory.read')
+              return json(res, await store.read(command.scope, command.document));
+            if (command.type === 'projectMemory.versions')
+              return json(res, await store.versions(command.scope, command.id, command.before));
+            if (command.type === 'projectMemory.receipt')
+              return json(res, await store.receipt(command.scope, command.requestId));
+            if (command.type === 'projectMemory.candidates')
+              return json(res, await store.candidates(command.scope, command.state));
+            if (command.type === 'projectMemory.candidate')
+              return json(res, await store.candidate(command.scope, command.id));
+            if (command.type === 'projectMemory.decide')
+              return json(res, await store.decide(command.request));
+            if (command.type === 'projectMemory.preview') {
+              models.projects.assertHumanScope(command.scope);
+              const extracted =
+                command.source.kind === 'upload'
+                  ? await documents.extract(command.source.file)
+                  : undefined;
+              return json(res, await store.preview(command.scope, command.source, extracted));
+            }
+            if (command.type === 'projectMemory.write') {
+              models.projects.assertHumanScope(command.request.scope);
+              const source =
+                command.request.action === 'publish' ? command.request.source : undefined;
+              const extracted =
+                source?.kind === 'upload' ? () => documents.extract(source.file) : undefined;
+              return json(res, await store.write(command.request, extracted));
+            }
+            throw new Fault('INVALID_PROJECT_MEMORY', 400);
           }
           if (url.pathname.startsWith('/api/projects/')) {
             if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
