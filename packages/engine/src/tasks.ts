@@ -16,7 +16,9 @@ import type {
   TaskTrace,
 } from '@daban/protocol';
 import {
+  type AutomationSource,
   isApprovalMode,
+  isAutomationSource,
   isGoalProgress,
   isProjectScope,
   isReplyStream,
@@ -27,6 +29,7 @@ import {
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
+import { type AutomationOutput, isAutomationOutput } from './automation.js';
 import { isConversationCheckpoint } from './checkpoint.js';
 import { Fault } from './control.js';
 
@@ -254,6 +257,8 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  automation?: AutomationSource;
+  automationOutput?: AutomationOutput;
   project?: ProjectScope;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -387,6 +392,9 @@ export class TaskJournal {
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.automation !== undefined && !isAutomationSource(task.automation)) continue;
+        if (task.automationOutput !== undefined && !isAutomationOutput(task.automationOutput))
+          delete task.automationOutput;
         if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
           delete task.goalSession;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
@@ -427,6 +435,10 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.automation !== undefined && !isAutomationSource(value.automation))
+      throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
+    if (value.automationOutput !== undefined && !isAutomationOutput(value.automationOutput))
+      throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
@@ -448,6 +460,8 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'automation',
+      'automationOutput',
       'bot',
       'chatRevision',
       'conversationId',
@@ -537,6 +551,8 @@ export class TaskJournal {
       .filter(
         (task) =>
           task.kind === 'chat' &&
+          // Changes runs have their own durable comparison; ordinary completion would leak a second notice.
+          task.automation?.policy.kind !== 'changes' &&
           !task.conversationId &&
           !task.running &&
           ['completed', 'failed', 'interrupted'].includes(task.phase),

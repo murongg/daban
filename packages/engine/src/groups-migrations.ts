@@ -21,4 +21,11 @@ export const migrations: Migration[] = [
     hash: '8705404575e4b0f0e81e16dea21658f37cfb03c39412f39a4b53e991ccfb6999',
     name: '20261103131026_baseline',
   },
+  {
+    sql: ['ALTER TABLE `group_turns` ADD `automation` text;'],
+    bps: true,
+    folderMillis: 1793804381000,
+    hash: 'bf74740e706e8977cc94315b6cbced57c582f3851f018354a5376e348774909a',
+    name: '20261104145941_automation-origin',
+  },
 ];

@@ -39,11 +39,17 @@ function connect(
   create?: (input: ScheduleInput) => Promise<Schedule>,
   items: Schedule[] = [],
   extra?: (command: RuntimeCommand) => Promise<RuntimeReply | undefined>,
+  automation = false,
+  files = false,
 ) {
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 6;
   snapshot.model.configured = true;
-  snapshot.schedules = { available: true, items };
+  snapshot.schedules = {
+    available: true,
+    items,
+    ...(automation ? { automation: { changes: true, files } } : {}),
+  };
   const listeners = new Set<(state: RuntimeSnapshot) => unknown>();
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
     const override = await extra?.(command);
@@ -422,4 +428,210 @@ it('bounds a large schedule list while keeping the native management controls', 
   } finally {
     restore();
   }
+});
+
+it('configures result monitoring separately and disables file triggers without project reads', async () => {
+  const item = record({
+    id: 'mock-monitored',
+    bot: 'a',
+    title: '合成监测',
+    prompt: 'SYNTHETIC',
+    rule: { kind: 'every', everySeconds: 3600 },
+  });
+  const invoke = connect(
+    undefined,
+    [item],
+    async (command) =>
+      command.type === 'schedule.monitor'
+        ? { ok: true, value: { ...item, enabled: false, revision: 2 } }
+        : undefined,
+    true,
+  );
+  render(<App />);
+  await workspaceTab(userEvent, '定时');
+  expect(screen.getByRole('button', { name: '新建文件监测' })).toBeDisabled();
+  await userEvent.click(screen.getByText('监测设置'));
+  await userEvent.click(screen.getByRole('checkbox', { name: '仅结果变化时通知' }));
+  await userEvent.type(screen.getByRole('textbox', { name: '结果信号文件' }), 'mock.txt');
+  await userEvent.click(screen.getByRole('button', { name: '保存监测策略' }));
+  expect(invoke.mock.calls.filter(([command]) => command.type === 'schedule.monitor')).toEqual([
+    [
+      {
+        type: 'schedule.monitor',
+        id: item.id,
+        revision: 1,
+        policy: { kind: 'changes', signalPath: 'mock.txt' },
+      },
+    ],
+  ]);
+  expect(
+    invoke.mock.calls.some(
+      ([command]) => command.type === 'schedule.run' || command.type === 'task.start',
+    ),
+  ).toBe(false);
+});
+
+it('saves a project file monitor paused and the existing dialog restores focus on Escape', async () => {
+  const project = {
+    id: 'mock-project',
+    name: '合成项目',
+    revision: 3,
+    status: 'active',
+    grants: [{ bot: 'a', content: 'read', browser: false }],
+    environment: { files: 'project', browser: 'private' },
+  };
+  const invoke = connect(
+    undefined,
+    [],
+    async (command) =>
+      command.type === 'projects.list' ? { ok: true, value: [project] } : undefined,
+    true,
+    true,
+  );
+  render(<App />);
+  await workspaceTab(userEvent, '定时');
+  const opener = screen.getByRole('button', { name: '新建文件监测' });
+  await userEvent.click(opener);
+  expect(await screen.findByRole('dialog', { name: '新建文件监测' })).toBeInTheDocument();
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog', { name: '新建文件监测' })).not.toBeInTheDocument();
+  expect(opener).toHaveFocus();
+  await userEvent.click(opener);
+  await screen.findByRole('option', { name: '合成项目 · 3' });
+  await userEvent.type(screen.getByRole('textbox', { name: '监测名称' }), 'Synthetic files');
+  await userEvent.type(
+    screen.getByRole('textbox', { name: '固定任务说明' }),
+    'Inspect synthetic records',
+  );
+  await userEvent.selectOptions(
+    screen.getByRole('combobox', { name: '项目与授权版本' }),
+    'mock-project',
+  );
+  await userEvent.type(
+    screen.getByRole('textbox', { name: '项目相对文件路径，每行一个' }),
+    'data/mock.txt{Enter}data/other.txt',
+  );
+  await userEvent.click(screen.getByRole('button', { name: '保存文件监测' }));
+  await waitFor(() =>
+    expect(invoke.mock.calls.some(([command]) => command.type === 'schedule.create')).toBe(true),
+  );
+  const created = invoke.mock.calls
+    .map(([command]) => command)
+    .find((command) => command.type === 'schedule.create');
+  expect(created).toMatchObject({
+    input: {
+      enabled: false,
+      bot: 'a',
+      rule: {
+        kind: 'file',
+        scope: { projectId: 'mock-project', revision: 3 },
+        paths: ['data/mock.txt', 'data/other.txt'],
+        pollSeconds: 60,
+      },
+    },
+  });
+  expect(
+    invoke.mock.calls.some(
+      ([command]) => command.type === 'schedule.run' || command.type === 'task.start',
+    ),
+  ).toBe(false);
+});
+
+it('keeps an orphaned unknown receipt queryable without starting or recreating its deleted rule', async () => {
+  const snapshot = disconnected('ready');
+  snapshot.protocolVersion = 45;
+  snapshot.schedules = { available: true, items: [], automation: { changes: true, files: false } };
+  snapshot.notices = {
+    available: true,
+    items: [
+      {
+        kind: 'automation',
+        id: 'mock-notice',
+        bot: 'a',
+        schedule: 'mock-deleted',
+        firing: 'mock-firing',
+        createdAt: '2026-01-01T00:00:00Z',
+        phase: 'interrupted',
+        reason: 'fault',
+        code: 'SCHEDULE_OUTCOME_UNKNOWN',
+      },
+    ],
+  };
+  const invoke = connect(undefined, [], async (command) =>
+    command.type === 'status'
+      ? { ok: true, value: snapshot }
+      : command.type === 'schedule.receipt'
+        ? {
+            ok: true,
+            value: {
+              id: 'mock-firing',
+              requestId: 'mock-original',
+              occurrenceAt: '2026-01-01T00:00:00Z',
+              createdAt: '2026-01-01T00:00:00Z',
+              state: 'interrupted',
+            },
+          }
+        : undefined,
+  );
+  render(<App />);
+  await workspaceTab(userEvent, '定时');
+  expect(screen.getByRole('heading', { name: '执行结果待核实' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '查询原执行回执' }));
+  await waitFor(() =>
+    expect(invoke.mock.calls.filter(([command]) => command.type === 'schedule.receipt')).toEqual([
+      [{ type: 'schedule.receipt', id: 'mock-deleted', firing: 'mock-firing' }],
+    ]),
+  );
+  expect(
+    invoke.mock.calls.some(
+      ([command]) =>
+        command.type === 'schedule.run' ||
+        command.type === 'schedule.create' ||
+        command.type === 'task.start',
+    ),
+  ).toBe(false);
+});
+
+it('requires explicit acceptance of a changed project revision before saving file configuration', async () => {
+  const item = record({
+    id: 'mock-scope-change',
+    bot: 'a',
+    title: 'Synthetic scope',
+    prompt: 'Synthetic task',
+    enabled: false,
+    rule: {
+      kind: 'file',
+      scope: { projectId: 'mock-project', revision: 1 },
+      paths: ['mock.txt'],
+      pollSeconds: 60,
+    },
+  });
+  const project = {
+    id: 'mock-project',
+    name: 'Synthetic project',
+    revision: 2,
+    status: 'active',
+    grants: [{ bot: 'a', content: 'read', browser: false }],
+    environment: { files: 'project', browser: 'private' },
+  };
+  const invoke = connect(
+    undefined,
+    [item],
+    async (command) =>
+      command.type === 'projects.list' ? { ok: true, value: [project] } : undefined,
+    true,
+    true,
+  );
+  render(<App />);
+  await workspaceTab(userEvent, '定时');
+  await userEvent.click(screen.getByText('监测设置'));
+  await screen.findByRole('option', { name: 'Synthetic project · 2' });
+  expect(screen.getByRole('button', { name: '保存文件监测' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '接受当前项目授权版本' }));
+  await userEvent.click(screen.getByRole('button', { name: '保存文件监测' }));
+  expect(
+    invoke.mock.calls
+      .map(([command]) => command)
+      .find((command) => command.type === 'schedule.update'),
+  ).toMatchObject({ patch: { rule: { scope: { projectId: 'mock-project', revision: 2 } } } });
 });

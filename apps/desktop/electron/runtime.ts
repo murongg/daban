@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
+  automationCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
@@ -13,6 +14,7 @@ import {
   isAttachmentPage,
   isAttachmentPurge,
   isAttachmentReceipt,
+  isAutomationCommand,
   isBotBundle,
   isBotCopyReceipt,
   isBotImportReceipt,
@@ -313,6 +315,7 @@ export class RuntimeClient {
       headers: {
         host: this.serverHost,
         'x-prototype-token': token,
+        'x-daban-automation': automationCapability,
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
@@ -376,7 +379,12 @@ export class RuntimeClient {
         groups?: { available?: unknown; revision?: unknown; items?: unknown[]; error?: unknown };
         profiles?: unknown[];
         interactions?: unknown[];
-        schedules?: { available?: unknown; items?: unknown[]; error?: unknown };
+        schedules?: {
+          available?: unknown;
+          items?: unknown[];
+          error?: unknown;
+          automation?: { changes?: unknown; files?: unknown };
+        };
         knowledge?: {
           available?: unknown;
           revision?: unknown;
@@ -610,6 +618,15 @@ export class RuntimeClient {
             ? {
                 available: value.available,
                 items: value.items,
+                ...(typeof value.automation?.changes === 'boolean' &&
+                typeof value.automation.files === 'boolean'
+                  ? {
+                      automation: {
+                        changes: value.automation.changes,
+                        files: value.automation.files,
+                      },
+                    }
+                  : {}),
                 ...(typeof value.error === 'string' && /^[A-Z_]+$/.test(value.error)
                   ? { error: value.error }
                   : {}),
@@ -1633,6 +1650,32 @@ export class RuntimeClient {
           throw new Error('INVALID_RUNTIME_STATE');
       }
       return result;
+    }
+    if (isAutomationCommand(command)) {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (
+        !state.schedules?.automation ||
+        (command.type === 'schedule.monitor' &&
+          command.policy.kind === 'changes' &&
+          !state.schedules.automation.changes)
+      )
+        throw new Error('AUTOMATION_UPGRADE_REQUIRED');
+      const { type, ...payload } = command;
+      const value = await this.api(`/api/schedules/${type.slice('schedule.'.length)}`, payload);
+      if (type === 'schedule.monitor' && (!isSchedule(value) || value.id !== command.id))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (type === 'schedule.receipt' && (!isScheduleFiring(value) || value.id !== command.firing))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        type === 'schedule.ack' &&
+        (!value ||
+          typeof value !== 'object' ||
+          !('acknowledged' in value) ||
+          value.acknowledged !== true)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
     }
     if (
       command.type === 'schedule.get' ||

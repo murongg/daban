@@ -5,6 +5,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ProjectScope } from '@daban/protocol';
 import {
+  type AutomationSource,
   type Group,
   type GroupActionAck,
   type GroupActionReceipt,
@@ -16,6 +17,7 @@ import {
   type GroupPage,
   type GroupSend,
   groupCopyKey,
+  isAutomationSource,
   isGroup,
   isGroupActionReceipt,
   isGroupActionRequest,
@@ -57,13 +59,18 @@ export interface GroupRunner {
     bot: string,
     runId: string,
     conversationId?: string,
-  ): { intentId: string; project?: ProjectScope } | undefined;
+  ): { intentId: string; project?: ProjectScope; automation?: AutomationSource } | undefined;
   projectScope?(bot: string, scope: ProjectScope): unknown;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
   findRequest(bot: string, requestId: string): GroupReceipt | undefined;
-  start(bot: string, task: TaskRequest, scope: ConversationScope): Promise<unknown>;
+  start(
+    bot: string,
+    task: TaskRequest,
+    scope: ConversationScope,
+    automation?: AutomationSource,
+  ): Promise<unknown>;
   stopRequest(bot: string, requestId: string, conversationId: string): Promise<unknown>;
 }
 export interface GroupSource {
@@ -407,7 +414,12 @@ export class Groups {
   notices(): Promise<RuntimeNotice[]> {
     return this.exclusive(() =>
       this.db
-        .select({ grp: groupTurns.grp, id: groupTurns.id, state: groupTurns.state })
+        .select({
+          grp: groupTurns.grp,
+          id: groupTurns.id,
+          state: groupTurns.state,
+          automation: groupTurns.automation,
+        })
         .from(groupTurns)
         .where(inArray(groupTurns.state, ['completed', 'failed', 'interrupted']))
         // rowid is the implicit insertion order; it is not a declared column.
@@ -415,6 +427,11 @@ export class Groups {
         .limit(1000)
         .all()
         .reverse()
+        .filter(
+          (row) =>
+            row.state !== 'completed' ||
+            this.automationSource(row.automation)?.policy.kind !== 'changes',
+        )
         .map((row) => ({
           kind: 'group',
           id: String(row.id),
@@ -422,6 +439,12 @@ export class Groups {
           phase: row.state as 'completed' | 'failed' | 'interrupted',
         })),
     );
+  }
+  private automationSource(value: string | null) {
+    if (value === null) return undefined;
+    const source: unknown = JSON.parse(value);
+    if (!isAutomationSource(source)) throw new Fault('GROUP_CORRUPT');
+    return source;
   }
   private async creationMembers(id: string, members: string[]) {
     if (await this.runner.member(id)) throw new Fault('GROUP_ID_CONFLICT');
@@ -504,7 +527,9 @@ export class Groups {
     };
     return this.exclusive(async () => {
       const identity = this.collaborationSource(source);
-      const project = this.runner.source?.(source.bot, source.runId)?.project;
+      const origin = this.runner.source?.(source.bot, source.runId);
+      const project = origin?.project;
+      const automation = origin?.automation ? structuredClone(origin.automation) : undefined;
       const signature = JSON.stringify(value);
       const prior = this.db
         .select()
@@ -552,6 +577,7 @@ export class Groups {
               recipients: [...value.members, source.bot],
             },
             { bot: source.bot, name: author.name },
+            automation,
           );
           // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
           this.db
@@ -776,7 +802,11 @@ export class Groups {
   private commitSend(value: GroupSend) {
     return this.db.transaction(() => this.enqueue(value), { behavior: 'immediate' });
   }
-  private enqueue(value: GroupSend, author?: { bot: string; name: string }) {
+  private enqueue(
+    value: GroupSend,
+    author?: { bot: string; name: string },
+    automation?: AutomationSource,
+  ) {
     const group = this.group(value.group),
       signature = JSON.stringify([
         value.prompt,
@@ -784,6 +814,7 @@ export class Groups {
         value.files || [],
         ...(value.revision === undefined ? [] : [value.revision]),
         ...(author ? [{ author: author.bot }] : []),
+        ...(automation ? [{ automation }] : []),
       ]);
     const prior = this.db
       .select()
@@ -856,6 +887,8 @@ export class Groups {
         created: now,
         state: 'pending',
         inputs: JSON.stringify(value.files || []),
+        // This belongs to the accepted turn, so a later independent human message never inherits its authority.
+        automation: automation ? JSON.stringify(automation) : null,
       })
       .run();
     value.recipients.forEach((bot, position) => {
@@ -1172,6 +1205,7 @@ export class Groups {
               files: this.inputs(group.id, String(turn.id)),
             },
             { id: group.id, context },
+            this.automationSource(turn.automation),
           );
           this.reconcile(row, true);
         } catch (error) {

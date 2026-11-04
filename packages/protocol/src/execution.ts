@@ -1,3 +1,4 @@
+import { fileObservationCapability } from './automation.js';
 import { validAgentId } from './id.js';
 import type { BrowserState, ComputerStatus, ModelId } from './index.js';
 import {
@@ -204,13 +205,7 @@ export function isExecutionParams(
     );
   if (method === 'workspace.read' || method === 'workspace.download')
     return (
-      executionKeys(value, [
-        'root',
-        'canonical',
-        'project',
-        'path',
-        ...(method === 'workspace.read' ? ['limit'] : []),
-      ]) &&
+      executionKeys(value, ['root', 'canonical', 'project', 'path', 'limit']) &&
       scope(value) &&
       text(value.path, 512) &&
       (value.limit === undefined ||
@@ -333,7 +328,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 4 ||
+    value.capabilities.length > executionCapabilities.length + 5 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
       [
@@ -342,6 +337,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         skillPackageCapability,
         browserTaskCapability,
         projectCapability,
+        fileObservationCapability,
       ].includes(capability),
     ) ||
     !executionCapabilities.every(

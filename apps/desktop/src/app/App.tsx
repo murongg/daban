@@ -250,6 +250,14 @@ function Workbench() {
     }
     const targetBot = state.bots.find((bot) => !bot.members && agentId(bot.id) === target.bot);
     if (!targetBot) return false;
+    if (target.kind === 'automation') {
+      dispatch({ type: 'select', bot: targetBot.id });
+      dispatch({ type: 'panel', panel: 'routines' });
+      runtime
+        .command({ type: 'schedule.ack', id: target.schedule, notice: target.id })
+        .catch((error) => notify(runtimeError(error)));
+      return true;
+    }
     if (target.chatRevision > chatRevision(state, targetBot.id, runtime.snapshot.chats)) {
       notify(t('app.notificationSConversationStateChangedCheckConversation'));
       return true;

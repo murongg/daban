@@ -4,6 +4,7 @@ import {
   isAttachmentQuery,
   isAttachmentUpload,
   isAttachmentVersion,
+  isAutomationCommand,
   isBotBundle,
   isBotCopyRequest,
   isBotExportRequest,
@@ -81,6 +82,7 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (isAutomationCommand(value)) return value;
   if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
