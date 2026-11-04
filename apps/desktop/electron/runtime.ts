@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
+  automationCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
@@ -14,6 +15,7 @@ import {
   isAttachmentPage,
   isAttachmentPurge,
   isAttachmentReceipt,
+  isAutomationCommand,
   isBotBundle,
   isBotCopyReceipt,
   isBotImportReceipt,
@@ -71,6 +73,7 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
@@ -105,13 +108,14 @@ import {
   noteKey,
   noteQueryKey,
   parseBotJSON,
+  projectFileMatches,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
-  type RuntimeFile,
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  sameProjectScope,
   sameTranscriptScope,
   unavailableLocalComputer,
   validAgentId,
@@ -196,6 +200,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
+    ...(isProjectScope(task.project) ? { project: task.project } : {}),
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
@@ -223,6 +228,7 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       ...(isModelAttempts(item.attemptSummary) ? { attemptSummary: item.attemptSummary } : {}),
       ...(validAgentId(item.rootRunId) ? { rootRunId: item.rootRunId } : {}),
       chatRevision: item.chatRevision,
+      ...(isProjectScope(item.project) ? { project: item.project } : {}),
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       runId: item.runId,
       requestId: item.requestId,
@@ -328,6 +334,7 @@ export class RuntimeClient {
       headers: {
         host: this.serverHost,
         'x-prototype-token': token,
+        'x-daban-automation': automationCapability,
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
@@ -391,7 +398,12 @@ export class RuntimeClient {
         groups?: { available?: unknown; revision?: unknown; items?: unknown[]; error?: unknown };
         profiles?: unknown[];
         interactions?: unknown[];
-        schedules?: { available?: unknown; items?: unknown[]; error?: unknown };
+        schedules?: {
+          available?: unknown;
+          items?: unknown[];
+          error?: unknown;
+          automation?: { changes?: unknown; files?: unknown };
+        };
         knowledge?: {
           available?: unknown;
           revision?: unknown;
@@ -635,6 +647,15 @@ export class RuntimeClient {
             ? {
                 available: value.available,
                 items: value.items,
+                ...(typeof value.automation?.changes === 'boolean' &&
+                typeof value.automation.files === 'boolean'
+                  ? {
+                      automation: {
+                        changes: value.automation.changes,
+                        files: value.automation.files,
+                      },
+                    }
+                  : {}),
                 ...(typeof value.error === 'string' && /^[A-Z_]+$/.test(value.error)
                   ? { error: value.error }
                   : {}),
@@ -776,7 +797,8 @@ export class RuntimeClient {
           !isGoalResumeTarget(target) ||
           target.owner.bot !== captured.owner.bot ||
           target.owner.chatRevision !== captured.owner.chatRevision ||
-          target.owner.conversationId !== captured.owner.conversationId
+          target.owner.conversationId !== captured.owner.conversationId ||
+          !sameProjectScope(target.owner.project, captured.owner.project)
         )
           throw new Error('INVALID_GOAL_TARGET');
         return target;
@@ -1798,6 +1820,32 @@ export class RuntimeClient {
       }
       return result;
     }
+    if (isAutomationCommand(command)) {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (
+        !state.schedules?.automation ||
+        (command.type === 'schedule.monitor' &&
+          command.policy.kind === 'changes' &&
+          !state.schedules.automation.changes)
+      )
+        throw new Error('AUTOMATION_UPGRADE_REQUIRED');
+      const { type, ...payload } = command;
+      const value = await this.api(`/api/schedules/${type.slice('schedule.'.length)}`, payload);
+      if (type === 'schedule.monitor' && (!isSchedule(value) || value.id !== command.id))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (type === 'schedule.receipt' && (!isScheduleFiring(value) || value.id !== command.firing))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        type === 'schedule.ack' &&
+        (!value ||
+          typeof value !== 'object' ||
+          !('acknowledged' in value) ||
+          value.acknowledged !== true)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
     if (
       command.type === 'schedule.get' ||
       command.type === 'schedule.create' ||
@@ -1925,13 +1973,53 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
     }
-    if (command.type === 'files.list') return this.api('/api/files') as Promise<RuntimeFile[]>;
-    if (command.type === 'files.read') return this.api('/api/files/read', { path: command.path });
+    if (command.type === 'projects.status') return this.api('/api/projects/status', {});
+    if (command.type === 'projects.select')
+      return this.api('/api/projects/select', {
+        bot: command.bot,
+        ...(command.scope ? { scope: command.scope } : {}),
+      });
+    if (command.type === 'projects.list') return this.api('/api/projects/list', {});
+    if (command.type === 'projects.write')
+      return this.api('/api/projects/write', { request: command.request });
+    if (command.type === 'projects.resume')
+      return this.api('/api/projects/resume', { requestId: command.requestId });
+    if (command.type === 'projects.receipt')
+      return this.api('/api/projects/receipt', { requestId: command.requestId });
+    if (command.type === 'files.list') {
+      const result = await (command.project
+        ? this.api('/api/files/list', {
+            project: command.project,
+            ...(command.task ? { task: command.task } : {}),
+          })
+        : this.api('/api/files'));
+      if (
+        (command.project && !Array.isArray(result)) ||
+        (Array.isArray(result) &&
+          !result.every((file: unknown) => projectFileMatches(file, command)))
+      )
+        throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
+    if (command.type === 'files.read') {
+      const result = await this.api('/api/files/read', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
     if (command.type === 'files.download') {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 11) throw new Error('RUNTIME_TOO_OLD');
-      const result = await this.api('/api/files/download', { path: command.path });
+      const result = await this.api('/api/files/download', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
       if (
         !isRuntimeDownload(result) ||
         result.path !== command.path ||

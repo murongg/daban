@@ -5,6 +5,7 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  automationCapability,
   type BudgetIncreaseRequest,
   botBundleLimit,
   type ExecutionSnapshot,
@@ -15,6 +16,7 @@ import {
   isAttachmentQuery,
   isAttachmentUpload,
   isAttachmentVersion,
+  isAutomationCommand,
   isBotCopyRequest,
   isBotExportRequest,
   isBotImportHeader,
@@ -41,8 +43,12 @@ import {
   isMcpCommand,
   isMemoryQuery,
   isNoteCommand,
+  isProjectCommand,
+  isProjectFileRequest,
   isRebootStatus,
   isRecoveryRequest,
+  isScheduleInput,
+  isSchedulePatch,
   isSetupStatus,
   isSkillBinding,
   isSkillContent,
@@ -62,11 +68,14 @@ import {
   legacyWorkList,
   legacyWorkReceipt,
   managedProtocol,
+  type ProjectFileRequest,
   parseBotJSON,
   type RebootStatus,
   type RuntimeCommand,
   type RuntimeNoticeStatus,
+  type Schedule,
   type SetupStatus,
+  sameProjectScope,
   validAgentId,
 } from '@daban/protocol';
 import { Authority, ViewerGrants } from './authority.js';
@@ -113,19 +122,62 @@ async function groupStatus(groups: Groups | undefined, modern: boolean) {
     ? status
     : { ...status, items: status.items.filter((group) => !group.archived).map(legacyGroup) };
 }
+function scheduleReply(item: Schedule, modern: boolean) {
+  if (modern) return item;
+  if (item.rule.kind === 'file') throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
+  const { automation: _automation, ...legacy } = item;
+  return {
+    ...legacy,
+    history: legacy.history.map(({ source: _source, monitor: _monitor, ...entry }) => entry),
+  };
+}
+async function scheduleStatus(
+  schedules: Schedules | undefined,
+  modern: boolean,
+  monitoring: boolean,
+) {
+  const state = schedules ? await schedules.status() : { available: false, items: [] };
+  return {
+    ...state,
+    items: state.items
+      .filter((item) => modern || item.rule.kind !== 'file')
+      .map((item) => scheduleReply(item, modern)),
+    ...(modern && schedules
+      ? {
+          automation: {
+            changes: monitoring,
+            files: schedules.options.observation?.available?.() ?? !!schedules.options.observation,
+          },
+        }
+      : {}),
+  };
+}
 async function noticeStatus(
   models: ModelRuns | undefined,
   groups: Groups | undefined,
+  schedules: Schedules | undefined,
+  modern: boolean,
 ): Promise<RuntimeNoticeStatus> {
   const items = models?.journal.notices() || [];
+  let groupItems: RuntimeNoticeStatus['items'] = [];
+  let automationItems: RuntimeNoticeStatus['items'] = [];
+  let error: string | undefined;
   try {
-    return {
-      available: !!models && !!groups,
-      items: [...items, ...(groups ? await groups.notices() : [])],
-    };
+    if (groups) groupItems = await groups.notices();
   } catch {
-    return { available: false, items, error: 'GROUP_NOTICES_UNAVAILABLE' };
+    error = 'GROUP_NOTICES_UNAVAILABLE';
   }
+  try {
+    if (modern && schedules) automationItems = await schedules.notices();
+  } catch {
+    error = 'SCHEDULE_NOTICES_UNAVAILABLE';
+  }
+  // An optional owner's failure cannot hide another owner's durable, actionable receipts.
+  return {
+    available: !!models && !!groups && !error,
+    items: [...automationItems, ...items, ...groupItems].slice(0, 2000),
+    ...(error ? { error } : {}),
+  };
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
@@ -133,6 +185,9 @@ const recoveryReads = new Set([
   '/api/budgets/settings',
   '/api/budgets/read',
   '/api/model/saved',
+  '/api/projects/list',
+  '/api/projects/status',
+  '/api/projects/receipt',
   '/api/notes/status',
   '/api/notes/list',
   '/api/notes/read',
@@ -143,6 +198,7 @@ const recoveryReads = new Set([
   '/api/work/comments',
   '/api/work/comment-receipt',
   '/api/computers/receipt',
+  '/api/files/list',
   '/api/files/read',
   '/api/files/download',
   '/api/groups/read',
@@ -169,6 +225,7 @@ const recoveryReads = new Set([
   '/api/bundles/cancel',
   '/api/schedules/get',
   '/api/schedules/preview',
+  '/api/schedules/receipt',
   '/api/mcp/list',
   '/api/mcp/saved',
   '/api/mcp/catalog',
@@ -821,6 +878,26 @@ export async function startPrototype({
               if (action) changing.delete(bot!);
             }
           }
+          if (url.pathname.startsWith('/api/projects/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search || !models) throw new Fault('INVALID_PROJECT_REQUEST', 400);
+            const data = await body(req);
+            const command = {
+              ...data,
+              type: `projects.${url.pathname.slice('/api/projects/'.length)}`,
+            };
+            if (Object.hasOwn(data, 'type') || !isProjectCommand(command))
+              throw new Fault('INVALID_PROJECT_REQUEST', 400);
+            if (command.type === 'projects.status') return json(res, models.projectStatus());
+            if (command.type === 'projects.select')
+              return json(res, await models.selectProject(command.bot, command.scope));
+            if (command.type === 'projects.list') return json(res, models.projects.list());
+            if (command.type === 'projects.resume')
+              return json(res, await models.projects.resume(command.requestId));
+            if (command.type === 'projects.receipt')
+              return json(res, await models.projects.receipt(command.requestId));
+            return json(res, await models.projects.write(command.request));
+          }
           if (url.pathname.startsWith('/api/notes/')) {
             if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
             if (url.search) throw new Fault('INVALID_NOTE_REQUEST', 400);
@@ -1198,6 +1275,12 @@ export async function startPrototype({
                     command.goalResume.budget.revision !== command.budget.revision)
                 )
                   throw new Fault('GOAL_TARGET_CHANGED', 409);
+                const record = await models.journal.read(command.scope.bot, command.scope.runId);
+                if (
+                  command.goalResume &&
+                  !sameProjectScope(command.goalResume.owner.project, record?.project)
+                )
+                  throw new Fault('GOAL_TARGET_CHANGED', 409);
                 const acceptedIncrease = models.budgets.continuationReceipt(
                   command.budget,
                   command.id,
@@ -1221,7 +1304,6 @@ export async function startPrototype({
                 const accepted = models.findRequest(command.scope.bot, `budget-${command.id}`);
                 if (!accepted && current.scope.revision !== command.budget.revision)
                   throw new Fault('BUDGET_CONTINUE_STALE', 409);
-                const record = await models.journal.read(command.scope.bot, command.scope.runId);
                 if (!accepted) {
                   if (!command.goalResume)
                     models.budgets.activate(command.budget, command.id, command.scope);
@@ -1249,9 +1331,11 @@ export async function startPrototype({
                       : { retryOf: command.scope.runId }),
                     prompt: command.goalResume ? '/goal resume' : record.prompt,
                     chatRevision: command.scope.chatRevision,
+                    ...(record.project ? { project: record.project } : {}),
                   },
                   undefined,
                   command.budget,
+                  record.automation,
                 );
                 return json(res, {
                   budget: command.budget,
@@ -1579,18 +1663,53 @@ export async function startPrototype({
             if (!schedules) throw new Fault('SCHEDULE_UNAVAILABLE', 503);
             const data = await body(req);
             const action = url.pathname.slice('/api/schedules/'.length);
-            if (action === 'create') return json(res, await schedules.create(data));
+            const modern = req.headers['x-daban-automation'] === automationCapability;
+            if (['monitor', 'receipt', 'ack'].includes(action)) {
+              if (!modern) throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
+              if ('type' in data) throw new Fault('INVALID_SCHEDULE', 400);
+              const command: unknown = { type: `schedule.${action}`, ...data };
+              if (!isAutomationCommand(command)) throw new Fault('INVALID_SCHEDULE', 400);
+              if (
+                command.type === 'schedule.monitor' &&
+                command.policy.kind === 'changes' &&
+                !models?.monitoringAvailable()
+              )
+                throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
+              if (command.type === 'schedule.monitor')
+                return json(
+                  res,
+                  await schedules.monitor(command.id, command.revision, command.policy),
+                );
+              if (command.type === 'schedule.receipt')
+                return json(res, await schedules.receipt(command.id, command.firing));
+              return json(res, await schedules.ack(command.id, command.notice));
+            }
+            if (action === 'create') {
+              if (!modern && isScheduleInput(data) && data.rule.kind === 'file')
+                throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
+              return json(res, scheduleReply(await schedules.create(data), modern));
+            }
             if (action === 'preview' && Object.keys(data).every((key) => key === 'rule'))
               return json(res, await schedules.preview(data.rule));
             if (!validAgentId(data.id)) throw new Fault('INVALID_SCHEDULE', 400);
             if (action === 'get' && Object.keys(data).every((key) => key === 'id'))
-              return json(res, await schedules.get(data.id));
+              return json(res, scheduleReply(await schedules.get(data.id), modern));
             if (
               action === 'update' &&
               typeof data.revision === 'number' &&
               Object.keys(data).every((key) => ['id', 'revision', 'patch'].includes(key))
-            )
-              return json(res, await schedules.update(data.id, data.revision, data.patch));
+            ) {
+              if (
+                !modern &&
+                ((await schedules.get(data.id)).rule.kind === 'file' ||
+                  (isSchedulePatch(data.patch) && data.patch.rule?.kind === 'file'))
+              )
+                throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
+              return json(
+                res,
+                scheduleReply(await schedules.update(data.id, data.revision, data.patch), modern),
+              );
+            }
             if (
               action === 'remove' &&
               typeof data.revision === 'number' &&
@@ -1646,6 +1765,22 @@ export async function startPrototype({
               throw new Fault('INVALID_MODEL_SETTINGS', 400);
             return json(res, await settings.check(data.revision));
           }
+          if (url.pathname === '/api/files/list' && req.method === 'POST' && models) {
+            const data = await body(req);
+            if (
+              url.search ||
+              Object.keys(data).some((key) => !['project', 'task'].includes(key)) ||
+              !isProjectFileRequest(data)
+            )
+              throw new Fault('INVALID_FILE', 400);
+            const reference = data as ProjectFileRequest;
+            const result = await models.filesFor(reference).list();
+            if (reference.project) models.projects.assertHumanScope(reference.project);
+            return json(
+              res,
+              result.map((file) => ({ ...file, ...data })),
+            );
+          }
           if (url.pathname === '/api/files' && req.method === 'GET' && files)
             return json(res, await files.list());
           if (
@@ -1654,14 +1789,25 @@ export async function startPrototype({
             files
           ) {
             const data = await body(req);
-            if (typeof data.path !== 'string' || Object.keys(data).some((key) => key !== 'path'))
+            if (
+              url.search ||
+              typeof data.path !== 'string' ||
+              Object.keys(data).some((key) => !['path', 'project', 'task'].includes(key)) ||
+              !isProjectFileRequest(data)
+            )
               throw new Fault('INVALID_FILE', 400);
-            return json(
-              res,
-              url.pathname.endsWith('/download')
-                ? await files.download(data.path)
-                : await files.read(data.path),
-            );
+            const reference = data as ProjectFileRequest;
+            if (reference.project && !models) throw new Fault('PROJECT_STORE_UNAVAILABLE');
+            const source = models ? models.filesFor(reference) : files;
+            const result = url.pathname.endsWith('/download')
+              ? await source.download(data.path)
+              : await source.read(data.path);
+            if (reference.project) models!.projects.assertHumanScope(reference.project);
+            return json(res, {
+              ...result,
+              ...(data.project ? { project: data.project } : {}),
+              ...(data.task ? { task: data.task } : {}),
+            });
           }
           if (url.pathname === '/api/bots') {
             if (!models) throw new Fault('STARTING', 503);
@@ -1705,7 +1851,12 @@ export async function startPrototype({
                 : {}),
               ...(host?.localComputer ? { localComputer: await host.localComputer.status() } : {}),
               ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
-              notices: await noticeStatus(models, groups),
+              notices: await noticeStatus(
+                models,
+                groups,
+                schedules,
+                req.headers['x-daban-automation'] === automationCapability,
+              ),
               chats: models
                 ? await models.chats.status()
                 : { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' },
@@ -1753,7 +1904,11 @@ export async function startPrototype({
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
               interactions: models ? await models.interactions.list() : [],
-              schedules: schedules ? await schedules.status() : { available: false, items: [] },
+              schedules: await scheduleStatus(
+                schedules,
+                req.headers['x-daban-automation'] === automationCapability,
+                models?.monitoringAvailable() ?? false,
+              ),
               // Capability metadata stays outside saved-model status so older clients can still validate that status.
               model: { ...models?.status(), ...(await settings.status(true)), inspection: true },
             });
@@ -2221,6 +2376,8 @@ export async function startPrototype({
             if (replacingRecovery || !recovery!.admit())
               throw new Fault('RUNTIME_RECOVERY_PENDING');
             models!.profiles.assertActive(run.bot);
+            const scope = models!.jobs.get(run.bot)?.project;
+            if (scope) models!.projects.assertScope(run.bot, scope, 'read');
             const job = models!.jobs.get(run.bot);
             if (!job?.running || job.id !== run.id || job.abort !== run.abort)
               throw new Fault('COMMAND_CANCELLED');
@@ -2232,12 +2389,24 @@ export async function startPrototype({
       schedules = new Schedules({
         file: path.join(modelDir, 'schedules.sqlite'),
         domain: nativeSchedules(host?.sdkFile),
+        observation: models.automationObserver(),
         runner: {
           running: (bot) => models!.running(bot),
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
-          start: (bot, task) =>
-            models!.start(bot, { ...task, chatRevision: models!.chats.current(bot).revision }),
+          signal: (bot, runId, file) => models!.automationSignal(bot, runId, file),
+          monitoringAvailable: () => models!.monitoringAvailable(),
+          start: (bot, task, _conversation, source) =>
+            models!.start(
+              bot,
+              {
+                ...task,
+                ...(source?.scope ? { project: source.scope } : {}),
+                chatRevision: models!.chats.current(bot).revision,
+              },
+              undefined,
+              source,
+            ),
         },
       });
       try {
@@ -2254,14 +2423,15 @@ export async function startPrototype({
           source: (bot, runId, group) => models!.groupSource(bot, runId, group),
           budget: (group, source) => models!.groupBudget(group, source),
           budgetResumeIssue: (bot, runId, goal) => models!.budgetResumeIssue(bot, runId, goal),
+          projectScope: (bot, scope) => models!.projects.assertScope(bot, scope, 'read'),
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
-          start: (bot, task, scope) =>
+          start: (bot, task, scope, automation) =>
             task.goalResume
-              ? models!.startHuman(bot, task, scope)
-              : models!.start(bot, task, scope),
+              ? models!.startHuman(bot, task, scope, scope.budget, automation)
+              : models!.start(bot, task, scope, automation),
           stopRequest: (bot, id, group) => models!.stopRequest(bot, id, group),
         },
         models.attachments,

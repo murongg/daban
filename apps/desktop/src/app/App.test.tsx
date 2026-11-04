@@ -1386,3 +1386,53 @@ it.each([false, true])(
       expect(sends[0].task.goalResume).toEqual(legacy ? undefined : target);
   },
 );
+
+it('captures the selected project in an explicit Human Goal target without adding automation authority', async () => {
+  const state = seedDemoState();
+  const project = { projectId: 'mock-project', revision: 1 };
+  state.projectScopes = { research: project };
+  localStorage.setItem(seedStorageKey, seedSerialize(state));
+  const snapshot = disconnected('ready');
+  snapshot.protocolVersion = 45;
+  snapshot.model.configured = true;
+  const target = {
+    owner: { bot: 'a', chatRevision: 0, project },
+    sessionId: 'mock-project-session',
+    goalId: 'mock-project-goal',
+    goalRevision: 1,
+    humanEpoch: 0,
+    budget: { budgetId: 'mock-project-budget', revision: 1 },
+  };
+  const invoke = vi.fn(async (command: RuntimeCommand) =>
+    command.type === 'task.start'
+      ? { ok: false as const, error: 'RUNTIME_UNAVAILABLE' }
+      : {
+          ok: true as const,
+          value:
+            command.type === 'status'
+              ? snapshot
+              : command.type === 'budget.goal'
+                ? target
+                : command.type === 'projects.list'
+                  ? []
+                  : command.type === 'projects.status'
+                    ? { available: true, execution: true }
+                    : {},
+        },
+  );
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: {
+      platform: 'darwin',
+      runtime: { invoke, subscribe: () => () => undefined } as unknown as RuntimeBridge,
+    },
+  });
+  render(<App />);
+  await userEvent.type(await screen.findByRole('textbox', { name: '发送消息' }), '/goal resume');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  const calls = invoke.mock.calls.map(([command]) => command);
+  expect(calls).toContainEqual({ type: 'budget.goal', owner: target.owner });
+  const send = calls.find((command) => command.type === 'task.start');
+  expect(send).toMatchObject({ type: 'task.start', task: { project, goalResume: target } });
+  expect(send && 'automation' in send).toBe(false);
+});

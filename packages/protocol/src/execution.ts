@@ -1,3 +1,4 @@
+import { fileObservationCapability } from './automation.js';
 import { validAgentId } from './id.js';
 import type { BrowserState, ComputerStatus, ModelId } from './index.js';
 import {
@@ -7,11 +8,19 @@ import {
   isDocumentUpload,
   isModelId,
 } from './index.js';
+import {
+  isProjectFileScope,
+  isProjectResources,
+  isProjectScope,
+  type ProjectScope,
+  projectCapability,
+} from './projects.js';
 import { isSkillPackage, skillPackageCapability } from './skills.js';
 
 export const executionVersion = 1;
 export const modelExecutionCapability = 'model-capabilities-v1';
 export const browserTaskCapability = 'browser-task-v1';
+export const projectTaskRunCapability = 'project-task-run-v1';
 export const executionCapabilities = [
   'workspace',
   'tools',
@@ -65,6 +74,9 @@ export interface ExecutionSnapshot {
   status: ComputerStatus;
 }
 export interface ExecutionRun {
+  /** Accepted task directory owner; id remains the physical attempt lease. */
+  taskRunId?: string;
+  project?: ProjectScope;
   id: string;
   bot: string;
   workdir: string;
@@ -75,6 +87,8 @@ export interface ExecutionRun {
   limit: number;
 }
 export const executionMethods = [
+  'projects.sync',
+  'projects.bind',
   'computer.snapshot',
   'computer.status',
   'computer.request',
@@ -124,6 +138,7 @@ const text = (value: unknown, max = 4096): value is string =>
 const absolute = (value: unknown) => text(value) && value.startsWith('/');
 const integer = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0;
 const scope = (value: Record<string, unknown>) =>
+  (value.project === undefined || isProjectFileScope(value.project)) &&
   (value.root === undefined || absolute(value.root)) &&
   (value.canonical === undefined || absolute(value.canonical));
 export function isExecutionRun(value: unknown): value is ExecutionRun {
@@ -131,14 +146,19 @@ export function isExecutionRun(value: unknown): value is ExecutionRun {
     executionRecord(value) &&
     executionKeys(value, [
       'id',
+      'taskRunId',
       'bot',
       'workdir',
       'canonicalRoot',
+      'project',
       'model',
       'vision',
       'prompt',
       'limit',
     ]) &&
+    (value.project === undefined || isProjectScope(value.project)) &&
+    (value.taskRunId === undefined ||
+      (isProjectScope(value.project) && validAgentId(value.taskRunId))) &&
     validAgentId(value.id) &&
     validAgentId(value.bot) &&
     absolute(value.workdir) &&
@@ -156,6 +176,13 @@ export function isExecutionParams(
   value: unknown,
 ): value is Record<string, unknown> {
   if (!executionRecord(value)) return false;
+  if (method === 'projects.sync') return isProjectResources(value);
+  if (method === 'projects.bind')
+    return (
+      executionKeys(value, ['bot', 'scope']) &&
+      validAgentId(value.bot) &&
+      (value.scope === undefined || isProjectScope(value.scope))
+    );
   if (method === 'computer.snapshot' || method === 'computer.status')
     return Object.keys(value).length === 0;
   if (method === 'computer.request')
@@ -166,16 +193,16 @@ export function isExecutionParams(
       (value.body === undefined || executionRecord(value.body))
     );
   if (method === 'workspace.base' || method === 'workspace.list')
-    return executionKeys(value, ['root', 'canonical']) && scope(value);
+    return executionKeys(value, ['root', 'canonical', 'project']) && scope(value);
   if (method === 'workspace.skill')
     return (
-      executionKeys(value, ['root', 'canonical', 'package']) &&
+      executionKeys(value, ['root', 'canonical', 'project', 'package']) &&
       scope(value) &&
       isSkillPackage(value.package)
     );
   if (method === 'workspace.create')
     return (
-      executionKeys(value, ['root', 'canonical', 'parts']) &&
+      executionKeys(value, ['root', 'canonical', 'project', 'parts']) &&
       scope(value) &&
       Array.isArray(value.parts) &&
       value.parts.length > 0 &&
@@ -184,12 +211,7 @@ export function isExecutionParams(
     );
   if (method === 'workspace.read' || method === 'workspace.download')
     return (
-      executionKeys(value, [
-        'root',
-        'canonical',
-        'path',
-        ...(method === 'workspace.read' ? ['limit'] : []),
-      ]) &&
+      executionKeys(value, ['root', 'canonical', 'project', 'path', 'limit']) &&
       scope(value) &&
       text(value.path, 512) &&
       (value.limit === undefined ||
@@ -312,7 +334,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 3 ||
+    value.capabilities.length > executionCapabilities.length + 6 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
       [
@@ -320,6 +342,9 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         modelExecutionCapability,
         skillPackageCapability,
         browserTaskCapability,
+        projectCapability,
+        fileObservationCapability,
+        projectTaskRunCapability,
       ].includes(capability),
     ) ||
     !executionCapabilities.every(

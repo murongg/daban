@@ -47,7 +47,27 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
+          sudo apt-get install -y --no-install-recommends apparmor bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
+      - name: Install Chromium for profile isolation regressions
+        if: runner.os == 'Linux'
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Permit sandbox namespaces for CI Chromium
+        if: runner.os == 'Linux'
+        # Ubuntu restricts namespaces for downloaded browsers; keep Chromium's sandbox and scope the exception to these CI binaries.
+        # https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
+        run: |
+          sudo tee /etc/apparmor.d/daban-playwright >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile daban-playwright-chrome /home/runner/.cache/ms-playwright/**/chrome flags=(unconfined) {
+            userns,
+          }
+          profile daban-playwright-headless-shell /home/runner/.cache/ms-playwright/**/chrome-headless-shell flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/daban-playwright
       - run: npx vitest run --maxWorkers=2
       - run: node --experimental-strip-types --test tools/roles.integration.ts
       - name: Verify idle-only host update handoff

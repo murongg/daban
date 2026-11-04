@@ -1,4 +1,5 @@
 import { isTranscriptQuery, isTranscriptScope, validAgentId } from './index.js';
+import { isProjectScope, type ProjectScope } from './projects.js';
 /** Provider-reported totals. Input includes cache; output includes reasoning. */
 export interface ReportedUsage {
   state: 'reported';
@@ -342,6 +343,7 @@ export function isBudgetCommand(v: unknown): v is BudgetCommand {
 }
 
 export interface GoalBudgetOwner {
+  project?: ProjectScope;
   bot: string;
   chatRevision?: number;
   conversationId?: string;
@@ -370,6 +372,9 @@ export function goalResumeKey(target?: GoalResumeTarget) {
           target.budget?.budgetId ?? null,
           target.budget?.revision ?? null,
           target.historyUnmetered === true,
+          ...(target.owner.project
+            ? [target.owner.project.projectId, target.owner.project.revision]
+            : []),
         ]
       : null,
   );
@@ -377,7 +382,8 @@ export function goalResumeKey(target?: GoalResumeTarget) {
 export function isGoalBudgetOwner(v: unknown): v is GoalBudgetOwner {
   return (
     object(v) &&
-    exact(v, ['bot', 'chatRevision', 'conversationId']) &&
+    exact(v, ['bot', 'chatRevision', 'conversationId', 'project']) &&
+    (v.project === undefined || isProjectScope(v.project)) &&
     validAgentId(v.bot) &&
     (v.conversationId === undefined
       ? integer(v.chatRevision)

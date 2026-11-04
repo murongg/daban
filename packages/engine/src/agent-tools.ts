@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { type FileHandle, link, lstat, open, realpath, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import type { ProjectAccess, ProjectScope } from '@daban/protocol';
 import {
   browserTaskCapability,
   documentLimit,
@@ -10,6 +11,7 @@ import {
   type ModelId,
   modelExecutionCapability,
   modelHasVision,
+  projectTaskRunCapability,
   type TaskRequest,
 } from '@daban/protocol';
 import { BrowserTools } from './browser-tools.js';
@@ -32,6 +34,7 @@ import type { KnowledgeTools } from './knowledge-tools.js';
 import type { LocalComputerPort } from './local-computer.js';
 import type { MemoryTools } from './memory.js';
 import type { NotesTools } from './notes-tools.js';
+import type { ProjectResources } from './project-resources.js';
 import type { WorkspaceExecutor } from './remote-workspace.js';
 import { scheduleToolList } from './schedule-catalog.js';
 import type { ScheduleTools } from './schedule-tools.js';
@@ -42,8 +45,10 @@ import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  taskRunId?: string;
   executionId?: string;
   beforeTool?: () => Promise<unknown>;
+  project?: ProjectScope;
   vision?: boolean;
   skills?: SkillSnapshot;
   sessionId?: string;
@@ -76,7 +81,7 @@ const workspaceToolList = [
   {
     name: 'list_files',
     description:
-      'List actual files without a screen. Relative paths and /workspace refer to this task. Use /shared to find prior or other Bot files; returned paths are relative to the listed directory.',
+      'List actual files without a screen. Relative paths and /workspace refer to this task. Use /shared for authorized shared files; returned paths are relative to the listed directory.',
     inputSchema: {
       type: 'object',
       properties: { path: { type: 'string' } },
@@ -86,7 +91,7 @@ const workspaceToolList = [
   {
     name: 'read_file',
     description:
-      'Read text without opening an application. Relative paths and /workspace refer to this task; /shared reads the shared workspace. offset/limit are character counts; follow nextOffset for a long file.',
+      'Read text without opening an application. Relative paths and /workspace refer to this task; /shared reads the authorized shared workspace. offset/limit are character counts; follow nextOffset for a long file.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -172,7 +177,12 @@ export class AgentTools {
   constructor(
     runtime: ComputerFacade | undefined,
     readonly workspace: AgentWorkspace,
-    readonly options: { execution?: WorkspaceExecutor; nativeOnly?: boolean } = {},
+    readonly options: {
+      execution?: WorkspaceExecutor;
+      nativeOnly?: boolean;
+      projects?: ProjectResources;
+      projectAccess?: (run: AgentToolRun, access: ProjectAccess) => unknown;
+    } = {},
   ) {
     if (runtime) {
       this.computer = new ComputerTools(runtime);
@@ -263,12 +273,26 @@ export class AgentTools {
         : []),
     ];
   }
+  checkProject(run: AgentToolRun, access: ProjectAccess = 'read') {
+    if (!run.project) return;
+    this.options.projectAccess?.(run, access);
+    this.options.projects?.get(run.project, run.bot, access);
+    if (!this.options.projectAccess && !this.options.projects)
+      throw new Fault('PROJECT_ACCESS_DENIED', 403);
+  }
   async open(run: AgentToolRun) {
+    this.checkProject(run);
     if (!this.localRuns.has(run))
       this.localRuns.set(run, (await this.localComputer?.prepare(run)) ?? false);
     if (!this.options.execution) return;
     const id = run.executionId ?? run.id;
     if (!id) throw new Fault('EXECUTION_INVALID_REQUEST');
+    const separateTask = run.project && id !== run.id;
+    if (
+      separateTask &&
+      (!run.id || !this.options.execution.snapshot?.capabilities.includes(projectTaskRunCapability))
+    )
+      throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
     const opened = this.opened.get(run);
     if (opened) {
       if (opened !== id) throw new Fault('EXECUTION_RUN_CONFLICT');
@@ -289,7 +313,9 @@ export class AgentTools {
       'tools.open',
       {
         id,
+        ...(separateTask ? { taskRunId: run.id } : {}),
         bot: run.bot,
+        ...(run.project ? { project: run.project } : {}),
         workdir: run.workdir,
         canonicalRoot: run.canonicalRoot,
         ...(run.model ? { model: run.model } : {}),
@@ -387,6 +413,7 @@ export class AgentTools {
   ): Promise<ToolResult> {
     let trace: ToolTrace | undefined;
     try {
+      this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
       args = structuredClone(args);
       run.abort.signal.throwIfAborted();
       if (++run.toolCount > run.limit) {
@@ -443,6 +470,7 @@ export class AgentTools {
     await this.open(run);
     const runId = this.opened.get(run);
     if (!runId) throw new Fault('EXECUTION_RUN_CLOSED');
+    this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
     const operationId = randomUUID();
     let status = (await this.options.execution!.call(
       'tools.invoke',
@@ -476,6 +504,7 @@ export class AgentTools {
     if (!status.result || !Array.isArray(status.result.content))
       throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
     if (computer) await this.authorizeComputer?.(run);
+    this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
     return status.result;
   }
   private async target(run: AgentToolRun, value: unknown = '', write = false) {
@@ -487,6 +516,27 @@ export class AgentTools {
       value.split('/').includes('..')
     )
       throw new Fault('INVALID_FILE', 400);
+    this.checkProject(run);
+    if (run.project && this.options.projects) {
+      const resources = this.options.projects;
+      const reference = resources.reference(run.project, run.bot, run.taskRunId ?? run.id!);
+      const shared = value === '/shared' || value.startsWith('/shared/');
+      this.checkProject(run, shared && write ? 'write' : 'read');
+      const root = shared ? resources.files(reference) : run.canonicalRoot;
+      if (
+        (await realpath(run.workdir)) !== resources.workdir(reference) ||
+        run.canonicalRoot !== resources.workdir(reference)
+      )
+        throw new Fault('TASK_DIRECTORY_MOVED');
+      const relative = shared
+        ? value.slice('/shared'.length).replace(/^\/+/, '')
+        : value === '/workspace' || value.startsWith('/workspace/')
+          ? value.slice('/workspace'.length).replace(/^\/+/, '')
+          : value;
+      const file = path.resolve(root, relative);
+      if (!inside(root, file)) throw new Fault('INVALID_FILE', 400);
+      return { root, file };
+    }
     const root = await this.workspace.base();
     if ((await realpath(run.workdir)) !== run.canonicalRoot || !inside(root, run.canonicalRoot))
       throw new Fault('TASK_DIRECTORY_MOVED');
@@ -506,7 +556,7 @@ export class AgentTools {
   private async browserInput(run: AgentToolRun, value: unknown) {
     run.abort.signal.throwIfAborted();
     const { root, file } = await this.target(run, value);
-    const source = await this.workspace.download(workspacePath(root, file));
+    const source = await this.workspace.scope(root, root).download(workspacePath(root, file));
     run.abort.signal.throwIfAborted();
     const types: Record<string, string> = {
       pdf: 'application/pdf',
@@ -525,6 +575,7 @@ export class AgentTools {
     };
   }
   private async browserOutput(run: AgentToolRun, name: string, bytes: Buffer) {
+    this.checkProject(run);
     if (
       !isTaskFileName(name) ||
       name.startsWith('.') ||
@@ -556,6 +607,7 @@ export class AgentTools {
       if (!inside(run.canonicalRoot, opened) || !identity.isFile() || identity.nlink !== 1)
         throw new Fault('INVALID_FILE', 400);
       run.abort.signal.throwIfAborted();
+      this.checkProject(run);
       await handle.writeFile(bytes);
       run.abort.signal.throwIfAborted();
       const source = await lstat(temporary);
@@ -568,6 +620,7 @@ export class AgentTools {
       )
         throw new Fault('TASK_DIRECTORY_MOVED');
       // Publish complete bytes with a create-only link; cancellation and filename collisions cannot overwrite an input.
+      this.checkProject(run);
       await link(temporary, path.join(base, name));
       return { path: file, bytes: bytes.length };
     } catch (error) {
@@ -588,6 +641,7 @@ export class AgentTools {
     }
   }
   async writeText(run: AgentToolRun, value: unknown, content: unknown, createOnly = false) {
+    this.checkProject(run);
     if (this.options.nativeOnly) throw new Fault('NATIVE_WORKSPACE_TOOL_UNAVAILABLE');
     if (
       typeof value !== 'string' ||
@@ -616,8 +670,15 @@ export class AgentTools {
     content: string | Buffer,
     createOnly = false,
   ) {
+    const root =
+      run.project && this.options.projects && !inside(run.canonicalRoot, file)
+        ? this.options.projects.files(
+            this.options.projects.reference(run.project, run.bot, run.taskRunId ?? run.id!),
+          )
+        : run.canonicalRoot;
+    this.checkProject(run, root === run.canonicalRoot ? 'read' : 'write');
     const parent = await realpath(path.dirname(file));
-    if (!inside(run.canonicalRoot, parent)) throw new Fault('INVALID_FILE', 400);
+    if (!inside(root, parent)) throw new Fault('INVALID_FILE', 400);
     const directory = await open(
       parent,
       constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
@@ -639,9 +700,10 @@ export class AgentTools {
         const opened = await realpath(
           process.platform === 'linux' ? `/proc/self/fd/${handle.fd}` : file,
         );
-        if (!info.isFile() || info.nlink !== 1 || !inside(run.canonicalRoot, opened))
+        if (!info.isFile() || info.nlink !== 1 || !inside(root, opened))
           throw new Fault('INVALID_FILE', 400);
         run.abort.signal.throwIfAborted();
+        this.checkProject(run, root === run.canonicalRoot ? 'read' : 'write');
         await handle.truncate(0);
         await handle.writeFile(content, 'utf8');
         return { path: file, bytes: Buffer.byteLength(content) };
@@ -775,6 +837,14 @@ export class AgentTools {
     args: Record<string, unknown>,
     wireId?: string,
   ): Promise<ToolResult> {
+    try {
+      this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: errorCode(error) ?? 'PROJECT_ACCESS_DENIED' }],
+      };
+    }
     const unavailable =
       this.options.nativeOnly && (Object.hasOwn(fields, name) || name.startsWith('process_'))
         ? 'NATIVE_WORKSPACE_TOOL_UNAVAILABLE'
@@ -860,7 +930,9 @@ export class AgentTools {
           throw new Fault('INVALID_TOOL_ARGS', 400);
         trace = { name, surface, phase: 'running', at: new Date().toISOString() };
         run.trace.push(trace);
-        const result = await this.integrations!.invoke(run, name, args, wireId);
+        const result = await this.integrations!.invoke(run, name, args, wireId, () =>
+          this.checkProject(run),
+        );
         trace.phase = result.isError ? 'rejected' : 'settled';
         return result;
       }
@@ -915,7 +987,10 @@ export class AgentTools {
           )
             throw new Fault('INVALID_FILE', 400);
           if (name === 'read_image') {
-            const source = await this.workspace.download(workspacePath(root, file));
+            this.checkProject(run);
+            const source = await this.workspace
+              .scope(root, root)
+              .download(workspacePath(root, file));
             const image = imageInput(source);
             run.abort.signal.throwIfAborted();
             trace.phase = 'settled';
@@ -923,6 +998,7 @@ export class AgentTools {
           }
           if (name === 'list_files') {
             if (!info.isDirectory()) throw new Fault('INVALID_FILE', 400);
+            this.checkProject(run);
             result = { directory: file, files: await new WorkspaceFiles(canonical).list() };
           } else {
             const offset = args.offset ?? 0,
@@ -935,7 +1011,8 @@ export class AgentTools {
               Number(limit) > 64000
             )
               throw new Fault('INVALID_TOOL_ARGS', 400);
-            const actual = await this.workspace.read(workspacePath(root, file)),
+            this.checkProject(run);
+            const actual = await this.workspace.scope(root, root).read(workspacePath(root, file)),
               content = actual.content || '';
             const end = Number(offset) + Number(limit);
             result = {

@@ -1,0 +1,1 @@
+ALTER TABLE `firings` ADD `unknownAck` integer DEFAULT 0 NOT NULL;

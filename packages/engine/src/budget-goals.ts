@@ -24,6 +24,8 @@ export const goalOwnerKey = (owner: GoalBudgetOwner) =>
         owner.bot,
         owner.conversationId ?? null,
         owner.conversationId ? null : owner.chatRevision,
+        // Keep legacy hashes stable; project revisions partition the native session identity.
+        ...(owner.project ? [owner.project.projectId, owner.project.revision] : []),
       ]),
     )
     .digest('hex');
