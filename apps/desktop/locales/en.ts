@@ -135,7 +135,7 @@ export const english = {
   'setup.agentDescription':
     'Download the core components to run Bots, then configure a model to get started. You can add a Linux computer later.',
   'setup.agentFootnote':
-    'Core components are prepared once and cached locally. The first download requires internet access.',
+    'Components are cached locally. When an app update needs newer components, they are downloaded and verified before reconnecting your existing workspace.',
   'setup.downloadComponents': 'Download core components',
   'setup.unpackComponents': 'Unpack core components',
   'setup.verifyComponents': 'Verify runtime components',
@@ -245,6 +245,10 @@ export const english = {
   'onboarding.connectingWorkspace': 'Connecting to your local workspace',
   'onboarding.connectionFailed': 'Could not connect to your workspace',
   'onboarding.checkingConfiguration': 'Checking your environment and model configuration.',
+  'onboarding.downloadingLinuxComponents':
+    'Downloading Linux runtime components. The first connection after an update may take a while.',
+  'onboarding.startupFailed':
+    'The background service could not start. Retry the connection; downloaded components are retained and reused.',
   'onboarding.modelTitle': 'Connect your first model',
   'onboarding.modelDescription':
     'Choose a provider, enter your API key, then load or enter a model to use.',

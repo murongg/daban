@@ -286,7 +286,18 @@ export function runtimeService(
     }
     await access(agentConfig.vmConfig);
     if (closed) throw new Error('RUNTIME_CLOSED');
-    daemon ??= new Daemon(agentConfig);
+    daemon ??= new Daemon(agentConfig, {
+      onProgress: (next) => {
+        if (closed) return;
+        setupState = {
+          ...next,
+          required: true,
+          target: 'linux',
+          phase: next.phase === 'complete' ? 'connecting' : next.phase,
+        };
+        publish(state);
+      },
+    });
     await daemon.ensure();
     if (closed) throw new Error('RUNTIME_CLOSED');
     nativeMode = false;

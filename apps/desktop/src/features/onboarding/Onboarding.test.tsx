@@ -10,6 +10,8 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
+import { initialState, reduce } from '../../app/state';
+import { serialize, storageKey } from '../../app/storage';
 import { selectControl, selectOption } from '../../test/select.fixture.ts';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
@@ -93,6 +95,80 @@ it('waits for authoritative startup status instead of flashing an unusable works
   render(<App />);
   expect(screen.getByRole('heading', { name: '正在连接本机工作区' })).toBeVisible();
   expect(screen.queryByRole('button', { name: '自定义 Bot' })).not.toBeInTheDocument();
+});
+it('opens a previously configured empty workspace immediately on the next launch', async () => {
+  connect(snapshot(true));
+  const first = render(<App />);
+  await screen.findByRole('button', { name: '自定义 Bot' });
+  first.unmount();
+  const backend = connect(disconnected('connecting'), undefined, true);
+  render(<App />);
+  expect(screen.getByRole('button', { name: '自定义 Bot' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: '正在连接本机工作区' })).not.toBeInTheDocument();
+  expect(backend.writes).toHaveLength(0);
+});
+
+it('restores an existing workspace before connection and keeps draft submission gated on readiness', async () => {
+  const state = reduce(initialState(), {
+    type: 'create',
+    id: 'mock-returning-bot',
+    name: 'SYNTHETIC RETURNING BOT',
+    role: '',
+    color: 'mint',
+  });
+  state.drafts['mock-returning-bot'] = 'SYNTHETIC UNSENT DRAFT';
+  state.messages['mock-returning-bot'] = [
+    { id: 'mock-cached-message', role: 'bot', text: 'SYNTHETIC CACHED REPLY' },
+  ];
+  localStorage.setItem(storageKey, serialize(state));
+  const backend = connect(disconnected('connecting'), undefined, true);
+  render(<App />);
+  expect(screen.getByRole('heading', { name: 'SYNTHETIC RETURNING BOT' })).toBeVisible();
+  expect(screen.getByText('SYNTHETIC CACHED REPLY')).toBeVisible();
+  const draft = screen.getByRole('textbox', { name: '发送消息' });
+  expect(draft).toHaveValue('SYNTHETIC UNSENT DRAFT');
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
+  expect(screen.queryByText('可对话 · 未连接电脑')).not.toBeInTheDocument();
+  await userEvent.type(draft, '{Enter}');
+  expect(backend.invoke).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'task.start' }));
+  expect(draft).toHaveValue('SYNTHETIC UNSENT DRAFT');
+  backend.publish(disconnected('offline'));
+  expect(screen.getByRole('heading', { name: 'SYNTHETIC RETURNING BOT' })).toBeVisible();
+  expect(draft).toHaveValue('SYNTHETIC UNSENT DRAFT');
+});
+
+it('does not treat an offline preview as completed first-use setup', async () => {
+  const preview = render(<App />);
+  await screen.findByRole('button', { name: '自定义 Bot' });
+  preview.unmount();
+  connect(disconnected('connecting'), undefined, true);
+  render(<App />);
+  expect(screen.getByRole('heading', { name: '正在连接本机工作区' })).toBeVisible();
+});
+it('shows Linux startup downloads while connecting and replaces them with failure recovery', async () => {
+  const value = disconnected('connecting');
+  value.setup = {
+    required: true,
+    target: 'linux',
+    phase: 'downloading',
+    progress: 25,
+    downloaded: 25,
+    total: 100,
+  };
+  const backend = connect(value);
+  render(<App />);
+  expect(await screen.findByRole('progressbar', { name: '下载进度' })).toHaveAttribute(
+    'aria-valuenow',
+    '25',
+  );
+  expect(screen.getByRole('status')).toHaveTextContent('正在下载 Linux 运行组件');
+  expect(backend.invoke).not.toHaveBeenCalledWith({ type: 'setup.start' });
+  const failed = disconnected('offline');
+  failed.setup = { required: true, target: 'linux', phase: 'failed', error: 'AGENT_START_FAILED' };
+  backend.publish(failed);
+  expect(await screen.findByRole('button', { name: '重新连接' })).toBeEnabled();
+  expect(screen.getByRole('alert')).toBeVisible();
+  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
 });
 it('keeps legacy runtimes without model setup support in their existing workspace flow', async () => {
   const value = snapshot();

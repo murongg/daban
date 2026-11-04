@@ -3,6 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import { isAbsolute, join, resolve } from 'node:path';
+import { isSetupStatus, type SetupStatus } from '@daban/protocol';
+import { readSetupRecord } from './setup-record';
 import { prepareSocket } from './socket';
 
 export interface DaemonConfig {
@@ -31,6 +33,7 @@ type Run = (
   options: CommandOptions,
 ) => Promise<{ code: number; stdout: string }>;
 interface DaemonDependencies {
+  onProgress?: (value: SetupStatus) => unknown;
   run?: Run;
   inspect?: (socketPath: string, signal: AbortSignal) => Promise<unknown>;
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<unknown>;
@@ -301,6 +304,7 @@ export class Daemon {
     await this.prepare();
     const existing = await this.identity();
     if (existing) return existing;
+    let progressRevision = (await readSetupRecord(this.config.dataRoot, 'progress.json'))?.revision;
     const domain = `gui/${this.uid}`;
     const target = `${domain}/${this.label}`;
     let registered = await this.command(['print', target]);
@@ -365,8 +369,18 @@ export class Daemon {
       await this.prepare();
       const current = await this.identity();
       if (current) return current;
+      const progress = await readSetupRecord(this.config.dataRoot, 'progress.json');
+      // A retry must not inherit a failure left by the previous process before this launch.
+      if (progress && progress.revision !== progressRevision) {
+        progressRevision = progress.revision;
+        if (!isSetupStatus(progress.value)) throw Error('SETUP_STORE');
+        this.dependencies.onProgress?.(progress.value);
+        if (['failed', 'unavailable', 'cancelled'].includes(progress.value.phase))
+          throw Error(progress.value.error ?? 'SETUP_CONNECT');
+      }
       await (this.dependencies.wait ?? wait)(500, this.cancellation.signal);
     }
+    this.dependencies.onProgress?.({ required: true, phase: 'failed', error: 'SETUP_CONNECT' });
     throw new Error('AGENT_DAEMON_UNAVAILABLE');
   }
   ensure() {

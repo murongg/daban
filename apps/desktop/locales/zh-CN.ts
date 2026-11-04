@@ -108,7 +108,8 @@ export const chinese = {
   'setup.agentWorking': '正在准备 Daban',
   'setup.agentDescription':
     '下载运行 Bot 所需的基础组件，完成后配置模型即可开始。Linux 电脑可以稍后安装。',
-  'setup.agentFootnote': '基础组件只需准备一次，之后从本机缓存启动。首次下载需要联网。',
+  'setup.agentFootnote':
+    '组件会缓存在本机。应用更新需要新版组件时，会下载并校验后继续使用原工作区。',
   'setup.downloadComponents': '下载基础组件',
   'setup.unpackComponents': '解压基础组件',
   'setup.verifyComponents': '校验运行组件',
@@ -204,6 +205,9 @@ export const chinese = {
   'onboarding.connectingWorkspace': '正在连接本机工作区',
   'onboarding.connectionFailed': '暂时无法连接工作区',
   'onboarding.checkingConfiguration': '正在检查运行环境和模型配置。',
+  'onboarding.downloadingLinuxComponents':
+    '正在下载 Linux 运行组件，更新后首次连接可能需要一些时间。',
+  'onboarding.startupFailed': '后台启动未完成，请重试连接。已下载的组件会保留并复用。',
   'onboarding.modelTitle': '连接你的第一个模型',
   'onboarding.modelDescription': '选择供应商，填写 API Key，再加载或填写要使用的模型。',
   'onboarding.readyTitle': '可以开始了',

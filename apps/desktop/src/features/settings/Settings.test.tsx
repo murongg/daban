@@ -15,10 +15,15 @@ import { demoState } from '../../test/fixtures';
 beforeEach(() => localStorage.setItem(storageKey, serialize(demoState())));
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
 
-function connect(uncertain = false, agent?: RuntimeSnapshot['agent']) {
+function connect(
+  uncertain = false,
+  agent?: RuntimeSnapshot['agent'],
+  setup?: RuntimeSnapshot['setup'],
+) {
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = 39;
   snapshot.agent = agent;
+  snapshot.setup = setup;
   snapshot.model = {
     configured: true,
     available: true,
@@ -219,6 +224,29 @@ it('does not clear conversation unread when settings closes in an unfocused wind
     'research',
   );
 });
+
+it.each(['cancelled', 'downloading'] as const)(
+  'controls %s core components from settings without replacing the existing workspace',
+  async (phase) => {
+    const invoke = connect(false, undefined, {
+      required: true,
+      target: 'agent',
+      phase,
+    });
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: '设置' }));
+    const dialog = await screen.findByRole('dialog', { name: '设置' });
+    await userEvent.click(within(dialog).getByRole('tab', { name: '电脑与权限' }));
+    await userEvent.click(
+      within(dialog).getByRole('button', {
+        name: phase === 'downloading' ? '暂停安装' : '继续安装',
+      }),
+    );
+    expect(invoke).toHaveBeenCalledWith({
+      type: phase === 'downloading' ? 'setup.cancel' : 'setup.start',
+    });
+  },
+);
 
 it('explains native-only setup without offering Linux installation or VM recovery', async () => {
   connect(false, {
