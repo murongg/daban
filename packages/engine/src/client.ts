@@ -63,6 +63,10 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isPreflightCommand,
+  isPreflightOptions,
+  isPreflightPackage,
+  isPreflightReport,
   isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
@@ -96,7 +100,15 @@ import {
   isWorkStatus,
   noteKey,
   noteQueryKey,
+  type PreflightCommand,
+  type PreflightPackage,
+  type PreflightPackageData,
+  type PreflightReport,
   parseBotJSON,
+  preflightByteLimit,
+  preflightJson,
+  preflightQueryKey,
+  preflightReportData,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
@@ -117,8 +129,11 @@ import { inspectSkillPackage } from './skill-package.js';
 // SSH forwards TCP unchanged. Use Node HTTP so the guest's canonical Host header is preserved.
 async function localRequest(url: string, init: RequestInit = {}): Promise<Response> {
   const body = init.body;
-  const responseLimit =
-    new URL(url).pathname === '/api/bundles/export' ? botBundleLimit + 64 * 1024 : 16 * 1024 * 1024;
+  const responseLimit = new URL(url).pathname.startsWith('/api/preflight/')
+    ? preflightByteLimit
+    : new URL(url).pathname === '/api/bundles/export'
+      ? botBundleLimit + 64 * 1024
+      : 16 * 1024 * 1024;
   if (body !== undefined && typeof body !== 'string') throw new Error('INVALID_INTERNAL_BODY');
   return new Promise<Response>((resolve, reject) => {
     const req = request(
@@ -228,11 +243,102 @@ interface Options {
   fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
   agent?: boolean;
 }
+async function preflightResponse(response: Response): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('INVALID_PREFLIGHT_RESPONSE');
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > preflightByteLimit) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error('INVALID_PREFLIGHT_RESPONSE');
+      }
+      chunks.push(part.value);
+    }
+    return JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)),
+    ) as unknown;
+  } catch {
+    throw new Error('INVALID_PREFLIGHT_RESPONSE');
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+const preflightHash = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
+
+// The cache binds returned bytes to a previously inspected query; it never substitutes for a fresh Host read.
+export class PreflightReplies {
+  private readonly reports = new Map<
+    string,
+    { report: PreflightReport; preview?: PreflightPackage }
+  >();
+  accept(command: PreflightCommand, value: unknown): unknown {
+    for (const [id, entry] of this.reports)
+      if (Date.parse(entry.report.expiresAt) <= Date.now()) this.reports.delete(id);
+    if (command.type === 'preflight.options') {
+      if (!isPreflightOptions(value) || value.bot !== command.query.bot)
+        throw new Error('INVALID_PREFLIGHT_RESPONSE');
+      return value;
+    }
+    if (command.type === 'preflight.inspect') {
+      if (
+        !isPreflightReport(value) ||
+        value.id !== command.query.id ||
+        preflightQueryKey(value) !== preflightQueryKey(command.query) ||
+        preflightHash(preflightJson(preflightReportData(value))) !== value.digest
+      )
+        throw new Error('INVALID_PREFLIGHT_RESPONSE');
+      const previous = this.reports.get(value.id);
+      if (previous && previous.report.digest !== value.digest)
+        throw new Error('INVALID_PREFLIGHT_RESPONSE');
+      if (!previous && this.reports.size >= 50) throw new Error('PREFLIGHT_STORAGE_LIMIT');
+      if (!previous) this.reports.set(value.id, { report: structuredClone(value) });
+      return value;
+    }
+    const saved = this.reports.get(command.query.id);
+    if (!saved) throw new Error('PREFLIGHT_REPORT_EXPIRED');
+    if (
+      saved.report.digest !== command.query.digest ||
+      !isPreflightPackage(value) ||
+      value.id !== command.query.id ||
+      value.reportDigest !== command.query.digest ||
+      preflightHash(value.json) !== value.packageDigest
+    )
+      throw new Error('INVALID_PREFLIGHT_RESPONSE');
+    const data = JSON.parse(value.json) as PreflightPackageData;
+    if (
+      data.checks.length !== saved.report.checks.length ||
+      data.checks.some((check, index) => {
+        const expected = saved.report.checks[index];
+        return (
+          check.kind !== saved.report.requirements[index].kind ||
+          check.state !== expected.state ||
+          check.reason !== expected.reason ||
+          check.evidence !== expected.evidence
+        );
+      })
+    )
+      throw new Error('INVALID_PREFLIGHT_RESPONSE');
+    if (command.type === 'preflight.export' && !saved.preview)
+      throw new Error('PREFLIGHT_PREVIEW_REQUIRED');
+    if (saved.preview && preflightJson(saved.preview) !== preflightJson(value))
+      throw new Error('INVALID_PREFLIGHT_RESPONSE');
+    if (!saved.preview) saved.preview = structuredClone(value);
+    return value;
+  }
+}
+
 export class RuntimeClient {
   readonly origin: string;
   private readonly serverHost: string;
   private readonly fetcher: NonNullable<Options['fetcher']>;
   private token = '';
+  private readonly preflightReplies = new PreflightReplies();
   private readonly tokenProvider?: Options['tokenProvider'];
   private authenticating?: Promise<unknown>;
   private readonly agent: boolean;
@@ -324,7 +430,11 @@ export class RuntimeClient {
       ),
     });
     const decode = async () =>
-      route.startsWith('/api/bundles/') ? parseBotJSON(await response.text()) : response.json();
+      route.startsWith('/api/preflight/')
+        ? preflightResponse(response)
+        : route.startsWith('/api/bundles/')
+          ? parseBotJSON(await response.text())
+          : response.json();
     if (response.status === 403 && retry) {
       const result = (await decode()) as { error?: string };
       // Only explicit authentication rejection is retryable; network loss after a mutation is ambiguous.
@@ -358,6 +468,7 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         contextInspector?: unknown;
+        preflight?: unknown;
         clientProtocol?: number;
         botCapabilities?: unknown;
         localComputer?: unknown;
@@ -460,6 +571,9 @@ export class RuntimeClient {
       if (raw.contextInspector !== undefined && raw.contextInspector !== 1)
         throw new Error('INVALID_RUNTIME_STATE');
       if (raw.contextInspector === 1) snapshot.contextInspector = 1;
+      if (raw.preflight !== undefined && raw.preflight !== 1)
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (raw.preflight === 1) snapshot.preflight = 1;
       snapshot.protocolVersion = raw.clientProtocol || 0;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
@@ -917,6 +1031,27 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_BOT_COPY_ACK');
       return value;
+    }
+    if (command.type.startsWith('preflight.')) {
+      if (!isPreflightCommand(command)) throw new Error('INVALID_COMMAND');
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.preflight !== 1) throw new Error('PREFLIGHT_UNSUPPORTED');
+      let value: unknown;
+      if (captured.type === 'preflight.options') {
+        const search = new URLSearchParams({ bot: captured.query.bot });
+        if (captured.query.cursor !== undefined) search.set('cursor', captured.query.cursor);
+        value = await this.api(`/api/preflight/options?${search}`);
+      } else if (captured.type === 'preflight.inspect') {
+        value = await this.api('/api/preflight/inspect', captured.query);
+      } else {
+        const action = captured.type === 'preflight.preview' ? 'preview' : 'export';
+        value = await this.api(
+          `/api/preflight/${encodeURIComponent(captured.query.id)}/${action}?digest=${captured.query.digest}`,
+        );
+      }
+      return this.preflightReplies.accept(captured, value);
     }
     if (command.type === 'context.inspect' || command.type === 'context.source') {
       const captured = structuredClone(command);

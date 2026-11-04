@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { arch, platform, release } from 'node:os';
@@ -35,6 +35,9 @@ import {
   isMcpCommand,
   isMemoryQuery,
   isNoteCommand,
+  isPreflightOptionsQuery,
+  isPreflightQuery,
+  isPreflightRead,
   isRebootStatus,
   isRecoveryRequest,
   isSetupStatus,
@@ -77,6 +80,8 @@ import { BotLifecycle } from './lifecycle.js';
 import { Machine } from './machine.js';
 import { ModelRuns } from './model.js';
 import { NativeWorkspace } from './native-workspace.js';
+import { Preflight, type PreflightRuntime } from './preflight.js';
+import { preflightSourcesFor } from './preflight-sources.js';
 import { privateServer } from './private-channel.js';
 import { Recovery } from './recovery.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
@@ -122,6 +127,7 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/preflight/inspect',
   '/api/notes/status',
   '/api/notes/list',
   '/api/notes/read',
@@ -465,6 +471,75 @@ export async function startPrototype({
       ? async () => ({ state: executionSnapshot && computerAvailable ? 'ready' : 'unavailable' })
       : desktopDependencies,
   });
+  const packageInfo: unknown = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  );
+  if (
+    !packageInfo ||
+    typeof packageInfo !== 'object' ||
+    !('version' in packageInfo) ||
+    typeof packageInfo.version !== 'string'
+  )
+    throw new Fault('PREFLIGHT_VERSION_UNAVAILABLE', 500);
+  const preflightScope = createHash('sha256').update(modelDir).digest('hex');
+  const preflight = new Preflight(
+    preflightSourcesFor({
+      scope: () => host?.scope ?? preflightScope,
+      settings,
+      profiles: () => {
+        if (!models) throw new Fault('STARTING', 503);
+        return models.profiles;
+      },
+      integrations: () => {
+        if (!models) throw new Fault('STARTING', 503);
+        return models.integrations;
+      },
+      local: host?.localComputer,
+      async runtime(bot): Promise<PreflightRuntime> {
+        if (host?.execution) {
+          // Read the existing executor owner directly: refreshExecution also reconciles tasks and recovery state.
+          const snapshot = await host.execution.refresh();
+          if (!isExecutionSnapshot(snapshot)) throw new Fault('EXECUTION_INVALID_RESPONSE');
+          const row = snapshot.status.items.find((item) => item.bot === bot);
+          const lease = snapshot.computer.bots[bot];
+          return {
+            supported: true,
+            connected: true,
+            identity: `${snapshot.boot}:${snapshot.nonce}`,
+            documents: snapshot.capabilities.includes('documents'),
+            computer: {
+              available: snapshot.status.available,
+              connected: row?.phase === 'connected' && !!lease && row.instance === lease.instance,
+              revision: row?.revision ?? snapshot.status.revision,
+              ...(row?.instance ? { instance: row.instance } : {}),
+              ...(lease ? { owner: lease.owner, epoch: lease.epoch } : {}),
+            },
+          };
+        }
+        if (runtime instanceof Computers) {
+          const status = runtime.status(),
+            snapshot = await runtime.snapshot();
+          const row = status.items.find((item) => item.bot === bot),
+            lease = snapshot.bots[bot];
+          return {
+            supported: true,
+            connected: true,
+            identity: preflightScope,
+            documents: platform() === 'linux',
+            computer: {
+              available: status.available,
+              connected: row?.phase === 'connected' && !!lease && row.instance === lease.instance,
+              revision: row?.revision ?? status.revision,
+              ...(row?.instance ? { instance: row.instance } : {}),
+              ...(lease ? { owner: lease.owner, epoch: lease.epoch } : {}),
+            },
+          };
+        }
+        return { supported: false, connected: false, identity: null, documents: false };
+      },
+    }),
+    { productVersion: packageInfo.version },
+  );
   const documentAbort = new AbortController();
   const documents = host?.execution
     ? {
@@ -925,6 +1000,45 @@ export async function startPrototype({
             if (action === 'retry' && Object.keys(data).length === 1 && validAgentId(data.id))
               return json(res, await models.bundles.retry(data.id));
             throw new Fault('INVALID_BOT_BUNDLE', 400);
+          }
+          if (url.pathname.startsWith('/api/preflight/')) {
+            if (url.pathname === '/api/preflight/inspect') {
+              if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+              if (url.search) throw new Fault('INVALID_PREFLIGHT_QUERY', 400);
+              const query = await body(req);
+              if (!isPreflightQuery(query)) throw new Fault('INVALID_PREFLIGHT_QUERY', 400);
+              return json(res, await preflight.inspect(query));
+            }
+            if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.pathname === '/api/preflight/options') {
+              if (
+                [...url.searchParams.keys()].some(
+                  (key) =>
+                    !['bot', 'cursor'].includes(key) || url.searchParams.getAll(key).length !== 1,
+                )
+              )
+                throw new Fault('INVALID_PREFLIGHT_QUERY', 400);
+              const query = {
+                bot: url.searchParams.get('bot'),
+                ...(url.searchParams.has('cursor')
+                  ? { cursor: url.searchParams.get('cursor') }
+                  : {}),
+              };
+              if (!isPreflightOptionsQuery(query)) throw new Fault('INVALID_PREFLIGHT_QUERY', 400);
+              return json(res, await preflight.options(query));
+            }
+            const route = url.pathname.match(
+              /^\/api\/preflight\/([a-zA-Z0-9_-]{1,80})\/(preview|export)$/,
+            );
+            if (!route) throw new Fault('NOT_FOUND', 404);
+            if (
+              [...url.searchParams.keys()].some((key) => key !== 'digest') ||
+              url.searchParams.getAll('digest').length !== 1
+            )
+              throw new Fault('INVALID_PREFLIGHT_QUERY', 400);
+            const query = { id: route[1], digest: url.searchParams.get('digest') };
+            if (!isPreflightRead(query)) throw new Fault('INVALID_PREFLIGHT_QUERY', 400);
+            return json(res, await preflight.preview(query, route[2] === 'export'));
           }
           if (url.pathname === '/api/diagnostics') {
             if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -1547,7 +1661,7 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
-              ...(models ? { contextInspector: 1 } : {}),
+              ...(models ? { contextInspector: 1, preflight: 1 } : {}),
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
               // Capability metadata stays outside saved-model status so older clients can still validate that status.
@@ -1842,6 +1956,7 @@ export async function startPrototype({
     let failure: unknown;
     // A failed owner must not prevent the remaining stores, computer and HTTP listener from closing.
     for (const owner of [
+      preflight,
       recovery,
       lifecycle,
       documents,

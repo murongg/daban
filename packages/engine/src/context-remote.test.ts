@@ -115,18 +115,19 @@ test('real remote sessions project status/connect and pushes for each accepted s
       type: 'snapshot-capabilities',
       host: 'f'.repeat(64),
       workspace: keys.identity.id,
-      accept: { contextInspector: 1 },
+      accept: { contextInspector: 1, preflight: 1 },
     });
     expect(await read('mock-session-a', 'mock-wrong-target')).toEqual(disconnected('ready'));
     message('mock-session-a', {
       type: 'snapshot-capabilities',
       host: keys.identity.id,
       workspace: keys.identity.id,
-      accept: { contextInspector: 1 },
+      accept: { contextInspector: 1, preflight: 1 },
     });
     expect(await read('mock-session-a', 'mock-accepted', 'connect')).toEqual({
       ...disconnected('ready'),
       contextInspector: 1,
+      preflight: 1,
     });
     expect(await read('mock-session-b', 'mock-legacy-peer')).toEqual(disconnected('ready'));
     // The Host's local state and a different peer must retain their own independent schema decisions.
@@ -136,7 +137,7 @@ test('real remote sessions project status/connect and pushes for each accepted s
     for (const event of sent.filter((item) => item.channel === 'events'))
       expect(event.message.value).toEqual({
         ...disconnected('ready'),
-        ...(event.session === 'mock-session-a' ? { contextInspector: 1 } : {}),
+        ...(event.session === 'mock-session-a' ? { contextInspector: 1, preflight: 1 } : {}),
       });
     receive({ type: 'state', session: 'mock-session-a', state: 'closed' });
     await open('mock-session-reconnected', a);
@@ -266,7 +267,7 @@ test('a controller sends one schema hint before RPC without waiting for an old H
       type: 'snapshot-capabilities',
       host: host.identity.id,
       workspace: host.identity.id,
-      accept: { contextInspector: 1 },
+      accept: { contextInspector: 1, preflight: 1 },
     });
     expect(await controller.request({ type: 'status' }, host.identity.id)).toEqual(
       disconnected('ready'),

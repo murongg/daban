@@ -143,7 +143,16 @@ export const suites = {
     'integrations.integration',
   ],
   lifecycle: ['lifecycle.test', 'lifecycle-model.test', 'lifecycle.integration'],
-  diagnostics: ['diagnostics.test', 'diagnostics.integration'],
+  diagnostics: [
+    'diagnostics.test',
+    'preflight.test',
+    'preflight-export.test',
+    'preflight-api.test',
+    'preflight-host.test',
+    'preflight-client.test',
+    'diagnostics.integration',
+    'preflight.integration',
+  ],
   recovery: ['recovery.test', 'recovery-model.test', 'recovery.integration'],
 } as const;
 

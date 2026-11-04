@@ -31,6 +31,7 @@ import {
   isModelInspectionRequest,
   isModelUpdate,
   isNoteCommand,
+  isPreflightCommand,
   isRecoveryRequest,
   isScheduleInput,
   isSchedulePatch,
@@ -74,6 +75,7 @@ export function safeRuntimePath(value: unknown): value is string {
 }
 export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('preflight.')) return isPreflightCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();

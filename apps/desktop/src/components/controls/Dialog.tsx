@@ -24,9 +24,11 @@ function visible(element: HTMLElement) {
   return true;
 }
 function tabStops(element: HTMLElement | null) {
-  return Array.from(element?.querySelectorAll<HTMLElement>(focusable) || []).filter(
+  // Match after traversal: some DOM implementations group compound selector results by tag.
+  return Array.from(element?.querySelectorAll<HTMLElement>('*') || []).filter(
     // Custom controls retain hidden native form inputs; those must never become Tab endpoints.
     (item) =>
+      item.matches(focusable) &&
       visible(item) &&
       !item.matches('input[type="hidden"]') &&
       !(item.hasAttribute('tabindex') && item.tabIndex < 0),

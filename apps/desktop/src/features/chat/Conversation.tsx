@@ -29,6 +29,7 @@ import { IconButton } from '../../components/controls/Button';
 import { Tooltip } from '../../components/controls/Tooltip';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { Avatar } from '../bots/Avatar';
+import { Preflight } from '../computer/Preflight';
 import { attachmentAccept, canParseDocuments } from '../files/files';
 import { modelName as displayModel, modelIcon } from '../models/model-options';
 import { Requests } from '../requests/Requests';
@@ -722,6 +723,23 @@ export function Conversation({
             </button>
           </div>
         </form>
+        {live && !lifecycleReadOnly && (
+          <Preflight
+            bot={target}
+            selection={JSON.stringify([
+              configuredModel,
+              runtime.snapshot.profiles.find((profile) => profile.id === target)?.revision,
+              attachments
+                .map((file) => file.name.split('.').at(-1)?.toLowerCase() ?? file.kind)
+                .sort(),
+            ])}
+            onAction={(action) => {
+              if (action === 'models') onModel();
+              else if (action === 'computer') dispatch({ type: 'panel', panel: 'computer' });
+              else dispatch({ type: 'view', view: 'settings' });
+            }}
+          />
+        )}
         <div className="composer-hints">
           <span>
             {task?.running

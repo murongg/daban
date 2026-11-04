@@ -1,4 +1,102 @@
 export const english = {
+  'preflight.budgetValue': 'Minimum input {0} tokens',
+  'preflight.trigger': 'Check required capabilities',
+  'preflight.title': 'Task capability preflight',
+  'preflight.explanation':
+    'Select explicit requirements. This check reads saved configuration and local status; it does not test external services or guarantee task success.',
+  'preflight.unsupported':
+    'This service does not support task preflight. Existing environment checks remain available.',
+  'preflight.requirements': 'Select requirements',
+  'preflight.model': 'Model configuration',
+  'preflight.vision': 'Image input declaration',
+  'preflight.tools': 'Tool calling declaration',
+  'preflight.budget': 'Minimum input budget (tokens)',
+  'preflight.budgetExplanation':
+    'Compares the configured context window minus maximum output. This does not estimate the full input for this task. Leave blank to skip the budget check.',
+  'preflight.search': 'Search configuration',
+  'preflight.office': 'Office document parsing',
+  'preflight.computer': 'Computer requirement',
+  'preflight.noComputer': 'No computer requirement',
+  'preflight.linuxComputer': 'Linux computer',
+  'preflight.localComputer': 'Local computer',
+  'preflight.access': 'Required access',
+  'preflight.observe': 'Observe',
+  'preflight.control': 'Control',
+  'preflight.mcp': 'MCP tools',
+  'preflight.chooseMcp': 'Select MCP tools',
+  'preflight.reloadOptions': 'Reload MCP options',
+  'preflight.loadingOptions': 'Reading tools selected for this Bot…',
+  'preflight.emptyOptions': 'This Bot has no authorized, selected MCP tools.',
+  'preflight.unavailableOptions': 'Tool configuration is unavailable; options cannot be listed.',
+  'preflight.truncated':
+    'Only the first 500 items are listed. Narrow the selected tools in the existing tool settings.',
+  'preflight.nextPage': 'Load next page',
+  'preflight.selection': 'Selected requirements',
+  'preflight.invalidSelection':
+    'Select at least one requirement. The input budget must be an integer from 1 to 1000000; select at most 10 MCP tools.',
+  'preflight.inspect': 'Check selected requirements',
+  'preflight.recheck': 'Check again',
+  'preflight.cancel': 'Cancel waiting',
+  'preflight.checking': 'Checking read-only facts…',
+  'preflight.results': 'Preflight results',
+  'preflight.ready': 'Selected configuration conditions are satisfied',
+  'preflight.attention': 'Some requirements need attention or confirmation',
+  'preflight.externalNotRun': 'External services and model connectivity: not tested here.',
+  'preflight.stale':
+    'This report is over 30 seconds old. Conditions may have changed; check again.',
+  'preflight.expired': 'This report has expired. Run a new read-only check.',
+  'preflight.readFailed': 'The check did not complete. Retry the read-only check.',
+  'preflight.optionsStale':
+    'Tool selections changed. Previous selections were cleared; reload the options.',
+  'preflight.scopeChanged': 'The target source changed. Check again against the current target.',
+  'preflight.limit': 'Diagnostic snapshots reached the memory limit. Check again later.',
+  'preflight.preview': 'Preview diagnostic package',
+  'preflight.previewTitle': 'Diagnostic package preview',
+  'preflight.exactJson': 'Exact export JSON',
+  'preflight.previewExplanation':
+    'This is the exact JSON to download. It contains only allowed diagnostic fields and package aliases. Canceling does not download it; no send or upload is provided here.',
+  'preflight.download': 'Download this package',
+  'preflight.exportMismatch': 'The package differs from the preview. Nothing was downloaded.',
+  'preflight.models': 'Open model settings',
+  'preflight.searchSettings': 'Open search settings',
+  'preflight.integrations': 'Open tool settings',
+  'preflight.computerSettings': 'View computer connection',
+  'preflight.environment': 'Open environment settings',
+  'preflight.state.ready': 'Ready',
+  'preflight.state.missing': 'Missing',
+  'preflight.state.unknown': 'Unknown',
+  'preflight.state.stale': 'Stale',
+  'preflight.state.unsupported': 'Unsupported',
+  'preflight.evidence.localConfig': 'Saved configuration',
+  'preflight.evidence.localStatus': 'Trusted local status',
+  'preflight.evidence.cachedCatalog': 'Cached tool catalog',
+  'preflight.evidence.unavailable': 'Source unavailable',
+  'preflight.reason.configPresent': 'Required configuration or local status is present.',
+  'preflight.reason.modelNotConfigured':
+    'The current Bot model route or credential is not configured.',
+  'preflight.reason.modelCapabilityUnknown': 'The model has not declared the required capability.',
+  'preflight.reason.modelCapabilityMissing':
+    'The model declares that the required capability is unsupported.',
+  'preflight.reason.inputBudgetTooSmall':
+    'The configured input budget is below the selected minimum.',
+  'preflight.reason.searchNotConfigured': 'No usable search connection is configured.',
+  'preflight.reason.computerDisconnected': 'The current Bot computer is disconnected.',
+  'preflight.reason.controlHeldByHuman':
+    'A person holds control. Preflight does not hand it back automatically.',
+  'preflight.reason.localPermissionMissing':
+    'A required local system permission is missing. Preflight does not request permission.',
+  'preflight.reason.localSessionMismatch':
+    'The local session does not match this Bot or model revision.',
+  'preflight.reason.mcpNotSelected': 'This Bot has not selected or authorized this exact tool.',
+  'preflight.reason.mcpCatalogStale':
+    'The connection or tool catalog changed. Review the tool settings.',
+  'preflight.reason.ownerUnavailable':
+    'The fact owner is unavailable; the condition cannot be confirmed.',
+  'preflight.reason.checkTimedOut':
+    'The source did not return before the deadline; its state is unknown.',
+  'preflight.reason.configChanged': 'Configuration or connection changed during the check.',
+  'preflight.reason.capabilityUnsupported':
+    'The current target does not advertise the required capability.',
   'context.title': 'Context inspector',
   'context.unsupported': 'This service does not support context inspection.',
   'context.noScope': 'Context inspection needs an identified task.',

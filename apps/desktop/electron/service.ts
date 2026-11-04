@@ -3,12 +3,14 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readVmConnection } from '@daban/engine/host';
 import { secureDirectory } from '@daban/engine/local-computer';
+import { PreflightReplies } from '@daban/engine/remote';
 import {
   type DiagnosticReport,
   diagnosticIds,
   disconnected,
   isGroupPage,
   isLocalComputerCommand,
+  isPreflightCommand,
   isRebootStatus,
   isRemoteSnapshot,
   modelCatalog,
@@ -65,6 +67,7 @@ export function runtimeService(
   platform: NodeJS.Platform = process.platform,
   remote?: { request(command: RuntimeCommand, host: string): Promise<unknown> },
 ) {
+  const remotePreflight = new Map<string, PreflightReplies>();
   const dataRoot = agent?.dataRoot ?? join(userData, 'agent');
   const vmConfig = agent?.vmConfig ?? join(userData, 'runtime.json');
   const agentScope = agent ? daemonScope(dataRoot, vmConfig) : undefined;
@@ -789,6 +792,10 @@ export function runtimeService(
       'transcript.content',
       'context.inspect',
       'context.source',
+      'preflight.options',
+      'preflight.inspect',
+      'preflight.preview',
+      'preflight.export',
     ].includes(command.type);
     const result = await client.invoke(command);
     // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.
@@ -818,6 +825,24 @@ export function runtimeService(
         if (command.type === 'clipboard.write' || command.type === 'link.open')
           return { ok: true, value: await dispatch(command) };
         if (!remote) throw Error('REMOTE_UNAVAILABLE');
+        if (isPreflightCommand(command)) {
+          const captured = structuredClone(command);
+          const snapshot = await remote.request({ type: 'status' }, target);
+          if (!isRemoteSnapshot(snapshot)) throw Error('INVALID_RUNTIME_STATE');
+          if (snapshot.phase !== 'ready') throw Error('RUNTIME_OFFLINE');
+          if (snapshot.preflight !== 1) throw Error('PREFLIGHT_UNSUPPORTED');
+          let replies = remotePreflight.get(target);
+          if (!replies) {
+            if (remotePreflight.size >= 16)
+              remotePreflight.delete(remotePreflight.keys().next().value!);
+            replies = new PreflightReplies();
+            remotePreflight.set(target, replies);
+          }
+          const result = await remote.request(captured, target);
+          if (closed || remotePreflight.get(target) !== replies) throw Error('RUNTIME_OFFLINE');
+          // The paired transport binds host/session workspace. Report.workspace remains the Host's opaque data scope.
+          return { ok: true, value: replies.accept(captured, result) };
+        }
         const result = await remote.request(command, target);
         if ((command.type === 'status' || command.type === 'connect') && !isRemoteSnapshot(result))
           throw Error('INVALID_RUNTIME_STATE');
@@ -891,6 +916,7 @@ export function runtimeService(
     localSnapshot: () => state,
     publishRemote(value: unknown, host: string) {
       if (closed || !remoteDeviceId(host) || !isRemoteSnapshot(value)) return;
+      if (value.phase !== 'ready') remotePreflight.delete(host);
       for (const window of BrowserWindow.getAllWindows())
         window.webContents.send('daban:runtime-state', value, host);
     },

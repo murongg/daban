@@ -30,3 +30,13 @@ Model diagnostics mainly inspect saved configuration, not successful inference. 
 Include the steps, platform, version, affected check, and error. Hide keys, private content, and sensitive URLs in screenshots. The page is neither a complete log nor a full data backup.
 
 Reconnect, whole-environment recovery, and reinstallation have different effects. Start with [Troubleshooting](troubleshooting.md) and [Recovery](recovery.md).
+
+## Check explicit task requirements
+
+Choose **Check required capabilities** below the composer in a single Bot conversation. Select model declarations, a minimum input budget, search, Office parsing, or computer access. MCP options are read only when you open their selector and include only the exact tools authorized and selected for this Bot on the target Host. The catalog is cached; preflight does not connect to the external MCP service. Ordinary sending does not require a preflight.
+
+Each requirement shows ready, missing, unknown, stale, or unsupported, together with its fact source and sample time. Saved model configuration does not prove a successful inference call. The input budget compares the configured context window minus maximum output and does not estimate the complete input for this task. Preflight does not request permissions, take computer control, start a VM, sign in, or repair the environment. Sending still performs the original authorization checks.
+
+A report is marked stale after 30 seconds and expires after five minutes. Changing requirements, models, attachment types, Bot, or Host invalidates the current view. Canceling the wait or closing the panel does not stop background tasks.
+
+Choose **Preview diagnostic package** to review the exact allowed JSON. Local download occurs only after **Download this package**, and its bytes must match the preview. Bot, connection, and tool identifiers are replaced with package aliases; the package excludes chat content, files, accounts, addresses, and raw errors. There is no send or upload action. Host restart discards previous reports. Older services without the preflight capability retain the existing environment checks.

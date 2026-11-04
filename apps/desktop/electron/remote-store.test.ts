@@ -125,3 +125,38 @@ it('takes fresh observations instead of persisting and replaying cached screens'
   expect(await f.store.run(f.keys.identity.id, request, async () => ++frame)).toBe(1);
   expect(await f.store.run(f.keys.identity.id, request, async () => ++frame)).toBe(2);
 });
+
+it('rechecks every preflight observation with the same RPC id after Host expiry or lost authority', async () => {
+  const f = await fixture();
+  f.store.pair(f.keys.identity, 'controller');
+  for (const method of [
+    'preflight.options',
+    'preflight.inspect',
+    'preflight.preview',
+    'preflight.export',
+  ]) {
+    const query =
+      method === 'preflight.options'
+        ? { bot: 'mock-bot' }
+        : method === 'preflight.inspect'
+          ? {
+              id: 'mock-report',
+              bot: 'mock-bot',
+              requirements: [{ kind: 'model', tools: false, vision: false }],
+            }
+          : { id: 'mock-report', digest: 'a'.repeat(64) };
+    const request = { ...f.request, id: method.replace('.', '-'), method, params: { query } };
+    let calls = 0;
+    const dispatch = async () => {
+      if (++calls > 1) throw Error('PREFLIGHT_REPORT_EXPIRED');
+      return { synthetic: 'first-observation' };
+    };
+    await expect(f.store.run(f.keys.identity.id, request, dispatch)).resolves.toEqual({
+      synthetic: 'first-observation',
+    });
+    await expect(f.store.run(f.keys.identity.id, request, dispatch)).rejects.toThrow(
+      'PREFLIGHT_REPORT_EXPIRED',
+    );
+    expect(calls).toBe(2);
+  }
+});

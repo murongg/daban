@@ -215,3 +215,11 @@ describe('remote wire boundary', () => {
     ).toBe(true);
   });
 });
+
+it('accepts only negotiated preflight schema one and keeps other unknown snapshot fields closed', () => {
+  const snapshot = disconnected('ready');
+  expect(isRemoteSnapshot({ ...snapshot, preflight: 1 })).toBe(true);
+  for (const value of [true, 2, '1', null])
+    expect(isRemoteSnapshot({ ...snapshot, preflight: value })).toBe(false);
+  expect(isRemoteSnapshot({ ...snapshot, preflight: 1, mockUnknown: true })).toBe(false);
+});

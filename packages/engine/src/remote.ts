@@ -1,4 +1,4 @@
-export { RuntimeClient } from './client.js';
+export { PreflightReplies, RuntimeClient } from './client.js';
 export { RemoteAccess } from './remote-access.js';
 export {
   remoteDigest,

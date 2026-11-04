@@ -19,6 +19,10 @@ export interface RemoteDevice {
 }
 
 const observations = new Set([
+  'preflight.options',
+  'preflight.inspect',
+  'preflight.preview',
+  'preflight.export',
   'context.inspect',
   'context.source',
   'local.status',

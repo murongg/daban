@@ -1521,3 +1521,135 @@ it.skipIf(process.platform !== 'darwin').each(['idle', 'running', 'queued-group'
     }
   },
 );
+
+it('refuses remote preflight without its target capability and validates returned target data', async () => {
+  const frame = { url: 'file:///mock/preflight.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  let supported = false;
+  const request = vi.fn(async (command: RuntimeCommand) =>
+    command.type === 'status'
+      ? { ...disconnected('ready'), ...(supported ? { preflight: 1 } : {}) }
+      : {
+          bot: 'mock-other',
+          workspace: 'mock-scope',
+          state: 'empty',
+          version: 'a'.repeat(64),
+          truncated: false,
+          items: [],
+        },
+  );
+  const service = runtimeService(
+    '/mock/preflight-remote',
+    frame.url,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'darwin',
+    { request },
+  );
+  try {
+    const handler = mocks.handlers.get('daban:runtime')!;
+    const command = { type: 'preflight.options', query: { bot: 'mock-bot' } };
+    expect(await handler({ sender, senderFrame: frame }, command, 'a'.repeat(64))).toEqual({
+      ok: false,
+      error: 'PREFLIGHT_UNSUPPORTED',
+    });
+    expect(request.mock.calls.map(([value]) => value.type)).toEqual(['status']);
+    supported = true;
+    expect(await handler({ sender, senderFrame: frame }, command, 'a'.repeat(64))).toEqual({
+      ok: false,
+      error: 'INVALID_PREFLIGHT_RESPONSE',
+    });
+    expect(request.mock.calls.map(([value]) => value.type)).toEqual([
+      'status',
+      'status',
+      'preflight.options',
+    ]);
+  } finally {
+    await service.close();
+  }
+});
+
+it('discards late preflight replies after reconnecting without refreshing unrelated runtime state', async () => {
+  const frame = { url: 'file:///mock/preflight.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  let release: (value: unknown) => unknown = () => undefined;
+  const pending = new Promise<unknown>((resolve) => {
+    release = resolve;
+  });
+  const client = {
+    status: vi.fn(async () => ({ ...disconnected('ready'), preflight: 1 as const })),
+    invoke: vi.fn(async () => pending),
+    releaseInputs: vi.fn(),
+  };
+  mocks.load.mockResolvedValue({ connect: vi.fn(async () => client), close: vi.fn() });
+  const service = runtimeService('/mock/preflight-owner', frame.url);
+  try {
+    await service.connect();
+    const handler = mocks.handlers.get('daban:runtime')!;
+    const command = { type: 'preflight.options', query: { bot: 'mock-bot' } };
+    const reading = handler({ sender, senderFrame: frame }, command);
+    await Promise.resolve();
+    await service.connect();
+    release({ synthetic: 'late' });
+    expect(await reading).toEqual({ ok: false, error: 'RUNTIME_OFFLINE' });
+    const polls = client.status.mock.calls.length;
+    client.invoke.mockResolvedValue({ synthetic: 'fresh' });
+    expect(await handler({ sender, senderFrame: frame }, command)).toEqual({
+      ok: true,
+      value: { synthetic: 'fresh' },
+    });
+    expect(client.status).toHaveBeenCalledTimes(polls);
+  } finally {
+    release(undefined);
+    await service.close();
+  }
+});
+
+it('drops remote preflight options that finish after their target disconnects', async () => {
+  const frame = { url: 'file:///mock/preflight.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  let release: (value: unknown) => unknown = () => undefined;
+  const pending = new Promise<unknown>((resolve) => {
+    release = resolve;
+  });
+  const request = vi.fn(async (command: RuntimeCommand) =>
+    command.type === 'status' ? { ...disconnected('ready'), preflight: 1 } : pending,
+  );
+  const service = runtimeService(
+    '/mock/preflight-disconnect',
+    frame.url,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'darwin',
+    { request },
+  );
+  const target = 'a'.repeat(64);
+  try {
+    const reading = mocks.handlers.get('daban:runtime')!(
+      { sender, senderFrame: frame },
+      { type: 'preflight.options', query: { bot: 'mock-bot' } },
+      target,
+    );
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    service.publishRemote(disconnected('offline'), target);
+    release({
+      bot: 'mock-bot',
+      workspace: 'mock-scope',
+      state: 'empty',
+      version: 'a'.repeat(64),
+      truncated: false,
+      items: [],
+    });
+    expect(await reading).toEqual({ ok: false, error: 'RUNTIME_OFFLINE' });
+  } finally {
+    release(undefined);
+    await service.close();
+  }
+});

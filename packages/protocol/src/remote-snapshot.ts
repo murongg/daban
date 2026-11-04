@@ -33,7 +33,7 @@ export interface RemoteSnapshotCapabilities {
   workspace: string;
   accept: SnapshotAccept;
 }
-export const supportedSnapshotCapabilities: SnapshotAccept = { contextInspector: 1 };
+export const supportedSnapshotCapabilities: SnapshotAccept = { contextInspector: 1, preflight: 1 };
 export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSnapshotCapabilities {
   return (
     object(value) &&
@@ -144,6 +144,7 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
     !exact(value, [
       'phase',
       'contextInspector',
+      'preflight',
       'error',
       'protocolVersion',
       'model',
@@ -178,6 +179,7 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
   if (
     !['connecting', 'ready', 'offline', 'unsupported'].includes(String(value.phase)) ||
     (value.contextInspector !== undefined && value.contextInspector !== 1) ||
+    (value.preflight !== undefined && value.preflight !== 1) ||
     !integer(value.protocolVersion) ||
     !optional(value.error, (error) => text(error, 512)) ||
     typeof value.sharedLogin !== 'boolean' ||

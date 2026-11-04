@@ -1517,6 +1517,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
 }
 export interface RuntimeSnapshot {
   contextInspector?: 1;
+  preflight?: 1;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1602,6 +1603,10 @@ export function recoveryReader(command: RuntimeCommand) {
     'chat.receipt',
     'chat.history',
     'transcript.statistics',
+    'preflight.options',
+    'preflight.inspect',
+    'preflight.preview',
+    'preflight.export',
     'context.inspect',
     'context.source',
     'transcript.list',
@@ -3947,6 +3952,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | import('./preflight.js').PreflightCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4399,6 +4405,7 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
 export * from './command.js';
 export * from './context-inspector.js';
 export * from './peer.js';
+export * from './preflight.js';
 export * from './receipt.js';
 export * from './remote.js';
 export * from './remote-snapshot.js';
