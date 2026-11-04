@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ReviewArea, ReviewCapture } from '@daban/protocol';
@@ -42,6 +42,57 @@ async function fixture(t: Pick<TestContext, 'onTestFinished'>) {
   await reviews.ready;
   return { root, reviews };
 }
+test('initial quota exhaustion persists its cause without admitting later capture evidence', async (t) => {
+  const { root } = await fixture(t);
+  const reviews = new FileReviews(root, { maxBytes: 2000 });
+  const pointer = await reviews.begin(scope);
+  expect(pointer).toEqual({ revision: 1, state: 'unavailable' });
+  const page = await reviews.read({ scope });
+  expect(page).toMatchObject({
+    state: 'unavailable',
+    reasons: expect.arrayContaining(['storage-limit']),
+    items: [],
+  });
+  expect(page.reasons).not.toContain('corrupt');
+  expect(await reviews.before(scope, [mockCapture('not retained')], roots)).toEqual(pointer);
+  expect(await reviews.finish(scope, [mockCapture('not retained either')])).toEqual(pointer);
+  const reopened = new FileReviews(root, { maxBytes: 2000 });
+  await reopened.ready;
+  expect(await reopened.read({ scope })).toEqual(page);
+});
+
+test('an existing corrupt head is not relabeled as initial quota exhaustion', async (t) => {
+  const { root, reviews } = await fixture(t);
+  const directory = path.join(root, digest(JSON.stringify(scope)));
+  await mkdir(directory, { mode: 0o700 });
+  await writeFile(path.join(directory, 'head.json'), '{', { mode: 0o600 });
+  await expect(reviews.begin(scope)).rejects.toBeInstanceOf(SyntaxError);
+  expect(await reviews.read({ scope })).toMatchObject({
+    state: 'unavailable',
+    reasons: ['corrupt'],
+  });
+});
+
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'publication permission failures retain their original IO error',
+  async (t) => {
+    const { root, reviews } = await fixture(t);
+    const blocked = path.join(root, '0'.repeat(64));
+    await mkdir(blocked, { mode: 0o000 });
+    try {
+      await expect(reviews.begin(scope)).rejects.toMatchObject({
+        code: expect.stringMatching(/^(EACCES|EPERM)$/),
+      });
+    } finally {
+      await chmod(blocked, 0o700);
+    }
+    expect(await reviews.read({ scope })).toMatchObject({
+      state: 'unavailable',
+      reasons: ['corrupt'],
+    });
+  },
+);
+
 test('retains original input bytes and immutable end evidence independently of current files', async (t) => {
   const { reviews } = await fixture(t);
   await reviews.begin(scope);

@@ -259,6 +259,25 @@ test('storage exhaustion is explicit without changing the successful task outcom
   });
 });
 
+test('initial report quota exhaustion preserves a successful task and the durable storage-limit reason', async (t) => {
+  const { models } = await fixture(t);
+  models.reviews.options.maxBytes = 2000;
+  await models.start('a', { requestId: 'mock-initial-storage-limit', prompt: 'Synthetic work.' });
+  const job = models.jobs.get('a')!;
+  await job.done;
+  expect(job.phase).toBe('completed');
+  expect(
+    await models.fileReview({ scope: { bot: 'a', runId: job.id, chatRevision: 0 } }),
+  ).toMatchObject({
+    state: 'unavailable',
+    reasons: expect.arrayContaining(['storage-limit']),
+    items: [],
+  });
+  expect((await models.journal.read('a', job.id))?.fileReview).toMatchObject({
+    state: 'unavailable',
+  });
+});
+
 test('Stop also fences a stalled shared root lookup before capture is dispatched', async (t) => {
   let release: () => unknown = () => {};
   const pauseBase = new Promise((resolve) => {

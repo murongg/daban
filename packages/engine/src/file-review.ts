@@ -420,14 +420,31 @@ export class FileReviews {
         published: [],
         state: 'capturing-before',
       };
-      return this.publish(head, {
-        scope: head.scope,
-        revision: 0,
-        state: 'capturing-before',
-        before: [],
-        after: [],
-        reasons: [],
-      });
+      try {
+        return await this.publish(head, {
+          scope: head.scope,
+          revision: 0,
+          state: 'capturing-before',
+          before: [],
+          after: [],
+          reasons: [],
+        });
+      } catch (error) {
+        if (!(error instanceof Fault) || error.code !== 'FILE_REVIEW_STORAGE_LIMIT') throw error;
+        // No head exists yet: use the reserved space so a quota failure cannot masquerade as corrupt evidence.
+        return this.publish(
+          head,
+          {
+            scope: head.scope,
+            revision: 0,
+            state: 'unavailable',
+            before: [],
+            after: [],
+            reasons: ['storage-limit'],
+          },
+          true,
+        );
+      }
     });
   }
   async before(

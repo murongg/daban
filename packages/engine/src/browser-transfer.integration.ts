@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  type FileHandle,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -32,7 +42,7 @@ const payload = (result: Awaited<ReturnType<AgentTools['invoke']>>) => {
 test('real browser tools upload actual task bytes, download binary output, refuse overwrite/oversize and cancel a slow transfer', {
   skip: process.platform !== 'linux',
   timeout: 60000,
-}, async () => {
+}, async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-transfer-'));
   const workspace = path.join(root, 'workspace'),
     workdir = path.join(workspace, 'current');
@@ -63,9 +73,8 @@ test('real browser tools upload actual task bytes, download binary output, refus
       }
       res.write(Buffer.from('SYNTHETIC-SLOW'));
       started();
-      setTimeout(() => {
-        if (!res.destroyed) res.end(Buffer.from('END'));
-      }, 1000);
+      // Keep the transfer incomplete until cancellation; capture latency must not finish the cancel fixture first.
+      await new Promise<unknown>((resolve) => res.once('close', () => resolve(undefined)));
       return;
     }
     if (req.method === 'POST' && req.url === '/fixture/upload') {
@@ -155,13 +164,61 @@ test('real browser tools upload actual task bytes, download binary output, refus
     shot = submitted.observation;
     assert.match(shot.text, /UPLOAD-OK-79/);
     assert.equal(uploaded, true);
-    const saved = payload(
-      await tools.invoke(run, 'browser_download', {
-        observation: shot.id,
-        ref: ref(shot.text, 'Download synthetic binary'),
-        name: 'result.bin',
-      }),
+    const probe = await open(path.join(root, 'publication-handle-probe'), 'wx', 0o600);
+    const fileHandles = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const originalWrite = fileHandles.writeFile;
+    let announceStaging!: () => unknown;
+    let releaseStaging!: () => unknown;
+    const staging = new Promise<undefined>((resolve) => {
+      announceStaging = () => resolve(undefined);
+    });
+    const released = new Promise<undefined>((resolve) => {
+      releaseStaging = () => resolve(undefined);
+    });
+    let held = false;
+    const publicationWrite = t.mock.method(
+      fileHandles,
+      'writeFile',
+      async function (this: FileHandle, ...args: Parameters<FileHandle['writeFile']>) {
+        const target = await realpath(`/proc/self/fd/${this.fd}`).catch(() => '');
+        if (!held && target.startsWith(`${run.canonicalRoot}/.browser-download-`)) {
+          // Download bytes arrive before publication staging exists; hold the real file write to observe that phase deterministically.
+          held = true;
+          announceStaging();
+          await released;
+        }
+        return originalWrite.apply(this, args);
+      },
     );
+    const saving = tools.invoke(run, 'browser_download', {
+      observation: shot.id,
+      ref: ref(shot.text, 'Download synthetic binary'),
+      name: 'result.bin',
+    });
+    try {
+      const observed = await Promise.race([
+        staging.then(() => true),
+        saving.then((result) => {
+          payload(result);
+          return false;
+        }),
+      ]);
+      assert.equal(
+        observed,
+        true,
+        'publication staging must be observed before download completion',
+      );
+      const stagedFiles = await reviewWorkspace.captureReview();
+      assert.ok(stagedFiles.snapshot.reasons.includes('excluded'));
+      assert.ok(stagedFiles.files.every((file) => !file.path.startsWith('.browser-download-')));
+      assert.ok(stagedFiles.files.every((file) => file.path !== 'result.bin'));
+    } finally {
+      releaseStaging();
+      publicationWrite.mock.restore();
+      await saving;
+    }
+    const saved = payload(await saving);
     assert.ok(saved.file);
     assert.deepEqual(await readFile(path.join(workdir, 'result.bin')), bytes);
     const publishedFiles = await reviewWorkspace.captureReview();
@@ -236,8 +293,8 @@ test('real browser tools upload actual task bytes, download binary output, refus
     });
     await slowStarted;
     const incompleteFiles = await reviewWorkspace.captureReview();
-    assert.ok(incompleteFiles.snapshot.reasons.includes('excluded'));
     assert.ok(incompleteFiles.files.every((file) => !file.path.startsWith('.browser-download-')));
+    assert.ok(incompleteFiles.files.every((file) => file.path !== 'cancelled.bin'));
     const human = await Promise.race([
       browser.control.transfer('a', 0, 'human'),
       new Promise<never>((_resolve, reject) =>
