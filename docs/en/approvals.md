@@ -48,3 +48,13 @@ Retain the original request and verify its result first. The app's retry follows
 Sudo inside Linux does not bypass approvals. Selecting an MCP tool does not eliminate per-call confirmation. Native desktop authorization permits real input and is not a promise of a new prompt before every click; see [Native desktop](local-computer.md).
 
 Webpages, files, and tool results cannot grant new authority on your behalf. Review the task boundaries and actual operations, particularly those affecting accounts, files, or external services.
+
+## Exact Bot rules
+
+Open **Settings → Approval rules**, choose a Bot, or select **Create an exact rule from this request** on an approval card. A one-time answer never creates a rule. Saving and previewing rules do not execute tools or approve the current request.
+
+Rules match an exact URL (including its query), complete command SHA-256 and canonical directory, complete MCP connection/catalog/tool/argument identity, or complete installation-plan digest. Arbitrary regular expressions, command prefixes and native desktop selectors are unavailable. Installation rules can only ask or deny. MCP allow requires a separate purpose confirmation and cannot enable disabled tools.
+
+Deny takes priority over ask and allow, including in full mode. Allow cannot bypass ask mode, uncertain command risk, file boundaries or human takeover. Interactive and scheduled tasks use separate rule sources. Rules can be disabled, deleted or expired; changing the policy invalidates waiting decisions before dispatch. After an uncertain save, inspect its receipt before retrying the same request. Conflicts retain the draft and require an explicit current-revision choice.
+
+New records show the reason, matched rule revision and checked exact resource. Older records report that no reason was recorded. A service without the rule capability disables editing. This release supports Bot scope; project scope awaits the shared Projects service.

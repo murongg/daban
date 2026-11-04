@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
+import { ApprovalRules, type RulePolicy } from './approval-rules.js';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
 import { Interactions } from './interactions.js';
@@ -26,7 +27,11 @@ async function ready(check: () => Promise<boolean>) {
   }
   expect.unreachable('Synthetic integration did not reach expected state');
 }
-async function fixture() {
+async function fixture(
+  policy?: RulePolicy,
+  start?: () => Promise<unknown>,
+  beforeSend?: () => Promise<unknown>,
+) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-integration-tools-'));
   const store = new Integrations(path.join(root, 'integrations.sqlite'));
   const interactions = new Interactions(path.join(root, 'interactions'));
@@ -52,14 +57,22 @@ async function fixture() {
     effects = 0,
     unknown = false,
     changed = false;
-  const tools = new IntegrationTools(store, interactions, {
-    remote: async (_config, options) => {
+  const options = {
+    policy,
+    remote: async (
+      _config: { endpoint: string; bearer?: string },
+      options: import('./mcp-fetch.js').McpFetchOptions,
+    ) => {
       factories++;
       return {
-        start: async () => {},
+        start: async () => {
+          await start?.();
+        },
         tools: async () => (changed ? [{ ...offered[0], description: '合成目录已更新' }] : offered),
-        call: async (_name, args) => {
+        call: async (_name: string, args: Record<string, unknown>) => {
           await options.onDispatch?.();
+          await beforeSend?.();
+          options.assertAuthority?.();
           effects++;
           if (unknown) throw new Error('synthetic lost reply');
           return { content: [{ type: 'text', text: `SYNTHETIC:${args.value}` }] };
@@ -67,7 +80,8 @@ async function fixture() {
         close: async () => {},
       };
     },
-  });
+  };
+  const tools = new IntegrationTools(store, interactions, options);
   const run = {
     id: 'mock-run',
     bot: 'mock-a',
@@ -137,6 +151,83 @@ test('external tools stay lazy and per-Bot; only a committed one-time decision p
   }
 });
 
+test('exact MCP deny is applied before connecting and stale durable approval cannot dispatch', async () => {
+  let rules: ApprovalRules | undefined;
+  const policy: RulePolicy = {
+    review: (run, selector, baseline, allowEligible = false) =>
+      rules!.evaluate({
+        scope: { kind: 'bot', bot: run.bot },
+        selector,
+        trigger: 'interactive',
+        mode: 'auto',
+        baseline,
+        allowEligible,
+      }),
+    assertCurrent: (_run, decision) => rules!.assertCurrent(decision),
+  };
+  const f = await fixture(policy);
+  rules = new ApprovalRules(path.join(f.root, 'rules.sqlite'));
+  try {
+    const capture = f.run.integrations.connections[0];
+    const { mcpDigest } = await import('./mcp-catalog.js');
+    const selector = {
+      kind: 'mcp' as const,
+      connection: capture.connection,
+      configRevision: capture.revision,
+      catalogDigest: capture.catalogDigest,
+      tool: 'synthetic_echo',
+      inputHash: mcpDigest({ value: 'mock-denied' }),
+    };
+    await rules.write({
+      requestId: 'mock-deny',
+      expectedRevision: 0,
+      scope: { kind: 'bot', bot: f.run.bot },
+      action: 'save',
+      rule: {
+        id: 'mock-deny',
+        name: 'Synthetic MCP deny',
+        effect: 'deny',
+        enabled: true,
+        trigger: 'interactive',
+        selector,
+      },
+    });
+    const denied = f.tools.invoke(f.run, f.alias, { value: 'mock-denied' }, 'mock-denied-call');
+    await ready(async () => (await f.interactions.list()).length > 0);
+    expect((await f.interactions.list())[0]).toMatchObject({
+      reply: { allow: false },
+      policyDecision: { effect: 'deny' },
+    });
+    expect((await denied).isError).toBe(true);
+    expect(f.counts()).toEqual({ effects: 0, factories: 0 });
+    const pending = f.tools.invoke(f.run, f.alias, { value: 'mock-ask' }, 'mock-ask-call');
+    await ready(async () =>
+      (await f.interactions.list()).some((item) => item.status === 'pending'),
+    );
+    const card = (await f.interactions.list()).find((item) => item.status === 'pending')!;
+    await rules.write({
+      requestId: 'mock-edit',
+      expectedRevision: 1,
+      scope: { kind: 'bot', bot: f.run.bot },
+      action: 'save',
+      rule: {
+        id: 'mock-deny',
+        name: 'Synthetic changed policy',
+        effect: 'ask',
+        enabled: true,
+        trigger: 'interactive',
+        selector,
+      },
+    });
+    await f.interactions.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
+    expect((await pending).isError).toBe(true);
+    expect(f.counts()).toEqual({ effects: 0, factories: 0 });
+  } finally {
+    await rules.close();
+    await f.close();
+  }
+});
+
 test('refusal and disable revoke pending authority without connecting, while uncertain effects cannot replay under a new wire id', async () => {
   const f = await fixture();
   try {
@@ -197,6 +288,138 @@ test('catalog drift after approval cannot execute the old reviewed tool definiti
     expect(f.counts().effects).toBe(0);
     expect((await f.store.capture(f.run.bot)).connections.length).toBe(0);
   } finally {
+    await f.close();
+  }
+});
+
+test('the granted MCP arguments are immutable while awaiting approval', async () => {
+  const f = await fixture();
+  try {
+    const args = { value: 'mock-reviewed' };
+    const pending = f.tools.invoke(f.run, f.alias, args, 'mock-immutable-call');
+    await ready(async () =>
+      (await f.interactions.list()).some((item) => item.status === 'pending'),
+    );
+    const card = (await f.interactions.list())[0];
+    args.value = 'mock-changed';
+    await f.interactions.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
+    expect(JSON.stringify(await pending)).toContain('SYNTHETIC:mock-reviewed');
+    expect(f.counts().effects).toBe(1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a rule edit while MCP start is awaiting readiness invalidates the committed approval', async () => {
+  let rules: ApprovalRules | undefined;
+  let signalStarted: () => unknown = () => undefined;
+  let release: () => unknown = () => undefined;
+  const started = new Promise<unknown>((resolve) => {
+    signalStarted = () => resolve(undefined);
+  });
+  const held = new Promise<unknown>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const policy: RulePolicy = {
+    review: (run, selector, baseline) =>
+      rules!.evaluate({
+        scope: { kind: 'bot', bot: run.bot },
+        selector,
+        trigger: 'interactive',
+        mode: 'auto',
+        baseline,
+        allowEligible: false,
+      }),
+    assertCurrent: (_run, decision) => rules!.assertCurrent(decision),
+  };
+  const f = await fixture(policy, async () => {
+    signalStarted();
+    await held;
+  });
+  rules = new ApprovalRules(path.join(f.root, 'rules.sqlite'));
+  try {
+    const pending = f.tools.invoke(f.run, f.alias, { value: 'mock-start-wait' }, 'mock-start-wait');
+    await ready(async () =>
+      (await f.interactions.list()).some((item) => item.status === 'pending'),
+    );
+    const card = (await f.interactions.list())[0];
+    await f.interactions.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
+    await started;
+    const capture = f.run.integrations.connections[0];
+    const { mcpDigest } = await import('./mcp-catalog.js');
+    await rules.write({
+      requestId: 'mock-revoke',
+      expectedRevision: 0,
+      scope: { kind: 'bot', bot: f.run.bot },
+      action: 'save',
+      rule: {
+        id: 'mock-revoke',
+        name: 'Synthetic revoke while connecting',
+        effect: 'deny',
+        enabled: true,
+        trigger: 'interactive',
+        selector: {
+          kind: 'mcp',
+          connection: capture.connection,
+          configRevision: capture.revision,
+          catalogDigest: capture.catalogDigest,
+          tool: 'synthetic_echo',
+          inputHash: mcpDigest({ value: 'mock-start-wait' }),
+        },
+      },
+    });
+    release();
+    expect(JSON.stringify(await pending)).toContain('APPROVAL_POLICY_CHANGED');
+    expect(f.counts()).toEqual({ factories: 1, effects: 0 });
+    expect((await f.interactions.list())[0].reply).toEqual({ kind: 'decision', allow: true });
+  } finally {
+    release();
+    await rules.close();
+    await f.close();
+  }
+});
+
+test('the final MCP send checks the original binding even if its change notification is delayed', async () => {
+  let signalReady: () => unknown = () => undefined;
+  let release: () => unknown = () => undefined;
+  const readyToSend = new Promise<unknown>((resolve) => {
+    signalReady = () => resolve(undefined);
+  });
+  const held = new Promise<unknown>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const f = await fixture(undefined, undefined, async () => {
+    signalReady();
+    await held;
+  });
+  try {
+    const pending = f.tools.invoke(
+      f.run,
+      f.alias,
+      { value: 'mock-binding-race' },
+      'mock-binding-race',
+    );
+    await ready(async () =>
+      (await f.interactions.list()).some((item) => item.status === 'pending'),
+    );
+    const card = (await f.interactions.list())[0];
+    await f.interactions.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
+    await readyToSend;
+    const capture = f.run.integrations.connections[0];
+    f.store.onChange = undefined;
+    await f.store.bind(f.run.bot, {
+      connection: capture.connection,
+      configRevision: capture.revision,
+      bindingRevision: capture.bindingRevision,
+      catalogDigest: capture.catalogDigest,
+      tools: ['synthetic_echo'],
+      enabled: false,
+    });
+    release();
+    expect(JSON.stringify(await pending)).toContain('MCP_AUTHORITY_CHANGED');
+    expect(f.counts().effects).toBe(0);
+  } finally {
+    release();
     await f.close();
   }
 });

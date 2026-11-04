@@ -247,6 +247,7 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  trigger?: import('@daban/protocol').ApprovalTrigger;
   goalSession?: boolean;
   goal?: GoalProgress;
   planning?: boolean;
@@ -437,6 +438,7 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'trigger',
       'bot',
       'chatRevision',
       'conversationId',

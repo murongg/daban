@@ -2,12 +2,17 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
+  approvalRulesCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
   disconnected,
   groupCopyKey,
   imageProtocol,
+  isApprovalRuleReceipt,
+  isApprovalRulesCommand,
+  isApprovalRulesSnapshot,
+  isApprovalRulesStatus,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
@@ -63,6 +68,7 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isPolicyDecision,
   isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
@@ -312,6 +318,7 @@ export class RuntimeClient {
         'x-prototype-token': token,
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
+        'x-daban-approval-rules': approvalRulesCapability,
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: data === undefined ? undefined : JSON.stringify(data),
@@ -358,6 +365,7 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         clientProtocol?: number;
+        approvalRules?: unknown;
         botCapabilities?: unknown;
         localComputer?: unknown;
         chats?: unknown;
@@ -513,6 +521,15 @@ export class RuntimeClient {
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
+      if (raw.approvalRules !== undefined)
+        snapshot.approvalRules = isApprovalRulesStatus(raw.approvalRules)
+          ? raw.approvalRules
+          : {
+              capability: approvalRulesCapability,
+              available: false,
+              revision: 0,
+              error: 'INVALID_RUNTIME_STATE',
+            };
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
           ? raw.software
@@ -721,6 +738,53 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (isApprovalRulesCommand(command)) {
+      const captured = structuredClone(command);
+      const scope =
+        captured.type === 'approval.rules.write' ? captured.request.scope : captured.scope;
+      const state = await this.status();
+      if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
+        throw new Error('APPROVAL_UPGRADE_REQUIRED');
+      if (!state.approvalRules.available) throw new Error('APPROVAL_RULES_UNAVAILABLE');
+      const value = await this.api(
+        `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
+        captured,
+      );
+      const valid =
+        captured.type === 'approval.rules.list'
+          ? isApprovalRulesSnapshot(value) && value.scope.bot === scope.bot
+          : captured.type === 'approval.rules.preview'
+            ? isPolicyDecision(value) &&
+              value.scope.bot === scope.bot &&
+              value.trigger === captured.trigger &&
+              JSON.stringify(value.selector) === JSON.stringify(captured.selector)
+            : isApprovalRuleReceipt(value) &&
+              value.scope.bot === scope.bot &&
+              value.requestId ===
+                (captured.type === 'approval.rules.receipt'
+                  ? captured.requestId
+                  : captured.request.requestId);
+      if (!valid) throw new Error('INVALID_RUNTIME_STATE');
+      if (captured.type === 'approval.rules.write' && isApprovalRuleReceipt(value)) {
+        const request = captured.request;
+        const id = request.action === 'save' ? request.rule.id : request.id;
+        if (
+          value.id !== id ||
+          value.revision !== request.expectedRevision + 1 ||
+          (request.action === 'delete'
+            ? value.deleted !== true
+            : !value.rule ||
+              value.deleted !== undefined ||
+              Object.entries(request.rule).some(
+                ([key, field]) =>
+                  JSON.stringify(value.rule![key as keyof typeof request.rule]) !==
+                  JSON.stringify(field),
+              ))
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      }
+      return value;
+    }
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
       const value = await this.api('/api/host/recovery', captured);

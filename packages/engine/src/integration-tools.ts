@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import type { RulePolicy } from './approval-rules.js';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
 import { type Integrations, type McpSnapshot, mcpSecrets } from './integrations.js';
@@ -23,6 +24,7 @@ interface Remote {
   close(): Promise<unknown>;
 }
 interface Options {
+  policy?: RulePolicy;
   networkFile?: string;
   remote?: (
     config: { endpoint: string; bearer?: string },
@@ -35,7 +37,9 @@ const text = (value: string, isError = true): ToolResult => ({
 });
 function failure(error: unknown, fallback = 'MCP_CONNECTION_FAILED') {
   const code = errorCode(error) ?? '';
-  return /^(MCP_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(code) ? code : fallback;
+  return /^(MCP_[A-Z_]+|APPROVAL_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(code)
+    ? code
+    : fallback;
 }
 function clean(value: unknown, secrets: readonly string[], depth = 0): unknown {
   if (depth > 16) throw new Fault('MCP_RESULT_TOO_LARGE');
@@ -123,8 +127,9 @@ export class IntegrationTools {
   private async remote(
     config: { endpoint: string; bearer?: string },
     onDispatch?: () => Promise<unknown>,
+    assertAuthority?: () => unknown,
   ) {
-    if (this.options.remote) return this.options.remote(config, { onDispatch });
+    if (this.options.remote) return this.options.remote(config, { onDispatch, assertAuthority });
     let upstream = process.env.DSH_NETWORK_PROXY;
     if (this.options.networkFile)
       try {
@@ -140,7 +145,7 @@ export class IntegrationTools {
       } catch (error) {
         if (errorCode(error) !== 'ENOENT') throw new Fault('MCP_NETWORK_CONFIG');
       }
-    return new McpRemote(config, { upstream, onDispatch });
+    return new McpRemote(config, { upstream, onDispatch, assertAuthority });
   }
   probe(connection: string, revision: number, caller?: AbortSignal) {
     if (this.closed) return Promise.reject(new Fault('MCP_CLOSED'));
@@ -185,6 +190,8 @@ export class IntegrationTools {
   ): Promise<ToolResult> {
     try {
       if (this.closed || run.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+      // The approval and dispatch must share these exact bytes, even if a caller mutates its object.
+      args = structuredClone(args);
       const connection = run.integrations?.connections.find((entry) =>
         entry.tools.some((tool) => tool.alias === name),
       );
@@ -251,6 +258,20 @@ export class IntegrationTools {
     let dispatched = false;
     try {
       signal.throwIfAborted();
+      const policyDecision = await this.options.policy?.review(
+        run,
+        {
+          kind: 'mcp',
+          connection: connection.connection,
+          configRevision: connection.revision,
+          catalogDigest: connection.catalogDigest,
+          tool: operation,
+          inputHash: mcpDigest(args),
+        },
+        'ask',
+        true,
+      );
+      if (policyDecision) await this.store.recordDecision(id, policyDecision);
       let request = await this.interactions.open(
         run.bot,
         run.id!,
@@ -269,6 +290,7 @@ export class IntegrationTools {
           inputHash: mcpDigest(args),
         },
         run.conversationId,
+        policyDecision,
       );
       while (request.status === 'pending')
         request = await this.interactions.wait(run.bot, run.id!, approvalId, signal);
@@ -281,14 +303,31 @@ export class IntegrationTools {
         await this.store.finish(id, { phase: 'denied', error: 'MCP_APPROVAL_DENIED' });
         return text('MCP_APPROVAL_DENIED');
       }
+      if (policyDecision) this.options.policy!.assertCurrent(run, policyDecision);
       const config = await this.store.assertLive(run.bot, connection, operation);
       const secrets = mcpSecrets(config);
-      remote = await this.remote(config, async () => {
-        signal.throwIfAborted();
-        await this.store.assertLive(run.bot, connection, operation);
-        await this.store.dispatched(id);
-        dispatched = true;
-      });
+      remote = await this.remote(
+        config,
+        async () => {
+          signal.throwIfAborted();
+          await this.store.assertLive(run.bot, connection, operation);
+          if (policyDecision) this.options.policy!.assertCurrent(run, policyDecision);
+          await this.store.dispatched(id);
+          // The receipt write can yield; only the original decision may authorize the actual HTTP call.
+          if (policyDecision) this.options.policy!.assertCurrent(run, policyDecision);
+          dispatched = true;
+        },
+        () => {
+          try {
+            signal.throwIfAborted();
+            this.store.assertLiveNow(run.bot, connection, operation);
+            if (policyDecision) this.options.policy!.assertCurrent(run, policyDecision);
+          } catch (error) {
+            dispatched = false;
+            throw error;
+          }
+        },
+      );
       await remote.start(signal);
       const catalog = mcpCatalog(connection.connection, await remote.tools(signal), secrets);
       if (mcpDigest(catalog) !== connection.catalogDigest) {

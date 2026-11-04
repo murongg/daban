@@ -1,4 +1,12 @@
+export * from './approval-rules.js';
 export * from './goals.js';
+
+import type {
+  ApprovalRulesCommand,
+  ApprovalRulesStatus,
+  PolicyDecision,
+} from './approval-rules.js';
+import { isPolicyDecision } from './approval-rules.js';
 
 import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
@@ -193,6 +201,7 @@ export type McpStatus =
   | { available: true; revision: number }
   | { available: false; error: 'MCP_STORE_UNAVAILABLE' };
 export interface McpReceipt {
+  policyDecision?: PolicyDecision;
   id: string;
   bot: string;
   run: string;
@@ -471,6 +480,7 @@ export function isMcpReceipt(value: unknown): value is McpReceipt {
   return (
     profileObject(value) &&
     browserKeys(value, [
+      'policyDecision',
       'id',
       'bot',
       'run',
@@ -489,6 +499,8 @@ export function isMcpReceipt(value: unknown): value is McpReceipt {
     typeof value.session === 'string' &&
     value.session.length <= 200 &&
     mcpRevision(value.configRevision) &&
+    (value.policyDecision === undefined ||
+      (isPolicyDecision(value.policyDecision) && value.policyDecision.scope.bot === value.bot)) &&
     typeof value.tool === 'string' &&
     !!value.tool &&
     value.tool.length <= 200 &&
@@ -1516,6 +1528,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  approvalRules?: ApprovalRulesStatus;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -2815,6 +2828,7 @@ export type InteractionInput = { id: string; sessionId: string } & (
     }
 );
 export type Interaction = InteractionInput & {
+  policyDecision?: PolicyDecision;
   decisionSource?: 'policy';
   conversationId?: string;
   bot: string;
@@ -3009,10 +3023,13 @@ export function isInteraction(value: unknown): value is Interaction {
     updatedAt,
     conversationId,
     decisionSource,
+    policyDecision,
     ...input
   } = value;
   return (
     isInteractionInput(input) &&
+    (policyDecision === undefined ||
+      (isPolicyDecision(policyDecision) && policyDecision.scope.bot === bot)) &&
     (decisionSource === undefined ||
       (decisionSource === 'policy' &&
         input.kind === 'approval' &&
@@ -3944,6 +3961,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | ApprovalRulesCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand

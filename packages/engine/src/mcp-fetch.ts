@@ -15,6 +15,7 @@ export interface McpFetchOptions {
   maxBytes?: number;
   timeoutMs?: number;
   onDispatch?: () => unknown | Promise<unknown>;
+  assertAuthority?: () => unknown;
 }
 export class McpFetch {
   private readonly endpoint: URL;
@@ -123,6 +124,9 @@ export class McpFetch {
       });
     const limit = this.options.maxBytes ?? 1024 * 1024;
     try {
+      signal.throwIfAborted();
+      // Dialing can outlive consent; this synchronous guard precedes the actual HTTP request.
+      if (tool) this.options.assertAuthority?.();
       return await new Promise<Response>((resolve, reject) => {
         const req = httpsRequest(
           {

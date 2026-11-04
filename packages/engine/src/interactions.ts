@@ -6,8 +6,10 @@ import {
   type Interaction,
   isInteraction,
   isInteractionInput,
+  isPolicyDecision,
   isUserReply,
   matchesReply,
+  type PolicyDecision,
   validAgentId,
 } from '@daban/protocol';
 import { Fault } from './control.js';
@@ -116,11 +118,21 @@ export class Interactions {
       throw new Fault('INTERACTION_NOT_FOUND', 404);
     return item;
   }
-  open(bot: string, runId: string, input: unknown, conversationId?: string) {
+  open(
+    bot: string,
+    runId: string,
+    input: unknown,
+    conversationId?: string,
+    policyDecision?: PolicyDecision,
+  ) {
     if (
       !validAgentId(bot) ||
       !validAgentId(runId) ||
       !isInteractionInput(input) ||
+      (policyDecision !== undefined &&
+        (!isPolicyDecision(policyDecision) ||
+          policyDecision.scope.bot !== bot ||
+          input.kind !== 'approval')) ||
       (conversationId !== undefined && !validAgentId(conversationId))
     )
       return Promise.reject(new Fault('INVALID_INTERACTION', 400));
@@ -136,6 +148,7 @@ export class Interactions {
           status: _status,
           reply: _reply,
           decisionSource: _source,
+          policyDecision: _policy,
           ...original
         } = existing;
         if (
@@ -149,13 +162,18 @@ export class Interactions {
       // Only the host's captured live-task policy can grant this; old records and questions never gain new authority.
       const automatic =
         value.kind === 'approval' &&
-        this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true;
+        (policyDecision
+          ? policyDecision.effect === 'allow'
+          : this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true);
+      const denied = policyDecision?.effect === 'deny';
       return this.commit({
         ...value,
         bot,
         runId,
         ...(conversationId ? { conversationId } : {}),
-        status: automatic ? 'resolved' : 'pending',
+        status: automatic || denied ? 'resolved' : 'pending',
+        ...(policyDecision ? { policyDecision: structuredClone(policyDecision) } : {}),
+        ...(denied ? { reply: { kind: 'decision' as const, allow: false } } : {}),
         ...(automatic
           ? { reply: { kind: 'decision' as const, allow: true }, decisionSource: 'policy' as const }
           : {}),

@@ -1,4 +1,10 @@
-import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
+import {
+  type ApprovalMode,
+  isPolicyDecision,
+  isTaskPlan,
+  type PolicyDecision,
+} from '@daban/protocol';
+import { type BridgeConfig, type BridgeFetch, callBridge } from './bridge.js';
 
 export const name = 'daban-budget';
 export const inject = ['tools', 'approval'];
@@ -50,7 +56,8 @@ export function requestedUrls(prompt: string) {
 }
 export function apply(
   ctx: Context,
-  config: { limit: number; urls: string[]; approvalMode?: ApprovalMode },
+  config: { limit: number; urls: string[]; approvalMode?: ApprovalMode; bridge?: BridgeConfig },
+  request: BridgeFetch = fetch,
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
@@ -94,8 +101,75 @@ export function apply(
         value && typeof value === 'object' && 'url' in value && typeof value.url === 'string'
           ? normalizedUrl(value.url)
           : undefined;
+      let hostDecision: PolicyDecision | undefined;
+      const agent = exec.agent;
+      const sessionId =
+        agent &&
+        typeof agent === 'object' &&
+        'session' in agent &&
+        agent.session &&
+        typeof agent.session === 'object' &&
+        'id' in agent.session
+          ? agent.session.id
+          : undefined;
+      const blocked = () => ({
+        kind: 'deny',
+        reason:
+          'The Host approval policy refused or invalidated this request. No HTTP request was made.',
+        info: { name: 'WebPolicyError', code: 'APPROVAL_POLICY_CHANGED' },
+      });
+      if (config.bridge) {
+        try {
+          const decision = await callBridge(
+            config.bridge,
+            'approval.web',
+            { url, sessionId },
+            exec.signal,
+            request,
+          );
+          if (
+            !isPolicyDecision(decision) ||
+            decision.selector.kind !== 'url' ||
+            decision.selector.url !== url ||
+            decision.effect === 'deny'
+          )
+            return blocked();
+          hostDecision = decision;
+        } catch {
+          return blocked();
+        }
+      }
+      const dispatch = async () => {
+        if (hostDecision && config.bridge) {
+          try {
+            const checked = await callBridge(
+              config.bridge,
+              'approval.web.check',
+              { url, sessionId, decision: hostDecision },
+              exec.signal,
+              request,
+            );
+            if (
+              !checked ||
+              typeof checked !== 'object' ||
+              !('current' in checked) ||
+              checked.current !== true
+            )
+              return blocked();
+          } catch {
+            return blocked();
+          }
+        }
+        if (exec.signal.aborted) return { kind: 'cancel' };
+        return next();
+      };
       // Page text cannot authorize another destination or append private data to an approved URL.
-      if (url && (config.approvalMode === 'ask' || !urls.has(url)) && exec.agent && ctx.approval) {
+      if (
+        url &&
+        (hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !urls.has(url)) &&
+        exec.agent &&
+        ctx.approval
+      ) {
         const decision = await ctx.approval.request({
           agent: exec.agent,
           toolName: 'web_fetch',
@@ -103,7 +177,7 @@ export function apply(
           reason: JSON.stringify({ url }),
           signal: exec.signal,
         });
-        if (decision === 'allowed-once' && !exec.signal.aborted) return next();
+        if (decision === 'allowed-once' && !exec.signal.aborted) return dispatch();
         return {
           kind: 'deny',
           reason:
@@ -123,13 +197,14 @@ export function apply(
           },
         };
       }
-      if (!url || config.approvalMode === 'ask' || !urls.has(url))
+      if (!url || hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !urls.has(url))
         return {
           kind: 'deny',
           reason:
             'Only fetch exact URLs provided by the user in this task. Ask the user to supply another URL.',
           info: { name: 'WebPolicyError', code: 'WEB_URL_NOT_AUTHORIZED' },
         };
+      return dispatch();
     }
     return next();
   });

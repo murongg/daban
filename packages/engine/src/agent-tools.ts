@@ -153,7 +153,7 @@ export class AgentTools {
     name: string,
     args: Record<string, unknown>,
     wireId: string | undefined,
-    dispatch: () => Promise<ToolResult>,
+    dispatch: (assertPolicy?: () => unknown) => Promise<ToolResult>,
   ) => Promise<ToolResult>;
   shellRunner?: (run: AgentToolRun, command: string) => Promise<unknown>;
   private readonly remoteCatalogs = new Map<
@@ -363,7 +363,8 @@ export class AgentTools {
         phase: 'running',
       };
       run.trace.push(trace);
-      const dispatch = () => this.dispatchRemote(run, name, args, wireId, computer);
+      const dispatch = (assertPolicy?: () => unknown) =>
+        this.dispatchRemote(run, name, args, wireId, computer, assertPolicy);
       if (raw && !this.executeRemote) throw new Fault('COMMAND_APPROVAL_UNAVAILABLE');
       const result = raw
         ? await this.executeRemote!(run, name, args, wireId, dispatch)
@@ -392,10 +393,13 @@ export class AgentTools {
     args: Record<string, unknown>,
     wireId: string | undefined,
     computer: boolean,
+    assertPolicy?: () => unknown,
   ): Promise<ToolResult> {
     run.abort.signal.throwIfAborted();
     if (computer) await this.authorizeComputer?.(run);
     await this.open(run);
+    // Opening the guest may wait; revalidate consent after that wait and before sending an effect.
+    assertPolicy?.();
     const operationId = randomUUID();
     let status = (await this.options.execution!.call(
       'tools.invoke',

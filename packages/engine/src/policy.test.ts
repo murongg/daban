@@ -1,5 +1,68 @@
 import { expect, test } from 'vitest';
+import { approvalHash } from './approval-rules.js';
 import { apply, inject, requestedUrls } from './policy.js';
+
+test('a supplied URL still consults Host deny and rechecks a captured decision immediately before fetch', async () => {
+  for (const denied of [true, false]) {
+    let listener: (
+      exec: { signal: AbortSignal; name: string; arguments: unknown; agent?: unknown },
+      next: () => Promise<unknown>,
+    ) => Promise<unknown> = async () => undefined;
+    let effects = 0;
+    const methods: string[] = [];
+    const selector = { kind: 'url' as const, url: 'https://example.test/mock' };
+    const scope = { kind: 'bot' as const, bot: 'mock-bot' };
+    const decision = {
+      effect: denied ? 'deny' : 'allow',
+      source: 'rule',
+      reasonCode: denied ? 'ruleDenied' : 'baselineAllowed',
+      matchedRules: [],
+      policyRevision: 1,
+      requestHash: approvalHash([scope, 'interactive', selector]),
+      scope,
+      trigger: 'interactive',
+      selector,
+    };
+    const request = async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      methods.push(body.method);
+      return Response.json(
+        body.method === 'approval.web'
+          ? { result: decision }
+          : { error: { code: 'APPROVAL_POLICY_CHANGED' } },
+      );
+    };
+    const config = {
+      limit: 10,
+      urls: [selector.url],
+      bridge: { url: 'http://127.0.0.1/mcp/mock-bot', capability: 'synthetic-capability' },
+    };
+    Reflect.apply(apply, undefined, [
+      {
+        on: (...hook: unknown[]) => {
+          if (hook[0] === 'tools/pre-execute') listener = hook[1] as typeof listener;
+        },
+      },
+      config,
+      request,
+    ]);
+    const result = await listener(
+      {
+        signal: new AbortController().signal,
+        name: 'web_fetch',
+        arguments: { url: selector.url },
+        agent: { session: { id: 'mock-session' } },
+      },
+      async () => {
+        effects++;
+        return { kind: 'allow' };
+      },
+    );
+    expect(effects).toBe(0);
+    expect(result).toMatchObject({ kind: 'deny' });
+    expect(methods).toEqual(denied ? ['approval.web'] : ['approval.web', 'approval.web.check']);
+  }
+});
 
 test('ask mode requests approval even for a URL supplied in the accepted task', async () => {
   let listener: (

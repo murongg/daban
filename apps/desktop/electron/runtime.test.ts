@@ -1,9 +1,70 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { disconnected } from '@daban/protocol';
+import { approvalRulesCapability, disconnected } from '@daban/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
+
+it('requires the rule capability and validates Bot and request identity on rule replies', async () => {
+  let reply: unknown = { scope: { kind: 'bot', bot: 'mock-bot' }, revision: 0, rules: [] };
+  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(reply));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  const snapshot = {
+    ...disconnected('ready'),
+    approvalRules: {
+      capability: approvalRulesCapability as typeof approvalRulesCapability,
+      available: true,
+      revision: 0,
+    },
+  };
+  const state = vi.spyOn(client, 'status').mockResolvedValue(disconnected('ready'));
+  const command = {
+    type: 'approval.rules.list' as const,
+    scope: { kind: 'bot' as const, bot: 'mock-bot' },
+  };
+  await expect(client.invoke(command)).rejects.toThrow('APPROVAL_UPGRADE_REQUIRED');
+  expect(fetcher).not.toHaveBeenCalled();
+  state.mockResolvedValue(snapshot);
+  expect(await client.invoke(command)).toEqual(reply);
+  reply = { scope: { kind: 'bot', bot: 'mock-other' }, revision: 0, rules: [] };
+  await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = {
+    requestId: 'mock-foreign',
+    id: 'mock-rule',
+    scope: command.scope,
+    revision: 1,
+    deleted: true,
+  };
+  await expect(
+    client.invoke({ type: 'approval.rules.receipt', scope: command.scope, requestId: 'mock-save' }),
+  ).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = {
+    requestId: 'mock-save',
+    id: 'mock-other-rule',
+    scope: command.scope,
+    revision: 1,
+    deleted: true,
+  };
+  await expect(
+    client.invoke({
+      type: 'approval.rules.write',
+      request: {
+        requestId: 'mock-save',
+        expectedRevision: 0,
+        scope: command.scope,
+        action: 'delete',
+        id: 'mock-rule',
+      },
+    }),
+  ).rejects.toThrow('INVALID_RUNTIME_STATE');
+  expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get('x-daban-approval-rules')).toBe(
+    approvalRulesCapability,
+  );
+});
 
 it('validates the approval mode and refuses it before sending to a runtime without policy support', async () => {
   const task = {

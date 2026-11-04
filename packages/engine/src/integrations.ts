@@ -5,10 +5,12 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   isMcpReceipt,
+  isPolicyDecision,
   type McpBindingInput,
   type McpConnection,
   type McpReceipt,
   type McpSave,
+  type PolicyDecision,
   validAgentId,
 } from '@daban/protocol';
 import { and, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
@@ -785,6 +787,9 @@ export class Integrations {
   }
   async assertLive(bot: string, capture: McpCapture, tool: string) {
     await this.ready;
+    return this.assertLiveNow(bot, capture, tool);
+  }
+  assertLiveNow(bot: string, capture: McpCapture, tool: string) {
     const config = this.config(this.scoped(capture.connection, bot)),
       binding = this.binding(bot, capture.connection);
     if (
@@ -817,6 +822,9 @@ export class Integrations {
       tool: String(row.tool),
       phase: String(row.phase),
       preview: String(row.preview),
+      ...(row.policyDecision
+        ? { policyDecision: JSON.parse(String(row.policyDecision)) as unknown }
+        : {}),
       ...(row.result !== null ? { result: String(row.result) } : {}),
       ...(row.error !== null ? { error: String(row.error) } : {}),
       createdAt: String(row.created),
@@ -899,6 +907,17 @@ export class Integrations {
         .run(),
     );
     return { fresh: true, receipt: this.receiptRow(this.call(input.id)) };
+  }
+  async recordDecision(id: string, decision: PolicyDecision) {
+    await this.ready;
+    const row = this.call(id);
+    if (row.phase !== 'claimed' || !isPolicyDecision(decision) || decision.scope.bot !== row.bot)
+      throw new Fault('MCP_AUTHORITY_CHANGED');
+    this.available()
+      .update(callReceipts)
+      .set({ policyDecision: JSON.stringify(decision) })
+      .where(eq(callReceipts.id, id))
+      .run();
   }
   async dispatched(id: string) {
     await this.ready;

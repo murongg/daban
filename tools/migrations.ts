@@ -9,6 +9,7 @@ import { type MigrationMeta, readMigrationFiles } from 'drizzle-orm/migrator';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const engine = path.join(root, 'packages/engine');
 export const stores = [
+  'approval-rules',
   'attachments',
   'chats',
   'commands',

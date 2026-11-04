@@ -5,10 +5,13 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  approvalRulesCapability,
   botBundleLimit,
   type ExecutionSnapshot,
   type Group,
   type GroupPage,
+  type Interaction,
+  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -60,6 +63,7 @@ import {
   type SetupStatus,
   validAgentId,
 } from '@daban/protocol';
+import { approvalCommand } from './approval-api.js';
 import { Authority, ViewerGrants } from './authority.js';
 import { Commands } from './commands.js';
 import { Computers } from './computers.js';
@@ -120,6 +124,9 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/approval-rules/list',
+  '/api/approval-rules/receipt',
+  '/api/approval-rules/preview',
   '/api/notes/status',
   '/api/notes/list',
   '/api/notes/read',
@@ -588,6 +595,12 @@ export async function startPrototype({
           return json(res, value);
         }
         const groupProtocol = req.headers['x-daban-client-protocol'];
+        const modernApprovals = req.headers['x-daban-approval-rules'] === approvalRulesCapability;
+        const interactionView = (item: Interaction) => {
+          if (modernApprovals) return item;
+          const { policyDecision: _policy, ...legacy } = item;
+          return legacy;
+        };
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
             ? Number(groupProtocol)
@@ -927,6 +940,18 @@ export async function startPrototype({
             if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
             return json(res, await diagnostics.inspect());
           }
+          if (url.pathname.startsWith('/api/approval-rules/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (!models) throw new Fault('APPROVAL_RULES_UNAVAILABLE', 503);
+            const command = await body(req);
+            if (
+              url.search ||
+              !isApprovalRulesCommand(command) ||
+              command.type !== `approval.rules.${url.pathname.slice('/api/approval-rules/'.length)}`
+            )
+              throw new Fault('INVALID_APPROVAL_RULE', 400);
+            return json(res, await approvalCommand(models, command));
+          }
           if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
             if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
             const data = await body(req);
@@ -939,7 +964,34 @@ export async function startPrototype({
             const cancel = () => controller.abort();
             res.once('close', cancel);
             try {
-              return json(res, await integrationCommand(models, data, controller.signal));
+              const result = await integrationCommand(models, data, controller.signal);
+              if (
+                !modernApprovals &&
+                data.type === 'mcp.receipt' &&
+                result &&
+                typeof result === 'object' &&
+                'policyDecision' in result
+              ) {
+                const { policyDecision: _decision, ...legacy } = result;
+                return json(res, legacy);
+              }
+              if (
+                !modernApprovals &&
+                data.type === 'mcp.calls' &&
+                result &&
+                typeof result === 'object' &&
+                'items' in result &&
+                Array.isArray(result.items)
+              )
+                return json(res, {
+                  ...result,
+                  items: result.items.map((item) => {
+                    if (!('policyDecision' in item)) return item;
+                    const { policyDecision: _decision, ...legacy } = item;
+                    return legacy;
+                  }),
+                });
+              return json(res, result);
             } finally {
               res.off('close', cancel);
             }
@@ -1534,7 +1586,10 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
-              interactions: models ? await models.interactions.list() : [],
+              interactions: models ? (await models.interactions.list()).map(interactionView) : [],
+              ...(modernApprovals && models
+                ? { approvalRules: await models.approvalRules.status() }
+                : {}),
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
               // Capability metadata stays outside saved-model status so older clients can still validate that status.
               model: { ...models?.status(), ...(await settings.status(true)), inspection: true },
@@ -1628,7 +1683,9 @@ export async function startPrototype({
                 throw new Fault('INVALID_INTERACTION_REPLY', 400);
               return json(
                 res,
-                await models.interactions.reply(id, data.runId, data.id, data.reply),
+                interactionView(
+                  await models.interactions.reply(id, data.runId, data.id, data.reply),
+                ),
               );
             }
             if (action === 'profile' && models) {
@@ -1994,10 +2051,11 @@ export async function startPrototype({
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),
           interactions: models.interactions,
+          policy: models.rulePolicy,
           review: new Risk({
             settings,
             resolve: async (request) => models?.reviewModel(request.bot, request.runId) ?? null,
-          }).review,
+          }).details,
           assertLive: (run) => {
             if (replacingRecovery || !recovery!.admit())
               throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -2018,7 +2076,12 @@ export async function startPrototype({
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
           start: (bot, task) =>
-            models!.start(bot, { ...task, chatRevision: models!.chats.current(bot).revision }),
+            models!.start(
+              bot,
+              { ...task, chatRevision: models!.chats.current(bot).revision },
+              undefined,
+              'automation',
+            ),
         },
       });
       try {

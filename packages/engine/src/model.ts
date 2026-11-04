@@ -19,13 +19,16 @@ import type {
   TranscriptScope,
 } from '@daban/protocol';
 import {
+  type ApprovalTrigger,
   type ChatPage,
+  canonicalApprovalUrl,
   imageMime,
   isAttachmentId,
   isChatPage,
   isGoalProgress,
   isInteractionInput,
   isModelId,
+  isPolicyDecision,
   isReplyStream,
   isSessionStats,
   isTaskFileName,
@@ -37,6 +40,12 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { AgentTools } from './agent-tools.js';
+import {
+  ApprovalRules,
+  approvalSelector,
+  type PolicyRun,
+  type RulePolicy,
+} from './approval-rules.js';
 import { Attachments } from './attachments.js';
 import { BotBundles, type BundleDocuments } from './bundles.js';
 import { CatalogTools } from './catalog.js';
@@ -106,7 +115,7 @@ const model = 'deepseek-flash';
 const sdkProvider = (route: Pick<ResolvedModel, 'provider' | 'api'>) =>
   route.api === 'google-generative-ai' ? 'google' : route.provider;
 // Risk-based approval replaces the all-command approval context; keep chat history, retire its SDK session.
-const sessionProfile = 'general-v11-risk-context';
+const sessionProfile = 'general-v12-approval-rules';
 const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
   JSON.stringify(
     conversationId || !chatRevision ? [bot, conversationId ?? null] : [bot, null, chatRevision],
@@ -278,6 +287,17 @@ export function sdkPatch(
           config: {
             limit,
             urls: requestedUrls(task?.prompt || ''),
+            ...(task
+              ? {
+                  bridge: {
+                    url: `${origin}/mcp/${bot}`,
+                    capability,
+                    ...(bridge
+                      ? { socketPath: bridge.socketPath, certificateFile: bridge.certificateFile }
+                      : {}),
+                  },
+                }
+              : {}),
             ...(task?.approvalMode ? { approvalMode: task.approvalMode } : {}),
           },
         },
@@ -535,6 +555,7 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  trigger?: ApprovalTrigger;
   goalCreated?: boolean;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -649,6 +670,8 @@ export class ModelRuns {
   readonly skills: Skills;
   readonly integrations: Integrations;
   readonly interactions: Interactions;
+  readonly approvalRules: ApprovalRules;
+  readonly rulePolicy: RulePolicy;
   readonly ready: Promise<unknown>;
   private readonly workspace: AgentWorkspace;
   private readonly sdkFile: string;
@@ -776,6 +799,38 @@ export class ModelRuns {
       skills: this.skills,
     });
     this.tools.memory = new MemoryTools(this.profiles);
+    this.approvalRules = new ApprovalRules(path.join(dir, 'approval-rules.sqlite'));
+    this.rulePolicy = {
+      review: async (run, selector, baseline, allowEligible = false, riskReason) => {
+        const job = this.policyIdentity(run);
+        const decision = await this.approvalRules.evaluate({
+          scope: { kind: 'bot', bot: job.bot },
+          trigger: job.trigger ?? 'interactive',
+          selector,
+          mode: job.task?.approvalMode ?? 'auto',
+          baseline:
+            baseline === 'deny' ? 'deny' : job.task?.approvalMode === 'full' ? 'allow' : baseline,
+          allowEligible: allowEligible && !!job.task,
+          ...(riskReason ? { riskReason } : {}),
+        });
+        this.policyIdentity(run);
+        // Commands, MCP and Interactions commit the authoritative explanation in their own receipt.
+        this.recordTranscript(job, () => ({
+          source: `policy:${randomBytes(12).toString('hex')}`,
+          kind: 'interaction',
+          name: 'policy',
+          at: new Date().toISOString(),
+          text: job.redact!(JSON.stringify(decision, null, 2)),
+        }));
+        return decision;
+      },
+      assertCurrent: (run, decision) => {
+        const job = this.policyIdentity(run);
+        if (decision.scope.bot !== job.bot || decision.trigger !== (job.trigger ?? 'interactive'))
+          throw new Fault('APPROVAL_POLICY_CHANGED');
+        this.approvalRules.assertCurrent(decision);
+      },
+    };
     this.interactions = new Interactions(
       path.join(dir, 'interactions'),
       (item) => {
@@ -820,6 +875,7 @@ export class ModelRuns {
     );
     if (software)
       this.tools.software = new SoftwareTools(this.interactions, software, {
+        policy: this.rulePolicy,
         assertLive: (run) => {
           if (!this.admission()) throw new Fault('SOFTWARE_RUNTIME_BUSY');
           this.profiles.assertActive(run.bot);
@@ -830,6 +886,7 @@ export class ModelRuns {
       });
     this.integrations = new Integrations(path.join(dir, 'integrations.sqlite'));
     this.tools.integrations = new IntegrationTools(this.integrations, this.interactions, {
+      policy: this.rulePolicy,
       networkFile: path.join(dir, 'network.json'),
     });
     this.tools.authorizeComputer = async (run) => {
@@ -913,6 +970,7 @@ export class ModelRuns {
         documentInputs: latest.documentInputs,
         bot,
         id: latest.runId,
+        trigger: latest.trigger,
         intentId: latest.intentId || latest.runId,
         requestId: latest.requestId || latest.runId,
         fingerprint: latest.fingerprint || '',
@@ -1318,6 +1376,7 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
+        trigger: job.trigger,
         elapsedMs: job.elapsedMs,
         chatRevision: job.chatRevision,
         conversationId: job.conversationId,
@@ -1373,7 +1432,12 @@ export class ModelRuns {
     job.writing = pending.catch(() => {});
     return pending;
   }
-  async start(bot: string, input?: unknown, conversation?: ConversationScope) {
+  async start(
+    bot: string,
+    input?: unknown,
+    conversation?: ConversationScope,
+    trigger: ApprovalTrigger = 'interactive',
+  ) {
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
     if (
@@ -1397,6 +1461,7 @@ export class ModelRuns {
     const data = task
       ? {
           prompt: task.prompt,
+          ...(trigger === 'automation' ? { trigger } : {}),
           memory: task.memory || '',
           files: task.files || [],
           ...(scope ? { conversationId: scope.id, context: scope.context } : {}),
@@ -1506,6 +1571,7 @@ export class ModelRuns {
       prepared = () => resolve(undefined);
     });
     const job: ModelJob = {
+      trigger,
       chatRevision,
       conversationId: scope?.id,
       conversationContext: scope?.context,
@@ -2285,6 +2351,21 @@ export class ModelRuns {
     await job.done;
     await this.tools.drain(job);
   }
+  private policyIdentity(run: PolicyRun) {
+    const job = this.jobs.get(run.bot);
+    if (
+      !this.admission() ||
+      !job?.running ||
+      job.abort.signal.aborted ||
+      job.abort !== run.abort ||
+      job.id !== run.id ||
+      job.sessionId !== run.sessionId ||
+      job.conversationId !== run.conversationId
+    )
+      throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+    this.profiles.assertActive(run.bot);
+    return job;
+  }
   async rpc(bot: string, authorization: string | undefined, value: unknown) {
     if (
       !value ||
@@ -2354,15 +2435,72 @@ export class ModelRuns {
         accepted: job.response?.turnId === turnId && job.response.revision === response.revision,
         revision: job.response?.revision || 0,
       };
+    } else if (rpc.method === 'approval.web' || rpc.method === 'approval.web.check') {
+      const params = rpc.params ?? {};
+      const url = canonicalApprovalUrl(params.url);
+      if (
+        !job.task ||
+        params.sessionId !== job.sessionId ||
+        !url ||
+        Object.keys(params).some(
+          (key) =>
+            ![
+              'sessionId',
+              'url',
+              ...(rpc.method === 'approval.web.check' ? ['decision'] : []),
+            ].includes(key),
+        )
+      )
+        throw new Fault('INVALID_INTERACTION', 400);
+      if (rpc.method === 'approval.web.check') {
+        if (
+          !isPolicyDecision(params.decision) ||
+          params.decision.selector.kind !== 'url' ||
+          params.decision.selector.url !== url
+        )
+          throw new Fault('INVALID_INTERACTION', 400);
+        this.rulePolicy.assertCurrent(job, params.decision);
+        result = { current: true };
+      } else {
+        // This is a restriction on DSH's existing URL authority, never a grant to fetch another URL.
+        result = await this.rulePolicy.review(job, { kind: 'url', url }, 'allow');
+        // A URL fast path has no tool receipt; its decision must be durable before DSH can dispatch it.
+        if (
+          isPolicyDecision(result) &&
+          result.effect === 'allow' &&
+          (!job.transcript || job.transcriptFailed)
+        )
+          throw new Fault('APPROVAL_AUDIT_UNAVAILABLE');
+        if (isPolicyDecision(result) && result.effect === 'deny') {
+          // Keep the existing browser/desktop refusal fence; another surface cannot bypass a denied URL.
+          await this.interactions.open(
+            bot,
+            job.id,
+            {
+              id: `web-${randomBytes(12).toString('hex')}`,
+              sessionId: job.sessionId!,
+              kind: 'approval',
+              tool: 'web_fetch',
+              url,
+            },
+            job.conversationId,
+            result,
+          );
+        }
+      }
     } else if (rpc.method === 'interaction.open') {
       if (
         !isInteractionInput(rpc.params) ||
         rpc.params.sessionId !== job.sessionId ||
         (rpc.params.kind === 'approval' &&
-          ['software_install', 'vm_command'].includes(rpc.params.tool))
+          ['software_install', 'vm_command', 'mcp_call'].includes(rpc.params.tool))
       )
         throw new Fault('INVALID_INTERACTION', 400);
-      result = await this.interactions.open(bot, job.id, rpc.params, job.conversationId);
+      const decision =
+        rpc.params.kind === 'approval'
+          ? await this.rulePolicy.review(job, approvalSelector(rpc.params), 'ask')
+          : undefined;
+      result = await this.interactions.open(bot, job.id, rpc.params, job.conversationId, decision);
     } else if (rpc.method === 'interaction.wait') {
       if (typeof rpc.params?.id !== 'string' || Object.keys(rpc.params).some((key) => key !== 'id'))
         throw new Fault('INVALID_INTERACTION', 400);
@@ -2411,6 +2549,7 @@ export class ModelRuns {
     }
     // Each store must close even when another owner fails, including unavailable optional services.
     for (const owner of [
+      this.approvalRules,
       this.tools.integrations,
       this.work,
       this.notes,

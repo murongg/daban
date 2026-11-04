@@ -68,6 +68,7 @@ export const callReceipts = sqliteTable(
     tool: text().notNull(),
     phase: text().notNull(),
     preview: text().notNull(),
+    policyDecision: text(),
     result: text(),
     error: text(),
     created: text().notNull(),

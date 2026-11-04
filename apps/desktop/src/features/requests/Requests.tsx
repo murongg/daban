@@ -6,6 +6,8 @@ import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
 import { Tooltip } from '../../components/controls/Tooltip';
 import { t, useLocale } from '../../i18n/locale';
+import { Decision } from '../approvals/Decision';
+import { CreateRule } from '../approvals/Rules';
 import { Avatar } from '../bots/Avatar';
 import { Command } from './Command';
 import { Software, SoftwareStatus } from './Software';
@@ -366,6 +368,12 @@ function Request({
             </dl>
           )}
         </div>
+      )}
+      {current.kind === 'approval' && (
+        <>
+          <Decision decision={current.policyDecision} />
+          <CreateRule request={current} />
+        </>
       )}
       {current.kind === 'approval' && current.tool === 'software_install' && (
         <SoftwareStatus request={current} />
