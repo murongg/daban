@@ -9,6 +9,8 @@ import {
 } from '@daban/protocol';
 import { ArrowLeft, ArrowRight, CornerDownLeft, Plus, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCache } from '../../app/CacheProvider';
+import { useRemote } from '../../app/Remote';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { IconButton } from '../../components/controls/Button';
 import { t, useLocale } from '../../i18n/locale';
@@ -42,6 +44,8 @@ export function Browser({
   expanded?: boolean;
 }) {
   useLocale();
+  const storage = useCache();
+  const remoteHost = useRemote().state?.selected;
   const runtime = useRuntime();
   const incoming = runtime.snapshot.browsers?.[bot];
   const [data, setData] = useState<BrowserState | undefined>(incoming),
@@ -60,7 +64,7 @@ export function Browser({
   const ready = runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion >= 16;
   const state = data?.bot === bot ? data : incoming;
   const selected = state?.tabs.find((tab) => tab.id === state.active);
-  const draftKey = `${bot}:${state?.instance}:${selected?.id}`;
+  const draftKey = `${remoteHost ? `${remoteHost}:` : ''}${bot}:${state?.instance}:${selected?.id}`;
   const address =
     addressDraft(draftKey) ??
     (selected?.suspended
@@ -98,7 +102,7 @@ export function Browser({
     setNonce(undefined);
     setStorageError(false);
     try {
-      setNonce(browserRequest(bot));
+      setNonce(browserRequest(bot, storage));
     } catch (error) {
       setStorageError(true);
       setError(runtimeError(error));
@@ -116,7 +120,7 @@ export function Browser({
     return () => {
       active = false;
     };
-  }, [bot, ready, runtime.command, merge]);
+  }, [bot, ready, runtime.command, merge, storage]);
   const inspect = useCallback(
     async (pending: BrowserPending) => {
       if (!pending) return;
@@ -131,7 +135,7 @@ export function Browser({
           setError(t('browser.operationResultUnconfirmedSystemWillNotRetry'));
           return;
         }
-        clearBrowserRequest(bot, pending.id);
+        clearBrowserRequest(bot, pending.id, storage);
         setNonce(undefined);
         setError(outcome(receipt));
         merge(await runtime.command<BrowserState>({ type: 'browser.state', bot }));
@@ -144,7 +148,7 @@ export function Browser({
         );
       }
     },
-    [bot, runtime.command, merge],
+    [bot, runtime.command, merge, storage],
   );
   // Recovery reads only the saved identity; it never stores or resends the old URL, prompt answer or file bytes.
   useEffect(() => {
@@ -160,7 +164,7 @@ export function Browser({
     setError('');
     let claimed = false;
     try {
-      beginBrowserRequest(bot, pending);
+      beginBrowserRequest(bot, pending, storage);
       claimed = true;
       setNonce(pending);
       const command =
@@ -175,7 +179,7 @@ export function Browser({
               ...request,
             };
       const ack = await runtime.command<BrowserAck>(command);
-      clearBrowserRequest(bot, id);
+      clearBrowserRequest(bot, id, storage);
       setNonce(undefined);
       merge(ack.state);
       if (ack.error || ack.uncertain) setError(outcome(ack));
@@ -328,7 +332,7 @@ export function Browser({
                   ...(control.instance === undefined ? {} : { instance: control.instance }),
                   owner: 'human',
                 });
-                clearBrowserRequest(bot, nonce.id);
+                clearBrowserRequest(bot, nonce.id, storage);
                 setNonce(undefined);
                 setError('');
                 await runtime.command({ type: 'status' });

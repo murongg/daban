@@ -4064,8 +4064,8 @@ export type RuntimeCommand =
   | { type: 'files.download'; path: string };
 export type RuntimeReply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 export interface RuntimeBridge {
-  invoke<T = unknown>(command: RuntimeCommand): Promise<RuntimeReply<T>>;
-  subscribe(callback: (snapshot: RuntimeSnapshot) => unknown): () => unknown;
+  invoke<T = unknown>(command: RuntimeCommand, host?: string | null): Promise<RuntimeReply<T>>;
+  subscribe(callback: (snapshot: RuntimeSnapshot) => unknown, host?: string | null): () => unknown;
 }
 export const runtimeTargets: Readonly<Record<string, RuntimeBot>> = Object.assign(
   Object.create(null) as Record<string, RuntimeBot>,
@@ -4391,3 +4391,8 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
     (value.cancelRequested === undefined || typeof value.cancelRequested === 'boolean')
   );
 }
+export * from './command.js';
+export * from './peer.js';
+export * from './receipt.js';
+export * from './remote.js';
+export * from './remote-snapshot.js';

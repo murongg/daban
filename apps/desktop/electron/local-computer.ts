@@ -18,7 +18,8 @@ export interface LocalCapture {
 }
 export interface LocalDriver {
   supported: boolean;
-  platform: 'darwin' | 'win32' | 'unsupported';
+  platform: 'darwin' | 'win32' | 'linux' | 'unsupported';
+  reason?: string;
   prepare?: () => undefined;
   requestPermissions?: () => Promise<unknown>;
   permissions(): { screen: boolean; accessibility: boolean };
@@ -49,6 +50,13 @@ export class LocalComputer {
     at: number;
   };
   private last?: LocalComputerFrame;
+  private humanObservation?: {
+    id: string;
+    session: string;
+    revision: number;
+    frame: LocalCapture;
+    at: number;
+  };
   private run?: string;
   private started = false;
   private readonly cancelled = new Set<string>();
@@ -65,6 +73,7 @@ export class LocalComputer {
       available: this.driver.supported && !this.closed,
       permissions: this.driver.permissions(),
       shortcut: this.shortcut,
+      ...(this.driver.reason ? { error: this.driver.reason } : {}),
       ...(this.session ? { session: { ...this.session } } : {}),
     };
   }
@@ -84,6 +93,7 @@ export class LocalComputer {
     this.session = undefined;
     this.consent = undefined;
     this.observation = undefined;
+    this.humanObservation = undefined;
     this.last = undefined;
     this.run = undefined;
     this.started = false;
@@ -124,6 +134,7 @@ export class LocalComputer {
     session.owner = 'human';
     session.revision++;
     this.observation = undefined;
+    this.humanObservation = undefined;
     await this.enqueue(() => this.driver.release());
     return this.status();
   }
@@ -141,6 +152,7 @@ export class LocalComputer {
     session.revision++;
     this.started = true;
     this.observation = undefined;
+    this.humanObservation = undefined;
     return this.status();
   }
   async disconnect(id: string, revision: number) {
@@ -153,6 +165,72 @@ export class LocalComputer {
   preview(id: string, revision: number) {
     this.current(id, revision);
     return this.last;
+  }
+  private human(id: string, revision: number) {
+    this.requirePermissions();
+    const session = this.current(id, revision);
+    if (session.owner !== 'human') throw Error('LOCAL_NOT_HUMAN');
+    return session;
+  }
+  private async humanFrame(id: string, revision: number): Promise<LocalComputerFrame> {
+    this.human(id, revision);
+    this.humanObservation = undefined;
+    const frame = await this.driver.capture();
+    const session = this.human(id, revision);
+    const observation = randomUUID();
+    this.humanObservation = { id: observation, session: id, revision, frame, at: Date.now() };
+    return {
+      session: id,
+      observation,
+      bot: session.bot,
+      runId: 'human',
+      width: frame.width,
+      height: frame.height,
+      image: frame.image,
+    };
+  }
+  async observeHuman(id: string, revision: number) {
+    this.human(id, revision);
+    return this.enqueue(() => this.humanFrame(id, revision));
+  }
+  async inputHuman(id: string, revision: number, observation: string, input: unknown) {
+    if (!isLocalComputerInput(input)) throw Error('LOCAL_INVALID_REQUEST');
+    this.human(id, revision);
+    const saved = this.humanObservation;
+    if (
+      !saved ||
+      saved.id !== observation ||
+      saved.session !== id ||
+      saved.revision !== revision ||
+      Date.now() - saved.at > 60000
+    )
+      throw Error('LOCAL_OBSERVATION_STALE');
+    return this.enqueue(async () => {
+      this.human(id, revision);
+      if (this.humanObservation?.id !== observation) throw Error('LOCAL_OBSERVATION_STALE');
+      // Consume before native IO; an uncertain delivery must not authorize a second input.
+      this.humanObservation = undefined;
+      const check = () => {
+        this.human(id, revision);
+      };
+      try {
+        if ((await this.driver.context()) !== saved.frame.context)
+          throw Error('LOCAL_SCREEN_CHANGED');
+        if (
+          'x' in input &&
+          input.x !== undefined &&
+          (input.x >= saved.frame.width || (input.y ?? 0) >= saved.frame.height)
+        )
+          throw Error('LOCAL_INVALID_COORDINATE');
+        await this.driver.input(input, saved.frame, check);
+        check();
+        return await this.humanFrame(id, revision);
+      } catch (error) {
+        await this.driver.release();
+        check();
+        throw error;
+      }
+    });
   }
   async cancel(runId: string, session?: string) {
     if (session && this.session?.id !== session) return;

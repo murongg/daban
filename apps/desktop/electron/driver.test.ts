@@ -59,6 +59,45 @@ const frame = {
   context: '1',
   bounds: { x: 0, y: 0, width: 1536, height: 864 },
 };
+
+it('supports the Linux X11 desktop through the same bounded native input path', async () => {
+  vi.stubEnv('DISPLAY', ':71');
+  vi.stubEnv('WAYLAND_DISPLAY', '');
+  vi.stubEnv('XDG_SESSION_TYPE', 'x11');
+  try {
+    const api = automation();
+    const driver = desktopDriver(
+      () => undefined,
+      'linux',
+      () => api,
+    );
+    expect(driver.supported).toBe(true);
+    expect(driver.platform).toBe('linux');
+    expect(driver.permissions()).toEqual({ screen: true, accessibility: true });
+    await driver.input({ type: 'key', key: 'ControlOrMeta+a' }, frame, () => {});
+    expect(api.keyTap).toHaveBeenCalledWith('a', ['control']);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it('does not advertise XWayland injection as full native Wayland access', () => {
+  vi.stubEnv('DISPLAY', ':71');
+  vi.stubEnv('WAYLAND_DISPLAY', 'wayland-synthetic');
+  vi.stubEnv('XDG_SESSION_TYPE', 'wayland');
+  try {
+    const driver = desktopDriver(
+      () => undefined,
+      'linux',
+      () => automation(),
+    );
+    expect(driver.platform).toBe('linux');
+    expect(driver.supported).toBe(false);
+    expect(driver.permissions().accessibility).toBe(false);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
 it('maps screenshot coordinates through Windows DPI conversion before native input', async () => {
   const api = automation();
   const driver = desktopDriver(

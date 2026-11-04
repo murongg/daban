@@ -12,7 +12,7 @@ import {
   workQueryKey,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { clientCache } from '../../app/cache';
+import { useCache } from '../../app/CacheProvider';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { type Action, reduce, type State } from '../../app/state';
 import { serialize, storageKey } from '../../app/storage';
@@ -73,6 +73,7 @@ export function useWork(
   dispatch: Dispatch<Action>,
   notify: (text: string) => unknown,
 ) {
+  const storage = useCache();
   const runtime = useRuntime();
   const cache = state.work ?? workInitial();
   const current = useRef(state);
@@ -309,7 +310,7 @@ export function useWork(
     if (!updated.work?.pending || keyOf(updated.work.pending.request) !== keyOf(input.request))
       return;
     try {
-      clientCache().setItem(storageKey, serialize(updated));
+      storage.setItem(storageKey, serialize(updated));
     } catch {
       (resuming ? setOperationError : setError)(
         t('common.operationRecordsCouldNotSavedLocallyFree'),

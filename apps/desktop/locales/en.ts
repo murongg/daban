@@ -1,4 +1,66 @@
 export const english = {
+  'remote.startVideo': 'Live video',
+  'remote.stopVideo': 'Stop video',
+  'remote.waitingVideo': 'Waiting for host approval and video…',
+  'remote.videoUnavailable': 'Live video is unavailable. Screenshots remain available.',
+  'remote.claimInput': 'Take input control',
+  'remote.permissionsOnHost': 'Open Daban on the host to grant screen and input permissions.',
+  'remote.liveScreen': 'Remote desktop of {0}',
+  'remote.sendText': 'Send text to the remote computer',
+  'remote.nativeTitle': 'Allow remote desktop control?',
+  'remote.nativeConfirm': 'Device “{0}” requests access to the local desktop for Bot “{1}”.',
+  'remote.nativeDetails':
+    'Screen image recipient: {0}\nModel: {1}\nController fingerprint: {2}\n\nApproval applies to this device, Bot and model during this Host session. Locking, emergency pause or model changes require approval again. Real desktop actions affect the current user’s apps, files and accounts.',
+  'remote.allowNative': 'Allow desktop access',
+  'localComputer.linux': 'This Linux computer',
+  'localComputer.waylandUnavailable':
+    'Native input is not verified for this Wayland session. Use a supported X11 session.',
+  'localComputer.displayUnavailable':
+    'No graphical user session is available. A cloud host can use a separate Linux workspace desktop.',
+  'remote.viewTitle': 'Allow remote desktop viewing?',
+  'remote.viewConfirm':
+    'A paired device requests to view the primary display, including visible apps and content.',
+  'remote.allowView': 'Allow viewing',
+  'remote.local': 'This computer',
+  'remote.current': 'Current computer: {0}',
+  'remote.unavailable': 'Remote computers are unavailable. The local workspace is still available.',
+  'remote.platformMac': 'macOS',
+  'remote.platformWindows': 'Windows',
+  'remote.platformLinux': 'Linux',
+  'remote.title': 'Remote computers',
+  'remote.intro':
+    'Each computer has its own workspace. Switching computers keeps accepted tasks running.',
+  'remote.openWorkspace': 'Open workspace',
+  'remote.offline': 'Offline',
+  'remote.connecting': 'Connecting',
+  'remote.direct': 'Direct',
+  'remote.relay': 'Relayed',
+  'remote.remove': 'Remove connection',
+  'remote.add': 'Add a remote computer',
+  'remote.addDescription':
+    'Enable remote access on the other computer and obtain its invitation. Pairing requires approval there.',
+  'remote.invitation': 'Invitation link',
+  'remote.requestPair': 'Request pairing',
+  'remote.working': 'Waiting for a response…',
+  'remote.hostTitle': 'Make this computer available remotely',
+  'remote.hostDescription':
+    'Allow paired devices to access this workspace. Desktop viewing and control require separate authorization. The connection service can be self-hosted.',
+  'remote.server': 'Connection service URL',
+  'remote.enableHost': 'Enable remote access',
+  'remote.disableHost': 'Disable remote access',
+  'remote.createInvitation': 'Create invitation',
+  'remote.fingerprint': 'Host fingerprint',
+  'remote.verifyPair':
+    'Verify the controller fingerprint. Approval grants access to this workspace.',
+  'remote.allowPair': 'Approve pairing',
+  'remote.rejectPair': 'Decline',
+  'remote.revoke': 'Revoke access',
+  'remote.invitationExpired': 'The invitation has expired. Create a new one on the host.',
+  'remote.pairRefused': 'The host declined the pairing request.',
+  'remote.outcomeUnknown':
+    'The outcome is unconfirmed. Reconnect and check the task record before repeating the operation.',
+  'remote.operationFailed':
+    'The operation could not finish. Check the connection service, host availability and invitation expiry.',
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',

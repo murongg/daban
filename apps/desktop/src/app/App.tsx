@@ -71,9 +71,11 @@ import { useWork } from '../features/tasks/work';
 import { syncLocale, t, useLocale } from '../i18n/locale';
 import { Actions } from './Actions';
 import { useAttention } from './attention';
+import { useCache } from './CacheProvider';
 import { clientCache } from './cache';
 import { profileInput, useProfiles } from './profiles';
-import { RuntimeProvider, runtimeError, useRuntime } from './Runtime';
+import { RemoteProvider, RemoteWorkspace } from './Remote';
+import { runtimeError, useRuntime } from './Runtime';
 import { Sidebar } from './Sidebar';
 import {
   type Action,
@@ -138,9 +140,9 @@ function definiteInsertError(error: unknown) {
 function uncertainInsertError(error: unknown) {
   return error instanceof Error && error.message === 'MODEL_INSERT_UNCERTAIN';
 }
-function load() {
+function load(cache = clientCache()) {
   try {
-    const state = restore(clientCache().getItem(storageKey));
+    const state = restore(cache.getItem(storageKey));
     return window.innerWidth < 1080 ? { ...state, panel: null } : state;
   } catch {
     return initialState();
@@ -157,19 +159,22 @@ export function App() {
   return (
     <I18nProvider locale={locale}>
       <UpdateProvider>
-        <RuntimeProvider>
-          <UpdateNotice />
-          <AgentUpgradeNotice />
-          <Onboarding>
-            <Workbench />
-          </Onboarding>
-        </RuntimeProvider>
+        <RemoteProvider>
+          <RemoteWorkspace>
+            <UpdateNotice />
+            <AgentUpgradeNotice />
+            <Onboarding>
+              <Workbench />
+            </Onboarding>
+          </RemoteWorkspace>
+        </RemoteProvider>
       </UpdateProvider>
     </I18nProvider>
   );
 }
 function Workbench() {
   useLocale();
+  const cache = useCache();
   const runtime = useRuntime();
   const submitting = useRef(new Set<string>());
   const draining = useRef(new Set<string>());
@@ -177,7 +182,7 @@ function Workbench() {
   const verifyingInserts = useRef(new Set<string>());
   const legacySettings = useRef(false);
   const [state, update] = useReducer(reduce, undefined, () => {
-    const restored = load();
+    const restored = load(cache);
     legacySettings.current = restored.view === 'settings';
     // Cache migration must not mark the obscured conversation read through a navigation action.
     return legacySettings.current ? { ...restored, view: 'chat' as const } : restored;
@@ -186,8 +191,8 @@ function Workbench() {
   updateState.current = state;
   useUpdateSave(
     useCallback(() => {
-      clientCache().setItem(storageKey, serialize(updateState.current));
-    }, []),
+      cache.setItem(storageKey, serialize(updateState.current));
+    }, [cache]),
   );
   const [settingsOpen, setSettingsOpen] = useState(legacySettings.current);
   const dispatch = useCallback((action: Action) => {
@@ -736,7 +741,7 @@ function Workbench() {
   }, [state.theme]);
   useEffect(() => {
     try {
-      clientCache().setItem(storageKey, serialize(state));
+      cache.setItem(storageKey, serialize(state));
       storageFailed.current = false;
     } catch {
       if (!storageFailed.current) {
@@ -744,7 +749,7 @@ function Workbench() {
         notify(t('app.localStorageUnavailableFullExportWorkspaceRefreshing'));
       }
     }
-  }, [state, notify]);
+  }, [state, notify, cache]);
   useEffect(() => {
     if (!toast) return;
     const timeout = setTimeout(() => setToast(''), 4500);
