@@ -80,9 +80,13 @@ test('Windows host probes reject malformed observations instead of claiming hard
   await expect(host.probe()).rejects.toThrow('QEMU_HOST_UNAVAILABLE');
 });
 
-test('failed hardware probes expose only the last fixed diagnostic stage', async () => {
+test('failed hardware probes retain bounded diagnostics without private process context', async () => {
   const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
   const failure = Object.assign(new Error('SYNTHETIC_PRIVATE_CONTEXT'), {
+    code: 'SYNTHETIC_PRIVATE_CONTEXT',
+    signal: 'SYNTHETIC_PRIVATE_CONTEXT',
+    cmd: 'SYNTHETIC_PRIVATE_CONTEXT',
+    stdout: 'SYNTHETIC_PRIVATE_CONTEXT',
     stderr:
       'SYNTHETIC_PRIVATE_CONTEXT\nDABAN_WINDOWS_PROBE:cpu\nDABAN_WINDOWS_PROBE:feature\nDABAN_WINDOWS_CIM:3\n',
   });
@@ -91,11 +95,55 @@ test('failed hardware probes expose only the last fixed diagnostic stage', async
       throw failure;
     },
   });
-  await expect(host.probe()).rejects.toThrow('QEMU_HOST_UNAVAILABLE');
+  const rejected: unknown = await host.probe().catch((error: unknown) => error);
+  expect.assert(rejected instanceof Error);
+  expect(rejected.message).toBe('QEMU_HOST_UNAVAILABLE');
+  expect(rejected.cause).toMatchObject({
+    failure: 'process',
+    stage: 'feature',
+    code: 'other',
+    signal: 'other',
+    timedOut: null,
+  });
+  expect(JSON.stringify(rejected.cause)).not.toContain('SYNTHETIC_PRIVATE_CONTEXT');
   expect(diagnostic.mock.calls).toContainEqual(['[windows-probe-stage]', 'feature']);
   expect(diagnostic.mock.calls).toContainEqual(['[windows-probe-cim]', '3']);
   expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('SYNTHETIC_PRIVATE_CONTEXT');
 });
+
+test.each([
+  ['json', 'SYNTHETIC_PRIVATE_JSON'],
+  ['shape', '{"architecture":"SYNTHETIC_PRIVATE_SHAPE"}'],
+] as const)(
+  'successful process %s failures retain phase evidence without returning its output',
+  async (failure, stdout) => {
+    const host = new WindowsHost({
+      run: async (_program, _args, options) => {
+        expect(options.timeout).toBe(15000);
+        return {
+          stdout,
+          stderr: 'DABAN_WINDOWS_PROBE:module:0\nDABAN_WINDOWS_PROBE:capability:42\n',
+        };
+      },
+    });
+    const rejected: unknown = await host.probe().catch((error: unknown) => error);
+    expect.assert(rejected instanceof Error);
+    expect(rejected.message).toBe('QEMU_HOST_UNAVAILABLE');
+    expect(rejected.cause).toMatchObject({
+      failure,
+      stage: 'capability',
+      exitCode: 0,
+      killed: false,
+      timedOut: false,
+      stdoutBytes: Buffer.byteLength(stdout),
+      phases: [
+        { stage: 'module', elapsedMs: 0 },
+        { stage: 'capability', elapsedMs: 42 },
+      ],
+    });
+    expect(JSON.stringify(rejected.cause)).not.toContain('SYNTHETIC_PRIVATE');
+  },
+);
 
 test('PowerShell retains its system cache location while excluding model credentials', async () => {
   vi.stubEnv('LOCALAPPDATA', path.resolve('mock-system-cache'));
