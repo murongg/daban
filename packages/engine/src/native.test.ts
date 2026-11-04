@@ -1,7 +1,27 @@
 import { expect, test } from 'vitest';
 import { Control } from './control.js';
 import type { Screens } from './desktop.js';
-import { Native } from './native.js';
+import { Native, nativeInput } from './native.js';
+
+test.each([
+  ['HOME', 'Home'],
+  ['END', 'End'],
+  ['ctrl+end', 'ctrl+End'],
+  ['CTRL+SHIFT+HOME', 'ctrl+shift+Home'],
+  ['Alt+ArrowLeft', 'alt+Left'],
+  ['ControlOrMeta+A', 'ctrl+a'],
+])('native key aliases canonicalize %s without adding commands', (input, expected) => {
+  expect(nativeInput({ type: 'key', key: input })).toEqual(['key', '--clearmodifiers', expected]);
+});
+
+test.each(['ctrl+end;echo bad', 'ctrl++end', '--clearmodifiers', 'ctrl+unknown', 'ctrl+Home\0'])(
+  'native key normalization rejects unsafe syntax: %s',
+  (key) => {
+    expect(() => nativeInput({ type: 'key', key })).toThrowError(
+      expect.objectContaining({ code: 'INVALID_INPUT' }),
+    );
+  },
+);
 
 test('a native screen driver operates a logical Bot without owning a browser or another Bot screen', async () => {
   const control = new Control(['mock-native-bot']);
