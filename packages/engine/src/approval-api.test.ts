@@ -75,13 +75,69 @@ test('authenticated rule editing and preview never start a task; lost save repli
       (await call('write', { request: { ...request, rule: { ...rule, effect: 'allow' } } })).status,
     ).toBe(409);
     expect(app.models!.jobs.size).toBe(0);
+    const mcpSelector = {
+      kind: 'mcp' as const,
+      connection: 'mock-connection',
+      configRevision: 1,
+      catalogDigest: 'a'.repeat(64),
+      tool: 'synthetic_write',
+      inputHash: 'b'.repeat(64),
+    };
+    const mcpDecision = await app.models!.approvalRules.evaluate({
+      scope: { kind: 'bot', bot: scope.bot },
+      selector: mcpSelector,
+      trigger: 'interactive',
+      mode: 'auto',
+      baseline: 'ask',
+      allowEligible: false,
+    });
+    await app.models!.interactions.open(
+      scope.bot,
+      'mock-api-run',
+      {
+        id: 'mock-api-card',
+        sessionId: 'mock-api-session',
+        kind: 'approval',
+        tool: 'mcp_call',
+        connection: mcpSelector.connection,
+        configRevision: 1,
+        catalogDigest: mcpSelector.catalogDigest,
+        name: 'Synthetic connection',
+        origin: 'https://mcp.example.test',
+        operation: mcpSelector.tool,
+        arguments: '{}',
+        inputHash: mcpSelector.inputHash,
+      },
+      undefined,
+      mcpDecision,
+      { taskId: 'mock-api-task', turnId: 'mock-api-turn' },
+    );
+    const oldReply = await fetch(`${app.url}/api/bots/${scope.bot}/reply`, {
+      method: 'POST',
+      headers: {
+        'x-prototype-token': app.token,
+        'x-daban-approval-rules': 'approval-rules-v1',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: 'mock-api-card',
+        runId: 'mock-api-run',
+        reply: { kind: 'decision', allow: true, confirmPurpose: true },
+      }),
+    });
+    expect(oldReply.status).toBe(400);
     const modern = await fetch(`${app.url}/api/state`, {
       headers: {
         'x-prototype-token': app.token,
         'x-daban-approval-rules': approvalRulesCapability,
       },
     });
-    expect((await modern.json()).approvalRules).toMatchObject({
+    const modernState = await modern.json();
+    expect(modernState.interactions[0].purposeScope).toEqual({
+      taskId: 'mock-api-task',
+      turnId: 'mock-api-turn',
+    });
+    expect(modernState.approvalRules).toMatchObject({
       capability: approvalRulesCapability,
       available: true,
       revision: 1,
@@ -89,7 +145,10 @@ test('authenticated rule editing and preview never start a task; lost save repli
     const legacy = await fetch(`${app.url}/api/state`, {
       headers: { 'x-prototype-token': app.token },
     });
-    expect((await legacy.json()).approvalRules).toBeUndefined();
+    const legacyState = await legacy.json();
+    expect(legacyState.approvalRules).toBeUndefined();
+    expect(legacyState.interactions[0].purposeScope).toBeUndefined();
+    expect(legacyState.interactions[0].policyDecision).toBeUndefined();
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

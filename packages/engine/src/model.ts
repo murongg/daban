@@ -7,7 +7,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   BotProfile,
   GoalProgress,
+  McpPurposeScope,
   ModelId,
+  PolicyDecision,
   ReplyStream,
   RunInsert,
   RunTurn,
@@ -42,7 +44,9 @@ import {
 import { AgentTools } from './agent-tools.js';
 import {
   ApprovalRules,
+  approvalHash,
   approvalSelector,
+  type PolicyRequest,
   type PolicyRun,
   type RulePolicy,
 } from './approval-rules.js';
@@ -803,16 +807,20 @@ export class ModelRuns {
     this.rulePolicy = {
       review: async (run, selector, baseline, allowEligible = false, riskReason) => {
         const job = this.policyIdentity(run);
-        const decision = await this.approvalRules.evaluate({
+        const request: PolicyRequest = {
           scope: { kind: 'bot', bot: job.bot },
           trigger: job.trigger ?? 'interactive',
           selector,
           mode: job.task?.approvalMode ?? 'auto',
           baseline:
             baseline === 'deny' ? 'deny' : job.task?.approvalMode === 'full' ? 'allow' : baseline,
-          allowEligible: allowEligible && !!job.task,
+          allowEligible: selector.kind !== 'mcp' && allowEligible && !!job.task,
           ...(riskReason ? { riskReason } : {}),
-        });
+        };
+        let decision = await this.approvalRules.evaluate(request);
+        // A caller's eligibility flag, saved rule checkbox or task text cannot substitute for Human purpose consent.
+        if (selector.kind === 'mcp' && this.hasMcpPurpose(run, decision))
+          decision = await this.approvalRules.evaluate({ ...request, allowEligible: true });
         this.policyIdentity(run);
         // Commands, MCP and Interactions commit the authoritative explanation in their own receipt.
         this.recordTranscript(job, () => ({
@@ -829,6 +837,13 @@ export class ModelRuns {
         if (decision.scope.bot !== job.bot || decision.trigger !== (job.trigger ?? 'interactive'))
           throw new Fault('APPROVAL_POLICY_CHANGED');
         this.approvalRules.assertCurrent(decision);
+        if (
+          decision.selector.kind === 'mcp' &&
+          decision.source === 'rule' &&
+          decision.effect === 'allow' &&
+          !this.hasMcpPurpose(run, decision)
+        )
+          throw new Fault('APPROVAL_AUTHORITY_CHANGED');
       },
     };
     this.interactions = new Interactions(
@@ -850,6 +865,29 @@ export class ModelRuns {
           job.conversationId === conversationId &&
           job.task?.approvalMode === 'full'
         );
+      },
+      (item) => {
+        const job = this.jobs.get(item.bot);
+        if (
+          !job ||
+          item.kind !== 'approval' ||
+          item.tool !== 'mcp_call' ||
+          !item.policyDecision ||
+          !item.purposeScope
+        )
+          throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+        const scope = this.mcpPurposeScope({ ...item, id: item.runId, abort: job.abort });
+        if (
+          !scope ||
+          approvalHash(scope) !== approvalHash(item.purposeScope) ||
+          (job.task?.approvalMode ?? 'auto') !== 'auto' ||
+          item.policyDecision.reasonCode !== 'baselineAsked' ||
+          !item.policyDecision.matchedRules.some((rule) => rule.effect === 'allow') ||
+          item.policyDecision.trigger !== (job.trigger ?? 'interactive') ||
+          approvalHash(item.policyDecision.selector) !== approvalHash(approvalSelector(item))
+        )
+          throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+        this.approvalRules.assertCurrent(item.policyDecision);
       },
     );
     this.tools.skills = new SkillTools(
@@ -887,6 +925,7 @@ export class ModelRuns {
     this.integrations = new Integrations(path.join(dir, 'integrations.sqlite'));
     this.tools.integrations = new IntegrationTools(this.integrations, this.interactions, {
       policy: this.rulePolicy,
+      purposeScope: (run) => this.mcpPurposeScope(run),
       networkFile: path.join(dir, 'network.json'),
     });
     this.tools.authorizeComputer = async (run) => {
@@ -2365,6 +2404,30 @@ export class ModelRuns {
       throw new Fault('APPROVAL_AUTHORITY_CHANGED');
     this.profiles.assertActive(run.bot);
     return job;
+  }
+  private mcpPurposeScope(run: PolicyRun): McpPurposeScope | undefined {
+    const job = this.policyIdentity(run);
+    const turnId = job.turns?.at(-1)?.id;
+    // Sessions and logical runs accept follow-up Human turns; only the persisted turn identifies the current purpose.
+    return job.task && turnId ? { taskId: job.task.requestId, turnId } : undefined;
+  }
+  private hasMcpPurpose(run: PolicyRun, decision: PolicyDecision) {
+    const scope = this.mcpPurposeScope(run);
+    return (
+      !!scope &&
+      !!run.id &&
+      !!run.sessionId &&
+      this.interactions.hasPurpose(
+        {
+          bot: run.bot,
+          runId: run.id,
+          sessionId: run.sessionId,
+          conversationId: run.conversationId,
+        },
+        scope,
+        decision,
+      )
+    );
   }
   async rpc(bot: string, authorization: string | undefined, value: unknown) {
     if (

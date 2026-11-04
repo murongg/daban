@@ -1,6 +1,6 @@
 import { agentId, type Interaction, matchesReply, type UserReply } from '@daban/protocol';
 import { Braces, Check, ChevronDown, Inbox, X } from 'lucide-react';
-import { type Dispatch, useEffect, useRef, useState } from 'react';
+import { type Dispatch, useEffect, useId, useRef, useState } from 'react';
 import { Tab, TabList, TabPanel, Tabs } from 'react-aria-components';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
@@ -98,6 +98,14 @@ function Request({
         : [],
   };
   const frozen = saving || !!submitted;
+  const purposeId = useId();
+  const canConfirmPurpose =
+    current.kind === 'approval' && current.tool === 'mcp_call' && !!current.purposeScope;
+  const activeTask = runtime.snapshot.agents[current.bot];
+  const purposeTurn =
+    current.purposeScope && activeTask?.runId === current.runId
+      ? activeTask.turns?.find((turn) => turn.id === current.purposeScope?.turnId)
+      : undefined;
   const settled = current.kind === 'approval' && current.status !== 'pending';
   const subject =
     current.kind === 'approval'
@@ -162,7 +170,9 @@ function Request({
           <span>
             {current.kind === 'question'
               ? t('requests.needsAnswer')
-              : t('requests.oneTimePermission')}
+              : canConfirmPurpose
+                ? t('requests.permissionScope')
+                : t('requests.oneTimePermission')}
           </span>
         )}
       </div>
@@ -273,41 +283,69 @@ function Request({
             </form>
           )}
           {current.kind === 'approval' && (
-            <div className="approval-actions">
-              {submitted ? (
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={saving}
-                  onClick={() => submit(submitted)}
-                >
-                  {saving ? t('common.submitting') : t('requests.retrySubmission')}
-                </button>
-              ) : (
+            <>
+              {canConfirmPurpose && (
                 <>
+                  {purposeTurn && (
+                    <div className="request-answers">
+                      <p className="field-help">{t('requests.currentHumanTurn')}</p>
+                      <p className="request-value">{purposeTurn.prompt}</p>
+                    </div>
+                  )}
+                  <p id={purposeId} className="field-help">
+                    {t('requests.currentPurposeHelp')}
+                  </p>
+                </>
+              )}
+              <div className="approval-actions">
+                {submitted ? (
                   <button
                     type="button"
                     className="primary"
                     disabled={saving}
-                    onClick={() => submit({ kind: 'decision', allow: true })}
+                    onClick={() => submit(submitted)}
                   >
-                    {current.tool === 'vm_command'
-                      ? t('requests.confirmExecution')
-                      : current.tool === 'software_install'
-                        ? t('requests.confirmInstallation')
-                        : t('requests.allowOnce')}
+                    {saving ? t('common.submitting') : t('requests.retrySubmission')}
                   </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={saving}
-                    onClick={() => submit({ kind: 'decision', allow: false })}
-                  >
-                    {t('requests.decline')}
-                  </button>
-                </>
-              )}
-            </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={saving}
+                      onClick={() => submit({ kind: 'decision', allow: true })}
+                    >
+                      {current.tool === 'vm_command'
+                        ? t('requests.confirmExecution')
+                        : current.tool === 'software_install'
+                          ? t('requests.confirmInstallation')
+                          : t('requests.allowOnce')}
+                    </button>
+                    {canConfirmPurpose && (
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={saving}
+                        aria-describedby={purposeId}
+                        onClick={() =>
+                          submit({ kind: 'decision', allow: true, confirmPurpose: true })
+                        }
+                      >
+                        {t('requests.confirmCurrentPurpose')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={saving}
+                      onClick={() => submit({ kind: 'decision', allow: false })}
+                    >
+                      {t('requests.decline')}
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
           )}
         </>
       ) : (
@@ -325,11 +363,13 @@ function Request({
                     <Check />
                     {current.decisionSource === 'policy'
                       ? t('approval.automaticallyApproved')
-                      : current.kind === 'approval' && current.tool === 'vm_command'
-                        ? t('requests.vmCommandApproved')
-                        : current.kind === 'approval' && current.tool === 'software_install'
-                          ? t('requests.installationApproved')
-                          : t('requests.allowedOnce')}
+                      : current.reply.confirmPurpose
+                        ? t('requests.currentPurposeConfirmed')
+                        : current.kind === 'approval' && current.tool === 'vm_command'
+                          ? t('requests.vmCommandApproved')
+                          : current.kind === 'approval' && current.tool === 'software_install'
+                            ? t('requests.installationApproved')
+                            : t('requests.allowedOnce')}
                   </>
                 ) : (
                   <>

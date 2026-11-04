@@ -1,4 +1,10 @@
 export const english = {
+  'requests.currentHumanTurn': 'Current request',
+  'requests.permissionScope': 'Choose permission scope',
+  'requests.confirmCurrentPurpose': 'Confirm purpose for this task and allow',
+  'requests.currentPurposeConfirmed': 'Purpose confirmed for this turn',
+  'requests.currentPurposeHelp':
+    'Confirm that the current request in this task may use this connection, tool and complete arguments. The exact allow rule may skip repeated prompts for identical calls. A new task or message from you, or a changed resource or rule version, needs fresh confirmation. Allowing once and saving a rule do not grant this permission.',
   'rules.editTitle': 'Edit rule',
   'rules.settingsHint': 'Set exact Bot restrictions and inspect each decision.',
   'rules.riskLiteralRead': 'The existing literal read-only check passed.',
@@ -37,7 +43,7 @@ export const english = {
   'rules.ask': 'Ask',
   'rules.allow': 'Allow within existing authority',
   'rules.confirmPurpose':
-    'I independently confirm this connection tool, complete arguments and purpose, for use within existing task authority.',
+    'I independently confirm this connection tool, complete arguments and purpose. This only saves a rule; the current task turn still needs purpose confirmation before execution.',
   'rules.trigger': 'Task source',
   'rules.interactive': 'Interactive task',
   'rules.automation': 'Automation task',

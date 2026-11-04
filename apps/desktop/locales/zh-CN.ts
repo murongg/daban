@@ -1,6 +1,12 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'requests.currentHumanTurn': '本轮请求',
+  'requests.permissionScope': '选择授权范围',
+  'requests.confirmCurrentPurpose': '确认当前任务用途并允许',
+  'requests.currentPurposeConfirmed': '已确认本轮任务用途',
+  'requests.currentPurposeHelp':
+    '确认你授权当前任务的这一轮使用此连接、工具和完整参数。相同调用可按精确允许规则免去重复询问；新任务、新一轮消息或资源和规则版本变化后需重新确认。仅允许一次和保存规则不会作此授权。',
   'rules.editTitle': '编辑规则',
   'rules.settingsHint': '为 Bot 设置精确限制，并查看每次决策的原因。',
   'rules.riskLiteralRead': '现有确定只读检查已通过。',
@@ -35,7 +41,8 @@ export const chinese = {
   'rules.deny': '拒绝',
   'rules.ask': '询问',
   'rules.allow': '允许符合现有权限的操作',
-  'rules.confirmPurpose': '我已独立确认此连接工具、完整参数及用途，并要求在已有任务授权内使用。',
+  'rules.confirmPurpose':
+    '我已独立确认此连接工具、完整参数及用途。这只保存规则，执行前仍须确认本轮任务用途。',
   'rules.trigger': '任务来源',
   'rules.interactive': '交互任务',
   'rules.automation': '自动化任务',

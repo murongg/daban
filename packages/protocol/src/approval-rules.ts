@@ -1,9 +1,27 @@
 import { validAgentId } from './id.js';
 
-export const approvalRulesCapability = 'approval-rules-v1';
+// Purpose replies require negotiation so older clients retain their one-time decision shape.
+export const approvalRulesCapability = 'approval-rules-v2';
 export type RuleEffect = 'allow' | 'ask' | 'deny';
 export type CommandRiskReason = 'literal-read' | 'model-low' | 'forced-human' | 'unavailable';
 export type ApprovalTrigger = 'interactive' | 'automation';
+export interface McpPurposeScope {
+  taskId: string;
+  turnId: string;
+}
+export function isMcpPurposeScope(value: unknown): value is McpPurposeScope {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 2 &&
+    Object.keys(value).every((key) => key === 'taskId' || key === 'turnId') &&
+    'taskId' in value &&
+    validAgentId(value.taskId) &&
+    'turnId' in value &&
+    validAgentId(value.turnId)
+  );
+}
 export interface ApprovalScope {
   kind: 'bot';
   bot: string;

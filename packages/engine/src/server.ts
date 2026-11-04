@@ -598,8 +598,16 @@ export async function startPrototype({
         const modernApprovals = req.headers['x-daban-approval-rules'] === approvalRulesCapability;
         const interactionView = (item: Interaction) => {
           if (modernApprovals) return item;
-          const { policyDecision: _policy, ...legacy } = item;
-          return legacy;
+          const { policyDecision: _policy, purposeScope: _purpose, reply, ...legacy } = item;
+          return {
+            ...legacy,
+            ...(reply
+              ? {
+                  reply:
+                    reply.kind === 'decision' ? { kind: reply.kind, allow: reply.allow } : reply,
+                }
+              : {}),
+          };
         };
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
@@ -1678,7 +1686,8 @@ export async function startPrototype({
                 Object.keys(data).some((key) => !['id', 'runId', 'reply'].includes(key)) ||
                 !validAgentId(data.id) ||
                 !validAgentId(data.runId) ||
-                !isUserReply(data.reply)
+                !isUserReply(data.reply) ||
+                (!modernApprovals && data.reply.kind === 'decision' && data.reply.confirmPurpose)
               )
                 throw new Fault('INVALID_INTERACTION_REPLY', 400);
               return json(

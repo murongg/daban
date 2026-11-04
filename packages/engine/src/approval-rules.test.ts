@@ -6,6 +6,9 @@ import {
   type ApprovalSelector,
   isApprovalRuleDraft,
   isApprovalSelector,
+  isMcpPurposeScope,
+  isUserReply,
+  matchesReply,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { ApprovalRules, decide } from './approval-rules.js';
@@ -28,6 +31,37 @@ const request = {
   baseline: 'allow' as const,
   allowEligible: false,
 };
+
+test('purpose scope accepts only its own exact task and Human turn identifiers', () => {
+  expect(isMcpPurposeScope({ taskId: 'mock-task', turnId: 'mock-turn' })).toBe(true);
+  expect(isMcpPurposeScope({ taskId: 'mock-task', turnId: 'mock-turn', granted: true })).toBe(
+    false,
+  );
+  const inherited = Object.assign(Object.create({ taskId: 'mock-task', turnId: 'mock-turn' }), {
+    arbitrary: true,
+    granted: true,
+  });
+  expect(isMcpPurposeScope(inherited)).toBe(false);
+});
+
+test('a purpose reply must be an explicit allow on an MCP card with Host purpose scope', () => {
+  const reply = { kind: 'decision', allow: true, confirmPurpose: true };
+  expect(isUserReply(reply)).toBe(true);
+  expect(isUserReply({ ...reply, allow: false })).toBe(false);
+  expect(isUserReply({ ...reply, taskId: 'mock-forged' })).toBe(false);
+  expect(
+    matchesReply(
+      {
+        kind: 'approval',
+        id: 'mock-card',
+        sessionId: 'mock-session',
+        tool: 'web_fetch',
+        url: 'https://example.test',
+      },
+      reply,
+    ),
+  ).toBe(false);
+});
 
 test('precise selectors reject prefixes, regex, credentials, incomplete MCP identity and software allow', () => {
   for (const input of [
