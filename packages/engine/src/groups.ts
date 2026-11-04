@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { ProjectScope } from '@daban/protocol';
 import {
   type Group,
   type GroupActionAck,
@@ -52,7 +53,12 @@ export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
   directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
-  source?(bot: string, runId: string, conversationId?: string): { intentId: string } | undefined;
+  source?(
+    bot: string,
+    runId: string,
+    conversationId?: string,
+  ): { intentId: string; project?: ProjectScope } | undefined;
+  projectScope?(bot: string, scope: ProjectScope): unknown;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
@@ -422,6 +428,11 @@ export class Groups {
     for (const member of members)
       if (!(await this.runner.member(member))) throw new Fault('GROUP_MEMBER_REQUIRED');
   }
+  private projectMembers(project: ProjectScope | undefined, members: string[]) {
+    if (!project) return;
+    if (!this.runner.projectScope) throw new Fault('PROJECT_ACCESS_DENIED', 403);
+    for (const bot of members) this.runner.projectScope(bot, project);
+  }
   private admitCreation(members: string[]) {
     // Directory awaits must finish first; commit in this same turn before lifecycle permission can change.
     if (members.some((member) => this.runner.admit?.(member) === false))
@@ -493,6 +504,7 @@ export class Groups {
     };
     return this.exclusive(async () => {
       const identity = this.collaborationSource(source);
+      const project = this.runner.source?.(source.bot, source.runId)?.project;
       const signature = JSON.stringify(value);
       const prior = this.db
         .select()
@@ -514,9 +526,11 @@ export class Groups {
       if (this.collaborationSource(source) !== identity || !author)
         throw new Fault('GROUP_SOURCE_CLOSED');
       this.admitCreation(members);
+      this.projectMembers(project, members);
       const now = new Date().toISOString();
       const group: Group = {
         id,
+        ...(project ? { project } : {}),
         name: value.name,
         members,
         revision: 1,
@@ -576,11 +590,13 @@ export class Groups {
       if (source.revision !== request.revision) throw new Fault('GROUP_CONFLICT');
       await this.creationMembers(request.id, source.members);
       this.admitCreation(source.members);
+      this.projectMembers(source.project, source.members);
       const now = new Date().toISOString();
       const group: Group = {
         id: request.id,
         name: request.name.trim(),
         members: [...source.members],
+        ...(source.project ? { project: source.project } : {}),
         revision: 1,
         createdAt: now,
         updatedAt: now,
@@ -659,6 +675,7 @@ export class Groups {
         JSON.stringify(current.members) === JSON.stringify(value.members)
       )
         return current;
+      this.projectMembers(current.project, value.members);
       const group = {
         ...current,
         ...value,
@@ -791,6 +808,7 @@ export class Groups {
       throw new Fault('GROUP_REVISION_REQUIRED');
     if (value.revision !== undefined && value.revision !== group.revision)
       throw new Fault('GROUP_CONFLICT');
+    this.projectMembers(group.project, [...value.recipients, ...(author ? [author.bot] : [])]);
     if (value.recipients.some((bot) => !group.members.includes(bot)))
       throw new Fault('GROUP_MEMBER_REQUIRED');
     if (value.recipients.some((bot) => this.runner.admit?.(bot) === false))
@@ -1119,6 +1137,7 @@ export class Groups {
             };
           }),
         );
+        this.projectMembers(group.project, [String(row.bot)]);
         const context = row.context ? String(row.context) : this.context(row, group, directory);
         // Directory reads yield; recheck eligibility in the same turn that claims the delivery.
         if (this.runner.admit?.(String(row.bot)) === false) continue;
@@ -1148,6 +1167,7 @@ export class Groups {
             String(row.bot),
             {
               requestId: requestId(row),
+              ...(group.project ? { project: group.project } : {}),
               prompt: String(turn.prompt),
               files: this.inputs(group.id, String(turn.id)),
             },
@@ -1292,6 +1312,7 @@ export class Groups {
       terminal.has(receipt.phase)
     )
       throw new Fault('GROUP_SOURCE_CLOSED');
+    this.projectMembers(group.project, [source.bot]);
     return { group, row };
   }
   history(source: GroupSource, args: Record<string, unknown>) {
@@ -1401,6 +1422,7 @@ export class Groups {
               deliveryId: String(previous.target),
             };
           }
+          this.projectMembers(group.project, [source.bot, value.bot]);
           if (this.runner.admit?.(value.bot) === false) throw new Fault('BOT_UNAVAILABLE');
           const stages = this.stages(group.id, String(row.source));
           let target: { id: string } | undefined = stages.find(
