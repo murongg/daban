@@ -667,7 +667,8 @@ export class ModelSettings {
   }
   async inspect(value: unknown) {
     if (!isModelInspectionRequest(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
-    const current = await this.privateConfig();
+    // Disconnect removes credentials, but retains the revision used by new draft diagnostics.
+    const current = await this.readState();
     if ((current?.revision ?? 0) !== value.revision)
       throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
     const existing = current
@@ -690,7 +691,7 @@ export class ModelSettings {
           ]);
     if (key && exposed.some((text) => text.includes(key)))
       throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
-    if (((await this.privateConfig())?.revision ?? 0) !== value.revision)
+    if (((await this.readState())?.revision ?? 0) !== value.revision)
       throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
     return result;
   }
@@ -970,7 +971,12 @@ export class ModelSettings {
         revision: input.revision,
         ...(input.kind === 'list' ? { kind: 'list' } : { kind: 'test', model: input.model }),
       });
-      if (result.kind === 'list' && !result.models.some((model) => model.id === input.model))
+      // Normalize only the Google catalog comparison; receipts retain the authored model reference.
+      const expected =
+        modelApi(input.connection) === 'google-generative-ai'
+          ? input.model.replace(/^models\//, '')
+          : input.model;
+      if (result.kind === 'list' && !result.models.some((model) => model.id === expected))
         throw new Fault('MODEL_API_MODEL_UNAVAILABLE', 400);
       settled = {
         ...operation,

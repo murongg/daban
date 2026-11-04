@@ -559,6 +559,49 @@ test('draining a run waits for its in-flight tool before lifecycle cleanup', asy
   expect(settled).toBe(true);
 });
 
+test('draining also retires a remote lease whose open completes during an active call', async () => {
+  let entered: () => unknown = () => undefined;
+  let release: () => unknown = () => undefined;
+  const ready = new Promise<undefined>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  const gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const calls: string[] = [];
+  const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), {
+    execution: {
+      call: async (method: string) => {
+        calls.push(method);
+        if (method === 'tools.open') {
+          entered();
+          await gate;
+          return { tools: [] };
+        }
+        return { phase: 'settled', result: { content: [] } };
+      },
+    },
+  });
+  const run: AgentToolRun = {
+    id: 'mock-late-lease',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    workdir: '/mock/task',
+    canonicalRoot: '/mock/task',
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+  };
+  const pending = tools.invoke(run, 'write_file', { path: 'result.txt', content: 'SYNTHETIC' });
+  await ready;
+  const drained = tools.drain(run);
+  release();
+  await pending;
+  await drained;
+  expect(calls).toEqual(['tools.open', 'tools.invoke', 'tools.drain']);
+});
+
 test('a parent replaced after validation cannot make a tool create even an empty file in a private directory', async (t) => {
   const fs = (await import('node:fs/promises')).default;
   const { syncBuiltinESMExports } = await import('node:module');

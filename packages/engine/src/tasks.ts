@@ -26,6 +26,7 @@ import {
   isRunTurn,
   isSessionStats,
   isTaskFile,
+  modelRecoveryBlocked,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
@@ -592,5 +593,47 @@ export class TaskJournal {
     await this.writing;
     const record = this.records.get(runId);
     return record?.bot === bot ? structuredClone(record) : undefined;
+  }
+  async recovery(bot: string, runId: string) {
+    await this.writing;
+    const record = this.records.get(runId);
+    if (record?.bot !== bot) return undefined;
+    const intentId = record.intentId || record.runId;
+    let toolCount = 0;
+    let activeMs = 0;
+    let blocked = false;
+    let contribution = { toolCount: 0, activeMs: 0 };
+    for (const task of this.records.values()) {
+      if (task.bot !== bot || (task.intentId || task.runId) !== intentId) continue;
+      if (
+        task.conversationId !== record.conversationId ||
+        (!record.conversationId && (task.chatRevision ?? 0) !== (record.chatRevision ?? 0))
+      )
+        throw new Fault('INVALID_RETRY', 400);
+      const counters = [
+        task.toolCount ?? 0,
+        task.executedCount ?? 0,
+        task.activeMs ?? task.elapsedMs ?? 0,
+      ];
+      if (counters.some((value) => !Number.isSafeInteger(value) || value < 0))
+        throw new Fault('INVALID_RETRY', 400);
+      // Records contribute once per run, independently of clocks or the selected retry ancestor.
+      // Older cumulative snapshots may overcharge; never reinterpret them as a lower/empty budget.
+      const tools = Math.max(counters[0], counters[1], taskActivity(task).executedCount);
+      toolCount += tools;
+      activeMs += counters[2];
+      if (task.runId === record.runId) contribution = { toolCount: tools, activeMs: counters[2] };
+      if (!Number.isSafeInteger(toolCount) || !Number.isSafeInteger(activeMs))
+        throw new Fault('INVALID_RETRY', 400);
+      blocked ||= modelRecoveryBlocked(task);
+    }
+    return {
+      record: structuredClone(record),
+      intentId,
+      toolCount,
+      activeMs,
+      blocked,
+      contribution,
+    };
   }
 }

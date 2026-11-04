@@ -893,6 +893,72 @@ it('queries an uncertain configure receipt instead of issuing another paid valid
   ).toBeInTheDocument();
 });
 
+it('queries the Host-selected provider receipt when a non-default connection save loses its reply', async () => {
+  const selected = {
+    ...connection,
+    id: 'mock-default',
+    name: 'Synthetic default',
+    baseURL: 'https://default.example.test/v1',
+  };
+  const backend = connect('RUNTIME_UNAVAILABLE', selected);
+  backend.snapshot.model.connections = [connection, selected];
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-model-host',
+    fallback: true,
+    diagnostics: true,
+    cli: false,
+  };
+  const original = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) => {
+    if (command.type !== 'model.saved') return original(command);
+    const write = backend.writes.find((entry) => entry.type === 'model.configure');
+    if (
+      write?.type !== 'model.configure' ||
+      command.input.connection !== selected.id ||
+      command.input.model !== `provider:${selected.id}:model-alpha` ||
+      command.input.requestId !== write.input.requestId ||
+      command.input.revision !== 3
+    )
+      return { ok: false, error: 'MODEL_OPERATION_MISMATCH' };
+    return {
+      ok: true,
+      value: {
+        scope: 'mock-model-host',
+        requestId: write.input.requestId,
+        revision: 3,
+        connection: selected.id,
+        model: `provider:${selected.id}:model-alpha`,
+        kind: 'configure',
+        phase: 'committed',
+        committedRevision: 4,
+        current: {
+          configured: true,
+          provider: selected.id,
+          model: `provider:${selected.id}:model-alpha`,
+          revision: 4,
+          connections: [connection, selected],
+          modelAccess: backend.snapshot.model.modelAccess,
+        },
+      },
+    };
+  });
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await userEvent.click(await screen.findByRole('button', { name: '查询保存回执' }));
+  const query = backend.invoke.mock.calls.find(([command]) => command.type === 'model.saved')?.[0];
+  expect(query).toMatchObject({
+    type: 'model.saved',
+    input: { connection: selected.id, model: `provider:${selected.id}:model-alpha`, revision: 3 },
+  });
+  expect(backend.writes).toHaveLength(1);
+  expect(backend.writes[0]).toMatchObject({
+    type: 'model.configure',
+    input: { connection: { id: connection.id }, model: `provider:${selected.id}:model-alpha` },
+  });
+  expect(screen.queryByRole('button', { name: '查询保存回执' })).not.toBeInTheDocument();
+});
+
 it('recovers a lost paid inference test through its exact diagnostic receipt', async () => {
   const backend = connect();
   backend.snapshot.model.modelAccess = {

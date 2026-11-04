@@ -672,3 +672,205 @@ test('model access: imported unresolved model references remain authored metadat
     await rm(root, { recursive: true, force: true });
   }
 });
+
+for (const kind of ['list', 'inference'] as const)
+  test(`model access: ${kind} diagnosis keeps the disconnected revision and its original receipt`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-disconnected-diagnosis-'));
+    const file = path.join(root, 'credentials.json');
+    let calls = 0;
+    const settings = new ModelSettings(file, async (url) => {
+      calls++;
+      return String(url).endsWith('/models')
+        ? Response.json({ data: [{ id: 'mock-model' }] })
+        : completion();
+    });
+    try {
+      await settings.configure({ ...input, revision: 0 });
+      const scope = (await settings.status(true)).modelAccess!.scope;
+      await settings.remove({
+        scope,
+        revision: 1,
+        requestId: 'mock-disconnect-for-test',
+        connection: input.connection.id,
+        disconnect: true,
+      });
+      const request = {
+        scope,
+        revision: 2,
+        probeRevision: 0,
+        requestId: `mock-disconnected-${kind}`,
+        connection: { id: input.connection.id, baseURL: input.connection.baseURL },
+        model: 'mock-model',
+        apiKey: 'synthetic-new-probe-key',
+        kind,
+      };
+      const result = await settings.diagnose(request);
+      expect(result).toMatchObject({
+        phase: 'settled',
+        diagnostic: { kind },
+        current: { configured: false, revision: 2 },
+      });
+      expect(result.error).toBeUndefined();
+      expect(await settings.diagnose(request)).toEqual(result);
+      expect(calls).toBe(2);
+      await expect(
+        settings.inspect({
+          connection: request.connection,
+          apiKey: request.apiKey,
+          revision: 0,
+          kind: 'list',
+        }),
+      ).rejects.toMatchObject({ code: 'MODEL_SETTINGS_CONFLICT' });
+      expect(calls).toBe(2);
+      expect(await readFile(file, 'utf8')).not.toContain(request.apiKey);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+for (const authored of ['models/mock-gemini', 'mock-gemini'])
+  test(`model access: Google directory diagnosis preserves the authored ${authored} reference`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-google-diagnosis-'));
+    const connection = {
+      ...input.connection,
+      id: 'mock-google',
+      api: 'google-generative-ai' as const,
+      baseURL: 'https://google.example.test/v1beta',
+      models: [{ ...input.connection.models[0], id: authored }],
+    };
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async (url) =>
+      new URL(String(url)).pathname.endsWith('/models')
+        ? Response.json({
+            models: [
+              { name: 'models/mock-gemini', supportedGenerationMethods: ['generateContent'] },
+            ],
+          })
+        : Response.json({
+            name: 'models/mock-gemini',
+            supportedGenerationMethods: ['generateContent'],
+          }),
+    );
+    try {
+      const model = `provider:mock-google:${authored}`;
+      await settings.configure({
+        model,
+        connection,
+        apiKey: 'synthetic-google-key',
+        revision: 0,
+        requestId: 'mock-google-config',
+      });
+      const scope = (await settings.status(true)).modelAccess!.scope;
+      const result = await settings.diagnose({
+        scope,
+        revision: 1,
+        probeRevision: 0,
+        requestId: 'mock-google-list',
+        connection: { id: connection.id, api: connection.api, baseURL: connection.baseURL },
+        model: authored,
+        kind: 'list',
+      });
+      expect(result.error).toBeUndefined();
+      expect(result).toMatchObject({
+        model,
+        phase: 'settled',
+        diagnostic: { kind: 'list', model },
+      });
+      expect(
+        (
+          await settings.saved({
+            scope,
+            revision: 1,
+            requestId: 'mock-google-list',
+            connection: connection.id,
+            model,
+          })
+        ).model,
+      ).toBe(model);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+test('model access: directory comparison keeps non-Google model prefixes literal', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-literal-model-'));
+  let missing = false;
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+    Response.json({ data: [{ id: missing ? 'mock-model' : 'models/mock-model' }] }),
+  );
+  try {
+    const connection = {
+      ...input.connection,
+      models: [{ ...input.connection.models[0], id: 'models/mock-model' }],
+    };
+    await settings.configure({
+      ...input,
+      model: 'provider:mock-provider:models/mock-model',
+      connection,
+      revision: 0,
+    });
+    missing = true;
+    const result = await settings.diagnose({
+      scope: (await settings.status(true)).modelAccess!.scope,
+      revision: 1,
+      probeRevision: 0,
+      requestId: 'mock-literal-list',
+      connection: { id: connection.id, baseURL: connection.baseURL },
+      model: 'models/mock-model',
+      kind: 'list',
+    });
+    expect(result.error).toBe('MODEL_API_MODEL_UNAVAILABLE');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('model access: editing one provider binds the receipt to the selected default model owner', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-selected-receipt-'));
+  let calls = 0;
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), async () => {
+    calls++;
+    return Response.json({ data: [{ id: 'mock-model' }] });
+  });
+  try {
+    await settings.configure({ ...input, revision: 0 });
+    const selected = {
+      ...input.connection,
+      id: 'mock-selected',
+      baseURL: 'https://selected.example.test/v1',
+    };
+    const model = 'provider:mock-selected:mock-model';
+    await settings.configure({
+      model,
+      connection: selected,
+      apiKey: 'synthetic-selected-key',
+      revision: 1,
+      requestId: 'mock-select-default',
+    });
+    const update = {
+      ...input,
+      model,
+      revision: 2,
+      requestId: 'mock-edit-nondefault',
+      connection: { ...input.connection, name: 'Synthetic updated provider' },
+    };
+    await settings.configure(update);
+    const query = {
+      scope: (await settings.status(true)).modelAccess!.scope,
+      requestId: update.requestId,
+      revision: 2,
+      connection: selected.id,
+      model,
+    };
+    expect(await settings.saved(query)).toMatchObject({
+      phase: 'committed',
+      current: { revision: 3, provider: selected.id, model },
+    });
+    await expect(
+      settings.saved({ ...query, connection: input.connection.id }),
+    ).rejects.toMatchObject({ code: 'MODEL_OPERATION_MISMATCH' });
+    await settings.configure(update);
+    expect(calls).toBe(3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
