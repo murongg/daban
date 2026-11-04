@@ -323,3 +323,66 @@ test('only exact URLs from a successful canonical search result bypass another a
   expect(approvals).toBe(2);
   expect(bodies).toBe(1);
 });
+
+test('attempt policy waits for durable Host fence acknowledgement before native tools or approvals', async () => {
+  const { vi } = await import('vitest');
+  let release: () => unknown = () => undefined;
+  const gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const order: string[] = [];
+  const fetcher: typeof fetch = async (_url, init) => {
+    const value = JSON.parse(String(init?.body)) as { method: string; params: unknown };
+    expect(value).toMatchObject({
+      method: 'attempt.fence',
+      params: { attemptId: 'mock-attempt', sessionId: 'mock-root', kind: 'tool' },
+    });
+    order.push('fence');
+    await gate;
+    return Response.json({ result: { accepted: true } });
+  };
+  vi.stubGlobal('fetch', fetcher);
+  let pre: (
+    exec: { signal: AbortSignal; name: string; arguments: unknown },
+    next: () => Promise<unknown>,
+  ) => Promise<unknown> = async () => undefined;
+  const ctx: Parameters<typeof apply>[0] = {
+    on: (...hook) => {
+      if (hook[0] === 'tools/pre-execute') pre = hook[1];
+    },
+  };
+  const config = {
+    limit: 10,
+    urls: [],
+    url: 'http://127.0.0.1:12345/mcp/mock-bot',
+    capability: 'synthetic-attempt-token',
+    attemptId: 'mock-attempt',
+  };
+  apply(
+    Object.assign(ctx, { agents: { roots: () => [{ session: { id: 'mock-root' } }] } }),
+    config,
+  );
+  let pending: Promise<unknown> | undefined;
+  try {
+    pending = pre(
+      {
+        signal: new AbortController().signal,
+        name: 'todo_write',
+        arguments: { todos: [{ content: 'Synthetic step', status: 'pending' }] },
+      },
+      async () => {
+        order.push('execute');
+        return { kind: 'allow' };
+      },
+    );
+    await new Promise(setImmediate);
+    expect(order).toEqual(['fence']);
+    release();
+    await pending;
+    expect(order).toEqual(['fence', 'execute']);
+  } finally {
+    release();
+    await pending?.catch(() => undefined);
+    vi.unstubAllGlobals();
+  }
+});

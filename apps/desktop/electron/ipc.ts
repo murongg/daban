@@ -26,7 +26,11 @@ import {
   isLocalComputerCommand,
   isMcpCommand,
   isMemoryQuery,
+  isModelDiagnoseRequest,
+  isModelFallbackRequest,
   isModelInspectionRequest,
+  isModelRemoveRequest,
+  isModelSavedRequest,
   isModelUpdate,
   isNoteCommand,
   isRecoveryRequest,
@@ -140,6 +144,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'group.copy.receipt': ['type', 'request'],
     'group.receipt': ['type', 'group', 'id'],
     'model.configure': ['type', 'input'],
+    'model.saved': ['type', 'input'],
+    'model.fallback.configure': ['type', 'input'],
+    'model.remove': ['type', 'input'],
+    'model.diagnose': ['type', 'input'],
     'model.check': ['type', 'revision'],
     'model.inspect': ['type', 'input'],
     'clipboard.write': ['type', 'text'],
@@ -310,6 +318,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if (v.type === 'group.input' && (!validAgentId(v.sourceId) || !isTaskFileName(v.name)))
     return fail();
   if (v.type === 'model.configure' && !isModelUpdate(v.input)) return fail();
+  if (v.type === 'model.saved' && !isModelSavedRequest(v.input)) return fail();
+  if (v.type === 'model.fallback.configure' && !isModelFallbackRequest(v.input)) return fail();
+  if (v.type === 'model.remove' && !isModelRemoveRequest(v.input)) return fail();
+  if (v.type === 'model.diagnose' && !isModelDiagnoseRequest(v.input)) return fail();
   if (v.type === 'model.inspect' && !isModelInspectionRequest(v.input)) return fail();
   if (v.type === 'model.check' && (!Number.isSafeInteger(v.revision) || Number(v.revision) < 0))
     return fail();

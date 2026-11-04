@@ -3,6 +3,7 @@ import path from 'node:path';
 import type {
   BotProfile,
   GoalProgress,
+  ModelAttempt,
   ModelId,
   ReplyStream,
   RunInsert,
@@ -17,6 +18,7 @@ import type {
 import {
   isApprovalMode,
   isGoalProgress,
+  isModelAttempts,
   isReplyStream,
   isRunInsert,
   isRunTurn,
@@ -247,6 +249,8 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  activeMs?: number;
+  attemptSummary?: ModelAttempt[];
   goalSession?: boolean;
   goal?: GoalProgress;
   planning?: boolean;
@@ -374,6 +378,14 @@ export class TaskJournal {
         )
           continue;
         if (task.running || ['starting', 'running', 'paused', 'waiting'].includes(task.phase)) {
+          // A crash loses exact human-wait timing; charge elapsed wall time conservatively instead of resetting the root budget.
+          const elapsed = Date.now() - Date.parse(task.createdAt || '');
+          if (Number.isFinite(elapsed) && elapsed >= 0)
+            task.activeMs = Math.min(
+              300000,
+              (Number.isSafeInteger(task.activeMs) && task.activeMs >= 0 ? task.activeMs : 0) +
+                elapsed,
+            );
           task.phase = 'interrupted';
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
@@ -383,6 +395,23 @@ export class TaskJournal {
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
         if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
+        if (
+          task.activeMs !== undefined &&
+          (!Number.isSafeInteger(task.activeMs) || task.activeMs < 0)
+        )
+          delete task.activeMs;
+        if (task.attemptSummary !== undefined && !isModelAttempts(task.attemptSummary))
+          delete task.attemptSummary;
+        if (task.phase === 'interrupted' && task.attemptSummary)
+          task.attemptSummary = task.attemptSummary.map((attempt: ModelAttempt) =>
+            ['starting', 'running'].includes(attempt.phase)
+              ? {
+                  ...attempt,
+                  phase: 'interrupted',
+                  fence: attempt.fence === 'clean' ? 'clean' : 'unknown',
+                }
+              : attempt,
+          );
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
         if (
           task.elapsedMs !== undefined &&
@@ -418,6 +447,13 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (
+      value.activeMs !== undefined &&
+      (!Number.isSafeInteger(value.activeMs) || value.activeMs < 0)
+    )
+      throw new Fault('INVALID_TASK_RECORD', 400);
+    if (value.attemptSummary !== undefined && !isModelAttempts(value.attemptSummary))
+      throw new Fault('INVALID_TASK_RECORD', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
@@ -437,6 +473,8 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'activeMs',
+      'attemptSummary',
       'bot',
       'chatRevision',
       'conversationId',

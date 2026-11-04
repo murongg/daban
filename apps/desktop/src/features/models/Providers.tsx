@@ -3,9 +3,12 @@ import {
   isModelApi,
   isModelConnection,
   isModelKey,
+  isModelSaved,
   type ModelCheck,
   type ModelConnection,
   type ModelDefinition,
+  type ModelSaved,
+  type ModelSavedRequest,
   type ModelUpdate,
   modelApi,
   modelCatalog,
@@ -17,6 +20,7 @@ import { runtimeError, useRuntime } from '../../app/Runtime';
 import { NumberField } from '../../components/controls/NumberField';
 import { Select } from '../../components/controls/Select';
 import { getLocale, t, useLocale } from '../../i18n/locale';
+import { ModelAccess } from './ModelAccess';
 import { ModelIcon } from './ModelIcon';
 import { ModelInputs } from './ModelInputs';
 import { ModelCatalog, ModelInspector } from './ModelTools';
@@ -112,6 +116,9 @@ export function Providers({
   const [selected, setSelected] = useState<string>();
   const [defaultRevision, setDefaultRevision] = useState<number>();
   const [pending, setPending] = useState<ModelUpdate>();
+  const pendingQuery = useRef<ModelSavedRequest | undefined>(undefined);
+  const owner = useRef(model.modelAccess?.scope);
+  owner.current = model.modelAccess?.scope;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [code, setCode] = useState('');
@@ -310,18 +317,51 @@ export function Providers({
       }
     }
     setPending(input);
+    if (!pending && model.modelAccess) {
+      const connection =
+        input.connection?.id ||
+        connections.find((connection) =>
+          connection.models.some(
+            (entry) => modelReference(connection.id, entry.id) === input.model,
+          ),
+        )?.id ||
+        'deepseek-official';
+      pendingQuery.current = {
+        scope: model.modelAccess.scope,
+        requestId: input.requestId,
+        revision: input.revision,
+        connection,
+        model: input.model,
+      };
+    }
     setBusy(true);
     setError('');
     setCode('');
     setNotice('');
     try {
-      await runtime.command({ type: 'model.configure', input });
+      if (pending && pendingQuery.current) {
+        if (pendingQuery.current.scope !== owner.current)
+          throw new Error('RUNTIME_SESSION_CHANGED');
+        const receipt = await runtime.command<ModelSaved>({
+          type: 'model.saved',
+          input: pendingQuery.current,
+        });
+        if (!isModelSaved(receipt) || receipt.kind !== 'configure')
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (receipt.phase === 'failed') {
+          if (mounted.current) setPending(undefined);
+          throw new Error(receipt.error || 'MODEL_OPERATION_UNKNOWN');
+        }
+        if (receipt.phase !== 'committed') throw new Error('MODEL_OPERATION_UNKNOWN');
+      } else await runtime.command({ type: 'model.configure', input });
+      if (pendingQuery.current && pendingQuery.current.scope !== owner.current) return;
       if (mounted.current) {
         setDraft(undefined);
         setEditorOpen(false);
         setSelected(undefined);
         setDefaultRevision(undefined);
         setPending(undefined);
+        pendingQuery.current = undefined;
         setChecked(undefined);
         setNotice(t('models.modelSettingsSavedChangesApplyNextTask'));
         // Status may publish before the save reply; onboarding completes only after this exact intent is acknowledged.
@@ -333,7 +373,11 @@ export function Providers({
         setError(runtimeError(failure));
         setCode(next);
         // Only a definitive server decision allows a new intent; uncertain replies retain the exact key and route.
-        if (definitiveModelErrors.has(next)) setPending(undefined);
+        if (
+          definitiveModelErrors.has(next) &&
+          !(pendingQuery.current && ['MODEL_API_UNAVAILABLE', 'MODEL_API_TIMEOUT'].includes(next))
+        )
+          setPending(undefined);
       }
     } finally {
       if (mounted.current) setBusy(false);
@@ -476,19 +520,21 @@ export function Providers({
               onClick={save}
             >
               {pending
-                ? t('common.verifyRetrySave')
+                ? t(model.modelAccess ? 'models.queryReceipt' : 'common.verifyRetrySave')
                 : busy
                   ? t('common.saving')
                   : t('models.saveDefaultModel')}
             </button>
-            <button
-              className="text-button"
-              type="button"
-              disabled={!available || busy || !!pending || !!draft || !model.configured}
-              onClick={check}
-            >
-              {t('models.checkDefaultConnection')}
-            </button>
+            {!model.modelAccess && (
+              <button
+                className="text-button"
+                type="button"
+                disabled={!available || busy || !!pending || !!draft || !model.configured}
+                onClick={check}
+              >
+                {t('models.checkDefaultConnection')}
+              </button>
+            )}
           </div>
           {code === 'MODEL_SETTINGS_CONFLICT' && (
             <div className="inline-note">
@@ -511,6 +557,11 @@ export function Providers({
               </button>
             </div>
           )}
+        </div>
+      )}
+      {mode === 'settings' && (
+        <div hidden={editorOpen}>
+          <ModelAccess />
         </div>
       )}
       {draft && (
@@ -906,9 +957,13 @@ export function Providers({
               </label>
             </details>
           </fieldset>
-          {pending && !busy && (
+          {pending && !busy && error !== t('models.operationUnknown') && (
             <p className="inline-note">
-              {t('models.saveResultUnconfirmedRetryingChecksSameOperation')}
+              {t(
+                model.modelAccess
+                  ? 'models.operationUnknown'
+                  : 'models.saveResultUnconfirmedRetryingChecksSameOperation',
+              )}
             </p>
           )}
           {code === 'MODEL_SETTINGS_CONFLICT' && (
@@ -953,12 +1008,13 @@ export function Providers({
               {busy
                 ? t('models.verifyingSaving')
                 : pending
-                  ? t('common.verifyRetrySave')
+                  ? t(model.modelAccess ? 'models.queryReceipt' : 'common.verifyRetrySave')
                   : t('models.verifySaveProvider')}
             </button>
           </div>
         </form>
       )}
+      {editorOpen && <p className="field-help">{t('models.configureCostHint')}</p>}
       {error && (
         <p className="form-error" role="alert">
           {error}

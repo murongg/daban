@@ -42,6 +42,7 @@ import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  beforeTool?: () => Promise<unknown>;
   vision?: boolean;
   skills?: SkillSnapshot;
   sessionId?: string;
@@ -312,11 +313,38 @@ export class AgentTools {
       calls = new Set();
       this.active.set(run, calls);
     }
-    const call = this.perform(run, name, args, wireId);
+    const call = run.beforeTool
+      ? this.fenced(run, name, args, wireId)
+      : this.perform(run, name, args, wireId);
     calls.add(call);
     return call.finally(() => {
       calls.delete(call);
     });
+  }
+  private async fenced(
+    run: AgentToolRun,
+    name: string,
+    args: Record<string, unknown>,
+    wireId?: string,
+  ) {
+    const identity = () =>
+      JSON.stringify([
+        run.bot,
+        run.id,
+        run.intentId,
+        run.sessionId,
+        run.model,
+        run.vision,
+        run.workdir,
+        run.canonicalRoot,
+        run.integrations?.key,
+      ]);
+    const owner = identity();
+    const input = structuredClone(args);
+    await run.beforeTool?.();
+    // Fence persistence must not move the read/permission snapshot past a change of task ownership.
+    if (identity() !== owner) throw new Fault('TOOL_CONTEXT_CHANGED', 403);
+    return this.perform(run, name, input, wireId);
   }
   async drain(run: AgentToolRun) {
     await Promise.allSettled([...(this.active.get(run) || [])]);

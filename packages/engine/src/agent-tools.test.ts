@@ -688,3 +688,49 @@ test('unavailable native-only tools still consume the run budget and report its 
   const second = await tools.invoke(run, 'read_file', { path: 'synthetic.txt' });
   expect(JSON.stringify(second)).toMatch(/TOOL_LIMIT/);
 });
+
+test('durability waits pin the task identity and the exact tool arguments before dispatch', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-tool-fence-owner-'));
+  const canonicalRoot = await realpath(root);
+  const tools = new AgentTools(undefined, new WorkspaceFiles(root));
+  let release: () => unknown = () => undefined;
+  let gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const run: AgentToolRun = {
+    id: 'mock-run',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    workdir: root,
+    canonicalRoot,
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    beforeTool: async () => gate,
+  };
+  try {
+    const args = { path: 'mock.txt', content: 'Synthetic accepted content' };
+    const first = tools.invoke(run, 'write_file', args);
+    args.content = 'Synthetic later mutation';
+    release();
+    const firstResult = await first;
+    expect(firstResult.isError, JSON.stringify(firstResult)).not.toBe(true);
+    expect(await readFile(path.join(root, 'mock.txt'), 'utf8')).toBe('Synthetic accepted content');
+    gate = new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const second = tools.invoke(run, 'write_file', {
+      path: 'other.txt',
+      content: 'Synthetic forbidden write',
+    });
+    run.bot = 'mock-other-bot';
+    release();
+    await expect(second).rejects.toMatchObject({ code: 'TOOL_CONTEXT_CHANGED' });
+    await expect(readFile(path.join(root, 'other.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    release();
+    await tools.drain(run);
+    await rm(root, { recursive: true, force: true });
+  }
+});

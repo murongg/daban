@@ -384,7 +384,8 @@ test('API and catalog failures do not replace existing credentials or reveal res
   try {
     const settings = new ModelSettings(path.join(dir, 'credentials.json'), async () => response());
     await settings.save({ apiKey: 'synthetic-existing-key' });
-    const before = await readFile(settings.file, 'utf8');
+    const before = await settings.resolve();
+    let attempt = 0;
     const input = {
       model: 'deepseek-flash',
       apiKey: 'synthetic-rejected-key',
@@ -398,29 +399,39 @@ test('API and catalog failures do not replace existing credentials or reveal res
       [500, 'MODEL_API_UNAVAILABLE'],
     ] as const) {
       response = () => new Response('synthetic-rejected-key', { status });
-      await expect(settings.configure(input)).rejects.toMatchObject({ code, message: code });
-      expect(await readFile(settings.file, 'utf8')).toBe(before);
+      await expect(
+        settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+      ).rejects.toMatchObject({ code, message: code });
+      expect(await settings.resolve()).toStrictEqual(before);
     }
     response = () => Response.json({ data: [{ id: 'different-model' }] });
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_MODEL_UNAVAILABLE',
     });
     response = () => new Response('{broken');
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_INVALID_RESPONSE',
     });
     response = () => new Response('x'.repeat(65537));
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_INVALID_RESPONSE',
     });
     response = () => {
       throw new Error('synthetic-rejected-key');
     };
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_UNAVAILABLE',
       message: 'MODEL_API_UNAVAILABLE',
     });
-    expect(await readFile(settings.file, 'utf8')).toBe(before);
+    expect(await settings.resolve()).toStrictEqual(before);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -456,12 +467,21 @@ test('a change during validation cannot overwrite the newer setting or publish a
               revision,
               requestId: 'mock-racing-write',
             });
-      const rejected = expect(pending).rejects.toMatchObject({ code: 'MODEL_SETTINGS_CONFLICT' });
       await started;
-      await settings.save({ apiKey: 'synthetic-newer-key' });
-      release();
-      await rejected;
-      expect((await settings.privateConfig())?.apiKey).toBe('synthetic-newer-key');
+      if (action === 'check') {
+        const rejected = expect(pending).rejects.toMatchObject({ code: 'MODEL_SETTINGS_CONFLICT' });
+        await settings.save({ apiKey: 'synthetic-newer-key' });
+        release();
+        await rejected;
+        expect((await settings.privateConfig())?.apiKey).toBe('synthetic-newer-key');
+      } else {
+        await expect(settings.save({ apiKey: 'synthetic-newer-key' })).rejects.toMatchObject({
+          code: 'MODEL_SETTINGS_BUSY',
+        });
+        release();
+        await pending;
+        expect((await settings.privateConfig())?.apiKey).toBe('synthetic-pending-key');
+      }
     }
   } finally {
     release?.();
@@ -883,7 +903,8 @@ test('completion fallback never hides authorization, balance, rate, malformed re
       return reply();
     });
     await settings.save({ apiKey: 'synthetic-preserved-key' });
-    const before = await readFile(settings.file, 'utf8');
+    const before = await settings.resolve();
+    let attempt = 0;
     const input = {
       model: 'provider:mock-provider:mock-text',
       connection: syntheticConnection(),
@@ -901,9 +922,11 @@ test('completion fallback never hides authorization, balance, rate, malformed re
     ] as const) {
       reply = () => new Response('synthetic-failing-key', { status });
       calls.length = 0;
-      await expect(settings.configure(input)).rejects.toMatchObject({ code, message: code });
+      await expect(
+        settings.configure({ ...input, requestId: `mock-completion-failure-${++attempt}` }),
+      ).rejects.toMatchObject({ code, message: code });
       expect(calls.length).toBe(1);
-      expect(await readFile(settings.file, 'utf8')).toBe(before);
+      expect(await settings.resolve()).toStrictEqual(before);
     }
     for (const response of [
       () => Response.json({ choices: [] }),
@@ -914,13 +937,15 @@ test('completion fallback never hides authorization, balance, rate, malformed re
     ]) {
       calls.length = 0;
       reply = () => (calls.length === 1 ? new Response(null, { status: 404 }) : response());
-      await expect(settings.configure(input)).rejects.toSatisfy(
+      await expect(
+        settings.configure({ ...input, requestId: `mock-completion-failure-${++attempt}` }),
+      ).rejects.toSatisfy(
         (error: unknown) =>
           error instanceof Error &&
           ['MODEL_API_INVALID_RESPONSE', 'MODEL_API_UNAVAILABLE'].includes(error.message),
       );
       expect(calls.length).toBe(2);
-      expect(await readFile(settings.file, 'utf8')).toBe(before);
+      expect(await settings.resolve()).toStrictEqual(before);
     }
     calls.length = 0;
     reply = () =>
@@ -940,11 +965,13 @@ test('completion fallback never hides authorization, balance, rate, malformed re
               ],
             })
           : new Response(null, { status: 403 });
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-completion-failure-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_UNAUTHORIZED',
     });
     expect(calls.length).toBe(3);
-    expect(await readFile(settings.file, 'utf8')).toBe(before);
+    expect(await settings.resolve()).toStrictEqual(before);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
