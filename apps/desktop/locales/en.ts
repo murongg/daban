@@ -80,6 +80,8 @@ export const english = {
   'errors.goalRequiresNewTask': 'Send goal controls after this task ends, or stop it first.',
   'errors.goalRoundLimit':
     'The goal reached its continuation limit. Inspect its status or clear it before creating another.',
+  'errors.taskIncomplete':
+    'The execution plan still has unfinished items. Check the reply for remaining work and blockers.',
   'errors.goalIncomplete':
     'The goal was not marked complete. Check its state and execution details.',
   'errors.goalBlocked': 'The goal reported a blocker. Check its saved reason.',

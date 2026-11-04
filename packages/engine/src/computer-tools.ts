@@ -19,7 +19,7 @@ export const computerToolList = [
   {
     name: 'act',
     description:
-      'Operate the most recently observed surface. Up to four sequential inputs per call. Keys on desktop use lowercase modifiers, e.g. ctrl+a, ctrl+s, ctrl+shift+s, Return. Browser keys use Enter, Tab, ControlOrMeta+A. Text pastes UTF-8. Coordinates are pixels of that surface. Returns a fresh screenshot. Do not call computer tools in parallel.',
+      'Operate the most recently observed surface. Send 1–4 sequential inputs per call; split longer sequences across calls and inspect each returned screenshot. Desktop keys use lowercase modifiers ctrl/alt/shift/super and named keys Return, Home, End, Left, Right, Page_Up, Page_Down, e.g. ctrl+End. Browser keys use Enter, Home, End, ArrowLeft, Alt+ArrowLeft, ControlOrMeta+A. Text pastes UTF-8. Coordinates are pixels of that surface. Returns a fresh screenshot. Do not call computer tools in parallel.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -34,7 +34,11 @@ export const computerToolList = [
               type: { type: 'string', enum: ['click', 'key', 'text', 'scroll', 'pointer'] },
               x: { type: 'number' },
               y: { type: 'number' },
-              key: { type: 'string' },
+              key: {
+                type: 'string',
+                description:
+                  'Required for key input. Desktop: ctrl+End, Home, Return. Browser: ControlOrMeta+A, Alt+ArrowLeft, Enter.',
+              },
               text: { type: 'string' },
               button: { type: 'integer' },
               phase: { type: 'string' },

@@ -7,7 +7,7 @@
     "dev": "npm run build && npm start",
     "build": "npm run lint && npm run build:engine && npm run build --workspace @daban/desktop && npm run build --workspace @daban/agent && npm run build --workspace @daban/runtime",
     "preview": "npm run preview --workspace @daban/desktop",
-    "test": "npm run build:agent && vitest run",
+    "test": "npm run build:agent && npm run build --workspace @daban/runtime && vitest run",
     "test:watch": "npm run build:protocol && vitest --project desktop",
     "typecheck": "npm run lint && npm run build:protocol && tsc -p tsconfig.json && npm run typecheck --workspaces --if-present",
     "dev:web": "npm run build:protocol && npm run dev --workspace @daban/desktop",
