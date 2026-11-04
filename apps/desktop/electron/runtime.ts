@@ -121,6 +121,7 @@ import {
   workKey,
   workQueryKey,
 } from '@daban/protocol';
+import { matchesApprovalReceipt } from '../shared/approval';
 import type { MessageKey } from '../shared/locale';
 import { isTaskReceipt } from '../shared/receipt';
 
@@ -779,31 +780,12 @@ export class RuntimeClient {
               sameApprovalScope(value.scope, scope) &&
               value.trigger === captured.trigger &&
               JSON.stringify(value.selector) === JSON.stringify(captured.selector)
-            : isApprovalRuleReceipt(value) &&
-              sameApprovalScope(value.scope, scope) &&
-              value.requestId ===
-                (captured.type === 'approval.rules.receipt'
-                  ? captured.requestId
-                  : captured.request.requestId);
+            : captured.type === 'approval.rules.write'
+              ? matchesApprovalReceipt(value, captured.request)
+              : isApprovalRuleReceipt(value) &&
+                sameApprovalScope(value.scope, scope) &&
+                value.requestId === captured.requestId;
       if (!valid) throw new Error('INVALID_RUNTIME_STATE');
-      if (captured.type === 'approval.rules.write' && isApprovalRuleReceipt(value)) {
-        const request = captured.request;
-        const id = request.action === 'save' ? request.rule.id : request.id;
-        if (
-          value.id !== id ||
-          value.revision !== request.expectedRevision + 1 ||
-          (request.action === 'delete'
-            ? value.deleted !== true
-            : !value.rule ||
-              value.deleted !== undefined ||
-              Object.entries(request.rule).some(
-                ([key, field]) =>
-                  JSON.stringify(value.rule![key as keyof typeof request.rule]) !==
-                  JSON.stringify(field),
-              ))
-        )
-          throw new Error('INVALID_RUNTIME_STATE');
-      }
       return value;
     }
     if (this.agent && command.type.startsWith('recovery.')) {

@@ -84,6 +84,71 @@ it('requires the rule capability and validates Bot and request identity on rule 
   );
 });
 
+it.each(['reordered selector', 'unexpected expiry', 'unexpected purpose'] as const)(
+  'correlates the complete normalized rule intent: %s',
+  async (change) => {
+    const scope = { kind: 'bot' as const, bot: 'mock-bot' };
+    const rule = {
+      id: 'mock-rule',
+      name: 'Synthetic exact rule',
+      enabled: true,
+      effect: 'ask' as const,
+      trigger: 'interactive' as const,
+      selector: {
+        kind: 'mcp' as const,
+        connection: 'mock-connection',
+        configRevision: 1,
+        catalogDigest: 'a'.repeat(64),
+        tool: 'synthetic_echo',
+        inputHash: 'b'.repeat(64),
+      },
+    };
+    const request = {
+      requestId: 'mock-edit',
+      expectedRevision: 0,
+      scope,
+      action: 'save' as const,
+      rule,
+    };
+    const reply = {
+      requestId: request.requestId,
+      revision: 1,
+      scope,
+      id: rule.id,
+      rule: {
+        ...rule,
+        scope,
+        revision: 1,
+        selector:
+          change === 'reordered selector'
+            ? {
+                inputHash: 'b'.repeat(64),
+                tool: 'synthetic_echo',
+                catalogDigest: 'a'.repeat(64),
+                configRevision: 1,
+                connection: 'mock-connection',
+                kind: 'mcp' as const,
+              }
+            : rule.selector,
+        ...(change === 'unexpected expiry' ? { expiresAt: '2027-01-01T00:00:00Z' } : {}),
+        ...(change === 'unexpected purpose' ? { purposeConfirmed: true as const } : {}),
+      },
+    };
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher: async () => Response.json(reply),
+    });
+    vi.spyOn(client, 'status').mockResolvedValue({
+      ...disconnected('ready'),
+      approvalRules: { capability: approvalRulesCapability, available: true, revision: 0 },
+    });
+    const result = client.invoke({ type: 'approval.rules.write', request });
+    if (change === 'reordered selector') await expect(result).resolves.toEqual(reply);
+    else await expect(result).rejects.toThrow('INVALID_RUNTIME_STATE');
+  },
+);
+
 it('validates the approval mode and refuses it before sending to a runtime without policy support', async () => {
   const task = {
     requestId: 'mock-approval-task',

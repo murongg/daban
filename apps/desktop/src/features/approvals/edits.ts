@@ -6,6 +6,7 @@ import type {
 } from '@daban/protocol';
 import { sameApprovalScope } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
+import { matchesApprovalReceipt } from '../../../shared/approval';
 import { useRuntime } from '../../app/Runtime';
 import { t } from '../../i18n/locale';
 
@@ -27,7 +28,8 @@ export function useRuleEdit(scope: ApprovalScope, onSaved: () => unknown) {
   const [missing, setMissing] = useState(false);
   const complete = (receipt: ApprovalRuleReceipt, request: ApprovalRuleWrite) => {
     if (!alive.current) return;
-    if (!sameApprovalScope(receipt.scope, scope) || receipt.requestId !== request.requestId)
+    // A historical receipt for this ID cannot confirm a different pending edit after a lost error reply.
+    if (!matchesApprovalReceipt(receipt, request) || !sameApprovalScope(receipt.scope, scope))
       throw new Error('INVALID_RUNTIME_STATE');
     setPending(undefined);
     setConflict(undefined);
@@ -35,7 +37,8 @@ export function useRuleEdit(scope: ApprovalScope, onSaved: () => unknown) {
     setMissing(false);
     saved.current();
   };
-  async function send(request: ApprovalRuleWrite) {
+  async function send(input: ApprovalRuleWrite) {
+    const request = structuredClone(input);
     setBusy(true);
     setPending(request);
     setError('');

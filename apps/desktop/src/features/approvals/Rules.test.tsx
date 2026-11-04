@@ -49,9 +49,12 @@ function connect(supported = true) {
         ok: true,
         value: {
           requestId: command.request.requestId,
-          id: 'mock-rule',
-          revision: 1,
+          id: command.request.action === 'save' ? command.request.rule.id : command.request.id,
+          revision: command.request.expectedRevision + 1,
           scope: command.request.scope,
+          ...(command.request.action === 'save'
+            ? { rule: { ...command.request.rule, scope: command.request.scope, revision: 1 } }
+            : { deleted: true }),
         },
       };
     return { ok: true, value: {} };
