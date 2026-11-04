@@ -46,6 +46,7 @@ export const automations = sqliteTable('automations', {
   observeError: text(),
   resultDigest: text(),
   resultError: text(),
+  resultFloor: integer().notNull().default(0),
   noticeRevision: integer().notNull().default(0),
   notice: text(),
 });
