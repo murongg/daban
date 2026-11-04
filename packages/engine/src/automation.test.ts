@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isScheduleInput } from '@daban/protocol';
+import { DatabaseSync } from 'node:sqlite';
+import { isAutomationNotice, isAutomationSource, isScheduleInput } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { sampleFiles, signalDigest } from './automation.js';
 import { secureDirectory } from './private-files.js';
@@ -72,12 +73,27 @@ async function fixture() {
     revoke() {
       allowed = false;
     },
+    setTime(value: number) {
+      now = value;
+    },
     async poll() {
       now += 60000;
       await store.tick();
     },
-    async reopen() {
+    async reopen(beforeFloor = false) {
       await store.close();
+      if (beforeFloor) {
+        // Build the exact pre-floor schema/journal while retaining synthetic firing and notice records.
+        const client = new DatabaseSync(options.file);
+        try {
+          client.exec('ALTER TABLE automations DROP COLUMN resultFloor');
+          client
+            .prepare('DELETE FROM __drizzle_migrations WHERE name = ?')
+            .run('20261104194048_result-floor');
+        } finally {
+          client.close();
+        }
+      }
       store = new Schedules(options);
       await store.ready;
     },
@@ -101,6 +117,95 @@ const input = (value: unknown) => ({
   prompt: 'Inspect synthetic data only',
   enabled: false,
   rule: value,
+});
+
+const invalidEnums: unknown[] = [
+  ['file'],
+  ['manual'],
+  ['completed'],
+  ['changed'],
+  [],
+  null,
+  false,
+  1,
+  { toString: null, valueOf: null },
+];
+test.each(invalidEnums)(
+  'rejects non-string automation triggers without coercion or exceptions %#',
+  (value) => {
+    const source = {
+      scheduleId: 'mock-rule',
+      firingId: 'mock-firing',
+      configRevision: 1,
+      trigger: value,
+      policy: { kind: 'all' },
+    };
+    expect(isAutomationSource(source)).toBe(false);
+  },
+);
+test.each(invalidEnums)(
+  'rejects non-string automation phases without coercion or exceptions %#',
+  (value) => {
+    const notice = {
+      kind: 'automation',
+      id: 'mock-notice',
+      bot: 'mock-bot',
+      schedule: 'mock-rule',
+      phase: 'completed',
+      reason: 'changed',
+    };
+    expect(isAutomationNotice({ ...notice, phase: value })).toBe(false);
+  },
+);
+test.each(invalidEnums)(
+  'rejects non-string automation reasons without coercion or exceptions %#',
+  (value) => {
+    const notice = {
+      kind: 'automation',
+      id: 'mock-notice',
+      bot: 'mock-bot',
+      schedule: 'mock-rule',
+      phase: 'completed',
+      reason: 'changed',
+    };
+    expect(isAutomationNotice({ ...notice, reason: value })).toBe(false);
+  },
+);
+
+test('retains valid original enum strings and mandatory file-source evidence', () => {
+  const source = {
+    scheduleId: 'mock-rule',
+    firingId: 'mock-firing',
+    configRevision: 1,
+    policy: { kind: 'all' },
+  };
+  for (const trigger of ['time', 'manual'])
+    expect(isAutomationSource({ ...source, trigger })).toBe(true);
+  expect(isAutomationSource({ ...source, trigger: 'file' })).toBe(false);
+  expect(
+    isAutomationSource({
+      ...source,
+      trigger: 'file',
+      scope: { projectId: 'mock-project', revision: 1 },
+      paths: ['mock.txt'],
+      fromCursor: 1,
+      toCursor: 2,
+      before: 'a'.repeat(64),
+      after: 'b'.repeat(64),
+    }),
+  ).toBe(true);
+  for (const phase of ['completed', 'failed', 'interrupted'])
+    for (const reason of ['changed', 'fault', 'recovered'])
+      expect(
+        isAutomationNotice({
+          kind: 'automation',
+          id: 'mock-notice',
+          bot: 'mock-bot',
+          schedule: 'mock-rule',
+          phase,
+          reason,
+        }),
+      ).toBe(true);
 });
 
 test.each([60, 86400])('accepts a paused file rule at %i seconds', (pollSeconds) => {
@@ -290,6 +395,489 @@ test('an unknown accepted outcome is only reconciled by its original receipt, ne
     await f.store.tick();
     expect(attempts).toBe(1);
     expect((await f.store.notices())[0].reason).toBe('recovered');
+  } finally {
+    await f.close();
+  }
+});
+
+test.each(['all', 'changes'] as const)(
+  'original completed receipts clear %s-mode unknown state without replay',
+  async (kind) => {
+    const f = await fixture();
+    let attempts = 0;
+    Object.assign(f.options.runner, {
+      start: async () => {
+        attempts++;
+        throw new Error('synthetic acknowledgement lost');
+      },
+      signal: async () => Buffer.from('Synthetic result'),
+    });
+    try {
+      let item = await f.store.create(input(rule));
+      if (kind === 'changes')
+        item = await f.store.monitor(item.id, item.revision, { kind, signalPath: 'mock.txt' });
+      const firing = await f.store.run(item.id, 'mock-original-receipt');
+      await f.store.tick();
+      await f.reopen(kind === 'all');
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBe('SCHEDULE_OUTCOME_UNKNOWN');
+      expect(
+        (await f.store.notices()).some((notice) => notice.code === 'SCHEDULE_OUTCOME_UNKNOWN'),
+      ).toBe(true);
+      expect(attempts).toBe(1);
+      f.receipts.set(firing.requestId, { runId: 'mock-confirmed-run', phase: 'completed' });
+      expect(await f.store.receipt(item.id, firing.id)).toMatchObject({
+        state: 'completed',
+        runId: 'mock-confirmed-run',
+      });
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+      expect((await f.store.get(item.id)).history[0].state).toBe('completed');
+      const notice = (await f.store.notices())[0];
+      expect(notice.reason).toBe('recovered');
+      await f.reopen();
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+      expect((await f.store.notices())[0].id).toBe(notice.id);
+      expect(attempts).toBe(1);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('an all-mode failed original receipt reports failure rather than recovery and later success clears it', async () => {
+  const f = await fixture();
+  let attempts = 0;
+  Object.assign(f.options.runner, {
+    start: async () => {
+      attempts++;
+      throw new Error('synthetic acknowledgement lost');
+    },
+  });
+  try {
+    const item = await f.store.create(input(rule));
+    const firing = await f.store.run(item.id, 'mock-failed-original');
+    await f.store.tick();
+    f.receipts.set(firing.requestId, {
+      runId: 'mock-failed-run',
+      phase: 'failed',
+      error: 'AUTOMATION_RUN_FAILED',
+    });
+    expect(await f.store.receipt(item.id, firing.id)).toMatchObject({ state: 'failed' });
+    await f.store.tick();
+    expect((await f.store.get(item.id)).automation?.error).toBe('AUTOMATION_RUN_FAILED');
+    expect((await f.store.notices())[0]).toMatchObject({
+      reason: 'fault',
+      phase: 'failed',
+      code: 'AUTOMATION_RUN_FAILED',
+    });
+    await f.reopen();
+    await f.store.tick();
+    expect(attempts).toBe(1);
+    Object.assign(f.options.runner, {
+      start: async (_bot: string, task: { requestId: string }) => {
+        attempts++;
+        f.receipts.set(task.requestId, { runId: 'mock-next-run', phase: 'completed' });
+      },
+    });
+    await f.store.run(item.id, 'mock-next-result');
+    await f.store.tick();
+    expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+    expect((await f.store.notices())[0].reason).toBe('recovered');
+    expect(attempts).toBe(2);
+  } finally {
+    await f.close();
+  }
+});
+
+test.each([
+  { kind: 'all', backwards: false, failure: 'run' },
+  { kind: 'all', backwards: true, failure: 'run' },
+  { kind: 'changes', backwards: true, failure: 'run' },
+  { kind: 'changes', backwards: false, failure: 'signal' },
+] as const)(
+  'an older completed receipt cannot clear a newer firing failure ($kind, backwards=$backwards, $failure)',
+  async ({ kind, backwards, failure }) => {
+    const f = await fixture();
+    let starts = 0;
+    Object.assign(f.options.runner, {
+      start: async () => {
+        starts++;
+        throw new Error('Synthetic old acknowledgement lost');
+      },
+      signal: async (_bot: string, run: string) => {
+        if (run === 'mock-newer-run' && failure === 'signal')
+          throw new Error('Synthetic missing signal');
+        return Buffer.from('Synthetic result');
+      },
+    });
+    try {
+      let item = await f.store.create(input(rule));
+      if (kind === 'changes')
+        item = await f.store.monitor(item.id, item.revision, { kind, signalPath: 'mock.txt' });
+      const older = await f.store.run(item.id, 'mock-older-firing');
+      await f.store.tick();
+      await f.reopen();
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBe('SCHEDULE_OUTCOME_UNKNOWN');
+      if (backwards) f.setTime(Date.parse('2025-12-31T23:59:00Z'));
+      Object.assign(f.options.runner, {
+        start: async (_bot: string, task: { requestId: string }) => {
+          starts++;
+          f.receipts.set(task.requestId, {
+            runId: 'mock-newer-run',
+            phase: failure === 'run' ? 'failed' : 'completed',
+            ...(failure === 'run' ? { error: 'AUTOMATION_RUN_FAILED' } : {}),
+          });
+        },
+      });
+      const newer = await f.store.run(item.id, 'mock-newer-firing');
+      await f.store.tick();
+      const code = failure === 'run' ? 'AUTOMATION_RUN_FAILED' : 'AUTOMATION_SIGNAL_UNAVAILABLE';
+      expect((await f.store.receipt(item.id, newer.id)).state).toBe(
+        failure === 'run' ? 'failed' : 'completed',
+      );
+      expect((await f.store.get(item.id)).automation?.error).toBe(code);
+      const fault = (await f.store.notices()).find((notice) => notice.runId === 'mock-newer-run');
+      expect.assert(fault);
+      expect(fault).toMatchObject({
+        reason: 'fault',
+        code,
+        runId: 'mock-newer-run',
+      });
+      await f.reopen(kind === 'all' && !backwards);
+      f.receipts.set(older.requestId, { runId: 'mock-older-run', phase: 'completed' });
+      expect(await f.store.receipt(item.id, older.id)).toMatchObject({
+        id: older.id,
+        requestId: older.requestId,
+        state: 'completed',
+        source: older.source,
+      });
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBe(code);
+      expect(await f.store.notices()).toEqual([fault]);
+      await f.reopen();
+      await f.store.receipt(item.id, older.id);
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBe(code);
+      expect(await f.store.notices()).toEqual([fault]);
+      expect(starts).toBe(2);
+      Object.assign(f.options.runner, {
+        start: async (_bot: string, task: { requestId: string }) => {
+          starts++;
+          f.receipts.set(task.requestId, { runId: 'mock-latest-run', phase: 'completed' });
+        },
+      });
+      await f.store.run(item.id, 'mock-latest-firing');
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+      const recovered = (await f.store.notices())[0];
+      expect(recovered).toMatchObject({ reason: 'recovered', runId: 'mock-latest-run' });
+      await f.store.tick();
+      expect(await f.store.notices()).toEqual([recovered]);
+      expect(starts).toBe(3);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('a late manual receipt preserves a newer file-event fault and its event identity', async () => {
+  const f = await fixture();
+  const sources: unknown[] = [];
+  let starts = 0;
+  Object.assign(f.options.runner, {
+    start: async () => {
+      starts++;
+      throw new Error('Synthetic old acknowledgement lost');
+    },
+  });
+  try {
+    let item = await f.store.create(input(rule));
+    item = await f.store.update(item.id, item.revision, { enabled: true });
+    await f.poll();
+    await f.poll();
+    const older = await f.store.run(item.id, 'mock-old-manual');
+    await f.store.tick();
+    Object.assign(f.options.runner, {
+      start: async (
+        _bot: string,
+        task: { requestId: string },
+        _conversation?: undefined,
+        source?: unknown,
+      ) => {
+        starts++;
+        sources.push(source);
+        f.receipts.set(task.requestId, {
+          runId: 'mock-file-run',
+          phase: 'failed',
+          error: 'AUTOMATION_RUN_FAILED',
+        });
+      },
+    });
+    f.setBytes('B');
+    await f.poll();
+    await f.poll();
+    const newer = (await f.store.get(item.id)).history.find(
+      (entry) => entry.source?.trigger === 'file',
+    );
+    expect.assert(newer);
+    expect(sources).toEqual([newer.source]);
+    expect(newer.source).toMatchObject({ firingId: newer.id, fromCursor: 1, toCursor: 1 });
+    const fault = (await f.store.notices()).find((notice) => notice.runId === 'mock-file-run');
+    expect.assert(fault);
+    await f.reopen();
+    f.receipts.set(older.requestId, { runId: 'mock-late-manual-run', phase: 'completed' });
+    await f.store.receipt(item.id, older.id);
+    await f.store.tick();
+    expect((await f.store.get(item.id)).automation).toMatchObject({
+      error: 'AUTOMATION_RUN_FAILED',
+      cursor: 1,
+    });
+    expect(await f.store.receipt(item.id, newer.id)).toMatchObject({
+      state: 'failed',
+      source: newer.source,
+      requestId: newer.requestId,
+    });
+    expect(await f.store.notices()).toEqual([fault]);
+    expect(starts).toBe(2);
+  } finally {
+    await f.close();
+  }
+});
+
+test.each([false, true])(
+  'a late original receipt cannot recover a capability fault (restored before receipt=%s)',
+  async (restored) => {
+    const f = await fixture();
+    let available = true;
+    let starts = 0;
+    Object.assign(f.options.runner, {
+      monitoringAvailable: () => available,
+      start: async () => {
+        starts++;
+        throw new Error('Synthetic old acknowledgement lost');
+      },
+      signal: async () => Buffer.from('Synthetic signal'),
+    });
+    try {
+      let item = await f.store.create(input({ kind: 'every', everySeconds: 60 }));
+      item = await f.store.monitor(item.id, item.revision, {
+        kind: 'changes',
+        signalPath: 'mock.txt',
+      });
+      const older = await f.store.run(item.id, 'mock-before-capability-fault');
+      await f.store.tick();
+      item = await f.store.update(item.id, item.revision, { enabled: true });
+      available = false;
+      await f.store.tick();
+      const fault = (await f.store.notices()).find(
+        (notice) => notice.code === 'AUTOMATION_MONITOR_UNAVAILABLE',
+      );
+      expect.assert(fault);
+      if (restored) await f.reopen(true);
+      available = restored;
+      f.receipts.set(older.requestId, { runId: 'mock-late-known-run', phase: 'completed' });
+      expect((await f.store.receipt(item.id, older.id)).state).toBe('completed');
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBe('AUTOMATION_MONITOR_UNAVAILABLE');
+      expect(await f.store.notices()).toEqual([fault]);
+      expect(starts).toBe(1);
+      await f.store.ack(item.id, fault.id);
+      await f.reopen();
+      await f.store.receipt(item.id, older.id);
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBe('AUTOMATION_MONITOR_UNAVAILABLE');
+      expect(await f.store.notices()).toHaveLength(0);
+      available = true;
+      Object.assign(f.options.runner, {
+        start: async (_bot: string, task: { requestId: string }) => {
+          starts++;
+          f.receipts.set(task.requestId, {
+            runId: 'mock-after-capability-recovery',
+            phase: 'completed',
+          });
+        },
+      });
+      await f.store.run(item.id, 'mock-after-capability-recovery');
+      await f.store.tick();
+      expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+      expect((await f.store.notices())[0].reason).toBe('recovered');
+      expect(starts).toBe(2);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test.each([false, true])(
+  'a newer unknown firing keeps result ownership while its original completed signal is in flight (old schema=%s)',
+  async (beforeFloor) => {
+    const f = await fixture();
+    let release!: () => unknown;
+    let entered!: () => unknown;
+    const waiting = new Promise<Uint8Array>((resolve) => {
+      release = () => resolve(Buffer.from('Synthetic newer signal'));
+    });
+    const reading = new Promise<unknown>((resolve) => {
+      entered = () => resolve(undefined);
+    });
+    let starts = 0;
+    let work: Promise<unknown> | undefined;
+    Object.assign(f.options.runner, {
+      start: async () => {
+        starts++;
+        throw new Error('Synthetic acknowledgement lost');
+      },
+      signal: async (_bot: string, run: string) => {
+        if (run === 'mock-newer-original') {
+          entered();
+          return waiting;
+        }
+        return Buffer.from('Synthetic older signal');
+      },
+    });
+    try {
+      let item = await f.store.create(input(rule));
+      item = await f.store.monitor(item.id, item.revision, {
+        kind: 'changes',
+        signalPath: 'mock.txt',
+      });
+      const older = await f.store.run(item.id, 'mock-older-unknown');
+      await f.store.tick();
+      const newer = await f.store.run(item.id, 'mock-newer-unknown');
+      await f.store.tick();
+      f.receipts.set(newer.requestId, { runId: 'mock-newer-original', phase: 'completed' });
+      await f.store.receipt(item.id, newer.id);
+      f.receipts.set(older.requestId, { runId: 'mock-older-original', phase: 'completed' });
+      await f.store.receipt(item.id, older.id);
+      if (beforeFloor) await f.reopen(true);
+      work = f.store.tick();
+      await reading;
+      expect((await f.store.get(item.id)).automation?.error).toBe('SCHEDULE_OUTCOME_UNKNOWN');
+      expect((await f.store.notices()).some((notice) => notice.reason === 'recovered')).toBe(false);
+      release();
+      await work;
+      expect((await f.store.get(item.id)).automation?.error).toBeUndefined();
+      const recovered = (await f.store.notices())[0];
+      expect(recovered).toMatchObject({ reason: 'recovered', runId: 'mock-newer-original' });
+      await f.reopen();
+      await f.store.tick();
+      expect(await f.store.notices()).toEqual([recovered]);
+      expect(starts).toBe(2);
+    } finally {
+      release();
+      await work;
+      await f.close();
+    }
+  },
+);
+
+test('result comparisons use persisted firing order when the clock moves backwards between accepted runs', async () => {
+  const f = await fixture();
+  let starts = 0;
+  Object.assign(f.options.runner, {
+    start: async (_bot: string, task: { requestId: string }) => {
+      starts++;
+      f.receipts.set(task.requestId, {
+        runId: starts === 1 ? 'mock-first-result' : 'mock-second-result',
+        phase: starts === 1 ? 'running' : 'completed',
+      });
+    },
+    signal: async (_bot: string, run: string) => Buffer.from(run),
+  });
+  try {
+    let item = await f.store.create(input(rule));
+    item = await f.store.monitor(item.id, item.revision, {
+      kind: 'changes',
+      signalPath: 'mock.txt',
+    });
+    const first = await f.store.run(item.id, 'mock-first-accepted');
+    await f.store.tick();
+    f.receipts.set(first.requestId, { runId: 'mock-first-result', phase: 'completed' });
+    f.setTime(Date.parse('2025-12-31T23:59:00Z'));
+    const second = await f.store.run(item.id, 'mock-second-accepted');
+    await f.store.tick();
+    expect(await f.store.receipt(item.id, first.id)).toMatchObject({ monitor: 'baseline' });
+    expect(await f.store.receipt(item.id, second.id)).toMatchObject({ monitor: 'changed' });
+    expect((await f.store.notices())[0]).toMatchObject({
+      reason: 'changed',
+      runId: 'mock-second-result',
+    });
+    expect(starts).toBe(2);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a late receipt from an old configuration cannot alter the current configuration fault', async () => {
+  const f = await fixture();
+  let starts = 0;
+  Object.assign(f.options.runner, {
+    start: async () => {
+      starts++;
+      throw new Error('Synthetic acknowledgement lost');
+    },
+  });
+  try {
+    let item = await f.store.create(input(rule));
+    const older = await f.store.run(item.id, 'mock-old-configuration');
+    await f.store.tick();
+    item = await f.store.update(item.id, item.revision, { prompt: 'Synthetic revised task' });
+    const newer = await f.store.run(item.id, 'mock-current-configuration');
+    await f.store.tick();
+    f.receipts.set(newer.requestId, {
+      runId: 'mock-current-failure',
+      phase: 'failed',
+      error: 'AUTOMATION_RUN_FAILED',
+    });
+    await f.store.receipt(item.id, newer.id);
+    await f.store.tick();
+    const fault = (await f.store.notices()).find(
+      (notice) => notice.runId === 'mock-current-failure',
+    );
+    expect.assert(fault);
+    expect(newer.source?.configRevision).toBe((older.source?.configRevision ?? 0) + 1);
+    f.receipts.set(older.requestId, { runId: 'mock-old-success', phase: 'completed' });
+    await f.store.receipt(item.id, older.id);
+    await f.store.tick();
+    expect((await f.store.get(item.id)).automation?.error).toBe('AUTOMATION_RUN_FAILED');
+    expect(await f.store.notices()).toEqual([fault]);
+    expect(starts).toBe(2);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a late receipt preserves a newer observation fault without reporting false recovery', async () => {
+  const f = await fixture();
+  let starts = 0;
+  Object.assign(f.options.runner, {
+    start: async () => {
+      starts++;
+      throw new Error('Synthetic acknowledgement lost');
+    },
+  });
+  try {
+    let item = await f.store.create(input(rule));
+    item = await f.store.update(item.id, item.revision, { enabled: true });
+    await f.poll();
+    await f.poll();
+    const older = await f.store.run(item.id, 'mock-before-observation-fault');
+    await f.store.tick();
+    f.revoke();
+    await f.poll();
+    const fault = (await f.store.notices()).find(
+      (notice) => notice.code === 'PROJECT_ACCESS_DENIED',
+    );
+    expect.assert(fault);
+    f.receipts.set(older.requestId, { runId: 'mock-late-before-revocation', phase: 'completed' });
+    await f.store.receipt(item.id, older.id);
+    await f.store.tick();
+    expect((await f.store.get(item.id)).automation?.error).toBe('PROJECT_ACCESS_DENIED');
+    expect(await f.store.notices()).toEqual([fault]);
+    expect(starts).toBe(1);
   } finally {
     await f.close();
   }
@@ -506,6 +1094,20 @@ test('unknown receipts remain actionable after rule deletion and acknowledgement
     expect(await f.store.notices()).toHaveLength(0);
     expect(await f.store.receipt(item.id, firing.id)).toMatchObject({ state: 'interrupted' });
     await f.store.tick();
+    expect(attempts).toBe(1);
+    f.receipts.set(firing.requestId, {
+      runId: 'mock-completed-after-deletion',
+      phase: 'completed',
+    });
+    expect(await f.store.receipt(item.id, firing.id)).toMatchObject({
+      id: firing.id,
+      requestId: firing.requestId,
+      state: 'completed',
+      runId: 'mock-completed-after-deletion',
+    });
+    await f.reopen();
+    await f.store.tick();
+    expect(await f.store.notices()).toHaveLength(0);
     expect(attempts).toBe(1);
   } finally {
     await f.close();

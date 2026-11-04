@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ApprovalTrigger, AutomationSource, TaskRequest } from '@daban/protocol';
+import type { ApprovalTrigger, AutomationSource, ProjectScope, TaskRequest } from '@daban/protocol';
 import { expect, onTestFinished, test, vi } from 'vitest';
 import { ApprovalRules } from './approval-rules.js';
 import * as durability from './durability.js';
@@ -9,6 +9,7 @@ import { RemoteExecutor } from './execution.js';
 import { startExecutor } from './executor.js';
 import { type GroupRunner, Groups } from './groups.js';
 import { ModelRuns } from './model.js';
+import { type ScheduleDomain, Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
 
 const transport = vi.hoisted(() => ({
@@ -863,6 +864,145 @@ test('Groups retains Host provenance across restart without transferring purpose
     await humanCall;
   } finally {
     await groups.close();
+    await f.close();
+  }
+});
+
+test.each<{ name: string; trigger: unknown }>([
+  { name: 'array', trigger: ['manual'] },
+  { name: 'coercible object', trigger: { toString: () => 'manual' } },
+  { name: 'malformed object', trigger: { toString: null, valueOf: null } },
+])(
+  'Host rejects a $name automation trigger before allocating an approval task',
+  async ({ trigger }) => {
+    const f = await mcpFixture();
+    try {
+      await expect(
+        Reflect.apply(f.models.start, f.models, [
+          'mock-other',
+          { requestId: 'mock-invalid-origin', prompt: 'Synthetic source boundary' },
+          undefined,
+          { ...automationSource('manual'), trigger },
+        ]),
+      ).rejects.toMatchObject({ code: 'INVALID_AUTOMATION_SOURCE' });
+      expect(f.models.jobs.has('mock-other')).toBe(false);
+      expect(transport.effects).toBe(0);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('an all-mode unknown schedule reconciles the original Human-approved MCP task without replay or stale unknown state', async () => {
+  const source = automationSource('file');
+  const f = await mcpFixture('auto', source);
+  await f.models.stop(f.job.bot);
+  await f.job.done;
+  let visible = false;
+  let starts = 0;
+  const domain: ScheduleDomain = {
+    create: (value, time) => ({
+      ...value,
+      kind: 'every',
+      scheduledAt: new Date(time + 60000).toISOString(),
+    }),
+    due: (_value, time) => ({
+      occurrenceAt: new Date(time).toISOString(),
+      nextScheduledAt: new Date(time + 60000).toISOString(),
+    }),
+    decode: (value) => value,
+  };
+  const options = {
+    file: path.join(f.root, 'schedules.sqlite'),
+    domain: Promise.resolve(domain),
+    observation: {
+      authorize: (bot: string, scope: ProjectScope) =>
+        f.models.projects.assertScope(bot, scope, 'read'),
+      read: async () => Buffer.from('Synthetic file bytes'),
+    },
+    runner: {
+      running: (bot: string) => f.models.running(bot),
+      findRequest: (bot: string, id: string) =>
+        visible ? f.models.findRequest(bot, id) : undefined,
+      start: async (
+        bot: string,
+        task: { requestId: string; prompt: string },
+        _conversation?: undefined,
+        source?: AutomationSource,
+      ) => {
+        starts++;
+        await f.models.start(
+          bot,
+          { ...task, approvalMode: 'auto', ...(source?.scope ? { project: source.scope } : {}) },
+          undefined,
+          source,
+        );
+        throw new Error('Synthetic acknowledgement lost after Host acceptance');
+      },
+    },
+  };
+  let schedules = new Schedules(options);
+  try {
+    await schedules.ready;
+    const item = await schedules.create({
+      id: 'mock-all-rule',
+      bot: 'mock-bot',
+      title: 'Synthetic all-mode task',
+      prompt: 'Synthetic saved task',
+      rule: { kind: 'file', scope: source.scope!, paths: ['mock.txt'], pollSeconds: 60 },
+      enabled: false,
+      locked: false,
+    });
+    const firing = await schedules.run(item.id, 'mock-original-firing');
+    await schedules.tick();
+    await schedules.close();
+    schedules = new Schedules(options);
+    await schedules.ready;
+    await schedules.tick();
+    expect((await schedules.get(item.id)).automation?.error).toBe('SCHEDULE_OUTCOME_UNKNOWN');
+    expect(starts).toBe(1);
+    const job = f.models.jobs.get('mock-bot')!;
+    await until(() => !!job.sessionId);
+    const pending = f.call(501);
+    const card = await f.card(1);
+    expect(card).toMatchObject({ status: 'pending', policyDecision: { trigger: 'automation' } });
+    expect(job.automation).toMatchObject({
+      scheduleId: item.id,
+      firingId: firing.id,
+      trigger: 'manual',
+      policy: { kind: 'all' },
+    });
+    expect(transport.effects).toBe(0);
+    await f.models.interactions.reply(job.bot, job.id, card.id, {
+      kind: 'decision',
+      allow: true,
+      confirmPurpose: true,
+    });
+    await pending;
+    expect(transport.effects).toBe(1);
+    f.releaseAll();
+    await job.done;
+    expect(job.phase).toBe('completed');
+    visible = true;
+    expect(await schedules.receipt(item.id, firing.id)).toMatchObject({
+      state: 'completed',
+      runId: job.id,
+    });
+    await schedules.tick();
+    expect((await schedules.get(item.id)).automation?.error).toBeUndefined();
+    const notice = (await schedules.notices())[0];
+    expect(notice.reason).toBe('recovered');
+    expect(notice.code).toBeUndefined();
+    await schedules.close();
+    schedules = new Schedules(options);
+    await schedules.ready;
+    await schedules.tick();
+    expect((await schedules.get(item.id)).automation?.error).toBeUndefined();
+    expect((await schedules.notices())[0].id).toBe(notice.id);
+    expect(starts).toBe(1);
+    expect(transport.effects).toBe(1);
+  } finally {
+    await schedules.close();
     await f.close();
   }
 });
