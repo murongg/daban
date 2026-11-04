@@ -112,6 +112,7 @@ import {
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  sameApprovalScope,
   sameTranscriptScope,
   unavailableLocalComputer,
   validAgentId,
@@ -772,14 +773,14 @@ export class RuntimeClient {
       );
       const valid =
         captured.type === 'approval.rules.list'
-          ? isApprovalRulesSnapshot(value) && value.scope.bot === scope.bot
+          ? isApprovalRulesSnapshot(value) && sameApprovalScope(value.scope, scope)
           : captured.type === 'approval.rules.preview'
             ? isPolicyDecision(value) &&
-              value.scope.bot === scope.bot &&
+              sameApprovalScope(value.scope, scope) &&
               value.trigger === captured.trigger &&
               JSON.stringify(value.selector) === JSON.stringify(captured.selector)
             : isApprovalRuleReceipt(value) &&
-              value.scope.bot === scope.bot &&
+              sameApprovalScope(value.scope, scope) &&
               value.requestId ===
                 (captured.type === 'approval.rules.receipt'
                   ? captured.requestId

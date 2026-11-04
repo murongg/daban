@@ -23,8 +23,11 @@ import {
   isApprovalSelector,
   isApprovalTrigger,
   isPolicyDecision,
+  isProjectScope,
   type PolicyDecision,
+  type ProjectScope,
   type RuleEffect,
+  sameApprovalScope,
 } from '@daban/protocol';
 import { count, eq, sql } from 'drizzle-orm';
 import { migrations } from './approval-rules-migrations.js';
@@ -42,6 +45,7 @@ export interface DecisionInput {
   matches: readonly RuleEffect[];
 }
 export interface PolicyRequest extends Omit<DecisionInput, 'matches'> {
+  project?: ProjectScope;
   scope: ApprovalScope;
   selector: ApprovalSelector;
   trigger: ApprovalTrigger;
@@ -66,6 +70,16 @@ export interface RulePolicy {
 export const approvalHash = (value: unknown) =>
   createHash('sha256').update(canonicalJson(value)).digest('hex');
 export const commandHash = (value: string) => createHash('sha256').update(value).digest('hex');
+// Retain old Bot column values and SQL layout. ':' cannot occur in Bot IDs, so project keys cannot alias them.
+const scopeOwner = (scope: ApprovalScope) =>
+  scope.kind === 'bot' ? scope.bot : `project:${scope.scope.projectId}`;
+const requestHash = (request: Pick<PolicyRequest, 'scope' | 'trigger' | 'selector' | 'project'>) =>
+  approvalHash([
+    request.scope,
+    request.trigger,
+    request.selector,
+    ...(request.project ? [request.project] : []),
+  ]);
 export function approvalSelector(
   input: Extract<InteractionInput, { kind: 'approval' }>,
 ): ApprovalSelector {
@@ -177,7 +191,7 @@ export class ApprovalRules {
             !isApprovalRule(value) ||
             value.id !== row.id ||
             value.revision !== row.revision ||
-            value.scope.bot !== row.bot ||
+            scopeOwner(value.scope) !== row.scopeKey ||
             ![0, 1].includes(row.deleted)
           )
             throw new Fault('APPROVAL_RULES_UNAVAILABLE', 503);
@@ -194,11 +208,14 @@ export class ApprovalRules {
       scope,
       revision: this.revision(),
       rules: this.rows()
-        .filter((row) => !row.deleted && row.rule.scope.bot === scope.bot)
+        .filter((row) => !row.deleted && scopeOwner(row.rule.scope) === scopeOwner(scope))
         .map((row) => row.rule),
     };
   }
-  async write(input: ApprovalRuleWrite): Promise<ApprovalRuleReceipt> {
+  async write(
+    input: ApprovalRuleWrite,
+    assertAuthority?: () => unknown,
+  ): Promise<ApprovalRuleReceipt> {
     if (!isApprovalRuleWrite(input)) throw new Fault('INVALID_APPROVAL_RULE', 400);
     const request = structuredClone(input);
     await this.ready;
@@ -212,16 +229,18 @@ export class ApprovalRules {
           .where(eq(approvalRuleEdits.id, request.requestId))
           .get();
         if (previous) {
-          if (previous.bot !== request.scope.bot || previous.hash !== hash)
+          if (previous.scopeKey !== scopeOwner(request.scope) || previous.hash !== hash)
             throw new Fault('APPROVAL_REQUEST_ID_REUSED', 409);
           return this.decodeReceipt(previous.receipt);
         }
+        // Only a new mutation needs current authority; a lost original reply remains recoverable after revocation.
+        assertAuthority?.();
         const current = this.revision();
         if (current !== request.expectedRevision) throw new Fault('APPROVAL_RULE_CONFLICT', 409);
         const rows = this.rows();
         const id = request.action === 'save' ? request.rule.id : request.id;
         const old = rows.find((row) => row.rule.id === id);
-        if (old && old.rule.scope.bot !== request.scope.bot)
+        if (old && scopeOwner(old.rule.scope) !== scopeOwner(request.scope))
           throw new Fault('APPROVAL_RULE_CONFLICT', 409);
         if (request.action === 'delete' && (!old || old.deleted))
           throw new Fault('APPROVAL_RULE_NOT_FOUND', 404);
@@ -249,7 +268,7 @@ export class ApprovalRules {
           throw new Fault('APPROVAL_RULE_LIMIT', 409);
         const row = {
           id,
-          bot: request.scope.bot,
+          scopeKey: scopeOwner(request.scope),
           revision: rule.revision,
           deleted: request.action === 'delete' ? 1 : 0,
           value: JSON.stringify(rule),
@@ -272,7 +291,7 @@ export class ApprovalRules {
         db.insert(approvalRuleEdits)
           .values({
             id: request.requestId,
-            bot: request.scope.bot,
+            scopeKey: scopeOwner(request.scope),
             hash,
             receipt: JSON.stringify(receipt),
           })
@@ -294,11 +313,15 @@ export class ApprovalRules {
       .from(approvalRuleEdits)
       .where(eq(approvalRuleEdits.id, id))
       .get();
-    if (!row || row.bot !== scope.bot) throw new Fault('APPROVAL_RECEIPT_NOT_FOUND', 404);
-    return this.decodeReceipt(row.receipt);
+    if (!row || row.scopeKey !== scopeOwner(scope))
+      throw new Fault('APPROVAL_RECEIPT_NOT_FOUND', 404);
+    const receipt = this.decodeReceipt(row.receipt);
+    if (!sameApprovalScope(receipt.scope, scope))
+      throw new Fault('APPROVAL_RECEIPT_NOT_FOUND', 404);
+    return receipt;
   }
   private matches(
-    request: Pick<PolicyRequest, 'scope' | 'selector' | 'trigger'>,
+    request: Pick<PolicyRequest, 'scope' | 'selector' | 'trigger' | 'project'>,
     preview?: ApprovalRuleDraft,
   ) {
     let rows = this.rows()
@@ -307,16 +330,23 @@ export class ApprovalRules {
     if (preview) {
       if (!isApprovalRuleDraft(preview)) throw new Fault('INVALID_APPROVAL_RULE', 400);
       const previous = rows.find((rule) => rule.id === preview.id);
+      if (previous && scopeOwner(previous.scope) !== scopeOwner(request.scope))
+        throw new Fault('APPROVAL_RULE_CONFLICT', 409);
       rows = [
         ...rows.filter((rule) => rule.id !== preview.id),
         { ...preview, scope: request.scope, revision: (previous?.revision ?? 0) + 1 },
       ];
     }
+    // Definitions follow the project ID; Projects separately revalidates each task's live membership and revision.
     return rows
       .filter(
         (rule) =>
           rule.enabled &&
-          rule.scope.bot === request.scope.bot &&
+          (scopeOwner(rule.scope) === scopeOwner(request.scope) ||
+            (request.scope.kind === 'bot' &&
+              request.project &&
+              rule.scope.kind === 'project' &&
+              rule.scope.scope.projectId === request.project.projectId)) &&
           rule.trigger === request.trigger &&
           (!rule.expiresAt || Date.parse(rule.expiresAt) > this.clock()) &&
           approvalHash(rule.selector) === approvalHash(request.selector),
@@ -328,6 +358,8 @@ export class ApprovalRules {
     await this.ready;
     if (
       !isApprovalScope(request.scope) ||
+      (request.project !== undefined &&
+        (request.scope.kind !== 'bot' || !isProjectScope(request.project))) ||
       !isApprovalSelector(request.selector) ||
       !isApprovalTrigger(request.trigger)
     )
@@ -337,10 +369,11 @@ export class ApprovalRules {
       ...decide({ ...request, matches: matchedRules.map((rule) => rule.effect) }),
       matchedRules,
       policyRevision: this.revision(),
-      requestHash: approvalHash([request.scope, request.trigger, request.selector]),
+      requestHash: requestHash(request),
       scope: request.scope,
       trigger: request.trigger,
       selector: request.selector,
+      ...(request.project ? { project: structuredClone(request.project) } : {}),
       ...(request.riskReason ? { riskReason: request.riskReason } : {}),
     };
   }
@@ -348,8 +381,7 @@ export class ApprovalRules {
     if (
       !isPolicyDecision(decision) ||
       decision.policyRevision !== this.revision() ||
-      decision.requestHash !==
-        approvalHash([decision.scope, decision.trigger, decision.selector]) ||
+      decision.requestHash !== requestHash(decision) ||
       canonicalJson(this.matches(decision)) !== canonicalJson(decision.matchedRules)
     )
       throw new Fault('APPROVAL_POLICY_CHANGED', 409);

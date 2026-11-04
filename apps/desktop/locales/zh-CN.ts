@@ -1,6 +1,14 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'rules.editBotScope': 'Bot 范围：{0}',
+  'rules.editProjectScope': '项目范围：{0}（版本 {1}）',
+  'rules.thisBot': '当前 Bot',
+  'rules.currentProject': '当前项目 · {0}（版本 {1}）',
+  'rules.projectMembersHint': '项目规则适用于当前成员；每个 Bot 仍须独立确认当前任务用途。',
+  'rules.chooseScope': '选择 Bot 或项目',
+  'rules.projectChoice': '项目 · {0}（版本 {1}）',
+  'rules.projectsUnavailable': '项目列表暂不可用。',
   'requests.currentHumanTurn': '本轮请求',
   'requests.permissionScope': '选择授权范围',
   'requests.confirmCurrentPurpose': '确认当前任务用途并允许',
@@ -8,14 +16,14 @@ export const chinese = {
   'requests.currentPurposeHelp':
     '确认你授权当前任务的这一轮使用此连接、工具和完整参数。相同调用可按精确允许规则免去重复询问；新任务、新一轮消息或资源和规则版本变化后需重新确认。仅允许一次和保存规则不会作此授权。',
   'rules.editTitle': '编辑规则',
-  'rules.settingsHint': '为 Bot 设置精确限制，并查看每次决策的原因。',
+  'rules.settingsHint': '为 Bot 或项目设置精确规则，并查看每次决策的原因。',
   'rules.riskLiteralRead': '现有确定只读检查已通过。',
   'rules.riskModelLow': '任务已捕获的审核模型返回了精确的低风险结论。',
   'rules.riskForcedHuman': '命令涉及敏感、危险或不透明效果，需要人工确认。',
   'rules.riskUnavailable': '风险审核不可用或结果无效，未授予自动执行权限。',
   'rules.title': '审批规则',
   'rules.scopeHint':
-    '规则仅作用于选中的 Bot；项目访问仍需通过现有项目授权。拒绝优先，规则不会扩大工具、文件或接管权限。',
+    '选择 Bot 或项目。项目规则覆盖当前成员，并与 Bot 限制共同生效。拒绝优先，规则不会扩大工具、访问或接管权限。',
   'rules.new': '新建规则',
   'rules.name': '规则名称',
   'rules.exactHint':

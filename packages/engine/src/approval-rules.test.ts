@@ -1,17 +1,21 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import {
   type ApprovalRuleDraft,
   type ApprovalSelector,
   isApprovalRuleDraft,
+  isApprovalRulesCommand,
   isApprovalSelector,
   isMcpPurposeScope,
   isUserReply,
   matchesReply,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
-import { ApprovalRules, decide } from './approval-rules.js';
+import { ApprovalRules, approvalHash, decide } from './approval-rules.js';
+import { migrations } from './approval-rules-migrations.js';
+import { configure, migrate } from './database.js';
 
 const scope = { kind: 'bot' as const, bot: 'mock-bot' };
 const selector: ApprovalSelector = { kind: 'url', url: 'https://example.test/mock?q=1' };
@@ -31,6 +35,195 @@ const request = {
   baseline: 'allow' as const,
   allowEligible: false,
 };
+
+test.each([
+  {
+    type: 'approval.rules.list',
+    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 1 } },
+  },
+  {
+    type: 'approval.rules.write',
+    request: {
+      requestId: 'mock-project-save',
+      expectedRevision: 0,
+      scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 1 } },
+      action: 'save',
+      rule: draft,
+    },
+  },
+  {
+    type: 'approval.rules.receipt',
+    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 1 } },
+    requestId: 'mock-project-save',
+  },
+  {
+    type: 'approval.rules.preview',
+    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 1 } },
+    trigger: 'interactive',
+    mode: 'auto',
+    selector,
+  },
+])('accepts the original explicit ProjectScope command $type', (value) => {
+  const input: unknown = value;
+  expect(isApprovalRulesCommand(input)).toBe(true);
+});
+
+test('project ownership persists independently of Bot and other projects, with exact original edit receipts', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-rules-'));
+  const file = path.join(root, 'rules.sqlite');
+  let rules = new ApprovalRules(file);
+  const project = { kind: 'project', scope: { projectId: 'mock-project', revision: 1 } };
+  const other = { kind: 'project', scope: { projectId: 'mock-other', revision: 1 } };
+  const write = {
+    requestId: 'mock-project-edit',
+    expectedRevision: 0,
+    action: 'save',
+    scope: project,
+    rule: draft,
+  };
+  try {
+    const saved = await Reflect.apply(rules.write, rules, [write]);
+    expect(await Reflect.apply(rules.snapshot, rules, [project])).toMatchObject({
+      rules: [{ scope: project }],
+    });
+    expect(await Reflect.apply(rules.snapshot, rules, [other])).toMatchObject({ rules: [] });
+    expect(await rules.snapshot(scope)).toMatchObject({ rules: [] });
+    await rules.close();
+    rules = new ApprovalRules(file);
+    expect(await Reflect.apply(rules.receipt, rules, [project, write.requestId])).toEqual(saved);
+    await expect(
+      Reflect.apply(rules.receipt, rules, [other, write.requestId]),
+    ).rejects.toMatchObject({ code: 'APPROVAL_RECEIPT_NOT_FOUND' });
+    await expect(
+      Reflect.apply(rules.receipt, rules, [
+        { ...project, scope: { ...project.scope, revision: 2 } },
+        write.requestId,
+      ]),
+    ).rejects.toMatchObject({ code: 'APPROVAL_RECEIPT_NOT_FOUND' });
+  } finally {
+    await rules.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a captured project combines its rules with the Bot restrictions without authorizing other projects', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-mixed-rules-'));
+  const rules = new ApprovalRules(path.join(root, 'rules.sqlite'));
+  try {
+    await rules.write({
+      requestId: 'mock-bot-deny',
+      expectedRevision: 0,
+      scope,
+      action: 'save',
+      rule: draft,
+    });
+    await Reflect.apply(rules.write, rules, [
+      {
+        requestId: 'mock-project-allow',
+        expectedRevision: 1,
+        scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 1 } },
+        action: 'save',
+        rule: { ...draft, id: 'mock-project-allow', effect: 'allow' },
+      },
+    ]);
+    const captured = {
+      ...request,
+      baseline: 'ask' as const,
+      allowEligible: true,
+      scope: { kind: 'bot' as const, bot: 'mock-peer' },
+      project: { projectId: 'mock-project', revision: 1 },
+    };
+    expect(await rules.evaluate(captured)).toMatchObject({
+      effect: 'allow',
+      matchedRules: [{ id: 'mock-project-allow' }],
+      project: captured.project,
+    });
+    expect(await rules.evaluate({ ...captured, scope })).toMatchObject({ effect: 'deny' });
+    const different = {
+      ...captured,
+      project: { projectId: 'mock-other', revision: 1 },
+      baseline: 'ask' as const,
+    };
+    expect(await rules.evaluate(different)).toMatchObject({ effect: 'ask', matchedRules: [] });
+  } finally {
+    await rules.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('pre-project Bot rows and edit hashes keep opening without changing their SQL ownership column', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-legacy-bot-rule-'));
+  const file = path.join(root, 'rules.sqlite');
+  const old = new DatabaseSync(file);
+  configure(old, { synchronous: 'FULL' });
+  migrate(old, migrations);
+  const input = {
+    requestId: 'mock-legacy-save',
+    expectedRevision: 0,
+    scope,
+    action: 'save' as const,
+    rule: draft,
+  };
+  const rule = { ...draft, scope, revision: 1 };
+  const receipt = { requestId: input.requestId, scope, revision: 1, id: draft.id, rule };
+  old
+    .prepare('INSERT INTO approval_rules(id,bot,revision,deleted,value) VALUES(?,?,?,?,?)')
+    .run(draft.id, scope.bot, 1, 0, JSON.stringify(rule));
+  old
+    .prepare('INSERT INTO approval_rule_edits(id,bot,hash,receipt) VALUES(?,?,?,?)')
+    .run(input.requestId, scope.bot, approvalHash(input), JSON.stringify(receipt));
+  old.exec('INSERT INTO approval_rule_meta(id,revision) VALUES(1,1)');
+  old.close();
+  const rules = new ApprovalRules(file);
+  try {
+    expect((await rules.snapshot(scope)).rules).toEqual([rule]);
+    expect(await rules.write(input)).toEqual(receipt);
+    expect(await rules.receipt(scope, input.requestId)).toEqual(receipt);
+    let checks = 0;
+    await expect(
+      rules.write({ ...input, requestId: 'mock-blocked-new', expectedRevision: 1 }, () => {
+        checks++;
+        throw new Error('SYNTHETIC_SCOPE_REVOKED');
+      }),
+    ).rejects.toThrow('SYNTHETIC_SCOPE_REVOKED');
+    expect(checks).toBe(1);
+    expect((await rules.status()).revision).toBe(1);
+    expect(
+      await rules.write(input, () => {
+        throw new Error('SYNTHETIC_SCOPE_REVOKED');
+      }),
+    ).toEqual(receipt);
+  } finally {
+    await rules.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('preview cannot replace a rule ID owned by a different subject', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-scope-preview-'));
+  const rules = new ApprovalRules(path.join(root, 'rules.sqlite'));
+  try {
+    await rules.write({
+      requestId: 'mock-owner-save',
+      expectedRevision: 0,
+      scope,
+      action: 'save',
+      rule: draft,
+    });
+    await expect(
+      rules.evaluate(
+        {
+          ...request,
+          scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 1 } },
+        },
+        draft,
+      ),
+    ).rejects.toMatchObject({ code: 'APPROVAL_RULE_CONFLICT' });
+  } finally {
+    await rules.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('purpose scope accepts only its own exact task and Human turn identifiers', () => {
   expect(isMcpPurposeScope({ taskId: 'mock-task', turnId: 'mock-turn' })).toBe(true);

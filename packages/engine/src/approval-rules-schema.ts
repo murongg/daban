@@ -2,14 +2,14 @@ import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const approvalRules = sqliteTable('approval_rules', {
   id: text().primaryKey(),
-  bot: text().notNull(),
+  scopeKey: text('bot').notNull(),
   revision: integer().notNull(),
   deleted: integer().notNull(),
   value: text().notNull(),
 });
 export const approvalRuleEdits = sqliteTable('approval_rule_edits', {
   id: text().primaryKey(),
-  bot: text().notNull(),
+  scopeKey: text('bot').notNull(),
   hash: text().notNull(),
   receipt: text().notNull(),
 });

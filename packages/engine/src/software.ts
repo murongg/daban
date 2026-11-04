@@ -121,7 +121,7 @@ const result = (value: unknown, isError = false): ToolResult => ({
 });
 function failure(error: unknown, fallback: string) {
   const code = errorCode(error);
-  return code && /^(SOFTWARE|APPROVAL)_[A-Z_]+$/.test(code) ? code : fallback;
+  return code && /^(SOFTWARE|APPROVAL|PROJECT)_[A-Z_]+$/.test(code) ? code : fallback;
 }
 function delay(milliseconds: number, signal: AbortSignal) {
   return new Promise<undefined>((resolve, reject) => {

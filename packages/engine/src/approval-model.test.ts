@@ -1,7 +1,13 @@
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ApprovalTrigger, AutomationSource, ProjectScope, TaskRequest } from '@daban/protocol';
+import {
+  type ApprovalTrigger,
+  type AutomationSource,
+  type ProjectScope,
+  projectCapability,
+  type TaskRequest,
+} from '@daban/protocol';
 import { expect, onTestFinished, test, vi } from 'vitest';
 import { ApprovalRules } from './approval-rules.js';
 import * as durability from './durability.js';
@@ -9,6 +15,7 @@ import { RemoteExecutor } from './execution.js';
 import { startExecutor } from './executor.js';
 import { type GroupRunner, Groups } from './groups.js';
 import { ModelRuns } from './model.js';
+import type { WorkspaceExecutor } from './remote-workspace.js';
 import { type ScheduleDomain, Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
 
@@ -79,22 +86,57 @@ async function mcpFixture(
   mode: 'auto' | 'ask' | 'full' | 'default' = 'auto',
   source?: AutomationSource,
   ruleTrigger: ApprovalTrigger = source ? 'automation' : 'interactive',
+  executionKind: 'platform' | 'synthetic' = 'platform',
+  project?: ProjectScope,
 ) {
+  const taskProject = project ?? source?.scope;
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-current-purpose-'));
   const releases: (() => unknown)[] = [];
+  const entered = new Map<string, number>();
+  let signalEntry: () => unknown = () => undefined;
+  let entryChanged = new Promise<unknown>((resolve) => {
+    signalEntry = () => resolve(undefined);
+  });
+  const waitRun = async (run: { privateDir: string; done?: Promise<unknown> }, turn = 1) => {
+    const done = run.done;
+    if (!done) throw new Error('Synthetic task was not started');
+    while ((entered.get(run.privateDir) ?? 0) < turn) {
+      await Promise.race([
+        entryChanged,
+        done.then(() => {
+          if ((entered.get(run.privateDir) ?? 0) < turn)
+            throw new Error('Synthetic Harness finished before the expected run entry');
+        }),
+      ]);
+    }
+  };
   let closed = false;
   class Harness {
+    private stopped = false;
+    private readonly own = new Set<() => unknown>();
+    constructor(private readonly options: { processCwd: string }) {}
     async start() {}
     async close() {
-      for (const release of releases) release();
+      this.stopped = true;
+      for (const release of this.own) release();
     }
     session() {
       return {
         id: 'mock-session',
         run: async () => {
-          if (!closed)
+          if (!closed && !this.stopped)
             await new Promise<unknown>((resolve) => {
-              releases.push(() => resolve(undefined));
+              const release = () => {
+                this.own.delete(release);
+                resolve(undefined);
+              };
+              releases.push(release);
+              this.own.add(release);
+              entered.set(this.options.processCwd, (entered.get(this.options.processCwd) ?? 0) + 1);
+              signalEntry();
+              entryChanged = new Promise<unknown>((resolve) => {
+                signalEntry = () => resolve(undefined);
+              });
             });
           return { sessionId: 'mock-session', finalResponse: 'SYNTHETIC' };
         },
@@ -110,16 +152,52 @@ async function mcpFixture(
   await mkdir(path.join(root, 'workspace'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   await settings.save({ apiKey: 'mock-purpose-key' });
-  const service = source?.scope
-    ? await startExecutor({ directory: path.join(root, 'guest'), port: 0, boot: 'mock-boot' })
-    : undefined;
+  const service =
+    taskProject && process.platform !== 'win32' && executionKind === 'platform'
+      ? await startExecutor({ directory: path.join(root, 'guest'), port: 0, boot: 'mock-boot' })
+      : undefined;
+  const syntheticExecution: WorkspaceExecutor = {
+    snapshot: { capabilities: [projectCapability] },
+    call: async (method, params) => {
+      if (method === 'workspace.base') return '/synthetic-root';
+      if (method === 'workspace.create') {
+        const parts = params.parts;
+        if (!Array.isArray(parts) || !parts.every((part) => typeof part === 'string'))
+          throw new Error('Invalid synthetic directory');
+        const directory = path.posix.join('/synthetic-root', ...parts);
+        return {
+          root: '/synthetic-root',
+          path: directory,
+          canonical: directory,
+          handleId: `mock-${parts.join('-')}`,
+        };
+      }
+      if (method === 'workspace.list') return [];
+      if (method === 'tools.open') return { tools: [] };
+      if (
+        [
+          'projects.sync',
+          'projects.bind',
+          'workspace.verify',
+          'workspace.write',
+          'workspace.close',
+          'tools.drain',
+          'tools.cancel',
+        ].includes(method)
+      )
+        return { ok: true };
+      throw new Error(`Unexpected synthetic execution method: ${method}`);
+    },
+  };
   const execution = service
     ? new RemoteExecutor({
         url: `${service.origin}/exec`,
         token: (await readFile(path.join(root, 'guest/token'), 'utf8')).trim(),
       })
-    : undefined;
-  await execution?.ready;
+    : taskProject
+      ? syntheticExecution
+      : undefined;
+  if (execution instanceof RemoteExecutor) await execution.ready;
   const models = new ModelRuns({
     settings,
     execution,
@@ -129,21 +207,25 @@ async function mcpFixture(
     Harness,
   });
   const calls: Promise<unknown>[] = [];
-  let disposed = false;
-  const close = async () => {
-    if (disposed) return;
-    disposed = true;
-    closed = true;
-    for (const release of releases) release();
-    try {
-      await models.close();
-      await Promise.allSettled(calls);
-    } finally {
-      await service?.close();
-      await rm(root, { recursive: true, force: true });
-    }
+  let closing: Promise<unknown> | undefined;
+  const close = () => {
+    if (closing) return closing;
+    closing = (async () => {
+      closed = true;
+      for (const release of releases) release();
+      try {
+        await models.close();
+        await Promise.allSettled(calls);
+      } finally {
+        await service?.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    })();
+    return closing;
   };
-  onTestFinished(close);
+  onTestFinished(async () => {
+    await close();
+  });
   await models.ready;
   await models.profiles.register({
     id: 'mock-bot',
@@ -152,13 +234,24 @@ async function mcpFixture(
     memory: '',
     color: 'mint',
   });
-  if (source?.scope)
+  if (project)
+    await models.profiles.register({
+      id: 'mock-peer',
+      name: 'Synthetic peer',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+  if (taskProject)
     await models.projects.write({
       action: 'create',
       requestId: 'mock-create-project',
-      projectId: source.scope.projectId,
+      projectId: taskProject.projectId,
       expectedRevision: 0,
-      value: { name: 'Synthetic project', grants: [{ bot: 'mock-bot' }] },
+      value: {
+        name: 'Synthetic project',
+        grants: [{ bot: 'mock-bot' }, ...(project ? [{ bot: 'mock-peer' }] : [])],
+      },
     });
   await models.integrations.save({
     requestId: 'mock-create',
@@ -206,11 +299,11 @@ async function mcpFixture(
     requestId: 'mock-task',
     prompt: 'Only greet me. Do not use integrations or write external records.',
     approvalMode: mode === 'default' ? undefined : mode,
-    ...(source?.scope ? { project: source.scope } : {}),
+    ...(taskProject ? { project: taskProject } : {}),
   };
   await models.start('mock-bot', task, undefined, source);
-  await until(() => releases.length === 1);
   let job = models.jobs.get('mock-bot')!;
+  await waitRun(job);
   const call = (id: number, value = 'synthetic-value', bot = 'mock-bot') => {
     const current = models.jobs.get(bot)!;
     const pending = models.rpc(bot, `Bearer ${current.token}`, {
@@ -234,14 +327,13 @@ async function mcpFixture(
       text: 'Synthetic unrelated follow-up',
     });
     releases[0]();
-    await until(() => releases.length === 2);
+    await waitRun(job, 2);
     expect(job.turns?.at(-1)?.id).toBe('mock-followup');
     expect(models.journal.findRequest(job.bot, 'mock-task')?.turns?.at(-1)?.id).toBe(
       'mock-followup',
     );
   };
   const nextTask = async (origin?: AutomationSource, prompt = 'Synthetic unrelated new task') => {
-    const previous = releases.length;
     await models.stop(job.bot);
     await job.done;
     await models.start(
@@ -255,12 +347,14 @@ async function mcpFixture(
       undefined,
       origin,
     );
-    await until(() => releases.length === previous + 1);
     job = models.jobs.get('mock-bot')!;
+    await waitRun(job);
   };
   return {
     root,
     models,
+    // sessionId is published before persistence/run entry; release only gates that the actual run has registered.
+    waitRun,
     get job() {
       return job;
     },
@@ -714,6 +808,169 @@ test('interactive purpose consent cannot authorize an identical subsequent autom
   }
 });
 
+test('shared project rules apply to current members and each member needs its own Human purpose', async () => {
+  const project = { projectId: 'mock-project', revision: 1 };
+  const f = await mcpFixture('auto', undefined, 'interactive', 'synthetic', project);
+  try {
+    await f.models.integrations.bind('mock-peer', {
+      connection: 'mock-connection',
+      configRevision: 1,
+      bindingRevision: 0,
+      catalogDigest: f.rule.selector.catalogDigest,
+      tools: ['synthetic_write'],
+      enabled: true,
+    });
+    await f.models.approvalRules.write({
+      requestId: 'mock-shared-rule',
+      expectedRevision: 1,
+      scope: { kind: 'project', scope: project },
+      action: 'save',
+      rule: { ...f.rule, id: 'mock-project-rule' },
+    });
+    const first = f.call(1);
+    const firstCard = await f.card(1);
+    expect(firstCard.policyDecision).toMatchObject({
+      project,
+      matchedRules: expect.arrayContaining([
+        { id: 'mock-project-rule', revision: 1, name: f.rule.name, effect: 'allow' },
+      ]),
+    });
+    await f.models.interactions.reply(f.job.bot, f.job.id, firstCard.id, {
+      kind: 'decision',
+      allow: true,
+      confirmPurpose: true,
+    });
+    await first;
+    expect(transport.effects).toBe(1);
+    await f.models.start('mock-peer', {
+      requestId: 'mock-peer-project-task',
+      prompt: 'Synthetic peer task',
+      project,
+    });
+    const peer = f.models.jobs.get('mock-peer')!;
+    await f.waitRun(peer);
+    const second = f.call(1, 'synthetic-value', peer.bot);
+    const secondCard = await f.card(2);
+    expect(secondCard).toMatchObject({
+      status: 'pending',
+      policyDecision: { project, matchedRules: [{ id: 'mock-project-rule' }] },
+    });
+    expect(transport.effects).toBe(1);
+    await f.models.interactions.reply(peer.bot, peer.id, secondCard.id, {
+      kind: 'decision',
+      allow: true,
+      confirmPurpose: true,
+    });
+    await second;
+    await f.call(2, 'synthetic-value', peer.bot);
+    expect((await f.card(3)).policyDecision).toMatchObject({ effect: 'allow', project });
+    expect(transport.effects).toBe(3);
+    await f.models.stop(peer.bot);
+    await peer.done;
+    await f.models.projects.write({
+      requestId: 'mock-other-project-create',
+      projectId: 'mock-other-project',
+      expectedRevision: 0,
+      action: 'create',
+      value: { name: 'Synthetic other project', grants: [{ bot: peer.bot }] },
+    });
+    const otherProject = { projectId: 'mock-other-project', revision: 1 };
+    await f.models.start(peer.bot, {
+      requestId: 'mock-other-project-task',
+      prompt: 'Synthetic other project task',
+      project: otherProject,
+    });
+    const switched = f.models.jobs.get(peer.bot)!;
+    await f.waitRun(switched);
+    const different = f.call(3, 'synthetic-value', peer.bot);
+    const differentCard = await f.card(4);
+    expect(differentCard).toMatchObject({
+      status: 'pending',
+      policyDecision: { project: otherProject, matchedRules: [] },
+    });
+    expect(transport.effects).toBe(3);
+    await f.models.interactions.reply(switched.bot, switched.id, differentCard.id, {
+      kind: 'decision',
+      allow: false,
+    });
+    await different;
+    await f.models.profiles.register({
+      id: 'mock-outsider',
+      name: 'Synthetic outsider',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+    await expect(
+      f.models.start('mock-outsider', {
+        requestId: 'mock-nonmember',
+        prompt: 'Synthetic nonmember task',
+        project,
+      }),
+    ).rejects.toMatchObject({ code: 'PROJECT_ACCESS_DENIED' });
+    expect(transport.effects).toBe(3);
+  } finally {
+    await f.close();
+  }
+});
+
+test('project membership revision withdrawal after Human confirmation blocks the final MCP send', async () => {
+  const project = { projectId: 'mock-project', revision: 1 };
+  const f = await mcpFixture('auto', undefined, 'interactive', 'synthetic', project);
+  try {
+    await f.models.approvalRules.write({
+      requestId: 'mock-shared-rule',
+      expectedRevision: 1,
+      scope: { kind: 'project', scope: project },
+      action: 'save',
+      rule: { ...f.rule, id: 'mock-project-rule' },
+    });
+    const pending = f.call(1);
+    const card = await f.card(1);
+    transport.beforeSend = async () => {
+      await f.models.projects.write({
+        requestId: 'mock-member-revoke',
+        projectId: project.projectId,
+        expectedRevision: 1,
+        action: 'update',
+        value: { name: 'Synthetic project', grants: [{ bot: 'mock-peer' }] },
+      });
+    };
+    await f.models.interactions.reply(f.job.bot, f.job.id, card.id, {
+      kind: 'decision',
+      allow: true,
+      confirmPurpose: true,
+    });
+    expect(await pending).toMatchObject({ result: { isError: true } });
+    expect(transport.effects).toBe(0);
+    expect(f.job.running).toBe(true);
+    expect(
+      (await f.models.approvalRules.snapshot({ kind: 'project', scope: project })).rules,
+    ).toHaveLength(1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('the portable Host executor fixture keeps real project and purpose admission for file provenance', async () => {
+  const f = await mcpFixture('auto', automationSource('file'), 'automation', 'synthetic');
+  try {
+    const pending = f.call(1);
+    const card = await f.card(1);
+    expect(card).toMatchObject({ status: 'pending', policyDecision: { trigger: 'automation' } });
+    expect(transport.effects).toBe(0);
+    await f.models.interactions.reply(f.job.bot, f.job.id, card.id, {
+      kind: 'decision',
+      allow: true,
+      confirmPurpose: true,
+    });
+    await pending;
+    expect(transport.effects).toBe(1);
+  } finally {
+    await f.close();
+  }
+});
+
 test('public task fields, prompt text and legacy positional flags cannot create trusted automation provenance', async () => {
   const f = await mcpFixture();
   try {
@@ -803,8 +1060,8 @@ test('Groups retains Host provenance across restart without transferring purpose
     groups = new Groups(path.join(f.root, 'groups.sqlite'), runner);
     await groups.ready;
     await groups.tick();
-    await until(() => !!f.models.jobs.get('mock-peer')?.sessionId);
     const peer = f.models.jobs.get('mock-peer')!;
+    await f.waitRun(peer);
     expect(origins[0]).toEqual(source);
     expect(peer.automation).toEqual(source);
     const peerCall = f.call(1, 'synthetic-value', 'mock-peer');
@@ -832,7 +1089,7 @@ test('Groups retains Host provenance across restart without transferring purpose
     await Promise.all([f.job.done, peer.done]);
     await groups.tick();
     const last = f.models.jobs.get('mock-bot')!;
-    await until(() => !!last.sessionId);
+    await f.waitRun(last);
     f.releaseAll();
     await last.done;
     await groups.tick();
@@ -845,8 +1102,8 @@ test('Groups retains Host provenance across restart without transferring purpose
       recipients: ['mock-peer'],
     });
     await groups.tick();
-    await until(() => !!f.models.jobs.get('mock-peer')?.sessionId);
     const human = f.models.jobs.get('mock-peer')!;
+    await f.waitRun(human);
     expect(origins.at(-1)).toBeUndefined();
     expect(human.automation).toBeUndefined();
     const humanCall = f.call(3, 'synthetic-value', 'mock-peer');
@@ -962,7 +1219,7 @@ test('an all-mode unknown schedule reconciles the original Human-approved MCP ta
     expect((await schedules.get(item.id)).automation?.error).toBe('SCHEDULE_OUTCOME_UNKNOWN');
     expect(starts).toBe(1);
     const job = f.models.jobs.get('mock-bot')!;
-    await until(() => !!job.sessionId);
+    await f.waitRun(job);
     const pending = f.call(501);
     const card = await f.card(1);
     expect(card).toMatchObject({ status: 'pending', policyDecision: { trigger: 'automation' } });

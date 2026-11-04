@@ -42,6 +42,7 @@ export function Decision({ decision }: { decision?: PolicyDecision }) {
             {JSON.stringify(
               {
                 scope: decision.scope,
+                ...(decision.project ? { project: decision.project } : {}),
                 trigger: decision.trigger,
                 selector: decision.selector,
                 policyRevision: decision.policyRevision,

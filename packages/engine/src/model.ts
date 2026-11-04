@@ -876,6 +876,7 @@ export class ModelRuns {
         const job = this.policyIdentity(run);
         const request: PolicyRequest = {
           scope: { kind: 'bot', bot: job.bot },
+          ...(job.project ? { project: structuredClone(job.project) } : {}),
           trigger: approvalTrigger(job),
           selector,
           mode: job.task?.approvalMode ?? 'auto',
@@ -901,7 +902,12 @@ export class ModelRuns {
       },
       assertCurrent: (run, decision) => {
         const job = this.policyIdentity(run);
-        if (decision.scope.bot !== job.bot || decision.trigger !== approvalTrigger(job))
+        if (
+          decision.scope.kind !== 'bot' ||
+          decision.scope.bot !== job.bot ||
+          decision.trigger !== approvalTrigger(job) ||
+          !sameProjectScope(decision.project, job.project)
+        )
           throw new Fault('APPROVAL_POLICY_CHANGED');
         this.approvalRules.assertCurrent(decision);
         if (
@@ -954,7 +960,7 @@ export class ModelRuns {
           approvalHash(item.policyDecision.selector) !== approvalHash(approvalSelector(item))
         )
           throw new Fault('APPROVAL_AUTHORITY_CHANGED');
-        this.approvalRules.assertCurrent(item.policyDecision);
+        this.rulePolicy.assertCurrent(job, item.policyDecision);
       },
     );
     this.tools.skills = new SkillTools(
@@ -2791,6 +2797,7 @@ export class ModelRuns {
     )
       throw new Fault('APPROVAL_AUTHORITY_CHANGED');
     this.profiles.assertActive(run.bot);
+    if (job.project) this.projects.assertScope(job.bot, job.project, 'read');
     return job;
   }
   private mcpPurposeScope(run: PolicyRun): McpPurposeScope | undefined {

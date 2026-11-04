@@ -4,6 +4,7 @@ import type {
   ApprovalRuleWrite,
   ApprovalScope,
 } from '@daban/protocol';
+import { sameApprovalScope } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import { t } from '../../i18n/locale';
@@ -26,7 +27,7 @@ export function useRuleEdit(scope: ApprovalScope, onSaved: () => unknown) {
   const [missing, setMissing] = useState(false);
   const complete = (receipt: ApprovalRuleReceipt, request: ApprovalRuleWrite) => {
     if (!alive.current) return;
-    if (receipt.scope.bot !== scope.bot || receipt.requestId !== request.requestId)
+    if (!sameApprovalScope(receipt.scope, scope) || receipt.requestId !== request.requestId)
       throw new Error('INVALID_RUNTIME_STATE');
     setPending(undefined);
     setConflict(undefined);
@@ -55,6 +56,10 @@ export function useRuleEdit(scope: ApprovalScope, onSaved: () => unknown) {
           'APPROVAL_STORAGE_LIMIT',
           'APPROVAL_RULE_NOT_FOUND',
           'APPROVAL_REQUEST_ID_REUSED',
+          'PROJECT_SCOPE_STALE',
+          'PROJECT_ARCHIVED',
+          'PROJECT_ACCESS_DENIED',
+          'PROJECT_NOT_FOUND',
         ].includes(code)
       ) {
         setPending(undefined);
@@ -68,7 +73,7 @@ export function useRuleEdit(scope: ApprovalScope, onSaved: () => unknown) {
           } catch {
             if (alive.current) setError(t('rules.reloadFailed'));
           }
-        } else setError(t('rules.invalid'));
+        } else setError(t(code === 'PROJECT_SCOPE_STALE' ? 'projects.stale' : 'rules.invalid'));
       }
     } finally {
       if (alive.current) setBusy(false);

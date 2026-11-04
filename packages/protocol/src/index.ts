@@ -524,7 +524,9 @@ export function isMcpReceipt(value: unknown): value is McpReceipt {
     value.session.length <= 200 &&
     mcpRevision(value.configRevision) &&
     (value.policyDecision === undefined ||
-      (isPolicyDecision(value.policyDecision) && value.policyDecision.scope.bot === value.bot)) &&
+      (isPolicyDecision(value.policyDecision) &&
+        value.policyDecision.scope.kind === 'bot' &&
+        value.policyDecision.scope.bot === value.bot)) &&
     typeof value.tool === 'string' &&
     !!value.tool &&
     value.tool.length <= 200 &&
@@ -3099,7 +3101,9 @@ export function isInteraction(value: unknown): value is Interaction {
         input.tool === 'mcp_call' &&
         isPolicyDecision(policyDecision))) &&
     (policyDecision === undefined ||
-      (isPolicyDecision(policyDecision) && policyDecision.scope.bot === bot)) &&
+      (isPolicyDecision(policyDecision) &&
+        policyDecision.scope.kind === 'bot' &&
+        policyDecision.scope.bot === bot)) &&
     (decisionSource === undefined ||
       (decisionSource === 'policy' &&
         input.kind === 'approval' &&

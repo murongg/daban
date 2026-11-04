@@ -911,7 +911,12 @@ export class Integrations {
   async recordDecision(id: string, decision: PolicyDecision) {
     await this.ready;
     const row = this.call(id);
-    if (row.phase !== 'claimed' || !isPolicyDecision(decision) || decision.scope.bot !== row.bot)
+    if (
+      row.phase !== 'claimed' ||
+      !isPolicyDecision(decision) ||
+      decision.scope.kind !== 'bot' ||
+      decision.scope.bot !== row.bot
+    )
       throw new Fault('MCP_AUTHORITY_CHANGED');
     this.available()
       .update(callReceipts)

@@ -30,6 +30,24 @@ it('requires the rule capability and validates Bot and request identity on rule 
   expect(fetcher).not.toHaveBeenCalled();
   state.mockResolvedValue(snapshot);
   expect(await client.invoke(command)).toEqual(reply);
+  const projectCommand = {
+    type: 'approval.rules.list' as const,
+    scope: { kind: 'project' as const, scope: { projectId: 'mock-project', revision: 1 } },
+  };
+  reply = {
+    scope: { kind: 'project', scope: { projectId: 'mock-other', revision: 1 } },
+    revision: 0,
+    rules: [],
+  };
+  await expect(client.invoke(projectCommand)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = {
+    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 2 } },
+    revision: 0,
+    rules: [],
+  };
+  await expect(client.invoke(projectCommand)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = { scope: projectCommand.scope, revision: 0, rules: [] };
+  expect(await client.invoke(projectCommand)).toEqual(reply);
   reply = { scope: { kind: 'bot', bot: 'mock-other' }, revision: 0, rules: [] };
   await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
   reply = {

@@ -1,7 +1,8 @@
 import { validAgentId } from './id.js';
+import { isProjectScope, type ProjectScope } from './projects.js';
 
-// Purpose replies require negotiation so older clients retain their one-time decision shape.
-export const approvalRulesCapability = 'approval-rules-v2';
+// Complete project scopes and decision context require negotiation; legacy clients retain their one-time shape.
+export const approvalRulesCapability = 'approval-rules-v3';
 export type RuleEffect = 'allow' | 'ask' | 'deny';
 export type CommandRiskReason = 'literal-read' | 'model-low' | 'forced-human' | 'unavailable';
 export type ApprovalTrigger = 'interactive' | 'automation';
@@ -22,10 +23,14 @@ export function isMcpPurposeScope(value: unknown): value is McpPurposeScope {
     validAgentId(value.turnId)
   );
 }
-export interface ApprovalScope {
-  kind: 'bot';
-  bot: string;
-}
+export type ApprovalScope = { kind: 'bot'; bot: string } | { kind: 'project'; scope: ProjectScope };
+export const sameApprovalSubject = (a: ApprovalScope, b: ApprovalScope) =>
+  a.kind === 'bot'
+    ? b.kind === 'bot' && a.bot === b.bot
+    : b.kind === 'project' && a.scope.projectId === b.scope.projectId;
+export const sameApprovalScope = (a: ApprovalScope, b: ApprovalScope) =>
+  sameApprovalSubject(a, b) &&
+  (a.kind === 'bot' || (b.kind === 'project' && a.scope.revision === b.scope.revision));
 export type ApprovalSelector =
   | { kind: 'url'; url: string }
   | {
@@ -58,6 +63,7 @@ export interface ApprovalRule extends ApprovalRuleDraft {
   revision: number;
 }
 export interface PolicyDecision {
+  project?: ProjectScope;
   riskReason?: CommandRiskReason;
   effect: RuleEffect;
   source: 'boundary' | 'rule' | 'mode' | 'risk';
@@ -145,7 +151,9 @@ export function canonicalApprovalUrl(value: unknown) {
 }
 export function isApprovalScope(value: unknown): value is ApprovalScope {
   return (
-    object(value) && keys(value, ['kind', 'bot']) && value.kind === 'bot' && validAgentId(value.bot)
+    object(value) &&
+    ((value.kind === 'bot' && keys(value, ['kind', 'bot']) && validAgentId(value.bot)) ||
+      (value.kind === 'project' && keys(value, ['kind', 'scope']) && isProjectScope(value.scope)))
   );
 }
 export function isApprovalSelector(value: unknown): value is ApprovalSelector {
@@ -280,6 +288,7 @@ export function isPolicyDecision(value: unknown): value is PolicyDecision {
       'source',
       'reasonCode',
       'riskReason',
+      'project',
       'matchedRules',
       'policyRevision',
       'requestHash',
@@ -307,6 +316,8 @@ export function isPolicyDecision(value: unknown): value is PolicyDecision {
     revision(value.policyRevision, 0) &&
     hash(value.requestHash) &&
     isApprovalScope(value.scope) &&
+    (value.project === undefined ||
+      (value.scope.kind === 'bot' && isProjectScope(value.project))) &&
     isApprovalTrigger(value.trigger) &&
     isApprovalSelector(value.selector) &&
     Array.isArray(value.matchedRules) &&
@@ -342,7 +353,8 @@ export function isApprovalRulesSnapshot(value: unknown): value is ApprovalRulesS
     Array.isArray(value.rules) &&
     value.rules.length <= 1000 &&
     value.rules.every(
-      (rule) => isApprovalRule(rule) && rule.scope.bot === (value.scope as ApprovalScope).bot,
+      (rule) =>
+        isApprovalRule(rule) && sameApprovalSubject(rule.scope, value.scope as ApprovalScope),
     ) &&
     new Set(value.rules.map((rule) => rule.id)).size === value.rules.length
   );
@@ -359,6 +371,6 @@ export function isApprovalRuleReceipt(value: unknown): value is ApprovalRuleRece
       (value.deleted === undefined &&
         isApprovalRule(value.rule) &&
         value.rule.id === value.id &&
-        value.rule.scope.bot === value.scope.bot))
+        sameApprovalScope(value.rule.scope, value.scope)))
   );
 }

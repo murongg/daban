@@ -93,6 +93,46 @@ const base = {
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
+it('creates a rule for the captured current project without approving the request', async () => {
+  const selector = { kind: 'url' as const, url: 'https://example.test/project' };
+  const request: Interaction = {
+    ...base,
+    id: 'mock-project-card',
+    bot: 'a',
+    runId: 'mock-run-a',
+    kind: 'approval',
+    tool: 'web_fetch',
+    url: selector.url,
+    policyDecision: {
+      effect: 'ask',
+      source: 'risk',
+      reasonCode: 'baselineAsked',
+      matchedRules: [],
+      policyRevision: 0,
+      requestHash: 'c'.repeat(64),
+      scope: { kind: 'bot', bot: 'a' },
+      project: { projectId: 'mock-project', revision: 2 },
+      trigger: 'interactive',
+      selector,
+    },
+  };
+  const invoke = connect([request]);
+  render(<App />);
+  await screen.findByRole('button', { name: '从此次请求创建精确规则' });
+  await userEvent.click(screen.getByRole('button', { name: /当前 Bot 选择 Bot 或项目/ }));
+  await userEvent.click(await screen.findByRole('option', { name: /当前项目 · mock-project/ }));
+  await userEvent.click(screen.getByRole('button', { name: '从此次请求创建精确规则' }));
+  expect(await screen.findByRole('dialog', { name: '新建规则' })).toBeVisible();
+  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
+    type: 'approval.rules.list',
+    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 2 } },
+  });
+  expect(
+    invoke.mock.calls.some(([command]) =>
+      ['interaction.reply', 'approval.rules.write', 'task.start'].includes(command.type),
+    ),
+  ).toBe(false);
+});
 it('separates current-task purpose consent from allowing once and saving a rule', async () => {
   const selector = {
     kind: 'mcp' as const,
@@ -204,6 +244,8 @@ function connect(
   };
   const subscribers = new Set<(snapshot: RuntimeSnapshot) => unknown>();
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
+    if (command.type === 'approval.rules.list')
+      return { ok: true, value: { scope: command.scope, revision: 0, rules: [] } };
     if (command.type === 'interaction.reply') {
       const current = snapshot.interactions!.find((item) => item.id === command.id)!;
       const updated = { ...current, status: 'resolved' as const, reply: command.reply };

@@ -181,6 +181,11 @@ export function Editor({
         }}
       >
         <p className="inline-note">{t('rules.exactHint')}</p>
+        <p className="inline-note">
+          {scope.kind === 'bot'
+            ? t('rules.editBotScope', { 0: scope.bot })
+            : t('rules.editProjectScope', { 0: scope.scope.projectId, 1: scope.scope.revision })}
+        </p>
         <fieldset disabled={frozen} className="rule-fields">
           {field('rules.name', draft.name, (name) => update({ name }), 80)}
           <Select

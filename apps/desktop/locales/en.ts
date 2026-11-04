@@ -1,4 +1,13 @@
 export const english = {
+  'rules.editBotScope': 'Bot scope: {0}',
+  'rules.editProjectScope': 'Project scope: {0} (revision {1})',
+  'rules.thisBot': 'This Bot',
+  'rules.currentProject': 'Current project · {0} (revision {1})',
+  'rules.projectMembersHint':
+    'Project rules apply to its current members. Each Bot still needs its own current-task purpose confirmation.',
+  'rules.chooseScope': 'Choose Bot or project',
+  'rules.projectChoice': 'Project · {0} (revision {1})',
+  'rules.projectsUnavailable': 'Project list is unavailable.',
   'requests.currentHumanTurn': 'Current request',
   'requests.permissionScope': 'Choose permission scope',
   'requests.confirmCurrentPurpose': 'Confirm purpose for this task and allow',
@@ -6,7 +15,7 @@ export const english = {
   'requests.currentPurposeHelp':
     'Confirm that the current request in this task may use this connection, tool and complete arguments. The exact allow rule may skip repeated prompts for identical calls. A new task or message from you, or a changed resource or rule version, needs fresh confirmation. Allowing once and saving a rule do not grant this permission.',
   'rules.editTitle': 'Edit rule',
-  'rules.settingsHint': 'Set exact Bot restrictions and inspect each decision.',
+  'rules.settingsHint': 'Set exact Bot or project rules and inspect each decision.',
   'rules.riskLiteralRead': 'The existing literal read-only check passed.',
   'rules.riskModelLow': 'The captured review model returned an exact low-risk verdict.',
   'rules.riskForcedHuman':
@@ -15,7 +24,7 @@ export const english = {
     'Risk review was unavailable or invalid; automatic permission was not granted.',
   'rules.title': 'Approval rules',
   'rules.scopeHint':
-    'Rules apply only to the selected Bot. Project access still requires its existing grants. Deny takes priority; rules cannot expand tools, file access or control.',
+    'Choose a Bot or project. Project rules cover its current members and combine with Bot restrictions. Deny takes priority; rules cannot expand tools, access or control.',
   'rules.new': 'New rule',
   'rules.name': 'Rule name',
   'rules.exactHint':

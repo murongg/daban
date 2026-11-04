@@ -156,6 +156,7 @@ export class Interactions {
           !policyDecision)) ||
       (policyDecision !== undefined &&
         (!isPolicyDecision(policyDecision) ||
+          policyDecision.scope.kind !== 'bot' ||
           policyDecision.scope.bot !== bot ||
           input.kind !== 'approval')) ||
       (conversationId !== undefined && !validAgentId(conversationId))

@@ -51,7 +51,7 @@ Webpages, files, and tool results cannot grant new authority on your behalf. Rev
 
 ## Exact Bot rules
 
-Open **Settings → Approval rules**, choose a Bot, or select **Create an exact rule from this request** on an approval card. A one-time answer never creates a rule. Saving and previewing rules do not execute tools or approve the current request.
+Open **Settings → Approval rules**, choose a Bot or project, or select **Create an exact rule from this request** on an approval card. A one-time answer never creates a rule. Saving and previewing rules do not execute tools or approve the current request.
 
 Rules match an exact URL (including its query), complete command SHA-256 and canonical directory, complete MCP connection/catalog/tool/argument identity, or complete installation-plan digest. Arbitrary regular expressions, command prefixes and native desktop selectors are unavailable. Installation rules can only ask or deny. MCP allow requires a separate purpose confirmation and cannot enable disabled tools.
 
@@ -61,4 +61,4 @@ Deny takes priority over ask and allow, including in full mode. Allow cannot byp
 
 Time, file and manually triggered schedules use automation rules, based on Host-captured source metadata. Group collaborators retain that source across queue restarts, but never inherit another Bot's purpose approval. A separately accepted Human task or group turn starts without the previous automatic task's source or purpose consent. Follow-up messages within a running task keep its captured source and require fresh purpose confirmation.
 
-New records show the reason, matched rule revision and checked exact resource. Older records report that no reason was recorded. A service without the rule capability disables editing. Rules support Bot scope; project files and browser access retain their separate project grants. Project rule selectors are not available.
+New records show the reason, matched rule revision and checked exact resource. Older records report that no reason was recorded. A service without the rule capability disables editing. Bot and project rules combine, with deny taking priority. Project rules cover current members when their accepted task captures that project; a Bot outside that scope cannot inherit them. Membership/revision changes invalidate waiting approvals. Each Bot still confirms its own current purpose. Project file/browser grants remain independent. Saved rules persist under the project ID; the selected revision is checked when editing, and the current task revision is checked before effects. Historical edit receipts remain queryable after archive and never grant new authority.
