@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { approvalRulesCapability } from '@daban/protocol';
 import { expect, test } from 'vitest';
+import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
 test('authenticated rule editing and preview never start a task; lost save replies use the exact receipt', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-rules-api-'));
+  // Windows Authority requires the same ACL-validated root registration as the real host.
+  await secureDirectory(root);
   const app = await startPrototype({
     profileDir: path.join(root, 'profile'),
     port: 0,
