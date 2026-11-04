@@ -512,6 +512,111 @@ test('model access: provider edits cannot remove a model still bound by another 
   }
 });
 
+for (const pendingWrite of [false, true])
+  test(`model access: a ${pendingWrite ? 'pending' : 'committed'} Bot binding admitted during a paid probe prevents model removal without replay`, async () => {
+    const { ModelRuns } = await import('./model.js');
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-model-binding-race-'));
+    const entered = deferred();
+    const probeGate = deferred();
+    const bindingEntered = deferred();
+    const bindingGate = deferred();
+    const calls: string[] = [];
+    let validating = false;
+    const file = path.join(root, 'credentials.json');
+    const fetcher: typeof fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/models')) return new Response(null, { status: 404 });
+      if (validating) {
+        entered.resolve();
+        await probeGate.promise;
+      }
+      return completion();
+    };
+    const settings = new ModelSettings(file, fetcher);
+    const models = new ModelRuns({
+      settings,
+      dir: path.join(root, 'models'),
+      workspace: path.join(root, 'workspace'),
+      origin: 'http://127.0.0.1:12345',
+    });
+    const kept = { ...input.connection.models[0], id: 'mock-kept' };
+    const update = {
+      ...input,
+      model: 'provider:mock-provider:mock-kept',
+      requestId: 'mock-remove-during-probe',
+      connection: { ...input.connection, models: [kept] },
+    };
+    let pending: Promise<unknown> | undefined;
+    let binding: Promise<unknown> | undefined;
+    try {
+      await settings.configure({
+        ...update,
+        revision: 0,
+        requestId: 'mock-seed-binding-race',
+        connection: { ...input.connection, models: [...input.connection.models, kept] },
+      });
+      const scope = (await settings.status(true)).modelAccess!.scope;
+      const paidBefore = calls.filter((url) => url.endsWith('/chat/completions')).length;
+      validating = true;
+      pending = settings.configure(update).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      await entered.promise;
+      if (pendingWrite)
+        models.profiles.modelGuard = (reference, write) =>
+          settings.withModel(reference, async () => {
+            bindingEntered.resolve();
+            await bindingGate.promise;
+            return write();
+          });
+      binding = models.profiles.register({
+        id: 'mock-racing-bot',
+        name: 'Synthetic racing Bot',
+        instructions: '',
+        memory: '',
+        color: 'mint',
+        model: input.model,
+      });
+      if (pendingWrite) await bindingEntered.promise;
+      else await binding;
+      probeGate.resolve();
+      expect(await pending).toMatchObject({ error: { code: 'MODEL_CONNECTION_REFERENCED' } });
+      expect(
+        await settings.saved({
+          scope,
+          requestId: update.requestId,
+          revision: 1,
+          connection: input.connection.id,
+          model: update.model,
+        }),
+      ).toMatchObject({
+        phase: 'failed',
+        error: 'MODEL_CONNECTION_REFERENCED',
+        current: { revision: 1 },
+      });
+      await expect(settings.configure(update)).rejects.toMatchObject({
+        code: 'MODEL_CONNECTION_REFERENCED',
+      });
+      const restarted = new ModelSettings(file, fetcher);
+      await expect(restarted.configure(update)).rejects.toMatchObject({
+        code: 'MODEL_CONNECTION_REFERENCED',
+      });
+      expect(calls.filter((url) => url.endsWith('/chat/completions'))).toHaveLength(paidBefore + 1);
+      expect((await restarted.resolve(input.model)).model).toBe(input.model);
+      bindingGate.resolve();
+      await binding;
+      expect((await models.profiles.get('mock-racing-bot'))?.model).toBe(input.model);
+    } finally {
+      probeGate.resolve();
+      bindingGate.resolve();
+      await pending?.catch(() => undefined);
+      await binding?.catch(() => undefined);
+      await models.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 test('model access: legacy key saves cannot make the selected default equal its fallback', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-legacy-fallback-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));

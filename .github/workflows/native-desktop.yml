@@ -79,6 +79,14 @@ jobs:
         run: npx vitest run apps/desktop/electron/skills.test.ts apps/desktop/electron/portable.test.ts apps/desktop/src/features/skills/SkillInstall.test.tsx apps/desktop/src/features/skills/SkillMetadata.test.tsx --maxWorkers=2
       - name: Verify standard skill packages
         run: npx vitest run --project node packages/engine/dist/skill-defaults.test.js packages/engine/dist/skill-discovery.test.js packages/engine/dist/skill-package.test.js packages/engine/dist/skills-packages.test.js packages/engine/dist/skill-tools.test.js packages/engine/dist/skill-sources.test.js packages/engine/dist/workspace-skills.test.js --maxWorkers=2
+      - name: Verify native API fallback with the installed SDK
+        timeout-minutes: 3
+        env:
+          DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
+        run: |
+          if (-not (Test-Path -LiteralPath $env:DABAN_TEST_SDK -PathType Leaf)) { throw "Installed DSH SDK is missing" }
+          node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/model-fallback.integration.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify native DSH tool loop
         timeout-minutes: 3
         run: |

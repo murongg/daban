@@ -485,6 +485,16 @@ export class ModelSettings {
     this.referenceChecks.add(check);
     return () => this.referenceChecks.delete(check);
   }
+  private async assertModelRemoval(previous: PrivateConnection, models: ModelConnection['models']) {
+    const removed = previous.models.filter((model) => !models.some((next) => next.id === model.id));
+    if (!removed.length) return;
+    if (this.bindings.has(previous.id)) throw new Fault('MODEL_CONNECTION_REFERENCED');
+    for (const check of this.referenceChecks) {
+      const references = await check({ ...metadata(previous), models: removed });
+      if (references.some((reference) => ['bot', 'fallback', 'running'].includes(reference)))
+        throw new Fault('MODEL_CONNECTION_REFERENCED');
+    }
+  }
   async withModel<T>(reference: ModelId, write: () => Promise<T>) {
     const connection = await this.serial(async () => {
       const config = await this.recover();
@@ -1055,19 +1065,8 @@ export class ModelSettings {
     )
       throw new Fault('MODEL_FALLBACK_INVALID', 400);
     const checked = edited || selected.connection;
-    if (existing && value.connection) {
-      const removed = existing.models.filter(
-        (previous) => !value.connection!.models.some((next) => next.id === previous.id),
-      );
-      if (removed.length) {
-        if (this.bindings.has(existing.id)) throw new Fault('MODEL_CONNECTION_REFERENCED');
-        for (const check of this.referenceChecks) {
-          const references = await check({ ...metadata(existing), models: removed });
-          if (references.some((reference) => ['bot', 'fallback', 'running'].includes(reference)))
-            throw new Fault('MODEL_CONNECTION_REFERENCED');
-        }
-      }
-    }
+    if (existing && value.connection)
+      await this.assertModelRemoval(existing, value.connection.models);
     const claim: ModelOperation = {
       id: value.requestId,
       fingerprint,
@@ -1111,10 +1110,9 @@ export class ModelSettings {
     connection: PrivateConnection,
     models: string[],
   ) {
-    let validated = false;
+    let committing = false;
     try {
       await this.probe(connection, models);
-      validated = true;
       return await this.serial(async () => {
         const current = await this.readState();
         if (
@@ -1122,7 +1120,11 @@ export class ModelSettings {
           !current.operations?.some((item) => item.id === claim.id && item.phase === 'claimed')
         )
           throw new Fault('MODEL_SETTINGS_CONFLICT');
-        // Effective credentials, revision and success receipt become visible in one atomic replacement.
+        const previous = allConnections(current).find((item) => item.id === connection.id);
+        // Hold the same owner as withModel admission through persist; pending writes retain their reservation until durable.
+        if (previous) await this.assertModelRemoval(previous, connection.models);
+        // A reference refusal is known; only an attempted atomic replacement can leave an unknown durable outcome.
+        committing = true;
         return this.persist({
           ...candidate,
           ...(current.probe ? { probe: current.probe, probeRevision: current.probeRevision } : {}),
@@ -1130,7 +1132,7 @@ export class ModelSettings {
         });
       });
     } catch (error) {
-      const unknown = validated || error instanceof ModelRequestUnknown;
+      const unknown = committing || error instanceof ModelRequestUnknown;
       const committed = await this.serial(async () => {
         const current = await this.readState();
         if (current?.operations?.some((item) => item.id === claim.id && item.phase === 'committed'))
@@ -1156,7 +1158,7 @@ export class ModelSettings {
         return undefined;
       }).catch(() => undefined);
       if (committed) return committed;
-      if (validated) throw new Fault('MODEL_OPERATION_UNKNOWN');
+      if (committing) throw new Fault('MODEL_OPERATION_UNKNOWN');
       throw error;
     }
   }
