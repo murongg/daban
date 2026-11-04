@@ -727,6 +727,16 @@ textarea.field {
   flex-direction: column;
   min-height: 100%;
 }
+.transcript-window {
+  display: block;
+}
+.transcript-row {
+  display: contents;
+  min-width: 0;
+}
+.transcript-window > .transcript-row {
+  display: flow-root;
+}
 .message-date {
   text-align: center;
   color: var(--muted);

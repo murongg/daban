@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-react';
 import { type Dispatch, Fragment } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { commentCard } from './comments-state';
 import { useComments } from './discussion';
@@ -62,8 +63,12 @@ export function Comments({
           // biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded history needs a keyboard scrolling target.
           tabIndex={0}
         >
-          <ol>
-            {discussion.rows.map((comment) => (
+          <WindowList
+            tag="ol"
+            scope={item.id}
+            items={discussion.rows}
+            getKey={(comment) => comment.id}
+            renderItem={(comment) => (
               <li key={comment.id}>
                 <div className="comment-meta">
                   <strong>{author(comment.createdBy)}</strong>
@@ -71,8 +76,8 @@ export function Comments({
                 </div>
                 <p>{comment.body}</p>
               </li>
-            ))}
-          </ol>
+            )}
+          />
         </section>
       )}
       {discussion.available &&

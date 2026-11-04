@@ -7,6 +7,7 @@ import type {
 import { Download, FileText, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
+import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { t, useLocale } from '../../i18n/locale';
 import { downloadBlob } from '../files/files';
@@ -262,8 +263,12 @@ export function Attachments({
           </div>
         </form>
       )}
-      <div className="file-list">
-        {page?.items.map((entry) => (
+      <WindowList
+        scope={`${bot}:${query}:${trash}`}
+        className="file-list"
+        items={page?.items || []}
+        getKey={(entry) => entry.id}
+        renderItem={(entry) => (
           <div className="file-row" key={entry.id}>
             <div className="retained-details">
               <span className="file-symbol">
@@ -308,8 +313,8 @@ export function Attachments({
               </IconButton>
             )}
           </div>
-        ))}
-      </div>
+        )}
+      />
       {page && !page.items.length && !loading && (
         <p className="panel-description">
           {trash ? t('attachments.trashEmpty') : t('attachments.noMatchingRetainedAttachments')}

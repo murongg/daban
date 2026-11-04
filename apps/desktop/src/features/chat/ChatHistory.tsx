@@ -36,6 +36,7 @@ export function ChatHistory({
   const [number, setNumber] = useState(
     String(initialRevision === undefined ? Math.max(1, revision) : initialRevision + 1),
   );
+  const [localOpen, setLocalOpen] = useState(false);
   const [page, setPage] = useState<ChatPage>();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
@@ -157,28 +158,34 @@ export function ChatHistory({
       {page && (
         <section aria-label={t('chathistory.conversationHistory', { 0: page.revision + 1 })}>
           {!!local.length && (
-            <details className="activity">
+            <details
+              className="activity"
+              onToggle={(event) => {
+                if (event.target === event.currentTarget) setLocalOpen(event.currentTarget.open);
+              }}
+            >
               <summary>{t('chathistory.legacyLocalCacheMayDuplicateServerRecords')}</summary>
-              {local.map((message) => (
-                <article key={message.id} className={`message ${message.role}`}>
-                  <div className="bubble">
-                    {message.role === 'bot' ? (
-                      <Markdown
-                        text={message.text}
-                        streaming={!!message.incomplete}
-                        files={cachedFiles}
-                        fileIds={message.files}
-                        preview={preview}
-                        openLink={openLink}
-                        copyText={copyText}
-                        notify={notify}
-                      />
-                    ) : (
-                      message.text
-                    )}
-                  </div>
-                </article>
-              ))}
+              {localOpen &&
+                local.map((message) => (
+                  <article key={message.id} className={`message ${message.role}`}>
+                    <div className="bubble">
+                      {message.role === 'bot' ? (
+                        <Markdown
+                          text={message.text}
+                          streaming={!!message.incomplete}
+                          files={cachedFiles}
+                          fileIds={message.files}
+                          preview={preview}
+                          openLink={openLink}
+                          copyText={copyText}
+                          notify={notify}
+                        />
+                      ) : (
+                        message.text
+                      )}
+                    </div>
+                  </article>
+                ))}
             </details>
           )}
           <p className="inline-note">

@@ -8,6 +8,7 @@ import { Archive as ArchiveIcon, RotateCcw } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { type Action, type Bot, lifecycleRequest, type Panel, type State } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { Dialog } from '../../components/controls/Dialog';
 import { t, useLocale } from '../../i18n/locale';
 import { Avatar } from './Avatar';
@@ -284,46 +285,51 @@ export function ArchiveList({
         {t('archive.historyDraftsRetainedReEnableBotAutomation')}
       </p>
       {!bots.length && <p className="inline-note">{t('archive.archivedBotsGroupsAppearHere')}</p>}
-      {bots.map((bot) => {
-        const pending = bot.members
-          ? state.groupActions[bot.id]
-          : lifecycleRequest(
-              state,
-              bot.id,
-              runtime.snapshot.profiles.find((entry) => entry.id === agentId(bot.id)),
-            );
-        return (
-          <div className="setting-row archive-row" key={bot.id}>
-            <Avatar bot={bot} />
-            <div className="archive-copy">
-              <div className="setting-label">{bot.name}</div>
-              <p className="setting-description">
-                {pending ? t('archive.operationNeedsVerification') : t('common.archived')}
-              </p>
+      <WindowList
+        scope="archived-bots"
+        items={bots}
+        getKey={(bot) => bot.id}
+        renderItem={(bot) => {
+          const pending = bot.members
+            ? state.groupActions[bot.id]
+            : lifecycleRequest(
+                state,
+                bot.id,
+                runtime.snapshot.profiles.find((entry) => entry.id === agentId(bot.id)),
+              );
+          return (
+            <div className="setting-row archive-row" key={bot.id}>
+              <Avatar bot={bot} />
+              <div className="archive-copy">
+                <div className="setting-label">{bot.name}</div>
+                <p className="setting-description">
+                  {pending ? t('archive.operationNeedsVerification') : t('common.archived')}
+                </p>
+              </div>
+              <div className="model-actions">
+                <button
+                  className="secondary"
+                  type="button"
+                  aria-label={t('archive.viewItemHistory', { 0: bot.name })}
+                  onClick={() => dispatch({ type: 'select', bot: bot.id })}
+                >
+                  {t('archive.viewHistory')}
+                </button>
+                <button
+                  className="secondary"
+                  type="button"
+                  aria-label={`${pending ? t('archive.verifyOperation') : t('common.restore')} ${bot.name}`}
+                  disabled={!onAction || runtime.snapshot.protocolVersion < (bot.members ? 28 : 22)}
+                  onClick={() => onAction?.(bot.id)}
+                >
+                  {pending ? <ArchiveIcon /> : <RotateCcw />}
+                  {pending ? t('archive.verifyOperation') : t('common.restore')}
+                </button>
+              </div>
             </div>
-            <div className="model-actions">
-              <button
-                className="secondary"
-                type="button"
-                aria-label={t('archive.viewItemHistory', { 0: bot.name })}
-                onClick={() => dispatch({ type: 'select', bot: bot.id })}
-              >
-                {t('archive.viewHistory')}
-              </button>
-              <button
-                className="secondary"
-                type="button"
-                aria-label={`${pending ? t('archive.verifyOperation') : t('common.restore')} ${bot.name}`}
-                disabled={!onAction || runtime.snapshot.protocolVersion < (bot.members ? 28 : 22)}
-                onClick={() => onAction?.(bot.id)}
-              >
-                {pending ? <ArchiveIcon /> : <RotateCcw />}
-                {pending ? t('archive.verifyOperation') : t('common.restore')}
-              </button>
-            </div>
-          </div>
-        );
-      })}
+          );
+        }}
+      />
     </div>
   );
 }

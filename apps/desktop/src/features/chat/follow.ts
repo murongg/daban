@@ -18,6 +18,10 @@ export function useFollow(scope: string, request = '') {
     following.current = true;
     update();
   }, [update]);
+  const pause = useCallback(() => {
+    following.current = false;
+  }, []);
+  const isFollowing = useCallback(() => following.current, []);
 
   // Follow actual rendered height, including final replies that replace the same message.
   useLayoutEffect(() => {
@@ -49,5 +53,5 @@ export function useFollow(scope: string, request = '') {
     position.current = element.scrollTop;
   }
 
-  return { viewport, content, attention, onScroll, resume };
+  return { viewport, content, attention, onScroll, resume, pause, isFollowing };
 }

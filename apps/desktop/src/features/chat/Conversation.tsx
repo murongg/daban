@@ -2,14 +2,9 @@ import { agentId, agentTask, isModelId, type RuntimeTask, recoveryBlocked } from
 import {
   ArrowUp,
   ArrowUpToLine,
-  Check,
   ChevronDown,
   CornerDownRight,
-  ExternalLink,
-  FileText,
-  Info,
   Mic,
-  Monitor,
   Paperclip,
   Pencil,
   Plus,
@@ -18,8 +13,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { type Dispatch, useCallback, useEffect, useRef } from 'react';
-import { runtimeMessage as taskError, useRuntime } from '../../app/Runtime';
+import { type Dispatch, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useRuntime } from '../../app/Runtime';
 import { demoIds } from '../../app/samples';
 import {
   type Action,
@@ -31,7 +26,6 @@ import {
   type State,
   type WorkspaceFile,
 } from '../../app/state';
-import { Markdown } from '../../components/content/Markdown';
 import { IconButton } from '../../components/controls/Button';
 import { Tooltip } from '../../components/controls/Tooltip';
 import { getLocale, t, useLocale } from '../../i18n/locale';
@@ -42,9 +36,12 @@ import { Requests } from '../requests/Requests';
 import { ApprovalMode } from './ApprovalMode';
 import { Execution } from './Execution';
 import { useFollow } from './follow';
+import { useHistory } from './history';
 import { useInputs } from './inputs';
+import { Message } from './Message';
 import { Plan } from './Plan';
 import { type DisplayMessage, visibleMessages } from './response';
+import { Transcript, type TranscriptEntry } from './Transcript';
 
 function progress(task: RuntimeTask) {
   if (task.phase === 'waiting') return t('common.waitingReply');
@@ -188,11 +185,29 @@ export function Conversation({
     notify,
     readOnly || pending,
   );
-  const saved = live
-    ? state.messages[bot.id].filter(
-        (message) => !demoIds.has(message.id) && (message.chatRevision ?? 0) === revision,
-      )
-    : state.messages[bot.id];
+  const cached = useMemo(
+    () =>
+      live
+        ? state.messages[bot.id].filter(
+            (message) => !demoIds.has(message.id) && (message.chatRevision ?? 0) === revision,
+          )
+        : state.messages[bot.id],
+    [live, state.messages, bot.id, revision],
+  );
+  const history = useHistory(
+    state,
+    bot.id,
+    revision,
+    live && runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion >= 29,
+  );
+  const saved = useMemo(() => {
+    const ids = new Set(cached.map((message) => message.id));
+    return [...history.messages.filter((message) => !ids.has(message.id)), ...cached];
+  }, [cached, history.messages]);
+  const files = useMemo(
+    () => [...new Map([...history.files, ...state.files].map((file) => [file.id, file])).values()],
+    [history.files, state.files],
+  );
   const entries = visibleMessages(saved, task);
   const draft = state.drafts[bot.id];
   const attachments = state.attachments[bot.id]
@@ -244,206 +259,153 @@ export function Conversation({
     });
     input.current?.focus();
   }
-  function artifact(id: string) {
-    const file = state.files.find((f) => f.id === id);
-    if (!file) return null;
+  const recordedByMessage = new Map(
+    [...history.records, ...(currentTask?.history || [])]
+      .filter(
+        (item) =>
+          !item.conversationId &&
+          (item.chatRevision ?? 0) === revision &&
+          item.runId !== task?.runId,
+      )
+      .map((item) => [`runtime-result:${item.runId}`, item]),
+  );
+  function renderMessage(message: DisplayMessage) {
+    const recorded = message.role === 'bot' ? recordedByMessage.get(message.id) : undefined;
     return (
-      <button type="button" className="message-artifact" key={id} onClick={() => preview(file)}>
-        <span className="file-symbol">
-          <FileText />
-        </span>
-        <div>
-          <div className="artifact-name">{file.name}</div>
-          <div className="artifact-meta">
-            {file.kind} · {file.size}
-          </div>
-        </div>
-        <ExternalLink />
-      </button>
+      <Message
+        key={message.id}
+        message={message}
+        author={state.bots.find((item) => item.id === message.author) || bot}
+        showAuthor={!!bot.members}
+        files={files}
+        target={target}
+        revision={revision}
+        recordedRun={recorded?.runId}
+        recordedPhase={recorded?.phase}
+        recordedElapsed={recorded?.elapsedMs}
+        recordedThinking={recorded?.response?.thinking}
+        phase={message.streaming || message.incomplete ? task?.phase : undefined}
+        dispatch={dispatch}
+        preview={preview}
+        openLink={openLink}
+        copyText={copyText}
+        notify={notify}
+      />
     );
   }
-  function renderMessage(message: DisplayMessage) {
-    if (message.role === 'activity')
-      return (
-        <details className="activity" key={message.id}>
-          <summary>
-            <Check />
-            {message.text}
-            <ChevronDown className="activity-chevron" />
-          </summary>
-          <div className="activity-files">
-            {message.files?.map((id) => {
-              const file = state.files.find((f) => f.id === id);
-              return (
-                file && (
-                  <button
-                    type="button"
-                    className="activity-file"
-                    key={id}
-                    onClick={() => preview(file)}
-                  >
-                    <FileText />
-                    {file.name}
-                  </button>
-                )
-              );
-            })}
-          </div>
-        </details>
-      );
-    if (message.role === 'notice')
-      return (
-        <div className="message" key={message.id}>
-          <p className="demo-message">
-            <Info />
-            <span>{message.text}</span>
-          </p>
-        </div>
-      );
-    const author = state.bots.find((b) => b.id === message.author) || bot;
-    const recorded =
-      message.role === 'bot'
-        ? currentTask?.history.find(
-            (item) =>
-              !item.conversationId &&
-              (item.chatRevision ?? 0) === revision &&
-              message.id === `runtime-result:${item.runId}` &&
-              item.runId !== task?.runId,
-          )
-        : undefined;
-    return (
-      <article
-        className={`message ${message.role}`}
-        key={message.id}
-        aria-live={message.streaming ? 'off' : undefined}
-      >
-        {bot.members && message.role === 'bot' && (
-          <div className="message-author">
-            <Avatar bot={author} />
-            {author.name}
-          </div>
-        )}
-        {recorded && (
-          <Execution
-            scope={{ bot: target, runId: recorded.runId, chatRevision: revision }}
-            phase={recorded.phase}
-          />
-        )}
-        <div className="bubble">
-          {message.role === 'bot' ? (
-            <Markdown
-              text={message.error ? taskError(message.error) : message.text}
-              streaming={!!message.streaming || !!message.incomplete}
-              fileIds={message.files || message.references}
-              files={state.files}
-              preview={preview}
-              openLink={openLink}
-              notify={notify}
-              copyText={copyText}
-            />
-          ) : (
-            message.text
-          )}
-        </div>
-        {(message.streaming || message.incomplete) && (
-          <p className="inline-note reply-state">
-            {message.incomplete
-              ? t('chat.responseIncomplete')
-              : task?.phase === 'waiting'
-                ? t('common.waitingReply')
-                : task?.phase === 'paused'
-                  ? t('common.waitingComputerHandback')
-                  : t('chat.responding')}
-          </p>
-        )}
-        {message.files?.map(artifact)}
-        {message.files?.includes('weekly-summary') && (
-          <div className="artifact-note">
-            <Check />
-            {t('chat.draftReadyReview')}
-          </div>
-        )}
-        {message.handoff && (
+  const rows: TranscriptEntry[] = [];
+  if (history.more)
+    rows.push({
+      id: 'older',
+      anchor: false,
+      content: (
+        <div className="history-loader">
           <button
             type="button"
-            className="secondary"
-            style={{ marginTop: 12 }}
-            onClick={() => dispatch({ type: 'panel', panel: 'computer' })}
+            className="text-button"
+            disabled={history.busy}
+            onClick={history.load}
           >
-            <Monitor />
-            {t('chat.viewComputer')}
+            {history.busy ? t('common.loading') : t('chat.loadEarlierMessages')}
           </button>
-        )}
-      </article>
+          {history.error && (
+            <p className="form-error" role="alert">
+              {history.error}
+            </p>
+          )}
+        </div>
+      ),
+    });
+  if (entries.length) {
+    rows.push({
+      id: 'date',
+      anchor: false,
+      content: (
+        <div className="message-date">
+          {live ? t('chat.localTasksConversations') : t('chat.todayExampleConversation')}
+        </div>
+      ),
+    });
+    rows.push(
+      ...earlier.map((message) => ({
+        id: `message:${message.id}`,
+        content: renderMessage(message),
+      })),
     );
-  }
+  } else
+    rows.push({
+      id: 'empty',
+      anchor: false,
+      content: (
+        <div className="empty-chat">
+          <Avatar bot={bot} size="large" />
+          <h2>
+            {t('common.and')}
+            {bot.name}
+            {t('chat.startCollaboration')}
+          </h2>
+          <p>{bot.role || t('chat.giveBotGoalStartFirstMessage')}</p>
+          <div className="suggestions">
+            {[
+              t('chat.organizeReferenceMaterials'),
+              t('chat.exploreIdeaTogether'),
+              t('chat.planTodaySWork'),
+            ].map((text) => (
+              <button
+                type="button"
+                key={text}
+                onClick={() => {
+                  dispatch({ type: 'draft', bot: bot.id, text });
+                  input.current?.focus();
+                }}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        </div>
+      ),
+    });
+  if (task?.runId)
+    rows.push({
+      id: `execution:${task.runId}`,
+      persistent: true,
+      content: (
+        <Execution
+          scope={{ bot: target, runId: task.runId, chatRevision: revision }}
+          phase={task.phase}
+        />
+      ),
+    });
+  const replyRows = current.map((message) => ({
+    id: `message:${message.id}`,
+    content: renderMessage(message),
+    persistent: !!task?.running,
+  }));
+  if (pendingIds) rows.push(...replyRows);
+  if (live && task?.plan)
+    rows.push({
+      id: `plan:${task.runId}`,
+      persistent: task.running,
+      content: <Plan items={task.plan} active={task.running && task.phase === 'running'} />,
+    });
+  if (live)
+    rows.push({
+      id: 'requests',
+      persistent: true,
+      content: (
+        <div ref={scroll.attention}>
+          <Requests state={state} dispatch={dispatch} notify={notify} bot={bot.id} />
+        </div>
+      ),
+    });
+  if (!pendingIds) rows.push(...replyRows);
+  rows.push(
+    ...later.map((message) => ({ id: `message:${message.id}`, content: renderMessage(message) })),
+  );
   return (
     <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
-      <div
-        className="transcript"
-        role="log"
-        aria-label={t('chat.conversationRecords')}
-        aria-live="polite"
-        ref={scroll.viewport}
-        onScroll={scroll.onScroll}
-      >
-        <div className="transcript-content" ref={scroll.content}>
-          {entries.length ? (
-            <>
-              <div className="message-date">
-                {live ? t('chat.localTasksConversations') : t('chat.todayExampleConversation')}
-              </div>
-              {earlier.map(renderMessage)}
-            </>
-          ) : (
-            <div className="empty-chat">
-              <Avatar bot={bot} size="large" />
-              <h2>
-                {t('common.and')}
-                {bot.name}
-                {t('chat.startCollaboration')}
-              </h2>
-              <p>{bot.role || t('chat.giveBotGoalStartFirstMessage')}</p>
-              <div className="suggestions">
-                {[
-                  t('chat.organizeReferenceMaterials'),
-                  t('chat.exploreIdeaTogether'),
-                  t('chat.planTodaySWork'),
-                ].map((text) => (
-                  <button
-                    type="button"
-                    key={text}
-                    onClick={() => {
-                      dispatch({ type: 'draft', bot: bot.id, text });
-                      input.current?.focus();
-                    }}
-                  >
-                    {text}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {/* Keep one mounted disclosure while the reply moves around human requests. */}
-          {task?.runId && (
-            <Execution
-              scope={{ bot: target, runId: task.runId, chatRevision: revision }}
-              phase={task.phase}
-            />
-          )}
-          {pendingIds && current.map(renderMessage)}
-          {live && task?.plan && (
-            <Plan items={task.plan} active={task.running && task.phase === 'running'} />
-          )}
-          {live && (
-            <div ref={scroll.attention}>
-              <Requests state={state} dispatch={dispatch} notify={notify} bot={bot.id} />
-            </div>
-          )}
-          {!pendingIds && current.map(renderMessage)}
-          {later.map(renderMessage)}
-        </div>
-      </div>
+      <Transcript scope={`${bot.id}:${revision}`} entries={rows} scroll={scroll} />
       <div className="composer-wrap">
         {!!state.chatRequests[bot.id] && (
           <div className="archive-banner">

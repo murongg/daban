@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, RefreshCw, Search, StickyNote } from 'lucide-react';
 import { type Dispatch, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, Bot, State } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { Select } from '../../components/controls/Select';
 import { getLocale, t, useLocale } from '../../i18n/locale';
@@ -438,8 +439,13 @@ export function Notes({
               {t('notes.loadingNotes')}
             </p>
           )}
-          <ul className="notes-list">
-            {notes.items.map((row) => (
+          <WindowList
+            scope={`${bot.id}:${cache.filter}:${cache.text}`}
+            tag="ul"
+            className="notes-list"
+            items={notes.items}
+            getKey={(row) => row.id}
+            renderItem={(row) => (
               <li key={row.id}>
                 <button
                   type="button"
@@ -466,8 +472,8 @@ export function Notes({
                   </time>
                 </button>
               </li>
-            ))}
-          </ul>
+            )}
+          />
           {notes.next !== undefined && (
             <button
               type="button"

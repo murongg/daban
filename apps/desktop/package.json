@@ -16,6 +16,7 @@
     "@daban/engine": "0.1.4",
     "@daban/protocol": "0.1.4",
     "@internationalized/date": "3.12.4",
+    "@tanstack/react-virtual": "3.14.25",
     "builder-util-runtime": "9.7.0",
     "dompurify": "3.4.17",
     "electron-updater": "6.8.11",

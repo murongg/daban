@@ -6,9 +6,60 @@ seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemo
 
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it } from 'vitest';
+import { createRef } from 'react';
+import { expect, it, vi } from 'vitest';
+import { mockViewport } from '../test/viewport';
 import { App } from './App';
+import { Sidebar } from './Sidebar';
 import { restore, storageKey } from './storage';
+
+it('windows a large Bot collection without mounting every row', () => {
+  const restoreViewport = mockViewport();
+  try {
+    const state = seedDemoState();
+    state.bots = Array.from({ length: 1000 }, (_, index) => ({
+      ...state.bots[0]!,
+      id: `mock-bot-${index}`,
+      name: `SYNTHETIC BOT ${index}`,
+      role: 'SYNTHETIC ROLE',
+    }));
+    render(
+      <Sidebar
+        state={state}
+        dispatch={vi.fn()}
+        query=""
+        setQuery={vi.fn()}
+        searchRef={createRef<HTMLInputElement>()}
+        onCreate={vi.fn()}
+        open
+        close={vi.fn()}
+      />,
+    );
+    expect(screen.queryAllByRole('button', { name: /^SYNTHETIC BOT/ }).length).toBeLessThan(80);
+  } finally {
+    restoreViewport();
+  }
+});
+
+it('does not scan retained message bodies until a sidebar search is requested', () => {
+  const state = seedDemoState();
+  const read = vi.fn(() => 'SYNTHETIC SEARCH BODY');
+  Object.defineProperty(state.messages.research[0]!, 'text', { get: read });
+  const props = {
+    state,
+    dispatch: vi.fn(),
+    setQuery: vi.fn(),
+    searchRef: createRef<HTMLInputElement>(),
+    onCreate: vi.fn(),
+    open: true,
+    close: vi.fn(),
+  };
+  const view = render(<Sidebar {...props} query="" />);
+  expect(read).not.toHaveBeenCalled();
+  view.rerender(<Sidebar {...props} query="synthetic search body" />);
+  expect(read).toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: '研究员' })).toBeVisible();
+});
 
 it('pins a Bot through row actions without changing the selected conversation or its draft', async () => {
   render(<App />);

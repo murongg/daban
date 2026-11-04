@@ -9,6 +9,7 @@ import { Download, FileText, Paperclip, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { WorkspaceFile } from '../../app/state';
+import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { getLocale, t, useLocale } from '../../i18n/locale';
@@ -104,8 +105,12 @@ export function RuntimeFiles({
           {error}
         </p>
       )}
-      <div className="file-list">
-        {files.map((file) => (
+      <WindowList
+        scope="runtime-files"
+        className="file-list"
+        items={files}
+        getKey={(file) => file.path}
+        renderItem={(file) => (
           <div className="file-row" key={file.path}>
             <button type="button" className="file-open" onClick={() => preview(item(file))}>
               <span className="file-symbol">
@@ -207,8 +212,8 @@ export function RuntimeFiles({
               <Download />
             </IconButton>
           </div>
-        ))}
-      </div>
+        )}
+      />
       {!files.length && !error && (
         <p className="panel-description">{t('runtimefiles.generatedFilesAppearHere')}</p>
       )}
