@@ -51,11 +51,14 @@ async function runScenario(
     | 'two-failures'
     | 'revoked'
     | 'unknown-capability',
+  plan?: ('plan' | 'text' | 'tool' | 'failure')[],
+  plannedModel: 'mock-primary' | 'mock-fallback' = 'mock-primary',
 ) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-model-fallback-'));
   const starts: string[] = [];
   const order: string[] = [];
   const sessions: string[] = [];
+  const rounds: string[] = [];
   const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
     Response.json({ data: [{ id: 'mock-primary' }, { id: 'mock-fallback' }] }),
   );
@@ -91,11 +94,52 @@ async function runScenario(
       sessions.push(id);
       return {
         id,
-        run: async () => {
+        run: async (_input: unknown, observer: { onNotification: (note: unknown) => unknown }) => {
+          rounds.push(this.options.model);
           const job = models.jobs.get('mock-bot')!;
+          const planned = async () => {
+            const round = rounds.filter((model) => model === this.options.model).length;
+            const step = plan?.[round - 1];
+            if (!step) throw new Error('Unexpected synthetic plan continuation');
+            if (step === 'text' || step === 'failure')
+              await models.rpc(job.bot, `Bearer ${job.token}`, {
+                id: `mock-plan-output-${round}`,
+                method: 'response.update',
+                params: {
+                  sessionId: id,
+                  revision: round,
+                  text: step === 'text' ? 'Synthetic earlier round output' : '',
+                  state: 'streaming',
+                },
+              });
+            if (step === 'tool')
+              await models.rpc(job.bot, `Bearer ${job.token}`, {
+                id: `mock-plan-tool-${round}`,
+                method: 'tools/call',
+                params: { name: 'list_files', arguments: {} },
+              });
+            observer.onNotification({
+              method: 'session.event',
+              params: {
+                sessionId: id,
+                event: {
+                  type: 'todo/write',
+                  seq: round,
+                  time: 1800000000000 + round,
+                  data: { todos: [{ content: 'Synthetic pending work', status: 'in_progress' }] },
+                },
+              },
+            });
+            return {
+              sessionId: id,
+              finalResponse: step === 'text' ? 'Synthetic earlier round output' : '',
+              ...(step === 'failure' ? { events: [failure] } : {}),
+            };
+          };
           if (this.options.model === 'mock-primary') {
             originalToken = job.token;
             originalSession = id;
+            if (plan && plannedModel === this.options.model) return planned();
             if (scenario === 'text' || scenario === 'cleared-text' || scenario === 'thinking')
               await models.rpc(job.bot, `Bearer ${job.token}`, {
                 id: 1,
@@ -159,6 +203,7 @@ async function runScenario(
               },
             }),
           ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+          if (plan && plannedModel === this.options.model) return planned();
           return {
             sessionId: id,
             finalResponse: scenario === 'two-failures' ? '' : 'Synthetic fallback reply',
@@ -219,6 +264,8 @@ async function runScenario(
       starts,
       order,
       sessions,
+      rounds,
+      toolCount: job.toolCount,
       settings: await settings.status(true),
     };
   } finally {
@@ -278,6 +325,47 @@ test('two failed providers produce at most two attempts and one failed task', as
   expect(result.starts).toEqual(['mock-primary', 'mock-fallback']);
   expect(result.result.phase).toBe('failed');
   expect(result.result.runId).toBe(result.accepted.runId);
+});
+
+for (const activity of ['text', 'tool'] as const)
+  for (const preceding of [[], ['plan']] satisfies 'plan'[][])
+    test(`plan continuation preserves ${activity} from ${preceding.length ? 'an intermediate' : 'the first'} round before a later failure`, async () => {
+      const result = await runScenario('clean', [...preceding, activity, 'failure']);
+      expect(result.rounds).toEqual(Array(preceding.length + 2).fill('mock-primary'));
+      expect(result.starts).toEqual(['mock-primary']);
+      expect(result.result).toMatchObject({
+        phase: 'failed',
+        runId: result.accepted.runId,
+        requestId: 'mock-fallback-request',
+        attemptSummary: [
+          { fence: activity === 'text' && !preceding.length ? 'output' : 'tool', failure: 'auth' },
+        ],
+      });
+      if (activity === 'text')
+        expect(result.result.response?.text).toBe('Synthetic earlier round output');
+      expect(result.toolCount).toBe(activity === 'tool' ? 1 : 0);
+      expect(result.record?.attemptSummary).toHaveLength(1);
+    });
+
+for (const beforeFailure of [[], ['plan']] satisfies 'plan'[][])
+  test(`a structured failure in plan round ${beforeFailure.length + 1} is checked before another continuation`, async () => {
+    const result = await runScenario('clean', [...beforeFailure, 'failure']);
+    expect(result.rounds).toEqual(Array(beforeFailure.length + 1).fill('mock-primary'));
+    expect(result.starts).toEqual(['mock-primary']);
+    expect(result.result).toMatchObject({
+      phase: 'failed',
+      runId: result.accepted.runId,
+      requestId: 'mock-fallback-request',
+      attemptSummary: [{ failure: 'auth', fence: 'tool' }],
+    });
+  });
+
+test('a fallback plan continuation failure cannot open a third provider attempt', async () => {
+  const result = await runScenario('clean', ['plan', 'failure'], 'mock-fallback');
+  expect(result.rounds).toEqual(['mock-primary', 'mock-fallback', 'mock-fallback']);
+  expect(result.starts).toEqual(['mock-primary', 'mock-fallback']);
+  expect(result.result).toMatchObject({ phase: 'failed', runId: result.accepted.runId });
+  expect(result.record?.attemptSummary).toHaveLength(2);
 });
 
 test('an explicit continuation cannot replay an earlier unknown tool outcome', async () => {
