@@ -34,9 +34,17 @@ async function currentRelease(tag: string, run: Run): Promise<Release | undefine
       'stderr' in error &&
       typeof error.stderr === 'string' &&
       /HTTP 404/.test(error.stderr)
-    )
-      return;
-    throw error;
+    ) {
+      // Drafts may be absent from lookup-by-tag; recover the exact private draft across all pages.
+      response = await run([
+        'api',
+        `repos/${repository}/releases?per_page=100`,
+        '--paginate',
+        '--jq',
+        `.[] | select(.draft == true and .tag_name == "${tag}")`,
+      ]);
+      if (!response.trim()) return;
+    } else throw error;
   }
   const result = JSON.parse(response) as Release;
   assert.equal(typeof result?.draft, 'boolean', 'PUBLISH_RESPONSE');
@@ -169,6 +177,17 @@ export async function publishClient(
     '--draft=false',
     ...(version.includes('-') ? ['--prerelease', '--latest=false'] : ['--latest']),
   ]);
+  const published = await currentRelease(tag, run);
+  assert.ok(published && !published.draft, 'PUBLISH_INTEGRITY');
+  assert.deepEqual(published.assets.map((a) => a.name).sort(), expected, 'PUBLISH_INTEGRITY');
+  for (const file of files)
+    assert.ok(
+      matches(
+        published.assets.find((a) => a.name === file.name),
+        file,
+      ),
+      'PUBLISH_INTEGRITY',
+    );
 }
 async function main() {
   const [directory, notes] = process.argv.slice(2),

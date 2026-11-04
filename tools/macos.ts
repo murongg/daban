@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { appendFile, copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { componentIndex, componentTag } from '@daban/engine/component';
 import { extractComponent } from '../apps/desktop/electron/component-install.ts';
 import {
-  checkpointNames,
   type CheckpointInput,
-  readCheckpoint,
+  checkpointNames,
   type ReleaseContext,
+  readCheckpoint,
   writeCheckpoint,
 } from './checkpoint.ts';
 import { fetchComponent } from './component-release.ts';
@@ -107,6 +107,7 @@ export async function finishRuntime(
 }
 async function runtimeBinding(directory: string, context: ReleaseContext) {
   await readCheckpoint(directory, context, 'runtime-ready');
+  // Two signed builds can share a source ID but differ in bytes; bind the client to its exact runtime.
   return (await hashAsset(path.join(directory, reference), 'sha256')).digest;
 }
 export async function prepareClient(

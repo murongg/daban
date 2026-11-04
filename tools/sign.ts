@@ -247,6 +247,7 @@ export async function prepareComponent(
   } = { sign: signRuntime, submit: notarize, run },
 ) {
   await dependencies.sign(app, options);
+  // Keep the exact submitted ZIP so ticket retries in another job never need to sign or submit again.
   await dependencies.run('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, archive]);
   return dependencies.submit(archive, options);
 }

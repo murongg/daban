@@ -35,7 +35,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - run: npm run build
+      - run: npm run build:engine
       - uses: actions/cache/restore@v4
         id: saved
         with:
@@ -47,6 +47,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUNTIME_CACHE: ${{ steps.saved.outputs.cache-hit == 'true' && format('{0}/runtime-cache', runner.temp) || '' }}
         run: node --experimental-strip-types tools/macos.ts runtime-cache "$RUNNER_TEMP/runtime-input"
+      - name: Build host and Linux execution services only on a cache miss
+        if: steps.cached.outputs.cached != 'true'
+        run: |
+          npm run build --workspace @daban/agent
+          npm run build --workspace @daban/runtime
       - name: Download the sealed credential-free Linux base
         if: steps.cached.outputs.cached != 'true'
         env:

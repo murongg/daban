@@ -53,7 +53,7 @@ async function fixture(prerelease = false) {
   await writeFile(notes, 'SYNTHETIC BILINGUAL RELEASE NOTES');
   return { root, directory, notes, version, tag: 'v' + version, assets };
 }
-function remote() {
+function remote(hideDraft = false) {
   const value = { draft: true, assets: [] as Asset[] };
   let exists = false;
   let source = commit;
@@ -69,6 +69,9 @@ function remote() {
         return '';
       }
       if (args[1].includes('/commits/')) return JSON.stringify({ sha: source });
+      if (args[1].includes('/releases?')) return exists ? JSON.stringify(value) : '';
+      if (hideDraft && value.draft)
+        throw Object.assign(new Error('SYNTHETIC_DRAFT_NOT_FOUND'), { stderr: 'HTTP 404' });
       if (!exists) throw Object.assign(new Error('SYNTHETIC_NOT_FOUND'), { stderr: 'HTTP 404' });
       return JSON.stringify(value);
     }
@@ -150,6 +153,53 @@ test('replaces a stale asset only while the release is a private draft', async (
   expect(server.calls.filter((a) => a[1] === 'upload')).toHaveLength(1);
   expect(server.calls.find((a) => a[1] === 'edit')).toContain('--prerelease');
   expect(server.calls.find((a) => a[1] === 'edit')).toContain('--latest=false');
+});
+
+test('finds and resumes a draft when the tag endpoint returns 404', async (t) => {
+  const pub = await api();
+  const f = await fixture();
+  t.onTestFinished(() => rm(f.root, { recursive: true, force: true }));
+  const server = remote(true);
+  server.seed();
+  server.value.assets = f.assets.slice(0, 3);
+  await pub.publishClient(f.tag, commit, f.directory, f.notes, server.run);
+  expect(server.value.draft).toBe(false);
+  expect(server.calls.filter((a) => a[1] === 'create')).toHaveLength(0);
+  expect(server.calls.filter((a) => a[1] === 'upload')).toHaveLength(8);
+  expect(server.calls.some((a) => a.includes('--paginate'))).toBe(true);
+});
+
+test('a tag moved during upload keeps the complete release private', async (t) => {
+  const pub = await api();
+  const f = await fixture();
+  t.onTestFinished(() => rm(f.root, { recursive: true, force: true }));
+  const server = remote();
+  const run = async (args: string[]) => {
+    const response = await server.run(args);
+    if (args[1] === 'upload') server.moveTag();
+    return response;
+  };
+  await expect(pub.publishClient(f.tag, commit, f.directory, f.notes, run)).rejects.toThrow(
+    /PUBLISH_COMMIT/,
+  );
+  expect(server.value.assets).toHaveLength(11);
+  expect(server.value.draft).toBe(true);
+  expect(server.calls.some((a) => a[1] === 'edit')).toBe(false);
+});
+
+test('confirms the release is public after the publish request', async (t) => {
+  const pub = await api();
+  const f = await fixture();
+  t.onTestFinished(() => rm(f.root, { recursive: true, force: true }));
+  const server = remote();
+  const run = async (args: string[]) => {
+    const response = await server.run(args);
+    if (args[1] === 'edit') server.value.draft = true;
+    return response;
+  };
+  await expect(pub.publishClient(f.tag, commit, f.directory, f.notes, run)).rejects.toThrow(
+    /PUBLISH_INTEGRITY/,
+  );
 });
 
 test('published releases are immutable and matching completed publication is a no-op', async (t) => {
