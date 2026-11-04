@@ -111,7 +111,9 @@ async function fixture() {
     oauth,
     connect,
     counters: () => ({ registrations, exchanges, refreshes }),
-    setExchangeFailure: () => { exchangeFailure = true; },
+    setExchangeFailure: () => {
+      exchangeFailure = true;
+    },
     setBadScope: () => {
       badScope = true;
     },
@@ -218,13 +220,17 @@ test('cancel closes only its own listener and prevents any callback from persist
 test('an uncertain code exchange is interrupted and the same start never registers or exchanges again', async () => {
   const f = await fixture();
   try {
-    f.setExchangeFailure(); const { reply, callback } = await f.connect();
+    f.setExchangeFailure();
+    const { reply, callback } = await f.connect();
     expect((await fetch(callback)).status).toBe(400);
     expect((await f.store.oauthAttempt(target, reply.receipt.attempt)).phase).toBe('interrupted');
     const repeated = await f.oauth.start(input);
-    expect(repeated.receipt.phase).toBe('interrupted'); expect(repeated.authorize).toBeUndefined();
+    expect(repeated.receipt.phase).toBe('interrupted');
+    expect(repeated.authorize).toBeUndefined();
     expect(f.counters()).toEqual({ registrations: 1, exchanges: 1, refreshes: 0 });
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 test('expired callbacks cannot exchange a code or create an empty connection', async () => {
   const f = await fixture();
@@ -235,8 +241,12 @@ test('expired callbacks cannot exchange a code or create an empty connection', a
     clock = vi.spyOn(Date, 'now').mockImplementation(() => actual() + 700000);
     expect((await fetch(callback)).status).toBe(400);
     expect((await f.store.oauthAttempt(target, reply.receipt.attempt)).phase).toBe('expired');
-    expect((await f.store.list(false, input.bot)).items).toEqual([]); expect(f.counters().exchanges).toBe(0);
-  } finally { clock?.mockRestore(); await f.close(); }
+    expect((await f.store.list(false, input.bot)).items).toEqual([]);
+    expect(f.counters().exchanges).toBe(0);
+  } finally {
+    clock?.mockRestore();
+    await f.close();
+  }
 });
 
 test('untrusted issuer metadata fails before registering or opening an authorization page', async () => {
