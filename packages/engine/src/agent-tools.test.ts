@@ -448,8 +448,11 @@ test('workspace tools work without a screen, enforce paths and preserve unrelate
         .isError,
     ).toBe(true);
     expect(
-      payload(await tools.invoke(run, 'read_file', { path: path.join(shared, 'previous.md') }))
-        .content,
+      payload(
+        await tools.invoke(run, 'read_file', {
+          path: path.join(shared, 'previous.md').split(path.sep).join('/'),
+        }),
+      ).content,
     ).toBe('synthetic previous report');
     for (const args of [
       { path: '../private.txt' },

@@ -467,7 +467,8 @@ export function editorShowsFile(
   file: string,
   home = homedir(),
 ) {
-  const abbreviated = file.startsWith(home + path.sep) ? `~${file.slice(home.length)}` : file;
+  // Editor titles contain Linux guest paths even when the model host runs on Windows.
+  const abbreviated = file.startsWith(home + path.posix.sep) ? `~${file.slice(home.length)}` : file;
   return windows.some(
     (window) =>
       /mousepad/i.test(window.class) &&

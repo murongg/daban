@@ -1,26 +1,62 @@
-import { chmod, link, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import fs, { chmod, link, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { Authority, ViewerGrants } from './authority.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
+
+test('a token replaced by a link between validation and open cannot truncate another private file', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-authority-race-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  await secureDirectory(root);
+  const token = path.join(root, 'model/control-token');
+  const other = path.join(root, 'synthetic-private');
+  await new Authority(token).publish();
+  await writeFile(other, 'SYNTHETIC-KEEP-53', { mode: 0o600 });
+  const original = fs.open;
+  let replaced = false;
+  vi.spyOn(fs, 'open').mockImplementation(async (named, flags, mode) => {
+    if (named === token && !replaced) {
+      replaced = true;
+      await rm(token);
+      await symlink(other, token);
+    }
+    return original(named, flags, mode);
+  });
+  syncBuiltinESMExports();
+  try {
+    await expect(new Authority(token).publish()).rejects.toThrowError();
+    expect(replaced).toBe(true);
+    expect(await readFile(other, 'utf8')).toBe('SYNTHETIC-KEEP-53');
+  } finally {
+    vi.restoreAllMocks();
+    syncBuiltinESMExports();
+  }
+});
 
 test('control capability publication refuses public files, links and foreign ownership safeguards', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-authority-'));
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  await secureDirectory(root);
   const file = path.join(root, 'model/control-token');
   const authority = new Authority(file);
   await authority.publish();
   expect(authority.token).toMatch(/^[a-f0-9]{64}$/);
-  expect((await stat(file)).mode & 0o777).toBe(0o600);
-  expect((await stat(path.dirname(file))).mode & 0o777).toBe(0o700);
+  expect(await privateMetadata(file, await stat(file), 0o600)).toBe(true);
+  expect(await privateMetadata(path.dirname(file), await stat(path.dirname(file)), 0o700)).toBe(
+    true,
+  );
   expect((await readFile(file, 'utf8')).trim()).toBe(authority.token);
   const second = new Authority(file);
   await second.publish();
   expect(second.token).not.toBe(authority.token);
-  await chmod(file, 0o644);
-  await expect(new Authority(file).publish()).rejects.toMatchObject({
-    code: 'CONTROL_AUTH_UNSAFE',
-  });
+  if (process.platform !== 'win32') {
+    await chmod(file, 0o644);
+    await expect(new Authority(file).publish()).rejects.toMatchObject({
+      code: 'CONTROL_AUTH_UNSAFE',
+    });
+  }
   await rm(file);
   const other = path.join(root, 'synthetic-private');
   await writeFile(other, 'SYNTHETIC-KEEP-47', { mode: 0o600 });
