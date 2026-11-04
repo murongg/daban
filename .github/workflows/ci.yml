@@ -36,6 +36,12 @@ jobs:
       - uses: ./.github/actions/setup
       - run: npm run build
       - run: npm run typecheck
+      - name: Verify context captures with the installed SDK
+        env:
+          DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
+        run: |
+          test -f "$DABAN_TEST_SDK"
+          node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/context-inspector.integration.js packages/engine/dist/transcripts.integration.js
       # Runtime unit tests need these tools during the single full Vitest pass.
       - name: Install Linux desktop runtime dependencies
         if: runner.os == 'Linux'
@@ -49,7 +55,10 @@ jobs:
         run: node --experimental-sqlite --test packages/engine/dist/upgrade.integration.js
       - name: Linux integration regressions
         if: runner.os == 'Linux'
+        env:
+          DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
         run: |
+          test -f "$DABAN_TEST_SDK"
           node --experimental-strip-types tools/runtime.ts
           node --experimental-strip-types tools/tests.ts runtime --integration-only
       - name: Verify legacy Agent upgrade in a disposable launchd scope

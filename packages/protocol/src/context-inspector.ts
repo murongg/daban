@@ -98,6 +98,9 @@ const exact = (value: Record<string, unknown>, keys: readonly string[]) =>
   Object.keys(value).every((key) => keys.includes(key));
 const integer = (value: unknown, min = 0): value is number =>
   Number.isSafeInteger(value) && Number(value) >= min;
+// Coercion can throw past the optional journal-field boundary and hide an otherwise readable task.
+const enumValue = (value: unknown, values: readonly string[]) =>
+  typeof value === 'string' && values.includes(value);
 
 function instant(value: unknown): value is string {
   const match =
@@ -187,7 +190,7 @@ export function isContextBoundary(value: unknown): value is ContextBoundary {
   return (
     object(value) &&
     exact(value, ['kind', 'endSeq', 'shadowedSeqs', 'omittedSeqs']) &&
-    ['summary', 'prune'].includes(String(value.kind)) &&
+    enumValue(value.kind, ['summary', 'prune']) &&
     integer(value.endSeq) &&
     Array.isArray(value.shadowedSeqs) &&
     value.shadowedSeqs.length <= 32 &&
@@ -213,8 +216,8 @@ function source(value: unknown): value is ContextSource {
     return false;
   return (
     contextCategories.includes(value.category as ContextCategory) &&
-    ['estimated', 'unknown', 'not-injected'].includes(String(value.evidence)) &&
-    ['host-injected', 'saved-only', 'unknown'].includes(String(value.membership)) &&
+    enumValue(value.evidence, ['estimated', 'unknown', 'not-injected']) &&
+    enumValue(value.membership, ['host-injected', 'saved-only', 'unknown']) &&
     (value.hostTokens === null || integer(value.hostTokens)) &&
     (value.evidence !== 'unknown' || value.hostTokens === null) &&
     (value.evidence !== 'estimated' || integer(value.hostTokens, 1)) &&
@@ -222,7 +225,8 @@ function source(value: unknown): value is ContextSource {
     integer(value.savedCharacters) &&
     integer(value.omittedRefs) &&
     Array.isArray(value.refs) &&
-    (!['persona', 'preferences'].includes(String(value.category)) || value.refs.length === 0) &&
+    ((value.category !== 'persona' && value.category !== 'preferences') ||
+      value.refs.length === 0) &&
     value.refs.length <= 5 &&
     value.refs.every(isContextRef)
   );
@@ -248,7 +252,7 @@ export function isContextCapture(value: unknown): value is ContextCapture {
     ]) &&
     integer(value.revision, 1) &&
     instant(value.at) &&
-    ['turn', 'projection', 'compaction', 'settled'].includes(String(value.reason)) &&
+    enumValue(value.reason, ['turn', 'projection', 'compaction', 'settled']) &&
     value.coverage === 'partial' &&
     validAgentId(value.turnId) &&
     value.estimator === 'daban-text-v1' &&
@@ -278,12 +282,12 @@ export function isContextView(value: unknown): value is ContextView {
   if (value.state === 'unavailable')
     return (
       exact(value, ['scope', 'state', 'reason']) &&
-      ['legacy', 'not-captured', 'capture-unavailable'].includes(String(value.reason))
+      enumValue(value.reason, ['legacy', 'not-captured', 'capture-unavailable'])
     );
   return (
     value.state === 'captured' &&
     exact(value, ['scope', 'state', 'health', 'selected', 'revisions']) &&
-    ['ok', 'capture-failed'].includes(String(value.health)) &&
+    enumValue(value.health, ['ok', 'capture-failed']) &&
     isContextCapture(value.selected) &&
     Array.isArray(value.revisions) &&
     value.revisions.length > 0 &&

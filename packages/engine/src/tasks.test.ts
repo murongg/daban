@@ -57,23 +57,65 @@ test('journal preserves bounded captures across restart and isolates a corrupt a
     const loaded = new TaskJournal(root);
     await loaded.load();
     expect(await loaded.read(record.bot, record.runId)).toHaveProperty('contextCaptures', captures);
+    const corruptions: unknown[] = [
+      { ...captures, nextRevision: 0 },
+      {
+        ...captures,
+        captures: captures.captures.map((capture) => ({ ...capture, reason: ['turn'] })),
+      },
+      {
+        ...captures,
+        captures: captures.captures.map((capture) => ({
+          ...capture,
+          reason: { toString: null, valueOf: null },
+        })),
+      },
+      {
+        ...captures,
+        captures: captures.captures.map((capture) => ({
+          ...capture,
+          sources: capture.sources.map((source) => ({
+            ...source,
+            membership: { toString: null, valueOf: null },
+          })),
+        })),
+      },
+    ];
+    const file = path.join(root, `${record.runId}.json`);
+    for (const contextCaptures of corruptions) {
+      await writeFile(file, JSON.stringify({ version: 1, task: { ...record, contextCaptures } }));
+      const corrupt = new TaskJournal(root);
+      await corrupt.load();
+      expect(await corrupt.read(record.bot, record.runId)).toMatchObject({
+        prompt: record.prompt,
+        result: record.result,
+        phase: 'completed',
+        running: false,
+        contextCaptureFailed: true,
+      });
+      expect(await corrupt.read(record.bot, record.runId)).not.toHaveProperty('contextCaptures');
+    }
     await writeFile(
-      path.join(root, `${record.runId}.json`),
+      file,
+      JSON.stringify({ version: 1, task: { ...record, contextCaptures: undefined } }),
+    );
+    const legacy = new TaskJournal(root);
+    await legacy.load();
+    expect(await legacy.read(record.bot, record.runId)).toMatchObject({
+      prompt: record.prompt,
+      result: record.result,
+    });
+    expect(await legacy.read(record.bot, record.runId)).not.toHaveProperty('contextCaptureFailed');
+    await writeFile(
+      file,
       JSON.stringify({
         version: 1,
-        task: {
-          ...record,
-          contextCaptures: { ...captures, nextRevision: 0 },
-        },
+        task: { ...record, phase: 'mock-invalid', contextCaptures: corruptions[2] },
       }),
     );
-    const corrupt = new TaskJournal(root);
-    await corrupt.load();
-    expect(await corrupt.read(record.bot, record.runId)).toMatchObject({
-      result: record.result,
-      contextCaptureFailed: true,
-    });
-    expect(await corrupt.read(record.bot, record.runId)).not.toHaveProperty('contextCaptures');
+    const invalidCore = new TaskJournal(root);
+    await invalidCore.load();
+    expect(await invalidCore.read(record.bot, record.runId)).toBeUndefined();
     const invalid = { ...record, contextCaptures: { ...captures, nextRevision: 0 } };
     await expect(journal.put(invalid)).rejects.toMatchObject({ code: 'INVALID_CONTEXT_CAPTURE' });
   } finally {

@@ -2,6 +2,7 @@ import {
   type ContextCapture,
   contextCategories,
   disconnected,
+  isContextBoundary,
   isContextCapture,
   isContextView,
   isRemoteRpcRequest,
@@ -34,6 +35,93 @@ const capture = (): ContextCapture => ({
   pressure: { seq: 0, at: '2026-01-01T00:00:00Z' },
   gaps: ['sdk-envelope'],
 });
+
+const enumFields = [
+  {
+    name: 'boundary kind',
+    value: 'summary',
+    check: isContextBoundary,
+    input: (kind: unknown) => ({ kind, endSeq: 1, shadowedSeqs: [0], omittedSeqs: 0 }),
+  },
+  {
+    name: 'source evidence',
+    value: 'unknown',
+    check: isContextCapture,
+    input: (evidence: unknown) => {
+      const selected = capture();
+      return {
+        ...selected,
+        sources: selected.sources.map((source, index) =>
+          index === 0 ? { ...source, evidence } : source,
+        ),
+      };
+    },
+  },
+  {
+    name: 'source membership',
+    value: 'unknown',
+    check: isContextCapture,
+    input: (membership: unknown) => {
+      const selected = capture();
+      return {
+        ...selected,
+        sources: selected.sources.map((source, index) =>
+          index === 0 ? { ...source, membership } : source,
+        ),
+      };
+    },
+  },
+  {
+    name: 'capture reason',
+    value: 'turn',
+    check: isContextCapture,
+    input: (reason: unknown) => ({ ...capture(), reason }),
+  },
+  {
+    name: 'unavailable reason',
+    value: 'legacy',
+    check: isContextView,
+    input: (reason: unknown) => ({ scope, state: 'unavailable', reason }),
+  },
+  {
+    name: 'capture health',
+    value: 'ok',
+    check: isContextView,
+    input: (health: unknown) => ({
+      scope,
+      state: 'captured',
+      health,
+      selected: capture(),
+      revisions: [1],
+    }),
+  },
+];
+const invalidEnums = [
+  { name: 'array', make: (value: string): unknown => [value] },
+  { name: 'nested array', make: (value: string): unknown => [[value]] },
+  { name: 'coercible object', make: (value: string): unknown => ({ toString: () => value }) },
+  {
+    name: 'uncoercible object',
+    make: (_value: string): unknown => ({ toString: null, valueOf: null }),
+  },
+  { name: 'plain object', make: (_value: string): unknown => ({}) },
+  { name: 'null', make: (_value: string): unknown => null },
+  { name: 'boolean', make: (_value: string): unknown => true },
+  { name: 'number', make: (_value: string): unknown => 1 },
+];
+for (const field of enumFields) {
+  test(`${field.name} accepts its original string`, () => {
+    expect(field.check(field.input(field.value))).toBe(true);
+  });
+  test.each(invalidEnums)(
+    `${field.name} rejects $name without conversion or exceptions`,
+    ({ make }) => {
+      const input: unknown = field.input(make(field.value));
+      expect(() => field.check(input)).not.toThrow();
+      expect(field.check(input)).toBe(false);
+    },
+  );
+}
 
 test('validates partial captures, safe source ownership, ISO dates and private-body exclusion', () => {
   const selected = capture();
