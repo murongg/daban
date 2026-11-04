@@ -9,9 +9,87 @@ import {
   lifecycleRequest,
   messageQueue,
   reduce,
+  sharedReviewPaths,
   skillDraft,
 } from './state';
 import { restore, serialize } from './storage';
+
+it('keeps shared file choices within one Bot revision and freezes queued and uncertain requests', () => {
+  let state = initialState();
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['mock-b.txt', 'mock-a.txt'],
+  });
+  expect(sharedReviewPaths(state, 'research', 0)).toEqual(['mock-a.txt', 'mock-b.txt']);
+  expect(sharedReviewPaths(state, 'writer', 0)).toEqual([]);
+  expect(sharedReviewPaths(state, 'research', 1)).toEqual([]);
+  const task = {
+    requestId: 'mock-review-send',
+    prompt: 'Synthetic request',
+    chatRevision: 0,
+    fileReview: { sharedPaths: [...sharedReviewPaths(state, 'research', 0)] },
+  };
+  state = reduce(state, { type: 'runtime-pending', bot: 'research', task });
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['mock-c.txt'],
+  });
+  expect(state.runtimeRequests.research).toEqual(task);
+  state = reduce(state, {
+    type: 'queue-add',
+    bot: 'research',
+    task: {
+      id: 'mock-queue',
+      prompt: 'Synthetic queued request',
+      files: [],
+      fileReview: { revision: 0, sharedPaths: ['mock-c.txt'] },
+    },
+  });
+  expect(messageQueue(state, 'research')[0].fileReview).toEqual({
+    revision: 0,
+    sharedPaths: ['mock-c.txt'],
+  });
+  expect(sharedReviewPaths(state, 'research', 0)).toEqual([]);
+  const queued = state;
+  state = reduce(state, { type: 'queue-insert', bot: 'research', id: 'mock-queue', revision: 0 });
+  expect(state).toBe(queued);
+  const old = restore(serialize(initialState()));
+  expect(sharedReviewPaths(old, 'research', 0)).toEqual([]);
+});
+
+it('rejects excessive or unsafe shared choices and repairs only damaged optional cache fields', () => {
+  let state = initialState();
+  const previous = state;
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: Array.from({ length: 9 }, (_, index) => `mock-${index}.txt`),
+  });
+  expect(state).toBe(previous);
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['../mock.txt'],
+  });
+  expect(state).toBe(previous);
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['mock.txt'],
+  });
+  const saved = JSON.parse(serialize(state));
+  saved.state.fileReviewSelections.research.sharedPaths = ['../mock.txt'];
+  const recovered = restore(JSON.stringify(saved));
+  expect(sharedReviewPaths(recovered, 'research', 0)).toEqual([]);
+  expect(recovered.bots).toEqual(state.bots);
+});
 
 it('keeps approval choice within one Bot conversation and preserves exact pending requests', () => {
   let state = initialState();

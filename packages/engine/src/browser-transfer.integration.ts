@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { documentLimit } from '@daban/protocol';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
+import { compareFiles } from './file-diff.js';
 import { type Browser, createBrowser } from './runtime.js';
 import { WorkspaceFiles } from './workspace.js';
 
@@ -112,6 +113,8 @@ test('real browser tools upload actual task bytes, download binary output, refus
         prompt: '在合成网站上传 source.csv 并下载结果。',
       },
     };
+    const reviewWorkspace = new WorkspaceFiles(workdir, await realpath(workdir));
+    const beforeFiles = await reviewWorkspace.captureReview();
     let shot = payload(
       await tools.invoke(run, 'browser_navigate', { url: `${origin}/fixture/page` }),
     );
@@ -161,6 +164,23 @@ test('real browser tools upload actual task bytes, download binary output, refus
     );
     assert.ok(saved.file);
     assert.deepEqual(await readFile(path.join(workdir, 'result.bin')), bytes);
+    const publishedFiles = await reviewWorkspace.captureReview();
+    assert.deepEqual(
+      compareFiles([beforeFiles], [publishedFiles]).map((change) => [
+        change.before.path,
+        change.kind,
+      ]),
+      [
+        ['result.bin', 'created'],
+        ['source.csv', 'unchanged'],
+      ],
+    );
+    assert.equal(publishedFiles.files.find((file) => file.path === 'result.bin')?.state, 'present');
+    assert.ok(
+      publishedFiles.files.some(
+        (file) => file.path === 'result.bin' && file.state === 'present' && !file.text,
+      ),
+    );
     assert.equal(
       await readFile(path.join(workdir, 'source.csv'), 'utf8'),
       'item,count\nSYNTHETIC-UPLOAD-79,47',
@@ -186,6 +206,12 @@ test('real browser tools upload actual task bytes, download binary output, refus
     });
     assert.equal(collision.isError, true);
     assert.match(JSON.stringify(collision), /BROWSER_FILE_EXISTS/);
+    const collisionFiles = await reviewWorkspace.captureReview();
+    assert.ok(
+      compareFiles([publishedFiles], [collisionFiles]).every(
+        (change) => change.kind === 'unchanged',
+      ),
+    );
     assert.equal(
       await readFile(path.join(workdir, 'source.csv'), 'utf8'),
       'item,count\nSYNTHETIC-UPLOAD-79,47',
@@ -209,6 +235,9 @@ test('real browser tools upload actual task bytes, download binary output, refus
       name: 'cancelled.bin',
     });
     await slowStarted;
+    const incompleteFiles = await reviewWorkspace.captureReview();
+    assert.ok(incompleteFiles.snapshot.reasons.includes('excluded'));
+    assert.ok(incompleteFiles.files.every((file) => !file.path.startsWith('.browser-download-')));
     const human = await Promise.race([
       browser.control.transfer('a', 0, 'human'),
       new Promise<never>((_resolve, reject) =>

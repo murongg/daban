@@ -15,9 +15,11 @@ import type {
   TaskTrace,
 } from '@daban/protocol';
 import {
+  compareReviewPaths,
   isApprovalMode,
   isGoalProgress,
   isReplyStream,
+  isReviewSelection,
   isRunInsert,
   isRunTurn,
   isSessionStats,
@@ -49,6 +51,7 @@ export function validateTask(input: unknown): TaskRequest {
           'files',
           'chatRevision',
           'approvalMode',
+          'fileReview',
         ].includes(k),
     )
   )
@@ -67,6 +70,7 @@ export function validateTask(input: unknown): TaskRequest {
     (typeof value.retryOf !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.retryOf))
   )
     fail();
+  if (value.fileReview !== undefined && !isReviewSelection(value.fileReview)) fail();
   if (value.retryOf && value.files?.length) fail();
   if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode)) fail();
   if (value.retryTurn !== undefined && (!value.retryOf || !validAgentId(value.retryTurn))) fail();
@@ -86,7 +90,11 @@ export function validateTask(input: unknown): TaskRequest {
     if (!isTaskFile(file) || names.has(file.name)) fail();
     names.add(file.name);
   }
-  return structuredClone(value);
+  const captured = structuredClone(value);
+  if (captured.fileReview?.sharedPaths.length)
+    captured.fileReview.sharedPaths.sort(compareReviewPaths);
+  else delete captured.fileReview;
+  return captured;
 }
 export function agentInstructionsFor(
   fullGuest: boolean,
@@ -248,6 +256,7 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  fileReview?: import('./file-review.js').ReviewPointer;
   contextCaptures?: ContextArchive;
   contextCaptureFailed?: true;
   goalSession?: boolean;
@@ -381,6 +390,8 @@ export class TaskJournal {
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.fileReview !== undefined && !validReviewPointer(task.fileReview))
+          delete task.fileReview;
         if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
           delete task.goalSession;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
@@ -446,6 +457,8 @@ export class TaskJournal {
         ))
     )
       throw new Fault('INVALID_CONTEXT_CAPTURE', 400);
+    if (value.fileReview !== undefined && !validReviewPointer(value.fileReview))
+      throw new Fault('INVALID_FILE_REVIEW', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
@@ -503,6 +516,7 @@ export class TaskJournal {
       'goal',
       'goalSession',
       'stats',
+      'fileReview',
       'contextCaptures',
       'contextCaptureFailed',
     ];
@@ -574,4 +588,24 @@ export class TaskJournal {
     const record = this.records.get(runId);
     return record?.bot === bot ? structuredClone(record) : undefined;
   }
+}
+
+function validReviewPointer(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const pointer = value as Record<string, unknown>;
+  return (
+    Object.keys(pointer).every((key) => ['revision', 'state'].includes(key)) &&
+    Number.isSafeInteger(pointer.revision) &&
+    Number(pointer.revision) >= 1 &&
+    typeof pointer.state === 'string' &&
+    [
+      'capturing-before',
+      'recording',
+      'capturing-after',
+      'complete',
+      'interrupted',
+      'unavailable',
+      'expired',
+    ].includes(pointer.state)
+  );
 }

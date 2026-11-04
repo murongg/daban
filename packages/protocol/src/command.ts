@@ -1,3 +1,4 @@
+import { isReviewFileQuery, isReviewQuery, isReviewSelection } from './file-review.js';
 import {
   isApprovalMode,
   isAttachmentId,
@@ -192,6 +193,9 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     'recovery.cancel': ['type', 'id'],
     'recovery.start': ['type', 'id'],
     connect: ['type'],
+    'files.review.read': ['type', 'query'],
+    'files.review.diff': ['type', 'query'],
+    'files.review.current': ['type', 'query'],
     'files.list': ['type'],
     'files.read': ['type', 'path'],
     'files.download': ['type', 'path'],
@@ -266,6 +270,12 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   )
     return fail();
   if (v.type === 'transcript.content' && !isTranscriptContentQuery(v.query)) return fail();
+  if (v.type === 'files.review.read' && !isReviewQuery(v.query)) return fail();
+  if (
+    ['files.review.diff', 'files.review.current'].includes(String(v.type)) &&
+    !isReviewFileQuery(v.query)
+  )
+    return fail();
   if (v.type === 'context.inspect' && !isContextQuery(v.query)) return fail();
   if (v.type === 'context.source' && !isContextSourceQuery(v.query)) return fail();
   if (v.type === 'chat.receipt' && (!validAgentId(v.bot) || !validAgentId(v.id))) return fail();
@@ -463,11 +473,13 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
         'files',
         'chatRevision',
         'approvalMode',
+        'fileReview',
       ]) ||
       !string(t.requestId, 100) ||
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
+      (t.fileReview !== undefined && !isReviewSelection(t.fileReview)) ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
       (t.memory !== undefined && !string(t.memory, 12000)) ||
       (t.chatRevision !== undefined &&

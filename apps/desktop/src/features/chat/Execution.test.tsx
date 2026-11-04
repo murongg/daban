@@ -25,6 +25,33 @@ afterEach(() => {
 });
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 
+it('opens file evidence for the exact task and closes without stopping background work', async () => {
+  const backend = bridge(() => ({
+    scope,
+    revision: 1,
+    state: 'unavailable',
+    writers: 'unknown',
+    effects: 'partial',
+    reasons: ['baseline-missing'],
+    counts: { created: 0, modified: 0, deleted: 0, unchanged: 0, unknown: 0 },
+    items: [],
+  }));
+  backend.snapshot.fileReview = { available: true };
+  render(
+    <RuntimeProvider>
+      <Execution scope={scope} phase="completed" />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  const trigger = await screen.findByRole('button', { name: '文件审阅' });
+  await user.click(trigger);
+  expect(await screen.findByText('此任务没有可用的文件证据。')).toBeVisible();
+  expect(backend.invoke).toHaveBeenCalledWith({ type: 'files.review.read', query: { scope } });
+  await user.keyboard('{Escape}');
+  expect(trigger).toHaveFocus();
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'task.stop')).toBe(false);
+});
+
 it('opens a context inspector bound to the displayed scope and restores focus without controlling work', async () => {
   const backend = bridge(() => ({ scope, state: 'unavailable', reason: 'legacy' }));
   backend.snapshot.contextInspector = 1;

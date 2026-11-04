@@ -66,7 +66,12 @@ test('real remote sessions project status/connect and pushes for each accepted s
       return () => {};
     },
   };
-  const snapshot = { ...disconnected('ready'), contextInspector: 1, preflight: 1, fileReview: 1 };
+  const snapshot = {
+    ...disconnected('ready'),
+    contextInspector: 1,
+    preflight: 1,
+    fileReview: { available: true },
+  };
   const host = new RemoteAccess({
     directory,
     name: 'Synthetic Host',
@@ -130,7 +135,11 @@ test('real remote sessions project status/connect and pushes for each accepted s
     });
     expect(await read('mock-session-b', 'mock-legacy-peer')).toEqual(disconnected('ready'));
     // The Host's local state and a different peer must retain their own independent schema decisions.
-    expect(snapshot).toMatchObject({ contextInspector: 1, preflight: 1, fileReview: 1 });
+    expect(snapshot).toMatchObject({
+      contextInspector: 1,
+      preflight: 1,
+      fileReview: { available: true },
+    });
     await new Promise((resolve) => setTimeout(resolve, 1100));
     await vi.waitFor(() => expect(sent.some((item) => item.channel === 'events')).toBe(true));
     for (const event of sent.filter((item) => item.channel === 'events'))
@@ -266,7 +275,7 @@ test('a controller sends one schema hint before RPC without waiting for an old H
       type: 'snapshot-capabilities',
       host: host.identity.id,
       workspace: host.identity.id,
-      accept: { contextInspector: 1 },
+      accept: { contextInspector: 1, fileReview: 1 },
     });
     expect(await controller.request({ type: 'status' }, host.identity.id)).toEqual(
       disconnected('ready'),

@@ -11,6 +11,7 @@ import {
   isGroupSend,
   isKnowledgeContent,
   isModelId,
+  isReviewSelection,
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
@@ -90,6 +91,17 @@ export function restore(raw: string | null): State {
       if (record(bot) && bot.model !== undefined && !isModelId(bot.model)) delete bot.model;
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
+    s.fileReviewSelections = Object.fromEntries(
+      Object.entries(record(s.fileReviewSelections) ? s.fileReviewSelections : {}).filter(
+        ([bot, value]) =>
+          ids.includes(bot) &&
+          record(value) &&
+          Object.keys(value).every((key) => ['revision', 'sharedPaths'].includes(key)) &&
+          Number.isSafeInteger(value.revision) &&
+          Number(value.revision) >= 0 &&
+          isReviewSelection({ sharedPaths: value.sharedPaths }),
+      ),
+    );
     s.approvalModes = Object.fromEntries(
       Object.entries(record(s.approvalModes) ? s.approvalModes : {}).filter(
         ([bot, value]) =>

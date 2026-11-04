@@ -5,8 +5,10 @@ import {
   isExecutionParams,
   isExecutionReply,
   isExecutionSnapshot,
+  reviewLimits,
 } from '@daban/protocol';
 import { Fault } from './control.js';
+import { checkedReviewCapture } from './workspace-review.js';
 
 export interface Executor {
   readonly ready: Promise<ExecutionSnapshot>;
@@ -26,6 +28,7 @@ const readers = new Set([
   'workspace.read',
   'workspace.download',
   'workspace.verify',
+  'workspace.review.capture',
   'tools.poll',
   'process.poll',
   'documents.extract',
@@ -70,7 +73,12 @@ export class RemoteExecutor implements Executor {
       throw new Fault('EXECUTION_INVALID_REQUEST', 400);
     const id = randomUUID();
     const boot = this.snapshot?.boot;
-    const bounded = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(20000)]);
+    const bounded = AbortSignal.any([
+      ...(signal ? [signal] : []),
+      AbortSignal.timeout(
+        method === 'workspace.review.capture' ? reviewLimits.milliseconds : 20000,
+      ),
+    ]);
     let response: Response;
     try {
       response = await (this.options.fetcher || fetch)(this.options.url, {
@@ -102,7 +110,11 @@ export class RemoteExecutor implements Executor {
         const next = await reader.read();
         if (next.done) break;
         bytes += next.value.byteLength;
-        if (bytes > 16 * 1024 * 1024) throw new Fault('EXECUTION_INVALID_RESPONSE');
+        if (
+          bytes >
+          (method === 'workspace.review.capture' ? reviewLimits.responseBytes : 16 * 1024 * 1024)
+        )
+          throw new Fault('EXECUTION_INVALID_RESPONSE');
         chunks.push(next.value);
       }
     } catch (error) {
@@ -126,6 +138,7 @@ export class RemoteExecutor implements Executor {
       (method === 'computer.status' && !isComputerStatus(value.value))
     )
       throw new Fault('EXECUTION_INVALID_RESPONSE');
+    if (method === 'workspace.review.capture') return checkedReviewCapture(value.value);
     return value.value;
   }
 }

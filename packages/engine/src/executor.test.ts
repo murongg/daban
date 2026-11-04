@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rename, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { documentLimit } from '@daban/protocol';
+import { documentLimit, isReviewCapture, workspaceReviewCapability } from '@daban/protocol';
 import { expect, type TestContext, test } from 'vitest';
 import { RemoteExecutor } from './execution.js';
 import { startExecutor } from './executor.js';
@@ -43,6 +43,108 @@ test('executor authenticates one narrow RPC surface without model or approval en
       apiKey: 'SYNTHETIC-PRIVATE',
     }),
   ).rejects.toMatchObject({ code: 'EXECUTION_INVALID_REQUEST' });
+});
+
+test.skipIf(process.platform !== 'linux')(
+  'executor captures only owned workspace scope under its boot and nonce fence',
+  async (t) => {
+    const { client, service, token } = await fixture(t);
+    expect(client.snapshot?.capabilities).toContain(workspaceReviewCapability);
+    const directory = await client.call<{ path: string; canonical: string; handleId: string }>(
+      'workspace.create',
+      { parts: ['mock-review-run', 'mock-bot'] },
+    );
+    await client.call('workspace.write', {
+      handleId: directory.handleId,
+      name: 'input.txt',
+      data: Buffer.from('synthetic').toString('base64'),
+    });
+    const result = await client.call('workspace.review.capture', {
+      root: directory.canonical,
+      canonical: directory.canonical,
+    });
+    expect(isReviewCapture(result)).toBe(true);
+    expect(result).toMatchObject({ files: [{ path: 'input.txt', state: 'present' }] });
+    await expect(client.call('workspace.review.capture', { root: '/tmp' })).rejects.toMatchObject({
+      code: 'EXECUTION_WORKSPACE_SCOPE',
+    });
+    const response = await fetch(`${service.origin}/exec`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-daban-execution-token': token },
+      body: JSON.stringify({
+        role: 'executor',
+        version: 1,
+        id: 'mock-old-review',
+        boot: client.snapshot?.boot,
+        nonce: 'mock-old-nonce',
+        method: 'workspace.review.capture',
+        params: {},
+      }),
+    });
+    expect(await response.json()).toMatchObject({ ok: false, error: 'EXECUTION_GUEST_RESTARTED' });
+    await client.call('workspace.close', { handleId: directory.handleId });
+  },
+);
+
+test('capture transport failures are fresh read failures and oversized envelopes are rejected', async () => {
+  const snapshot = {
+    role: 'executor',
+    version: 1,
+    boot: 'mock-boot',
+    nonce: 'mock-nonce',
+    capabilities: [
+      'workspace',
+      'tools',
+      'computer',
+      'processes',
+      'documents',
+      workspaceReviewCapability,
+    ],
+    computer: {
+      mode: 'agent',
+      sharedLogin: false,
+      viewport: { width: 1280, height: 800 },
+      environment: { platform: 'linux', arch: 'arm64', kernel: 'mock', node: 'mock', browser: '' },
+      events: [],
+      bots: {},
+    },
+    status: { available: true, revision: 0, limit: 2, items: [] },
+  };
+  for (const failure of ['disconnected', 'oversized']) {
+    let captures = 0;
+    const client = new RemoteExecutor({
+      url: 'http://127.0.0.1:12345/exec',
+      token: 'synthetic-token',
+      fetcher: async (_url, options) => {
+        const request = JSON.parse(String(options?.body));
+        if (request.method === 'workspace.review.capture') {
+          captures++;
+          if (failure === 'disconnected') throw new Error('SYNTHETIC DISCONNECTION');
+          return Response.json({
+            role: 'executor',
+            version: 1,
+            id: request.id,
+            boot: 'mock-boot',
+            ok: true,
+            value: 'x'.repeat(8 * 1024 * 1024),
+          });
+        }
+        return Response.json({
+          role: 'executor',
+          version: 1,
+          id: request.id,
+          boot: 'mock-boot',
+          ok: true,
+          value: snapshot,
+        });
+      },
+    });
+    await client.ready;
+    await expect(client.call('workspace.review.capture', {})).rejects.toMatchObject({
+      code: failure === 'disconnected' ? 'EXECUTION_UNAVAILABLE' : 'EXECUTION_INVALID_RESPONSE',
+    });
+    expect(captures).toBe(1);
+  }
 });
 
 test('workspace handles stay in the guest and reject moved roots and outside scopes', async (t) => {

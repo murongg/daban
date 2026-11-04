@@ -88,6 +88,7 @@ import {
   messageQueueLimit,
   type QueuedTask,
   reduce,
+  sharedReviewPaths,
   type WorkspaceFile,
 } from './state';
 import { restore, serialize, storageKey } from './storage';
@@ -405,6 +406,29 @@ function Workbench() {
         ? queued.files.map((id) => state.files.find((file) => file.id === id))
         : state.attachments[botId].map((id) => state.files.find((f) => f.id === id))
     ).filter((f): f is WorkspaceFile => !!f);
+    const reviewRevision = chatRevision(state, botId, runtime.snapshot.chats);
+    const reviewPaths = queued
+      ? [...(queued.fileReview?.sharedPaths ?? [])]
+      : sharedReviewPaths(state, botId, reviewRevision);
+    if (
+      !state.runtimeRequests[botId] &&
+      !continued &&
+      reviewPaths.length &&
+      queued?.fileReview?.revision !== undefined &&
+      queued.fileReview.revision !== reviewRevision
+    ) {
+      notify(t('fileReview.selectionStale'));
+      return skipped;
+    }
+    if (
+      !state.runtimeRequests[botId] &&
+      !continued &&
+      reviewPaths.length &&
+      !runtime.snapshot.fileReview?.available
+    ) {
+      notify(t('fileReview.unsupported'));
+      return skipped;
+    }
     const task: TaskRequest = state.runtimeRequests[botId] ||
       continued || {
         ...(runtime.snapshot.protocolVersion >= 29
@@ -423,6 +447,7 @@ function Workbench() {
         prompt: text || t('common.reviewFilesCompleteTaskIDescribed'),
         ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
         files: attached.map(taskFile),
+        ...(reviewPaths.length ? { fileReview: { sharedPaths: reviewPaths } } : {}),
       };
     if (!task.prompt.trim()) return skipped;
     // An uncertain send keeps its captured request; next-task model edits cannot change receipt reconciliation.
@@ -557,7 +582,19 @@ function Workbench() {
     dispatch({
       type: 'queue-add',
       bot: botId,
-      task: { id: crypto.randomUUID(), prompt, files: files.map((file) => file.id) },
+      task: {
+        id: crypto.randomUUID(),
+        prompt,
+        files: files.map((file) => file.id),
+        fileReview: {
+          revision: chatRevision(state, botId, runtime.snapshot.chats),
+          sharedPaths: sharedReviewPaths(
+            state,
+            botId,
+            chatRevision(state, botId, runtime.snapshot.chats),
+          ),
+        },
+      },
     });
   }
   function rejectInsert(botId: string, id: string, error: unknown) {
@@ -572,7 +609,7 @@ function Workbench() {
   }
   async function insertQueued(botId: string, id: string) {
     const item = messageQueue(state, botId).find((entry) => entry.id === id);
-    if (!item || item.files.length || item.verify) return;
+    if (!item || item.files.length || item.verify || item.fileReview?.sharedPaths.length) return;
     const task = agentTask(runtime.snapshot, botId);
     if (!task?.running || !task.runId || task.conversationId) {
       notify(t('errors.taskEndedMessageKeptQueue'));
@@ -966,6 +1003,26 @@ function Workbench() {
                       ? (id) => {
                           const item = messageQueue(state, bot.id).find((entry) => entry.id === id);
                           if (!item || item.verify || item.sending) return;
+                          if (
+                            item.fileReview?.sharedPaths.length &&
+                            item.fileReview.revision !==
+                              chatRevision(state, bot.id, runtime.snapshot.chats)
+                          ) {
+                            notify(t('fileReview.selectionStale'));
+                            return;
+                          }
+                          const mergedReview = new Set([
+                            ...sharedReviewPaths(
+                              state,
+                              bot.id,
+                              chatRevision(state, bot.id, runtime.snapshot.chats),
+                            ),
+                            ...(item.fileReview?.sharedPaths ?? []),
+                          ]);
+                          if (mergedReview.size > 8) {
+                            notify(t('fileReview.selectionLimit'));
+                            return;
+                          }
                           const draft = state.drafts[bot.id] ?? '';
                           const prompt =
                             draft && item.prompt

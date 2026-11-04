@@ -18,6 +18,7 @@ import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app
 import { IconButton } from '../../components/controls/Button';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { taskPhase } from '../../i18n/tasks';
+import { FileReview } from '../files/FileReview';
 import { ContextInspector } from './ContextInspector';
 
 const tools: Record<string, MessageKey> = {
@@ -543,6 +544,7 @@ export function Execution(props: {
         {...props}
       />
       <ContextInspector scope={scope} />
+      <FileReview scope={scope} />
     </>
   );
 }

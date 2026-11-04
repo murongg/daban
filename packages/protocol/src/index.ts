@@ -1517,6 +1517,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
 }
 export interface RuntimeSnapshot {
   contextInspector?: 1;
+  fileReview?: { available: boolean };
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1579,6 +1580,9 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'frame',
+    'files.review.read',
+    'files.review.diff',
+    'files.review.current',
     'files.list',
     'files.read',
     'files.download',
@@ -3039,6 +3043,7 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
   return value === 'ask' || value === 'auto' || value === 'full';
 }
 export interface TaskRequest {
+  fileReview?: import('./file-review.js').ReviewSelection;
   approvalMode?: ApprovalMode;
   chatRevision?: number;
   requestId: string;
@@ -3947,6 +3952,11 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | { type: 'files.review.read'; query: import('./file-review.js').ReviewQuery }
+  | {
+      type: 'files.review.diff' | 'files.review.current';
+      query: import('./file-review.js').ReviewFileQuery;
+    }
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4398,6 +4408,7 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
 }
 export * from './command.js';
 export * from './context-inspector.js';
+export * from './file-review.js';
 export * from './peer.js';
 export * from './receipt.js';
 export * from './remote.js';

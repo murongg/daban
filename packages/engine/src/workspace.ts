@@ -6,11 +6,13 @@ import {
   documentLimit,
   isSkillPackage,
   isTaskFileName,
+  type ReviewCapture,
   type RuntimeDownload,
   type SkillPackage,
   validAgentId,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
+import { captureWorkspaceReview, unavailableReviewCapture } from './workspace-review.js';
 
 export interface WorkspaceFile {
   path: string;
@@ -29,14 +31,16 @@ export interface TaskDirectory {
 }
 export interface AgentWorkspace {
   readonly root: string;
+  readonly reviewAvailable?: boolean;
   prepare(): Promise<unknown>;
-  base(): Promise<string>;
+  base(signal?: AbortSignal): Promise<string>;
   create(parts: string[]): Promise<TaskDirectory>;
   list(): Promise<WorkspaceFile[]>;
   read(relative: string, limit?: number): Promise<WorkspaceFile & { content: string }>;
   download(relative: string): Promise<RuntimeDownload>;
   scope(root: string, canonical?: string): AgentWorkspace;
   stageSkill?(bundle: SkillPackage, signal?: AbortSignal): Promise<string>;
+  captureReview?(paths?: string[], signal?: AbortSignal): Promise<ReviewCapture>;
 }
 export class WorkspaceFiles implements AgentWorkspace {
   root: string;
@@ -45,12 +49,21 @@ export class WorkspaceFiles implements AgentWorkspace {
     this.root = root;
     this.canonical = expectedRoot ?? null;
   }
+  get reviewAvailable() {
+    return process.platform === 'linux';
+  }
   async prepare() {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     return this.base();
   }
   scope(root: string, canonical?: string) {
     return new WorkspaceFiles(root, canonical);
+  }
+  async captureReview(paths?: string[], signal?: AbortSignal): Promise<ReviewCapture> {
+    if (!this.reviewAvailable)
+      return unavailableReviewCapture(paths ? 'shared' : 'task', 'unsupported');
+    const canonical = await this.base();
+    return captureWorkspaceReview(this.root, canonical, paths, signal);
   }
   async base() {
     const handle = await open(

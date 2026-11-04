@@ -136,6 +136,46 @@ import { runtimeService } from './service';
 import { controlSocket, prepareSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
 
+it.each(['files.review.read', 'files.review.diff', 'files.review.current'] as const)(
+  'discards a late %s reply after closing without stopping the accepted task',
+  async (type) => {
+    const frame = { url: 'file:///mock/index.html' };
+    const sender = { mainFrame: frame, send: vi.fn() };
+    mocks.windows.push({ webContents: sender });
+    let release: (value: unknown) => unknown = () => {};
+    const client = {
+      status: vi.fn(async () => disconnected('ready')),
+      invoke: vi.fn(
+        () =>
+          new Promise<unknown>((resolve) => {
+            release = resolve;
+          }),
+      ),
+      releaseInputs: vi.fn(),
+    };
+    mocks.load.mockResolvedValue({ connect: async () => client, close: vi.fn() });
+    const service = runtimeService('/mock/review-fence', frame.url);
+    await service.connect();
+    const handler = mocks.handlers.get('daban:runtime')!;
+    const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+    const pending = handler(
+      { sender, senderFrame: frame },
+      {
+        type,
+        query:
+          type === 'files.review.read'
+            ? { scope }
+            : { scope, revision: 1, area: 'task', path: 'input.txt' },
+      },
+    );
+    await vi.waitFor(() => expect(client.invoke).toHaveBeenCalledTimes(1));
+    await service.close();
+    release({ synthetic: 'saved evidence' });
+    expect(await pending).toEqual({ ok: false, error: 'RUNTIME_OFFLINE' });
+    expect(client.invoke).toHaveBeenCalledTimes(1);
+  },
+);
+
 const roots = new Set<string>();
 it('routes an explicitly captured host without falling back to the local computer', async () => {
   const frame = { url: 'file:///synthetic/index.html' };

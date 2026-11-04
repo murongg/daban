@@ -5,8 +5,10 @@ import {
   isRemoteMediaRequest,
   isRemoteRpcRequest,
   isRemoteSnapshotCapabilities,
+  isReviewResponse,
   type PeerEvent,
   parseRemoteInvitation,
+  parseRuntimeCommand,
   type RemoteHost,
   type RemoteIdentity,
   type RemoteInvitation,
@@ -65,6 +67,15 @@ function code(error: unknown) {
   return error instanceof Error && /^[A-Z_]{1,100}$/.test(error.message)
     ? error.message
     : 'REMOTE_OPERATION_FAILED';
+}
+function validateReviewReply(command: RuntimeCommand, value: unknown) {
+  if (
+    (command.type === 'files.review.read' ||
+      command.type === 'files.review.diff' ||
+      command.type === 'files.review.current') &&
+    !isReviewResponse(command, value)
+  )
+    throw Error('INVALID_RUNTIME_STATE');
 }
 export class RemoteAccess {
   readonly ready: Promise<unknown>;
@@ -718,7 +729,10 @@ export class RemoteAccess {
           this.mediaPlans.delete(value.params.id);
           await this.drop(value.params.id);
           result = { closed: true };
-        } else result = await this.gateway.invoke(session.device.id, session.id, value);
+        } else {
+          result = await this.gateway.invoke(session.device.id, session.id, value);
+          validateReviewReply(parseRuntimeCommand({ type: value.method, ...value.params }), result);
+        }
         reply = {
           type: 'reply',
           id: value.id,
@@ -772,12 +786,16 @@ export class RemoteAccess {
     }
   }
   async request(command: RuntimeCommand, host = this.selected): Promise<unknown> {
+    const captured = structuredClone(command);
     await this.ready;
     const target = host;
     if (!target || this.stopped) throw Error('REMOTE_NO_HOST_SELECTED');
     const session = await this.connect(target);
-    const { type, ...params } = command;
-    return this.rpc(session, type, params);
+    const { type, ...params } = captured;
+    const result = await this.rpc(session, type, params);
+    if (this.sessions.get(session.id) !== session) throw Error('REMOTE_SESSION_CLOSED');
+    validateReviewReply(captured, result);
+    return result;
   }
   private async rpc(session: Session, type: string, params: Record<string, unknown>) {
     const request: RemoteRpcRequest = {

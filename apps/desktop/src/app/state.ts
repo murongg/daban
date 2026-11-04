@@ -10,6 +10,7 @@ import {
   type ChatRequest,
   type ChatState,
   type ChatStatus,
+  compareReviewPaths,
   type Group,
   type GroupActionRequest,
   type GroupCopyRequest,
@@ -26,6 +27,7 @@ import {
   isGroupActionRequest,
   isGroupCopyRequest,
   isKnowledgeDocument,
+  isReviewSelection,
   isSkillDocument,
   type KnowledgeDocument,
   type ModelId,
@@ -201,6 +203,7 @@ export interface QueuedInsertTarget {
   chatRevision: number;
 }
 export interface QueuedTask {
+  fileReview?: { revision: number; sharedPaths: string[] };
   id: string;
   prompt: string;
   files: string[];
@@ -209,6 +212,7 @@ export interface QueuedTask {
   verify?: QueuedInsertTarget;
 }
 export interface State {
+  fileReviewSelections: Record<string, { revision: number; sharedPaths: string[] }>;
   sampleRevision?: 1 | 2;
   comments?: CommentsState;
   notes?: Record<string, NotesState | undefined>;
@@ -254,6 +258,16 @@ export interface State {
 export function messageQueue(state: Pick<State, 'queued'>, bot: string): QueuedTask[] {
   // IDs such as constructor are valid; inherited object properties are never queue state.
   return Object.hasOwn(state.queued, bot) ? state.queued[bot] : [];
+}
+export function sharedReviewPaths(
+  state: Pick<State, 'fileReviewSelections'>,
+  bot: string,
+  revision: number,
+): string[] {
+  const selection = Object.hasOwn(state.fileReviewSelections, bot)
+    ? state.fileReviewSelections[bot]
+    : undefined;
+  return selection?.revision === revision ? [...selection.sharedPaths] : [];
 }
 function uniqueFileName(name: string, names: Set<string | undefined>) {
   const extension = name.lastIndexOf('.');
@@ -348,6 +362,7 @@ export type Action =
   | { type: 'profile-local'; bot: string; name: string; instructions: string }
   | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
   | { type: 'approval-mode'; bot: string; revision: number; mode: ApprovalMode }
+  | { type: 'file-review-select'; bot: string; revision: number; sharedPaths: string[] }
   | { type: 'chats'; items: ChatState[] }
   | { type: 'chat-pending'; bot: string; request: ChatRequest }
   | { type: 'chat-clear'; bot: string; id: string }
@@ -403,6 +418,7 @@ export function initialState(): State {
     groupActions: {},
     chatStates: {},
     approvalModes: {},
+    fileReviewSelections: {},
     chatRequests: {},
     groupRevisions: {},
     groupTargets: {},
@@ -853,6 +869,24 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: { revision: action.revision, mode: action.mode },
         },
       };
+    case 'file-review-select':
+      if (
+        !Number.isSafeInteger(action.revision) ||
+        action.revision < chatRevision(state, action.bot) ||
+        !isReviewSelection({ sharedPaths: action.sharedPaths }) ||
+        state.bots.find((bot) => bot.id === action.bot)?.members
+      )
+        return state;
+      return {
+        ...state,
+        fileReviewSelections: {
+          ...state.fileReviewSelections,
+          [action.bot]: {
+            revision: action.revision,
+            sharedPaths: [...action.sharedPaths].sort(compareReviewPaths),
+          },
+        },
+      };
     case 'runtime-pending':
       return {
         ...state,
@@ -1012,10 +1046,22 @@ export function reduce(state: State, action: Action): State {
         currentFiles.every(
           (file, index) => JSON.stringify(taskFile(file)) === JSON.stringify(sentFiles[index]),
         );
+      const clearReview =
+        acknowledged &&
+        sameContext &&
+        !pending.retryOf &&
+        JSON.stringify(sharedReviewPaths(state, action.bot, task.chatRevision ?? 0)) ===
+          JSON.stringify(pending.fileReview?.sharedPaths ?? []);
       if (!changed && !acknowledged) return state;
       return {
         ...state,
         files,
+        fileReviewSelections: clearReview
+          ? {
+              ...state.fileReviewSelections,
+              [action.bot]: { revision: task.chatRevision ?? 0, sharedPaths: [] },
+            }
+          : state.fileReviewSelections,
         messages: { ...state.messages, [action.bot]: entries },
         runtimeRequests: acknowledged
           ? { ...state.runtimeRequests, [action.bot]: undefined }
@@ -1091,14 +1137,28 @@ export function reduce(state: State, action: Action): State {
       if (queue.length >= messageQueueLimit || !task.id || task.prompt.length > 12000) return state;
       if (!task.prompt.trim() && !task.files.length) return state;
       if (task.files.some((id) => !state.files.some((file) => file.id === id))) return state;
+      if (
+        task.fileReview &&
+        (!Number.isSafeInteger(task.fileReview.revision) ||
+          task.fileReview.revision < chatRevision(state, action.bot) ||
+          !isReviewSelection({ sharedPaths: task.fileReview.sharedPaths }))
+      )
+        return state;
       return {
         ...state,
         queued: {
           ...state.queued,
-          [action.bot]: [...queue, { ...task, prompt: task.prompt.trim() }],
+          [action.bot]: [...queue, { ...structuredClone(task), prompt: task.prompt.trim() }],
         },
         drafts: { ...state.drafts, [action.bot]: '' },
         attachments: { ...state.attachments, [action.bot]: [] },
+        fileReviewSelections: {
+          ...state.fileReviewSelections,
+          [action.bot]: {
+            revision: task.fileReview?.revision ?? chatRevision(state, action.bot),
+            sharedPaths: [],
+          },
+        },
       };
     }
     case 'queue-verify': {
@@ -1131,6 +1191,18 @@ export function reduce(state: State, action: Action): State {
       const merged = mergeAttachments(state.attachments[action.bot] ?? [], state.files, item.files);
       // A merge that would exceed the attachment cap or lose a file also keeps the queued message intact.
       if (!merged) return state;
+      if (
+        item.fileReview?.sharedPaths.length &&
+        item.fileReview.revision !== chatRevision(state, action.bot)
+      )
+        return state;
+      const reviewPaths = [
+        ...new Set([
+          ...sharedReviewPaths(state, action.bot, chatRevision(state, action.bot)),
+          ...(item.fileReview?.sharedPaths ?? []),
+        ]),
+      ];
+      if (reviewPaths.length > 8) return state;
       return {
         ...state,
         files: merged.files,
@@ -1140,6 +1212,13 @@ export function reduce(state: State, action: Action): State {
         },
         drafts: { ...state.drafts, [action.bot]: prompt },
         attachments: { ...state.attachments, [action.bot]: merged.attachments },
+        fileReviewSelections: {
+          ...state.fileReviewSelections,
+          [action.bot]: {
+            revision: chatRevision(state, action.bot),
+            sharedPaths: reviewPaths.sort(compareReviewPaths),
+          },
+        },
       };
     }
     case 'queue-promote': {
@@ -1153,7 +1232,9 @@ export function reduce(state: State, action: Action): State {
     case 'queue-insert': {
       const queue = messageQueue(state, action.bot);
       const item = queue.find((entry) => entry.id === action.id);
-      if (!item || item.files.length || item.sending) return state;
+      // Shared selection needs a fresh baseline; inserting cannot enlarge an already accepted run's scope.
+      if (!item || item.files.length || item.sending || item.fileReview?.sharedPaths.length)
+        return state;
       return {
         ...state,
         queued: {
@@ -1214,6 +1295,7 @@ export function reduce(state: State, action: Action): State {
         id: queue[index].id,
         prompt: queue[index].prompt,
         files: queue[index].files,
+        fileReview: queue[index].fileReview,
       };
       return { ...state, queued: { ...state.queued, [action.bot]: items } };
     }

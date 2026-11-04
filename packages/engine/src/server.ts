@@ -37,6 +37,8 @@ import {
   isNoteCommand,
   isRebootStatus,
   isRecoveryRequest,
+  isReviewFileQuery,
+  isReviewQuery,
   isSetupStatus,
   isSkillBinding,
   isSkillContent,
@@ -132,6 +134,9 @@ const recoveryReads = new Set([
   '/api/work/comments',
   '/api/work/comment-receipt',
   '/api/computers/receipt',
+  '/api/files/review/read',
+  '/api/files/review/diff',
+  '/api/files/review/current',
   '/api/files/read',
   '/api/files/download',
   '/api/groups/read',
@@ -1120,6 +1125,18 @@ export async function startPrototype({
               return json(res, await models.transcriptContent(data.scope, data.seq, data.offset));
             throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
           }
+          if (url.pathname.startsWith('/api/files/review/')) {
+            if (req.method !== 'POST' || url.search) throw new Fault('INVALID_FILE_REVIEW', 400);
+            if (!models) throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
+            const query = await body(req);
+            if (url.pathname === '/api/files/review/read' && isReviewQuery(query))
+              return json(res, await models.fileReview(query));
+            if (url.pathname === '/api/files/review/diff' && isReviewFileQuery(query))
+              return json(res, await models.fileReviewDiff(query));
+            if (url.pathname === '/api/files/review/current' && isReviewFileQuery(query))
+              return json(res, await models.fileReviewCurrent(query));
+            throw new Fault('INVALID_FILE_REVIEW', 400);
+          }
           if (url.pathname.startsWith('/api/context/') && req.method === 'POST') {
             if (!models) throw new Fault('CONTEXT_CAPTURE_UNAVAILABLE', 503);
             const data = await body(req);
@@ -1547,7 +1564,9 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
-              ...(models ? { contextInspector: 1 } : {}),
+              ...(models
+                ? { contextInspector: 1, fileReview: { available: models.fileReviewAvailable } }
+                : {}),
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
               // Capability metadata stays outside saved-model status so older clients can still validate that status.

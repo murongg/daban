@@ -22,6 +22,45 @@ import { demoState as initialState } from '../../test/fixtures';
 import { Conversation } from './Conversation';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
+
+it('keeps shared-file review queued for a new run while ordinary messages remain insertable', async () => {
+  connect();
+  const local = initialState();
+  local.queued.research = [
+    {
+      id: 'mock-review-queue',
+      prompt: 'SYNTHETIC SHARED REVIEW',
+      files: [],
+      fileReview: { revision: 0, sharedPaths: ['mock.txt'] },
+    },
+    { id: 'mock-insert-queue', prompt: 'SYNTHETIC ORDINARY INSERT', files: [] },
+  ];
+  const insert = vi.fn();
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={local}
+        bot={local.bots.find((bot) => bot.id === 'research')!}
+        dispatch={vi.fn()}
+        notify={vi.fn()}
+        preview={vi.fn()}
+        onModel={vi.fn()}
+        onQueueInsert={insert}
+      />
+    </RuntimeProvider>,
+  );
+  expect(await screen.findByText('审阅 1 个共享文件')).toHaveAttribute(
+    'title',
+    '共享文件审阅需要新的任务基线，不能插入正在运行的任务。',
+  );
+  expect(
+    screen.queryByRole('button', { name: '将排队消息 SYNTHETIC SHARED REVIEW 插入当前任务' }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole('button', { name: '将排队消息 SYNTHETIC ORDINARY INSERT 插入当前任务' }),
+  );
+  expect(insert).toHaveBeenCalledWith('mock-insert-queue');
+});
 const base: RuntimeTask = {
   running: true,
   phase: 'running',

@@ -4,6 +4,7 @@ import {
   isDocumentName,
   type RuntimeDownload,
   type RuntimeFile,
+  type TranscriptScope,
 } from '@daban/protocol';
 import { Download, FileText, Paperclip, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
@@ -14,6 +15,7 @@ import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { Attachments } from '../chat/Attachments';
+import { FileReview } from './FileReview';
 import { attachment, canParseDocuments, download, downloadBlob, stagedAttachment } from './files';
 
 export function RuntimeFiles({
@@ -23,6 +25,9 @@ export function RuntimeFiles({
   attachBot,
   onAttaching,
   attachmentLimit = false,
+  reviewPaths = [],
+  onReviewPaths,
+  reviewScope,
 }: {
   preview: (file: WorkspaceFile) => unknown;
   notify: (text: string) => unknown;
@@ -30,6 +35,9 @@ export function RuntimeFiles({
   attachBot?: string;
   onAttaching?: (busy: boolean) => unknown;
   attachmentLimit?: boolean;
+  reviewPaths?: string[];
+  onReviewPaths?: (paths: string[]) => unknown;
+  reviewScope?: TranscriptScope;
 }) {
   useLocale();
   const runtime = useRuntime(),
@@ -100,6 +108,21 @@ export function RuntimeFiles({
         </IconButton>
       </div>
       <p className="panel-description">{t('runtimefiles.allBotsShareFilesAddTextPdf')}</p>
+      {reviewScope && <FileReview scope={reviewScope} />}
+      {onReviewPaths && (runtime.snapshot.fileReview?.available || reviewPaths.length > 0) && (
+        <div className="file-review-selection-summary">
+          <p>{t('fileReview.selection', { 0: reviewPaths.length })}</p>
+          <p className="field-help">{t('fileReview.selectionHint')}</p>
+          {reviewPaths.length >= 8 && (
+            <p role="status" className="field-help">
+              {t('fileReview.selectionLimit')}
+            </p>
+          )}
+          {!runtime.snapshot.fileReview?.available && (
+            <p className="field-help">{t('fileReview.unsupported')}</p>
+          )}
+        </div>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -112,6 +135,29 @@ export function RuntimeFiles({
         getKey={(file) => file.path}
         renderItem={(file) => (
           <div className="file-row" key={file.path}>
+            {onReviewPaths &&
+              (runtime.snapshot.fileReview?.available || reviewPaths.includes(file.path)) && (
+                <label className="file-review-shared-choice">
+                  <input
+                    type="checkbox"
+                    checked={reviewPaths.includes(file.path)}
+                    disabled={
+                      !reviewPaths.includes(file.path) &&
+                      (reviewPaths.length >= 8 ||
+                        runtime.snapshot.phase !== 'ready' ||
+                        !runtime.snapshot.fileReview?.available)
+                    }
+                    onChange={(event) =>
+                      onReviewPaths(
+                        event.target.checked
+                          ? [...reviewPaths, file.path]
+                          : reviewPaths.filter((path) => path !== file.path),
+                      )
+                    }
+                  />
+                  {t('fileReview.select', { 0: file.name })}
+                </label>
+              )}
             <button type="button" className="file-open" onClick={() => preview(item(file))}>
               <span className="file-symbol">
                 <FileText />

@@ -22,6 +22,7 @@ import {
   modelExecutionCapability,
   skillPackageCapability,
   validAgentId,
+  workspaceReviewCapability,
 } from '@daban/protocol';
 import type { AgentToolRun } from './agent-tools.js';
 import { AgentTools } from './agent-tools.js';
@@ -503,6 +504,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           modelExecutionCapability,
           skillPackageCapability,
           browserTaskCapability,
+          ...(workspace.reviewAvailable ? [workspaceReviewCapability] : []),
         ],
         computer: {
           mode: raw.mode,
@@ -557,6 +559,8 @@ export async function startExecutor(options: ExecutorOptions = {}) {
       const files = await scoped(params);
       if (method === 'workspace.base') return files.base();
       if (method === 'workspace.list') return files.list();
+      if (method === 'workspace.review.capture')
+        return files.captureReview(params.paths as string[] | undefined, signal);
       if (method === 'workspace.read')
         return files.read(
           String(params.path),

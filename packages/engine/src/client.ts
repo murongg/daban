@@ -68,6 +68,7 @@ import {
   isRecoveryReview,
   isRecoveryStatus,
   isReplyStream,
+  isReviewResponse,
   isRunInsert,
   isRunStatistics,
   isRunTurn,
@@ -358,6 +359,7 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         contextInspector?: unknown;
+        fileReview?: unknown;
         clientProtocol?: number;
         botCapabilities?: unknown;
         localComputer?: unknown;
@@ -457,6 +459,17 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
+      if (raw.fileReview !== undefined) {
+        if (
+          !raw.fileReview ||
+          typeof raw.fileReview !== 'object' ||
+          Array.isArray(raw.fileReview) ||
+          Object.keys(raw.fileReview).some((key) => key !== 'available') ||
+          typeof (raw.fileReview as Record<string, unknown>).available !== 'boolean'
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        snapshot.fileReview = { available: (raw.fileReview as { available: boolean }).available };
+      }
       if (raw.contextInspector !== undefined && raw.contextInspector !== 1)
         throw new Error('INVALID_RUNTIME_STATE');
       if (raw.contextInspector === 1) snapshot.contextInspector = 1;
@@ -916,6 +929,22 @@ export class RuntimeClient {
         (copying && value.state !== 'complete')
       )
         throw new Error('INVALID_BOT_COPY_ACK');
+      return value;
+    }
+    if (
+      command.type === 'files.review.read' ||
+      command.type === 'files.review.diff' ||
+      command.type === 'files.review.current'
+    ) {
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!state.fileReview?.available) throw new Error('FILE_REVIEW_UNSUPPORTED');
+      const value: unknown = await this.api(
+        `/api/files/review/${captured.type.split('.').at(-1)}`,
+        captured.query,
+      );
+      if (!isReviewResponse(captured, value)) throw new Error('INVALID_RUNTIME_STATE');
       return value;
     }
     if (command.type === 'context.inspect' || command.type === 'context.source') {
@@ -1810,25 +1839,26 @@ export class RuntimeClient {
     const route = `/api/bots/${'bot' in command ? command.bot : ''}`;
     switch (command.type) {
       case 'task.start': {
+        const captured = structuredClone(command);
         const current = await this.status();
         if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
-        if (command.task.retryTurn !== undefined && current.protocolVersion < 43)
+        if (captured.task.retryTurn !== undefined && current.protocolVersion < 43)
           throw new Error('RUNTIME_TOO_OLD');
-        if (command.task.approvalMode !== undefined && current.protocolVersion < 44)
+        if (captured.task.approvalMode !== undefined && current.protocolVersion < 44)
           throw new Error('RUNTIME_TOO_OLD');
         if (
           current.protocolVersion < 11 &&
-          command.task.files?.some((file) => file.attachmentId !== undefined)
+          captured.task.files?.some((file) => file.attachmentId !== undefined)
         )
           throw new Error('RUNTIME_TOO_OLD');
         if (
           current.protocolVersion < 1 ||
-          (current.protocolVersion < 2 && !['a', 'b'].includes(command.bot))
+          (current.protocolVersion < 2 && !['a', 'b'].includes(captured.bot))
         )
           throw new Error('RUNTIME_TOO_OLD');
         const value: unknown = await this.api(`${route}/model`, {
           running: true,
-          task: command.task,
+          task: captured.task,
         });
         if (current.protocolVersion < 29) return value;
         if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -1849,9 +1879,9 @@ export class RuntimeClient {
         if (
           !isTaskReceipt(receipt) ||
           raw.conversationId !== undefined ||
-          receipt.requestId !== command.task.requestId ||
-          receipt.prompt !== command.task.prompt ||
-          (receipt.chatRevision ?? 0) !== (command.task.chatRevision ?? 0)
+          receipt.requestId !== captured.task.requestId ||
+          receipt.prompt !== captured.task.prompt ||
+          (receipt.chatRevision ?? 0) !== (captured.task.chatRevision ?? 0)
         )
           throw new Error('INVALID_TASK_ACK');
         return receipt;

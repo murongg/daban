@@ -40,6 +40,11 @@ import {
   isTaskInsert,
   isTaskPlan,
   modelHasVision,
+  type ReviewArea,
+  type ReviewCapture,
+  type ReviewFileQuery,
+  type ReviewQuery,
+  type ReviewReason,
   replyLimit,
   sameTranscriptScope,
   turnLimit,
@@ -65,6 +70,7 @@ import { errorCode, errorMessage, Fault } from './control.js';
 import type { Desktop } from './desktop.js';
 import { DshLog, defaultSdkFile, readDshStartup } from './dsh.js';
 import { observeTools } from './events.js';
+import { FileReviews, type ReviewPointer, type ReviewRoots } from './file-review.js';
 import { builtinSkills } from './find-skills.js';
 import { goalCommand, goalOperation, goalView, projectGoal } from './goals.js';
 import { HistoryTools } from './history.js';
@@ -116,6 +122,7 @@ import { webDownloadLimit } from './webpage.js';
 import { Work } from './work.js';
 import { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './workspace.js';
+import { checkedReviewCapture, unavailableReviewCapture } from './workspace-review.js';
 
 const model = 'deepseek-flash';
 // Every task owns its Harness process, so the native Google catalog route cannot alias another connection's key or session.
@@ -629,6 +636,15 @@ interface ModelJob extends ToolRun {
   harness?: Harness;
   done?: Promise<unknown>;
   stopReason?: string;
+  review?: {
+    scope: TranscriptScope;
+    before: ReviewCapture[];
+    roots: ReviewRoots;
+    sharedPaths: string[];
+    pointer: ReviewPointer;
+    finalized: boolean;
+    failures: ReviewReason[];
+  };
   task?: TaskRequest;
   inserts: RunInsert[];
   insertWrites: Map<string, Promise<InsertReceipt>>;
@@ -684,6 +700,7 @@ export class ModelRuns {
   readonly tools: AgentTools;
   readonly jobs = new Map<string, ModelJob>();
   readonly journal: TaskJournal;
+  readonly reviews: FileReviews;
   readonly transcripts: Transcripts;
   readonly knowledge: Knowledge;
   readonly work: Work;
@@ -773,6 +790,8 @@ export class ModelRuns {
     if (localComputer)
       localComputer.modelRevision = async () => (await this.settings.status()).revision ?? 0;
     this.journal = new TaskJournal(path.join(dir, 'task-journal'));
+    this.reviews = new FileReviews(path.join(dir, 'file-reviews'));
+    this.reviews.ready.catch(() => undefined);
     this.transcripts = new Transcripts(path.join(dir, 'transcripts.sqlite'));
     this.tools.history = new HistoryTools(this.journal, this.transcripts);
     this.knowledge = new Knowledge(path.join(dir, 'knowledge.sqlite'));
@@ -1415,6 +1434,7 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
+        fileReview: job.review?.pointer,
         contextCaptures: contextArchive ?? job.context?.archive,
         contextCaptureFailed: job.context?.failed,
         elapsedMs: job.elapsedMs,
@@ -1533,6 +1553,7 @@ export class ModelRuns {
           prompt: task.prompt,
           memory: task.memory || '',
           files: task.files || [],
+          ...(task.fileReview?.sharedPaths.length ? { fileReview: task.fileReview } : {}),
           ...(scope ? { conversationId: scope.id, context: scope.context } : {}),
           ...(task.retryOf ? { retryOf: task.retryOf } : {}),
           ...(task.retryTurn ? { retryTurn: task.retryTurn } : {}),
@@ -1694,6 +1715,8 @@ export class ModelRuns {
     this.jobs.set(bot, job);
     let inputDirectory: TaskDirectory | undefined;
     try {
+      await this.beginFileReview(job);
+      job.abort.signal.throwIfAborted();
       job.skills = task ? await this.skills.capture(bot) : { available: true, key: '', skills: [] };
       job.integrations = task
         ? await this.integrations.capture(bot)
@@ -1778,6 +1801,8 @@ export class ModelRuns {
       }
       job.abort.signal.throwIfAborted();
       await inputDirectory.verify();
+      await this.baselineFileReview(job);
+      job.abort.signal.throwIfAborted();
       await this.tools.open(job);
       // A Mac grant and a VM connection must never resume each other's native SDK tool context.
       if (this.tools.localSelected(job.bot, job))
@@ -1849,6 +1874,8 @@ export class ModelRuns {
       job.done = this.execute(job, config, patch);
       return this.publicJob(job);
     } catch (error) {
+      await this.tools.drain(job).catch(() => undefined);
+      await this.finishFileReview(job);
       if (job.skills) this.skills.release(job.skills);
       this.tools.skills?.release(job);
       job.imageInputs = undefined;
@@ -2332,10 +2359,13 @@ export class ModelRuns {
           rm(file, { force: true }).catch(() => undefined),
         ),
       );
+      let reviewDrainFailed = false;
       await this.tools.drain(job).catch(() => {
+        reviewDrainFailed = true;
         job.phase = 'failed';
         job.error = 'EXECUTOR_DRAIN_UNAVAILABLE';
       });
+      await this.finishFileReview(job, reviewDrainFailed ? ['drain-failed'] : []);
       if (job.skills) this.skills.release(job.skills);
       // Completed jobs remain visible in the UI; their preview buffers must not live as long as that retained job.
       this.tools.skills?.release(job);
@@ -2407,6 +2437,203 @@ export class ModelRuns {
         this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
       job.finalizing = false;
     }
+  }
+  get fileReviewAvailable() {
+    return this.workspace.reviewAvailable === true;
+  }
+  private reviewScope(job: ModelJob): TranscriptScope {
+    return job.conversationId
+      ? { bot: job.bot, runId: job.id, conversationId: job.conversationId }
+      : { bot: job.bot, runId: job.id, chatRevision: job.chatRevision ?? 0 };
+  }
+  private async boundedReviewRead<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
+    let abort = () => {};
+    try {
+      signal.throwIfAborted();
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal.reason);
+        signal.addEventListener('abort', abort, { once: true });
+      });
+      const result = await Promise.race([read(), cancelled]);
+      signal.throwIfAborted();
+      return result;
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
+  }
+  private async captureFileReview(
+    area: ReviewArea,
+    workspace: AgentWorkspace,
+    paths: string[] | undefined,
+    signal: AbortSignal,
+  ) {
+    if (!workspace.captureReview) return unavailableReviewCapture(area, 'unsupported');
+    try {
+      const result = checkedReviewCapture(
+        await this.boundedReviewRead(() => workspace.captureReview!(paths, signal), signal),
+      );
+      if (result.snapshot.area !== area) throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
+      return result;
+    } catch (error) {
+      return unavailableReviewCapture(
+        area,
+        signal.aborted
+          ? signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError'
+            ? 'time-limit'
+            : 'cancelled'
+          : errorCode(error) === 'INVALID_EXECUTOR_RESPONSE'
+            ? 'corrupt'
+            : 'disconnected',
+      );
+    }
+  }
+  private async beginFileReview(job: ModelJob) {
+    if (!job.task) return;
+    const scope = this.reviewScope(job);
+    const sharedPaths = job.task.fileReview?.sharedPaths ?? [];
+    job.review = {
+      scope,
+      sharedPaths: [...sharedPaths],
+      before: [],
+      roots: {},
+      pointer: { revision: 1, state: 'unavailable' },
+      finalized: false,
+      failures: [],
+    };
+    let signal: AbortSignal | undefined;
+    try {
+      job.review.pointer = await this.reviews.begin(scope, sharedPaths);
+      if (sharedPaths.length) {
+        if (!this.workspace.captureReview || this.workspace.reviewAvailable === false) {
+          job.review.before.push(unavailableReviewCapture('shared', 'unsupported'));
+          return;
+        }
+        signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(5000)]);
+        const canonical = await this.boundedReviewRead(() => this.workspace.base(signal), signal);
+        job.review.roots.shared = { root: this.workspace.root, canonical };
+        job.review.before.push(
+          await this.captureFileReview('shared', this.workspace, sharedPaths, signal),
+        );
+      }
+    } catch {
+      if (sharedPaths.length)
+        job.review.before.push(
+          unavailableReviewCapture(
+            'shared',
+            job.abort.signal.aborted
+              ? 'cancelled'
+              : signal?.aborted
+                ? 'time-limit'
+                : 'disconnected',
+          ),
+        );
+    }
+  }
+  private async baselineFileReview(job: ModelJob) {
+    const review = job.review;
+    if (!review) return;
+    review.roots.task = { root: job.workdir, canonical: job.canonicalRoot };
+    const signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(5000)]);
+    review.before.push(
+      await this.captureFileReview(
+        'task',
+        this.workspace.scope(job.workdir, job.canonicalRoot),
+        undefined,
+        signal,
+      ),
+    );
+    try {
+      review.pointer = await this.reviews.before(review.scope, review.before, review.roots);
+    } catch (error) {
+      review.failures.push(
+        errorCode(error) === 'FILE_REVIEW_STORAGE_LIMIT' ? 'storage-limit' : 'corrupt',
+      );
+      review.pointer = { revision: review.pointer.revision, state: 'unavailable' };
+    }
+  }
+  private async finishFileReview(job: ModelJob, reasons: ReviewReason[] = []) {
+    const review = job.review;
+    if (!review || review.finalized) return;
+    review.finalized = true;
+    // Stop cancels execution authority, not the bounded attempt to preserve its end observation.
+    const signal = AbortSignal.timeout(5000);
+    try {
+      if (!review.before.some((capture) => capture.snapshot.area === 'task')) {
+        review.before.push(unavailableReviewCapture('task', 'baseline-missing'));
+        review.pointer = await this.reviews.before(review.scope, review.before, review.roots);
+      }
+      review.pointer = await this.reviews.finalizing(review.scope);
+      const after: ReviewCapture[] = [];
+      if (job.workdir)
+        after.push(
+          await this.captureFileReview(
+            'task',
+            this.workspace.scope(job.workdir, job.canonicalRoot),
+            undefined,
+            signal,
+          ),
+        );
+      else after.push(unavailableReviewCapture('task', 'baseline-missing'));
+      const shared = review.before.find((capture) => capture.snapshot.area === 'shared');
+      const paths =
+        shared?.files.filter((file) => file.state === 'present').map((file) => file.path) ?? [];
+      // An absent/unknown baseline path never authorizes a later file which happens to use the same name.
+      if (paths.length && review.roots.shared) {
+        const root = review.roots.shared;
+        after.push(
+          await this.captureFileReview(
+            'shared',
+            this.workspace.scope(root.root, root.canonical),
+            paths,
+            signal,
+          ),
+        );
+      }
+      review.pointer = await this.reviews.finish(review.scope, after, [
+        ...new Set([...reasons, ...review.failures]),
+      ]);
+    } catch (error) {
+      const reason = errorCode(error) === 'FILE_REVIEW_STORAGE_LIMIT' ? 'storage-limit' : 'corrupt';
+      review.pointer = await this.reviews
+        .unavailable(review.scope, reason)
+        .catch(() => ({ revision: review.pointer.revision, state: 'unavailable' as const }));
+    }
+  }
+  private async reviewOwner(scope: TranscriptScope) {
+    try {
+      await this.transcriptOwner(scope);
+    } catch {
+      throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
+    }
+  }
+  async fileReview(query: ReviewQuery) {
+    await this.reviewOwner(query.scope);
+    return this.reviews.read(query);
+  }
+  async fileReviewDiff(query: ReviewFileQuery) {
+    await this.reviewOwner(query.scope);
+    return this.reviews.diff(query);
+  }
+  async fileReviewCurrent(query: ReviewFileQuery) {
+    await this.reviewOwner(query.scope);
+    const record = await this.journal.read(query.scope.bot, query.scope.runId);
+    return this.reviews.current(query, async (root, paths) => {
+      const signal = AbortSignal.timeout(5000);
+      if (
+        (query.area === 'task' && root.root !== record?.outputDirectory) ||
+        (query.area === 'shared' &&
+          (root.root !== this.workspace.root ||
+            root.canonical !==
+              (await this.boundedReviewRead(() => this.workspace.base(signal), signal))))
+      )
+        throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
+      return this.captureFileReview(
+        'shared',
+        this.workspace.scope(root.root, root.canonical),
+        paths,
+        signal,
+      );
+    });
   }
   private async collectFiles(job: ModelJob) {
     const inputs = new Set(job.inputs),

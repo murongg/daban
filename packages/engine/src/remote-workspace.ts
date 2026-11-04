@@ -1,7 +1,16 @@
 import path from 'node:path';
-import { type RuntimeDownload, type SkillPackage, skillPackageCapability } from '@daban/protocol';
+import {
+  isReviewSelection,
+  type ReviewCapture,
+  type RuntimeDownload,
+  reviewLimits,
+  type SkillPackage,
+  skillPackageCapability,
+  workspaceReviewCapability,
+} from '@daban/protocol';
 import { Fault } from './control.js';
 import type { AgentWorkspace, TaskDirectory, WorkspaceFile } from './workspace.js';
+import { checkedReviewCapture, unavailableReviewCapture } from './workspace-review.js';
 
 export interface WorkspaceExecutor {
   readonly snapshot?: { capabilities: string[] };
@@ -21,6 +30,9 @@ export class RemoteWorkspace implements AgentWorkspace {
     private readonly canonical?: string,
     private readonly initialRoot?: string,
   ) {}
+  get reviewAvailable() {
+    return this.execution.snapshot?.capabilities.includes(workspaceReviewCapability) ?? false;
+  }
   private params(extra: Record<string, unknown> = {}) {
     return {
       ...(this.root ? { root: this.root } : {}),
@@ -33,8 +45,32 @@ export class RemoteWorkspace implements AgentWorkspace {
     if (this.initialRoot) return this.initialRoot;
     return this.base();
   }
-  async base() {
-    const root = await this.execution.call('workspace.base', this.params());
+  async captureReview(paths?: string[], signal?: AbortSignal): Promise<ReviewCapture> {
+    if (paths !== undefined && (!isReviewSelection({ sharedPaths: paths }) || paths.length === 0))
+      throw new Fault('INVALID_FILE', 400);
+    const selected = paths && [...paths];
+    if (!this.reviewAvailable)
+      return unavailableReviewCapture(selected ? 'shared' : 'task', 'unsupported');
+    const bounded = AbortSignal.any([
+      ...(signal ? [signal] : []),
+      AbortSignal.timeout(reviewLimits.milliseconds),
+    ]);
+    const result = checkedReviewCapture(
+      await this.execution.call(
+        'workspace.review.capture',
+        this.params(selected ? { paths: selected } : {}),
+        bounded,
+      ),
+    );
+    if (
+      result.snapshot.area !== (selected ? 'shared' : 'task') ||
+      (selected && result.files.some((file) => !selected.includes(file.path)))
+    )
+      throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
+    return result;
+  }
+  async base(signal?: AbortSignal) {
+    const root = await this.execution.call('workspace.base', this.params(), signal);
     if (typeof root !== 'string' || !path.posix.isAbsolute(root))
       throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
     if (this.initialRoot && root !== this.initialRoot) throw new Fault('WORKSPACE_CHANGED');

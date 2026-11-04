@@ -19,6 +19,14 @@ Open **Files** in a Bot's workspace. Actual work files, chat attachments, and kn
 
 Example: “Generate a CSV from the attachment, save it, and check its headers and row count.” Download and inspect the actual result.
 
+## Read-only file review
+
+With a compatible Linux execution service, new tasks record their task directory after inputs are staged and again after known tool calls drain. Open **File review** from execution details or the files panel to compare retained evidence. Before sending, you can explicitly select up to eight existing shared files; a queued selection stays with that request and requires a new run.
+
+The review shows additions, modifications, deletions, unchanged files and unknown evidence, plus bounded UTF-8 line differences. **Check current state** compares a fresh read with the retained end evidence; it does not replace history. Regular preview and download still read the current file. Missing or unstable baselines, exclusions and size/time limits remain explicit. Binary files have size and digest evidence, without a semantic document comparison.
+
+Two observations do not establish which Bot caused a change, cover external actions, or prove background writers have stopped. Files created and deleted between observations may be invisible. Review has no restore or patch action. Evidence is private to the Host and retained for at most 30 days, 64 terminal runs and 512 MiB; active reviews are not evicted. Older execution services and native-only workspaces report review as unavailable.
+
 ## Sharing and paths
 
 The backend manages Linux task and shared directories. Bots can list, read, write, and process files through workspace tools. Task directories can differ. Ask the Bot to locate an earlier output or shared file instead of guessing an old path.

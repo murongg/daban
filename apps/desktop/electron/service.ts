@@ -789,6 +789,9 @@ export function runtimeService(
       'transcript.content',
       'context.inspect',
       'context.source',
+      'files.review.read',
+      'files.review.diff',
+      'files.review.current',
     ].includes(command.type);
     const result = await client.invoke(command);
     // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.

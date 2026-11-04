@@ -505,6 +505,14 @@ export function Conversation({
                             {t('chat.queuedAttachments', { 0: item.files.length })}
                           </span>
                         )}
+                        {!!item.fileReview?.sharedPaths.length && (
+                          <span
+                            className="queued-message-count"
+                            title={t('fileReview.queueNeedsRun')}
+                          >
+                            {t('fileReview.queued', { 0: item.fileReview.sharedPaths.length })}
+                          </span>
+                        )}
                       </div>
                       {item.verify ? (
                         <span className="queued-message-error" role="status">
@@ -526,6 +534,7 @@ export function Conversation({
                       {onQueueInsert &&
                         task?.running &&
                         !item.files.length &&
+                        !item.fileReview?.sharedPaths.length &&
                         !item.verify &&
                         !item.sending && (
                           <IconButton

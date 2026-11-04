@@ -1,4 +1,4 @@
-import { agentId, type BotProfile, runtimeTargets } from '@daban/protocol';
+import { agentId, agentTask, type BotProfile, runtimeTargets } from '@daban/protocol';
 import {
   BookOpen,
   Brain,
@@ -38,9 +38,11 @@ import { runtimeError, useRuntime } from './Runtime';
 import {
   type Action,
   type Bot,
+  chatRevision,
   lifecycleRequest,
   type Panel,
   type State,
+  sharedReviewPaths,
   type WorkspaceFile,
 } from './state';
 
@@ -76,6 +78,8 @@ export function Workspace({
 }) {
   useLocale();
   const runtime = useRuntime();
+  const reviewRevision = chatRevision(state, bot.id, runtime.snapshot.chats);
+  const task = !bot.members ? agentTask(runtime.snapshot, bot.id) : undefined;
   const [expandedBot, setExpandedBot] = useState<string>();
   const expanded = expandedBot === bot.id;
   const restricted = (id: string) => readOnly && !['computer', 'files', 'notes'].includes(id);
@@ -302,6 +306,29 @@ export function Workspace({
           ))}
         {panel === 'files' && runtime.enabled && (
           <RuntimeFiles
+            reviewPaths={sharedReviewPaths(state, bot.id, reviewRevision)}
+            onReviewPaths={
+              !bot.members && !readOnly
+                ? (sharedPaths) =>
+                    dispatch({
+                      type: 'file-review-select',
+                      bot: bot.id,
+                      revision: reviewRevision,
+                      sharedPaths,
+                    })
+                : undefined
+            }
+            reviewScope={
+              task?.runId
+                ? task.conversationId
+                  ? { bot: agentId(bot.id), runId: task.runId, conversationId: task.conversationId }
+                  : {
+                      bot: agentId(bot.id),
+                      runId: task.runId,
+                      chatRevision: task.chatRevision ?? 0,
+                    }
+                : undefined
+            }
             notify={notify}
             preview={preview}
             attach={

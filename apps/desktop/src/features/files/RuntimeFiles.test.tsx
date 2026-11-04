@@ -65,6 +65,19 @@ function connect(
   });
   return {
     invoke,
+    review() {
+      snapshot.fileReview = { available: true };
+      snapshot.protocolVersion = 44;
+    },
+    nextChat() {
+      snapshot = {
+        ...snapshot,
+        chats: { available: true, revision: 1, items: [{ bot: 'a', revision: 1 }] },
+      };
+      act(() => {
+        for (const listener of listeners) listener(snapshot);
+      });
+    },
     document(name = 'mock.pdf', protocol = 11) {
       files = [{ ...file, name, path: `mock/task/${name}` }];
       snapshot.protocolVersion = protocol;
@@ -90,6 +103,7 @@ function connect(
           },
         },
       };
+
       act(() => {
         for (const listener of listeners) listener(snapshot);
       });
@@ -239,4 +253,65 @@ it('mounts only a window of a large shared file list', async () => {
   } finally {
     restore();
   }
+});
+
+it('freezes an explicit shared review selection in the accepted request', async () => {
+  const backend = connect();
+  backend.review();
+  render(<App />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('tab', { name: '文件' }));
+  await user.click(await screen.findByRole('checkbox', { name: '同时审阅 report.csv' }));
+  await user.type(screen.getByRole('textbox', { name: '发送消息' }), '核对合成文件');
+  await user.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual(
+    expect.objectContaining({
+      type: 'task.start',
+      bot: 'a',
+      task: expect.objectContaining({ fileReview: { sharedPaths: [file.path] } }),
+    }),
+  );
+});
+
+it('limits review choices to eight and keeps them within the selected Bot and chat revision', async () => {
+  const backend = connect(undefined, 9);
+  backend.review();
+  render(<App />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('tab', { name: '文件' }));
+  for (let index = 0; index < 8; index++)
+    await user.click(
+      await screen.findByRole('checkbox', { name: `同时审阅 SYNTHETIC FILE ${index}` }),
+    );
+  expect(screen.getByRole('checkbox', { name: '同时审阅 SYNTHETIC FILE 8' })).toBeDisabled();
+  const nav = screen.getByRole('navigation', { name: 'Bot 列表' });
+  await user.click(within(nav).getByRole('button', { name: '写作搭档' }));
+  expect(screen.getByRole('checkbox', { name: '同时审阅 SYNTHETIC FILE 0' })).not.toBeChecked();
+  await user.click(within(nav).getByRole('button', { name: '研究员' }));
+  expect(screen.getByRole('checkbox', { name: '同时审阅 SYNTHETIC FILE 0' })).toBeChecked();
+  backend.nextChat();
+  expect(screen.getByRole('checkbox', { name: '同时审阅 SYNTHETIC FILE 0' })).not.toBeChecked();
+});
+
+it('keeps an uncertain send unchanged after editing the next shared selection', async () => {
+  const backend = connect(undefined, 2);
+  backend.review();
+  const fallback = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'task.start' ? { ok: false, error: 'RUNTIME_UNAVAILABLE' } : fallback(command),
+  );
+  render(<App />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('tab', { name: '文件' }));
+  await user.click(await screen.findByRole('checkbox', { name: '同时审阅 SYNTHETIC FILE 0' }));
+  await user.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC UNCERTAIN REVIEW');
+  await user.click(screen.getByRole('button', { name: '发送消息' }));
+  await user.click(screen.getByRole('checkbox', { name: '同时审阅 SYNTHETIC FILE 1' }));
+  await user.click(await screen.findByRole('button', { name: '重试发送' }));
+  const starts = backend.invoke.mock.calls
+    .map(([command]) => command)
+    .filter((command) => command.type === 'task.start');
+  expect(starts).toHaveLength(2);
+  expect(starts[0]).toEqual(starts[1]);
+  expect(starts[0]).toMatchObject({ task: { fileReview: { sharedPaths: ['mock-files/0.txt'] } } });
 });
