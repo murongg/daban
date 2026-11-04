@@ -183,6 +183,12 @@ export function Sidebar({
           runtime.snapshot.groups.items.some((group) => group.id === bot.id)
             ? t('sidebar.groupConnected')
             : t('sidebar.groupDisconnected');
+      else if (runtime.snapshot.phase !== 'ready')
+        preview = t(
+          runtime.snapshot.phase === 'connecting'
+            ? 'onboarding.connectingWorkspace'
+            : 'sidebar.runtimeDisconnected',
+        );
       else if (computer?.owner === 'human') preview = t('sidebar.controllingBotSComputer');
       else if (agentTask(runtime.snapshot, bot.id)?.running)
         preview = t('common.processingMessage');
@@ -507,7 +513,7 @@ export function Sidebar({
                         ? t('localComputer.workspace')
                         : t('sidebar.linuxConnectedRunningLocally')
                       : runtime.snapshot.phase === 'connecting'
-                        ? t('sidebar.startingLinux')
+                        ? t('onboarding.connectingWorkspace')
                         : t('sidebar.runtimeDisconnected')
                     : t('sidebar.uiDemoSavedLocally')}
                 </span>

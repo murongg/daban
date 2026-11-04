@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { constants, type Stats } from 'node:fs';
+import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
-import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
-import type { SetupStatus } from '@daban/protocol';
+import { secureDirectory } from '@daban/engine/local-computer';
+import { isSetupStatus, type SetupStatus } from '@daban/protocol';
 import { Daemon, type DaemonConfig } from './daemon';
+import { readSetupRecord } from './setup-record';
 
 interface SetupDaemon {
   ensure(): Promise<unknown>;
@@ -16,21 +17,8 @@ export interface AgentSetupOptions {
   daemon?: (config: DaemonConfig) => SetupDaemon;
   pollMs?: number;
 }
-const phases = new Set([
-  'existing',
-  'available',
-  'verifying',
-  'extracting',
-  'creating',
-  'starting',
-  'connecting',
-  'cancelling',
-  'cancelled',
-  'complete',
-  'failed',
-  'unavailable',
-]);
 const busy = new Set([
+  'downloading',
   'verifying',
   'extracting',
   'creating',
@@ -39,22 +27,6 @@ const busy = new Set([
   'cancelling',
 ]);
 const terminal = new Set(['failed', 'unavailable', 'cancelled']);
-function status(value: unknown): value is SetupStatus {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const item = value as Record<string, unknown>;
-  return (
-    Object.keys(item).every((key) => ['required', 'phase', 'progress', 'error'].includes(key)) &&
-    typeof item.required === 'boolean' &&
-    phases.has(String(item.phase)) &&
-    (item.progress === undefined ||
-      (typeof item.progress === 'number' &&
-        Number.isFinite(item.progress) &&
-        item.progress >= 0 &&
-        item.progress <= 100)) &&
-    (item.error === undefined ||
-      (typeof item.error === 'string' && /^[A-Z_]{1,100}$/.test(item.error)))
-  );
-}
 async function exists(file: string) {
   try {
     await fs.access(file);
@@ -95,47 +67,8 @@ export class AgentSetup {
       throw new Error('SETUP_STORE');
     }
   }
-  private async read(name: string) {
-    const entry = join(this.options.config.dataRoot, name);
-    let identity: Stats;
-    let file: Awaited<ReturnType<typeof fs.open>>;
-    try {
-      // Windows ignores O_NOFOLLOW. Bind the handle to the regular, single-link entry inspected here.
-      identity = await fs.lstat(entry);
-      if (!identity.isFile() || identity.isSymbolicLink() || identity.nlink !== 1)
-        throw new Error('SETUP_STORE');
-      file = await fs.open(entry, constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch (error) {
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
-        return undefined;
-      throw new Error('SETUP_STORE');
-    }
-    try {
-      const info = await file.stat();
-      // An atomic progress replacement unlinks the old observation; discard it without trusting its contents.
-      const replaced = identity.dev !== info.dev || identity.ino !== info.ino;
-      if (name === 'progress.json' && (info.nlink === 0 || replaced)) return undefined;
-      if (
-        !info.isFile() ||
-        replaced ||
-        info.nlink !== 1 ||
-        !(await privateMetadata(entry, info, 0o600)) ||
-        info.size > 16384
-      )
-        throw new Error('SETUP_STORE');
-      const bytes = Buffer.alloc(16385);
-      const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-      if (bytesRead > 16384) throw new Error('SETUP_STORE');
-      try {
-        return JSON.parse(bytes.subarray(0, bytesRead).toString('utf8')) as unknown;
-      } catch (error) {
-        // Progress is observational: a producer may be between truncation and its next complete write.
-        if (name === 'progress.json' && error instanceof SyntaxError) return undefined;
-        throw error;
-      }
-    } finally {
-      await file.close();
-    }
+  private async read(name: 'progress.json' | 'cancel.json') {
+    return (await readSetupRecord(this.options.config.dataRoot, name))?.value;
   }
   private async marker() {
     const value = await this.read('cancel.json');
@@ -150,7 +83,7 @@ export class AgentSetup {
       throw new Error('SETUP_STORE');
     return true;
   }
-  private async save(name: string, value: unknown) {
+  private async save(name: 'progress.json' | 'cancel.json', value: unknown) {
     await this.directory();
     await this.read(name);
     const file = join(this.options.config.dataRoot, name),
@@ -170,7 +103,7 @@ export class AgentSetup {
       return;
     }
     const progress = await this.read('progress.json');
-    if (progress !== undefined && !status(progress)) throw new Error('SETUP_STORE');
+    if (progress !== undefined && !isSetupStatus(progress)) throw new Error('SETUP_STORE');
     const configured = await exists(this.options.config.vmConfig);
     if (
       configured &&
@@ -230,7 +163,7 @@ export class AgentSetup {
       progress === undefined
     )
       return;
-    if (!status(progress)) throw new Error('SETUP_STORE');
+    if (!isSetupStatus(progress)) throw new Error('SETUP_STORE');
     if (progress.phase === 'complete') {
       this.publish({ required: true, phase: 'connecting' });
       // A reopened UI can verify an already-created environment without authorizing fresh VM creation.

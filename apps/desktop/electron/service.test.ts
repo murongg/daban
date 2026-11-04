@@ -5,6 +5,7 @@ import {
   type RecoveryReview,
   type RuntimeCommand,
   type RuntimeSnapshot,
+  type SetupStatus,
 } from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   daemonRestart: vi.fn(),
   daemonEnsure: vi.fn(),
   daemonClose: vi.fn(),
+  daemonProgress: undefined as undefined | ((status: SetupStatus) => unknown),
   daemonConfigs: [] as {
     dataRoot: string;
     socketPath: string;
@@ -85,7 +87,9 @@ vi.mock('./daemon', async (importOriginal) => {
           entry: string;
           executable: string;
         },
+        options?: { onProgress?: (status: SetupStatus) => unknown },
       ) {
+        mocks.daemonProgress = options?.onProgress;
         mocks.daemonConfigs.push(config);
         this.scope = actual.daemonScope(config.dataRoot, config.vmConfig);
       }
@@ -135,6 +139,7 @@ import { readAgentToken, unixFetch } from './unix';
 const roots = new Set<string>();
 afterEach(async () => {
   vi.useRealTimers();
+  mocks.daemonProgress = undefined;
   mocks.handlers.clear();
   mocks.windows.length = 0;
   for (const root of roots) await fs.rm(root, { recursive: true, force: true });
@@ -1318,6 +1323,46 @@ it('keeps first-use native model setup usable without probing an uninstalled VM 
       }),
     ).toEqual({ ok: false, error: 'RUNTIME_RECOVERY_PENDING' });
   } finally {
+    await service.close();
+    await f.close();
+  }
+});
+
+it('publishes macOS Linux startup progress while the background service is still connecting', async () => {
+  const f = await agentFixture();
+  const states: RuntimeSnapshot[] = [];
+  let finish: () => unknown = () => {};
+  mocks.daemonEnsure.mockImplementationOnce(
+    () =>
+      new Promise<unknown>((resolve) => {
+        finish = () => resolve(undefined);
+      }),
+  );
+  const service = runtimeService(
+    f.root,
+    'file:///mock/index.html',
+    '/mock/environment',
+    async (state) => {
+      states.push(state);
+    },
+    { ...f.config, nativeFirst: true },
+    undefined,
+    'darwin',
+  );
+  const connecting = service.connect();
+  try {
+    await vi.waitFor(() => expect(mocks.daemonProgress).toBeTypeOf('function'));
+    mocks.daemonProgress?.({ required: true, phase: 'downloading', progress: 25 });
+    expect(states.at(-1)).toMatchObject({
+      phase: 'connecting',
+      setup: { required: true, target: 'linux', phase: 'downloading', progress: 25 },
+    });
+    finish();
+    expect((await connecting).phase).toBe('ready');
+    expect(states.at(-1)?.setup).toEqual({ required: false, target: 'linux', phase: 'complete' });
+  } finally {
+    finish();
+    await connecting;
     await service.close();
     await f.close();
   }

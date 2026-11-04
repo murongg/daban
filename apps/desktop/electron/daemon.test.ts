@@ -1,5 +1,15 @@
 import { once } from 'node:events';
-import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer, globalAgent } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,6 +84,85 @@ it('launches one scoped launchd job and leaves it running when the UI connection
   const reconnect = new Daemon(config, { run, inspect: async () => identity, platform: 'darwin' });
   expect(await reconnect.ensure()).toEqual(identity);
   expect(run.mock.calls.filter(([, args]) => args[0] === 'bootstrap')).toHaveLength(1);
+});
+
+it('reports fresh startup downloads and failures without inheriting an earlier failed attempt', async () => {
+  const config = await fixture();
+  await mkdir(config.dataRoot, { mode: 0o700 });
+  const progress = join(config.dataRoot, 'progress.json');
+  const write = async (value: unknown) => {
+    await writeFile(`${progress}.next`, JSON.stringify(value), { mode: 0o600 });
+    await rename(`${progress}.next`, progress);
+  };
+  await write({ required: true, phase: 'failed', error: 'SYNTHETIC_OLD_FAILURE' });
+  const downloading = {
+    required: true,
+    target: 'linux',
+    phase: 'downloading',
+    progress: 25,
+    downloaded: 25,
+    total: 100,
+  } as const;
+  const onProgress = vi.fn();
+  let waits = 0;
+  const run = vi.fn(async (_program: string, args: string[]) => {
+    if (args[0] === 'kickstart') await write(downloading);
+    return { code: args[0] === 'print' ? 113 : 0, stdout: '' };
+  });
+  const daemon = new Daemon(config, {
+    platform: 'darwin',
+    inspect: async () => undefined,
+    run,
+    onProgress,
+    wait: async () => {
+      if (++waits > 1) throw Error('SYNTHETIC_UNREPORTED_FAILURE');
+      await write({ required: true, phase: 'failed', error: 'AGENT_START_FAILED' });
+    },
+  });
+  try {
+    await expect(daemon.ensure()).rejects.toThrow('AGENT_START_FAILED');
+    expect(onProgress).toHaveBeenNthCalledWith(1, downloading);
+    expect(onProgress).toHaveBeenLastCalledWith({
+      required: true,
+      phase: 'failed',
+      error: 'AGENT_START_FAILED',
+    });
+    expect(waits).toBe(1);
+    expect(run.mock.calls.some(([, args]) => ['bootout', 'kill'].includes(args[0]))).toBe(false);
+  } finally {
+    await daemon.close();
+  }
+});
+
+it('ignores an unchanged failure record while a retry reaches its authenticated identity', async () => {
+  const config = await fixture();
+  await mkdir(config.dataRoot, { mode: 0o700 });
+  await writeFile(
+    join(config.dataRoot, 'progress.json'),
+    JSON.stringify({ required: true, phase: 'failed', error: 'AGENT_START_FAILED' }),
+    { mode: 0o600 },
+  );
+  const identity = {
+    role: 'agent',
+    scope: daemonScope(config.dataRoot, config.vmConfig),
+    dataRoot: config.dataRoot,
+    socketPath: config.socketPath,
+  };
+  let inspected = 0;
+  const onProgress = vi.fn();
+  const daemon = new Daemon(config, {
+    platform: 'darwin',
+    inspect: async () => (++inspected > 2 ? identity : undefined),
+    run: async () => ({ code: 0, stdout: '' }),
+    wait: async () => {},
+    onProgress,
+  });
+  try {
+    expect(await daemon.ensure()).toEqual(identity);
+    expect(onProgress).not.toHaveBeenCalled();
+  } finally {
+    await daemon.close();
+  }
 });
 
 it('validates daemon identity and private paths before adopting or launching anything', async () => {

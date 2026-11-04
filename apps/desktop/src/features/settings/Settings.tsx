@@ -48,6 +48,13 @@ export function Settings({
 }) {
   useLocale();
   const runtime = useRuntime();
+  const preparation =
+    runtime.snapshot.setup?.target === 'agent' && runtime.snapshot.setup.required
+      ? runtime.snapshot.setup
+      : undefined;
+  const preparing =
+    !!preparation &&
+    ['downloading', 'extracting', 'verifying', 'cancelling'].includes(preparation.phase);
   const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
   const [category, setCategory] = useState('general');
   const [error, setError] = useState('');
@@ -168,18 +175,29 @@ export function Settings({
                 <button
                   type="button"
                   className="secondary"
+                  disabled={
+                    preparation?.phase === 'cancelling' || preparation?.phase === 'unavailable'
+                  }
                   onClick={async () => {
                     setError('');
                     try {
-                      await runtime.command({ type: 'connect' });
+                      await runtime.command({
+                        type: preparation
+                          ? preparing
+                            ? 'setup.cancel'
+                            : 'setup.start'
+                          : 'connect',
+                      });
                     } catch (error) {
                       setError(runtimeError(error));
                     }
                   }}
                 >
-                  {runtime.snapshot.phase === 'ready'
-                    ? t('settings.reconnect')
-                    : t('settings.retryConnection')}
+                  {preparation
+                    ? t(preparing ? 'setup.pauseSetup' : 'setup.continueSetup')
+                    : runtime.snapshot.phase === 'ready'
+                      ? t('settings.reconnect')
+                      : t('settings.retryConnection')}
                 </button>
               ) : (
                 <span className="badge">{t('settings.notConnected')}</span>

@@ -1,18 +1,53 @@
+import type { SetupPhase } from '@daban/protocol';
 import { ArrowRight, Check, CircleAlert, CircleCheck, LoaderCircle, RefreshCw } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { runtimeError, useRuntime } from '../../app/Runtime';
-import { isMessageKey, t, useLocale } from '../../i18n/locale';
+import { clientCache } from '../../app/cache';
+import { runtimeError, runtimeMessage, useRuntime } from '../../app/Runtime';
+import { restore, storageKey } from '../../app/storage';
+import { isMessageKey, type MessageKey, t, useLocale } from '../../i18n/locale';
 import { Models } from '../models/Models';
 import { Setup, SetupHeader } from './Setup';
 
 type Stage = 'checking' | 'environment' | 'models' | 'workspace';
+export const onboardingKey = 'daban.onboarding.v1';
+function hasWorkspace() {
+  try {
+    const cache = clientCache();
+    // Older clients have no completion marker; their validated workspace cache is also a presentation hint.
+    return (
+      cache.getItem(onboardingKey) === 'complete' ||
+      restore(cache.getItem(storageKey)).bots.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+const startupLabels: Partial<Record<SetupPhase, MessageKey>> = {
+  downloading: 'onboarding.downloadingLinuxComponents',
+  verifying: 'setup.checkingInstallationFilesCompleteness',
+  extracting: 'setup.unpackingSystemFilesMayTakeLittleWhile',
+  creating: 'setup.preparingSeparateLocalEnvironmentBots',
+  starting: 'setup.startingLinuxWillConnectAutomaticallyWhenReady',
+  connecting: 'setup.connectingLocalServicesOpeningWorkspace',
+};
 export function Onboarding({ children }: { children: ReactNode }) {
   useLocale();
   const runtime = useRuntime();
   const snapshot = runtime.snapshot;
-  const [stage, setStage] = useState<Stage>(runtime.enabled ? 'checking' : 'workspace');
+  const [stage, setStage] = useState<Stage>(() =>
+    runtime.enabled && !hasWorkspace() ? 'checking' : 'workspace',
+  );
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (stage !== 'workspace' || !runtime.enabled || snapshot.phase !== 'ready') return;
+    try {
+      // Remember only the completed guide; runtime readiness and permissions still come from the live service.
+      clientCache().setItem(onboardingKey, 'complete');
+    } catch {
+      console.error('Onboarding completion could not be saved');
+    }
+  }, [stage, runtime.enabled, snapshot.phase]);
   useEffect(() => {
     // Polling and temporary disconnects must never remount a secret draft or an entered workspace.
     if (stage === 'models' || stage === 'workspace') return;
@@ -67,7 +102,25 @@ export function Onboarding({ children }: { children: ReactNode }) {
     );
   if (snapshot.setup?.required && snapshot.setup.target !== 'linux') return <Setup />;
   const offline = snapshot.phase === 'offline';
-  const problem = error || (isMessageKey(snapshot.error) ? t(snapshot.error) : snapshot.error);
+  const startup = snapshot.setup?.target === 'linux' ? snapshot.setup : undefined;
+  const label = startup && startupLabels[startup.phase];
+  const percent =
+    !offline &&
+    startup &&
+    ['downloading', 'extracting'].includes(startup.phase) &&
+    typeof startup.progress === 'number' &&
+    Number.isFinite(startup.progress) &&
+    startup.progress >= 0 &&
+    startup.progress <= 100
+      ? startup.progress
+      : undefined;
+  const problem =
+    error ||
+    (offline && startup?.error
+      ? runtimeMessage(startup.error, t('onboarding.startupFailed'))
+      : isMessageKey(snapshot.error)
+        ? t(snapshot.error)
+        : snapshot.error);
   return (
     <main className="setup-page">
       <SetupHeader />
@@ -81,8 +134,23 @@ export function Onboarding({ children }: { children: ReactNode }) {
           {t(offline ? 'onboarding.connectionFailed' : 'onboarding.connectingWorkspace')}
         </h1>
         <p role="status">
-          {t(offline ? 'onboarding.reconnectHint' : 'onboarding.checkingConfiguration')}
+          {t(offline ? 'onboarding.reconnectHint' : (label ?? 'onboarding.checkingConfiguration'))}
         </p>
+        {percent !== undefined && (
+          <div className="setup-measured onboarding-progress">
+            <div
+              className="setup-track"
+              role="progressbar"
+              aria-label={t('setup.linuxDownload')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent}
+            >
+              <span style={{ width: `${percent}%` }} />
+            </div>
+            <span>{percent}%</span>
+          </div>
+        )}
         {problem && (
           <p className="form-error" role="alert">
             {problem}

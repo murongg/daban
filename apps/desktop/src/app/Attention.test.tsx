@@ -145,7 +145,7 @@ it('keeps manual unread across reconstruction and unavailable feeds, and treats 
   const fake = connect(initialStatus);
   const { unmount } = render(<App />);
   await waitFor(() => expect(fake.invoke).toHaveBeenCalled());
-  await screen.findByRole('heading', { name: '正在连接本机工作区' });
+  expect(screen.queryByRole('heading', { name: '正在连接本机工作区' })).not.toBeInTheDocument();
   const organize = screen.findByRole('button', { name: '整理 写作搭档' });
   await act(() => {
     release();
@@ -155,7 +155,7 @@ it('keeps manual unread across reconstruction and unavailable feeds, and treats 
   await act(() => fake.emit({ ...fake.snapshot(), phase: 'offline', notices: undefined }));
   unmount();
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '离线查看工作区' }));
+  expect(screen.queryByRole('button', { name: '离线查看工作区' })).not.toBeInTheDocument();
   expect(await screen.findByRole('status', { name: '写作搭档有未读消息' })).toBeVisible();
   await act(() =>
     fake.emit({
@@ -258,7 +258,7 @@ it('searches genuine cached conversation text without presenting shipped demonst
   localStorage.setItem(storageKey, serialize(state));
   render(<App />);
   await waitFor(() => expect(fake.invoke).toHaveBeenCalled());
-  // Starting a status request does not mean onboarding has committed the workspace yet.
+  // Cached conversation search is available while the live status request is still pending.
   const ready = screen.findByRole('searchbox', { name: '搜索 Bot 和对话' });
   await act(() => {
     release();

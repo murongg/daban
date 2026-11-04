@@ -4411,6 +4411,9 @@ textarea.skill-source {
   flex: none;
   margin: 0 auto 20px;
 }
+.onboarding-progress {
+  width: 100%;
+}
 .onboarding-recovery-actions {
   display: flex;
   flex-wrap: wrap;

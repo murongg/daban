@@ -234,6 +234,8 @@ export function Conversation({
   const later = entries.slice(split + (replyIndex >= 0 ? 1 : 0));
   function send() {
     if (readOnly || recovering) return;
+    // Enter submits through this handler too, so the disabled button alone cannot fence startup.
+    if (live && (runtime.snapshot.phase !== 'ready' || !runtime.snapshot.model.configured)) return;
     if (state.attachmentUploads[bot.id]) {
       notify(t('common.waitUntilAttachmentsReadySending'));
       return;
