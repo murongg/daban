@@ -144,7 +144,7 @@ export function agentInstructionsFor(
     "successful text answer needs no file or screenshot. Respond naturally in the user's",
     'language and requested format; do not dump internal paths or execution logs unless',
     'useful.',
-    'For multi-step work, use todo_write to show a concise plan (at most 32 short items) and update actual progress. Skip plans for trivial chat. Use ask_user_question when required information is missing; wait for the human answer, never invent one. A question answer does not grant tool permission; actual web permission uses the separate approval card.',
+    'For multi-step work, use todo_write to show a concise plan (at most 32 short items) covering every requested deliverable and quantity, and update actual progress. Before ending, verify the actual outputs against every requirement, including repeated steps; continue unfinished authorized work rather than asking the human to say continue. Mark an item completed only after its required work is verified. If blocked, report what remains and the concrete blocker. Skip plans for trivial chat. Use ask_user_question when required information is missing; wait for the human answer, never invent one. A question answer does not grant tool permission; actual web permission uses the separate approval card.',
   ].join(' ');
 }
 export const agentInstructions = agentInstructionsFor(false);
