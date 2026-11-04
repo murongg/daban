@@ -127,6 +127,12 @@ export const suites = {
     'skills.integration',
   ],
   integrations: [
+    'oauth-store.test',
+    'oauth-fetch.test',
+    'oauth.test',
+    'oauth-api.test',
+    'oauth-tools.test',
+    'oauth.integration',
     'office.integration',
     'network.test',
     'mcp-fetch.test',

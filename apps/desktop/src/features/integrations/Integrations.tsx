@@ -12,6 +12,7 @@ import type { Bot } from '../../app/state';
 import { Dialog } from '../../components/controls/Dialog';
 import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
+import { AppCatalog } from './AppCatalog';
 import { IntegrationTools } from './IntegrationTools';
 import { McpCopy } from './McpCopy';
 
@@ -127,7 +128,10 @@ function BotIntegrations({
   const [accessDirty, setAccessDirty] = useState(false);
   const [copying, setCopying] = useState<McpConnection>();
   const [archiving, setArchiving] = useState<McpConnection>();
-  const dialogOpen = !!archiving || !!copying;
+  const [appDirty, setAppDirty] = useState(false);
+  const [appDialog, setAppDialog] = useState(false);
+  const [oauthConnections, setOAuthConnections] = useState<string[]>([]);
+  const dialogOpen = !!archiving || !!copying || appDialog;
   useEffect(() => {
     onDialogChange?.(dialogOpen);
   }, [dialogOpen, onDialogChange]);
@@ -240,8 +244,8 @@ function BotIntegrations({
     }
   }
   useEffect(() => {
-    onDirty(busy || !!draft || !!pending || accessDirty || !!archiving || !!copying);
-  }, [busy, draft, pending, accessDirty, archiving, copying, onDirty]);
+    onDirty(busy || !!draft || !!pending || accessDirty || !!archiving || !!copying || appDirty);
+  }, [busy, draft, pending, accessDirty, archiving, copying, appDirty, onDirty]);
   const entry = rows.find((row) => row.id === selected?.id) ?? selected;
   const blocked = !available || busy || !!draft || accessDirty;
   return (
@@ -270,11 +274,25 @@ function BotIntegrations({
               : t('integrations.externalToolsTemporarilyUnavailableOrdinaryChatExisting')}
         </p>
       )}
+      {!draft && !trash && runtime.snapshot.appConnections?.catalog && (
+        <AppCatalog
+          bot={agentId(bot.id)}
+          rows={rows}
+          blocked={blocked}
+          onCustom={() => edit()}
+          onChanged={load}
+          onDirty={setAppDirty}
+          onOAuthConnections={setOAuthConnections}
+          onDialogChange={setAppDialog}
+        />
+      )}
       <div className="integration-actions">
-        <button className="secondary" type="button" disabled={blocked} onClick={() => edit()}>
-          <Plus />
-          {t('integrations.addConnection')}
-        </button>
+        {!runtime.snapshot.appConnections?.catalog && (
+          <button className="secondary" type="button" disabled={blocked} onClick={() => edit()}>
+            <Plus />
+            {t('integrations.addConnection')}
+          </button>
+        )}
         <button
           className="secondary"
           type="button"
@@ -543,7 +561,9 @@ function BotIntegrations({
                   className="secondary"
                   type="button"
                   aria-label={t('common.editNamedItem', { 0: row.name })}
-                  disabled={blocked || (privatePanel && !row.ownerBot)}
+                  disabled={
+                    blocked || (privatePanel && !row.ownerBot) || oauthConnections.includes(row.id)
+                  }
                   onClick={() => edit(row)}
                 >
                   {t('common.edit')}

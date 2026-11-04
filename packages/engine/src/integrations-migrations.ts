@@ -18,4 +18,16 @@ export const migrations: Migration[] = [
     hash: '7a641c6090df0054bf0bbf989a21e40efbad5a2ff5775cabcf407cfb2c50dc05',
     name: '20261103131126_baseline',
   },
+  {
+    sql: [
+      'CREATE TABLE `oauth_attempts` (\n\t`request_id` text PRIMARY KEY,\n\t`attempt` text NOT NULL UNIQUE,\n\t`hash` text NOT NULL,\n\t`bot` text NOT NULL,\n\t`connection` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`name` text NOT NULL,\n\t`name_key` text NOT NULL,\n\t`phase` text NOT NULL,\n\t`deadline` integer NOT NULL,\n\t`error` text\n);\n',
+      '\nCREATE TABLE `oauth_grants` (\n\t`connection` text PRIMARY KEY,\n\t`epoch` integer NOT NULL,\n\t`state` text NOT NULL,\n\t`issuer` text NOT NULL,\n\t`resource` text NOT NULL,\n\t`client_id` text NOT NULL,\n\t`client_secret` text,\n\t`redirect_uri` text NOT NULL,\n\t`token_endpoint` text NOT NULL,\n\t`access_token` text NOT NULL,\n\t`refresh_token` text,\n\t`expires_at` integer NOT NULL,\n\t`scope` text NOT NULL,\n\t`identity` text\n);\n',
+      "\nALTER TABLE `integrations` ADD `auth_kind` text DEFAULT 'bearer' NOT NULL;",
+      '\nALTER TABLE `integrations` ADD `credential_epoch` integer DEFAULT 0 NOT NULL;',
+    ],
+    bps: true,
+    folderMillis: 1793794568000,
+    hash: 'f0286d8fe7e3139b591e04af40a1656b82645e84b6ddc604546367d7cc833f35',
+    name: '20261104121608_oauth',
+  },
 ];

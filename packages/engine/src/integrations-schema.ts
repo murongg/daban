@@ -18,6 +18,8 @@ export const integrations = sqliteTable(
     nameKey: text('name_key').notNull(),
     endpoint: text().notNull(),
     bearer: text(),
+    authKind: text('auth_kind').notNull().default('bearer'),
+    credentialEpoch: integer('credential_epoch').notNull().default(0),
     deleted: integer().notNull(),
     health: text().notNull(),
     catalog: text().notNull(),
@@ -32,6 +34,36 @@ export const integrations = sqliteTable(
     uniqueIndex('integration_owner_name').on(sql`COALESCE(${table.owner},'')`, table.nameKey),
   ],
 );
+
+export const oauthGrants = sqliteTable('oauth_grants', {
+  connection: text().primaryKey(),
+  epoch: integer().notNull(),
+  state: text().notNull(),
+  issuer: text().notNull(),
+  resource: text().notNull(),
+  clientId: text('client_id').notNull(),
+  clientSecret: text('client_secret'),
+  redirectUri: text('redirect_uri').notNull(),
+  tokenEndpoint: text('token_endpoint').notNull(),
+  accessToken: text('access_token').notNull(),
+  refreshToken: text('refresh_token'),
+  expiresAt: integer('expires_at').notNull(),
+  scope: text().notNull(),
+  identity: text(),
+});
+export const oauthAttempts = sqliteTable('oauth_attempts', {
+  requestId: text('request_id').primaryKey(),
+  attempt: text().notNull().unique(),
+  hash: text().notNull(),
+  bot: text().notNull(),
+  connection: text().notNull(),
+  revision: integer().notNull(),
+  name: text().notNull(),
+  nameKey: text('name_key').notNull(),
+  phase: text().notNull(),
+  deadline: integer().notNull(),
+  error: text(),
+});
 
 export const integrationBindings = sqliteTable(
   'integration_bindings',

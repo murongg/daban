@@ -9,6 +9,7 @@ import {
   type ExecutionSnapshot,
   type Group,
   type GroupPage,
+  isAppCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -70,7 +71,7 @@ import { Documents } from './documents.js';
 import type { Executor } from './execution.js';
 import { GroupTools } from './group-tools.js';
 import { Groups } from './groups.js';
-import { integrationCommand } from './integration-api.js';
+import { appCommand, integrationCommand } from './integration-api.js';
 import { BotLifecycle } from './lifecycle.js';
 import { Machine } from './machine.js';
 import { ModelRuns } from './model.js';
@@ -290,6 +291,7 @@ export async function startPrototype({
   await mkdir(host ? modelDir : profileDir, { recursive: true, mode: 0o700 });
   const settings = new ModelSettings(path.join(modelDir, 'credentials.json'));
   const authority = new Authority(path.join(modelDir, 'control-token'));
+  const appAuthority = host ? new Authority(path.join(modelDir, 'app-control-token')) : undefined;
   const token = authority.token;
   const viewers = new ViewerGrants();
   const assets = new Map();
@@ -696,6 +698,25 @@ export async function startPrototype({
               return json(res, await recovery.cancel(data.id, Number(data.revision)));
             throw new Fault('INVALID_RECOVERY_REQUEST', 400);
           }
+          const appInput = url.pathname === '/api/mcp/app' ? await body(req, 32000) : undefined;
+          if (appInput) {
+            if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+            if (req.method !== 'POST' || url.search || !isAppCommand(appInput))
+              throw new Fault('OAUTH_INVALID_REQUEST', 400);
+            // Local reads and revocation cannot launch a task or bypass the recovery fence for a new authorization.
+            if (appInput.type !== 'app.oauth.start')
+              return json(
+                res,
+                await appCommand(
+                  models,
+                  appInput,
+                  appAuthority?.accepts(req.headers['x-daban-app-control'])
+                    ? 'interactive'
+                    : 'service',
+                  !!host,
+                ),
+              );
+          }
           if (
             recovery &&
             req.method !== 'GET' &&
@@ -927,6 +948,22 @@ export async function startPrototype({
             if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
             return json(res, await diagnostics.inspect());
           }
+          if (url.pathname === '/api/mcp/app' && req.method === 'POST') {
+            if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+            const command = appInput;
+            if (!isAppCommand(command) || url.search) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+            return json(
+              res,
+              await appCommand(
+                models,
+                command,
+                appAuthority?.accepts(req.headers['x-daban-app-control'])
+                  ? 'interactive'
+                  : 'service',
+                !!host,
+              ),
+            );
+          }
           if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
             if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
             const data = await body(req);
@@ -939,7 +976,17 @@ export async function startPrototype({
             const cancel = () => controller.abort();
             res.once('close', cancel);
             try {
-              return json(res, await integrationCommand(models, data, controller.signal));
+              return json(
+                res,
+                await integrationCommand(
+                  models,
+                  data,
+                  controller.signal,
+                  appAuthority?.accepts(req.headers['x-daban-app-control'])
+                    ? 'interactive'
+                    : 'service',
+                ),
+              );
             } finally {
               res.off('close', cancel);
             }
@@ -1495,6 +1542,7 @@ export async function startPrototype({
               mcp: models
                 ? await models.integrations.status()
                 : { available: false, error: 'MCP_STORE_UNAVAILABLE' },
+              appConnections: { catalog: true, oauthLoopback: !!host },
               ...(models?.tools.software ? { software: await models.tools.software.status() } : {}),
               skills: models
                 ? await models.skills.status()
@@ -1850,6 +1898,7 @@ export async function startPrototype({
   try {
     // Publish only after binding: a pre-existing listener must never receive the new credential.
     await authority.publish();
+    await appAuthority?.publish();
     if (host?.execution) {
       const snapshot = await host.execution!.ready;
       if (!isExecutionSnapshot(snapshot)) throw new Fault('EXECUTION_INVALID_RESPONSE');

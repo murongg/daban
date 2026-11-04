@@ -129,6 +129,10 @@ export function isDiagnosticReport(value: unknown): value is DiagnosticReport {
     )
   );
 }
+export * from './app-connections.js';
+
+import type { AppCommand, AppConnectionsCapability } from './app-connections.js';
+
 export interface McpTool {
   name: string;
   alias: string;
@@ -1516,6 +1520,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  appConnections?: AppConnectionsCapability;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1577,6 +1582,8 @@ export function recoveryBlocked(snapshot: Pick<RuntimeSnapshot, 'reboot' | 'reco
 export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'input') return command.input.type === 'release';
   return [
+    'app.catalog',
+    'app.oauth.status',
     'frame',
     'files.list',
     'files.read',
@@ -3969,6 +3976,7 @@ export type RuntimeCommand =
   | { type: 'recovery.inspect' | 'recovery.cancel' | 'recovery.start'; id: string }
   | { type: 'runtime.inspect' }
   | McpCommand
+  | AppCommand
   | { type: 'skill.list'; bot: string; includeDeleted?: boolean }
   | { type: 'skill.read'; bot: string; id: string }
   | SkillPackageCommand

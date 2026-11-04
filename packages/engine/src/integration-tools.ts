@@ -23,6 +23,7 @@ interface Remote {
   close(): Promise<unknown>;
 }
 interface Options {
+  authorization?: (connection: string) => Promise<string>;
   networkFile?: string;
   remote?: (
     config: { endpoint: string; bearer?: string },
@@ -33,9 +34,20 @@ const text = (value: string, isError = true): ToolResult => ({
   isError,
   content: [{ type: 'text', text: value }],
 });
+function unknownResult(error?: string) {
+  const hint =
+    error === 'MCP_RECONNECT_REQUIRED'
+      ? ' MCP_RECONNECT_REQUIRED: reconnect before another operation.'
+      : error === 'MCP_SCOPE_REQUIRED'
+        ? ' MCP_SCOPE_REQUIRED: review permissions and reconnect explicitly.'
+        : '';
+  return `MCP_OUTCOME_UNKNOWN: the operation may have executed; do not repeat it.${hint}`;
+}
 function failure(error: unknown, fallback = 'MCP_CONNECTION_FAILED') {
   const code = errorCode(error) ?? '';
-  return /^(MCP_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(code) ? code : fallback;
+  return /^(MCP_[A-Z_]+|OAUTH_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(code)
+    ? code
+    : fallback;
 }
 function clean(value: unknown, secrets: readonly string[], depth = 0): unknown {
   if (depth > 16) throw new Fault('MCP_RESULT_TOO_LARGE');
@@ -142,6 +154,16 @@ export class IntegrationTools {
       }
     return new McpRemote(config, { upstream, onDispatch });
   }
+  private async authenticated(connection: string) {
+    const config = await this.store.privateConfig(connection);
+    if (config.authKind !== 'oauth') return config;
+    if (!this.options.authorization) throw new Fault('OAUTH_RECONNECT_REQUIRED');
+    const bearer = await this.options.authorization(connection);
+    const current = await this.store.privateConfig(connection);
+    if (current.revision !== config.revision || current.deleted || !current.authenticated)
+      throw new Fault('MCP_AUTHORITY_CHANGED');
+    return { ...current, bearer };
+  }
   probe(connection: string, revision: number, caller?: AbortSignal) {
     if (this.closed) return Promise.reject(new Fault('MCP_CLOSED'));
     if (this.probes.has(connection)) return Promise.reject(new Fault('MCP_CHECK_PENDING'));
@@ -161,7 +183,7 @@ export class IntegrationTools {
     const signal = AbortSignal.any([controller.signal, ...(caller ? [caller] : [])]);
     let remote: Remote | undefined;
     try {
-      const config = await this.store.privateConfig(connection);
+      const config = await this.authenticated(connection);
       if (config.revision !== revision || config.deleted) throw new Fault('MCP_CONFLICT');
       signal.throwIfAborted();
       remote = await this.remote(config);
@@ -214,7 +236,7 @@ export class IntegrationTools {
           return JSON.parse(claim.receipt.result) as ToolResult;
         return text(
           claim.receipt.phase === 'unknown' || claim.receipt.phase === 'dispatched'
-            ? 'MCP_OUTCOME_UNKNOWN: the operation may have executed; do not repeat it.'
+            ? unknownResult(claim.receipt.error)
             : `MCP_${claim.receipt.phase.toUpperCase()}`,
         );
       }
@@ -281,7 +303,9 @@ export class IntegrationTools {
         await this.store.finish(id, { phase: 'denied', error: 'MCP_APPROVAL_DENIED' });
         return text('MCP_APPROVAL_DENIED');
       }
-      const config = await this.store.assertLive(run.bot, connection, operation);
+      await this.store.assertLive(run.bot, connection, operation);
+      const config = await this.authenticated(connection.connection);
+      await this.store.assertLive(run.bot, connection, operation);
       const secrets = mcpSecrets(config);
       remote = await this.remote(config, async () => {
         signal.throwIfAborted();
@@ -302,8 +326,13 @@ export class IntegrationTools {
       await this.store.finish(id, { phase: 'settled', result: JSON.stringify(result) });
       return result;
     } catch (error) {
+      const authentication = ['MCP_RECONNECT_REQUIRED', 'MCP_SCOPE_REQUIRED'].includes(
+        errorCode(error) ?? '',
+      )
+        ? errorCode(error)
+        : undefined;
       const code = dispatched
-        ? 'MCP_OUTCOME_UNKNOWN'
+        ? (authentication ?? 'MCP_OUTCOME_UNKNOWN')
         : signal.aborted
           ? 'MCP_AUTHORITY_CHANGED'
           : failure(error);
@@ -311,9 +340,7 @@ export class IntegrationTools {
       await this.store
         .finish(id, { phase: dispatched ? 'unknown' : 'cancelled', error: code })
         .catch(() => {});
-      return text(
-        `${code}${dispatched ? ': the operation may have executed; do not repeat it.' : ''}`,
-      );
+      return text(dispatched ? unknownResult(code) : code);
     } finally {
       await remote?.close().catch(() => {});
     }

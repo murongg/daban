@@ -6,12 +6,16 @@ Open a Bot’s **Capabilities → External tools**, or choose a Bot in **Setting
 
 ## Add and check
 
-1. Confirm the target Bot and add a connection with a name and service URL.
+1. Confirm the target Bot and choose **Custom remote MCP** (or **Add connection** on an older Host), then enter a name and service URL.
 2. Enter a Bearer token if authentication is required.
 3. Save and check the connection to load its current tool catalog.
 4. Open tools and permissions, choose the tools for this Bot, enable their use, and save.
 
-Current support is public HTTPS Streamable HTTP. Launching local programs, stdio, OAuth sign-in, and custom request headers are not provided. A normal model API endpoint is not an MCP service URL.
+Current support is public HTTPS Streamable HTTP. Launching local programs, stdio, and custom request headers are not provided. A normal model API endpoint is not an MCP service URL.
+
+The app directory also identifies Notion's publisher and authorization destination. **Notion remains disabled until independent test-account verification is complete.** OAuth requires a verified local Electron/Host connection and a system-browser loopback callback; remote and older Hosts retain the custom Bearer flow. When enabled, authorization does not check or grant tools: complete steps 3–4 separately. Account authorization, connection health, and Bot tool access are distinct states.
+
+OAuth credentials stay in the Host's private store. A normal refresh retains the reviewed connection revision; a new authorization or scope change requires a new tool review. Cancellation affects only that authorization attempt. Disconnect clears local tokens and disables old bindings; provider-side revocation is reported as unconfirmed. Uncertain token exchanges, refreshes, and already-dispatched tool calls are not automatically replayed. Closing the window leaves accepted tasks running.
 
 Saved URLs and tokens are not fully echoed in the editor. Follow its blank-to-retain instructions; explicitly select token clearing when needed. Recheck authorization after destination or credential changes.
 
