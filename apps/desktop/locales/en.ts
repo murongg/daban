@@ -3428,8 +3428,6 @@ export const english = {
     'Earlier requests were not recorded. Historical usage and costs remain unknown and are excluded from these totals.',
   'budgets.staleContinue':
     'The budget revision changed before this continuation started. Reload the current limits before continuing.',
-  'budgets.goalContinueUnavailable':
-    'This task uses a native Goal. Budget-driven Goal continuation is not available in this version; prior usage and reservations are retained.',
 };
 
 export type MessageKey = keyof typeof english;

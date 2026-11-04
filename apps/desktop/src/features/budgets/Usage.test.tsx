@@ -1,8 +1,9 @@
-import { defaultBudgetPolicy, type BudgetView } from '@daban/protocol';
+import { type BudgetView, defaultBudgetPolicy } from '@daban/protocol';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { Usage } from './Usage';
+
 const backend = vi.hoisted(() => ({ command: vi.fn() }));
 vi.mock('../../app/Runtime', () => ({
   useRuntime: () => backend,

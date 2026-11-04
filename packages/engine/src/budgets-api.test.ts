@@ -117,6 +117,37 @@ test('Host budget HTTP validates owners, revisions, receipts and unavailable str
         })
       ).status,
     ).toBe(403);
+    const owner = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+    app.models!.budgets.goals.observe(
+      { bot: 'mock-bot', chatRevision: 0 },
+      'synthetic-session',
+      { id: 'synthetic-goal', revision: 1 },
+      scope,
+      true,
+    );
+    const target = await app.models!.goalTarget({ bot: 'mock-bot', chatRevision: 0 });
+    const increase = {
+      budgetId: scope.budgetId,
+      id: 'synthetic-goal-increase',
+      scope: owner,
+      revision: 1,
+      policy: { ...policy, maxRequests: 8 },
+      goalResume: target,
+    };
+    expect(
+      (await call('increase', { ...increase, goalResume: { ...target, goalId: 'foreign-goal' } }))
+        .status,
+    ).toBe(409);
+    expect(app.models!.budgets.view(scope.budgetId).scope.revision).toBe(1);
+    const accepted = await call('increase', increase);
+    expect(accepted.status).toBe(200);
+    expect(isBudgetView(accepted.value) && accepted.value.goalResume?.budget?.revision).toBe(2);
+    expect(
+      await call('increase', {
+        ...increase,
+        goalResume: { ...target, owner: { chatRevision: 0, bot: 'mock-bot' } },
+      }),
+    ).toEqual(accepted);
     expect(app.models!.jobs.size).toBe(0);
   } finally {
     await app.close();

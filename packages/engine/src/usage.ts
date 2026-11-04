@@ -256,10 +256,6 @@ export function apply(ctx: Context, config: UsageConfig) {
             },
             AbortSignal.timeout(5000),
           );
-          if (object(result) && result.statisticsUnavailable === true && !config.strict) {
-            gap = true;
-            return undefined;
-          }
           if (!object(result) || result.accepted !== true) throw new BridgeRejected(200);
           const sent = await callBudgetBridge(
             config,
@@ -267,10 +263,6 @@ export function apply(ctx: Context, config: UsageConfig) {
             { scope: config.scope, modelAttemptId: config.modelAttemptId, attemptId: id },
             AbortSignal.timeout(5000),
           );
-          if (object(sent) && sent.statisticsUnavailable === true && !config.strict) {
-            gap = true;
-            return undefined;
-          }
           if (!object(sent) || sent.send !== true) throw new BridgeRejected(200);
           return id;
         } catch (error) {
@@ -344,7 +336,7 @@ export function usagePatch(patch: readonly unknown[], config?: UsageConfig) {
         : entry,
     );
     const index = entries.findIndex((entry) => object(entry) && entry.id === 'daban-prompt-cache');
-    const at = index < 0 ? 0 : index;
+    const at = Math.max(index, 0);
     // Meter below cacheFetch: its unsupported-parameter downgrade is a second actual provider send.
     return {
       ...item,

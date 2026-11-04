@@ -18,9 +18,7 @@ for (const strict of [false, true])
       strict,
     };
     type Context = Parameters<typeof apply>[0];
-    let stream: Parameters<Context['on']>[1] = async function* () {
-      throw new Error('SYNTHETIC_NOT_REGISTERED');
-    };
+    let stream: Parameters<Context['on']>[1] | undefined;
     let close: () => Promise<unknown> = async () => {};
     let sent = 0;
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -43,7 +41,8 @@ for (const strict of [false, true])
     );
     try {
       const consume = async () => {
-        const output = stream(
+        expect(stream).toBeTypeOf('function');
+        const output = stream!(
           { provider: config.provider, model: config.model, sessionId: root.session.id },
           async function* () {
             await fetch(`${config.baseURL}/chat/completions`, {

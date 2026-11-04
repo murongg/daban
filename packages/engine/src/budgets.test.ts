@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { defaultBudgetPolicy, type BudgetPrice } from '@daban/protocol';
+import { type BudgetPrice, defaultBudgetPolicy } from '@daban/protocol';
 import { expect, test } from 'vitest';
 
 import { Budgets } from './budgets.js';

@@ -1,4 +1,3 @@
-import { isBudgetCommand } from '@daban/protocol';
 import {
   isApprovalMode,
   isAttachmentId,
@@ -16,9 +15,11 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
+  isBudgetCommand,
   isChatRequest,
   isComputerRequest,
   isDocumentUpload,
+  isGoalResumeTarget,
   isGroupActionRequest,
   isGroupCopyRequest,
   isGroupInput,
@@ -469,6 +470,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     if (
       !object(t) ||
       !keys(t, [
+        'goalResume',
         'requestId',
         'prompt',
         'retryOf',
@@ -482,6 +484,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
+      (t.goalResume !== undefined && !isGoalResumeTarget(t.goalResume)) ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
       (t.memory !== undefined && !string(t.memory, 12000)) ||
       (t.chatRevision !== undefined &&

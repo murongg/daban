@@ -3091,6 +3091,4 @@ export const chinese = {
   'budgets.currentLimits': '采用额度：工具 {0} 次，有效执行 {1} 秒，目标续行 {2} 轮。',
   'budgets.historyUnmetered': '更早的请求未记录，历史用量和费用保持未知，不包含在以下合计中。',
   'budgets.staleContinue': '额度版本已更新，原继续请求未启动。可重新读取当前额度后再继续。',
-  'budgets.goalContinueUnavailable':
-    '该任务使用原生 Goal，当前版本暂不提供预算加额自动续行；原用量和预留仍保留。',
 } satisfies Record<MessageKey, string>;

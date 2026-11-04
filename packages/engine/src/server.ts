@@ -1,10 +1,3 @@
-import {
-  isBudgetCommand,
-  isBudgetConfigure,
-  isBudgetPolicy,
-  isTranscriptScope,
-  type BudgetIncreaseRequest,
-} from '@daban/protocol';
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -12,10 +5,12 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  type BudgetIncreaseRequest,
   botBundleLimit,
   type ExecutionSnapshot,
   type Group,
   type GroupPage,
+  goalResumeKey,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -28,11 +23,17 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
+  isBudgetCommand,
+  isBudgetConfigure,
+  isBudgetPolicy,
   isChatRequest,
   isComputerRequest,
   isDocumentUpload,
   isExecutionSnapshot,
+  isGoalBudgetOwner,
+  isGoalResumeTarget,
   isGroupCopyRequest,
+  isGroupSend,
   isKnowledgeContent,
   isKnowledgeWrite,
   isLegacyWorkQuery,
@@ -51,6 +52,7 @@ import {
   isTaskInsert,
   isTranscriptContentQuery,
   isTranscriptQuery,
+  isTranscriptScope,
   isUserReply,
   isWorkCommentQuery,
   isWorkCommentWrite,
@@ -127,6 +129,7 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/budgets/goal',
   '/api/budgets/settings',
   '/api/budgets/read',
   '/api/model/saved',
@@ -1119,6 +1122,12 @@ export async function startPrototype({
             if (!models) throw new Fault('BUDGET_UNAVAILABLE', 503);
             const data = await body(req);
             try {
+              if (
+                url.pathname === '/api/budgets/goal' &&
+                Object.keys(data).every((key) => key === 'owner') &&
+                isGoalBudgetOwner(data.owner)
+              )
+                return json(res, await models.goalTarget(data.owner));
               if (url.pathname === '/api/budgets/settings' && Object.keys(data).length === 0)
                 return json(res, models.budgets.settings());
               if (url.pathname === '/api/budgets/configure' && isBudgetConfigure(data))
@@ -1137,18 +1146,25 @@ export async function startPrototype({
               if (
                 url.pathname === '/api/budgets/increase' &&
                 Object.keys(data).every((k) =>
-                  ['budgetId', 'id', 'scope', 'revision', 'policy'].includes(k),
+                  ['budgetId', 'id', 'scope', 'revision', 'policy', 'goalResume'].includes(k),
                 ) &&
                 validAgentId(data.id) &&
                 isTranscriptScope(data.scope) &&
                 Number.isSafeInteger(data.revision) &&
-                isBudgetPolicy(data.policy)
+                isBudgetPolicy(data.policy) &&
+                (data.goalResume === undefined || isGoalResumeTarget(data.goalResume))
               ) {
                 const input = data as unknown as BudgetIncreaseRequest;
                 const current = await models.budget(input.scope);
                 if (!current) throw new Fault('BUDGET_NOT_FOUND', 404);
                 if (current.scope.budgetId !== input.budgetId)
                   throw new Fault('BUDGET_OWNER_CONFLICT', 403);
+                if (
+                  input.goalResume &&
+                  current.scope.revision === input.revision &&
+                  goalResumeKey(input.goalResume) !== goalResumeKey(current.goalResume)
+                )
+                  throw new Fault('GOAL_TARGET_CHANGED', 409);
                 const view = models.budgets.increase(
                   current.scope.budgetId,
                   input.revision,
@@ -1160,6 +1176,7 @@ export async function startPrototype({
                         job.budget?.budgetId === current.scope.budgetId && models!.running(job.bot),
                     ),
                   input.scope,
+                  input.goalResume,
                 );
                 return json(res, { ...view, owner: input.scope });
               }
@@ -1171,8 +1188,30 @@ export async function startPrototype({
                 const current = await models.budget(command.scope);
                 if (!current || current.scope.budgetId !== command.budget.budgetId)
                   throw new Fault('BUDGET_OWNER_CONFLICT', 403);
-                models.budgets.continuationReceipt(command.budget, command.id, command.scope);
-                if (groups && (await groups.budgetResume(command.budget, command.id)))
+                if (
+                  command.goalResume &&
+                  (command.goalResume.owner.bot !== command.scope.bot ||
+                    command.goalResume.owner.conversationId !== command.scope.conversationId ||
+                    (command.goalResume.owner.chatRevision ?? 0) !==
+                      (command.scope.chatRevision ?? 0) ||
+                    command.goalResume.budget?.budgetId !== command.budget.budgetId ||
+                    command.goalResume.budget.revision !== command.budget.revision)
+                )
+                  throw new Fault('GOAL_TARGET_CHANGED', 409);
+                const acceptedIncrease = models.budgets.continuationReceipt(
+                  command.budget,
+                  command.id,
+                  command.scope,
+                );
+                if (
+                  goalResumeKey(acceptedIncrease.goalResume) !== goalResumeKey(command.goalResume)
+                )
+                  throw new Fault('GOAL_TARGET_CHANGED', 409);
+
+                if (
+                  groups &&
+                  (await groups.budgetResume(command.budget, command.id, command.goalResume))
+                )
                   return json(res, {
                     budget: command.budget,
                     owner: command.scope,
@@ -1184,9 +1223,12 @@ export async function startPrototype({
                   throw new Fault('BUDGET_CONTINUE_STALE', 409);
                 const record = await models.journal.read(command.scope.bot, command.scope.runId);
                 if (!accepted) {
-                  if (record?.goalSession) throw new Fault('BUDGET_GOAL_CONTINUE_UNAVAILABLE', 409);
-                  models.budgets.activate(command.budget, command.id, command.scope);
-                  if (groups && (await groups.resumeBudget(command.budget, command.id)))
+                  if (!command.goalResume)
+                    models.budgets.activate(command.budget, command.id, command.scope);
+                  if (
+                    groups &&
+                    (await groups.resumeBudget(command.budget, command.id, command.goalResume))
+                  )
                     return json(res, {
                       budget: command.budget,
                       owner: command.scope,
@@ -1196,12 +1238,16 @@ export async function startPrototype({
                 }
                 if (!record || record.conversationId)
                   throw new Fault('BUDGET_CONTINUE_UNAVAILABLE', 409);
-                const receipt = await models.start(
+                if (record.goalSession && current.goalResume && !command.goalResume)
+                  throw new Fault('GOAL_TARGET_REQUIRED', 409);
+                const receipt = await models.startHuman(
                   command.scope.bot,
                   {
                     requestId: `budget-${command.id}`,
-                    retryOf: command.scope.runId,
-                    prompt: record.prompt,
+                    ...(command.goalResume
+                      ? { goalResume: command.goalResume }
+                      : { retryOf: command.scope.runId }),
+                    prompt: command.goalResume ? '/goal resume' : record.prompt,
                     chatRevision: command.scope.chatRevision,
                   },
                   undefined,
@@ -1311,8 +1357,16 @@ export async function startPrototype({
               action = url.pathname.slice('/api/groups/'.length);
             if (action === 'register')
               return json(res, groupReply(await groups.register(data), modernGroups));
-            if (action === 'send')
-              return json(res, groupReply(await groups.send(data), modernGroups));
+            if (action === 'send') {
+              const page = await groups.send(data);
+              if (models && isGroupSend(data))
+                for (const bot of data.recipients)
+                  models.budgets.goals.noteHuman(
+                    { bot, conversationId: data.group },
+                    `group-${data.id}`,
+                  );
+              return json(res, groupReply(page, modernGroups));
+            }
             if (action === 'action') return json(res, await groups.action(data));
             if (!validAgentId(data.group)) throw new Fault('INVALID_GROUP', 400);
             if (
@@ -1803,7 +1857,7 @@ export async function startPrototype({
             if (action === 'model' && models && typeof data.running === 'boolean') {
               if ((host || runtime instanceof Computers) && data.running && data.task === undefined)
                 throw new Fault('TASK_REQUIRED', 400);
-              if (data.running) return json(res, await models.start(id, data.task));
+              if (data.running) return json(res, await models.startHuman(id, data.task));
               await models.stop(id);
               return json(res, { ok: true });
             }
@@ -2199,17 +2253,15 @@ export async function startPrototype({
           directory: () => models!.profiles.list(),
           source: (bot, runId, group) => models!.groupSource(bot, runId, group),
           budget: (group, source) => models!.groupBudget(group, source),
-          budgetResumeIssue: (bot, runId) => {
-            const record = models!.journal.records.get(runId);
-            return record?.bot === bot && record.goalSession
-              ? 'BUDGET_GOAL_CONTINUE_UNAVAILABLE'
-              : undefined;
-          },
+          budgetResumeIssue: (bot, runId, goal) => models!.budgetResumeIssue(bot, runId, goal),
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
-          start: (bot, task, scope) => models!.start(bot, task, scope),
+          start: (bot, task, scope) =>
+            task.goalResume
+              ? models!.startHuman(bot, task, scope)
+              : models!.start(bot, task, scope),
           stopRequest: (bot, id, group) => models!.stopRequest(bot, id, group),
         },
         models.attachments,

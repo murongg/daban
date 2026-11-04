@@ -20,6 +20,7 @@ import {
   isApprovalMode,
   isBudgetScope,
   isGoalProgress,
+  isGoalResumeTarget,
   isModelAttempts,
   isReplyStream,
   isRunInsert,
@@ -45,6 +46,7 @@ export function validateTask(input: unknown): TaskRequest {
     Object.keys(value).some(
       (k) =>
         ![
+          'goalResume',
           'requestId',
           'prompt',
           'retryOf',
@@ -72,6 +74,7 @@ export function validateTask(input: unknown): TaskRequest {
   )
     fail();
   if (value.retryOf && value.files?.length) fail();
+  if (value.goalResume !== undefined && !isGoalResumeTarget(value.goalResume)) fail();
   if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode)) fail();
   if (value.retryTurn !== undefined && (!value.retryOf || !validAgentId(value.retryTurn))) fail();
   if (

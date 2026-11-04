@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { micros, decimalMicros } from './draft';
+import { decimalMicros, micros } from './draft';
+
 test('manual decimal prices become exact integer micro-currency without floating point rounding', () => {
   expect(micros('0.000001')).toBe(1);
   expect(micros('1.234567')).toBe(1234567);

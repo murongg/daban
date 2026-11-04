@@ -1,5 +1,5 @@
 import { Select } from '../../components/controls/Select';
-import { t, type MessageKey } from '../../i18n/locale';
+import { type MessageKey, t } from '../../i18n/locale';
 import type { BudgetDraft } from './draft';
 
 export function Fields({

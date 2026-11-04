@@ -1560,3 +1560,20 @@ it('projects bounded model attempts and their logical root into live and histori
   expect(state.agents.a.rootRunId).toBe('mock-root');
   expect(state.agents.a.history[0].attemptSummary).toEqual([attempt]);
 });
+
+it('recognizes only an absent Goal target endpoint as legacy service support', async () => {
+  for (const [status, error] of [
+    [404, 'NOT_FOUND'],
+    [409, 'GOAL_TARGET_CHANGED'],
+    [403, 'UNAUTHORIZED'],
+  ] as const) {
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher: async () => Response.json({ error }, { status }),
+    });
+    const call = client.invoke({ type: 'budget.goal', owner: { bot: 'a', chatRevision: 0 } });
+    if (error === 'NOT_FOUND') await expect(call).resolves.toBeNull();
+    else await expect(call).rejects.toThrow();
+  }
+});

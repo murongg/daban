@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { Budgets } from './Budgets';
+
 const backend = vi.hoisted(() => ({
   command: vi.fn(),
   snapshot: { model: { revision: 1, connections: [] } },

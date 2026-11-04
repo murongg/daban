@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { type Group, isGroupPage, type TaskRequest, type BudgetScope } from '@daban/protocol';
+import { type BudgetScope, type Group, isGroupPage, type TaskRequest } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';

@@ -18,4 +18,18 @@ export const migrations: Migration[] = [
     hash: 'eb3809fca8072323d53721ff3efa908ecd57d8f41af1751f51936dc5235060db',
     name: '20261104160300_initial',
   },
+  {
+    sql: [
+      'CREATE TABLE `budget_goal_grants` (\n\t`id` text PRIMARY KEY,\n\t`owner` text NOT NULL,\n\t`run` text NOT NULL,\n\t`target` text NOT NULL,\n\t`budget` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`epoch` integer NOT NULL,\n\t`fingerprint` text NOT NULL,\n\t`claimed` integer DEFAULT false NOT NULL,\n\tCONSTRAINT `fk_budget_goal_grants_budget_budget_tasks_id_fk` FOREIGN KEY (`budget`) REFERENCES `budget_tasks`(`id`)\n);\n',
+      '\nCREATE TABLE `budget_goal_links` (\n\t`owner` text PRIMARY KEY,\n\t`budget` text NOT NULL,\n\t`session` text NOT NULL,\n\t`goal` text NOT NULL,\n\t`revision` integer NOT NULL,\n\tCONSTRAINT `fk_budget_goal_links_budget_budget_tasks_id_fk` FOREIGN KEY (`budget`) REFERENCES `budget_tasks`(`id`)\n);\n',
+      '\nCREATE TABLE `budget_human_turns` (\n\t`id` text PRIMARY KEY,\n\t`owner` text NOT NULL,\n\t`epoch` integer NOT NULL\n);\n',
+      '\nCREATE TABLE `budget_humans` (\n\t`owner` text PRIMARY KEY,\n\t`epoch` integer NOT NULL\n);\n',
+      '\nALTER TABLE `budget_tasks` ADD `toolAdjustment` integer DEFAULT 0 NOT NULL;',
+      '\nALTER TABLE `budget_tasks` ADD `activeAdjustment` integer DEFAULT 0 NOT NULL;',
+    ],
+    bps: true,
+    folderMillis: 1793810267000,
+    hash: '968c3fc881cca0ab4439928d9315d79e1a9996fc10e9e30a96a259a339228cf3',
+    name: '20261104163747_goal-grants',
+  },
 ];

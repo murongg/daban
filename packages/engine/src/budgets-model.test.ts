@@ -242,7 +242,7 @@ test('a trusted continuation pinned to an old budget revision cannot silently ad
   });
   try {
     await settings.save({ apiKey: 'synthetic-pinned-key' });
-    await models.start('mock-bot', {
+    await models.startHuman('mock-bot', {
       requestId: 'synthetic-pinned-root',
       prompt: 'SYNTHETIC TASK',
     });
@@ -257,7 +257,7 @@ test('a trusted continuation pinned to an old budget revision cannot silently ad
     );
     models.budgets.activate(raised.scope, 'synthetic-new-quota');
     await expect(
-      models.start(
+      models.startHuman(
         'mock-bot',
         { requestId: 'synthetic-stale', retryOf: first.id, prompt: 'SYNTHETIC TASK' },
         undefined,

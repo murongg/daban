@@ -1336,3 +1336,53 @@ it('shows an error when an ordinary send is definitively rejected', async () => 
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
   expect(await screen.findByText('任务或附件参数无效，请修改后重新发送。')).toBeVisible();
 });
+
+it.each([false, true])(
+  'captures a fresh Goal target once and preserves an uncertain request (legacy=%s)',
+  async (legacy) => {
+    const snapshot = disconnected('ready');
+    snapshot.protocolVersion = 1;
+    snapshot.model.configured = true;
+    const target = {
+      owner: { bot: 'a', chatRevision: 0 },
+      sessionId: 'mock-goal-session',
+      goalId: 'mock-goal',
+      goalRevision: 2,
+      humanEpoch: 1,
+      budget: { budgetId: 'mock-budget', revision: 1 },
+    };
+    const invoke = vi.fn(async (command: RuntimeCommand) =>
+      command.type === 'task.start'
+        ? { ok: false as const, error: 'RUNTIME_UNAVAILABLE' }
+        : {
+            ok: true as const,
+            value:
+              command.type === 'status'
+                ? snapshot
+                : command.type === 'budget.goal'
+                  ? legacy
+                    ? null
+                    : target
+                  : {},
+          },
+    );
+    Object.defineProperty(window, 'daban', {
+      configurable: true,
+      value: {
+        platform: 'darwin',
+        runtime: { invoke, subscribe: () => () => undefined } as unknown as RuntimeBridge,
+      },
+    });
+    render(<App />);
+    await userEvent.type(await screen.findByRole('textbox', { name: '发送消息' }), '/goal resume');
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    await userEvent.click(await screen.findByRole('button', { name: '重试发送' }));
+    const calls = invoke.mock.calls.map(([value]) => value);
+    expect(calls.filter((value) => value.type === 'budget.goal')).toHaveLength(1);
+    const sends = calls.filter((value) => value.type === 'task.start');
+    expect(sends).toHaveLength(2);
+    expect(sends[0]).toEqual(sends[1]);
+    if (sends[0]?.type === 'task.start')
+      expect(sends[0].task.goalResume).toEqual(legacy ? undefined : target);
+  },
+);

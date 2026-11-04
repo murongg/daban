@@ -1,4 +1,5 @@
-import type { BudgetCommand } from './budgets.js';
+import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+
 export * from './goals.js';
 export * from './model-access.js';
 
@@ -3078,6 +3079,7 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
   return value === 'ask' || value === 'auto' || value === 'full';
 }
 export interface TaskRequest {
+  goalResume?: GoalResumeTarget;
   approvalMode?: ApprovalMode;
   chatRevision?: number;
   requestId: string;

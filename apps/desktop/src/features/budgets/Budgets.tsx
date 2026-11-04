@@ -9,10 +9,10 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import { Select } from '../../components/controls/Select';
-import { t, useLocale, type MessageKey } from '../../i18n/locale';
-import { clearPending, readPending, writePending } from './pending';
-import { Fields } from './Fields';
+import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { type BudgetDraft, draft, micros, policy, routeLabel } from './draft';
+import { Fields } from './Fields';
+import { clearPending, readPending, writePending } from './pending';
 import './budgets.css';
 
 export function Budgets() {
@@ -29,6 +29,7 @@ export function Budgets() {
   const [rates, setRates] = useState({ input: '', output: '', cacheRead: '', cacheWrite: '' });
   const epoch = useRef(0);
   const [reload, setReload] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit reload discards a stale read and reconciles the exact persisted settings receipt.
   useEffect(() => {
     const ticket = ++epoch.current;
     setSettings(undefined);
@@ -238,7 +239,7 @@ export function Budgets() {
               {t('budgets.reload')}
             </button>
           )}
-          <button type="submit" className="primary-button" disabled={busy}>
+          <button type="submit" className="primary" disabled={busy}>
             {busy ? t('budgets.saving') : pending ? t('budgets.retrySave') : t('budgets.save')}
           </button>
         </form>

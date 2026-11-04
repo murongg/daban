@@ -4,8 +4,9 @@ import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  type Group,
   type BudgetScope,
+  type GoalResumeTarget,
+  type Group,
   type GroupActionAck,
   type GroupActionReceipt,
   type GroupCopyAck,
@@ -15,6 +16,7 @@ import {
   type GroupMessage,
   type GroupPage,
   type GroupSend,
+  goalResumeKey,
   groupCopyKey,
   isGroup,
   isGroupActionReceipt,
@@ -52,7 +54,7 @@ import type { ConversationScope, RunReceipt } from './tasks.js';
 
 export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
-  budgetResumeIssue?(bot: string, runId: string): string | undefined;
+  budgetResumeIssue?(bot: string, runId: string, goal?: GoalResumeTarget): string | undefined;
   budget?(group: string, sourceId: string): BudgetScope;
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
   directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
@@ -1161,7 +1163,8 @@ export class Groups {
             String(row.bot),
             {
               requestId: requestId(row),
-              prompt: String(turn.prompt),
+              prompt: row.goalResume ? '/goal resume' : String(turn.prompt),
+              ...(row.goalResume ? { goalResume: row.goalResume } : {}),
               ...(row.retryOf
                 ? { retryOf: row.retryOf }
                 : { files: this.inputs(group.id, String(turn.id)) }),
@@ -1215,26 +1218,29 @@ export class Groups {
       this.failure = '';
     });
   }
-  private resumeRecord(scope: BudgetScope, id: string) {
+  private resumeRecord(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
     const prior = this.db
       .select()
       .from(groupBudgetResumes)
       .where(eq(groupBudgetResumes.id, id))
       .get();
-    if (prior && prior.signature !== JSON.stringify(scope))
+    if (
+      prior &&
+      prior.signature !== JSON.stringify([scope.budgetId, scope.revision, goalResumeKey(goal)])
+    )
       throw new Fault('BUDGET_CONTINUE_CONFLICT', 409);
     return prior !== undefined;
   }
-  budgetResume(scope: BudgetScope, id: string) {
-    return this.exclusive(() => this.resumeRecord(scope, id));
+  budgetResume(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
+    return this.exclusive(() => this.resumeRecord(scope, id, goal));
   }
-  resumeBudget(scope: BudgetScope, id: string) {
+  resumeBudget(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
     if (!validAgentId(id)) return Promise.reject(new Fault('INVALID_BUDGET_CONTINUATION', 400));
     return this.exclusive(() =>
       this.db.transaction(
         () => {
-          const signature = JSON.stringify(scope);
-          if (this.resumeRecord(scope, id)) return true;
+          const signature = JSON.stringify([scope.budgetId, scope.revision, goalResumeKey(goal)]);
+          if (this.resumeRecord(scope, id, goal)) return true;
           const turns = this.db
             .select()
             .from(groupTurns)
@@ -1254,7 +1260,7 @@ export class Groups {
             );
             if (failed) {
               const issue = failed.run
-                ? this.runner.budgetResumeIssue?.(failed.bot, failed.run)
+                ? this.runner.budgetResumeIssue?.(failed.bot, failed.run, goal)
                 : undefined;
               if (issue) throw new Fault(issue, 409);
               // A new delivery keeps the failed reply and its receipt intact; only an explicit human continuation can retry it.
@@ -1267,7 +1273,8 @@ export class Groups {
                   bot: failed.bot,
                   position: failed.position,
                   state: 'pending',
-                  retryOf: failed.run ?? undefined,
+                  retryOf: goal ? undefined : (failed.run ?? undefined),
+                  goalResume: goal,
                   retryStage: failed.id,
                   context: failed.context,
                   name: failed.name,

@@ -4,26 +4,28 @@ import { open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  defaultBudgetPolicy,
-  isBudgetView,
-  sameTranscriptScope,
-  type TranscriptScope,
-  isBudgetSettings,
-  isBudgetPolicy,
-  isBudgetPrice,
-  isTokenUsage,
   type BudgetPolicy,
   type BudgetPrice,
   type BudgetScope,
   type BudgetSettings,
   type BudgetView,
+  defaultBudgetPolicy,
+  type GoalResumeTarget,
+  goalResumeKey,
+  isBudgetPolicy,
+  isBudgetPrice,
+  isBudgetSettings,
+  isBudgetView,
+  isTokenUsage,
   type ReportedUsage,
+  sameTranscriptScope,
   type TokenUsage,
-  type UsageReceipt,
+  type TranscriptScope,
   type UsagePurpose,
+  type UsageReceipt,
 } from '@daban/protocol';
 import { and, eq } from 'drizzle-orm';
-import { configure, type Database, migrate } from './database.js';
+import { GoalBudgets } from './budget-goals.js';
 import { migrations } from './budgets-migrations.js';
 import {
   budgetActions,
@@ -34,8 +36,9 @@ import {
   budgetTasks,
   budgetTools,
 } from './budgets-schema.js';
-import { privateMetadata, secureDirectory } from './private-files.js';
+import { configure, type Database, migrate } from './database.js';
 import { costMicros } from './pricing.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 
 type Receipt = typeof budgetReceipts.$inferSelect;
 export interface BudgetReservation {
@@ -89,6 +92,7 @@ const text = (v: unknown): v is string =>
   typeof v === 'string' && v.length > 0 && v.length <= 1024 && !v.includes('\0');
 export class Budgets {
   readonly ready: Promise<unknown>;
+  goals!: GoalBudgets;
   private db!: Database;
   private closed = false;
   constructor(readonly file: string) {
@@ -118,6 +122,7 @@ export class Budgets {
         busyTimeout: 5000,
       });
       this.db = migrate(client, migrations);
+      this.goals = new GoalBudgets(this.db, this);
       this.db.transaction(
         () => {
           this.db
@@ -452,7 +457,7 @@ export class Budgets {
           .from(budgetRuns)
           .where(eq(budgetRuns.budget, task.id))
           .all()
-          .reduce((sum, run) => add(sum, run.activeMs), 0);
+          .reduce((sum, run) => add(sum, run.activeMs), task.activeAdjustment);
         if (active >= task.policy.activeMs) {
           this.db
             .update(budgetTasks)
@@ -641,6 +646,7 @@ export class Budgets {
     command: string,
     admit: () => boolean = () => true,
     owner?: TranscriptScope,
+    goalResume?: GoalResumeTarget,
   ) {
     if (!isBudgetPolicy(policy) || !text(command)) throw new Error('INVALID_BUDGET_POLICY');
     if (policy.mode === 'strict' && (policy.maxTokens !== undefined || policy.money))
@@ -652,6 +658,7 @@ export class Budgets {
           revision,
           policyKey(policy),
           owner ? [owner.bot, owner.runId, owner.conversationId, owner.chatRevision] : null,
+          goalResumeKey(goalResume),
         ]);
         const prior = this.action(command, fingerprint);
         if (prior) return prior.result as BudgetView;
@@ -685,7 +692,18 @@ export class Budgets {
           .set({ phase: 'released' })
           .where(and(eq(budgetReceipts.budget, id), eq(budgetReceipts.phase, 'reserved')))
           .run();
-        const result = { ...this.view(id), ...(owner ? { owner: structuredClone(owner) } : {}) };
+        const result = {
+          ...this.view(id),
+          ...(owner ? { owner: structuredClone(owner) } : {}),
+          ...(goalResume
+            ? {
+                goalResume: {
+                  ...structuredClone(goalResume),
+                  budget: { budgetId: id, revision: revision + 1 },
+                },
+              }
+            : {}),
+        };
         this.db.insert(budgetActions).values({ id: command, fingerprint, result }).run();
         return result;
       },
@@ -758,20 +776,52 @@ export class Budgets {
     );
   }
   tools(id: string) {
-    return this.db.select().from(budgetTools).where(eq(budgetTools.budget, id)).all().length;
+    return (
+      this.task(id).toolAdjustment +
+      this.db.select().from(budgetTools).where(eq(budgetTools.budget, id)).all().length
+    );
+  }
+  runs(id: string) {
+    return this.db
+      .select()
+      .from(budgetRuns)
+      .where(eq(budgetRuns.budget, id))
+      .all()
+      .map((row) => row.id);
+  }
+  reconcileOwner(scope: BudgetScope, tools: number, activeMs: number) {
+    if (![tools, activeMs].every((value) => Number.isSafeInteger(value) && value >= 0))
+      throw new Error('BUDGET_OVERFLOW');
+    const task = this.revision(scope);
+    const knownTools = this.tools(task.id);
+    const knownTime = this.db
+      .select()
+      .from(budgetRuns)
+      .where(eq(budgetRuns.budget, task.id))
+      .all()
+      .reduce((sum, row) => add(sum, row.activeMs), task.activeAdjustment);
+    this.db
+      .update(budgetTasks)
+      .set({
+        toolAdjustment: add(task.toolAdjustment, Math.max(0, tools - knownTools)),
+        activeAdjustment: add(task.activeAdjustment, Math.max(0, activeMs - knownTime)),
+      })
+      .where(eq(budgetTasks.id, task.id))
+      .run();
   }
   time(run: string, used: number, priorOwner = 0) {
     if (![used, priorOwner].every((value) => Number.isSafeInteger(value) && value >= 0))
       throw new Error('INVALID_BUDGET_TIME');
     const row = this.db.select().from(budgetRuns).where(eq(budgetRuns.id, run)).get();
     if (!row) throw new Error('BUDGET_OWNER_CONFLICT');
+    const adjustment = this.task(row.budget).activeAdjustment;
     const others = this.db
       .select()
       .from(budgetRuns)
       .where(eq(budgetRuns.budget, row.budget))
       .all()
       .filter((run) => run.id !== row.id)
-      .reduce((sum, run) => add(sum, run.activeMs), 0);
+      .reduce((sum, run) => add(sum, run.activeMs), adjustment);
     // Keep the original owner's conservative crash charge as well as ledger time from later retries of an older ancestor.
     const charged = add(used, Math.max(0, priorOwner - others));
     if (charged > row.activeMs)
@@ -781,7 +831,7 @@ export class Budgets {
       .from(budgetRuns)
       .where(eq(budgetRuns.budget, row.budget))
       .all()
-      .reduce((sum, r) => add(sum, r.activeMs), 0);
+      .reduce((sum, r) => add(sum, r.activeMs), adjustment);
   }
   close() {
     if (!this.closed && this.db) {

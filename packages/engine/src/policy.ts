@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type BudgetScope, type ApprovalMode, isTaskPlan } from '@daban/protocol';
+import { type ApprovalMode, type BudgetScope, isTaskPlan } from '@daban/protocol';
 import { type BridgeConfig, callBridge } from './bridge.js';
 
 export const name = 'daban-budget';

@@ -1,4 +1,4 @@
-import type { BudgetScope } from '@daban/protocol';
+import type { BudgetScope, GoalResumeTarget } from '@daban/protocol';
 import { sql } from 'drizzle-orm';
 import {
   check,
@@ -78,6 +78,7 @@ export const groupDeliveries = sqliteTable(
     run: text(),
     retryOf: text(),
     retryStage: text(),
+    goalResume: text({ mode: 'json' }).$type<GoalResumeTarget>(),
     context: text(),
     name: text(),
     error: text(),

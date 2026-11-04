@@ -1,19 +1,19 @@
 import {
-  type UsagePurpose,
   type BudgetIncreaseRequest,
   type BudgetView,
-  isBudgetView,
   isBudgetCommand,
+  isBudgetView,
   sameTranscriptScope,
   type TranscriptScope,
+  type UsagePurpose,
 } from '@daban/protocol';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import { Dialog } from '../../components/controls/Dialog';
-import { t, useLocale, type MessageKey } from '../../i18n/locale';
-import { clearPending, readPending, writePending } from './pending';
-import { Fields } from './Fields';
+import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { type BudgetDraft, decimalMicros, draft, policy, routeLabel } from './draft';
+import { Fields } from './Fields';
+import { clearPending, readPending, writePending } from './pending';
 import './budgets.css';
 
 const purposeKeys: Record<UsagePurpose, MessageKey> = {
@@ -28,9 +28,13 @@ const purposeKeys: Record<UsagePurpose, MessageKey> = {
 export function Usage({ scope, running = false }: { scope: TranscriptScope; running?: boolean }) {
   useLocale();
   const runtime = useRuntime();
-  const target = useMemo(
-    () => ({ ...scope }),
-    [scope.bot, scope.runId, scope.chatRevision, scope.conversationId],
+  const { bot, runId, chatRevision, conversationId } = scope;
+  const target = useMemo<TranscriptScope>(
+    () =>
+      conversationId
+        ? { bot, runId, conversationId }
+        : { bot, runId, chatRevision: chatRevision ?? 0 },
+    [bot, runId, chatRevision, conversationId],
   );
   const [reload, setReload] = useState(0);
   const epoch = useRef(0);
@@ -42,6 +46,7 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const pending = useRef<BudgetIncreaseRequest | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit reload reconciles a pending continuation without replacing its captured target.
   useEffect(() => {
     const ticket = ++epoch.current;
     setView(undefined);
@@ -107,6 +112,7 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
         scope: structuredClone(target),
         revision: view.scope.revision,
         policy: policy(value),
+        ...(view.goalResume ? { goalResume: structuredClone(view.goalResume) } : {}),
       };
     } catch {
       setError(t('budgets.invalid'));
@@ -139,6 +145,9 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
         scope: request.scope,
         budget: result.scope,
         id: request.id,
+        ...(request.goalResume
+          ? { goalResume: { ...request.goalResume, budget: result.scope } }
+          : {}),
       });
       if (ticket === epoch.current) {
         clearPending(key);
@@ -187,9 +196,6 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
         <p role="status" className="field-help">
           {t('budgets.partial')}
         </p>
-      )}
-      {view.continuationIssue && (
-        <p className="field-help">{t('budgets.goalContinueUnavailable')}</p>
       )}
       {view.warned && (
         <p role="status" className="field-help">
@@ -257,7 +263,7 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
         <button
           type="button"
           className="text-button"
-          disabled={!!view.continuationIssue || running}
+          disabled={running}
           onClick={() => {
             setValue(draft(pending.current?.policy ?? view.policy));
             setOpen(true);
@@ -304,7 +310,7 @@ export function Usage({ scope, running = false }: { scope: TranscriptScope; runn
                 {t('budgets.reload')}
               </button>
             )}
-            <button className="primary-button" type="submit" disabled={busy}>
+            <button className="primary" type="submit" disabled={busy}>
               {busy ? t('budgets.saving') : t('budgets.increase')}
             </button>
           </form>

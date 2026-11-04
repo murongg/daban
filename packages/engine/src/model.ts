@@ -7,11 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   BotProfile,
   BudgetScope,
+  GoalBudgetOwner,
   GoalProgress,
+  GoalResumeTarget,
+  ModelApi,
   ModelAttempt,
   ModelAttemptFence,
   ModelId,
-  ModelApi,
   ModelReference,
   ReplyStream,
   RunInsert,
@@ -25,11 +27,12 @@ import type {
 } from '@daban/protocol';
 import {
   type ChatPage,
+  goalResumeKey,
   imageMime,
   isAttachmentId,
   isBudgetScope,
-  isTokenUsage,
   isChatPage,
+  isGoalBudgetOwner,
   isGoalProgress,
   isInteractionInput,
   isModelId,
@@ -38,21 +41,21 @@ import {
   isTaskFileName,
   isTaskInsert,
   isTaskPlan,
+  isTokenUsage,
   modelHasVision,
   modelReference,
   replyLimit,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
-import { usageFetch, usagePatch } from './usage.js';
-import { Budgets } from './budgets.js';
 import { type AgentToolRun, AgentTools, executionAttemptId } from './agent-tools.js';
 import { Attachments } from './attachments.js';
+import { Budgets } from './budgets.js';
 import { BotBundles, type BundleDocuments } from './bundles.js';
 import { CatalogTools } from './catalog.js';
-import type { CommandReview } from './commands.js';
 import { Chats } from './chats.js';
 import { CheckpointTracker, type ConversationCheckpoint, recoveryContext } from './checkpoint.js';
+import type { CommandReview } from './commands.js';
 import { type ComputerFacade, computerToolList } from './computer-tools.js';
 import { contextBudget, contextEstimate, recoveryBudget } from './context.js';
 import { errorCode, errorMessage, Fault } from './control.js';
@@ -60,7 +63,7 @@ import type { Desktop } from './desktop.js';
 import { DshLog, defaultSdkFile, readDshStartup } from './dsh.js';
 import { observeTools } from './events.js';
 import { builtinSkills } from './find-skills.js';
-import { goalCommand, goalOperation, goalView, projectGoal } from './goals.js';
+import { goalCommand, goalGrantPatch, goalOperation, goalView, projectGoal } from './goals.js';
 import { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
 import { IntegrationTools } from './integration-tools.js';
@@ -108,6 +111,7 @@ import {
   type TranscriptEvent,
   Transcripts,
 } from './transcripts.js';
+import { usageFetch, usagePatch } from './usage.js';
 import { webDownloadLimit } from './webpage.js';
 import { Work } from './work.js';
 import { WorkTools } from './work-tools.js';
@@ -563,6 +567,7 @@ interface HarnessOptions {
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends AgentToolRun {
   budget?: BudgetScope;
+  goalGrant?: { id: string; target: GoalResumeTarget };
   routeRevision?: number;
   activityBase?: { toolCount: number; activeMs: number };
   activeMs?: number;
@@ -1097,15 +1102,16 @@ export class ModelRuns {
   async budget(scope: TranscriptScope) {
     await this.transcriptOwner(scope);
     const record = await this.journal.read(scope.bot, scope.runId);
-    return record?.budget
-      ? {
-          ...this.budgets.view(record.budget.budgetId),
-          owner: structuredClone(scope),
-          ...(record.goalSession
-            ? { continuationIssue: 'BUDGET_GOAL_CONTINUE_UNAVAILABLE' as const }
-            : {}),
-        }
-      : null;
+    if (!record?.budget) return null;
+    const view = this.budgets.view(record.budget.budgetId);
+    const goal = this.budgets.goals.prepare(
+      this.goalOwner(scope.bot, scope.conversationId, scope.chatRevision ?? 0),
+    );
+    return {
+      ...view,
+      owner: structuredClone(scope),
+      ...(goal?.budget?.budgetId === view.scope.budgetId ? { goalResume: goal } : {}),
+    };
   }
   async statistics(scope: TranscriptScope) {
     await this.transcriptOwner(scope);
@@ -1332,7 +1338,13 @@ export class ModelRuns {
     const existing = job.insertWrites.get(insert.id);
     if (existing) return existing;
     if (!job.inserts.includes(insert)) job.inserts.push(insert);
-    const receipt = this.persist(job).then(() => ({ ok: true, id: insert.id }));
+    const receipt = this.persist(job).then(() => {
+      this.budgets.goals.noteHuman(
+        this.goalOwner(job.bot, job.conversationId, job.chatRevision ?? 0),
+        insert.id,
+      );
+      return { ok: true, id: insert.id };
+    });
     job.insertWrites.set(insert.id, receipt);
     receipt.catch(() => {
       if (job.insertWrites.get(insert.id) === receipt) job.insertWrites.delete(insert.id);
@@ -1414,6 +1426,79 @@ export class ModelRuns {
     return job?.id === runId && job.running && !job.abort.signal.aborted
       ? (job.route ?? null)
       : null;
+  }
+  private goalOwner(bot: string, conversationId?: string, chatRevision = 0): GoalBudgetOwner {
+    return conversationId ? { bot, conversationId } : { bot, chatRevision };
+  }
+  async goalTarget(owner: GoalBudgetOwner): Promise<GoalResumeTarget> {
+    await this.ready;
+    if (!isGoalBudgetOwner(owner)) throw new Fault('INVALID_GOAL_TARGET', 400);
+    if (!owner.conversationId) this.chats.assertCurrent(owner.bot, owner.chatRevision);
+    const target = this.budgets.goals.prepare(owner);
+    if (target) return target;
+    const job = this.jobs.get(owner.bot);
+    if (
+      !job?.goal ||
+      !job.sessionId ||
+      job.conversationId !== owner.conversationId ||
+      (!owner.conversationId && (job.chatRevision ?? 0) !== owner.chatRevision)
+    )
+      throw new Fault('GOAL_TARGET_UNAVAILABLE', 409);
+    if (job.budget) throw new Fault('GOAL_BUDGET_LINK_MISSING', 409);
+    return {
+      owner: structuredClone(owner),
+      sessionId: job.sessionId,
+      goalId: job.goal.id,
+      goalRevision: job.goal.revision,
+      humanEpoch: this.budgets.goals.epoch(owner),
+      historyUnmetered: true,
+    };
+  }
+  budgetResumeIssue(bot: string, runId: string, goal?: GoalResumeTarget) {
+    const record = this.journal.records.get(runId);
+    if (!record || record.bot !== bot) return 'BUDGET_CONTINUE_UNAVAILABLE';
+    const target = this.budgets.goals.prepare(
+      this.goalOwner(bot, record.conversationId, record.chatRevision ?? 0),
+    );
+    if (
+      goal &&
+      (!record.budget ||
+        goal.budget?.budgetId !== record.budget.budgetId ||
+        goalResumeKey(goal) !== goalResumeKey(target))
+    )
+      return 'GOAL_TARGET_CHANGED';
+    if (record.goalSession && target?.budget?.budgetId === record.budget?.budgetId && !goal)
+      return 'GOAL_TARGET_REQUIRED';
+    return undefined;
+  }
+  private async reconcileGoalHistory(scope: BudgetScope) {
+    let tools = 0,
+      activeMs = 0;
+    await this.journal.writing;
+    for (const run of this.budgets.runs(scope.budgetId)) {
+      const record = this.journal.records.get(run);
+      if (!record) throw new Fault('TASK_OUTCOME_UNKNOWN');
+      const recovery = await this.journal.recovery(record.bot, run);
+      if (!recovery || recovery.blocked) throw new Fault('TASK_OUTCOME_UNKNOWN');
+      tools += recovery.contribution.toolCount;
+      activeMs += recovery.contribution.activeMs;
+      if (!Number.isSafeInteger(tools) || !Number.isSafeInteger(activeMs))
+        throw new Fault('INVALID_RETRY', 400);
+    }
+    this.budgets.reconcileOwner(scope, tools, activeMs);
+  }
+  private observeGoalBudget(job: ModelJob) {
+    if (!job.budget || !job.goal || !job.sessionId) return;
+    const sameGrant =
+      job.goalGrant?.target.goalId === job.goal.id &&
+      job.goalGrant.target.sessionId === job.sessionId;
+    this.budgets.goals.observe(
+      this.goalOwner(job.bot, job.conversationId, job.chatRevision ?? 0),
+      job.sessionId,
+      job.goal,
+      job.budget,
+      job.goalCreated === true || sameGrant,
+    );
   }
   groupBudget(group: string, sourceId: string) {
     return this.budgets.ensure(
@@ -1577,13 +1662,20 @@ export class ModelRuns {
       record: { ...recovery.record, outputDirectory: recovery.record.outputDirectory },
     };
   }
-  async start(
+  startHuman(bot: string, input?: unknown, conversation?: ConversationScope, budget?: BudgetScope) {
+    return this.startAccepted(bot, input, conversation, budget, true);
+  }
+  start(bot: string, input?: unknown, conversation?: ConversationScope) {
+    return this.startAccepted(bot, input, conversation, undefined, false);
+  }
+  private async startAccepted(
     bot: string,
     input?: unknown,
     conversation?: ConversationScope,
     budget?: BudgetScope,
+    human = false,
   ) {
-    const acceptedBudget = budget
+    let acceptedBudget = budget
       ? structuredClone(budget)
       : conversation?.budget
         ? structuredClone(conversation.budget)
@@ -1613,9 +1705,14 @@ export class ModelRuns {
     if (input === undefined && !this.tools.hasComputer(bot))
       throw new Fault('COMPUTER_NOT_CONNECTED');
     const task = input === undefined ? undefined : validateTask(input);
+    const resumingGoal = !!task && !task.retryOf && goalCommand(task.prompt)?.action === 'resume';
+    if (resumingGoal && (!human || !task?.goalResume))
+      throw new Fault('GOAL_HUMAN_COMMAND_REQUIRED', 403);
+    if (task?.goalResume && (!human || !resumingGoal)) throw new Fault('INVALID_GOAL_TARGET', 400);
     if (scope && task?.chatRevision !== undefined) throw new Fault('INVALID_CONVERSATION', 400);
     const data = task
       ? {
+          ...(task.goalResume ? { goalResume: task.goalResume } : {}),
           prompt: task.prompt,
           memory: task.memory || '',
           files: task.files || [],
@@ -1638,6 +1735,35 @@ export class ModelRuns {
         if (saved.fingerprint !== fingerprint) throw new Fault('REQUEST_ID_REUSED');
         return { ...saved, history: this.history(bot) };
       }
+    }
+    if (task?.goalResume) {
+      const target = task.goalResume;
+      const owner = this.goalOwner(
+        bot,
+        scope?.id,
+        task.chatRevision ?? this.chats.current(bot).revision,
+      );
+      if (
+        target.owner.bot !== owner.bot ||
+        target.owner.conversationId !== owner.conversationId ||
+        target.owner.chatRevision !== owner.chatRevision
+      )
+        throw new Fault('GOAL_TARGET_CHANGED', 409);
+      const current = await this.goalTarget(owner);
+      if (
+        current.sessionId !== target.sessionId ||
+        current.goalId !== target.goalId ||
+        current.goalRevision !== target.goalRevision
+      )
+        throw new Fault('GOAL_TARGET_CHANGED', 409);
+      if (
+        acceptedBudget &&
+        target.budget &&
+        (acceptedBudget.budgetId !== target.budget.budgetId ||
+          acceptedBudget.revision !== target.budget.revision)
+      )
+        throw new Fault('BUDGET_REVISION_CONFLICT', 409);
+      acceptedBudget = target.budget ? structuredClone(target.budget) : acceptedBudget;
     }
     let cachedInputs: TaskRequest['files'];
     let intentId: string | undefined;
@@ -1809,7 +1935,7 @@ export class ModelRuns {
               )
               .digest('hex'),
             undefined,
-            !!task?.retryOf || !!scope?.sourceId,
+            !!task?.retryOf || !!scope?.sourceId || task?.goalResume?.historyUnmetered === true,
           );
     } catch (error) {
       if (error instanceof Error && error.message === 'BUDGET_HISTORY_UNMETERED')
@@ -1823,6 +1949,36 @@ export class ModelRuns {
         job.budget.revision !== acceptedBudget.revision)
     )
       throw new Fault('BUDGET_REVISION_CONFLICT', 409);
+    if (task?.goalResume) {
+      await this.reconcileGoalHistory(job.budget);
+      // Reconciliation awaits journal I/O. A competing request may have published while this one waited.
+      const current = this.jobs.get(bot);
+      const saved = this.journal.findRequest(bot, task.requestId);
+      if (current?.requestId === task.requestId) {
+        if (current.fingerprint !== fingerprint) throw new Fault('REQUEST_ID_REUSED');
+        return this.publicJob(current);
+      }
+      if (saved) {
+        if (saved.fingerprint !== fingerprint) throw new Fault('REQUEST_ID_REUSED');
+        return { ...saved, history: this.history(bot) };
+      }
+      if (this.running(bot)) throw new Fault('MODEL_ALREADY_RUNNING');
+      this.profiles.assertActive(bot);
+      if (!scope) this.chats.assertCurrent(bot, chatRevision);
+      if (
+        !this.admission() ||
+        !this.botAdmission(bot) ||
+        this.tools.computer?.runtime.admit?.(bot) === false
+      )
+        throw new Fault('COMPUTER_CHANGING');
+      const grant = this.budgets.goals.accept(task.goalResume, task.requestId, job.id, job.budget);
+      job.goalGrant = { id: grant.id, target: structuredClone(task.goalResume) };
+    } else if (human && task) {
+      this.budgets.goals.noteHuman(
+        this.goalOwner(bot, scope?.id, chatRevision ?? 0),
+        task.requestId,
+      );
+    }
     this.budgets.bind(job.budget, job.id);
     const budgetView = this.budgets.view(job.budget.budgetId);
     if (budgetView.state !== 'active') throw new Fault('BUDGET_LIMIT_REACHED', 409);
@@ -2060,28 +2216,31 @@ export class ModelRuns {
       file,
       JSON.stringify(
         usagePatch(
-          sdkPatch(
-            this.origin,
-            job.bot,
-            job.token,
-            job.task ? { ...job.task, planning: job.planning } : undefined,
-            job.limit - job.toolCount,
-            config.model,
-            job.skills,
-            this.bridge,
-            config,
-            this.sdkFile,
-            promptCacheId({
-              workspace: this.dir,
-              provider: config.provider,
-              model: config.apiModel,
-              bot: job.bot,
-              conversationId: job.conversationId,
-              chatRevision: job.chatRevision,
-            }),
-            path.join(job.privateDir, 'turn.json'),
-            office,
-            job.attemptId,
+          goalGrantPatch(
+            sdkPatch(
+              this.origin,
+              job.bot,
+              job.token,
+              job.task ? { ...job.task, planning: job.planning } : undefined,
+              job.limit - job.toolCount,
+              config.model,
+              job.skills,
+              this.bridge,
+              config,
+              this.sdkFile,
+              promptCacheId({
+                workspace: this.dir,
+                provider: config.provider,
+                model: config.apiModel,
+                bot: job.bot,
+                conversationId: job.conversationId,
+                chatRevision: job.chatRevision,
+              }),
+              path.join(job.privateDir, 'turn.json'),
+              office,
+              job.attemptId,
+            ),
+            job.goalGrant,
           ),
           job.budget
             ? {
@@ -2253,6 +2412,7 @@ export class ModelRuns {
             job.goal = goal ?? undefined;
             job.goalSession = goal !== null && goal.phase !== 'complete';
             if (goalOperation(note, session.id) === 'create') job.goalCreated = true;
+            this.observeGoalBudget(job);
             this.persist(job)
               .catch(() => this.stop(job.bot, 'goal-save-failed'))
               .catch(() => {
@@ -2508,19 +2668,32 @@ export class ModelRuns {
     };
     job.onInteraction = refreshWait;
     job.onComputerWait = refreshWait;
-    const logicalTimeLimit = job.budget
-      ? this.budgets.view(job.budget.budgetId).policy.activeMs
-      : timeLimit;
+    let logicalTimeLimit = timeLimit;
     const totalActive = () =>
       job.budget
         ? this.budgets.time(job.id, Math.max(0, activeUsed() - priorActiveMs), priorActiveMs)
         : activeUsed();
+    let budgetFailed = false;
+    const budgetFailure = () => {
+      budgetFailed = true;
+      this.markFence(job, 'unknown');
+      job.phase = 'failed';
+      job.error = 'BUDGET_EVIDENCE_SAVE_FAILED';
+    };
     const timeout = setInterval(() => {
       refreshWait();
-      if (totalActive() >= logicalTimeLimit)
-        this.stop(job.bot, 'timeout').catch(() => {
+      try {
+        if (totalActive() >= logicalTimeLimit)
+          this.stop(job.bot, 'timeout').catch(() => {
+            job.error = 'MODEL_STOP_FAILED';
+          });
+      } catch {
+        budgetFailure();
+        clearInterval(timeout);
+        this.stop(job.bot).catch(() => {
           job.error = 'MODEL_STOP_FAILED';
         });
+      }
     }, 1000);
     const startupFile = path.join(job.privateDir, 'dsh-startup.json');
     const diagnostic = (stage: string, details: Record<string, unknown> = {}) =>
@@ -2536,6 +2709,9 @@ export class ModelRuns {
       );
     const startup = { initialized: false, stage: 'sdk-loading', log: diagnostic };
     try {
+      logicalTimeLimit = job.budget
+        ? this.budgets.view(job.budget.budgetId).policy.activeMs
+        : timeLimit;
       totalActive();
       for (;;) {
         const attempt = job.attemptSummary!.at(-1)!;
@@ -2669,7 +2845,11 @@ export class ModelRuns {
       // Keep queue receipts and admission active until artifacts and the final journal record are complete.
       job.finalizing = true;
       job.activeMs = activeUsed();
-      totalActive();
+      try {
+        totalActive();
+      } catch {
+        budgetFailure();
+      }
       job.attemptActive = false;
       job.insertable = false;
       clearInterval(timeout);
@@ -2744,7 +2924,13 @@ export class ModelRuns {
           job.phase === 'completed' ? 'completed' : job.abort.signal.aborted ? 'stopped' : 'failed';
         currentAttempt.finishedAt = new Date().toISOString();
       }
-      this.budgets.finishRun(job.id);
+      // Ledger storage can fail independently; it must never strand execution ownership or skip native shutdown.
+      try {
+        this.budgets.finishRun(job.id);
+      } catch {
+        budgetFailure();
+      }
+      if (budgetFailed) budgetFailure();
       job.running = false;
       job.imageInputs = undefined;
       job.token = '';
@@ -3007,6 +3193,35 @@ export class ModelRuns {
         throw new Fault('INVALID_ATTEMPT', 403);
       await this.fenceAttempt(job, 'tool');
       result = { accepted: true };
+    } else if (rpc.method === 'goal.resume') {
+      const { grantId, sessionId, goalId, revision, ...extra } = rpc.params ?? {};
+      if (
+        !job.goalGrant ||
+        grantId !== job.goalGrant.id ||
+        sessionId !== job.sessionId ||
+        typeof goalId !== 'string' ||
+        !Number.isSafeInteger(revision) ||
+        Object.keys(extra).length
+      )
+        throw new Fault('GOAL_TARGET_CHANGED', 403);
+      await this.fenceAttempt(job, 'tool');
+      if (
+        this.jobs.get(bot) !== job ||
+        !job.running ||
+        job.abort.signal.aborted ||
+        !job.attemptActive ||
+        authorization !== `Bearer ${job.token}`
+      )
+        throw new Fault('GOAL_RESUME_UNCONFIRMED', 403);
+      result = {
+        accepted: this.budgets.goals.claim(
+          job.goalGrant.id,
+          job.id,
+          String(sessionId),
+          goalId,
+          Number(revision),
+        ),
+      };
     } else if (rpc.method === 'goal.observe') {
       const { sessionId, goal, ...extra } = rpc.params ?? {};
       if (!job.task || sessionId !== job.sessionId || Object.keys(extra).length)
@@ -3017,6 +3232,7 @@ export class ModelRuns {
       if (observed || job.goal || job.goalSession) this.markFence(job, 'tool');
       job.goal = observed;
       job.goalSession = observed !== undefined && observed.phase !== 'complete';
+      this.observeGoalBudget(job);
       await this.persist(job);
       result = { accepted: true };
     } else if (rpc.method === 'statistics.update') {

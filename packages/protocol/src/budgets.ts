@@ -60,7 +60,7 @@ export interface BudgetView {
   scope: BudgetScope;
   rootId: string;
   owner?: import('./index.js').TranscriptScope;
-  continuationIssue?: 'BUDGET_GOAL_CONTINUE_UNAVAILABLE';
+  goalResume?: GoalResumeTarget;
   policy: BudgetPolicy;
   state: 'active' | 'limit-reached' | 'usage-unknown' | 'stopped' | 'closed';
   availability: 'recorded' | 'partial';
@@ -213,7 +213,7 @@ export function isBudgetView(v: unknown): v is BudgetView {
       'scope',
       'rootId',
       'owner',
-      'continuationIssue',
+      'goalResume',
       'policy',
       'state',
       'availability',
@@ -232,8 +232,7 @@ export function isBudgetView(v: unknown): v is BudgetView {
     isBudgetScope(v.scope) &&
     text(v.rootId) &&
     (v.owner === undefined || isTranscriptScope(v.owner)) &&
-    (v.continuationIssue === undefined ||
-      v.continuationIssue === 'BUDGET_GOAL_CONTINUE_UNAVAILABLE') &&
+    (v.goalResume === undefined || isGoalResumeTarget(v.goalResume)) &&
     isBudgetPolicy(v.policy) &&
     ['active', 'limit-reached', 'usage-unknown', 'stopped', 'closed'].includes(String(v.state)) &&
     ['recorded', 'partial'].includes(String(v.availability)) &&
@@ -279,6 +278,7 @@ export interface BudgetConfigureRequest {
   prices: BudgetPrice[];
 }
 export interface BudgetIncreaseRequest {
+  goalResume?: GoalResumeTarget;
   budgetId: string;
   id: string;
   scope: import('./index.js').TranscriptScope;
@@ -286,6 +286,7 @@ export interface BudgetIncreaseRequest {
   policy: BudgetPolicy;
 }
 export type BudgetCommand =
+  | { type: 'budget.goal'; owner: GoalBudgetOwner }
   | { type: 'budget.settings' }
   | { type: 'budget.configure'; request: BudgetConfigureRequest }
   | { type: 'budget.read'; query: import('./index.js').TranscriptQuery }
@@ -295,6 +296,7 @@ export type BudgetCommand =
       scope: import('./index.js').TranscriptScope;
       budget: BudgetScope;
       id: string;
+      goalResume?: GoalResumeTarget;
     };
 export function isBudgetConfigure(v: unknown): v is BudgetConfigureRequest {
   return (
@@ -312,6 +314,7 @@ export function isBudgetConfigure(v: unknown): v is BudgetConfigureRequest {
 
 export function isBudgetCommand(v: unknown): v is BudgetCommand {
   if (!object(v)) return false;
+  if (v.type === 'budget.goal') return exact(v, ['type', 'owner']) && isGoalBudgetOwner(v.owner);
   if (v.type === 'budget.settings') return exact(v, ['type']);
   if (v.type === 'budget.configure')
     return exact(v, ['type', 'request']) && isBudgetConfigure(v.request);
@@ -320,18 +323,86 @@ export function isBudgetCommand(v: unknown): v is BudgetCommand {
     return (
       exact(v, ['type', 'request']) &&
       object(v.request) &&
-      exact(v.request, ['budgetId', 'id', 'scope', 'revision', 'policy']) &&
+      exact(v.request, ['budgetId', 'id', 'scope', 'revision', 'policy', 'goalResume']) &&
       text(v.request.budgetId) &&
       validAgentId(v.request.id) &&
       isTranscriptScope(v.request.scope) &&
       positive(v.request.revision) &&
+      (v.request.goalResume === undefined || isGoalResumeTarget(v.request.goalResume)) &&
       isBudgetPolicy(v.request.policy)
     );
   return (
     v.type === 'budget.continue' &&
-    exact(v, ['type', 'scope', 'budget', 'id']) &&
+    exact(v, ['type', 'scope', 'budget', 'id', 'goalResume']) &&
     isBudgetScope(v.budget) &&
+    (v.goalResume === undefined || isGoalResumeTarget(v.goalResume)) &&
     isTranscriptScope(v.scope) &&
     validAgentId(v.id)
+  );
+}
+
+export interface GoalBudgetOwner {
+  bot: string;
+  chatRevision?: number;
+  conversationId?: string;
+}
+export interface GoalResumeTarget {
+  owner: GoalBudgetOwner;
+  sessionId: string;
+  goalId: string;
+  goalRevision: number;
+  humanEpoch: number;
+  budget?: BudgetScope;
+  historyUnmetered?: true;
+}
+/** Stable identity for durable Human receipts, independent of JSON object key order. */
+export function goalResumeKey(target?: GoalResumeTarget) {
+  return JSON.stringify(
+    target
+      ? [
+          target.owner.bot,
+          target.owner.conversationId ?? null,
+          target.owner.chatRevision ?? null,
+          target.sessionId,
+          target.goalId,
+          target.goalRevision,
+          target.humanEpoch,
+          target.budget?.budgetId ?? null,
+          target.budget?.revision ?? null,
+          target.historyUnmetered === true,
+        ]
+      : null,
+  );
+}
+export function isGoalBudgetOwner(v: unknown): v is GoalBudgetOwner {
+  return (
+    object(v) &&
+    exact(v, ['bot', 'chatRevision', 'conversationId']) &&
+    validAgentId(v.bot) &&
+    (v.conversationId === undefined
+      ? integer(v.chatRevision)
+      : validAgentId(v.conversationId) && v.chatRevision === undefined)
+  );
+}
+export function isGoalResumeTarget(v: unknown): v is GoalResumeTarget {
+  return (
+    object(v) &&
+    exact(v, [
+      'owner',
+      'sessionId',
+      'goalId',
+      'goalRevision',
+      'humanEpoch',
+      'budget',
+      'historyUnmetered',
+    ]) &&
+    isGoalBudgetOwner(v.owner) &&
+    text(v.sessionId) &&
+    validAgentId(v.goalId) &&
+    positive(v.goalRevision) &&
+    integer(v.humanEpoch) &&
+    (v.budget === undefined
+      ? v.historyUnmetered === true
+      : isBudgetScope(v.budget) && v.historyUnmetered === undefined)
   );
 }

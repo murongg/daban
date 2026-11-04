@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { Groups, type GroupReceipt } from './groups.js';
+import { type GroupReceipt, Groups } from './groups.js';
 
 test('explicit quota continuation retries only the failed group stage and preserves completed stages and receipts', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-budget-groups-'));
@@ -39,25 +39,18 @@ test('explicit quota continuation retries only the failed group stage and preser
     await store.tick();
     await store.tick();
     expect(starts).toEqual(['mock-b', 'mock-c']);
-    const resume = Reflect.get(store, 'resumeBudget') as
-      | ((budget: typeof scope, id: string) => Promise<boolean>)
-      | undefined;
-    expect(resume).toBeTypeOf('function');
+    const resume = store.resumeBudget.bind(store);
     failBot = 'mock-a';
-    expect(await resume!.call(store, { ...scope, revision: 2 }, 'synthetic-human-resume')).toBe(
-      true,
-    );
+    expect(await resume({ ...scope, revision: 2 }, 'synthetic-human-resume')).toBe(true);
     await store.tick();
     await store.tick();
     expect(starts).toEqual(['mock-b', 'mock-c', 'mock-c', 'mock-a']);
     expect(retryOf[2]).toBe('run-2');
-    expect(await resume!.call(store, { ...scope, revision: 2 }, 'synthetic-human-resume')).toBe(
-      true,
-    );
+    expect(await resume({ ...scope, revision: 2 }, 'synthetic-human-resume')).toBe(true);
     await store.tick();
     expect(starts).toHaveLength(4);
     failBot = '';
-    await resume!.call(store, { ...scope, revision: 3 }, 'synthetic-human-resume-again');
+    await resume({ ...scope, revision: 3 }, 'synthetic-human-resume-again');
     await store.tick();
     expect(starts).toEqual(['mock-b', 'mock-c', 'mock-c', 'mock-a', 'mock-a']);
   } finally {

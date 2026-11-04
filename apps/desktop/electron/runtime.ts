@@ -1,4 +1,3 @@
-import { isBudgetSettings, isBudgetView, isBudgetScope, isTranscriptScope } from '@daban/protocol';
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
@@ -24,6 +23,9 @@ import {
   isBrowserReceipt,
   isBrowserState,
   isBrowserView,
+  isBudgetScope,
+  isBudgetSettings,
+  isBudgetView,
   isChatAck,
   isChatPage,
   isChatStatus,
@@ -32,6 +34,7 @@ import {
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
+  isGoalResumeTarget,
   isGroup,
   isGroupActionAck,
   isGroupCopyReceipt,
@@ -91,6 +94,7 @@ import {
   isTaskPlan,
   isTranscriptContent,
   isTranscriptPage,
+  isTranscriptScope,
   isWorkCommentCommand,
   isWorkCommentList,
   isWorkCommentReceipt,
@@ -759,6 +763,24 @@ export class RuntimeClient {
     if (command.type.startsWith('budget.')) {
       const captured = structuredClone(command);
       let value: unknown;
+      if (captured.type === 'budget.goal') {
+        const target: unknown = await this.api('/api/budgets/goal', {
+          owner: captured.owner,
+        }).catch((error) => {
+          // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
+          if (error instanceof Error && error.message === 'NOT_FOUND') return null;
+          throw error;
+        });
+        if (target === null) return null;
+        if (
+          !isGoalResumeTarget(target) ||
+          target.owner.bot !== captured.owner.bot ||
+          target.owner.chatRevision !== captured.owner.chatRevision ||
+          target.owner.conversationId !== captured.owner.conversationId
+        )
+          throw new Error('INVALID_GOAL_TARGET');
+        return target;
+      }
       if (captured.type === 'budget.settings') value = await this.api('/api/budgets/settings', {});
       else if (captured.type === 'budget.configure')
         value = await this.api('/api/budgets/configure', captured.request);
@@ -771,6 +793,7 @@ export class RuntimeClient {
           scope: captured.scope,
           budget: captured.budget,
           id: captured.id,
+          ...(captured.goalResume ? { goalResume: captured.goalResume } : {}),
         });
         if (
           !reply ||
