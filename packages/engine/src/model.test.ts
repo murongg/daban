@@ -1421,10 +1421,31 @@ test('DSH profile disables unscoped native tools and registers a scoped tool ser
 });
 
 test('general DSH tasks enable the stock anonymous fetch provider and a shared tool budget', () => {
-  const patch = sdkPatch('http://127.0.0.1:12345', 'chief', 'synthetic-capability', {
-    requestId: 'mock-web',
-    prompt: '读取 https://example.test/',
-  });
+  const patch = sdkPatch(
+    'http://127.0.0.1:12345',
+    'chief',
+    'synthetic-capability',
+    {
+      requestId: 'mock-web',
+      prompt: '读取 https://example.test/',
+    },
+    60,
+    'deepseek-flash',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    {
+      runId: 'mock-web-run',
+      revision: 0,
+      provider: 'brave',
+      available: true,
+      binding: 'mock-search',
+    },
+  );
   const plugins = patch.find((row) => 'insert' in row)!.insert;
   expect.assert(plugins.some((row) => row.name === '@deepseek-ai/dsh-web'));
   expect.assert(plugins.some((row) => row.id === 'web-fetch-http' && row.name.endsWith('/web.js')));
@@ -1438,13 +1459,14 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
     searchTimeoutMs: 30000,
   });
   expect.assert(plugins.some((row) => row.id === 'web-read' && row.name.endsWith('/web-read.js')));
-  const search = plugins.find((row) => row.id === 'web-deepseek-api');
+  const search = plugins.find((row) => row.id === 'host-search');
   expect.assert(search && 'config' in search);
-  expect(search.config).toStrictEqual({
-    apiKeyEnv: 'DEEPSEEK_API_KEY',
-    baseURL: 'https://api.deepseek.com/v1/tools',
-    count: 5,
-    sendOriginalQuestion: false,
+  expect(search.config).toMatchObject({
+    url: 'http://127.0.0.1:12345/mcp/chief',
+    capability: 'synthetic-capability',
+    runId: 'mock-web-run',
+    revision: 0,
+    available: true,
   });
   expect.assert(plugins.some((row) => row.name === '@deepseek-ai/dsh-tool-call-timeout-policy'));
   const budget = plugins.find((row) => row.id === 'daban-budget');
@@ -1606,4 +1628,36 @@ test('enabling Linux retires a native-only SDK context while preserving saved co
     await models.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('task search availability and provider selection come from an independent capture', () => {
+  const capture = {
+    runId: 'mock-search-run',
+    revision: 3,
+    provider: 'brave' as const,
+    available: true,
+    binding: 'mock-binding',
+  };
+  const patch = (available: boolean) =>
+    JSON.stringify(
+      sdkPatch(
+        'http://127.0.0.1:12345',
+        'mock-bot',
+        'mock-capability',
+        { requestId: 'mock-task-search', prompt: 'synthetic' },
+        60,
+        'deepseek-flash',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        { ...capture, available },
+      ),
+    );
+  expect(patch(true)).toContain('daban-host-search');
+  expect(patch(true)).toContain('search-provider.js');
+  expect(patch(false)).toContain('"search":false');
 });

@@ -61,7 +61,14 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
       };
       calls.set(data.callId, trace);
       run.trace.push(trace);
-      if (++run.toolCount > run.limit) run.onLimit?.();
+      // Only search shares a private RPC counter; other native calls must not lend it a free quota slot.
+      const identity = JSON.stringify([session, data.callId]);
+      const alreadyCounted = data.name === 'web_search' && run.countedCalls?.has(identity);
+      if (data.name === 'web_search') {
+        run.countedCalls ??= new Set();
+        run.countedCalls.add(identity);
+      }
+      if (!alreadyCounted && ++run.toolCount > run.limit) run.onLimit?.();
     } else if (
       event.type === 'tool/result' &&
       record(data.message) &&

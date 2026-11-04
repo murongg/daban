@@ -76,6 +76,7 @@ export interface ToolRun {
   bot: string;
   abort: AbortController;
   toolCount: number;
+  countedCalls?: Set<string>;
   limit: number;
   seen: Record<string, number>;
   browserSeen?: BrowserBinding;

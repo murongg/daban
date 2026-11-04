@@ -70,6 +70,8 @@ import { promptCacheId } from './prompt-cache.js';
 import { programmatic } from './ptc.js';
 import { redact, redactStream } from './redaction.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
+import { RunSearch } from './search-run.js';
+import { type SearchCapture, SearchSettings } from './search-settings.js';
 import type { ModelSettings, ResolvedModel } from './settings.js';
 import { SkillDiscovery } from './skill-discovery.js';
 import { invokedSkills } from './skill-provider.js';
@@ -125,8 +127,9 @@ export function sdkPatch(
   cacheKey?: string,
   turnFile?: string,
   office = false,
+  searchConfig?: SearchCapture & { runId: string },
 ) {
-  const search = route ? !!route.searchApiKey : true;
+  const search = searchConfig?.available === true;
   const budget = contextBudget(route?.contextWindow ?? 1000000, route?.maxTokens ?? 8192);
   return [
     {
@@ -322,19 +325,27 @@ export function sdkPatch(
                 name: '@deepseek-ai/dsh-web',
                 config: {
                   fetchProvider: 'http',
-                  ...(search ? { searchProvider: 'deepseek-search-api' } : {}),
+                  ...(search ? { searchProvider: 'daban-host-search' } : {}),
                 },
               },
               ...(search
                 ? [
                     {
-                      id: 'web-deepseek-api',
-                      name: '@deepseek-ai/dsh-web-deepseek-api',
+                      id: 'host-search',
+                      name: new URL('./search-provider.js', import.meta.url).href,
                       config: {
-                        apiKeyEnv: 'DEEPSEEK_API_KEY',
-                        baseURL: 'https://api.deepseek.com/v1/tools',
-                        count: 5,
-                        sendOriginalQuestion: false,
+                        url: `${origin}/mcp/${bot}`,
+                        capability,
+                        sdkFile,
+                        runId: searchConfig!.runId,
+                        revision: searchConfig!.revision,
+                        available: search,
+                        ...(bridge
+                          ? {
+                              socketPath: bridge.socketPath,
+                              certificateFile: bridge.certificateFile,
+                            }
+                          : {}),
                       },
                     },
                   ]
@@ -534,6 +545,8 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  searchCapture?: SearchCapture;
+  searchRun?: RunSearch;
   goalCreated?: boolean;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -610,6 +623,7 @@ interface Rpc {
   params?: Record<string, unknown>;
 }
 interface ModelOptions {
+  search?: SearchSettings;
   nativeOnly?: boolean;
   localComputer?: LocalComputerClient;
   documents?: BundleDocuments;
@@ -632,6 +646,7 @@ export class ModelRuns {
   attachmentPinned?: (owner: string, id: string) => boolean;
   readonly runtime: Desktop | undefined;
   readonly settings: ModelSettings;
+  readonly search: SearchSettings;
   readonly origin: string;
   readonly dir: string;
   readonly tools: AgentTools;
@@ -678,6 +693,7 @@ export class ModelRuns {
     computer = runtime,
     workspace,
     settings,
+    search,
     origin,
     dir,
     Harness,
@@ -694,6 +710,7 @@ export class ModelRuns {
   }: ModelOptions) {
     this.runtime = runtime;
     this.settings = settings;
+    this.search = search ?? new SearchSettings(path.join(dir, 'search.json'), settings);
     this.origin = origin;
     this.dir = dir;
     this.dshLog = new DshLog(path.join(dir, 'dsh-startup.log'));
@@ -1317,6 +1334,14 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
+        ...(job.searchCapture
+          ? {
+              search: {
+                provider: job.searchCapture.provider,
+                revision: job.searchCapture.revision,
+              },
+            }
+          : {}),
         elapsedMs: job.elapsedMs,
         chatRevision: job.chatRevision,
         conversationId: job.conversationId,
@@ -1565,12 +1590,17 @@ export class ModelRuns {
       // Per-Bot choice is captured with the task; it never edits the shared credential or a running job.
       const config = await this.settings.resolve(job.profile?.model);
       job.route = config;
+      job.searchCapture = await this.search.capture();
+      job.searchRun = new RunSearch(this.search, job.searchCapture, job);
       job.model = config.model;
       job.vision = config.vision;
       // Native-only and Linux sessions expose different tools and workspace paths. Keep visible turns, never resume across modes.
       job.binding = this.tools.options.nativeOnly
         ? createHash('sha256').update(`${config.binding}:native-workspace`).digest('hex')
         : config.binding;
+      job.binding = createHash('sha256')
+        .update(`${job.binding}:search:${job.searchCapture.binding}`)
+        .digest('hex');
       // A resumed SDK context must not retain the instructions of a different approval policy.
       if (task?.approvalMode && task.approvalMode !== 'auto')
         job.binding = createHash('sha256')
@@ -1689,6 +1719,7 @@ export class ModelRuns {
             }),
             path.join(job.privateDir, 'turn.json'),
             office,
+            { ...job.searchCapture, runId: job.id },
           ),
         ),
         {
@@ -1823,6 +1854,7 @@ export class ModelRuns {
               !!this.execution,
               !!this.tools.options.nativeOnly,
               job.task.approvalMode,
+              job.searchCapture?.available ? job.searchCapture.provider : undefined,
             ),
           ]
             .filter(Boolean)
@@ -1846,7 +1878,6 @@ export class ModelRuns {
             : {}),
           LANG: 'C.UTF-8',
           DABAN_MODEL_KEY: config.apiKey,
-          ...(config.searchApiKey ? { DEEPSEEK_API_KEY: config.searchApiKey } : {}),
           DSH_SYSTEM_PROMPT: system,
           ...(proxy
             ? { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy }
@@ -2287,7 +2318,30 @@ export class ModelRuns {
       throw new Fault('UNAUTHORIZED', 403);
     if (rpc.id === undefined) return null;
     let result: unknown;
-    if (rpc.method === 'goal.observe') {
+    if (rpc.method === 'search.query') {
+      try {
+        if (!job.task || !job.searchRun) throw new Fault('SEARCH_NOT_CONFIGURED');
+        result = await job.searchRun.query(rpc.id, rpc.params);
+        await this.persist(job);
+        // Persistence can outlive this search authority. Recheck the cached result without another paid dispatch.
+        result = await job.searchRun.query(rpc.id, rpc.params);
+        if (this.jobs.get(bot) !== job || !job.running || authorization !== `Bearer ${job.token}`)
+          throw new Fault('UNAUTHORIZED', 403);
+      } catch (error) {
+        const code = errorCode(error);
+        return {
+          jsonrpc: '2.0',
+          id: rpc.id,
+          error: {
+            code: -32000,
+            message:
+              code && /^(SEARCH_[A-Z_]+|TOOL_LIMIT|UNAUTHORIZED)$/.test(code)
+                ? code
+                : 'SEARCH_UNAVAILABLE',
+          },
+        };
+      }
+    } else if (rpc.method === 'goal.observe') {
       const { sessionId, goal, ...extra } = rpc.params ?? {};
       if (!job.task || sessionId !== job.sessionId || Object.keys(extra).length)
         throw new Fault('INVALID_GOAL_STATE', 400);

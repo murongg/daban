@@ -43,7 +43,6 @@ export interface ResolvedModel {
   contextWindow: number;
   maxTokens: number;
   binding: string;
-  searchApiKey?: string;
   secrets: string[];
 }
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -62,6 +61,9 @@ const legacyConnection = (apiKey: string): PrivateConnection => ({
     maxTokens: 8192,
   })),
 });
+const officialSearch = (item: ModelConnection) =>
+  modelApi(item) === 'openai-completions' &&
+  item.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1';
 const metadata = ({ apiKey: _apiKey, ...connection }: PrivateConnection): ModelConnection =>
   connection;
 const allConnections = (config: PrivateConfig) =>
@@ -104,6 +106,7 @@ const readConfig = async (file: string): Promise<unknown> => {
 };
 
 export class ModelSettings {
+  withConnectionChange?: <T>(connection: ModelConnection, commit: () => Promise<T>) => Promise<T>;
   private writing: Promise<unknown> = Promise.resolve();
   private readonly discovery: ModelDiscovery;
   constructor(
@@ -185,6 +188,20 @@ export class ModelSettings {
   async status(includeConnections = false) {
     return this.publicConfig(await this.privateConfig(), includeConnections);
   }
+  async searchConnection(reference?: string) {
+    const config = await this.privateConfig();
+    if (!config) return undefined;
+    const connections = allConnections(config);
+    const selected = findModel(connections, config.model)?.connection;
+    const connection =
+      reference !== undefined
+        ? connections.find((item) => item.id === reference && officialSearch(item))
+        : selected && officialSearch(selected)
+          ? selected
+          : connections.find((item) => item.id === 'deepseek-official' && officialSearch(item)) ||
+            connections.find(officialSearch);
+    return connection ? { id: connection.id, key: connection.apiKey } : undefined;
+  }
   async resolve(reference?: ModelId): Promise<ResolvedModel> {
     const config = await this.privateConfig();
     if (!config) throw new Fault('MODEL_NOT_CONFIGURED', 400);
@@ -192,14 +209,6 @@ export class ModelSettings {
     const selected = findModel(connections, reference ?? config.model);
     if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
     const { connection, model } = selected;
-    const official = (item: PrivateConnection) =>
-      modelApi(item) === 'openai-completions' &&
-      item.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1';
-    // The configured destination authorizes this key; generated connection IDs do not identify the vendor.
-    const search = official(connection)
-      ? connection
-      : connections.find((item) => item.id === 'deepseek-official' && official(item)) ||
-        connections.find(official);
     return {
       model: modelReference(connection.id, model.id),
       api: modelApi(connection),
@@ -219,9 +228,7 @@ export class ModelSettings {
         modelApi(connection),
         model,
         digest(connection.apiKey),
-        search ? digest(search.apiKey) : null,
       ]),
-      ...(search ? { searchApiKey: search.apiKey } : {}),
       secrets: [...new Set(connections.map((item) => item.apiKey))],
     };
   }
@@ -261,13 +268,16 @@ export class ModelSettings {
         typeof requestedModel === 'string' ? requestedModel : prior?.model || 'deepseek-flash';
       const selected = findModel(connections, model);
       if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
-      return this.persist({
-        apiKey: selected.connection.apiKey,
-        model,
-        provider: selected.connection.id,
-        connections,
-        revision: (prior?.revision || 0) + 1,
-      });
+      const changed = connections.find((item) => item.id === 'deepseek-official')!;
+      const commit = () =>
+        this.persist({
+          apiKey: selected.connection.apiKey,
+          model,
+          provider: selected.connection.id,
+          connections,
+          revision: (prior?.revision || 0) + 1,
+        });
+      return this.withConnectionChange ? this.withConnectionChange(changed, commit) : commit();
     });
   }
   private async probe(connection: PrivateConnection, models: string[]) {
@@ -449,6 +459,8 @@ export class ModelSettings {
     const selected = findModel(connections, value.model);
     if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
     const checked = edited || selected.connection;
+    // Protect legacy search before dispatch, then recheck at commit because a probe can outlive a configuration edit.
+    if (edited) await this.withConnectionChange?.(edited, async () => undefined);
     await this.probe(
       checked,
       value.connection ? checked.models.map((item) => item.id) : [selected.model.id],
@@ -459,14 +471,19 @@ export class ModelSettings {
       // Validation waits on the network; compare again inside the commit owner before replacing any provider.
       if ((current?.revision || 0) !== value.revision)
         throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
-      return this.persist({
-        apiKey: selected.connection.apiKey,
-        model: value.model,
-        provider: selected.connection.id,
-        connections,
-        revision: value.revision + 1,
-        receipt: { id: value.requestId, fingerprint },
-      });
+      const commit = () =>
+        this.persist({
+          apiKey: selected.connection.apiKey,
+          model: value.model,
+          provider: selected.connection.id,
+          connections,
+          revision: value.revision + 1,
+          receipt: { id: value.requestId, fingerprint },
+        });
+      // Search may be re-enabled while validation waits; its owner must cover the model rename, not only a prior check.
+      return edited && this.withConnectionChange
+        ? this.withConnectionChange(edited, commit)
+        : commit();
     });
   }
 }

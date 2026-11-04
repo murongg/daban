@@ -1,4 +1,5 @@
 export const definitiveModelErrors = new Set([
+  'SEARCH_LEGACY_IN_USE',
   'INVALID_CREDENTIAL',
   'INVALID_MODEL_SETTINGS',
   'MODEL_NOT_CONFIGURED',

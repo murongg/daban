@@ -1,17 +1,33 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Interaction } from '@daban/protocol';
 import { ModelRuns } from './model.js';
+import { SearchSettings } from './search-settings.js';
 import { ModelSettings } from './settings.js';
 
 // Manual paid-model check against public documentation, separate from synthetic unit tests.
-export async function acceptSearch(output = '/tmp/daban-search-live.json') {
+export async function acceptSearch(options: {
+  modelFile: string;
+  searchFile: string;
+  sdkFile: string;
+  output: string;
+}) {
+  if (
+    !options ||
+    [options.modelFile, options.searchFile, options.sdkFile, options.output].some(
+      (file) => typeof file !== 'string' || !path.isAbsolute(file),
+    )
+  )
+    throw new Error(
+      'Explicit absolute model, search, SDK and output paths are required for paid acceptance',
+    );
   assert.equal(process.platform, 'linux');
   const directory = await mkdtemp(path.join(tmpdir(), 'daban-search-acceptance-'));
+  const evidenceFile = await open(options.output, 'wx', 0o600);
   let models: ModelRuns | undefined;
   const evidence: Record<string, unknown> = { verified: false, computerAttached: false };
   const server = createServer(async (request, response) => {
@@ -49,8 +65,11 @@ export async function acceptSearch(output = '/tmp/daban-search-live.json') {
     assert.ok(address && typeof address !== 'string');
     const workspace = path.join(directory, 'workspace');
     await mkdir(workspace);
+    const settings = new ModelSettings(options.modelFile);
     models = new ModelRuns({
-      settings: new ModelSettings('/var/lib/bot-prototype/model/credentials.json'),
+      settings,
+      search: new SearchSettings(options.searchFile, settings),
+      sdkFile: options.sdkFile,
       workspace,
       dir: path.join(directory, 'model'),
       origin: `http://127.0.0.1:${address.port}`,
@@ -106,15 +125,20 @@ export async function acceptSearch(output = '/tmp/daban-search-live.json') {
       evidence.lastStatus = models.status().bots.probe;
       evidence.requests = await models.interactions.list();
     }
-    await writeFile(output, JSON.stringify(evidence, null, 2), { mode: 0o600 });
-    await models?.close().catch(() => {});
-    server.closeAllConnections();
-    await new Promise<unknown>((resolve) => server.close(() => resolve(undefined)));
-    await rm(directory, { recursive: true, force: true });
+    try {
+      await evidenceFile.writeFile(JSON.stringify(evidence, null, 2));
+    } finally {
+      await evidenceFile.close();
+      await models?.close().catch(() => {});
+      server.closeAllConnections();
+      await new Promise<unknown>((resolve) => server.close(() => resolve(undefined)));
+      await rm(directory, { recursive: true, force: true });
+    }
   }
   return evidence;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const result = await acceptSearch(process.argv[2]);
+  const [modelFile, searchFile, sdkFile, output] = process.argv.slice(2);
+  const result = await acceptSearch({ modelFile, searchFile, sdkFile, output });
   console.log(JSON.stringify({ verified: result.verified, greeting: result.greeting }));
 }

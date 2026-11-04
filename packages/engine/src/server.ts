@@ -35,6 +35,9 @@ import {
   isNoteCommand,
   isRebootStatus,
   isRecoveryRequest,
+  isSearchCheckRequest,
+  isSearchReceiptQuery,
+  isSearchUpdate,
   isSetupStatus,
   isSkillBinding,
   isSkillContent,
@@ -83,6 +86,7 @@ import { type Browser, createBrowser } from './runtime.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
+import { SearchSettings } from './search-settings.js';
 import { ModelSettings } from './settings.js';
 import { skillHash, writeSkillZip } from './skill-package.js';
 import { type SoftwareBackend, SoftwareClient } from './software.js';
@@ -162,6 +166,7 @@ const recoveryReads = new Set([
   '/api/mcp/bindings',
   '/api/mcp/calls',
   '/api/mcp/receipt',
+  '/api/search/saved',
 ]);
 
 async function body(
@@ -289,6 +294,9 @@ export async function startPrototype({
   if (host && (computers || desktop)) throw new Fault('AGENT_REMOTE_REQUIRED');
   await mkdir(host ? modelDir : profileDir, { recursive: true, mode: 0o700 });
   const settings = new ModelSettings(path.join(modelDir, 'credentials.json'));
+  const searches = new SearchSettings(path.join(modelDir, 'search.json'), settings);
+  // Search configuration is optional; its status endpoint reports corruption without blocking ordinary Host startup.
+  await searches.status().catch(() => undefined);
   const authority = new Authority(path.join(modelDir, 'control-token'));
   const token = authority.token;
   const viewers = new ViewerGrants();
@@ -1409,6 +1417,31 @@ export async function startPrototype({
               return json(res, await schedules.run(data.id, data.requestId));
             throw new Fault('INVALID_SCHEDULE', 400);
           }
+          if (url.pathname.startsWith('/api/search/')) {
+            if (url.search) throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+            const action = url.pathname.slice('/api/search/'.length);
+            if (!['status', 'configure', 'check', 'saved'].includes(action))
+              throw new Fault('NOT_FOUND', 404);
+            if (req.method !== (action === 'status' ? 'GET' : 'POST'))
+              throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (action === 'status') {
+              if (
+                req.headers['transfer-encoding'] ||
+                (req.headers['content-length'] && req.headers['content-length'] !== '0')
+              )
+                throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+              return json(res, await searches.status());
+            }
+            const data = await body(req, 16384);
+            if (action === 'configure' && isSearchUpdate(data))
+              return json(res, await searches.configure(data));
+            if (action === 'check' && isSearchCheckRequest(data))
+              // The Host owns a durably accepted check even if this requesting window or connection closes.
+              return json(res, await searches.check(data));
+            if (action === 'saved' && isSearchReceiptQuery(data))
+              return json(res, await searches.saved(data));
+            throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+          }
           if (url.pathname === '/api/model/settings') {
             if (req.method === 'GET')
               return json(res, await settings.status(url.searchParams.get('catalog') === '1'));
@@ -1474,6 +1507,7 @@ export async function startPrototype({
                       bots: {},
                     }),
               botCapabilities: true,
+              searchSettings: true,
               clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
               ...(host
                 ? {
@@ -1986,6 +2020,7 @@ export async function startPrototype({
         computer: runtime instanceof Computers ? runtime.facade : undefined,
         workspace: files,
         settings,
+        search: searches,
         origin,
         dir: modelDir,
       });
