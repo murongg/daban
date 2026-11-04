@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
+import { secureDirectory } from './private-files.js';
 import { Projects } from './projects.js';
 import { startPrototype } from './server.js';
 import { TaskJournal, validateTask } from './tasks.js';
@@ -24,6 +25,8 @@ test('host task validation preserves an explicit project and rejects malformed a
 
 test('an unavailable project database refuses scoped work while legacy task receipts remain queryable', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-unavailable-'));
+  // Host boot protects the data root before publishing control tokens; these fixtures need the same boundary.
+  await secureDirectory(root);
   await mkdir(path.join(root, 'model'), { recursive: true, mode: 0o700 });
   await writeFile(path.join(root, 'model/projects.sqlite'), 'SYNTHETIC NOT A DATABASE', {
     mode: 0o600,
@@ -65,6 +68,7 @@ test('an unavailable project database refuses scoped work while legacy task rece
 
 test('authenticated project creation keeps content and browser grants independent and receipts durable', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-projects-'));
+  await secureDirectory(root);
   const options = { profileDir: path.join(root, 'profile'), port: 0, computers: true as const };
   let app = await startPrototype(options);
   t.onTestFinished(async () => {
