@@ -13,6 +13,38 @@ import { App } from './App';
 import { Sidebar } from './Sidebar';
 import { restore, storageKey } from './storage';
 
+it.each([
+  ['win32', 'MacIntel', 'Ctrl K'],
+  ['darwin', 'Win32', '⌘ K'],
+  [undefined, 'Win32', 'Ctrl K'],
+  [undefined, 'MacIntel', '⌘ K'],
+  [undefined, 'Linux x86_64', 'Ctrl K'],
+])('shows the search modifier for desktop %s and browser %s', (platform, browser, shortcut) => {
+  const original = Object.getOwnPropertyDescriptor(window, 'daban');
+  const browserPlatform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue(browser);
+  if (platform) Object.defineProperty(window, 'daban', { configurable: true, value: { platform } });
+  else Reflect.deleteProperty(window, 'daban');
+  try {
+    render(
+      <Sidebar
+        state={seedDemoState()}
+        dispatch={vi.fn()}
+        query=""
+        setQuery={vi.fn()}
+        searchRef={createRef<HTMLInputElement>()}
+        onCreate={vi.fn()}
+        open
+        close={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(shortcut, { selector: 'kbd' })).toBeVisible();
+  } finally {
+    browserPlatform.mockRestore();
+    if (original) Object.defineProperty(window, 'daban', original);
+    else Reflect.deleteProperty(window, 'daban');
+  }
+});
+
 it('windows a large Bot collection without mounting every row', () => {
   const restoreViewport = mockViewport();
   try {

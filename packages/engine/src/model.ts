@@ -482,7 +482,8 @@ export function editorShowsFile(
   file: string,
   home = homedir(),
 ) {
-  const abbreviated = file.startsWith(home + path.sep) ? `~${file.slice(home.length)}` : file;
+  // Editor titles contain Linux guest paths even when the model host runs on Windows.
+  const abbreviated = file.startsWith(home + path.posix.sep) ? `~${file.slice(home.length)}` : file;
   return windows.some(
     (window) =>
       /mousepad/i.test(window.class) &&
@@ -2164,13 +2165,25 @@ export class ModelRuns {
           );
           if (context) job.prompt = context + '\n\n' + job.prompt;
         }
+        const unfinished = () =>
+          !job.goal && !job.planning && job.plan?.some((item) => item.status !== 'completed');
         const runTurn = async (id: string, input: Parameters<HarnessSession['run']>[0]) => {
           const file = path.join(job.privateDir, 'turn.json');
           // The trusted publisher captures this before generating frames; atomic replacement prevents torn reads.
           await writeFile(`${file}.next`, JSON.stringify({ id }), { mode: 0o600 });
           await rename(`${file}.next`, file);
           job.abort.signal.throwIfAborted();
-          return session.run(input, observe);
+          let result = await session.run(input, observe);
+          // Continue in the same turn so cancellation, ownership and the shared tool/time budgets still apply.
+          for (let attempt = 0; attempt < 2 && unfinished(); attempt++) {
+            job.abort.signal.throwIfAborted();
+            if (job.inserts.some((item) => !item.done && item.id !== id)) break;
+            result = await session.run(
+              'Your execution plan still has unfinished items. Review the current human request and actual results; continue authorized unfinished work from its current state, without replaying completed effects. Verify every requested deliverable and quantity before marking plan items completed. If blocked or awaiting required human input, explain the blocker honestly; never mark unfinished work completed just to end the turn. Do not create additional work or bypass refusals, takeover, budgets or tool permissions.',
+              observe,
+            );
+          }
+          return result;
         };
         let result = await runTurn(
           job.turns![0].id,
@@ -2208,6 +2221,10 @@ export class ModelRuns {
         job.result = complete(result.finalResponse);
         job.phase = job.result ? 'completed' : 'failed';
         if (!job.result) job.error = 'MODEL_EMPTY_RESULT';
+        else if (unfinished()) {
+          job.phase = 'failed';
+          job.error = 'TASK_INCOMPLETE';
+        }
         const goalIntent = goalCommand(job.task.prompt);
         if (
           goalIntent &&

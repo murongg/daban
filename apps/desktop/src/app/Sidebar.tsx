@@ -63,6 +63,8 @@ export function Sidebar({
 }) {
   useLocale();
   const runtime = useRuntime();
+  const platform = window.daban?.platform ?? navigator.platform;
+  const searchShortcut = platform === 'darwin' || platform.startsWith('Mac') ? '⌘ K' : 'Ctrl K';
   const [menu, setMenu] = useState<{
     kind: 'bot' | 'section';
     id: string;
@@ -289,7 +291,7 @@ export function Sidebar({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <kbd>⌘ K</kbd>
+          <kbd>{searchShortcut}</kbd>
         </div>
         <div className="nav-main">
           <button

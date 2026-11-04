@@ -13,6 +13,7 @@ import {
   modelReference,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
+import { privateMetadata, secureDirectory } from './private-files.js';
 import { ModelSettings } from './settings.js';
 
 test('native Claude discovery uses its Messages API credential and protocol survives persistence', async () => {
@@ -303,6 +304,7 @@ test('the configured official model survives writes and rejects unsupported mode
 test('model credentials are write-only in public status and persist with private permissions', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-model-settings-'));
   try {
+    await secureDirectory(dir);
     const settings = new ModelSettings(path.join(dir, 'credentials.json'));
     expect((await settings.status()).configured).toBe(false);
     const key = 'synthetic-key-for-unit-tests';
@@ -312,7 +314,8 @@ test('model credentials are write-only in public status and persist with private
     expect(state.model).toBe('deepseek-flash');
     expect(JSON.stringify(state).includes(key)).toBe(false);
     expect((await settings.privateConfig())?.apiKey).toBe(key);
-    expect((await stat(path.join(dir, 'credentials.json'))).mode & 0o777).toBe(0o600);
+    const file = path.join(dir, 'credentials.json');
+    expect(await privateMetadata(file, await stat(file), 0o600)).toBe(true);
     await expect(settings.save({ apiKey: 'bad\ncredential' })).rejects.toMatchObject({
       code: 'INVALID_CREDENTIAL',
     });

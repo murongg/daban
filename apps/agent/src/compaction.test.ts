@@ -278,7 +278,7 @@ for (const needsSummary of [false, true])
       dataRoot: root,
       socketPath:
         process.platform === 'win32'
-          ? String.raw`\\.\pipe\daban-context-${scope.slice(0, 24)}`
+          ? String.raw`\\.\pipe\daban-agent-${scope.slice(0, 24)}`
           : path.join(root, 'a.sock'),
       scope,
       sdkFile: resolveSdk(),
