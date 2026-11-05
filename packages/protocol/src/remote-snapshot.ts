@@ -1,6 +1,6 @@
 import {
   type Group,
-  isAutomationNotice,
+  isAutomationSource,
   isBotProfile,
   isBrowserState,
   isChatPage,
@@ -33,7 +33,6 @@ import {
   isSoftwareState,
   isTaskPlan,
   isWorkStatus,
-  legacySchedule,
   type RuntimeFile,
   type RuntimeSnapshot,
   type RuntimeTask,
@@ -109,6 +108,117 @@ function basicApprovalReply(method: string, value: unknown): unknown {
   return value;
 }
 
+function retiredMonitor(value: unknown) {
+  if (
+    !object(value) ||
+    !exact(value, [
+      'configRevision',
+      'policy',
+      'initialized',
+      'cursor',
+      'committed',
+      'candidate',
+      'count',
+      'nextPollAt',
+      'error',
+    ])
+  )
+    return false;
+  const policy = value.policy;
+  return (
+    integer(value.configRevision, 1) &&
+    object(policy) &&
+    ((policy.kind === 'all' && exact(policy, ['kind'])) ||
+      (policy.kind === 'changes' &&
+        exact(policy, ['kind', 'signalPath']) &&
+        text(policy.signalPath, 512))) &&
+    typeof value.initialized === 'boolean' &&
+    integer(value.cursor) &&
+    integer(value.count) &&
+    Number(value.count) <= 2 &&
+    optional(value.committed, (item) => typeof item === 'string' && /^[a-f0-9]{64}$/.test(item)) &&
+    optional(value.candidate, (item) => typeof item === 'string' && /^[a-f0-9]{64}$/.test(item)) &&
+    optional(
+      value.nextPollAt,
+      (item) => typeof item === 'string' && Number.isFinite(Date.parse(item)),
+    ) &&
+    optional(value.error, (item) => typeof item === 'string' && /^[A-Z_]{1,100}$/.test(item))
+  );
+}
+function retiredNotice(value: unknown) {
+  return (
+    object(value) &&
+    exact(value, [
+      'kind',
+      'id',
+      'bot',
+      'schedule',
+      'phase',
+      'reason',
+      'runId',
+      'code',
+      'firing',
+      'createdAt',
+    ]) &&
+    value.kind === 'automation' &&
+    validAgentId(value.id) &&
+    validAgentId(value.bot) &&
+    validAgentId(value.schedule) &&
+    typeof value.phase === 'string' &&
+    ['completed', 'failed', 'interrupted'].includes(value.phase) &&
+    typeof value.reason === 'string' &&
+    ['changed', 'fault', 'recovered'].includes(value.reason) &&
+    optional(value.runId, validAgentId) &&
+    optional(value.firing, validAgentId) &&
+    optional(value.code, (item) => typeof item === 'string' && /^[A-Z_]{1,100}$/.test(item)) &&
+    optional(
+      value.createdAt,
+      (item) => typeof item === 'string' && Number.isFinite(Date.parse(item)),
+    )
+  );
+}
+function basicFiring(value: unknown): unknown {
+  if (!object(value)) return value;
+  const { source, monitor, ...firing } = value;
+  if (
+    (source !== undefined && !isAutomationSource(source)) ||
+    (monitor !== undefined &&
+      (typeof monitor !== 'string' ||
+        !['all', 'baseline', 'unchanged', 'changed', 'fault', 'recovered'].includes(monitor)))
+  )
+    return value;
+  return firing;
+}
+function fileSchedule(value: unknown) {
+  return object(value) && object(value.rule) && value.rule.kind === 'file';
+}
+function basicSchedule(value: unknown): unknown {
+  if (!object(value)) return value;
+  const { automation, history, ...schedule } = value;
+  if (automation !== undefined && !retiredMonitor(automation)) return value;
+  return { ...schedule, history: Array.isArray(history) ? history.map(basicFiring) : history };
+}
+function basicSchedules(value: unknown): unknown {
+  if (!object(value) || !Array.isArray(value.items)) return value;
+  const { automation, ...status } = value;
+  if (
+    automation !== undefined &&
+    (!object(automation) ||
+      !exact(automation, ['changes', 'files', 'error']) ||
+      typeof automation.changes !== 'boolean' ||
+      typeof automation.files !== 'boolean' ||
+      !optional(automation.error, text))
+  )
+    return value;
+  const retired = value.items.some(fileSchedule);
+  // Old file rules are unavailable, never reinterpreted as ordinary time rules. Other schedules remain usable.
+  return {
+    ...status,
+    items: value.items.filter((item) => !fileSchedule(item)).map(basicSchedule),
+    ...(retired ? { error: 'SCHEDULE_UNAVAILABLE' } : {}),
+  };
+}
+
 export function remoteReplyFor(
   method: string,
   value: unknown,
@@ -125,6 +235,10 @@ export function remoteReplyFor(
   if (method.startsWith('search.') && formats.searchSettings !== true)
     throw Error('RUNTIME_TOO_OLD');
   value = basicApprovalReply(method, value);
+  if (method.startsWith('schedule.')) {
+    if (fileSchedule(value)) throw Error('SCHEDULE_NOT_FOUND');
+    value = object(value) && 'rule' in value ? basicSchedule(value) : basicFiring(value);
+  }
   if (schema === 2) return value;
   if (isModelStatus(value)) return legacyModel({ ...value });
   if (isChatPage(value)) return { ...value, items: value.items.map(legacySummary) };
@@ -147,10 +261,6 @@ export function remoteReplyFor(
         : {}),
     };
   if (object(value) && isGroup(value.group)) return { ...value, group: legacyGroup(value.group) };
-  if (isSchedule(value)) {
-    if (value.rule.kind === 'file') throw Error('AUTOMATION_UPGRADE_REQUIRED');
-    return legacySchedule(value);
-  }
   if (method.startsWith('files.')) {
     if (Array.isArray(value) && value.every(isRuntimeFileMetadata)) return legacyFiles(value);
     if (object(value) && value.project !== undefined) throw Error('REMOTE_SCHEMA_UPGRADE_REQUIRED');
@@ -227,6 +337,12 @@ export function remoteSnapshotFor(
 ): unknown {
   if (!object(value)) return value;
   const wire = { ...value };
+  if (value.schedules !== undefined) wire.schedules = basicSchedules(value.schedules);
+  if (object(value.notices) && Array.isArray(value.notices.items))
+    wire.notices = {
+      ...value.notices,
+      items: value.notices.items.filter((item) => !retiredNotice(item)),
+    };
   // Only negotiated additions are omitted. Unknown fields still reach the strict consumer validator and are rejected.
   for (const key of snapshotCapabilityKeys) if (accept[key] !== 1) delete wire[key];
   if (formats.searchSettings !== true) delete wire.searchSettings;
@@ -256,20 +372,6 @@ export function remoteSnapshotFor(
           isGroup(item) ? legacyGroup(item) : item,
         ),
       };
-    if (object(value.notices) && Array.isArray(value.notices.items))
-      wire.notices = {
-        ...value.notices,
-        items: value.notices.items.filter((item: unknown) => !isAutomationNotice(item)),
-      };
-    if (object(value.schedules) && Array.isArray(value.schedules.items)) {
-      const { automation: _automation, ...schedules } = value.schedules;
-      wire.schedules = {
-        ...schedules,
-        items: value.schedules.items
-          .filter((item: unknown) => !isSchedule(item) || item.rule.kind !== 'file')
-          .map((item: unknown) => (isSchedule(item) ? legacySchedule(item) : item)),
-      };
-    }
   }
   return wire;
 }
@@ -530,19 +632,10 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
       value.schedules,
       (schedules) =>
         object(schedules) &&
-        exact(schedules, ['available', 'items', 'error', 'automation']) &&
+        exact(schedules, ['available', 'items', 'error']) &&
         typeof schedules.available === 'boolean' &&
         array(schedules.items, isSchedule) &&
-        optional(schedules.error, text) &&
-        optional(
-          schedules.automation,
-          (automation) =>
-            object(automation) &&
-            exact(automation, ['changes', 'files', 'error']) &&
-            typeof automation.changes === 'boolean' &&
-            typeof automation.files === 'boolean' &&
-            optional(automation.error, text),
-        ),
+        optional(schedules.error, text),
     ) &&
     optional(
       value.knowledge,

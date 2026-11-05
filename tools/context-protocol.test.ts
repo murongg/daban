@@ -302,7 +302,7 @@ test('legacy snapshots omit unsupported scoped locators and preserve archived gr
       ],
     },
   };
-  expect(isRemoteSnapshot(snapshot)).toBe(true);
+  expect(isRemoteSnapshot(remoteSnapshotFor(snapshot, {}, 2))).toBe(true);
   const legacy = remoteSnapshotFor(snapshot) as typeof snapshot;
   expect(legacy.agents[scope.bot].files).toEqual([file]);
   expect(legacy.agents[scope.bot].history[0].files).toEqual([file]);
@@ -311,9 +311,12 @@ test('legacy snapshots omit unsupported scoped locators and preserve archived gr
   expect(legacy.groups.items[0].archived).toBe(true);
   expect(legacy.notices.items).toEqual([]);
   expect(legacy.schedules.items).toEqual([{ ...time, automation: undefined }]);
-  expect(remoteSnapshotFor(snapshot, {}, 2)).toEqual(snapshot);
-  expect(() => remoteReplyFor('schedule.get', fileSchedule)).toThrow('AUTOMATION_UPGRADE_REQUIRED');
-  expect(remoteReplyFor('schedule.get', fileSchedule, {}, 2)).toEqual(fileSchedule);
+  const current = remoteSnapshotFor(snapshot, {}, 2) as typeof snapshot;
+  expect(current.agents[scope.bot].files).toEqual([file, scoped]);
+  expect(current.schedules.items).toEqual([{ ...time, automation: undefined }]);
+  expect(current.notices.items).toEqual([]);
+  expect(() => remoteReplyFor('schedule.get', fileSchedule)).toThrow('SCHEDULE_NOT_FOUND');
+  expect(() => remoteReplyFor('schedule.get', fileSchedule, {}, 2)).toThrow('SCHEDULE_NOT_FOUND');
   expect(() => remoteReplyFor('files.read', { ...scoped, content: 'SYNTHETIC CONTENT' })).toThrow(
     'REMOTE_SCHEMA_UPGRADE_REQUIRED',
   );
@@ -329,7 +332,7 @@ test('legacy snapshots omit unsupported scoped locators and preserve archived gr
   expect(remoteReplyFor('group.read', group)).toEqual({ ...group, project: undefined });
 });
 
-test('validates the current task and automation metadata as closed public values', () => {
+test('validates current task metadata and the closed old schedule read view independently', () => {
   const snapshot = disconnected('ready');
   const task = {
     phase: 'completed',
@@ -366,17 +369,19 @@ test('validates the current task and automation metadata as closed public values
   ])
     expect(isRemoteSnapshot({ ...snapshot, agents: { 'mock-bot': invalid } })).toBe(false);
   expect(
-    isRemoteSnapshot({
-      ...snapshot,
-      schedules: { available: true, items: [], automation: { changes: true, files: true } },
-    }),
+    isRemoteSnapshot(
+      remoteReplyFor('status', {
+        ...snapshot,
+        schedules: { available: true, items: [], automation: { changes: true, files: true } },
+      }),
+    ),
   ).toBe(true);
-  expect(
-    isRemoteSnapshot({
+  expect(() =>
+    remoteReplyFor('status', {
       ...snapshot,
       schedules: { available: true, items: [], automation: { changes: 'true', files: true } },
     }),
-  ).toBe(false);
+  ).toThrow('REMOTE_INVALID_SNAPSHOT');
 });
 
 const capture = (): ContextCapture => ({

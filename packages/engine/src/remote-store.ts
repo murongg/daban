@@ -25,7 +25,6 @@ const observations = new Set([
   'context.source',
   'model.saved',
   'goal.target',
-  'schedule.receipt',
   'local.status',
   'local.connect',
   'local.pause',

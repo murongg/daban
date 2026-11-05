@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { disconnected, parseRuntimeCommand, type RuntimeSnapshot } from '@daban/protocol';
+import {
+  disconnected,
+  parseRuntimeCommand,
+  type RuntimeSnapshot,
+  type SnapshotConsumer,
+} from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { RuntimeClient } from './client.js';
 import { secureDirectory } from './private-files.js';
@@ -166,21 +171,35 @@ test('Goal target reads refuse a different owner and only a missing endpoint has
 });
 
 test('consumer formatting is immutable per invoke and cannot leak between concurrent peers', async () => {
-  const headers: (string | null)[] = [];
+  const status = {
+    revision: 1,
+    checkRevision: 0,
+    enabled: true,
+    provider: 'duckduckgo',
+    credentialConfigured: false,
+    credentialSource: 'none',
+    health: 'unchecked',
+  };
+  const fetcher = vi.fn(async () => Response.json(status));
   const client = new RuntimeClient({
     origin: 'http://127.0.0.1:12345',
     tokenProvider: async () => 'a'.repeat(64),
-    fetcher: async (_url, options) => {
-      headers.push(new Headers(options?.headers).get('x-daban-automation'));
-      await Promise.resolve();
-      return Response.json([]);
-    },
+    fetcher,
   });
-  await Promise.all([
-    client.invoke({ type: 'files.list' }, 1),
-    client.invoke({ type: 'files.list' }, 2),
-  ]);
-  expect(headers.sort()).toEqual([null, 'schedule-automation-v1'].sort());
+  let release = () => {};
+  vi.spyOn(client, 'status').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = () => resolve({ ...disconnected('ready'), searchSettings: true });
+      }),
+  );
+  const consumer: SnapshotConsumer = { schema: 2, formats: { searchSettings: true } };
+  const first = client.invoke({ type: 'search.status' }, consumer);
+  consumer.formats!.searchSettings = undefined;
+  await expect(client.invoke({ type: 'search.status' }, 2)).rejects.toThrow('RUNTIME_TOO_OLD');
+  release();
+  expect(await first).toEqual(status);
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
 test('real Host state normalization retains capability and reads legacy records without starting work', async () => {
