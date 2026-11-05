@@ -1,5 +1,6 @@
 import {
   isApprovalMode,
+  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -88,6 +89,7 @@ export function safeRelative(value: unknown): value is string {
   );
 }
 export function parseCommand(value: unknown): RuntimeCommand {
+  if (isApprovalRulesCommand(value)) return value;
   if (!object(value) || typeof value.type !== 'string') return fail();
   if (isBotTemplateCommand(value)) return value;
   if (isAutomationCommand(value)) return value;
