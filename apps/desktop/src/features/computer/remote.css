@@ -19,6 +19,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.remote-selector[data-variant="header"] {
+  width: auto;
+  max-width: 220px;
+  margin: 0;
+  padding: 8px 10px;
+  border-color: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.remote-selector[data-variant="header"]:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
 .dialog.remote-dialog {
   width: 560px;
 }
@@ -173,24 +186,7 @@
 .remote-pair-request > svg {
   color: var(--muted);
 }
-.onboarding-remote {
-  position: fixed;
-  top: 56px;
-  right: 24px;
-  z-index: 5;
-  width: 230px;
-}
-.onboarding-remote .remote-selector {
-  width: 100%;
-  margin: 0;
-  background: var(--canvas);
-}
 @media (max-width: 760px) {
-  .onboarding-remote {
-    top: 48px;
-    right: 16px;
-    width: 200px;
-  }
   .remote-device-row {
     flex-wrap: wrap;
   }

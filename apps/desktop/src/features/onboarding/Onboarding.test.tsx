@@ -8,7 +8,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -292,7 +292,7 @@ it('bypasses onboarding for configured users and does not remount their workspac
   expect(screen.queryByRole('heading', { name: '连接你的第一个模型' })).not.toBeInTheDocument();
 });
 
-it('offers remote connection before configuring a local model', async () => {
+it('switches computers from the setup header without losing a model draft', async () => {
   const local = connect(snapshot());
   const state: RemoteState = {
     selected: null,
@@ -309,7 +309,17 @@ it('offers remote connection before configuring a local model', async () => {
   });
   render(<App />);
   await screen.findByRole('heading', { name: '连接你的第一个模型' });
-  await userEvent.click(await screen.findByRole('button', { name: '连接另一台电脑' }));
+  const computer = await within(screen.getByRole('banner')).findByRole('button', {
+    name: '当前电脑：本机运行',
+  });
+  const key = screen.getByLabelText('API Key');
+  await userEvent.type(key, 'SYNTHETIC-ONBOARDING-DRAFT');
+  await userEvent.click(computer);
   expect(screen.getByRole('dialog', { name: '远程电脑' })).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '连接另一台电脑' }));
+  expect(screen.getByRole('textbox', { name: '连接链接' })).toHaveFocus();
+  await userEvent.keyboard('{Escape}');
+  expect(key).toHaveValue('SYNTHETIC-ONBOARDING-DRAFT');
+  expect(computer).toHaveFocus();
   expect(local.writes).toHaveLength(0);
 });

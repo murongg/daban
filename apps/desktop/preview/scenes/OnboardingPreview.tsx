@@ -1,3 +1,4 @@
+import type { RemoteBridge, RemoteState } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import { App } from '../../src/app/App';
 import { clientCache } from '../../src/app/cache';
@@ -68,6 +69,27 @@ if (query.get('mode') === 'legacy') {
 }
 Object.defineProperty(window, 'daban', {
   configurable: true,
-  value: { platform: 'darwin', runtime: bridge },
+  value: {
+    platform: 'darwin',
+    runtime: bridge,
+    remote: {
+      invoke: async (command) => {
+        if (command.type !== 'status') throw Error('REMOTE_PREVIEW_ONLY');
+        return {
+          selected: null,
+          identity: {
+            id: 'a'.repeat(64),
+            publicKey: 'A'.repeat(59),
+            name: 'Synthetic onboarding computer',
+          },
+          hosting: false,
+          server: '',
+          hosts: [],
+          pending: [],
+        } satisfies RemoteState;
+      },
+      subscribe: () => () => {},
+    } satisfies RemoteBridge,
+  },
 });
 createRoot(document.getElementById('root')!).render(<App />);

@@ -1,5 +1,15 @@
 import { parseRemoteInvitation } from '@daban/protocol';
-import { ArrowLeft, Check, Copy, Link, Monitor, Plus, ShieldCheck } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  Copy,
+  HardDrive,
+  Link,
+  Monitor,
+  Plus,
+  ShieldCheck,
+} from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useRemote } from '../../app/Remote';
 import { Dialog } from '../../components/controls/Dialog';
@@ -7,7 +17,7 @@ import { t, useLocale } from '../../i18n/locale';
 import './remote.css';
 
 type Page = 'devices' | 'join' | 'share';
-export function RemoteButton({ label }: { label?: string }) {
+export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'header' }) {
   useLocale();
   const remote = useRemote();
   const [open, setOpen] = useState(false),
@@ -37,7 +47,8 @@ export function RemoteButton({ label }: { label?: string }) {
       </span>
     ) : null;
   const selected = state.hosts.find((host) => host.identity.id === state.selected);
-  const name = selected?.identity.name ?? t('remote.local');
+  const name =
+    selected?.identity.name ?? t(variant === 'header' ? 'setup.runningLocally' : 'remote.local');
   function close() {
     intent.current++;
     setOpen(false);
@@ -119,15 +130,16 @@ export function RemoteButton({ label }: { label?: string }) {
       <button
         type="button"
         className="remote-selector"
-        aria-label={label ?? t('remote.current', { 0: name })}
+        data-variant={variant}
+        aria-label={t('remote.current', { 0: name })}
         onClick={() => {
           navigate('devices');
           setOpen(true);
         }}
       >
-        <Monitor size={15} />
-        <span>{label ?? name}</span>
-        <Plus size={13} />
+        {variant === 'header' && !selected ? <HardDrive size={15} /> : <Monitor size={15} />}
+        <span>{name}</span>
+        {variant === 'header' ? <ChevronDown size={13} /> : <Plus size={13} />}
       </button>
       {open && (
         <Dialog title={t('remote.title')} onClose={close} className="remote-dialog">

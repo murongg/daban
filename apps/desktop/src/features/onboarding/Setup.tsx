@@ -10,8 +10,10 @@ import {
   Pause,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useRemote } from '../../app/Remote';
 import { useRuntime } from '../../app/Runtime';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
+import { RemoteButton } from '../computer/Remote';
 import { Language } from '../settings/Language';
 
 const linuxSteps = [
@@ -74,6 +76,7 @@ const errors: Record<string, MessageKey> = {
 };
 export function SetupHeader() {
   useLocale();
+  const remote = useRemote();
   return (
     <header className="setup-header" data-platform={window.daban?.platform}>
       <span className="setup-brand">
@@ -82,10 +85,14 @@ export function SetupHeader() {
       </span>
       <div className="setup-tools">
         <Language />
-        <span className="setup-local">
-          <HardDrive size={15} />
-          {t('setup.runningLocally')}
-        </span>
+        {remote.state ? (
+          <RemoteButton variant="header" />
+        ) : (
+          <span className="setup-local">
+            <HardDrive size={15} />
+            {t('setup.runningLocally')}
+          </span>
+        )}
       </div>
     </header>
   );

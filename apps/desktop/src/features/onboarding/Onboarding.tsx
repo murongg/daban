@@ -30,7 +30,7 @@ const startupLabels: Partial<Record<SetupPhase, MessageKey>> = {
   starting: 'setup.startingLinuxWillConnectAutomaticallyWhenReady',
   connecting: 'setup.connectingLocalServicesOpeningWorkspace',
 };
-export function Onboarding({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+export function Onboarding({ children }: { children: ReactNode }) {
   useLocale();
   const runtime = useRuntime();
   const snapshot = runtime.snapshot;
@@ -91,30 +91,23 @@ export function Onboarding({ children, actions }: { children: ReactNode; actions
     }
   }
   if (stage === 'workspace') return children;
-  const content =
-    stage === 'models' ? (
-      <ModelSetup
-        onComplete={() => setStage('workspace')}
-        reconnect={reconnect}
-        retrying={retrying}
-        error={error}
-      />
-    ) : snapshot.setup?.required && snapshot.setup.target !== 'linux' ? (
-      <Setup />
-    ) : (
-      <StartupStatus
-        snapshot={snapshot}
-        retrying={retrying}
-        error={error}
-        reconnect={reconnect}
-        enter={() => setStage('workspace')}
-      />
-    );
-  return (
-    <>
-      {actions && <div className="onboarding-remote">{actions}</div>}
-      {content}
-    </>
+  return stage === 'models' ? (
+    <ModelSetup
+      onComplete={() => setStage('workspace')}
+      reconnect={reconnect}
+      retrying={retrying}
+      error={error}
+    />
+  ) : snapshot.setup?.required && snapshot.setup.target !== 'linux' ? (
+    <Setup />
+  ) : (
+    <StartupStatus
+      snapshot={snapshot}
+      retrying={retrying}
+      error={error}
+      reconnect={reconnect}
+      enter={() => setStage('workspace')}
+    />
   );
 }
 function StartupStatus({
