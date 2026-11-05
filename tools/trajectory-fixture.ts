@@ -99,12 +99,15 @@ export async function readTrajectoryArtifact(
     const opened = await handle.stat({ bigint: true });
     if (!opened.isFile() || !unchanged(before, opened)) return unknown('changed');
     const bytes = await read(handle);
+    // Some filesystems defer same-size rewrite timestamps; compare the bytes through the same handle too.
+    const confirmed = await readBounded(handle);
     const after = await handle.stat({ bigint: true });
     const current = await lstat(file, { bigint: true });
     // A pathname or same-sized rewrite cannot certify bytes read through a different file identity.
     if (
       !unchanged(opened, after) ||
       !unchanged(opened, current) ||
+      !bytes.equals(confirmed) ||
       BigInt(bytes.length) !== opened.size
     )
       return unknown('changed');

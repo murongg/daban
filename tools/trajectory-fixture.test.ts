@@ -385,3 +385,13 @@ test('artifact read errors do not reveal filesystem contents', async () => {
   expect(result).toStrictEqual({ path: 'report.txt', state: 'unknown', reason: 'unsafe' });
   expect(JSON.stringify(result)).not.toContain('PRIVATE VALUE');
 });
+
+test('read bytes that disagree with the current file stay unknown even when metadata matches', async () => {
+  const root = await directory();
+  await writeFile(path.join(root, 'coarse-time.txt'), 'SYNTHETIC-A');
+  // Model a rewrite that the filesystem timestamp cannot distinguish from the original read.
+  const result = await readTrajectoryArtifact(root, 'coarse-time.txt', async () =>
+    Buffer.from('SYNTHETIC-B'),
+  );
+  expect(result).toStrictEqual({ path: 'coarse-time.txt', state: 'unknown', reason: 'changed' });
+});
