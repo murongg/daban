@@ -92,7 +92,7 @@ test('sign-in deliberately opens a dialog, clears the secret and updates the acc
   render(<Gallery fetcher={fetcher} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
   const dialog = await screen.findByRole('dialog');
-  const token = screen.getByLabelText('Access token', { exact: true });
+  const token = await screen.findByLabelText('Access token', { exact: true });
   fireEvent.change(token, { target: { value: 'SYNTHETIC LOGIN TOKEN' } });
   fireEvent.submit(dialog.querySelector('form')!);
   await screen.findByText('mock-admin');
@@ -204,7 +204,7 @@ test('a late initial session response cannot replace a newer sign-in', async () 
   });
   render(<Gallery fetcher={fetcher} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
-  fireEvent.change(screen.getByLabelText('Access token'), {
+  fireEvent.change(await screen.findByLabelText('Access token'), {
     target: { value: 'SYNTHETIC NEW TOKEN' },
   });
   fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);

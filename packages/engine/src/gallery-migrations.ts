@@ -29,4 +29,22 @@ export const migrations: Migration[] = [
     hash: '13c945ae621143522b724febb994dd9a50946cab6c27139f4a4404c443932c4e',
     name: '20261104071427_concurrency',
   },
+  {
+    sql: [
+      'CREATE TABLE `gallery_auth_accounts` (\n\t`id` text PRIMARY KEY,\n\t`account_id` text NOT NULL,\n\t`provider_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`access_token` text,\n\t`refresh_token` text,\n\t`id_token` text,\n\t`access_token_expires_at` integer,\n\t`refresh_token_expires_at` integer,\n\t`scope` text,\n\t`password` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tCONSTRAINT `fk_gallery_auth_accounts_user_id_gallery_auth_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `gallery_auth_users`(`id`) ON DELETE CASCADE\n);\n',
+      '\nCREATE TABLE `gallery_auth_sessions` (\n\t`id` text PRIMARY KEY,\n\t`token` text NOT NULL UNIQUE,\n\t`user_id` text NOT NULL,\n\t`expires_at` integer NOT NULL,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`ip_address` text,\n\t`user_agent` text,\n\tCONSTRAINT `fk_gallery_auth_sessions_user_id_gallery_auth_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `gallery_auth_users`(`id`) ON DELETE CASCADE\n);\n',
+      '\nCREATE TABLE `gallery_namespaces` (\n\t`namespace` text PRIMARY KEY,\n\t`user_id` text UNIQUE\n);\n',
+      '\nCREATE TABLE `gallery_auth_rate_limits` (\n\t`id` text PRIMARY KEY,\n\t`key` text NOT NULL UNIQUE,\n\t`count` integer NOT NULL,\n\t`last_request` integer NOT NULL\n);\n',
+      '\nCREATE TABLE `gallery_auth_users` (\n\t`id` text PRIMARY KEY,\n\t`name` text NOT NULL,\n\t`email` text NOT NULL UNIQUE,\n\t`email_verified` integer DEFAULT false NOT NULL,\n\t`image` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL\n);\n',
+      '\nCREATE TABLE `gallery_auth_verifications` (\n\t`id` text PRIMARY KEY,\n\t`identifier` text NOT NULL,\n\t`value` text NOT NULL,\n\t`expires_at` integer NOT NULL,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL\n);\n',
+      '\nCREATE UNIQUE INDEX `gallery_auth_provider_account` ON `gallery_auth_accounts` (`provider_id`,`account_id`);',
+      '\nCREATE INDEX `gallery_auth_account_user` ON `gallery_auth_accounts` (`user_id`);',
+      '\nCREATE INDEX `gallery_auth_session_user` ON `gallery_auth_sessions` (`user_id`);',
+      '\nCREATE INDEX `gallery_auth_verification_identifier` ON `gallery_auth_verifications` (`identifier`);',
+    ],
+    bps: true,
+    folderMillis: 1793865265000,
+    hash: 'efeba4952973cbfb54d46d47aa17d2a03e0d59e05f14126551e280e50e1cc7f6',
+    name: '20261105075425_github-auth',
+  },
 ];

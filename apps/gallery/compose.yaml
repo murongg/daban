@@ -8,6 +8,11 @@ services:
     environment:
       GALLERY_PUBLIC_ORIGIN: ${GALLERY_PUBLIC_ORIGIN:?Set your HTTPS gallery origin}
       GALLERY_READ_MODE: ${GALLERY_READ_MODE:-private}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      GALLERY_GITHUB_ADMIN_IDS: ${GALLERY_GITHUB_ADMIN_IDS:-}
+      GALLERY_GITHUB_ALLOWED_IDS: ${GALLERY_GITHUB_ALLOWED_IDS:-}
     volumes:
       - gallery-data:/data
     restart: unless-stopped

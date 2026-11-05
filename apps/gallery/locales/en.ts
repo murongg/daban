@@ -1,4 +1,13 @@
 export const en = {
+  'gallery.authTitle': 'Sign in to Daban',
+  'gallery.githubContinue': 'Continue with GitHub',
+  'gallery.githubHint':
+    'Sign in or create an account with GitHub. Private galleries require administrator approval.',
+  'gallery.githubFailed':
+    'GitHub sign-in did not complete. Try again or contact the gallery administrator.',
+  'gallery.authUnavailable':
+    'Sign-in methods could not be loaded. Reopen this dialog to try again.',
+  'gallery.tokenAlternative': 'Use an access token',
   'gallery.catalog': 'Explore templates',
   'gallery.workspace': 'Workspace',
   'gallery.guest': 'Guest',

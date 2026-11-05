@@ -1,5 +1,11 @@
 import type { en } from './en';
 export const zh: Record<keyof typeof en, string> = {
+  'gallery.authTitle': '登录 Daban Bot 广场',
+  'gallery.githubContinue': '使用 GitHub 继续',
+  'gallery.githubHint': '使用 GitHub 登录或创建账户。私有广场需管理员授权。',
+  'gallery.githubFailed': 'GitHub 登录未完成，请重试或联系广场管理员。',
+  'gallery.authUnavailable': '暂时无法读取登录方式，请重新打开此窗口重试。',
+  'gallery.tokenAlternative': '使用访问令牌',
   'gallery.catalog': '探索模板',
   'gallery.workspace': '发布空间',
   'gallery.guest': '访客',

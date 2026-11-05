@@ -18,7 +18,16 @@ import {
   releaseUuid,
   releaseVersion,
 } from '@daban/protocol';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gt } from 'drizzle-orm';
+import {
+  createGalleryAuth,
+  type GalleryAuthConfig,
+  githubAllowed,
+  githubScopes,
+} from './gallery-auth.js';
+
+export { galleryAuthConfig } from './gallery-auth.js';
+
 import { Fault } from './control.js';
 import { configure, type Database, migrate } from './database.js';
 import { migrations } from './gallery-migrations.js';
@@ -29,12 +38,16 @@ import {
   validateGalleryTemplate,
 } from './gallery-policy.js';
 import {
+  galleryAccounts,
+  galleryAuthSessions,
+  galleryNamespaces,
   galleryReleases,
   galleryRequests,
   gallerySessions,
   gallerySettings,
   galleryTemplates,
   galleryTokens,
+  galleryUsers,
 } from './gallery-schema.js';
 import { privateMetadata } from './private-files.js';
 import { ReleaseStore, releaseHash } from './releases.js';
@@ -70,7 +83,10 @@ export class GalleryStore {
   readonly ready: Promise<unknown>;
   readonly packages: ReleaseStore;
   private connection?: Database;
-  private readonly authorities = new WeakMap<GalleryPrincipal, string>();
+  private readonly authorities = new WeakMap<
+    GalleryPrincipal,
+    string | { session: string; githubId: string }
+  >();
   sourceId = '';
   constructor(readonly options: GalleryOptions) {
     this.packages = new ReleaseStore(options.directory);
@@ -97,7 +113,12 @@ export class GalleryStore {
     }
     const client = new DatabaseSync(file);
     try {
-      configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
+      configure(client, {
+        journal: 'WAL',
+        synchronous: 'FULL',
+        busyTimeout: 5000,
+        foreignKeys: true,
+      });
       this.connection = migrate(client, migrations);
       this.db
         .insert(gallerySettings)
@@ -111,11 +132,109 @@ export class GalleryStore {
         .get()!.value;
       if (!releaseUuid(this.sourceId)) throw new Fault('GALLERY_STORE_UNSAFE');
       this.db.delete(gallerySessions).where(eq(gallerySessions.expires, 0)).run();
+      this.reserveLegacyNamespaces();
     } catch (error) {
       client.close();
       this.connection = undefined;
       throw error;
     }
+  }
+  private reserveLegacyNamespaces() {
+    if (
+      this.db
+        .select()
+        .from(gallerySettings)
+        .where(eq(gallerySettings.key, 'authNamespaceReservations'))
+        .get()
+    )
+      return;
+    this.db.transaction((tx) => {
+      const namespaces = new Set(
+        tx
+          .select({ namespace: galleryTemplates.namespace })
+          .from(galleryTemplates)
+          .all()
+          .map((row) => row.namespace),
+      );
+      for (const row of tx.select().from(galleryTokens).all()) {
+        const principal: GalleryPrincipal = JSON.parse(row.principal);
+        validateGalleryPrincipal(principal);
+        for (const namespace of principal.namespaces) namespaces.add(namespace);
+      }
+      const rows = [...namespaces].map((namespace) => ({ namespace, userId: null }));
+      for (let offset = 0; offset < rows.length; offset += 50)
+        tx.insert(galleryNamespaces)
+          .values(rows.slice(offset, offset + 50))
+          .onConflictDoNothing()
+          .run();
+      tx.insert(gallerySettings)
+        .values({ key: 'authNamespaceReservations', value: '1' })
+        .onConflictDoNothing()
+        .run();
+    });
+  }
+  authentication(origin: string, config: GalleryAuthConfig) {
+    return createGalleryAuth(
+      this.db,
+      config,
+      origin,
+      this.options.readMode === 'public',
+      (id, csrf) => {
+        const row = this.db
+          .select({ session: galleryAuthSessions, account: galleryAccounts, user: galleryUsers })
+          .from(galleryAuthSessions)
+          .innerJoin(galleryUsers, eq(galleryAuthSessions.userId, galleryUsers.id))
+          .innerJoin(
+            galleryAccounts,
+            and(
+              eq(galleryAccounts.userId, galleryUsers.id),
+              eq(galleryAccounts.providerId, 'github'),
+            ),
+          )
+          .where(and(eq(galleryAuthSessions.id, id), gt(galleryAuthSessions.expiresAt, new Date())))
+          .get();
+        // Callback checks only run at sign-in; allowlist changes must also apply to existing sessions.
+        if (
+          !row ||
+          !githubAllowed(config, row.account.accountId, this.options.readMode === 'public')
+        )
+          throw new Fault('AUTH_REQUIRED', 401);
+        let owned = this.db
+          .select()
+          .from(galleryNamespaces)
+          .where(eq(galleryNamespaces.userId, row.user.id))
+          .get();
+        for (let attempt = 0; !owned && attempt < 4; attempt++) {
+          const namespace = `gh-${row.account.accountId}${attempt ? `-${randomUUID().slice(0, 8)}` : ''}`;
+          this.db
+            .insert(galleryNamespaces)
+            .values({ namespace, userId: row.user.id })
+            .onConflictDoNothing()
+            .run();
+          owned = this.db
+            .select()
+            .from(galleryNamespaces)
+            .where(eq(galleryNamespaces.userId, row.user.id))
+            .get();
+        }
+        if (!owned) throw new Fault('TEMPORARILY_UNAVAILABLE', 503);
+        const principal: GallerySession = {
+          principalId: `github:${row.user.id}`,
+          namespaces: [owned.namespace],
+          scopes: [...githubScopes(config, row.account.accountId)],
+          csrfToken: csrf,
+          expiresAt: row.session.expiresAt.toISOString(),
+          user: {
+            id: row.user.id,
+            name: row.user.name,
+            githubId: row.account.accountId,
+          },
+        };
+        this.authorities.set(principal, { session: id, githubId: row.account.accountId });
+        return principal;
+      },
+      (id) => this.db.delete(galleryAuthSessions).where(eq(galleryAuthSessions.id, id)).run(),
+    );
   }
   discovery(): GalleryDiscovery {
     return {
@@ -133,10 +252,16 @@ export class GalleryStore {
     validateGalleryPrincipal(principal);
     const token = randomBytes(32).toString('base64url');
     const id = randomUUID();
-    this.db
-      .insert(galleryTokens)
-      .values({ id, hash: releaseHash(token), principal: JSON.stringify(principal) })
-      .run();
+    this.db.transaction((tx) => {
+      if (principal.namespaces.length)
+        tx.insert(galleryNamespaces)
+          .values(principal.namespaces.map((namespace) => ({ namespace, userId: null })))
+          .onConflictDoNothing()
+          .run();
+      tx.insert(galleryTokens)
+        .values({ id, hash: releaseHash(token), principal: JSON.stringify(principal) })
+        .run();
+    });
     return { id, token };
   }
   revokeToken(id: string) {
@@ -211,8 +336,24 @@ export class GalleryStore {
   }
   authorize(principal: GalleryPrincipal | undefined, namespace: string, scope: GalleryScope) {
     const proof = principal ? this.authorities.get(principal) : undefined;
-    if (proof && !this.db.select().from(galleryTokens).where(eq(galleryTokens.id, proof)).get())
-      throw new Fault('INVALID_CREDENTIAL', 401);
+    const valid =
+      !proof ||
+      (typeof proof === 'string'
+        ? this.db.select().from(galleryTokens).where(eq(galleryTokens.id, proof)).get()
+        : this.db
+            .select({ id: galleryAuthSessions.id })
+            .from(galleryAuthSessions)
+            .innerJoin(galleryAccounts, eq(galleryAuthSessions.userId, galleryAccounts.userId))
+            .where(
+              and(
+                eq(galleryAuthSessions.id, proof.session),
+                gt(galleryAuthSessions.expiresAt, new Date()),
+                eq(galleryAccounts.providerId, 'github'),
+                eq(galleryAccounts.accountId, proof.githubId),
+              ),
+            )
+            .get());
+    if (!valid) throw new Fault('INVALID_CREDENTIAL', 401);
     if (!this.allowed(principal, namespace, scope)) throw new Fault('PUBLISH_FORBIDDEN', 403);
   }
   private rawTemplate(id: string): GalleryTemplate {

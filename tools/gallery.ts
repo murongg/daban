@@ -14,7 +14,9 @@ await mkdir(path.join(output, 'vendor/protocol'), { recursive: true });
 const engine = JSON.parse(await readFile(path.join(root, 'packages/engine/package.json'), 'utf8'));
 engine.exports = { './gallery': engine.exports['./gallery'] };
 engine.dependencies = {
+  '@better-auth/drizzle-adapter': engine.dependencies['@better-auth/drizzle-adapter'],
   '@daban/protocol': 'file:../protocol',
+  'better-auth': engine.dependencies['better-auth'],
   'drizzle-orm': engine.dependencies['drizzle-orm'],
   yaml: engine.dependencies.yaml,
 };

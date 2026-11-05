@@ -6,6 +6,7 @@ import {
 } from '@daban/protocol';
 import { Fault } from './control.js';
 import type { GalleryStore } from './gallery.js';
+import type { GalleryAuth } from './gallery-auth.js';
 
 type Operation =
   | 'discovery'
@@ -35,6 +36,7 @@ export type GalleryBackend = {
 export interface GalleryHttpOptions {
   origin: string;
   assets?: (request: Request) => Promise<Response>;
+  auth?: GalleryAuth;
 }
 export async function galleryHash(text: string) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -54,7 +56,7 @@ export function galleryRequestFields(
   )
     throw new Fault('INVALID_REQUEST', 400);
 }
-async function readBody(request: Request, limit: number) {
+export async function readBody(request: Request, limit: number) {
   if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json')
     throw new Fault('UNSUPPORTED_MEDIA_TYPE', 415);
   if (Number(request.headers.get('content-length')) > limit)
@@ -129,6 +131,7 @@ export function createGalleryHandler(store: GalleryBackend, options: GalleryHttp
   let uploads = 0;
   const attempts = new Map<string, { count: number; until: number }>();
   const cookieName = 'daban_gallery_session';
+  const clearCookie = `${cookieName}=; HttpOnly; SameSite=Lax; Path=/api/v1; Max-Age=0${options.origin.startsWith('https:') ? '; Secure' : ''}`;
   const cookie = (request: Request) =>
     request.headers
       .get('cookie')
@@ -138,11 +141,22 @@ export function createGalleryHandler(store: GalleryBackend, options: GalleryHttp
       ?.slice(cookieName.length + 1);
   const authenticate = async (
     request: Request,
-  ): Promise<{ principal?: GalleryPrincipal; session?: GallerySession; secret?: string }> => {
+  ): Promise<{
+    principal?: GalleryPrincipal;
+    session?: GallerySession;
+    secret?: string;
+    github?: boolean;
+  }> => {
     const authorization = request.headers.get('authorization');
     if (authorization) {
       if (!authorization.startsWith('Bearer ')) throw new Fault('INVALID_CREDENTIAL', 401);
       return { principal: (await store.authenticate(authorization.slice(7))).principal };
+    }
+    if (options.auth?.hasSession(request)) {
+      const session = await options.auth.session(request);
+      // A stale OAuth cookie must not silently fall back to a more privileged token session.
+      if (!session) throw new Fault('AUTH_REQUIRED', 401);
+      return { principal: session, session, github: true };
     }
     const secret = cookie(request);
     if (secret) {
@@ -169,8 +183,24 @@ export function createGalleryHandler(store: GalleryBackend, options: GalleryHttp
       const route = url.pathname;
       const method = request.method;
       const discovery = await store.discovery();
+      if (route.startsWith('/api/auth/')) {
+        if (!options.auth) throw new Fault('NOT_FOUND', 404);
+        const response = await options.auth.handle(request, address);
+        const result = new Response(response.body, response);
+        headers.forEach((value, key) => {
+          result.headers.set(key, value);
+        });
+        if (response.ok && ['/api/auth/sign-in/social', '/api/auth/sign-out'].includes(route)) {
+          const legacy = cookie(request);
+          if (legacy) await store.logout(legacy);
+          // The browser withholds Path=/api/v1 cookies on /api/auth, so always expire that path.
+          result.headers.append('Set-Cookie', clearCookie);
+        }
+        return result;
+      }
       if (route === '/healthz' || route === '/readyz') return json({ ok: !!discovery.sourceId });
       if (route === '/.well-known/daban-gallery.json' && method === 'GET') return json(discovery);
+      if (route === '/api/v1/auth' && method === 'GET') return json({ github: !!options.auth });
       if (!route.startsWith('/api/')) {
         if (method !== 'GET' || !options.assets) throw new Fault('NOT_FOUND', 404);
         const response = await options.assets(request);
@@ -199,13 +229,23 @@ export function createGalleryHandler(store: GalleryBackend, options: GalleryHttp
           throw new Fault('INVALID_REQUEST', 400);
         galleryRequestFields(input, ['token'], ['token']);
         const result = await store.session(input.token);
-        headers.set(
+        if (options.auth?.hasSession(request)) {
+          const signedOut = await options.auth.logout(request);
+          if (!signedOut.ok) throw new Fault('TEMPORARILY_UNAVAILABLE', 503);
+          for (const value of signedOut.headers.getSetCookie()) headers.append('Set-Cookie', value);
+        }
+        headers.append(
           'Set-Cookie',
           `${cookieName}=${result.secret}; HttpOnly; SameSite=Lax; Path=/api/v1; Max-Age=43200${options.origin.startsWith('https:') ? '; Secure' : ''}`,
         );
         return json(result.session);
       }
-      if (route === '/api/v1/sessions/current' && method === 'DELETE' && !cookie(request)) {
+      if (
+        route === '/api/v1/sessions/current' &&
+        method === 'DELETE' &&
+        !cookie(request) &&
+        !options.auth?.hasSession(request)
+      ) {
         if (requestOrigin !== options.origin) throw new Fault('CSRF_REJECTED', 403);
         return new Response(null, { status: 204, headers });
       }
@@ -218,11 +258,14 @@ export function createGalleryHandler(store: GalleryBackend, options: GalleryHttp
         if (!auth.session) throw new Fault('AUTH_REQUIRED', 401);
         if (method === 'GET') return json(auth.session);
         if (method === 'DELETE') {
-          await store.logout(auth.secret!);
-          headers.set(
-            'Set-Cookie',
-            `${cookieName}=; HttpOnly; SameSite=Lax; Path=/api/v1; Max-Age=0${options.origin.startsWith('https:') ? '; Secure' : ''}`,
-          );
+          if (auth.github) {
+            const signedOut = await options.auth!.logout(request);
+            if (!signedOut.ok) throw new Fault('TEMPORARILY_UNAVAILABLE', 503);
+            for (const value of signedOut.headers.getSetCookie())
+              headers.append('Set-Cookie', value);
+            if (cookie(request)) await store.logout(cookie(request)!);
+          } else await store.logout(auth.secret!);
+          headers.append('Set-Cookie', clearCookie);
           return new Response(null, { status: 204, headers });
         }
       }
