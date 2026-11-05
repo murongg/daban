@@ -74,6 +74,7 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult()) {
   let gate = Promise.resolve<unknown>(undefined);
   let observed: ((note: unknown) => unknown) | undefined;
   let sequence = 0;
+  let eventSequence = 0;
   const environments: NodeJS.ProcessEnv[] = [];
   class Harness {
     constructor(options: { env: NodeJS.ProcessEnv }) {
@@ -107,6 +108,14 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult()) {
     workspace: path.join(root, 'workspace'),
     origin: 'http://127.0.0.1:12345',
   });
+  await models.ready;
+  await models.profiles.register({
+    id: 'mock-search-bot',
+    name: 'Synthetic search Bot',
+    instructions: '',
+    memory: '',
+    color: 'mint',
+  });
   async function start(
     requestId: string,
     prompt = 'Synthetic research with optional public web tools.',
@@ -117,7 +126,7 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult()) {
     gate = new Promise<unknown>((resolve) => {
       release = () => resolve(undefined);
     });
-    await models.start('mock-search-bot', { requestId, prompt });
+    await models.startHuman('mock-search-bot', { requestId, prompt });
     await started;
     const job = models.jobs.get('mock-search-bot');
     assert.ok(job?.sessionId);
@@ -131,7 +140,10 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult()) {
     assert.equal(job.phase, 'completed', job.error);
   }
   function notify(sessionId: string, type: string, data: unknown) {
-    observed?.({ method: 'session.event', params: { sessionId, event: { type, data } } });
+    observed?.({
+      method: 'session.event',
+      params: { sessionId, event: { type, data, seq: ++eventSequence, time: Date.now() } },
+    });
   }
   async function close() {
     release();
@@ -182,6 +194,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   const approvals: string[] = [];
   const reads: string[] = [];
   const rpcs: Rpc[] = [];
+  const bridgeErrors: string[] = [];
   ctx.provide('systemPrompt', { tools: () => {}, section: () => {}, getSectionOrder: () => 1 });
   ctx.provide('agents', {
     roots: () => [rootAgent],
@@ -201,23 +214,40 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   });
   const capture = job.searchCapture;
   assert.ok(capture);
-  policy(ctx as unknown as Parameters<typeof policy>[0], { limit: 60, urls });
+  const bridge = {
+    url: 'http://127.0.0.1:12345/mcp/mock-search-bot',
+    capability: job.token,
+  };
+  const request = async (_url: string, init: RequestInit) => {
+    assert.equal(new Headers(init.headers).get('authorization'), `Bearer ${bridge.capability}`);
+    const rpc = JSON.parse(String(init.body)) as Rpc;
+    if (rpc.method === 'search.query') rpcs.push(rpc);
+    return Response.json(
+      await f.models
+        .rpc('mock-search-bot', `Bearer ${bridge.capability}`, rpc)
+        .catch((error: unknown) => {
+          bridgeErrors.push(
+            `${rpc.method}:${error instanceof Error ? error.message : String(error)}`,
+          );
+          throw error;
+        }),
+    );
+  };
+  policy(
+    ctx as unknown as Parameters<typeof policy>[0],
+    { ...bridge, limit: job.limit, urls, attemptId: job.attemptId, budget: job.budget },
+    request,
+  );
   await searchProvider(
     ctx as unknown as SearchProviderContext,
     {
       sdkFile,
-      url: 'http://127.0.0.1:12345/mcp/mock-search-bot',
-      capability: job.token,
+      ...bridge,
       runId: job.id,
       revision: capture.revision,
       available: capture.available,
     },
-    async (_url, init) => {
-      assert.equal(new Headers(init.headers).get('authorization'), `Bearer ${job.token}`);
-      const rpc = JSON.parse(String(init.body)) as Rpc;
-      rpcs.push(rpc);
-      return Response.json(await f.models.rpc('mock-search-bot', `Bearer ${job.token}`, rpc));
-    },
+    request,
   );
   if (capture.available) native.applyWebSearchTool(ctx, 5, 4, 30000, true);
   ctx.web.registerFetchProvider({
@@ -236,7 +266,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   });
   await webReader(ctx as unknown as Parameters<typeof webReader>[0], { sdkFile });
   async function execute(name: string, args: unknown, callId: string, signal = job.abort.signal) {
-    f.notify(job.sessionId!, 'tool/call', { name, callId });
+    f.notify(job.sessionId!, 'tool/call', { name, callId, arguments: JSON.stringify(args) });
     const result = await ctx.tools.execute({
       name,
       arguments: args,
@@ -245,7 +275,11 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
       signal,
     });
     f.notify(job.sessionId!, 'tool/result', {
-      message: { toolCallId: callId, isError: result.isError },
+      message: {
+        toolCallId: callId,
+        isError: result.isError,
+        content: Array.isArray(result.content) ? result.content : [],
+      },
       error: result.error,
     });
     return result;
@@ -255,6 +289,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
     approvals,
     reads,
     rpcs,
+    bridgeErrors,
     execute,
     async close() {
       await ctx.fiber.dispose();
@@ -366,12 +401,12 @@ test('legacy upgrade, independent Brave and exact-source reading work with a non
     const forged = await f.models.rpc('mock-search-bot', `Bearer ${job.token}`, {
       ...firstRpc,
       id: 'mock-foreign-session',
-      params: { ...firstRpc.params, sessionId: 'mock-foreign-session' },
+      params: { ...firstRpc.params, claimId: '0'.repeat(64) },
     });
     assert.match(JSON.stringify(forged), /UNAUTHORIZED/);
     assert.equal(f.supplierCalls.length, 2);
     const fetched = await p.execute('web_fetch', { url: sourceUrl }, 'mock-read-original');
-    assert.equal(fetched.isError, false, JSON.stringify(fetched));
+    assert.equal(fetched.isError, false, JSON.stringify({ fetched, bridgeErrors: p.bridgeErrors }));
     assert.match(JSON.stringify(fetched.value), /SYNTHETIC ORIGINAL ARTICLE/);
     assert.deepEqual(p.reads, [sourceUrl]);
     assert.equal(p.approvals.length, 0);
@@ -501,7 +536,7 @@ for (const change of ['stop', 'configure'] as const)
       );
       assert.equal(read.isError, true);
       assert.deepEqual(p.reads, []);
-      assert.equal(p.approvals.length, 1);
+      assert.equal(p.approvals.length, change === 'stop' ? 0 : 1);
       if (change === 'configure') await f.finish();
     } finally {
       deliver?.(suppliedResult());
@@ -549,15 +584,17 @@ test('the installed DSH pipeline keeps parallel tool batches separate and enforc
       JSON.stringify(outcomes),
     );
     assert.equal(f.supplierCalls.length, 2);
-    assert.deepEqual(p.rpcs.map((rpc) => [rpc.params.callId, rpc.params.query]).sort(), [
-      ['mock-parallel-first', 'synthetic parallel first'],
-      ['mock-parallel-second', 'synthetic parallel second'],
+    assert.deepEqual(p.rpcs.map((rpc) => rpc.params.query).sort(), [
+      'synthetic parallel first',
+      'synthetic parallel second',
     ]);
+    assert.equal(new Set(p.rpcs.map((rpc) => rpc.params.claimId)).size, 2);
     assert.equal(
       job.toolCount,
-      3,
-      'one denied batch plus two permitted batches share native and Host counts',
+      2,
+      'two admitted executions project once each; the invalid five-query declaration obtains no claim',
     );
+    assert.equal(f.models.budgets.tools(job.budget!.budgetId), 2);
     await f.finish();
   } finally {
     await p?.close();

@@ -762,6 +762,12 @@ export class Budgets {
       .where(and(eq(budgetReceipts.run, run), eq(budgetReceipts.phase, 'dispatched')))
       .run();
   }
+  toolClaim(scope: BudgetScope, id: string) {
+    const task = this.revision(scope);
+    const row = this.db.select().from(budgetTools).where(eq(budgetTools.id, id)).get();
+    if (row && row.budget !== task.id) throw new Error('BUDGET_OWNER_CONFLICT');
+    return row ? { active: task.state === 'active' } : undefined;
+  }
   tool(scope: BudgetScope, id: string) {
     return this.db.transaction(
       () => {

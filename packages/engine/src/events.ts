@@ -18,6 +18,8 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
     const event = note.params.event;
     if (!record(event.data)) return;
     const data = event.data;
+    // Host-managed search emits one canonical batch trace; provider IDs cannot identify that execution.
+    if (run.hostSearch && event.type === 'tool/call' && data.name === 'web_search') return;
     if (event.type === 'todo/write' && isTaskPlan(data.todos))
       onPlan?.(structuredClone(data.todos));
     if (
@@ -68,7 +70,13 @@ export function observeTools(run: ToolRun, session: string, onPlan?: (plan: Task
         run.countedCalls ??= new Set();
         run.countedCalls.add(identity);
       }
-      if (!alreadyCounted && ++run.toolCount > run.limit) run.onLimit?.();
+      // Provider IDs can repeat; Host receipts own search counts in the captured search pipeline.
+      if (
+        !(run.hostSearch && data.name === 'web_search') &&
+        !alreadyCounted &&
+        ++run.toolCount > run.limit
+      )
+        run.onLimit?.();
     } else if (
       event.type === 'tool/result' &&
       record(data.message) &&

@@ -57,10 +57,26 @@ async function fixture() {
     workspace: path.join(root, 'workspace'),
     origin: 'http://127.0.0.1:12345',
   });
-  await models.start('mock-bot', { requestId: 'mock-search-task', prompt: 'Synthetic research.' });
+  await models.startHuman('mock-bot', {
+    requestId: 'mock-search-task',
+    prompt: 'Synthetic research.',
+  });
   await started;
   const job = models.jobs.get('mock-bot');
   expect.assert(job?.sessionId && job.token);
+  const accepted = await models.rpc('mock-bot', `Bearer ${job.token}`, {
+    id: 'mock-search-claim',
+    method: 'budget.tool',
+    params: {
+      scope: job.budget,
+      modelAttemptId: job.attemptId,
+      sessionId: job.sessionId,
+      callId: 'mock-search-execution',
+      search: { executionSessionId: job.sessionId, queries: ['synthetic'] },
+    },
+  });
+  const claimId = (accepted as { result: { searchReceipt: { claimId: string } } }).result
+    .searchReceipt.claimId;
   const original = models.journal.put.bind(models.journal);
   let held = () => {};
   const claimed = new Promise<undefined>((resolve) => {
@@ -72,7 +88,7 @@ async function fixture() {
   });
   let first = true;
   vi.spyOn(models.journal, 'put').mockImplementation(async (record) => {
-    if (first) {
+    if (first && query.mock.calls.length === 1) {
       first = false;
       held();
       await publication;
@@ -84,16 +100,7 @@ async function fixture() {
       jsonrpc: '2.0',
       id: 'mock-search-rpc',
       method: 'search.query',
-      params: {
-        runId: job.id,
-        sessionId: 'mock-search-session',
-        executionSessionId: 'mock-search-session',
-        callId: 'mock-search-call',
-        searchRevision: 1,
-        queries: ['synthetic'],
-        query: 'synthetic',
-        maxResults: 5,
-      },
+      params: { claimId, query: 'synthetic' },
     });
   return {
     models,

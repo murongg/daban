@@ -1490,6 +1490,7 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
     undefined,
     undefined,
     false,
+    'synthetic-physical-attempt',
     {
       runId: 'mock-web-run',
       revision: 0,
@@ -1525,6 +1526,7 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
   expect.assert(budget && 'config' in budget);
   expect(budget.config).toStrictEqual({
     limit: 60,
+    attemptId: 'synthetic-physical-attempt',
     urls: ['https://example.test/'],
     url: 'http://127.0.0.1:12345/mcp/chief',
     capability: 'synthetic-capability',
@@ -1708,6 +1710,7 @@ test('task search availability and provider selection come from an independent c
         undefined,
         undefined,
         false,
+        'synthetic-physical-attempt',
         { ...capture, available },
       ),
     );

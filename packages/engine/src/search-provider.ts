@@ -5,6 +5,7 @@ import { isSearchErrorCode, type SearchResult } from '@daban/protocol';
 import type { BridgeConfig, BridgeFetch } from './bridge.js';
 import { bridgeRequest } from './bridge.js';
 import { runtimeRequire } from './dsh.js';
+import { readSearchClaim } from './policy.js';
 
 export interface SearchProviderConfig extends BridgeConfig {
   sdkFile: string;
@@ -17,6 +18,7 @@ interface Agent {
   session: { id: string };
 }
 interface Execution {
+  readonly token?: symbol;
   name: string;
   callId: string;
   agent?: Agent;
@@ -83,14 +85,14 @@ export async function apply(
     throw new WebError(code, code);
   };
   const executions = new AsyncLocalStorage<{
-    sessionId: string;
-    executionSessionId: string;
-    callId: string;
-    queries: string[];
+    claimId: string;
+    queries: readonly string[];
     signal: AbortSignal;
+    current(): boolean;
   }>();
   ctx.on('tools/execute', async (exec, next) => {
     if (exec.name !== 'web_search') return next();
+    if (!config.available) return failure('SEARCH_DISABLED');
     const roots = ctx.agents.roots();
     const agent = exec.agent;
     if (
@@ -109,14 +111,36 @@ export async function apply(
       args.queries.some((query) => typeof query !== 'string' || !query.trim())
     )
       return failure('SEARCH_INVALID_QUERY');
+    const claim = readSearchClaim(exec.token, config);
+    if (
+      !claim ||
+      claim.root !== roots[0] ||
+      claim.agent !== agent ||
+      !claim.current() ||
+      claim.sessionId !== roots[0].session.id ||
+      claim.executionSessionId !== agent.session.id ||
+      JSON.stringify([...new Set(args.queries)]) !== JSON.stringify(claim.queries)
+    )
+      return failure('SEARCH_INVALID_QUERY');
+    let receipt: { claimId: string };
+    try {
+      receipt = await claim.receipt;
+    } catch {
+      return failure('SEARCH_INVALID_QUERY');
+    }
+    if (
+      !claim.current() ||
+      ctx.agents.roots()[0] !== roots[0] ||
+      ctx.agents.get(agent.id) !== agent
+    )
+      return failure('SEARCH_INVALID_QUERY');
     // Async context keeps concurrent tool batches separate without replacing DSH's web_search or policy pipeline.
     return executions.run(
       {
-        sessionId: roots[0].session.id,
-        executionSessionId: agent.session.id,
-        callId: exec.callId,
-        queries: [...new Set(args.queries as string[])],
+        claimId: receipt.claimId,
+        queries: claim.queries,
         signal: exec.signal,
+        current: claim.current,
       },
       next,
     );
@@ -127,7 +151,12 @@ export async function apply(
     async search(input, caller) {
       if (!config.available) return failure('SEARCH_DISABLED');
       const execution = executions.getStore();
-      if (!execution?.queries.includes(input.query)) return failure('SEARCH_INVALID_QUERY');
+      if (
+        !execution?.current() ||
+        !execution.queries.includes(input.query) ||
+        (input.maxResults !== undefined && input.maxResults !== 5)
+      )
+        return failure('SEARCH_INVALID_QUERY');
       const signal = AbortSignal.any([
         execution.signal,
         ...(caller ? [caller] : []),
@@ -144,14 +173,8 @@ export async function apply(
             id,
             method: 'search.query',
             params: {
-              runId: config.runId,
-              sessionId: execution.sessionId,
-              executionSessionId: execution.executionSessionId,
-              callId: execution.callId,
-              searchRevision: config.revision,
-              queries: execution.queries,
+              claimId: execution.claimId,
               query: input.query,
-              maxResults: input.maxResults ?? 5,
             },
           },
           signal,
@@ -168,6 +191,7 @@ export async function apply(
         );
       }
       if (signal.aborted) return failure('SEARCH_CANCELLED');
+      if (!execution.current()) return failure('SEARCH_INVALID_QUERY');
       if (!object(reply) || reply.id !== id) return failure('SEARCH_INVALID_RESPONSE');
       if (object(reply.error))
         return failure(

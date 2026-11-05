@@ -23,6 +23,7 @@ import type {
   RunTurn,
   RuntimeFile,
   RuntimeTaskSummary,
+  SearchResult,
   SessionStats,
   TaskPlan,
   TaskRequest,
@@ -638,6 +639,7 @@ interface ModelJob extends AgentToolRun {
   project?: ProjectScope;
   searchCapture?: SearchCapture;
   searchRun?: RunSearch;
+  toolClaims?: Map<string, ToolClaim>;
   goalCreated?: boolean;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -705,6 +707,19 @@ interface ModelJob extends AgentToolRun {
   };
 }
 // Schedule "manual" firings still carry Host provenance; only a source-free Human entry is interactive.
+interface ToolClaim {
+  id: string;
+  job: ModelJob;
+  owner: Pick<ModelJob, 'attemptId' | 'token' | 'sessionId'>;
+  scope: BudgetScope;
+  declaration: string;
+  capture?: SearchCapture;
+  search?: { executionSessionId: string; queries: readonly string[] };
+  remaining: Set<string>;
+  trace?: ModelJob['trace'][number];
+  deliveryCurrent?: () => unknown;
+  result: Promise<{ accepted: true; searchReceipt?: { claimId: string } }>;
+}
 const approvalTrigger = (job: Pick<ModelJob, 'automation'>): ApprovalTrigger =>
   job.automation ? 'automation' : 'interactive';
 interface InsertReceipt {
@@ -2171,22 +2186,28 @@ export class ModelRuns {
     requestId: string,
     scope?: { id: string },
   ) {
-    const attempt = await this.work.deliveryObserve((store) => {
+    const read = await this.work.deliveryObserve((store) => () => {
       try {
         return store.attempt(reference.workId, reference.attemptId);
       } catch {
         throw new Fault('DELIVERY_START_REQUIRED');
       }
     });
-    // Root identity stays frozen; persisted Group stages carry their own distinct child request IDs.
-    if (
-      !sameDeliveryReference(attempt, reference) ||
-      attempt.decision ||
-      !['accepted', 'running'].includes(attempt.phase) ||
-      (!scope && (attempt.bot !== bot || reference.requestId !== requestId))
-    )
-      throw new Fault('DELIVERY_START_REQUIRED');
+    const current = () => {
+      const attempt = read();
+      // Root identity stays frozen; persisted Group stages carry their own distinct child request IDs.
+      if (
+        !sameDeliveryReference(attempt, reference) ||
+        attempt.decision ||
+        !['accepted', 'running'].includes(attempt.phase) ||
+        (!scope && (attempt.bot !== bot || reference.requestId !== requestId))
+      )
+        throw new Fault('DELIVERY_START_REQUIRED');
+    };
+    current();
+    return current;
   }
+
   private goalDelivery(target: GoalResumeTarget) {
     // Goal resume has no retryOf; inspect durable ownership rather than granting it from the command.
     const origins = [...this.journal.records.values()]
@@ -2666,7 +2687,13 @@ export class ModelRuns {
       job.beforeTool = () => this.fenceAttempt(job, 'tool');
       job.route = config;
       job.searchCapture = await this.search.capture();
-      job.searchRun = new RunSearch(this.search, job.searchCapture, job);
+      job.hostSearch = true;
+      job.searchRun = new RunSearch(
+        this.search,
+        job.searchCapture,
+        job,
+        (claimId, query, dispatch) => this.searchEffect(job, claimId, query, dispatch),
+      );
       job.model = config.model;
       job.vision = config.vision;
       // Native-only and Linux sessions expose different tools and workspace paths. Keep visible turns, never resume across modes.
@@ -2757,9 +2784,7 @@ export class ModelRuns {
       // A Mac grant and a VM connection must never resume each other's native SDK tool context.
       if (this.tools.localSelected(job.bot, job))
         job.binding = createHash('sha256')
-          .update(
-            `${config.binding}:local-desktop:${this.tools.options.nativeOnly ? 'native' : 'vm'}`,
-          )
+          .update(`${job.binding}:local-desktop:${this.tools.options.nativeOnly ? 'native' : 'vm'}`)
           .digest('hex');
       // Keep the mode across SDK catalog/persona replacements; old context must never silently re-enable writes.
       if (task)
@@ -2835,6 +2860,210 @@ export class ModelRuns {
     if (request.action === 'purge')
       return this.attachments.purge(bot, request.id, request.version, request.confirmation || '');
     return this.attachments[request.action](bot, request.id, request.version);
+  }
+  private assertToolEntry(entry: ToolClaim) {
+    const job = entry.job;
+    if (
+      job.toolClaims?.get(entry.id) !== entry ||
+      this.jobs.get(job.bot) !== job ||
+      job.attemptId !== entry.owner.attemptId ||
+      job.token !== entry.owner.token ||
+      job.sessionId !== entry.owner.sessionId
+    )
+      throw new Fault('UNAUTHORIZED', 403);
+    this.assertAttempt(job, entry.owner);
+    if (
+      job.budget?.budgetId !== entry.scope.budgetId ||
+      job.budget.revision !== entry.scope.revision
+    )
+      throw new Fault('UNAUTHORIZED', 403);
+    this.profiles.assertActive(job.bot);
+    this.tools.checkProject(job);
+    entry.deliveryCurrent?.();
+  }
+  private claimTool(job: ModelJob, value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Fault('INVALID_BUDGET_TOOL', 403);
+    const { scope, modelAttemptId, sessionId, callId, search, ...extra } = value as Record<
+      string,
+      unknown
+    >;
+    if (
+      !isBudgetScope(scope) ||
+      !job.budget ||
+      scope.budgetId !== job.budget.budgetId ||
+      scope.revision !== job.budget.revision ||
+      modelAttemptId !== job.attemptId ||
+      sessionId !== job.sessionId ||
+      typeof callId !== 'string' ||
+      !callId ||
+      callId.length > 1024 ||
+      Object.keys(extra).length ||
+      !job.attemptActive
+    )
+      throw new Fault('INVALID_BUDGET_TOOL', 403);
+    let declaration: ToolClaim['search'];
+    if (search !== undefined) {
+      if (!search || typeof search !== 'object' || Array.isArray(search))
+        throw new Fault('INVALID_BUDGET_TOOL', 403);
+      const item = search as Record<string, unknown>;
+      if (
+        Object.keys(item).some((key) => !['executionSessionId', 'queries'].includes(key)) ||
+        typeof item.executionSessionId !== 'string' ||
+        !item.executionSessionId ||
+        item.executionSessionId.length > 1000 ||
+        !Array.isArray(item.queries) ||
+        item.queries.length < 1 ||
+        item.queries.length > 4 ||
+        !item.queries.every(
+          (query): query is string =>
+            typeof query === 'string' &&
+            !!query.trim() &&
+            query.length <= 1200 &&
+            Array.from(query).length <= 600,
+        )
+      )
+        throw new Fault('INVALID_BUDGET_TOOL', 403);
+      declaration = Object.freeze({
+        executionSessionId: item.executionSessionId,
+        queries: Object.freeze([...new Set(item.queries)]),
+      });
+    }
+    const id = createHash('sha256')
+      .update(JSON.stringify([scope.budgetId, modelAttemptId, callId]))
+      .digest('hex');
+    const fingerprint = JSON.stringify([scope, modelAttemptId, sessionId, declaration ?? null]);
+    job.toolClaims ??= new Map();
+    const previous = job.toolClaims.get(id);
+    if (previous) {
+      this.assertToolEntry(previous);
+      if (previous.declaration !== fingerprint) throw new Fault('INVALID_BUDGET_TOOL', 403);
+      return previous.result;
+    }
+    // An existing ledger row has no authority to acquire new execution metadata after a lost Host index.
+    if (this.budgets.toolClaim(scope, id)) throw new Fault('INVALID_BUDGET_TOOL', 403);
+    const entry: ToolClaim = {
+      id,
+      job,
+      scope: Object.freeze(structuredClone(scope)),
+      declaration: fingerprint,
+      owner: Object.freeze({
+        attemptId: job.attemptId,
+        token: job.token,
+        sessionId: job.sessionId,
+      }),
+      search: declaration,
+      capture:
+        declaration && job.searchCapture ? Object.freeze({ ...job.searchCapture }) : undefined,
+      remaining: new Set(declaration?.queries),
+      result: Promise.resolve({ accepted: true }),
+    };
+    // Ordinary and search claims share this slot before any fence/persistence await.
+    entry.result = Promise.resolve().then(() => this.finishToolClaim(entry));
+    job.toolClaims.set(id, entry);
+    return entry.result;
+  }
+  private async finishToolClaim(entry: ToolClaim) {
+    this.assertToolEntry(entry);
+    await this.fenceAttempt(entry.job, 'tool');
+    this.assertToolEntry(entry);
+    this.budgets.tool(entry.scope, entry.id);
+    if (!entry.search) return { accepted: true as const };
+    const job = entry.job;
+    job.countedCalls ??= new Set();
+    job.countedCalls.add(JSON.stringify([entry.search.executionSessionId, entry.id]));
+    job.toolCount++;
+    // The ledger debit and this run's contribution must both be durable before exposing a usable receipt.
+    try {
+      await this.persist(job);
+    } catch {
+      this.assertToolEntry(entry);
+      this.markFence(job, 'unknown');
+      throw new Fault('MODEL_FENCE_UNAVAILABLE', 503);
+    }
+    await this.currentSearchClaim(entry);
+    return { accepted: true as const, searchReceipt: { claimId: entry.id } };
+  }
+  private async currentSearchClaim(entry: ToolClaim) {
+    this.assertToolEntry(entry);
+    if (!entry.search || !entry.capture?.available) throw new Fault('SEARCH_NOT_CONFIGURED');
+    if (entry.job.delivery) {
+      const job = entry.job;
+      entry.deliveryCurrent = await this.assertDelivery(
+        job.delivery!,
+        job.bot,
+        job.requestId,
+        job.conversationId ? { id: job.conversationId } : undefined,
+      );
+      this.assertToolEntry(entry);
+    }
+    const capture = await this.search.capture();
+    this.assertToolEntry(entry);
+    if (
+      !capture.available ||
+      capture.binding !== entry.capture.binding ||
+      capture.revision !== entry.capture.revision ||
+      capture.provider !== entry.capture.provider
+    )
+      throw new Fault('SEARCH_CONFIG_CHANGED');
+    // A debit is not current permission: stop/revision changes still fence a previously admitted execution.
+    if (!this.budgets.toolClaim(entry.scope, entry.id)?.active)
+      throw new Fault('UNAUTHORIZED', 403);
+  }
+  private async searchEffect(
+    job: ModelJob,
+    claimId: string,
+    query: string,
+    dispatch: (beforeSend?: () => unknown) => Promise<SearchResult>,
+  ) {
+    const entry = job.toolClaims?.get(claimId);
+    if (!entry?.search) throw new Fault('UNAUTHORIZED', 403);
+    await this.currentSearchClaim(entry);
+    if (!entry.trace) {
+      entry.trace = {
+        name: 'web_search',
+        surface: 'web',
+        phase: 'running',
+        at: new Date().toISOString(),
+      };
+      job.trace.push(entry.trace);
+    }
+    await this.persist(job);
+    await this.currentSearchClaim(entry);
+    try {
+      const result = await dispatch(() => {
+        this.assertToolEntry(entry);
+        if (!this.budgets.toolClaim(entry.scope, entry.id)?.active)
+          throw new Fault('UNAUTHORIZED', 403);
+      });
+      await this.currentSearchClaim(entry);
+      entry.remaining.delete(query);
+      if (!entry.remaining.size && !entry.trace.code) entry.trace.phase = 'settled';
+      await this.persist(job);
+      await this.currentSearchClaim(entry);
+      return result;
+    } catch (error) {
+      // A retired completion must not mutate the new attempt, even when its old supplier finally rejects.
+      this.assertToolEntry(entry);
+      entry.trace.phase = 'rejected';
+      const code = errorCode(error);
+      const known =
+        code &&
+        [
+          'SEARCH_FORBIDDEN',
+          'SEARCH_UNAUTHORIZED',
+          'SEARCH_RATE_LIMITED',
+          'SEARCH_INVALID_QUERY',
+          'SEARCH_QUERY_TOO_LONG',
+          'SEARCH_INVALID_RESPONSE',
+        ].includes(code);
+      if (entry.trace.code !== 'SEARCH_OUTCOME_UNKNOWN')
+        entry.trace.code = known ? code : 'SEARCH_OUTCOME_UNKNOWN';
+      if (!known) this.markFence(job, 'unknown');
+      await this.persist(job);
+      this.assertToolEntry(entry);
+      throw error;
+    }
   }
   private markFence(job: ModelJob, kind: ModelAttemptFence) {
     // Visible prefixes and accepted tool/intents cannot be undone by SDK draft clearing or another attempt.
@@ -2920,6 +3149,7 @@ export class ModelRuns {
               path.join(job.privateDir, 'turn.json'),
               office,
               job.attemptId,
+              job.searchCapture ? { ...job.searchCapture, runId: job.id } : undefined,
             ),
             job.goalGrant,
           ),
@@ -3856,12 +4086,30 @@ export class ModelRuns {
     if (rpc.method === 'search.query') {
       try {
         if (!job.task || !job.searchRun) throw new Fault('SEARCH_NOT_CONFIGURED');
-        result = await job.searchRun.query(rpc.id, rpc.params);
-        await this.persist(job);
-        // Persistence can outlive this search authority. Recheck the cached result without another paid dispatch.
-        result = await job.searchRun.query(rpc.id, rpc.params);
-        if (this.jobs.get(bot) !== job || !job.running || authorization !== `Bearer ${job.token}`)
+        const { claimId, query, ...extra } = rpc.params ?? {};
+        if (typeof claimId !== 'string' || typeof query !== 'string' || Object.keys(extra).length)
+          throw new Fault('SEARCH_INVALID_QUERY', 400);
+        const entry = job.toolClaims?.get(claimId);
+        if (!entry?.search || !entry.capture || !entry.search.queries.includes(query))
           throw new Fault('UNAUTHORIZED', 403);
+        // Knowing a deterministic claim hash cannot skip a failed or still-pending contribution barrier.
+        await entry.result;
+        await this.currentSearchClaim(entry);
+        const params = {
+          runId: job.id,
+          sessionId: entry.owner.sessionId,
+          executionSessionId: entry.search.executionSessionId,
+          callId: entry.id,
+          searchRevision: entry.capture.revision,
+          queries: [...entry.search.queries],
+          query,
+          maxResults: 5,
+        };
+        result = await job.searchRun.query(rpc.id, params);
+        await this.currentSearchClaim(entry);
+        await this.persist(job);
+        // Journal I/O cannot renew a retired capability or release cached sources to its replacement.
+        await this.currentSearchClaim(entry);
       } catch (error) {
         const code = errorCode(error);
         return {
@@ -3891,27 +4139,7 @@ export class ModelRuns {
       this.budgets.coverage(job.id, job.attemptId!, complete);
       result = { accepted: true };
     } else if (rpc.method === 'budget.tool') {
-      const { scope, modelAttemptId, sessionId, callId, ...extra } = rpc.params ?? {};
-      if (
-        !isBudgetScope(scope) ||
-        !job.budget ||
-        scope.budgetId !== job.budget.budgetId ||
-        scope.revision !== job.budget.revision ||
-        modelAttemptId !== job.attemptId ||
-        sessionId !== job.sessionId ||
-        typeof callId !== 'string' ||
-        callId.length > 1024 ||
-        Object.keys(extra).length ||
-        !job.attemptActive
-      )
-        throw new Fault('INVALID_BUDGET_TOOL', 403);
-      this.budgets.tool(
-        scope,
-        createHash('sha256')
-          .update(JSON.stringify([scope.budgetId, modelAttemptId, callId]))
-          .digest('hex'),
-      );
-      result = { accepted: true };
+      result = await this.claimTool(job, rpc.params);
     } else if (rpc.method === 'budget.reserve' || rpc.method === 'budget.dispatched') {
       const { scope, modelAttemptId, attemptId, ...rest } = rpc.params ?? {};
       if (

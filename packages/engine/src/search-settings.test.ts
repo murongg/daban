@@ -18,7 +18,7 @@ import { ModelSettings } from './settings.js';
 const writes = vi.hoisted(() => ({
   failRename: false,
   heldRename: undefined as
-    | { file: string; entered: () => unknown; release: Promise<unknown> }
+    | { file: string; entered: () => unknown; release: Promise<unknown>; skip?: number }
     | undefined,
 }));
 vi.mock('node:fs/promises', async (original) => {
@@ -30,6 +30,10 @@ vi.mock('node:fs/promises', async (original) => {
         throw Object.assign(new Error('Synthetic rename failure'), { code: 'EACCES' });
       const held = writes.heldRename;
       if (held && String(args[1]) === held.file) {
+        if (held.skip) {
+          held.skip--;
+          return actual.rename(...args);
+        }
         held.entered();
         await held.release;
       }
@@ -659,7 +663,7 @@ test('a model destination commit and concurrent legacy reenable cannot both acce
   const held = new Promise<unknown>((resolve) => {
     release = () => resolve(undefined);
   });
-  writes.heldRename = { file: models.file, entered: () => entered?.(), release: held };
+  writes.heldRename = { file: models.file, entered: () => entered?.(), release: held, skip: 1 };
   const modelChange = models.configure(edit);
   await started;
   const enabling = search.configure(
@@ -698,4 +702,172 @@ test('a model destination commit and concurrent legacy reenable cannot both acce
     credentialSource: 'legacy-linked',
   });
   expect(client.query).not.toHaveBeenCalled();
+});
+
+test('a model probe releases search ownership and a newly enabled legacy reference becomes a known failed model receipt', async () => {
+  const { models, search, fetcher, edit } = await disabledLegacy();
+  const scope = (await models.status(true)).modelAccess!.scope;
+  let entered = () => {};
+  const started = new Promise<undefined>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  let release = () => {};
+  const gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  fetcher.mockImplementation(async () => {
+    entered();
+    await gate;
+    return Response.json({ data: [{ id: 'mock-model' }] });
+  });
+  const pending = models.configure(edit);
+  const refused = expect(pending).rejects.toMatchObject({ code: 'SEARCH_LEGACY_IN_USE' });
+  await started;
+  try {
+    await search.configure(
+      update({
+        requestId: 'mock-enable-during-probe',
+        revision: 1,
+        provider: 'deepseek',
+        key: undefined,
+      }),
+    );
+  } finally {
+    release();
+  }
+  await refused;
+  const receipt = await models.saved({
+    scope,
+    requestId: edit.requestId,
+    revision: edit.revision,
+    connection: edit.connection.id,
+    model: edit.model,
+  });
+  expect(receipt).toMatchObject({
+    phase: 'failed',
+    error: 'SEARCH_LEGACY_IN_USE',
+    current: { revision: 7 },
+  });
+  await expect(models.configure(edit)).rejects.toMatchObject({ code: 'SEARCH_LEGACY_IN_USE' });
+  const restarted = new ModelSettings(models.file, fetcher);
+  await expect(restarted.configure(edit)).rejects.toMatchObject({ code: 'SEARCH_LEGACY_IN_USE' });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+test('the last model disconnect records the active legacy search reference and only an independent replacement permits a new removal', async () => {
+  const { models, search } = await fixture();
+  await writeFile(
+    models.file,
+    JSON.stringify({ apiKey: 'synthetic-last-model-key', revision: 1 }),
+    {
+      mode: 0o600,
+    },
+  );
+  await search.status();
+  const request = {
+    scope: (await models.status(true)).modelAccess!.scope,
+    requestId: 'mock-linked-last-disconnect',
+    revision: 1,
+    connection: 'deepseek-official',
+    disconnect: true,
+  };
+  const refused = await models.remove(request);
+  expect(refused).toMatchObject({
+    phase: 'failed',
+    error: 'MODEL_CONNECTION_REFERENCED',
+    references: ['search'],
+    current: { configured: true, revision: 1 },
+  });
+  await search.configure(update());
+  expect(await models.remove(request)).toEqual(refused);
+  expect(
+    await models.remove({ ...request, requestId: 'mock-independent-last-disconnect' }),
+  ).toMatchObject({
+    phase: 'committed',
+    current: { configured: false, revision: 2 },
+  });
+});
+
+test('an independent search key does not retain an unrelated official model but canonical references still refuse its removal', async () => {
+  const { models, search } = await fixture();
+  const official = connection('mock-search-official');
+  const selected = connection('mock-default', 'https://model.example.test/v1');
+  await catalog(models.file, [official, selected], selected.id);
+  await search.status();
+  await search.configure(update());
+  const request = {
+    scope: (await models.status(true)).modelAccess!.scope,
+    requestId: 'mock-remove-running-official',
+    revision: 7,
+    connection: official.id,
+  };
+  const unregister = models.registerReferences(async () => ['running']);
+  expect(await models.remove(request)).toMatchObject({
+    phase: 'failed',
+    references: ['running'],
+  });
+  unregister();
+  expect(
+    await models.remove({ ...request, requestId: 'mock-remove-independent-official' }),
+  ).toMatchObject({
+    phase: 'committed',
+    current: { revision: 8, provider: selected.id },
+  });
+});
+
+test('a last model disconnect holds search ownership through durable removal before a legacy enable can be accepted', async () => {
+  const { models, search } = await disabledLegacy();
+  const request = {
+    scope: (await models.status(true)).modelAccess!.scope,
+    requestId: 'mock-last-model-removal-race',
+    revision: 7,
+    connection: 'mock-linked-model',
+    disconnect: true,
+  };
+  let entered = () => {};
+  const started = new Promise<undefined>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  let release = () => {};
+  const gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  writes.heldRename = { file: models.file, entered, release: gate };
+  const removing = models.remove(request);
+  await started;
+  const enabling = search.configure(
+    update({
+      requestId: 'mock-enable-during-remove',
+      revision: 1,
+      provider: 'deepseek',
+      key: undefined,
+    }),
+  );
+  const enabled = enabling.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  await new Promise<unknown>((resolve) => setTimeout(resolve, 30));
+  release();
+  expect(await removing).toMatchObject({ phase: 'committed' });
+  expect(await enabled).toMatchObject({ code: 'SEARCH_CREDENTIAL_REQUIRED' });
+  expect(await search.status()).toMatchObject({ enabled: false, revision: 1 });
+});
+
+test('captured fallback model credentials and binding do not inherit a search route annotation', async () => {
+  const { models } = await fixture();
+  const primary = connection('mock-primary', 'https://primary.example.test/v1');
+  const backup = connection('mock-backup', 'https://backup.example.test/v1');
+  await catalog(models.file, [primary, backup], primary.id);
+  await models.fallback({
+    scope: (await models.status(true)).modelAccess!.scope,
+    requestId: 'mock-select-backup',
+    revision: 7,
+    model: `provider:${backup.id}:mock-model`,
+  });
+  const captured = await models.capture();
+  expect(captured.fallback).not.toHaveProperty('searchApiKey');
+  expect(captured.fallback?.binding).toBe(
+    (await models.resolve(`provider:${backup.id}:mock-model`)).binding,
+  );
 });

@@ -41,7 +41,13 @@ async function bounded<T>(operation: Promise<T>, signal: AbortSignal): Promise<T
 }
 
 // Resolve once, then dial that public address: global fetch/proxy resolution must not retarget a credential.
-const pinnedRequest: typeof fetch = async (input, init = {}) => {
+type SearchRequest = (
+  input: Parameters<typeof fetch>[0],
+  init?: RequestInit,
+  beforeSend?: () => unknown,
+) => Promise<Response>;
+
+const pinnedRequest: SearchRequest = async (input, init = {}, beforeSend) => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   if (
     !Object.values(endpoints).some((endpoint) => url.origin + url.pathname === endpoint) ||
@@ -58,11 +64,13 @@ const pinnedRequest: typeof fetch = async (input, init = {}) => {
   headers.set('connection', 'close');
   headers.set('host', url.host);
   const addresses = await resolvePublic(url.hostname, signal);
+  beforeSend?.();
   const socket = await dialAddress(addresses[0].address, 443, signal);
   const agent = new Agent({ keepAlive: false });
   agent.createConnection = () =>
     secureConnect({ socket, servername: url.hostname, rejectUnauthorized: true });
   try {
+    beforeSend?.();
     return await new Promise<Response>((resolve, reject) => {
       const request = httpsRequest(
         {
@@ -112,7 +120,16 @@ const pinnedRequest: typeof fetch = async (input, init = {}) => {
       request.once('close', () => signal.removeEventListener('abort', cancel));
       request.once('error', reject);
       if (signal.aborted) cancel();
-      else request.end(typeof init.body === 'string' ? init.body : undefined);
+      else {
+        try {
+          // DNS and dialing yield; no credential or query may leave under their earlier authority snapshot.
+          beforeSend?.();
+          request.end(typeof init.body === 'string' ? init.body : undefined);
+        } catch (error) {
+          request.destroy();
+          reject(error);
+        }
+      }
     });
   } finally {
     socket.destroy();
@@ -262,7 +279,7 @@ function statusFailure(response: Response) {
 
 export class SearchClient {
   constructor(
-    private readonly request: typeof fetch = pinnedRequest,
+    private readonly request: SearchRequest = pinnedRequest,
     private readonly timeoutMs = 30000,
   ) {}
 
@@ -272,6 +289,7 @@ export class SearchClient {
     query: string,
     caller = new AbortController().signal,
     maxResults = 5,
+    beforeSend?: () => unknown,
   ): Promise<SearchResult> {
     if (provider !== 'deepseek' && provider !== 'brave')
       throw new SearchFault('SEARCH_INVALID_PROVIDER', 400);
@@ -291,6 +309,15 @@ export class SearchClient {
     )
       throw new SearchFault('SEARCH_QUERY_TOO_LONG', 400);
     const signal = AbortSignal.any([caller, AbortSignal.timeout(this.timeoutMs)]);
+    let denied: { error: unknown } | undefined;
+    const guard = () => {
+      try {
+        beforeSend?.();
+      } catch (error) {
+        denied = { error };
+        throw error;
+      }
+    };
     try {
       signal.throwIfAborted();
       const endpoint = new URL(endpoints[provider]);
@@ -314,7 +341,8 @@ export class SearchClient {
           result_filter: 'web',
         }).toString();
       }
-      const response = await bounded(this.request(endpoint.href, init), signal);
+      guard();
+      const response = await bounded(this.request(endpoint.href, init, guard), signal);
       try {
         signal.throwIfAborted();
         statusFailure(response);
@@ -325,6 +353,7 @@ export class SearchClient {
         if (!response.bodyUsed && response.body) await bounded(response.body.cancel(), signal);
       }
     } catch (error) {
+      if (denied && denied.error === error) throw error;
       if (caller.aborted) throw new SearchFault('SEARCH_CANCELLED', 409);
       if (signal.aborted) throw new SearchFault('SEARCH_TIMEOUT', 504);
       if (error instanceof SearchFault) throw error;

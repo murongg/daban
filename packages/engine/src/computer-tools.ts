@@ -75,6 +75,7 @@ export interface ToolTrace {
   code?: string;
 }
 export interface ToolRun {
+  hostSearch?: true;
   project?: import('@daban/protocol').ProjectScope;
   id?: string;
   conversationId?: string;

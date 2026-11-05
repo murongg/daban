@@ -154,6 +154,7 @@ const testQuery = 'synthetic search connectivity test';
 export class SearchSettings {
   private writing: Promise<unknown> = Promise.resolve();
   private initialized = false;
+  private generation = 0;
   private readonly checks = new Map<
     string,
     { fingerprint: string; promise: Promise<SearchReceipt> }
@@ -163,7 +164,8 @@ export class SearchSettings {
     readonly models: ModelSettings,
     private readonly client: Pick<SearchClient, 'query'> = new SearchClient(),
   ) {
-    models.withConnectionChange = (connection, commit) => this.protect(connection, commit);
+    models.withConnectionChange = (connection, commit, removing) =>
+      this.protect(connection, commit, removing);
   }
   private serial<T>(operation: () => Promise<T>) {
     const pending = this.writing.catch(() => {}).then(operation);
@@ -350,6 +352,7 @@ export class SearchSettings {
         status: await this.statusOf(next),
       };
       next.receipt = { fingerprint, result };
+      this.generation++;
       await this.persist(next);
       return structuredClone(result);
     });
@@ -364,17 +367,27 @@ export class SearchSettings {
         : { ...query, phase: 'superseded' };
     });
   }
-  private async protect<T>(connection: ModelConnection, commit: () => Promise<T>) {
+  private async protect<T>(
+    connection: ModelConnection,
+    commit: () => Promise<T>,
+    removing = false,
+  ) {
     return this.serial(async () => {
       const config = await this.read();
       if (
         config.enabled &&
         config.credential?.kind === 'legacy-linked' &&
         config.credential.connection === connection.id &&
-        (modelApi(connection) !== 'openai-completions' ||
+        (removing ||
+          modelApi(connection) !== 'openai-completions' ||
           connection.baseURL.replace(/\/+$/, '') !== 'https://api.deepseek.com/v1')
       )
         throw new Fault('SEARCH_LEGACY_IN_USE');
+      if (
+        config.credential?.kind === 'legacy-linked' &&
+        config.credential.connection === connection.id
+      )
+        this.generation++;
       // Keep this owner through the model rename so enabling a legacy reference cannot cross the destination change.
       return await commit();
     });
@@ -417,11 +430,27 @@ export class SearchSettings {
     query: string,
     signal?: AbortSignal,
     maxResults = 5,
+    beforeSend?: () => unknown,
   ): Promise<SearchResult> {
+    const generation = this.generation;
+    const guard = () => {
+      // The final transport gate cannot await a config read; owner writes invalidate every earlier read synchronously.
+      if (this.generation !== generation) throw new Fault('SEARCH_CONFIG_CHANGED');
+      if (signal?.aborted) throw new Fault('SEARCH_CANCELLED');
+      beforeSend?.();
+    };
     const key = await this.current(snapshot);
-    const result = await this.client.query(snapshot.provider, key, query, signal, maxResults);
+    guard();
+    const result = await this.client.query(
+      snapshot.provider,
+      key,
+      query,
+      signal,
+      maxResults,
+      guard,
+    );
     await this.current(snapshot);
-    if (signal?.aborted) throw new Fault('SEARCH_CANCELLED');
+    guard();
     return result;
   }
   async check(input: SearchCheckRequest): Promise<SearchReceipt> {

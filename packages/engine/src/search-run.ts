@@ -90,6 +90,11 @@ export class RunSearch {
     private readonly settings: Pick<SearchSettings, 'query' | 'capture'>,
     private readonly snapshot: SearchCapture,
     private readonly run: SearchRun,
+    private readonly effect?: (
+      claimId: string,
+      query: string,
+      dispatch: (beforeSend?: () => unknown) => Promise<SearchResult>,
+    ) => Promise<SearchResult>,
   ) {}
   private owner(query: Query) {
     if (this.run.abort.signal.aborted) throw new Fault('SEARCH_CANCELLED');
@@ -162,12 +167,17 @@ export class RunSearch {
   }
   private async dispatch(query: Query) {
     await this.current(query);
-    const result = await this.settings.query(
-      this.snapshot,
-      query.query,
-      this.run.abort.signal,
-      query.maxResults,
-    );
+    const dispatch = (beforeSend?: () => unknown) =>
+      this.settings.query(
+        this.snapshot,
+        query.query,
+        this.run.abort.signal,
+        query.maxResults,
+        beforeSend,
+      );
+    const result = await (this.effect
+      ? this.effect(query.callId, query.query, dispatch)
+      : dispatch());
     await this.current(query);
     return structuredClone(result);
   }

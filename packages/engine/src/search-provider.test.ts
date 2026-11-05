@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { expect, test } from 'vitest';
+import { apply as policy } from './policy.js';
 import { apply, type SearchProviderConfig, type SearchProviderContext } from './search-provider.js';
 
 const config: SearchProviderConfig = {
@@ -30,15 +32,52 @@ function fixture() {
     },
   };
   const exec = {
+    token: Symbol('synthetic-provider-execution'),
     name: 'web_search',
     callId: 'mock-call',
     agent: root,
     arguments: { queries: ['synthetic one', 'synthetic two'] },
     signal: new AbortController().signal,
   };
+  let pre:
+    | Extract<Parameters<Parameters<typeof policy>[0]['on']>, ['tools/pre-execute', unknown]>[1]
+    | undefined;
+  const claims: string[] = [];
+  policy(
+    {
+      agents: ctx.agents,
+      on: (...hook) => {
+        if (hook[0] === 'tools/pre-execute') pre = hook[1];
+      },
+    },
+    {
+      ...config,
+      limit: 60,
+      urls: [],
+      attemptId: 'mock-attempt',
+      budget: { budgetId: 'mock-budget', revision: 1 },
+    },
+    async (_url, init) => {
+      const rpc = JSON.parse(String(init.body)) as {
+        id: string;
+        method: string;
+        params: { callId: string };
+      };
+      const claimId = createHash('sha256')
+        .update(rpc.params.callId || '')
+        .digest('hex');
+      if (rpc.method === 'budget.tool') claims.push(claimId);
+      return Response.json({ id: rpc.id, result: { accepted: true, searchReceipt: { claimId } } });
+    },
+  );
   return {
     ctx,
     exec,
+    claims,
+    authorize: async (value = exec) => {
+      expect.assert(pre);
+      expect(await pre(value, async () => ({ kind: 'allow' }))).toMatchObject({ kind: 'allow' });
+    },
     get provider() {
       expect.assert(provider);
       return provider;
@@ -63,6 +102,7 @@ test('the provider uses the actual tool context and capability bridge without su
     });
   });
   expect(f.provider.available()).toBe(true);
+  await f.authorize();
   const result = await f.execute(f.exec, async () =>
     f.provider.search({ query: 'synthetic one', maxResults: 5 }, f.exec.signal),
   );
@@ -73,14 +113,8 @@ test('the provider uses the actual tool context and capability bridge without su
   expect(received[0]).toMatchObject({
     method: 'search.query',
     params: {
-      runId: 'mock-run',
-      sessionId: 'mock-session',
-      executionSessionId: 'mock-session',
-      callId: 'mock-call',
-      searchRevision: 3,
-      queries: ['synthetic one', 'synthetic two'],
+      claimId: f.claims[0],
       query: 'synthetic one',
-      maxResults: 5,
     },
   });
   await expect(f.provider.search({ query: 'synthetic one' })).rejects.toMatchObject({
@@ -93,20 +127,27 @@ test('parallel tool executions retain their own invocation identity', async () =
   await apply(f.ctx, config, async (_url, init) => {
     const body = JSON.parse(String(init.body)) as {
       id: string;
-      params: { callId: string; query: string };
+      params: { claimId: string; query: string };
     };
-    calls.push(`${body.params.callId}:${body.params.query}`);
+    calls.push(`${body.params.claimId}:${body.params.query}`);
     return Response.json({ id: body.id, result: { sources: [], truncated: false } });
   });
   await Promise.all(
-    ['one', 'two'].map((value) =>
-      f.execute({ ...f.exec, callId: value, arguments: { queries: [value] } }, async () => {
+    ['one', 'two'].map(async (value) => {
+      const exec = {
+        ...f.exec,
+        token: Symbol(value),
+        callId: value,
+        arguments: { queries: [value] },
+      };
+      await f.authorize(exec);
+      return f.execute(exec, async () => {
         await new Promise<unknown>((resolve) => setTimeout(resolve, value === 'one' ? 3 : 1));
         return f.provider.search({ query: value });
-      }),
-    ),
+      });
+    }),
   );
-  expect(calls.sort()).toEqual(['one:one', 'two:two']);
+  expect(calls.sort()).toEqual([`${f.claims[0]}:one`, `${f.claims[1]}:two`].sort());
 });
 test('stable Host errors survive the bridge but unknown responses and cancelled results grant nothing', async () => {
   const f = fixture();
@@ -115,6 +156,7 @@ test('stable Host errors survive the bridge but unknown responses and cancelled 
     const body = JSON.parse(String(init.body)) as { id: string };
     return Response.json({ id: body.id, ...(result as object) });
   });
+  await f.authorize();
   const search = () => f.execute(f.exec, async () => f.provider.search({ query: 'synthetic one' }));
   await expect(search()).rejects.toMatchObject({ code: 'SEARCH_CONFIG_CHANGED' });
   result = { error: { message: 'synthetic-secret-reflection' } };
