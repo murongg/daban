@@ -61,6 +61,7 @@ export class OAuth {
   private readonly refreshing = new Map<string, Promise<string>>();
   private readonly callbacks = new Set<Promise<unknown>>();
   private closed = false;
+  private closing?: Promise<unknown>;
   constructor(
     readonly store: Integrations,
     readonly options: OAuthOptions = {},
@@ -479,8 +480,12 @@ export class OAuth {
       this.dispose(pending);
     }
   }
-  async close() {
-    if (this.closed) return;
+  close() {
+    // Every caller must wait for the same drain before closing the shared SQLite owner.
+    this.closing ??= this.drain();
+    return this.closing;
+  }
+  private async drain() {
     this.closed = true;
     await Promise.allSettled(
       [...this.active.values()].map((p) => this.end(p, 'interrupted', 'OAUTH_INTERRUPTED')),

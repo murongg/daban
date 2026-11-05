@@ -342,11 +342,16 @@ test('close drains an in-flight exchange before its SQLite owner can close', asy
     const closing = f.oauth.close().then(() => {
       closed = true;
     });
+    let secondClosed = false;
+    const secondClosing = f.oauth.close().then(() => {
+      secondClosed = true;
+    });
     await new Promise((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
+    expect(secondClosed).toBe(false);
     f.releaseExchange();
     expect((await callback).status).toBe(400);
-    await closing;
+    await Promise.all([closing, secondClosing]);
     expect(await f.store.oauthGrant(f.input.connection)).toBeUndefined();
   } finally {
     await f.close();
