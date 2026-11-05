@@ -152,5 +152,8 @@ test('trajectory evaluation participates in the existing runtime stage', () => {
     }),
   ).toBe(0);
   expect(calls[0]).toContain('packages/engine/dist/trajectory.test.js');
-  expect(calls).toHaveLength(10);
+  expect(calls).toHaveLength(process.platform === 'linux' ? 11 : 10);
+  expect(
+    calls.flat().filter((arg) => arg === 'packages/engine/dist/trajectory.test.js'),
+  ).toHaveLength(1);
 });
