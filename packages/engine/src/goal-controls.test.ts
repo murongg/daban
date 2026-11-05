@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 import { GoalControls } from './goal-controls.js';
 
-test('Human epochs and consumed native Goal grants survive restart without becoming a new permission', async () => {
+test('repeated shutdown preserves Human epochs and consumed Goal grants across restart', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-goal-restart-'));
   const file = path.join(root, 'goals.sqlite');
   let store = new GoalControls(file);
@@ -13,16 +13,20 @@ test('Human epochs and consumed native Goal grants survive restart without becom
     const owner = { bot: 'synthetic-bot', chatRevision: 0 };
     store.observe(owner, 'synthetic-session', { id: 'synthetic-goal', revision: 1 }, true);
     const grant = store.accept(store.prepare(owner)!, 'synthetic-human', 'synthetic-run');
-    store.close();
+    const initial = store;
+    initial.close();
     store = new GoalControls(file);
     await store.ready;
+    expect(() => initial.close()).not.toThrow();
     expect(store.epoch(owner)).toBe(1);
     expect(store.claim(grant.id, 'synthetic-run', 'synthetic-session', 'synthetic-goal', 1)).toBe(
       true,
     );
-    store.close();
+    const claimed = store;
+    claimed.close();
     store = new GoalControls(file);
     await store.ready;
+    expect(() => claimed.close()).not.toThrow();
     expect(store.noteHuman(owner, 'synthetic-human')).toBe(1);
     expect(store.claim(grant.id, 'synthetic-run', 'synthetic-session', 'synthetic-goal', 1)).toBe(
       false,
