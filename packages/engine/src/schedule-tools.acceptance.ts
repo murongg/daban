@@ -10,6 +10,15 @@ import { Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
 import type { RawModelTask } from './snapshot.js';
 
+function scheduleRunner(models: ModelRuns): ConstructorParameters<typeof Schedules>[0]['runner'] {
+  return {
+    running: (bot) => models.running(bot),
+    findRequest: (bot, request) => models.findRequest(bot, request),
+    start: (bot, task, _scope, source) =>
+      models.start(bot, task, undefined, { automation: source }),
+  };
+}
+
 // Manual paid-model acceptance; synthetic instructions, no customer data or real schedules.
 export async function acceptScheduleTools(output = '/tmp/daban-schedule-tools-live.json') {
   assert.equal(process.platform, 'linux');
@@ -53,7 +62,10 @@ export async function acceptScheduleTools(output = '/tmp/daban-schedule-tools-li
       origin: `http://127.0.0.1:${address.port}`,
     });
     await models.ready;
-    schedules = new Schedules({ file: path.join(directory, 'schedules.sqlite'), runner: models });
+    schedules = new Schedules({
+      file: path.join(directory, 'schedules.sqlite'),
+      runner: scheduleRunner(models),
+    });
     await schedules.ready;
     models.tools.schedules = new ScheduleTools(schedules);
     async function turn(

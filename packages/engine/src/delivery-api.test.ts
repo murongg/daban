@@ -27,7 +27,7 @@ test('human checklist creation is CAS-bound, durable, idempotent and never start
   };
   try {
     expect.assert(app.models);
-    const start = vi.spyOn(app.models, 'start');
+    const start = vi.spyOn(app.models, 'startHuman');
     await call('work/write', {
       id: 'mock-create',
       item: 'mock-work',
@@ -117,19 +117,21 @@ async function fixture() {
   });
   const receipts = new Map<string, RunReceipt>();
   vi.spyOn(models, 'findRequest').mockImplementation((_bot, request) => receipts.get(request));
-  const start = vi
-    .spyOn(models, 'start')
-    .mockImplementation(async (_bot, input, _scope, delivery) => {
-      const request = input as { requestId: string };
-      expect((await models.work.get('mock-work')).status).toBe('doing');
-      receipts.set(request.requestId, {
-        runId: request.requestId === 'mock-start' ? 'mock-run' : `mock-${request.requestId}`,
-        phase: 'running',
-        delivery,
-        conversationId: _scope?.id,
-      });
-      return {} as Awaited<ReturnType<typeof models.start>>;
+  const dispatch: typeof models.startHuman = async (_bot, input, _scope, _budget, provenance) => {
+    const request = input as { requestId: string };
+    expect((await models.work.get('mock-work')).status).toBe('doing');
+    receipts.set(request.requestId, {
+      runId: request.requestId === 'mock-start' ? 'mock-run' : `mock-${request.requestId}`,
+      phase: 'running',
+      delivery: provenance?.delivery,
+      conversationId: _scope?.id,
     });
+    return {} as Awaited<ReturnType<typeof models.start>>;
+  };
+  const start = vi.spyOn(models, 'startHuman').mockImplementation(dispatch);
+  vi.spyOn(models, 'start').mockImplementation((bot, input, scope, origin) =>
+    dispatch(bot, input, scope, undefined, origin),
+  );
   const page = async () => {
     const value = (await call('delivery/get', { workId: 'mock-work' })).value;
     expect.assert(isDeliveryPage(value));

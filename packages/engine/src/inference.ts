@@ -178,3 +178,68 @@ export function inferenceText(
     ? ''
     : null;
 }
+
+/** Parse the provider wire, never a normalized SDK usage object with default zeros. */
+export function inferenceUsage(
+  api: ModelApi,
+  value: unknown,
+): import('@daban/protocol').TokenUsage {
+  const unknown = { state: 'unknown', reason: 'PROVIDER_USAGE_MISSING_OR_INVALID' } as const;
+  if (!object(value) || !object(value.usage)) return unknown;
+  const usage = value.usage;
+  let input: unknown;
+  let output: unknown;
+  let read: unknown;
+  let write: unknown;
+  if (api === 'openai-completions') {
+    input = usage.prompt_tokens;
+    output = usage.completion_tokens;
+    if (object(usage.prompt_tokens_details)) {
+      read = usage.prompt_tokens_details.cached_tokens;
+      write = usage.prompt_tokens_details.cache_write_tokens;
+    }
+    if (
+      usage.prompt_cache_hit_tokens !== undefined &&
+      read !== undefined &&
+      usage.prompt_cache_hit_tokens !== read
+    )
+      return unknown;
+    read = usage.prompt_cache_hit_tokens ?? read;
+    if (
+      object(usage.completion_tokens_details) &&
+      usage.completion_tokens_details.reasoning_tokens !== undefined &&
+      (!Number.isSafeInteger(usage.completion_tokens_details.reasoning_tokens) ||
+        Number(usage.completion_tokens_details.reasoning_tokens) < 0 ||
+        Number(usage.completion_tokens_details.reasoning_tokens) > Number(output))
+    )
+      return unknown;
+  } else if (api === 'openai-responses') {
+    input = usage.input_tokens;
+    output = usage.output_tokens;
+    if (object(usage.input_tokens_details)) {
+      read = usage.input_tokens_details.cached_tokens;
+      write = usage.input_tokens_details.cache_write_tokens;
+    }
+  } else if (api === 'anthropic-messages') {
+    input = usage.input_tokens;
+    output = usage.output_tokens;
+    read = usage.cache_read_input_tokens;
+    write = usage.cache_creation_input_tokens;
+  } else return unknown;
+  if (![input, output, read, write].every((v) => Number.isSafeInteger(v) && Number(v) >= 0))
+    return unknown;
+  const inputTokens =
+    Number(input) + (api === 'anthropic-messages' ? Number(read) + Number(write) : 0);
+  if (
+    !Number.isSafeInteger(inputTokens + Number(output)) ||
+    Number(read) + Number(write) > inputTokens
+  )
+    return unknown;
+  return {
+    state: 'reported',
+    inputTokens,
+    outputTokens: Number(output),
+    cacheReadTokens: Number(read),
+    cacheWriteTokens: Number(write),
+  };
+}

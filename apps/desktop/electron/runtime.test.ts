@@ -1,9 +1,153 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { disconnected } from '@daban/protocol';
+import { approvalRulesCapability, disconnected } from '@daban/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
+
+it('requires the rule capability and validates Bot and request identity on rule replies', async () => {
+  let reply: unknown = { scope: { kind: 'bot', bot: 'mock-bot' }, revision: 0, rules: [] };
+  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(reply));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  const snapshot = {
+    ...disconnected('ready'),
+    approvalRules: {
+      capability: approvalRulesCapability as typeof approvalRulesCapability,
+      available: true,
+      revision: 0,
+    },
+  };
+  const state = vi.spyOn(client, 'status').mockResolvedValue(disconnected('ready'));
+  const command = {
+    type: 'approval.rules.list' as const,
+    scope: { kind: 'bot' as const, bot: 'mock-bot' },
+  };
+  await expect(client.invoke(command)).rejects.toThrow('APPROVAL_UPGRADE_REQUIRED');
+  expect(fetcher).not.toHaveBeenCalled();
+  state.mockResolvedValue(snapshot);
+  expect(await client.invoke(command)).toEqual(reply);
+  const projectCommand = {
+    type: 'approval.rules.list' as const,
+    scope: { kind: 'project' as const, scope: { projectId: 'mock-project', revision: 1 } },
+  };
+  reply = {
+    scope: { kind: 'project', scope: { projectId: 'mock-other', revision: 1 } },
+    revision: 0,
+    rules: [],
+  };
+  await expect(client.invoke(projectCommand)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = {
+    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 2 } },
+    revision: 0,
+    rules: [],
+  };
+  await expect(client.invoke(projectCommand)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = { scope: projectCommand.scope, revision: 0, rules: [] };
+  expect(await client.invoke(projectCommand)).toEqual(reply);
+  reply = { scope: { kind: 'bot', bot: 'mock-other' }, revision: 0, rules: [] };
+  await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = {
+    requestId: 'mock-foreign',
+    id: 'mock-rule',
+    scope: command.scope,
+    revision: 1,
+    deleted: true,
+  };
+  await expect(
+    client.invoke({ type: 'approval.rules.receipt', scope: command.scope, requestId: 'mock-save' }),
+  ).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = {
+    requestId: 'mock-save',
+    id: 'mock-other-rule',
+    scope: command.scope,
+    revision: 1,
+    deleted: true,
+  };
+  await expect(
+    client.invoke({
+      type: 'approval.rules.write',
+      request: {
+        requestId: 'mock-save',
+        expectedRevision: 0,
+        scope: command.scope,
+        action: 'delete',
+        id: 'mock-rule',
+      },
+    }),
+  ).rejects.toThrow('INVALID_RUNTIME_STATE');
+  expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get('x-daban-approval-rules')).toBe(
+    approvalRulesCapability,
+  );
+});
+
+it.each(['reordered selector', 'unexpected expiry', 'unexpected purpose'] as const)(
+  'correlates the complete normalized rule intent: %s',
+  async (change) => {
+    const scope = { kind: 'bot' as const, bot: 'mock-bot' };
+    const rule = {
+      id: 'mock-rule',
+      name: 'Synthetic exact rule',
+      enabled: true,
+      effect: 'ask' as const,
+      trigger: 'interactive' as const,
+      selector: {
+        kind: 'mcp' as const,
+        connection: 'mock-connection',
+        configRevision: 1,
+        catalogDigest: 'a'.repeat(64),
+        tool: 'synthetic_echo',
+        inputHash: 'b'.repeat(64),
+      },
+    };
+    const request = {
+      requestId: 'mock-edit',
+      expectedRevision: 0,
+      scope,
+      action: 'save' as const,
+      rule,
+    };
+    const reply = {
+      requestId: request.requestId,
+      revision: 1,
+      scope,
+      id: rule.id,
+      rule: {
+        ...rule,
+        scope,
+        revision: 1,
+        selector:
+          change === 'reordered selector'
+            ? {
+                inputHash: 'b'.repeat(64),
+                tool: 'synthetic_echo',
+                catalogDigest: 'a'.repeat(64),
+                configRevision: 1,
+                connection: 'mock-connection',
+                kind: 'mcp' as const,
+              }
+            : rule.selector,
+        ...(change === 'unexpected expiry' ? { expiresAt: '2027-01-01T00:00:00Z' } : {}),
+        ...(change === 'unexpected purpose' ? { purposeConfirmed: true as const } : {}),
+      },
+    };
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher: async () => Response.json(reply),
+    });
+    vi.spyOn(client, 'status').mockResolvedValue({
+      ...disconnected('ready'),
+      approvalRules: { capability: approvalRulesCapability, available: true, revision: 0 },
+    });
+    const result = client.invoke({ type: 'approval.rules.write', request });
+    if (change === 'reordered selector') await expect(result).resolves.toEqual(reply);
+    else await expect(result).rejects.toThrow('INVALID_RUNTIME_STATE');
+  },
+);
 
 it('validates the approval mode and refuses it before sending to a runtime without policy support', async () => {
   const task = {
@@ -1413,3 +1557,195 @@ it('accepts a native-only host without a VM, reboot service, or connected Linux 
   expect(state.agent).toEqual(role);
   expect(state.reboot).toBeUndefined();
 });
+
+it('accepts exact model access intents and rejects secrets or extra authority in receipt queries', () => {
+  const scope = 'mock-model-host';
+  const identity = {
+    scope,
+    requestId: 'mock-model-operation',
+    revision: 2,
+    connection: 'mock-provider',
+    model: 'provider:mock-provider:mock-model',
+  };
+  const commands = [
+    { type: 'model.saved', input: identity },
+    {
+      type: 'model.fallback.configure',
+      input: { scope, requestId: 'mock-fallback', revision: 2, model: identity.model },
+    },
+    {
+      type: 'model.fallback.configure',
+      input: { scope, requestId: 'mock-disable-fallback', revision: 2, model: null },
+    },
+    {
+      type: 'model.remove',
+      input: {
+        scope,
+        requestId: 'mock-remove',
+        revision: 2,
+        connection: 'mock-provider',
+        disconnect: true,
+      },
+    },
+    {
+      type: 'model.diagnose',
+      input: {
+        scope,
+        requestId: 'mock-diagnose',
+        revision: 2,
+        probeRevision: 0,
+        connection: { id: 'mock-provider', baseURL: 'https://models.example.test/v1' },
+        model: 'mock-model',
+        kind: 'inference',
+      },
+    },
+  ];
+  for (const command of commands) {
+    expect(parseCommand(command)).toEqual(command);
+    expect(() =>
+      parseCommand({ ...command, input: { ...command.input, authority: 'model' } }),
+    ).toThrow();
+    expect(() => parseCommand({ ...command, input: { ...command.input, revision: -1 } })).toThrow();
+  }
+  expect(() =>
+    parseCommand({ type: 'model.saved', input: { ...identity, apiKey: 'synthetic-private-key' } }),
+  ).toThrow();
+});
+
+it('gates model access by capability and verifies the exact receipt identity and key-free current state', async () => {
+  const input = {
+    scope: 'mock-model-host',
+    requestId: 'mock-saved',
+    revision: 2,
+    connection: 'mock-provider',
+    model: 'provider:mock-provider:mock-model',
+  };
+  const current = { provider: 'mock-provider', model: input.model, revision: 2, configured: true };
+  const valid = { ...input, kind: 'configure', phase: 'unknown', current };
+  let reply: unknown = valid;
+  const fetcher = vi.fn(async () => Response.json(reply));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  const state = disconnected('ready');
+  vi.spyOn(client, 'status').mockImplementation(async () => structuredClone(state));
+  const command = parseCommand({ type: 'model.saved', input });
+  await expect(client.invoke(command)).rejects.toThrow('RUNTIME_TOO_OLD');
+  expect(fetcher).not.toHaveBeenCalled();
+  state.model.modelAccess = { scope: input.scope, fallback: true, diagnostics: true, cli: false };
+  expect(await client.invoke(command)).toEqual(valid);
+  for (const invalid of [
+    { ...valid, scope: 'mock-other-host' },
+    { ...valid, connection: 'mock-other-provider' },
+    { ...valid, revision: 3 },
+    { ...valid, current: { ...current, apiKey: 'synthetic-private-key' } },
+  ]) {
+    reply = invalid;
+    await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
+  }
+});
+
+it('projects bounded model attempts and their logical root into live and historical task metadata', async () => {
+  const attempt = {
+    attemptId: 'mock-primary-attempt',
+    model: 'deepseek-flash',
+    phase: 'failed',
+    fence: 'clean',
+    failure: 'auth',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    usage: 'unknown',
+  };
+  const settings = {
+    provider: 'deepseek-official',
+    model: 'deepseek-flash',
+    configured: true,
+    revision: 1,
+  };
+  const history = {
+    runId: 'mock-run',
+    requestId: 'mock-request',
+    rootRunId: 'mock-root',
+    prompt: 'Synthetic input',
+    phase: 'failed',
+    result: '',
+    error: '',
+    attemptSummary: [attempt],
+  };
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (url) =>
+      Response.json(
+        url.endsWith('/api/model/settings')
+          ? settings
+          : {
+              ...raw,
+              model: {
+                ...raw.model,
+                ...settings,
+                bots: {
+                  ...raw.model.bots,
+                  a: {
+                    ...raw.model.bots.a,
+                    rootRunId: 'mock-root',
+                    attemptSummary: [attempt],
+                    history: [history],
+                  },
+                },
+              },
+            },
+      ),
+  });
+  const state = await client.status();
+  expect(state.phase).toBe('ready');
+  expect(state.agents.a.attemptSummary).toEqual([attempt]);
+  expect(state.agents.a.rootRunId).toBe('mock-root');
+  expect(state.agents.a.history[0].attemptSummary).toEqual([attempt]);
+});
+
+it('recognizes only an absent Goal target endpoint as legacy service support', async () => {
+  for (const [status, error] of [
+    [404, 'NOT_FOUND'],
+    [409, 'GOAL_TARGET_CHANGED'],
+    [403, 'UNAUTHORIZED'],
+  ] as const) {
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher: async () => Response.json({ error }, { status }),
+    });
+    const call = client.invoke({ type: 'budget.goal', owner: { bot: 'a', chatRevision: 0 } });
+    if (error === 'NOT_FOUND') await expect(call).resolves.toBeNull();
+    else await expect(call).rejects.toThrow();
+  }
+});
+
+it.each([true, false])(
+  'Goal target replies retain the captured project identity (same project=%s)',
+  async (same) => {
+    const owner = { bot: 'a', chatRevision: 0, project: { projectId: 'mock-alpha', revision: 1 } };
+    const target = {
+      owner: same ? owner : { ...owner, project: { projectId: 'mock-beta', revision: 1 } },
+      sessionId: 'mock-session',
+      goalId: 'mock-goal',
+      goalRevision: 1,
+      humanEpoch: 0,
+      budget: { budgetId: 'mock-budget', revision: 1 },
+    };
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json(target),
+    );
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher,
+    });
+    expect(parseCommand({ type: 'budget.goal', owner })).toEqual({ type: 'budget.goal', owner });
+    const reply = client.invoke({ type: 'budget.goal', owner });
+    if (same) await expect(reply).resolves.toEqual(target);
+    else await expect(reply).rejects.toThrow('INVALID_GOAL_TARGET');
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ owner });
+  },
+);

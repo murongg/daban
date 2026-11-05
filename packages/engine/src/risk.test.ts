@@ -40,6 +40,24 @@ function reviewer(content = '{"risk":"low"}') {
   return { risk, bodies };
 }
 
+test('detailed risk reasons distinguish literal reads, exact model-low and forced or unavailable review', async () => {
+  const { risk } = reviewer();
+  expect(await risk.details(request('ls'))).toEqual({ decision: 'allow', reason: 'literal-read' });
+  expect(await risk.details(request('node -p "6 * 7"'))).toEqual({
+    decision: 'allow',
+    reason: 'model-low',
+  });
+  expect(await risk.details(request('rm synthetic.txt'))).toEqual({
+    decision: 'ask',
+    reason: 'forced-human',
+  });
+  const absent = new Risk({ settings: { ...settings, resolve: async () => null } });
+  expect(await absent.details(request('node -p "6 * 7"'))).toEqual({
+    decision: 'ask',
+    reason: 'unavailable',
+  });
+});
+
 test('native risk review uses the captured protocol headers and reads only a complete native decision', async () => {
   const verdict = '{"risk":"low"}';
   for (const [api, baseURL, endpoint, header, response] of [
@@ -300,4 +318,28 @@ test('a live task review uses its captured route rather than a later workspace d
   };
   expect(await new Risk(options).review(request('node -p "1+2"'))).toBe('allow');
   expect(destinations).toStrictEqual(['https://task-provider.example.test/v1/chat/completions']);
+});
+
+test('budget admission precedes a paid Risk send and denial always falls back to ask', async () => {
+  let sent = 0,
+    metered = 0;
+  const options = {
+    settings,
+    fetcher: async () => {
+      sent++;
+      return Response.json({
+        choices: [{ finish_reason: 'stop', message: { content: '{"risk":"low"}' } }],
+      });
+    },
+    meter: (_request: CommandReview, _api: unknown, _fetcher: unknown) => async () => {
+      metered++;
+      throw new Error('BUDGET_LIMIT_REACHED');
+    },
+  };
+  const risk = new Risk(options);
+  expect(await risk.review(request("python3 -c 'print(2 + 3)'"))).toBe('ask');
+  expect(metered).toBe(1);
+  expect(sent).toBe(0);
+  expect(await risk.review(request('ls'))).toBe('allow');
+  expect(metered).toBe(1);
 });

@@ -97,6 +97,7 @@ test('real DSH preserves a reusable conversation below the model compaction budg
         prompt_tokens: 24000,
         completion_tokens: tool ? 12000 : 10,
         total_tokens: tool ? 36000 : 24010,
+        prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
       },
     };
     res.end(`data: ${JSON.stringify(delta)}\n\ndata: ${JSON.stringify(end)}\n\ndata: [DONE]\n\n`);
@@ -258,7 +259,7 @@ for (const needsSummary of [false, true])
         const promptTokens = summary ? 4000 : normal === 1 && !needsSummary ? 49500 : 40000;
         const completionTokens = normal === 1 && !summary && needsSummary ? 12000 : 40;
         res.end(
-          `data: ${JSON.stringify({ ...frame, choices: [{ index: 0, delta: message, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ ...frame, choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens } })}\n\ndata: [DONE]\n\n`,
+          `data: ${JSON.stringify({ ...frame, choices: [{ index: 0, delta: message, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ ...frame, choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } } })}\n\ndata: [DONE]\n\n`,
         );
       } catch {
         res.writeHead(400, { 'content-type': 'application/json' });
@@ -324,6 +325,18 @@ for (const needsSummary of [false, true])
     expect.assert(pruned, 'the normal continuation must see the pruned result');
     expect.assert(recovered, 'the marker must remain readable from the original saved tool output');
     expect(summaries > 0).toBe(needsSummary);
+    const budget = agent.models.budgets.view(first.budget!.budgetId);
+    expect(budget.requests).toBe(requests.length);
+    expect(budget.receipts.filter((receipt) => receipt.purpose === 'compaction')).toHaveLength(
+      summaries,
+    );
+    expect(
+      budget.unknownCount,
+      JSON.stringify(
+        budget.receipts.map((receipt) => ({ phase: receipt.phase, usage: receipt.usage })),
+      ),
+    ).toBe(0);
+    expect(budget.availability).toBe('recorded');
     expect(normal).toBe(4);
     const saved = await agent.models.journal.read('mock-bot', first.id);
     if (needsSummary)

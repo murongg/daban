@@ -223,14 +223,97 @@ test('a fresh human command can pause and resume a goal while an ordinary retry 
       goal: { phase: 'paused', activation: 'disarmed' },
     });
     stage = 'resume';
-    await fixture.models.start('mock-bot', {
+    await fixture.models.startHuman('mock-bot', {
       requestId: 'mock-resume-explicit',
       prompt: '/goal resume',
+      chatRevision: 0,
+      goalResume: await fixture.models.goalTarget({ bot: 'mock-bot', chatRevision: 0 }),
     });
     const resumed = fixture.models.jobs.get('mock-bot')!;
     await resumed.done;
     expect(resumed.phase, resumed.error).toBe('completed');
     expect(resumed).toMatchObject({ goal: { phase: 'complete', rounds: 1 } });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('explicit budget continuation resumes the same native Goal through its existing owner without resetting rounds', {
+  timeout: 60000,
+}, async () => {
+  const { defaultBudgetPolicy } = await import('@daban/protocol');
+  let resuming = false;
+  let refreshed = false;
+  const fixture = await inferenceFixture((request) => {
+    if (resuming && !refreshed) {
+      refreshed = true;
+      return [{ name: 'get_goal', args: {} }];
+    }
+    const goal = observedGoal(request);
+    if (!goal)
+      return [
+        { name: 'create_goal', args: { objective: 'SYNTHETIC BUDGET GOAL', max_goal_rounds: 3 } },
+      ];
+    if (goal.phase === 'complete') return 'SYNTHETIC GOAL COMPLETE';
+    const round = Number(
+      [...JSON.stringify(request.messages).matchAll(/Round: (\d+)\/3/g)].at(-1)?.[1] ?? 0,
+    );
+    if (resuming && round >= 2)
+      return [
+        {
+          name: 'update_goal',
+          args: { goal_id: goal.id, revision: goal.revision, action: 'complete' },
+        },
+      ];
+    return 'SYNTHETIC GOAL PROGRESS';
+  });
+  try {
+    await fixture.models.ready;
+    fixture.models.budgets.configure(
+      0,
+      { ...defaultBudgetPolicy, mode: 'strict', maxRequests: 2 },
+      [],
+      'synthetic-goal-budget',
+    );
+    await fixture.models.start('mock-bot', {
+      requestId: 'synthetic-goal-first',
+      prompt: '/goal SYNTHETIC BUDGET GOAL',
+    });
+    const first = fixture.models.jobs.get('mock-bot')!;
+    await first.done;
+    expect(first.goal?.id).toBeDefined();
+    expect(fixture.models.budgets.view(first.budget!.budgetId).state).toBe('limit-reached');
+    const owner = { bot: 'mock-bot', runId: first.id, chatRevision: 0 };
+    const raised = fixture.models.budgets.increase(
+      first.budget!.budgetId,
+      1,
+      { ...defaultBudgetPolicy, mode: 'strict', maxRequests: 12 },
+      'synthetic-goal-human',
+      () => true,
+      owner,
+    );
+    fixture.models.budgets.activate(raised.scope, 'synthetic-goal-human', owner);
+    resuming = true;
+    const target = await fixture.models.goalTarget({ bot: 'mock-bot', chatRevision: 0 });
+    await fixture.models.startHuman(
+      'mock-bot',
+      {
+        requestId: 'budget-synthetic-goal-human',
+        prompt: '/goal resume',
+        chatRevision: 0,
+        goalResume: target,
+      },
+      undefined,
+      raised.scope,
+    );
+    const last = fixture.models.jobs.get('mock-bot')!;
+    await last.done;
+    expect(last.phase, last.error).toBe('completed');
+    expect(last.goal?.id).toBe(first.goal!.id);
+    expect(last.goal?.phase).toBe('complete');
+    expect(last.goal?.rounds).toBeLessThanOrEqual(3);
+    expect(last.budget?.budgetId).toBe(first.budget!.budgetId);
+    expect(fixture.models.budgets.view(first.budget!.budgetId).requests).toBeGreaterThan(2);
   } finally {
     await fixture.close();
   }

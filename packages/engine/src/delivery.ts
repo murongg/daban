@@ -159,7 +159,7 @@ export class Delivery {
     const attempt = accepted.attempt;
     try {
       // Commit the accepted claim before ModelRuns can issue any side effect. Recovery only queries this identity.
-      await this.models.start(
+      await this.models.startHuman(
         attempt.bot,
         {
           requestId: attempt.requestId,
@@ -178,7 +178,8 @@ export class Delivery {
           chatRevision: this.models.chats.current(attempt.bot).revision,
         },
         undefined,
-        this.reference(attempt),
+        undefined,
+        { delivery: this.reference(attempt) },
       );
     } catch (error) {
       if (

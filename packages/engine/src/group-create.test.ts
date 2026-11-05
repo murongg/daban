@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { type Group, isGroupPage, type TaskRequest } from '@daban/protocol';
+import { type BudgetScope, type Group, isGroupPage, type TaskRequest } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
@@ -24,7 +24,7 @@ function value<T>(result: ToolResult): T {
 }
 type Created = { group: Group; sourceId: string; reused: boolean };
 
-async function fixture() {
+async function fixture(project?: { projectId: string; revision: number }) {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-group-create-'));
   const file = path.join(root, 'groups.sqlite');
   const members = ['mock-alpha', 'mock-beta', 'mock-gamma', 'mock-archived'].map((id) => ({
@@ -37,7 +37,7 @@ async function fixture() {
   let activeRun = 'mock-run';
   let intentId = 'mock-intent';
   let reading: (() => unknown) | undefined;
-  const calls: { bot: string; task: TaskRequest; context: string }[] = [];
+  const calls: { bot: string; task: TaskRequest; context: string; budget?: BudgetScope }[] = [];
   const runtime = {
     member: async (id: string) => members.find((member) => member.id === id),
     directory: async () => {
@@ -45,13 +45,28 @@ async function fixture() {
       return members;
     },
     source: (bot: string, runId: string) =>
-      bot === 'mock-alpha' && runId === activeRun ? { intentId } : undefined,
+      bot === 'mock-alpha' && runId === activeRun
+        ? {
+            intentId,
+            budget: { budgetId: 'synthetic-origin-budget', revision: 1 },
+            ...(project ? { project } : {}),
+          }
+        : undefined,
     running: () => false,
     groupRunning: () => false,
     admit: (bot: string) => !blocked.has(bot),
     findRequest: () => undefined,
-    start: async (bot: string, task: TaskRequest, scope: { context: string }) => {
-      calls.push({ bot, task, context: scope.context });
+    start: async (
+      bot: string,
+      task: TaskRequest,
+      scope: { context: string; budget?: BudgetScope },
+    ) => {
+      calls.push({
+        bot,
+        task,
+        context: scope.context,
+        ...(scope.budget ? { budget: scope.budget } : {}),
+      });
     },
     stopRequest: async () => {},
   } satisfies GroupRunner & {
@@ -302,11 +317,57 @@ test('the maximum shared summary remains a valid executable task without truncat
   }
 });
 
+test('collaboration persists trusted origin budget through restart and all sequential stages', async () => {
+  const f = await fixture();
+  try {
+    await f.tools.invoke(f.run, 'group_create', request);
+    await f.reopen();
+    await f.groups.tick();
+    expect(f.calls.length).toBeGreaterThan(0);
+    expect(f.calls[0].budget).toEqual({ budgetId: 'synthetic-origin-budget', revision: 1 });
+    await expect(
+      f.groups.collaborate(
+        { bot: 'mock-alpha', runId: 'mock-run' },
+        { ...request, budgetId: 'forged' },
+      ),
+    ).rejects.toThrow();
+  } finally {
+    await f.close();
+  }
+});
+
+test('a project collaboration checks every recipient before saving or delivering its summary', async () => {
+  const project = { projectId: 'mock-project', revision: 1 };
+  const f = await fixture(project);
+  Object.assign(f.runtime, {
+    projectScope: (bot: string) => {
+      if (bot === 'mock-gamma')
+        throw Object.assign(Error('PROJECT_ACCESS_DENIED'), { code: 'PROJECT_ACCESS_DENIED' });
+    },
+  });
+  try {
+    await expect(
+      f.groups.collaborate(
+        { bot: 'mock-alpha', runId: 'mock-run' },
+        { ...request, members: ['mock-gamma'] },
+      ),
+    ).rejects.toMatchObject({ code: 'PROJECT_ACCESS_DENIED' });
+    expect(f.calls).toStrictEqual([]);
+    expect((await f.groups.status()).items).toStrictEqual([]);
+    const allowed = await f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request);
+    expect(allowed.group.project).toStrictEqual(project);
+    await f.groups.tick();
+    expect(f.calls[0]?.task.project).toStrictEqual(project);
+  } finally {
+    await f.close();
+  }
+});
+
 test('delivery progress retains its trusted root across restart and excludes later unrelated turns', async () => {
   const f = await fixture();
   try {
     const reference = { workId: 'mock-work', attemptId: 'mock-attempt', requestId: 'mock-request' };
-    f.runtime.source = () => ({ intentId: 'mock-intent', delivery: reference });
+    Object.assign(f.runtime, { source: () => ({ intentId: 'mock-intent', delivery: reference }) });
     const created = await f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request);
     await f.reopen();
     const progress = Reflect.get(f.groups, 'deliveryProgress') as
@@ -321,3 +382,72 @@ test('delivery progress retains its trusted root across restart and excludes lat
     await f.close();
   }
 });
+
+test('collaboration restart forwards delivery and automation independently beside parent budget and project', async () => {
+  const project = { projectId: 'mock-project', revision: 1 };
+  const f = await fixture(project);
+  const delivery = {
+    workId: 'mock-work',
+    attemptId: 'mock-delivery-claim',
+    requestId: 'mock-root-request',
+  };
+  const automation = {
+    scheduleId: 'mock-schedule',
+    firingId: 'mock-firing',
+    configRevision: 1,
+    trigger: 'manual' as const,
+    policy: { kind: 'all' as const },
+  };
+  const budget = { budgetId: 'mock-parent-budget', revision: 1 };
+  const calls: unknown[][] = [];
+  Object.assign(f.runtime, {
+    source: () => ({ intentId: 'mock-intent', delivery, automation, budget, project }),
+    projectScope: () => {},
+    start: async (...args: unknown[]) => {
+      calls.push(args);
+    },
+  });
+  try {
+    const created = await f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request);
+    await f.reopen();
+    await f.groups.tick();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toMatchObject({ project });
+    expect(calls[0][2]).toMatchObject({ budget, sourceId: created.sourceId });
+    expect(calls[0][3]).toEqual({ automation, delivery });
+    expect(await f.groups.deliveryProgress(delivery)).toMatchObject([
+      { sourceId: created.sourceId },
+    ]);
+  } finally {
+    await f.close();
+  }
+});
+
+test.each([
+  '',
+  '{',
+  JSON.stringify({
+    workId: 'mock-work',
+    attemptId: 'mock-claim',
+    requestId: 'mock-request',
+    human: true,
+  }),
+])(
+  'malformed persisted delivery origin %j cannot reopen as an unowned collaboration',
+  async (delivery) => {
+    const f = await fixture();
+    try {
+      await f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request);
+      const db = new DatabaseSync(f.file);
+      try {
+        db.prepare('UPDATE group_collaborations SET delivery=?').run(delivery);
+      } finally {
+        db.close();
+      }
+      await expect(f.reopen()).rejects.toMatchObject({ code: 'GROUP_STORAGE_FAILED' });
+      expect(f.calls).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  },
+);
