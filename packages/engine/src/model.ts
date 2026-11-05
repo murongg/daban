@@ -11,11 +11,13 @@ import type {
   GoalBudgetOwner,
   GoalProgress,
   GoalResumeTarget,
+  McpPurposeScope,
   ModelApi,
   ModelAttempt,
   ModelAttemptFence,
   ModelId,
   ModelReference,
+  PolicyDecision,
   ReplyStream,
   RunInsert,
   RunTurn,
@@ -27,8 +29,10 @@ import type {
   TranscriptScope,
 } from '@daban/protocol';
 import {
+  type ApprovalTrigger,
   type AutomationSource,
   type ChatPage,
+  canonicalApprovalUrl,
   fileObservationCapability,
   goalResumeKey,
   imageMime,
@@ -41,6 +45,7 @@ import {
   isGoalProgress,
   isInteractionInput,
   isModelId,
+  isPolicyDecision,
   isReplyStream,
   isRuntimeDownload,
   isSessionStats,
@@ -61,6 +66,14 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { type AgentToolRun, AgentTools, executionAttemptId } from './agent-tools.js';
+import {
+  ApprovalRules,
+  approvalHash,
+  approvalSelector,
+  type PolicyRequest,
+  type PolicyRun,
+  type RulePolicy,
+} from './approval-rules.js';
 import { Attachments } from './attachments.js';
 import { type AutomationOutput, automationHash, signalDigest } from './automation.js';
 import { Budgets } from './budgets.js';
@@ -138,7 +151,7 @@ const timeLimit = 300000;
 const sdkProvider = (route: Pick<ResolvedModel, 'provider' | 'api'>) =>
   route.api === 'google-generative-ai' ? 'google' : route.provider;
 // Risk-based approval replaces the all-command approval context; keep chat history, retire its SDK session.
-const sessionProfile = 'general-v11-risk-context';
+const sessionProfile = 'general-v12-approval-rules';
 // A directory switch does not clear an SDK conversation; project revisions must partition its identity.
 const sessionKey = (
   bot: string,
@@ -320,9 +333,9 @@ export function sdkPatch(
           name: new URL('./policy.js', import.meta.url).href,
           config: {
             limit,
-            ...(attemptId
+            ...(task || attemptId
               ? {
-                  attemptId,
+                  ...(attemptId ? { attemptId } : {}),
                   url: `${origin}/mcp/${bot}`,
                   capability,
                   ...(bridge
@@ -671,6 +684,9 @@ interface ModelJob extends AgentToolRun {
     expected?: Record<string, number | undefined>;
   };
 }
+// Schedule "manual" firings still carry Host provenance; only a source-free Human entry is interactive.
+const approvalTrigger = (job: Pick<ModelJob, 'automation'>): ApprovalTrigger =>
+  job.automation ? 'automation' : 'interactive';
 interface InsertReceipt {
   ok: boolean;
   id: string;
@@ -721,6 +737,8 @@ export class ModelRuns {
   readonly skills: Skills;
   readonly integrations: Integrations;
   readonly interactions: Interactions;
+  readonly approvalRules: ApprovalRules;
+  readonly rulePolicy: RulePolicy;
   readonly ready: Promise<unknown>;
   private readonly projectSelections = new Set<string>();
   private readonly workspace: AgentWorkspace;
@@ -914,6 +932,55 @@ export class ModelRuns {
       skills: this.skills,
     });
     this.tools.memory = new MemoryTools(this.profiles);
+    this.approvalRules = new ApprovalRules(path.join(dir, 'approval-rules.sqlite'));
+    this.rulePolicy = {
+      review: async (run, selector, baseline, allowEligible = false, riskReason) => {
+        const job = this.policyIdentity(run);
+        const request: PolicyRequest = {
+          scope: { kind: 'bot', bot: job.bot },
+          ...(job.project ? { project: structuredClone(job.project) } : {}),
+          trigger: approvalTrigger(job),
+          selector,
+          mode: job.task?.approvalMode ?? 'auto',
+          baseline:
+            baseline === 'deny' ? 'deny' : job.task?.approvalMode === 'full' ? 'allow' : baseline,
+          allowEligible: selector.kind !== 'mcp' && allowEligible && !!job.task,
+          ...(riskReason ? { riskReason } : {}),
+        };
+        let decision = await this.approvalRules.evaluate(request);
+        // A caller's eligibility flag, saved rule checkbox or task text cannot substitute for Human purpose consent.
+        if (selector.kind === 'mcp' && this.hasMcpPurpose(run, decision))
+          decision = await this.approvalRules.evaluate({ ...request, allowEligible: true });
+        this.policyIdentity(run);
+        // Commands, MCP and Interactions commit the authoritative explanation in their own receipt.
+        this.recordTranscript(job, () => ({
+          source: `policy:${randomBytes(12).toString('hex')}`,
+          kind: 'interaction',
+          name: 'policy',
+          at: new Date().toISOString(),
+          text: job.redact!(JSON.stringify(decision, null, 2)),
+        }));
+        return decision;
+      },
+      assertCurrent: (run, decision) => {
+        const job = this.policyIdentity(run);
+        if (
+          decision.scope.kind !== 'bot' ||
+          decision.scope.bot !== job.bot ||
+          decision.trigger !== approvalTrigger(job) ||
+          !sameProjectScope(decision.project, job.project)
+        )
+          throw new Fault('APPROVAL_POLICY_CHANGED');
+        this.approvalRules.assertCurrent(decision);
+        if (
+          decision.selector.kind === 'mcp' &&
+          decision.source === 'rule' &&
+          decision.effect === 'allow' &&
+          !this.hasMcpPurpose(run, decision)
+        )
+          throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+      },
+    };
     this.interactions = new Interactions(
       path.join(dir, 'interactions'),
       (item) => {
@@ -933,6 +1000,29 @@ export class ModelRuns {
           job.conversationId === conversationId &&
           job.task?.approvalMode === 'full'
         );
+      },
+      (item) => {
+        const job = this.jobs.get(item.bot);
+        if (
+          !job ||
+          item.kind !== 'approval' ||
+          item.tool !== 'mcp_call' ||
+          !item.policyDecision ||
+          !item.purposeScope
+        )
+          throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+        const scope = this.mcpPurposeScope({ ...item, id: item.runId, abort: job.abort });
+        if (
+          !scope ||
+          approvalHash(scope) !== approvalHash(item.purposeScope) ||
+          (job.task?.approvalMode ?? 'auto') !== 'auto' ||
+          item.policyDecision.reasonCode !== 'baselineAsked' ||
+          !item.policyDecision.matchedRules.some((rule) => rule.effect === 'allow') ||
+          item.policyDecision.trigger !== approvalTrigger(job) ||
+          approvalHash(item.policyDecision.selector) !== approvalHash(approvalSelector(item))
+        )
+          throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+        this.rulePolicy.assertCurrent(job, item.policyDecision);
       },
     );
     this.tools.skills = new SkillTools(
@@ -961,6 +1051,7 @@ export class ModelRuns {
     );
     if (software)
       this.tools.software = new SoftwareTools(this.interactions, software, {
+        policy: this.rulePolicy,
         assertLive: (run) => {
           if (!this.admission()) throw new Fault('SOFTWARE_RUNTIME_BUSY');
           this.profiles.assertActive(run.bot);
@@ -971,6 +1062,8 @@ export class ModelRuns {
       });
     this.integrations = new Integrations(path.join(dir, 'integrations.sqlite'));
     this.tools.integrations = new IntegrationTools(this.integrations, this.interactions, {
+      policy: this.rulePolicy,
+      purposeScope: (run) => this.mcpPurposeScope(run),
       networkFile: path.join(dir, 'network.json'),
     });
     this.tools.authorizeComputer = async (run) => {
@@ -2620,7 +2713,24 @@ export class ModelRuns {
     const attempt = job.attemptSummary?.at(-1);
     if (attempt) attempt.fence = job.fence;
   }
+  private assertAttempt(
+    job: ModelJob,
+    captured: Pick<ModelJob, 'attemptId' | 'token' | 'sessionId'>,
+  ) {
+    if (
+      this.jobs.get(job.bot) !== job ||
+      !job.running ||
+      job.abort.signal.aborted ||
+      !job.attemptActive ||
+      !captured.attemptId ||
+      job.attemptId !== captured.attemptId ||
+      job.token !== captured.token ||
+      job.sessionId !== captured.sessionId
+    )
+      throw new Fault('MODEL_CANCELLED');
+  }
   private async fenceAttempt(job: ModelJob, kind: ModelAttemptFence) {
+    const captured = { attemptId: job.attemptId, token: job.token, sessionId: job.sessionId };
     if (!job.running || job.abort.signal.aborted || !job.attemptActive)
       throw new Fault('MODEL_CANCELLED');
     this.markFence(job, kind);
@@ -2630,7 +2740,7 @@ export class ModelRuns {
       this.markFence(job, 'unknown');
       throw new Fault('MODEL_FENCE_UNAVAILABLE', 503);
     }
-    job.abort.signal.throwIfAborted();
+    this.assertAttempt(job, captured);
   }
   private async writePatch(
     job: ModelJob,
@@ -3501,6 +3611,46 @@ export class ModelRuns {
     await job.done;
     await this.tools.drain(job);
   }
+  private policyIdentity(run: PolicyRun) {
+    const job = this.jobs.get(run.bot);
+    if (
+      !this.admission() ||
+      !job?.running ||
+      job.abort.signal.aborted ||
+      job.abort !== run.abort ||
+      job.id !== run.id ||
+      job.sessionId !== run.sessionId ||
+      job.conversationId !== run.conversationId
+    )
+      throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+    this.profiles.assertActive(run.bot);
+    if (job.project) this.projects.assertScope(job.bot, job.project, 'read');
+    return job;
+  }
+  private mcpPurposeScope(run: PolicyRun): McpPurposeScope | undefined {
+    const job = this.policyIdentity(run);
+    const turnId = job.turns?.at(-1)?.id;
+    // Sessions and logical runs accept follow-up Human turns; only the persisted turn identifies the current purpose.
+    return job.task && turnId ? { taskId: job.task.requestId, turnId } : undefined;
+  }
+  private hasMcpPurpose(run: PolicyRun, decision: PolicyDecision) {
+    const scope = this.mcpPurposeScope(run);
+    return (
+      !!scope &&
+      !!run.id &&
+      !!run.sessionId &&
+      this.interactions.hasPurpose(
+        {
+          bot: run.bot,
+          runId: run.id,
+          sessionId: run.sessionId,
+          conversationId: run.conversationId,
+        },
+        scope,
+        decision,
+      )
+    );
+  }
   async rpc(bot: string, authorization: string | undefined, value: unknown) {
     if (
       !value ||
@@ -3544,6 +3694,11 @@ export class ModelRuns {
     )
       throw new Fault('UNAUTHORIZED', 403);
     if (rpc.id === undefined) return null;
+    const approvalAttempt = {
+      attemptId: job.attemptId,
+      token: job.token,
+      sessionId: job.sessionId,
+    };
     let result: unknown;
     if (rpc.method === 'budget.coverage') {
       const { scope, modelAttemptId, complete, ...extra } = rpc.params ?? {};
@@ -3758,16 +3913,79 @@ export class ModelRuns {
         accepted: job.response?.turnId === turnId && job.response.revision === response.revision,
         revision: job.response?.revision || 0,
       };
+    } else if (rpc.method === 'approval.web' || rpc.method === 'approval.web.check') {
+      const params = rpc.params ?? {};
+      const url = canonicalApprovalUrl(params.url);
+      if (
+        !job.task ||
+        params.sessionId !== job.sessionId ||
+        !url ||
+        Object.keys(params).some(
+          (key) =>
+            ![
+              'sessionId',
+              'url',
+              ...(rpc.method === 'approval.web.check' ? ['decision'] : []),
+            ].includes(key),
+        )
+      )
+        throw new Fault('INVALID_INTERACTION', 400);
+      await this.fenceAttempt(job, 'tool');
+      this.assertAttempt(job, approvalAttempt);
+      if (rpc.method === 'approval.web.check') {
+        if (
+          !isPolicyDecision(params.decision) ||
+          params.decision.selector.kind !== 'url' ||
+          params.decision.selector.url !== url
+        )
+          throw new Fault('INVALID_INTERACTION', 400);
+        this.rulePolicy.assertCurrent(job, params.decision);
+        result = { current: true };
+      } else {
+        // This is a restriction on DSH's existing URL authority, never a grant to fetch another URL.
+        result = await this.rulePolicy.review(job, { kind: 'url', url }, 'allow');
+        this.assertAttempt(job, approvalAttempt);
+        if (isPolicyDecision(result)) this.rulePolicy.assertCurrent(job, result);
+        // A URL fast path has no tool receipt; its decision must be durable before DSH can dispatch it.
+        if (
+          isPolicyDecision(result) &&
+          result.effect === 'allow' &&
+          (!job.transcript || job.transcriptFailed)
+        )
+          throw new Fault('APPROVAL_AUDIT_UNAVAILABLE');
+        if (isPolicyDecision(result) && result.effect === 'deny') {
+          // Keep the existing browser/desktop refusal fence; another surface cannot bypass a denied URL.
+          await this.interactions.open(
+            bot,
+            job.id,
+            {
+              id: `web-${randomBytes(12).toString('hex')}`,
+              sessionId: job.sessionId!,
+              kind: 'approval',
+              tool: 'web_fetch',
+              url,
+            },
+            job.conversationId,
+            result,
+          );
+        }
+      }
     } else if (rpc.method === 'interaction.open') {
       if (
         !isInteractionInput(rpc.params) ||
         rpc.params.sessionId !== job.sessionId ||
         (rpc.params.kind === 'approval' &&
-          ['software_install', 'vm_command'].includes(rpc.params.tool))
+          ['software_install', 'vm_command', 'mcp_call'].includes(rpc.params.tool))
       )
         throw new Fault('INVALID_INTERACTION', 400);
       await this.fenceAttempt(job, 'tool');
-      result = await this.interactions.open(bot, job.id, rpc.params, job.conversationId);
+      const decision =
+        rpc.params.kind === 'approval'
+          ? await this.rulePolicy.review(job, approvalSelector(rpc.params), 'ask')
+          : undefined;
+      this.assertAttempt(job, approvalAttempt);
+      if (decision) this.rulePolicy.assertCurrent(job, decision);
+      result = await this.interactions.open(bot, job.id, rpc.params, job.conversationId, decision);
     } else if (rpc.method === 'interaction.wait') {
       if (typeof rpc.params?.id !== 'string' || Object.keys(rpc.params).some((key) => key !== 'id'))
         throw new Fault('INVALID_INTERACTION', 400);
@@ -3801,6 +4019,9 @@ export class ModelRuns {
         id: rpc.id,
         error: { code: -32601, message: 'Method not supported' },
       };
+    // Historical approval records never renew the replaced physical attempt that requested them.
+    if (['approval.web', 'approval.web.check', 'interaction.open'].includes(rpc.method))
+      this.assertAttempt(job, approvalAttempt);
     // A human wait can outlive the run that authenticated it; never release a grant after stop.
     if (
       job.abort.signal.aborted &&
@@ -3822,6 +4043,7 @@ export class ModelRuns {
     // Each store must close even when another owner fails, including unavailable optional services.
     if (![...this.jobs.values()].some((job) => job.running)) this.releaseModelReferences();
     for (const owner of [
+      this.approvalRules,
       this.budgets,
       this.tools.integrations,
       this.work,

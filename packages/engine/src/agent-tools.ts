@@ -166,7 +166,7 @@ export class AgentTools {
     name: string,
     args: Record<string, unknown>,
     wireId: string | undefined,
-    dispatch: () => Promise<ToolResult>,
+    dispatch: (assertPolicy?: () => unknown) => Promise<ToolResult>,
   ) => Promise<ToolResult>;
   shellRunner?: (run: AgentToolRun, command: string) => Promise<unknown>;
   private readonly remoteCatalogs = new Map<
@@ -343,6 +343,9 @@ export class AgentTools {
       )
     )
       throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
+    // An open acknowledgement belongs to the physical attempt that requested it, never its replacement.
+    run.abort.signal.throwIfAborted();
+    if ((run.executionId ?? run.id) !== id) throw new Fault('EXECUTION_RUN_CLOSED');
     this.remoteCatalogs.set(run.bot, result.tools);
     this.opened.set(run, id);
   }
@@ -437,7 +440,8 @@ export class AgentTools {
         phase: 'running',
       };
       run.trace.push(trace);
-      const dispatch = () => this.dispatchRemote(run, name, args, wireId, computer);
+      const dispatch = (assertPolicy?: () => unknown) =>
+        this.dispatchRemote(run, name, args, wireId, computer, assertPolicy);
       if (raw && !this.executeRemote) throw new Fault('COMMAND_APPROVAL_UNAVAILABLE');
       const result = raw
         ? await this.executeRemote!(run, name, args, wireId, dispatch)
@@ -466,12 +470,15 @@ export class AgentTools {
     args: Record<string, unknown>,
     wireId: string | undefined,
     computer: boolean,
+    assertPolicy?: () => unknown,
   ): Promise<ToolResult> {
     run.abort.signal.throwIfAborted();
     if (computer) await this.authorizeComputer?.(run);
     await this.open(run);
     const runId = this.opened.get(run);
     if (!runId) throw new Fault('EXECUTION_RUN_CLOSED');
+    // Opening the guest may wait; revalidate consent after that wait and before sending an effect.
+    assertPolicy?.();
     this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
     const operationId = randomUUID();
     let status = (await this.options.execution!.call(
