@@ -2,6 +2,80 @@ import { expect, test } from 'vitest';
 import { approvalHash } from './approval-rules.js';
 import { apply, inject, requestedUrls } from './policy.js';
 
+test.each([true, false])(
+  'published flat attempt/budget config retains Host approval before dispatch: deny=%s',
+  async (deny) => {
+    let listener: (
+      exec: { signal: AbortSignal; name: string; arguments: unknown; agent?: unknown },
+      next: () => Promise<unknown>,
+    ) => Promise<unknown> = async () => undefined;
+    const root = { id: 'mock-root', session: { id: 'mock-session' } };
+    const selector = { kind: 'url' as const, url: 'https://example.test/joint' };
+    const scope = { kind: 'bot' as const, bot: 'mock-bot' };
+    const methods: string[] = [];
+    let effects = 0;
+    const config = {
+      limit: 10,
+      urls: [selector.url],
+      url: 'http://127.0.0.1/mcp/mock-bot',
+      capability: 'synthetic-capability',
+      attemptId: 'mock-attempt',
+      budget: { budgetId: 'mock-budget', revision: 1 },
+    };
+    apply(
+      {
+        agents: {
+          roots: () => [root],
+          get: (id) => (id === root.id ? root : undefined),
+          isOwnedBy: () => false,
+        },
+        on: (...hook: unknown[]) => {
+          if (hook[0] === 'tools/pre-execute') listener = hook[1] as typeof listener;
+        },
+      },
+      config,
+      async (_url, init) => {
+        const body = JSON.parse(String(init.body)) as { method: string };
+        methods.push(body.method);
+        return Response.json({
+          result:
+            body.method === 'approval.web'
+              ? {
+                  effect: deny ? 'deny' : 'allow',
+                  source: 'rule',
+                  reasonCode: deny ? 'ruleDenied' : 'ruleAllowed',
+                  matchedRules: [],
+                  policyRevision: 1,
+                  requestHash: approvalHash([scope, 'interactive', selector]),
+                  scope,
+                  trigger: 'interactive',
+                  selector,
+                }
+              : body.method === 'approval.web.check'
+                ? { current: true }
+                : { accepted: true },
+        });
+      },
+    );
+    const execution = {
+      signal: new AbortController().signal,
+      name: 'web_fetch',
+      arguments: { url: selector.url },
+      agent: root,
+      token: Symbol('synthetic-execution'),
+    };
+    await listener(execution, async () => {
+      effects++;
+      return { kind: 'allow' };
+    });
+    expect(methods).toContain('approval.web');
+    expect(methods).toContain('attempt.fence');
+    expect(effects).toBe(deny ? 0 : 1);
+    expect(methods.filter((method) => method === 'budget.tool')).toHaveLength(deny ? 0 : 1);
+    if (!deny) expect(methods).toContain('approval.web.check');
+  },
+);
+
 test('a supplied URL still consults Host deny and rechecks a captured decision immediately before fetch', async () => {
   for (const denied of [true, false]) {
     let listener: (
