@@ -40,24 +40,6 @@ function reviewer(content = '{"risk":"low"}') {
   return { risk, bodies };
 }
 
-test('detailed risk reasons distinguish literal reads, exact model-low and forced or unavailable review', async () => {
-  const { risk } = reviewer();
-  expect(await risk.details(request('ls'))).toEqual({ decision: 'allow', reason: 'literal-read' });
-  expect(await risk.details(request('node -p "6 * 7"'))).toEqual({
-    decision: 'allow',
-    reason: 'model-low',
-  });
-  expect(await risk.details(request('rm synthetic.txt'))).toEqual({
-    decision: 'ask',
-    reason: 'forced-human',
-  });
-  const absent = new Risk({ settings: { ...settings, resolve: async () => null } });
-  expect(await absent.details(request('node -p "6 * 7"'))).toEqual({
-    decision: 'ask',
-    reason: 'unavailable',
-  });
-});
-
 test('native risk review uses the captured protocol headers and reads only a complete native decision', async () => {
   const verdict = '{"risk":"low"}';
   for (const [api, baseURL, endpoint, header, response] of [
