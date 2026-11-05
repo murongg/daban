@@ -121,6 +121,13 @@ test.each(['unknown-effect', 'newer-authority'] as const)(
   async (mode) => {
     const root = await mkdtemp(path.join(tmpdir(), 'synthetic-goal-unknown-'));
     const dir = path.join(root, 'model');
+    const legacySource = {
+      scheduleId: 'synthetic-retired-schedule',
+      firingId: 'synthetic-retired-firing',
+      configRevision: 1,
+      trigger: 'time' as const,
+      policy: { kind: 'changes' as const, signalPath: 'synthetic-result.txt' },
+    };
     const journal = new TaskJournal(path.join(dir, 'task-journal'));
     await journal.put({
       bot: 'a',
@@ -135,6 +142,7 @@ test.each(['unknown-effect', 'newer-authority'] as const)(
       sessionId: 'synthetic-goal-session',
       createdAt: '2026-01-01T00:00:00Z',
       chatRevision: 0,
+      automation: legacySource,
       goalSession: true,
       goal: {
         id: 'synthetic-goal',
@@ -198,12 +206,17 @@ test.each(['unknown-effect', 'newer-authority'] as const)(
         return;
       }
       await expect(
-        models.startHuman('a', {
-          requestId: 'synthetic-resume',
-          prompt: '/goal resume',
-          chatRevision: 0,
-          goalResume: target,
-        }),
+        models.startHuman(
+          'a',
+          {
+            requestId: 'synthetic-resume',
+            prompt: '/goal resume',
+            chatRevision: 0,
+            goalResume: target,
+          },
+          undefined,
+          legacySource,
+        ),
       ).rejects.toMatchObject({ code: 'TASK_OUTCOME_UNKNOWN' });
       expect(starts).toBe(0);
       expect(models.goals.epoch(target.owner)).toBe(target.humanEpoch);

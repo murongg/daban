@@ -39,17 +39,11 @@ function connect(
   create?: (input: ScheduleInput) => Promise<Schedule>,
   items: Schedule[] = [],
   extra?: (command: RuntimeCommand) => Promise<RuntimeReply | undefined>,
-  automation = false,
-  files = false,
 ) {
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 6;
   snapshot.model.configured = true;
-  snapshot.schedules = {
-    available: true,
-    items,
-    ...(automation ? { automation: { changes: true, files } } : {}),
-  };
+  snapshot.schedules = { available: true, items };
   const listeners = new Set<(state: RuntimeSnapshot) => unknown>();
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
     const override = await extra?.(command);
@@ -428,100 +422,4 @@ it('bounds a large schedule list while keeping the native management controls', 
   } finally {
     restore();
   }
-});
-
-it('configures result monitoring separately and disables file triggers without project reads', async () => {
-  const item = record({
-    id: 'mock-monitored',
-    bot: 'a',
-    title: '合成监测',
-    prompt: 'SYNTHETIC',
-    rule: { kind: 'every', everySeconds: 3600 },
-  });
-  const invoke = connect(
-    undefined,
-    [item],
-    async (command) =>
-      command.type === 'schedule.monitor'
-        ? { ok: true, value: { ...item, enabled: false, revision: 2 } }
-        : undefined,
-    true,
-  );
-  render(<App />);
-  await workspaceTab(userEvent, '定时');
-  expect(screen.getByRole('button', { name: '新建文件监测' })).toBeDisabled();
-  await userEvent.click(screen.getByText('监测设置'));
-  await userEvent.click(screen.getByRole('checkbox', { name: '仅结果变化时通知' }));
-  await userEvent.type(screen.getByRole('textbox', { name: '结果信号文件' }), 'mock.txt');
-  await userEvent.click(screen.getByRole('button', { name: '保存监测策略' }));
-  expect(invoke.mock.calls.filter(([command]) => command.type === 'schedule.monitor')).toEqual([
-    [
-      {
-        type: 'schedule.monitor',
-        id: item.id,
-        revision: 1,
-        policy: { kind: 'changes', signalPath: 'mock.txt' },
-      },
-    ],
-  ]);
-  expect(
-    invoke.mock.calls.some(
-      ([command]) => command.type === 'schedule.run' || command.type === 'task.start',
-    ),
-  ).toBe(false);
-});
-
-it('keeps an orphaned unknown receipt queryable without starting or recreating its deleted rule', async () => {
-  const snapshot = disconnected('ready');
-  snapshot.protocolVersion = 45;
-  snapshot.schedules = { available: true, items: [], automation: { changes: true, files: false } };
-  snapshot.notices = {
-    available: true,
-    items: [
-      {
-        kind: 'automation',
-        id: 'mock-notice',
-        bot: 'a',
-        schedule: 'mock-deleted',
-        firing: 'mock-firing',
-        createdAt: '2026-01-01T00:00:00Z',
-        phase: 'interrupted',
-        reason: 'fault',
-        code: 'SCHEDULE_OUTCOME_UNKNOWN',
-      },
-    ],
-  };
-  const invoke = connect(undefined, [], async (command) =>
-    command.type === 'status'
-      ? { ok: true, value: snapshot }
-      : command.type === 'schedule.receipt'
-        ? {
-            ok: true,
-            value: {
-              id: 'mock-firing',
-              requestId: 'mock-original',
-              occurrenceAt: '2026-01-01T00:00:00Z',
-              createdAt: '2026-01-01T00:00:00Z',
-              state: 'interrupted',
-            },
-          }
-        : undefined,
-  );
-  render(<App />);
-  await workspaceTab(userEvent, '定时');
-  expect(screen.getByRole('heading', { name: '执行结果待核实' })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: '查询原执行回执' }));
-  await waitFor(() =>
-    expect(invoke.mock.calls.filter(([command]) => command.type === 'schedule.receipt')).toEqual([
-      [{ type: 'schedule.receipt', id: 'mock-deleted', firing: 'mock-firing' }],
-    ]),
-  );
-  expect(
-    invoke.mock.calls.some(
-      ([command]) =>
-        command.type === 'schedule.run' ||
-        command.type === 'schedule.create' ||
-        command.type === 'task.start',
-    ),
-  ).toBe(false);
 });

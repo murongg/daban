@@ -1,61 +1,6 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
-  'automation.acceptedRevision': '已接受的项目授权版本：{0}',
-  'automation.scopeChanged':
-    '项目授权范围已变化。请审阅并接受当前版本；保存其他字段不会自动升级授权。',
-  'automation.acceptScope': '接受当前项目授权版本',
-  'automation.savedActive': '已保存，日程保持启用。',
-  'automation.restoreAll': '恢复普通通知',
-  'automation.monitorUnavailable':
-    '执行环境暂不支持受限结果读取，监测已暂停。更新环境后需显式重新启用，也可恢复普通通知。',
-  'automation.deletedRule': '已删除规则',
-  'automation.deletedRuleAt': '已删除规则 · {0}',
-  'automation.pending': '执行结果待核实',
-  'automation.unknownHelp':
-    '这些执行可能已经产生效果。查询和标记提示已读都不会重新运行，删除规则也不会删除原回执。',
-  'automation.receiptStatus': '{0} 的原执行回执：{1}',
-  'automation.newFile': '新建文件监测',
-  'automation.settings': '监测设置',
-  'automation.title': '监测名称',
-  'automation.instructions': '固定任务说明',
-  'automation.project': '项目与授权版本',
-  'automation.selectProject': '选择已授权项目',
-  'automation.paths': '项目相对文件路径，每行一个',
-  'automation.pollSeconds': '轮询间隔（秒）',
-  'automation.fileHelp':
-    '仅监测 1–20 个明确文件，每个最多 1 MiB、合计 4 MiB。首次两次一致读取只建立基线；之后稳定变化才运行。轮询可能遗漏两次采样之间的变化，不是文件审计。运行可能产生模型费用。',
-  'automation.filesUnavailable':
-    '文件触发不可用：需要支持项目授权与受限文件读取的执行环境。普通时间日程仍可使用。',
-  'automation.saveFile': '保存文件监测',
-  'automation.saved': '已保存为暂停状态，请检查配置后显式启用。运行中的任务继续使用原快照。',
-  'automation.changesOnly': '仅结果变化时通知',
-  'automation.signalPath': '结果信号文件',
-  'automation.signalHelp':
-    '使用本次任务产物中的一个 UTF-8 文本文件，最多 64 KiB。首次成功和相同结果保持静默；首次故障、恢复或需人工处理仍会提示。系统通知不保证送达，可在历史与待处理提示中恢复查看。',
-  'automation.savePolicy': '保存监测策略',
-  'automation.fileTiming': '文件变化 · 每 {0} 秒采样',
-  'automation.observing': '基线已建立，等待稳定变化。锁定只限制 Bot 编辑，不暂停观察或执行。',
-  'automation.baselinePending': '等待启用后的两次一致采样，首轮不运行。',
-  'automation.cursors': '事件 {0}–{1}',
-  'automation.checkReceipt': '查询原执行回执',
-  'automation.ack': '标记提示已读',
-  'automation.noticeChanged': '监测结果有变化',
-  'automation.noticeFault': '监测需要处理',
-  'automation.noticeRecovered': '监测已恢复',
-  'automation.noticeBody': '点击查看原日程、执行历史与待处理提示。',
-  'automation.upgradeRequired': '当前服务不支持此监测能力，请更新执行环境。',
-  'automation.signalUnavailable':
-    '结果信号不可用：请检查本次任务产物、文件大小与 UTF-8 内容。上次成功基线已保留。',
-  'automation.filesTooLarge': '监测文件超过单文件 1 MiB 或合计 4 MiB 限制。请调整文件后重试。',
-  'automation.readFailed': '文件采样失败，成功基线未改变；将在下次轮询重试。',
-  'automation.runFailed': '监测执行失败，请查看原任务历史。',
-  'automation.result.all': '普通通知',
-  'automation.result.baseline': '静默：首次结果基线',
-  'automation.result.unchanged': '静默：结果未变',
-  'automation.result.changed': '结果变化',
-  'automation.result.fault': '需处理',
-  'automation.result.recovered': '已恢复',
   'tasks.projectRetired': '项目管理已移除。历史记录仍保留，原项目任务或文件不能改用共享路径继续。',
   'projects.browserScope': 'Linux 浏览器：{0}',
   'projects.storeUnavailable':
