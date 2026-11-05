@@ -6,8 +6,12 @@ import {
   type Interaction,
   isInteraction,
   isInteractionInput,
+  isMcpPurposeScope,
+  isPolicyDecision,
   isUserReply,
+  type McpPurposeScope,
   matchesReply,
+  type PolicyDecision,
   validAgentId,
 } from '@daban/protocol';
 import { Fault } from './control.js';
@@ -30,6 +34,7 @@ export class Interactions {
       sessionId: string,
       conversationId?: string,
     ) => boolean,
+    private readonly assertPurpose?: (item: Interaction) => unknown,
   ) {
     this.ready = this.load();
   }
@@ -84,8 +89,24 @@ export class Interactions {
     } finally {
       await directory.close();
     }
-    if (value.status === 'resolved' && this.closed.has(`${value.bot}/${value.runId}`)) {
-      // Stop may arrive while the decision is being written. Withdraw it before any waiter can receive a grant.
+    let authorityError: unknown;
+    if (
+      value.status === 'resolved' &&
+      value.reply?.kind === 'decision' &&
+      value.reply.confirmPurpose
+    ) {
+      try {
+        if (!this.assertPurpose) throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+        this.assertPurpose(value);
+      } catch (error) {
+        authorityError = error;
+      }
+    }
+    if (
+      value.status === 'resolved' &&
+      (this.closed.has(`${value.bot}/${value.runId}`) || authorityError)
+    ) {
+      // Stop or a new Human turn may arrive during fsync. Withdraw the grant before releasing any waiter.
       await this.commit({
         ...value,
         reply: undefined,
@@ -93,7 +114,7 @@ export class Interactions {
         status: 'cancelled',
         updatedAt: new Date().toISOString(),
       });
-      throw new Fault('INTERACTION_CLOSED');
+      throw authorityError ?? new Fault('INTERACTION_CLOSED');
     }
     // Publish and release the model only after the decision has committed to disk.
     this.records.set(value.id, structuredClone(value));
@@ -116,11 +137,28 @@ export class Interactions {
       throw new Fault('INTERACTION_NOT_FOUND', 404);
     return item;
   }
-  open(bot: string, runId: string, input: unknown, conversationId?: string) {
+  open(
+    bot: string,
+    runId: string,
+    input: unknown,
+    conversationId?: string,
+    policyDecision?: PolicyDecision,
+    purposeScope?: McpPurposeScope,
+  ) {
     if (
       !validAgentId(bot) ||
       !validAgentId(runId) ||
       !isInteractionInput(input) ||
+      (purposeScope !== undefined &&
+        (!isMcpPurposeScope(purposeScope) ||
+          input.kind !== 'approval' ||
+          input.tool !== 'mcp_call' ||
+          !policyDecision)) ||
+      (policyDecision !== undefined &&
+        (!isPolicyDecision(policyDecision) ||
+          policyDecision.scope.kind !== 'bot' ||
+          policyDecision.scope.bot !== bot ||
+          input.kind !== 'approval')) ||
       (conversationId !== undefined && !validAgentId(conversationId))
     )
       return Promise.reject(new Fault('INVALID_INTERACTION', 400));
@@ -136,6 +174,8 @@ export class Interactions {
           status: _status,
           reply: _reply,
           decisionSource: _source,
+          policyDecision: _policy,
+          purposeScope: _purpose,
           ...original
         } = existing;
         if (
@@ -149,13 +189,19 @@ export class Interactions {
       // Only the host's captured live-task policy can grant this; old records and questions never gain new authority.
       const automatic =
         value.kind === 'approval' &&
-        this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true;
+        (policyDecision
+          ? policyDecision.effect === 'allow'
+          : this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true);
+      const denied = policyDecision?.effect === 'deny';
       return this.commit({
         ...value,
         bot,
         runId,
         ...(conversationId ? { conversationId } : {}),
-        status: automatic ? 'resolved' : 'pending',
+        status: automatic || denied ? 'resolved' : 'pending',
+        ...(policyDecision ? { policyDecision: structuredClone(policyDecision) } : {}),
+        ...(purposeScope ? { purposeScope: structuredClone(purposeScope) } : {}),
+        ...(denied ? { reply: { kind: 'decision' as const, allow: false } } : {}),
         ...(automatic
           ? { reply: { kind: 'decision' as const, allow: true }, decisionSource: 'policy' as const }
           : {}),
@@ -177,6 +223,10 @@ export class Interactions {
       }
       if (item.status !== 'pending' || this.closed.has(`${bot}/${runId}`))
         throw new Fault('INTERACTION_CLOSED');
+      if (submitted.kind === 'decision' && submitted.confirmPurpose) {
+        if (!this.assertPurpose) throw new Fault('APPROVAL_AUTHORITY_CHANGED');
+        this.assertPurpose(item);
+      }
       return this.commit({
         ...item,
         reply: submitted,
@@ -191,6 +241,34 @@ export class Interactions {
     return [...this.records.values()]
       .map((value) => structuredClone(value))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  hasPurpose(
+    current: Pick<Interaction, 'bot' | 'runId' | 'sessionId' | 'conversationId'>,
+    scope: McpPurposeScope,
+    decision: PolicyDecision,
+  ) {
+    if (this.closed.has(`${current.bot}/${current.runId}`)) return false;
+    // Only an explicit committed Human reply can be reused; policy approvals and one-time replies grant no purpose.
+    return [...this.records.values()].some(
+      (item) =>
+        item.bot === current.bot &&
+        item.runId === current.runId &&
+        item.sessionId === current.sessionId &&
+        item.conversationId === current.conversationId &&
+        item.status === 'resolved' &&
+        item.kind === 'approval' &&
+        item.tool === 'mcp_call' &&
+        item.decisionSource !== 'policy' &&
+        item.reply?.kind === 'decision' &&
+        item.reply.allow &&
+        item.reply.confirmPurpose === true &&
+        item.purposeScope?.taskId === scope.taskId &&
+        item.purposeScope.turnId === scope.turnId &&
+        item.policyDecision?.policyRevision === decision.policyRevision &&
+        item.policyDecision.requestHash === decision.requestHash &&
+        item.policyDecision.trigger === decision.trigger &&
+        JSON.stringify(item.policyDecision.matchedRules) === JSON.stringify(decision.matchedRules),
+    );
   }
   pending(bot: string, runId: string) {
     return [...this.records.values()].some(

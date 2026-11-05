@@ -12,11 +12,75 @@ import { resolveSdk } from './sdk.js';
 test('real DSH keeps conversation cache identity across tasks/restarts and preserves all four provider protocols', {
   timeout: 60000,
 }, async (t) => {
+  const started = performance.now();
   const root = await mkdtemp(path.join(tmpdir(), 'mock-prompt-cache-'));
   let agent: Awaited<ReturnType<typeof startNativeAgent>> | undefined;
   const captures: { path: string; session?: string; body: Record<string, unknown> }[] = [];
+  let currentApi: ModelApi | undefined;
+  let currentBot: string | undefined;
+  let sequence = 0;
+  let currentTask: number | undefined;
+  let currentGroup = false;
+  let currentChatRevision = 0;
+  let catalogs = 0;
+  let emitted = 0;
+  let active = { name: 'fixture', since: started };
+  const safeCode = (error: unknown) => {
+    const candidate = error instanceof Error && 'code' in error ? error.code : error;
+    return typeof candidate === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(candidate)
+      ? candidate
+      : error
+        ? 'UNCLASSIFIED'
+        : undefined;
+  };
+  const report = (phase: string, event: string, since: number, error?: unknown) => {
+    // Bound diagnostic volume, but always retain the timeout and final snapshots.
+    if (emitted >= 160 && event !== 'test.abort' && event !== 'test.finished') return;
+    emitted++;
+    const job = currentBot ? agent?.models.jobs.get(currentBot) : undefined;
+    const current = job?.task?.requestId === `mock-cache-${currentTask}` ? job : undefined;
+    const now = performance.now();
+    // Vitest hides passing-test console output by default; keep these bounded timing records visible.
+    process.stderr.write(
+      `[prompt-cache-phase] ${JSON.stringify({
+        event,
+        phase,
+        elapsedMs: Math.round(now - started),
+        phaseMs: Math.round(now - since),
+        api: currentApi,
+        task: currentTask,
+        group: currentGroup,
+        chatRevision: currentChatRevision,
+        catalogs,
+        requests: captures.length,
+        jobPhase: current?.phase,
+        jobRunning: current?.running,
+        jobError: safeCode(current?.error),
+        errorCode: safeCode(error),
+        aborted: t.signal.aborted,
+        testState: t.task.result?.state,
+      })}\n`,
+    );
+  };
+  const phase = async <T>(name: string, operation: () => T | Promise<T>) => {
+    const since = performance.now();
+    active = { name, since };
+    report(name, 'begin', since);
+    try {
+      const result = await operation();
+      report(name, 'end', since);
+      return result;
+    } catch (error) {
+      report(name, 'error', since, error);
+      throw error;
+    }
+  };
+  const aborted = () => report(active.name, 'test.abort', active.since, t.signal.reason);
+  t.signal.addEventListener('abort', aborted, { once: true });
   const model = createServer(async (req, res) => {
     if (req.method === 'GET') {
+      catalogs++;
+      report(active.name, 'provider.catalog', active.since);
       res.setHeader('content-type', 'application/json');
       res.end(
         JSON.stringify({
@@ -143,15 +207,19 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
         })
         .join('') + (req.url?.includes('/chat/completions') ? 'data: [DONE]\n\n' : ''),
     );
+    report(active.name, 'provider.response', active.since);
   });
   t.onTestFinished(async () => {
-    await agent?.close();
+    report(active.name, 'test.finished', active.since, t.task.result?.errors?.[0]);
+    t.signal.removeEventListener('abort', aborted);
+    await phase('cleanup.agent.stop', () => agent?.close());
     model.closeAllConnections();
-    if (model.listening) await new Promise((resolve) => model.close(resolve));
-    await rm(root, { recursive: true, force: true });
+    if (model.listening)
+      await phase('cleanup.provider.stop', () => new Promise((resolve) => model.close(resolve)));
+    await phase('cleanup.directory', () => rm(root, { recursive: true, force: true }));
   });
   model.listen(0, '127.0.0.1');
-  await once(model, 'listening');
+  await phase('provider.listen', () => once(model, 'listening'));
   const port = (model.address() as { port: number }).port;
   const scope = createHash('sha256').update(root).digest('hex');
   const options = {
@@ -164,20 +232,25 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
     sdkFile: resolveSdk(),
     nativeWorkspace: path.join(root, 'workspace'),
   };
-  agent = await startNativeAgent(options);
-  let sequence = 0;
+  agent = await phase('agent.start', () => startNativeAgent(options));
   const run = async (bot: string, chatRevision = 0, conversationId?: string) => {
-    await agent!.models.start(
-      bot,
-      {
-        requestId: `mock-cache-${++sequence}`,
-        prompt: 'SYNTHETIC: reply briefly without tools.',
-        ...(conversationId ? {} : { chatRevision }),
-      },
-      conversationId ? { id: conversationId, context: 'SYNTHETIC GROUP' } : undefined,
+    currentBot = bot;
+    currentTask = sequence + 1;
+    currentGroup = conversationId !== undefined;
+    currentChatRevision = chatRevision;
+    await phase('task.start', () =>
+      agent!.models.start(
+        bot,
+        {
+          requestId: `mock-cache-${++sequence}`,
+          prompt: 'SYNTHETIC: reply briefly without tools.',
+          ...(conversationId ? {} : { chatRevision }),
+        },
+        conversationId ? { id: conversationId, context: 'SYNTHETIC GROUP' } : undefined,
+      ),
     );
     const job = agent!.models.jobs.get(bot)!;
-    await job.done;
+    await phase('task.wait', () => job.done);
     expect(job.phase, `${bot}: ${job.error}; ${captures.at(-1)?.path}`).toBe('completed');
     expect(job.result).toBe('SYNTHETIC COMPLETE');
     return captures.at(-1)!;
@@ -191,41 +264,58 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
   let revision = 0;
   for (const api of apis) {
     const bot = `mock-${api}`;
-    await agent.models.settings.configure({
-      model: `provider:${bot}:mock-model`,
-      revision: revision++,
-      requestId: `mock-config-${api}`,
-      apiKey: 'synthetic-model-key',
-      connection: {
+    currentApi = api;
+    currentBot = bot;
+    currentTask = undefined;
+    currentGroup = false;
+    currentChatRevision = 0;
+    await phase('provider.configure', () =>
+      agent!.models.settings.configure({
+        model: `provider:${bot}:mock-model`,
+        revision: revision++,
+        requestId: `mock-config-${api}`,
+        apiKey: 'synthetic-model-key',
+        connection: {
+          id: bot,
+          name: bot,
+          api,
+          baseURL: `http://127.0.0.1:${port}${api === 'anthropic-messages' ? '' : api === 'google-generative-ai' ? '/v1beta' : '/v1'}`,
+          models: [
+            {
+              id: 'mock-model',
+              name: 'Mock',
+              vision: false,
+              contextWindow: 500000,
+              maxTokens: 8192,
+            },
+          ],
+        },
+      }),
+    );
+    await phase('profile.register', () =>
+      agent!.models.profiles.register({
         id: bot,
         name: bot,
-        api,
-        baseURL: `http://127.0.0.1:${port}${api === 'anthropic-messages' ? '' : api === 'google-generative-ai' ? '/v1beta' : '/v1'}`,
-        models: [
-          { id: 'mock-model', name: 'Mock', vision: false, contextWindow: 500000, maxTokens: 8192 },
-        ],
-      },
-    });
-    await agent.models.profiles.register({
-      id: bot,
-      name: bot,
-      color: 'mint',
-      instructions: '',
-      memory: '',
-    });
+        color: 'mint',
+        instructions: '',
+        memory: '',
+      }),
+    );
     const first = await run(bot);
     const second = await run(bot);
-    const sessionRoot = path.join(agent.models.dir, 'dsh', bot);
-    const sessions = (await readdir(sessionRoot, { recursive: true })).filter((file) =>
-      file.endsWith('session.v4.jsonl'),
-    );
-    const events = (
-      await Promise.all(sessions.map((file) => readFile(path.join(sessionRoot, file), 'utf8')))
-    )
-      .join('\n')
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    const events = await phase('cache.read', async () => {
+      const sessionRoot = path.join(agent!.models.dir, 'dsh', bot);
+      const sessions = (await readdir(sessionRoot, { recursive: true })).filter((file) =>
+        file.endsWith('session.v4.jsonl'),
+      );
+      return (
+        await Promise.all(sessions.map((file) => readFile(path.join(sessionRoot, file), 'utf8')))
+      )
+        .join('\n')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    });
     const usage = events.filter((event) => event.type === 'assistant/message').at(-1)?.data.usage;
     expect(usage?.cacheReadTokens, `${api} must preserve native cache usage`).toBe(23000);
     if (api.startsWith('openai-')) {
@@ -238,11 +328,13 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
       const field = api === 'openai-completions' ? 'messages' : 'input';
       const prefix = first.body[field] as unknown[];
       expect((second.body[field] as unknown[]).slice(0, prefix.length)).toStrictEqual(prefix);
-      await agent.close();
-      agent = await startNativeAgent(options);
+      await phase('agent.restart.stop', () => agent!.close());
+      agent = await phase('agent.restart.start', () => startNativeAgent(options));
       expect((await run(bot)).body.prompt_cache_key).toBe(key);
       expect((await run(bot, 0, 'mock-group')).body.prompt_cache_key).not.toBe(key);
-      await agent.models.chats.renew({ id: `mock-renew-${api}`, bot, revision: 0 });
+      await phase('conversation.renew', () =>
+        agent!.models.chats.renew({ id: `mock-renew-${api}`, bot, revision: 0 }),
+      );
       expect((await run(bot, 1)).body.prompt_cache_key).not.toBe(key);
     } else {
       expect(first.body.prompt_cache_key).toBe(undefined);

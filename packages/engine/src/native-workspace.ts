@@ -30,8 +30,8 @@ export class NativeWorkspace implements AgentWorkspace {
   read(relative: string, limit?: number) {
     return this.files.read(relative, limit);
   }
-  download(relative: string) {
-    return this.files.download(relative);
+  download(relative: string, limit?: number) {
+    return this.files.download(relative, limit);
   }
   async base() {
     const info = await lstat(this.root);

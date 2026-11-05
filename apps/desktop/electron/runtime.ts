@@ -4,9 +4,12 @@ import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
   type AppCommand,
   appReceiptMatches,
+  approvalRulesCapability,
+  automationCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  diagnosticModel,
   disconnected,
   groupCopyKey,
   imageProtocol,
@@ -14,11 +17,16 @@ import {
   isAppCommand,
   isAppConnectionsCapability,
   isAppOAuthReceipt,
+  isApprovalRuleReceipt,
+  isApprovalRulesCommand,
+  isApprovalRulesSnapshot,
+  isApprovalRulesStatus,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
   isAttachmentPurge,
   isAttachmentReceipt,
+  isAutomationCommand,
   isBotBundle,
   isBotCopyReceipt,
   isBotImportReceipt,
@@ -28,6 +36,9 @@ import {
   isBrowserReceipt,
   isBrowserState,
   isBrowserView,
+  isBudgetScope,
+  isBudgetSettings,
+  isBudgetView,
   isChatAck,
   isChatPage,
   isChatStatus,
@@ -36,6 +47,7 @@ import {
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
+  isGoalResumeTarget,
   isGroup,
   isGroupActionAck,
   isGroupCopyReceipt,
@@ -58,10 +70,13 @@ import {
   isMcpSaved,
   isMcpStatus,
   isMemoryPage,
+  isModelAccess,
+  isModelAttempts,
   isModelCheck,
   isModelConnection,
   isModelId,
   isModelInspection,
+  isModelSaved,
   isModelStatus,
   isNoteAvailability,
   isNoteCommand,
@@ -70,6 +85,8 @@ import {
   isNoteReceipt,
   isNoteStatusResult,
   isNotionAuthorizeUrl,
+  isPolicyDecision,
+  isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
@@ -93,6 +110,7 @@ import {
   isTaskPlan,
   isTranscriptContent,
   isTranscriptPage,
+  isTranscriptScope,
   isWorkCommentCommand,
   isWorkCommentList,
   isWorkCommentReceipt,
@@ -104,13 +122,15 @@ import {
   noteKey,
   noteQueryKey,
   parseBotJSON,
+  projectFileMatches,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
-  type RuntimeFile,
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  sameApprovalScope,
+  sameProjectScope,
   sameTranscriptScope,
   unavailableLocalComputer,
   validAgentId,
@@ -119,6 +139,7 @@ import {
   workKey,
   workQueryKey,
 } from '@daban/protocol';
+import { matchesApprovalReceipt } from '../shared/approval';
 import type { MessageKey } from '../shared/locale';
 import { isTaskReceipt } from '../shared/receipt';
 
@@ -169,6 +190,11 @@ async function localRequest(url: string, init: RequestInit = {}): Promise<Respon
 
 function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   if (
+    (task.attemptSummary !== undefined && !isModelAttempts(task.attemptSummary)) ||
+    (task.rootRunId !== undefined && !validAgentId(task.rootRunId))
+  )
+    throw new Error('INVALID_RUNTIME_STATE');
+  if (
     task.chatRevision !== undefined &&
     (!Number.isSafeInteger(task.chatRevision) || task.chatRevision < 0)
   )
@@ -185,9 +211,12 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   )
     throw new Error('INVALID_RUNTIME_STATE');
   return {
+    ...(isModelAttempts(task.attemptSummary) ? { attemptSummary: task.attemptSummary } : {}),
+    ...(task.rootRunId ? { rootRunId: task.rootRunId } : {}),
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
+    ...(isProjectScope(task.project) ? { project: task.project } : {}),
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
@@ -212,7 +241,10 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       ? { inserts: task.inserts }
       : {}),
     history: (task.history || []).map((item) => ({
+      ...(isModelAttempts(item.attemptSummary) ? { attemptSummary: item.attemptSummary } : {}),
+      ...(validAgentId(item.rootRunId) ? { rootRunId: item.rootRunId } : {}),
       chatRevision: item.chatRevision,
+      ...(isProjectScope(item.project) ? { project: item.project } : {}),
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       runId: item.runId,
       requestId: item.requestId,
@@ -325,8 +357,10 @@ export class RuntimeClient {
         host: this.serverHost,
         'x-prototype-token': token,
         ...privateHeaders,
+        'x-daban-automation': automationCapability,
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
+        'x-daban-approval-rules': approvalRulesCapability,
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: data === undefined ? undefined : JSON.stringify(data),
@@ -373,6 +407,7 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         clientProtocol?: number;
+        approvalRules?: unknown;
         botCapabilities?: unknown;
         appConnections?: unknown;
         localComputer?: unknown;
@@ -389,7 +424,12 @@ export class RuntimeClient {
         groups?: { available?: unknown; revision?: unknown; items?: unknown[]; error?: unknown };
         profiles?: unknown[];
         interactions?: unknown[];
-        schedules?: { available?: unknown; items?: unknown[]; error?: unknown };
+        schedules?: {
+          available?: unknown;
+          items?: unknown[];
+          error?: unknown;
+          automation?: { changes?: unknown; files?: unknown };
+        };
         knowledge?: {
           available?: unknown;
           revision?: unknown;
@@ -402,6 +442,9 @@ export class RuntimeClient {
         computerError?: unknown;
         sharedLogin?: boolean;
         model?: {
+          modelAccess?: unknown;
+          fallbackModel?: unknown;
+          probeRevision?: unknown;
           connections?: unknown;
           inspection?: unknown;
           revision?: number;
@@ -463,6 +506,13 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       }
       if ((raw.clientProtocol || 0) >= 13 && !isModelStatus(settings))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        (raw.model?.modelAccess !== undefined && !isModelAccess(raw.model.modelAccess)) ||
+        (raw.model?.fallbackModel !== undefined && !isModelId(raw.model.fallbackModel)) ||
+        (raw.model?.probeRevision !== undefined &&
+          (!Number.isSafeInteger(raw.model.probeRevision) || Number(raw.model.probeRevision) < 0))
+      )
         throw new Error('INVALID_RUNTIME_STATE');
       if (
         raw.model?.connections !== undefined &&
@@ -534,6 +584,15 @@ export class RuntimeClient {
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
+      if (raw.approvalRules !== undefined)
+        snapshot.approvalRules = isApprovalRulesStatus(raw.approvalRules)
+          ? raw.approvalRules
+          : {
+              capability: approvalRulesCapability,
+              available: false,
+              revision: 0,
+              error: 'INVALID_RUNTIME_STATE',
+            };
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
           ? raw.software
@@ -628,6 +687,15 @@ export class RuntimeClient {
             ? {
                 available: value.available,
                 items: value.items,
+                ...(typeof value.automation?.changes === 'boolean' &&
+                typeof value.automation.files === 'boolean'
+                  ? {
+                      automation: {
+                        changes: value.automation.changes,
+                        files: value.automation.files,
+                      },
+                    }
+                  : {}),
                 ...(typeof value.error === 'string' && /^[A-Z_]+$/.test(value.error)
                   ? { error: value.error }
                   : {}),
@@ -649,6 +717,17 @@ export class RuntimeClient {
               model: settings.model,
               provider: settings.provider,
               revision: settings.revision,
+              ...(raw.model?.revision === settings.revision && isModelAccess(raw.model.modelAccess)
+                ? {
+                    modelAccess: raw.model.modelAccess,
+                    ...(isModelId(raw.model.fallbackModel)
+                      ? { fallbackModel: raw.model.fallbackModel }
+                      : {}),
+                    ...(typeof raw.model.probeRevision === 'number'
+                      ? { probeRevision: raw.model.probeRevision }
+                      : {}),
+                  }
+                : {}),
               ...(raw.model?.inspection === true ? { inspection: true } : {}),
               ...(Array.isArray(raw.model?.connections) && raw.model.revision === settings.revision
                 ? { connections: raw.model.connections }
@@ -832,6 +911,110 @@ export class RuntimeClient {
         throw new Error('OAUTH_INTERACTIVE_REQUIRED');
       return this.appRequest(command);
     }
+    if (isApprovalRulesCommand(command)) {
+      const captured = structuredClone(command);
+      const scope =
+        captured.type === 'approval.rules.write' ? captured.request.scope : captured.scope;
+      const state = await this.status();
+      if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
+        throw new Error('APPROVAL_UPGRADE_REQUIRED');
+      if (!state.approvalRules.available) throw new Error('APPROVAL_RULES_UNAVAILABLE');
+      const value = await this.api(
+        `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
+        captured,
+      );
+      const valid =
+        captured.type === 'approval.rules.list'
+          ? isApprovalRulesSnapshot(value) && sameApprovalScope(value.scope, scope)
+          : captured.type === 'approval.rules.preview'
+            ? isPolicyDecision(value) &&
+              sameApprovalScope(value.scope, scope) &&
+              value.trigger === captured.trigger &&
+              JSON.stringify(value.selector) === JSON.stringify(captured.selector)
+            : captured.type === 'approval.rules.write'
+              ? matchesApprovalReceipt(value, captured.request)
+              : isApprovalRuleReceipt(value) &&
+                sameApprovalScope(value.scope, scope) &&
+                value.requestId === captured.requestId;
+      if (!valid) throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    if (command.type.startsWith('budget.')) {
+      const captured = structuredClone(command);
+      let value: unknown;
+      if (captured.type === 'budget.goal') {
+        const target: unknown = await this.api('/api/budgets/goal', {
+          owner: captured.owner,
+        }).catch((error) => {
+          // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
+          if (error instanceof Error && error.message === 'NOT_FOUND') return null;
+          throw error;
+        });
+        if (target === null) return null;
+        if (
+          !isGoalResumeTarget(target) ||
+          target.owner.bot !== captured.owner.bot ||
+          target.owner.chatRevision !== captured.owner.chatRevision ||
+          target.owner.conversationId !== captured.owner.conversationId ||
+          !sameProjectScope(target.owner.project, captured.owner.project)
+        )
+          throw new Error('INVALID_GOAL_TARGET');
+        return target;
+      }
+      if (captured.type === 'budget.settings') value = await this.api('/api/budgets/settings', {});
+      else if (captured.type === 'budget.configure')
+        value = await this.api('/api/budgets/configure', captured.request);
+      else if (captured.type === 'budget.read')
+        value = await this.api('/api/budgets/read', captured.query);
+      else if (captured.type === 'budget.increase')
+        value = await this.api('/api/budgets/increase', captured.request);
+      else if (captured.type === 'budget.continue') {
+        const reply: unknown = await this.api('/api/budgets/continue', {
+          scope: captured.scope,
+          budget: captured.budget,
+          id: captured.id,
+          ...(captured.goalResume ? { goalResume: captured.goalResume } : {}),
+        });
+        if (
+          !reply ||
+          typeof reply !== 'object' ||
+          !('budget' in reply) ||
+          !isBudgetScope(reply.budget) ||
+          reply.budget.budgetId !== captured.budget.budgetId ||
+          reply.budget.revision !== captured.budget.revision ||
+          !('owner' in reply) ||
+          !isTranscriptScope(reply.owner) ||
+          !sameTranscriptScope(reply.owner, captured.scope) ||
+          !('id' in reply) ||
+          reply.id !== captured.id ||
+          !('queued' in reply) ||
+          typeof reply.queued !== 'boolean'
+        )
+          throw new Error('INVALID_BUDGET_CONTINUATION');
+        return reply;
+      } else throw new Error('INVALID_COMMAND');
+      if (captured.type === 'budget.settings' || captured.type === 'budget.configure') {
+        if (!isBudgetSettings(value)) throw new Error('INVALID_BUDGET_SETTINGS');
+      } else if (value !== null) {
+        if (!isBudgetView(value)) throw new Error('INVALID_BUDGET_VIEW');
+        const owner =
+          captured.type === 'budget.read'
+            ? captured.query.scope
+            : captured.type === 'budget.increase'
+              ? captured.request.scope
+              : undefined;
+        if (!owner || !value.owner || !sameTranscriptScope(value.owner, owner))
+          throw new Error('INVALID_BUDGET_OWNER');
+        if (
+          captured.type === 'budget.increase' &&
+          (value.scope.budgetId !== captured.request.budgetId ||
+            value.scope.revision !== captured.request.revision + 1)
+        )
+          throw new Error('INVALID_BUDGET_ACK');
+      }
+      return value;
+    }
+
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
       const value = await this.api('/api/host/recovery', captured);
@@ -1068,6 +1251,7 @@ export class RuntimeClient {
       if (command.type === 'chat.history') {
         if (command.runId && state.protocolVersion < 30) throw new Error('RUNTIME_TOO_OLD');
         const value = await this.api('/api/chats/history', {
+          ...(state.model.modelAccess ? { modelAccess: true } : {}),
           bot: command.bot,
           revision: command.revision,
           before: command.before,
@@ -1543,6 +1727,58 @@ export class RuntimeClient {
       }
       return result;
     }
+    if (
+      command.type === 'model.saved' ||
+      command.type === 'model.fallback.configure' ||
+      command.type === 'model.remove' ||
+      command.type === 'model.diagnose'
+    ) {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!state.model.modelAccess) throw new Error('RUNTIME_TOO_OLD');
+      if (state.model.modelAccess.scope !== command.input.scope)
+        throw new Error('RUNTIME_SESSION_CHANGED');
+      const route =
+        command.type === 'model.fallback.configure'
+          ? 'fallback'
+          : command.type.slice('model.'.length);
+      const value = await this.api(`/api/model/${route}`, command.input);
+      if (command.type === 'model.fallback.configure') {
+        if (
+          !isModelStatus(value) ||
+          value.requestId !== command.input.requestId ||
+          value.revision !== command.input.revision + 1 ||
+          value.fallbackModel !== (command.input.model || undefined)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else {
+        if (
+          !isModelSaved(value) ||
+          value.scope !== command.input.scope ||
+          value.requestId !== command.input.requestId ||
+          value.revision !== command.input.revision
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.saved' &&
+          (value.connection !== command.input.connection || value.model !== command.input.model)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.remove' &&
+          (value.kind !== 'remove' || value.connection !== command.input.connection)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.diagnose' &&
+          (value.kind !== 'diagnose' ||
+            value.connection !== command.input.connection.id ||
+            value.model !== diagnosticModel(command.input))
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      }
+      return value;
+    }
     if (command.type === 'model.inspect') {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
@@ -1745,6 +1981,32 @@ export class RuntimeClient {
       }
       return result;
     }
+    if (isAutomationCommand(command)) {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (
+        !state.schedules?.automation ||
+        (command.type === 'schedule.monitor' &&
+          command.policy.kind === 'changes' &&
+          !state.schedules.automation.changes)
+      )
+        throw new Error('AUTOMATION_UPGRADE_REQUIRED');
+      const { type, ...payload } = command;
+      const value = await this.api(`/api/schedules/${type.slice('schedule.'.length)}`, payload);
+      if (type === 'schedule.monitor' && (!isSchedule(value) || value.id !== command.id))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (type === 'schedule.receipt' && (!isScheduleFiring(value) || value.id !== command.firing))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        type === 'schedule.ack' &&
+        (!value ||
+          typeof value !== 'object' ||
+          !('acknowledged' in value) ||
+          value.acknowledged !== true)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
     if (
       command.type === 'schedule.get' ||
       command.type === 'schedule.create' ||
@@ -1872,13 +2134,53 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
     }
-    if (command.type === 'files.list') return this.api('/api/files') as Promise<RuntimeFile[]>;
-    if (command.type === 'files.read') return this.api('/api/files/read', { path: command.path });
+    if (command.type === 'projects.status') return this.api('/api/projects/status', {});
+    if (command.type === 'projects.select')
+      return this.api('/api/projects/select', {
+        bot: command.bot,
+        ...(command.scope ? { scope: command.scope } : {}),
+      });
+    if (command.type === 'projects.list') return this.api('/api/projects/list', {});
+    if (command.type === 'projects.write')
+      return this.api('/api/projects/write', { request: command.request });
+    if (command.type === 'projects.resume')
+      return this.api('/api/projects/resume', { requestId: command.requestId });
+    if (command.type === 'projects.receipt')
+      return this.api('/api/projects/receipt', { requestId: command.requestId });
+    if (command.type === 'files.list') {
+      const result = await (command.project
+        ? this.api('/api/files/list', {
+            project: command.project,
+            ...(command.task ? { task: command.task } : {}),
+          })
+        : this.api('/api/files'));
+      if (
+        (command.project && !Array.isArray(result)) ||
+        (Array.isArray(result) &&
+          !result.every((file: unknown) => projectFileMatches(file, command)))
+      )
+        throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
+    if (command.type === 'files.read') {
+      const result = await this.api('/api/files/read', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
     if (command.type === 'files.download') {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 11) throw new Error('RUNTIME_TOO_OLD');
-      const result = await this.api('/api/files/download', { path: command.path });
+      const result = await this.api('/api/files/download', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
       if (
         !isRuntimeDownload(result) ||
         result.path !== command.path ||

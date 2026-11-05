@@ -1,0 +1,1 @@
+ALTER TABLE `group_deliveries` ADD `goalResume` text;
