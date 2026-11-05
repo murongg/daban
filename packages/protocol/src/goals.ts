@@ -2,6 +2,7 @@ import { validAgentId } from './index.js';
 import { isProjectScope, type ProjectScope } from './projects.js';
 
 export interface GoalOwner {
+  /** Archived identity only; it cannot authorize a current Goal control. */
   project?: ProjectScope;
   bot: string;
   chatRevision?: number;

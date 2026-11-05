@@ -183,6 +183,7 @@ export const chinese = {
   'automation.result.changed': '结果变化',
   'automation.result.fault': '需处理',
   'automation.result.recovered': '已恢复',
+  'tasks.projectRetired': '项目管理已移除。历史记录仍保留，原项目任务或文件不能改用共享路径继续。',
   'projects.browserScope': 'Linux 浏览器：{0}',
   'projects.storeUnavailable':
     '项目存储暂时不可用。原共享任务和历史回执仍可查看，请检查环境后重试项目操作。',

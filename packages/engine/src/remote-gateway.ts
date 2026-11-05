@@ -1,4 +1,5 @@
 import {
+  assertNoRetiredProject,
   isLocalComputerCommand,
   isLocalComputerStatus,
   isRemoteRpcRequest,
@@ -39,6 +40,7 @@ export class RemoteGateway {
     const sessionKey = JSON.stringify([device, session]);
     if (this.retired.has(sessionKey)) throw Error('REMOTE_SESSION_CLOSED');
     const command = parseRuntimeCommand({ type: value.method, ...value.params });
+    assertNoRetiredProject(command);
     if (isLocalComputerCommand(command) && 'session' in command) {
       const owner = this.nativeOwners.get(command.session);
       const ours = owner?.device === device && owner.session === session;

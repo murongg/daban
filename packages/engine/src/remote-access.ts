@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import {
+  assertNoRetiredProject,
   isRemoteCommand,
   isRemoteMediaRequest,
   isRemoteRpcRequest,
@@ -803,6 +804,7 @@ export class RemoteAccess {
     }
   }
   async request(command: RuntimeCommand, host = this.selected): Promise<unknown> {
+    assertNoRetiredProject(command);
     await this.ready;
     const target = host;
     if (!target || this.stopped) throw Error('REMOTE_NO_HOST_SELECTED');

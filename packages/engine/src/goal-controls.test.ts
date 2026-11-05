@@ -1,8 +1,87 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
-import { GoalControls } from './goal-controls.js';
+import { DatabaseSync } from 'node:sqlite';
+import { expect, type TestContext, test } from 'vitest';
+import { migrate } from './database.js';
+import { GoalControls, goalOwnerKey } from './goal-controls.js';
+import { migrations } from './goal-controls-migrations.js';
+import { goalGrants, goalHumans, goalLinks } from './goal-controls-schema.js';
+
+async function retiredGoalFixture(t: TestContext, strippedScope = false) {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-retired-goal-'));
+  const file = path.join(root, 'goals.sqlite');
+  const owner = {
+    bot: 'mock-retired-bot',
+    chatRevision: 0,
+    project: { projectId: 'mock-retired-project', revision: 1 },
+  };
+  const target = {
+    owner,
+    sessionId: 'mock-retired-session',
+    goalId: 'mock-retired-goal',
+    goalRevision: 1,
+    humanEpoch: 0,
+  };
+  const client = new DatabaseSync(file);
+  try {
+    const db = migrate(client, migrations);
+    const key = goalOwnerKey(owner);
+    db.insert(goalLinks)
+      .values({ owner: key, session: target.sessionId, goal: target.goalId, revision: 1 })
+      .run();
+    db.insert(goalHumans).values({ owner: key, epoch: 0 }).run();
+    db.insert(goalGrants)
+      .values({
+        id: 'mock-retired-grant',
+        owner: key,
+        run: 'mock-retired-run',
+        target: strippedScope ? { ...target, owner: { bot: owner.bot, chatRevision: 0 } } : target,
+        epoch: 0,
+        fingerprint: 'synthetic-legacy-fingerprint',
+        claimed: false,
+      })
+      .run();
+  } finally {
+    client.close();
+  }
+  await chmod(file, 0o600);
+  const store = new GoalControls(file);
+  t.onTestFinished(async () => {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  await store.ready;
+  return { store, owner, target };
+}
+
+test.for(['epoch', 'prepare', 'noteHuman', 'observe', 'accept'] as const)(
+  'a retired Goal owner cannot acquire current authority through %s',
+  async (operation, t) => {
+    const { store, owner, target } = await retiredGoalFixture(t);
+    const actions = {
+      epoch: () => store.epoch(owner),
+      prepare: () => store.prepare(owner),
+      noteHuman: () => store.noteHuman(owner, 'mock-new-human'),
+      observe: () =>
+        store.observe(owner, target.sessionId, { id: target.goalId, revision: 2 }, true),
+      accept: () => store.accept(target, 'mock-new-human', 'mock-new-run'),
+    };
+    expect(actions[operation]).toThrowError(expect.objectContaining({ code: 'PROJECT_RETIRED' }));
+    expect(store.prepare({ bot: owner.bot, chatRevision: 0 })).toBeUndefined();
+  },
+);
+
+test.for([false, true])(
+  'a stored retired-project Goal grant cannot be claimed or aliased (stripped scope=%s)',
+  async (strippedScope, t) => {
+    const { store, owner, target } = await retiredGoalFixture(t, strippedScope);
+    expect(
+      store.claim('mock-retired-grant', 'mock-retired-run', target.sessionId, target.goalId, 1),
+    ).toBe(false);
+    expect(store.prepare({ bot: owner.bot, chatRevision: 0 })).toBeUndefined();
+  },
+);
 
 test('Human epochs and consumed native Goal grants survive restart without becoming a new permission', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-goal-restart-'));
@@ -62,59 +141,6 @@ test('Human Goal grants bind target and Human turn; observations never grant res
       goals.claim(next.id, 'synthetic-next-run', 'synthetic-session', 'synthetic-goal', 1),
     ).toBe(false);
     expect(() => goals.accept(fresh, 'synthetic-old-target', 'synthetic-old-run')).toThrow();
-  } finally {
-    store.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('project-scoped Goal targets keep distinct native sessions and preserve legacy owner keys', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-goal-controls-'));
-  const store = new GoalControls(path.join(root, 'goals.sqlite'));
-  try {
-    await store.ready;
-    const legacy = { bot: 'mock-bot', chatRevision: 0 };
-    const alpha = { ...legacy, project: { projectId: 'mock-alpha', revision: 1 } };
-    const beta = { ...legacy, project: { projectId: 'mock-beta', revision: 1 } };
-    for (const [index, owner] of [legacy, alpha, beta].entries())
-      store.observe(
-        owner,
-        `synthetic-session-${index}`,
-        { id: `synthetic-goal-${index}`, revision: 1 },
-        true,
-      );
-    expect(store.prepare(legacy)).toMatchObject({
-      sessionId: 'synthetic-session-0',
-    });
-    expect(store.prepare(alpha)).toMatchObject({
-      owner: alpha,
-      sessionId: 'synthetic-session-1',
-    });
-    expect(store.prepare(beta)).toMatchObject({
-      owner: beta,
-      sessionId: 'synthetic-session-2',
-    });
-    const target = store.prepare(alpha)!;
-    const grant = store.accept(target, 'synthetic-alpha-human', 'synthetic-alpha-run');
-    store.noteHuman(beta, 'synthetic-beta-human');
-    expect(
-      store.claim(
-        grant.id,
-        'synthetic-alpha-run',
-        target.sessionId,
-        target.goalId,
-        target.goalRevision,
-      ),
-    ).toBe(true);
-    expect(
-      store.claim(
-        grant.id,
-        'synthetic-alpha-run',
-        target.sessionId,
-        target.goalId,
-        target.goalRevision,
-      ),
-    ).toBe(false);
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });

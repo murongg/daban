@@ -39,7 +39,6 @@ import {
   isMcpCommand,
   isMemoryQuery,
   isNoteCommand,
-  isProjectCommand,
   isProjectFileRequest,
   isRebootStatus,
   isRecoveryRequest,
@@ -174,9 +173,6 @@ async function noticeStatus(
 const recoveryReads = new Set([
   '/api/goals/target',
   '/api/model/saved',
-  '/api/projects/list',
-  '/api/projects/status',
-  '/api/projects/receipt',
   '/api/notes/status',
   '/api/notes/list',
   '/api/notes/read',
@@ -187,7 +183,6 @@ const recoveryReads = new Set([
   '/api/work/comments',
   '/api/work/comment-receipt',
   '/api/computers/receipt',
-  '/api/files/list',
   '/api/files/read',
   '/api/files/download',
   '/api/groups/read',
@@ -868,26 +863,6 @@ export async function startPrototype({
             } finally {
               if (action) changing.delete(bot!);
             }
-          }
-          if (url.pathname.startsWith('/api/projects/')) {
-            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-            if (url.search || !models) throw new Fault('INVALID_PROJECT_REQUEST', 400);
-            const data = await body(req);
-            const command = {
-              ...data,
-              type: `projects.${url.pathname.slice('/api/projects/'.length)}`,
-            };
-            if (Object.hasOwn(data, 'type') || !isProjectCommand(command))
-              throw new Fault('INVALID_PROJECT_REQUEST', 400);
-            if (command.type === 'projects.status') return json(res, models.projectStatus());
-            if (command.type === 'projects.select')
-              return json(res, await models.selectProject(command.bot, command.scope));
-            if (command.type === 'projects.list') return json(res, models.projects.list());
-            if (command.type === 'projects.resume')
-              return json(res, await models.projects.resume(command.requestId));
-            if (command.type === 'projects.receipt')
-              return json(res, await models.projects.receipt(command.requestId));
-            return json(res, await models.projects.write(command.request));
           }
           if (url.pathname.startsWith('/api/notes/')) {
             if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -1598,22 +1573,6 @@ export async function startPrototype({
               throw new Fault('INVALID_MODEL_SETTINGS', 400);
             return json(res, await settings.check(data.revision));
           }
-          if (url.pathname === '/api/files/list' && req.method === 'POST' && models) {
-            const data = await body(req);
-            if (
-              url.search ||
-              Object.keys(data).some((key) => !['project', 'task'].includes(key)) ||
-              !isProjectFileRequest(data)
-            )
-              throw new Fault('INVALID_FILE', 400);
-            const reference = data as ProjectFileRequest;
-            const result = await models.filesFor(reference).list();
-            if (reference.project) models.projects.assertHumanScope(reference.project);
-            return json(
-              res,
-              result.map((file) => ({ ...file, ...data })),
-            );
-          }
           if (url.pathname === '/api/files' && req.method === 'GET' && files)
             return json(res, await files.list());
           if (
@@ -1630,17 +1589,14 @@ export async function startPrototype({
             )
               throw new Fault('INVALID_FILE', 400);
             const reference = data as ProjectFileRequest;
-            if (reference.project && !models) throw new Fault('PROJECT_STORE_UNAVAILABLE');
+            if (reference.project !== undefined || reference.task !== undefined)
+              throw new Fault('PROJECT_RETIRED', 409);
             const source = models ? models.filesFor(reference) : files;
             const result = url.pathname.endsWith('/download')
               ? await source.download(data.path)
               : await source.read(data.path);
-            if (reference.project) models!.projects.assertHumanScope(reference.project);
-            return json(res, {
-              ...result,
-              ...(data.project ? { project: data.project } : {}),
-              ...(data.task ? { task: data.task } : {}),
-            });
+
+            return json(res, result);
           }
           if (url.pathname === '/api/bots') {
             if (!models) throw new Fault('STARTING', 503);
@@ -2210,7 +2166,7 @@ export async function startPrototype({
               throw new Fault('RUNTIME_RECOVERY_PENDING');
             models!.profiles.assertActive(run.bot);
             const scope = models!.jobs.get(run.bot)?.project;
-            if (scope) models!.projects.assertScope(run.bot, scope, 'read');
+            if (scope) throw new Fault('PROJECT_RETIRED', 409);
             const job = models!.jobs.get(run.bot);
             if (!job?.running || job.id !== run.id || job.abort !== run.abort)
               throw new Fault('COMMAND_CANCELLED');
@@ -2254,7 +2210,6 @@ export async function startPrototype({
           member: (bot) => models!.profiles.get(bot),
           directory: () => models!.profiles.list(),
           source: (bot, runId, group) => models!.groupSource(bot, runId, group),
-          projectScope: (bot, scope) => models!.projects.assertScope(bot, scope, 'read'),
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),

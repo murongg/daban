@@ -25,10 +25,6 @@ export class Machine implements ComputerDriver {
     string,
     { profile: string; browser: Browser; alive: boolean }
   >();
-  private readonly selected = new Map<
-    string,
-    { profile?: string; workspace: string; key: string }
-  >();
   private closed = false;
   private readonly profiles: BrowserProfiles;
   constructor(readonly options: MachineOptions) {
@@ -48,17 +44,6 @@ export class Machine implements ComputerDriver {
         throw new Fault('BROWSER_PROFILE_UNAVAILABLE', 503);
       });
     });
-  }
-  checkProfile(profile: string, control: Control) {
-    return this.profiles.check(profile, control);
-  }
-  binding(bot: string) {
-    return this.selected.get(bot)?.key ?? 'legacy-shared';
-  }
-  bind(bot: string, binding?: { profile?: string; workspace: string; key: string }) {
-    if (this.active.has(bot)) throw new Fault('PROJECT_BUSY');
-    if (binding) this.selected.set(bot, binding);
-    else this.selected.delete(bot);
   }
   hasBrowser(bot: string) {
     const active = this.active.get(bot);
@@ -86,7 +71,6 @@ export class Machine implements ComputerDriver {
       viewers: this.options.viewers,
       displayBase: this.options.displayBase + slot,
       fullGuest: this.options.fullGuest,
-      workspace: this.selected.get(bot)?.workspace,
     });
     const resource: ComputerResource = {
       bot,
@@ -101,9 +85,7 @@ export class Machine implements ComputerDriver {
     try {
       await screens.start([bot]);
       resource.instance = screens.instance(bot);
-      const profile = this.selected.has(bot)
-        ? this.selected.get(bot)?.profile
-        : this.options.profileDir;
+      const profile = this.options.profileDir;
       if (profile) {
         const browser = await this.profiles.acquire(profile, bot, control);
         const active = { profile, browser, alive: true };

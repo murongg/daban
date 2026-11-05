@@ -310,3 +310,16 @@ test('the maximum shared summary remains a valid executable task without truncat
     await f.close();
   }
 });
+
+test('a retained scoped collaboration cannot publish into an ordinary group', async () => {
+  const f = await fixture({ projectId: 'mock-retired-project', revision: 1 });
+  try {
+    await expect(
+      f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request),
+    ).rejects.toMatchObject({ code: 'PROJECT_RETIRED' });
+    expect(f.calls).toStrictEqual([]);
+    expect((await f.groups.status()).items).toStrictEqual([]);
+  } finally {
+    await f.close();
+  }
+});

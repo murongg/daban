@@ -1,4 +1,4 @@
-import { agentId, agentTask, type BotProfile, runtimeTargets } from '@daban/protocol';
+import { agentId, type BotProfile, runtimeTargets } from '@daban/protocol';
 import {
   BookOpen,
   Brain,
@@ -40,7 +40,6 @@ import {
   type Bot,
   lifecycleRequest,
   type Panel,
-  projectScope,
   type State,
   type WorkspaceFile,
 } from './state';
@@ -77,12 +76,6 @@ export function Workspace({
 }) {
   useLocale();
   const runtime = useRuntime();
-  const task = agentTask(runtime.snapshot, bot.id);
-  const scope = bot.members
-    ? runtime.snapshot.groups?.items.find((group) => group.id === bot.id)?.project
-    : task?.running
-      ? task.project
-      : projectScope(state, bot.id);
   const [expandedBot, setExpandedBot] = useState<string>();
   const expanded = expandedBot === bot.id;
   const restricted = (id: string) => readOnly && !['computer', 'files', 'notes'].includes(id);
@@ -309,7 +302,6 @@ export function Workspace({
           ))}
         {panel === 'files' && runtime.enabled && (
           <RuntimeFiles
-            project={scope}
             notify={notify}
             preview={preview}
             attach={

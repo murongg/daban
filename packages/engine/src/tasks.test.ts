@@ -220,6 +220,41 @@ test('journal preserves bounded captures across restart and isolates a corrupt a
   }
 });
 
+test('retired project requests cannot be accepted as ordinary shared-workspace tasks', () => {
+  const request = {
+    requestId: 'mock-retired-project-request',
+    prompt: 'SYNTHETIC PRIVATE PROJECT TASK',
+    project: { projectId: 'mock-retired-project', revision: 1 },
+  };
+  expect(() => validateTask(request)).toThrowError(
+    expect.objectContaining({ code: 'PROJECT_RETIRED' }),
+  );
+  expect(validateTask({ requestId: 'mock-ordinary-request', prompt: 'SYNTHETIC TASK' })).toEqual({
+    requestId: 'mock-ordinary-request',
+    prompt: 'SYNTHETIC TASK',
+  });
+});
+
+test('an archived Goal target cannot reintroduce retired project authority into an ordinary request', () => {
+  expect(() =>
+    validateTask({
+      requestId: 'mock-retired-goal-request',
+      prompt: '/goal resume',
+      goalResume: {
+        owner: {
+          bot: 'mock-bot',
+          chatRevision: 0,
+          project: { projectId: 'mock-retired-project', revision: 1 },
+        },
+        sessionId: 'mock-retired-session',
+        goalId: 'mock-retired-goal',
+        goalRevision: 1,
+        humanEpoch: 0,
+      },
+    }),
+  ).toThrowError(expect.objectContaining({ code: 'PROJECT_RETIRED' }));
+});
+
 test('task approval mode accepts only the three explicit user policies', () => {
   const task = { requestId: 'mock-policy-request', prompt: 'Synthetic task' };
   for (const approvalMode of ['ask', 'auto', 'full'])

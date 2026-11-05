@@ -69,7 +69,6 @@ test.each([{ type: 'search.status' }])(
   },
 );
 test.each([
-  { type: 'projects.list' },
   {
     type: 'model.saved',
     input: {

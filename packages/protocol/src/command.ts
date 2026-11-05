@@ -38,7 +38,6 @@ import {
   isModelSavedRequest,
   isModelUpdate,
   isNoteCommand,
-  isProjectCommand,
   isProjectFileRequest,
   isProjectScope,
   isRecoveryRequest,
@@ -87,7 +86,6 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
   if (value.type.startsWith('search.')) return isSearchCommand(value) ? value : fail();
   if (isAutomationCommand(value)) return value;
-  if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();

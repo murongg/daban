@@ -79,9 +79,11 @@ export function validateTask(input: unknown): TaskRequest {
     (typeof value.retryOf !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.retryOf))
   )
     fail();
-  if (value.project !== undefined && !isProjectScope(value.project)) fail();
+  // A stale client must not turn a scoped request into a shared-workspace task.
+  if (value.project !== undefined) throw new Fault('PROJECT_RETIRED', 409);
   if (value.retryOf && value.files?.length) fail();
   if (value.goalResume !== undefined && !isGoalResumeTarget(value.goalResume)) fail();
+  if (value.goalResume?.owner.project !== undefined) throw new Fault('PROJECT_RETIRED', 409);
   if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode)) fail();
   if (value.retryTurn !== undefined && (!value.retryOf || !validAgentId(value.retryTurn))) fail();
   if (

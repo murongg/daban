@@ -66,7 +66,6 @@ export interface GroupRunner {
         automation?: AutomationSource;
       }
     | undefined;
-  projectScope?(bot: string, scope: ProjectScope): unknown;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
@@ -457,10 +456,8 @@ export class Groups {
     for (const member of members)
       if (!(await this.runner.member(member))) throw new Fault('GROUP_MEMBER_REQUIRED');
   }
-  private projectMembers(project: ProjectScope | undefined, members: string[]) {
-    if (!project) return;
-    if (!this.runner.projectScope) throw new Fault('PROJECT_ACCESS_DENIED', 403);
-    for (const bot of members) this.runner.projectScope(bot, project);
+  private projectMembers(project: ProjectScope | undefined, _members: string[]) {
+    if (project) throw new Fault('PROJECT_RETIRED', 409);
   }
   private admitCreation(members: string[]) {
     // Directory awaits must finish first; commit in this same turn before lifecycle permission can change.

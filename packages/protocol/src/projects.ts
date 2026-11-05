@@ -1,5 +1,22 @@
 import { validAgentId } from './id.js';
+import type { RuntimeCommand } from './index.js';
 
+export function assertNoRetiredProject(command: RuntimeCommand) {
+  // Metadata remains readable, but a current request must never lose its retired scope on an older Host.
+  if (
+    (command.type === 'task.start' &&
+      (command.task.project !== undefined ||
+        command.task.goalResume?.owner.project !== undefined)) ||
+    (command.type === 'goal.target' && command.owner.project !== undefined) ||
+    ((command.type === 'files.list' ||
+      command.type === 'files.read' ||
+      command.type === 'files.download') &&
+      (command.project !== undefined || command.task !== undefined))
+  )
+    throw Error('PROJECT_RETIRED');
+}
+
+// Archived metadata and older peer capabilities remain readable; they grant no current execution authority.
 export const projectCapability = 'project-scope-v1';
 export interface ProjectScope {
   projectId: string;
@@ -21,7 +38,6 @@ export interface Project {
     browser: 'private' | 'project' | 'legacy-shared';
   };
 }
-export type ProjectAccess = 'read' | 'write' | 'browser';
 export interface ProjectInput {
   name: string;
   grants: { bot: string; content?: 'read' | 'write'; browser?: boolean }[];
@@ -32,33 +48,12 @@ export type ProjectWrite = {
   projectId: string;
   expectedRevision: number;
 } & ({ action: 'create' | 'update'; value: ProjectInput } | { action: 'archive' });
-export interface ProjectReceipt {
-  requestId: string;
-  projectId: string;
-  state: 'preparing' | 'complete' | 'failed';
-  project?: Project;
-  error?: string;
-}
-// Resource identifiers cross the trusted execution bridge; physical paths and credentials never do.
-export interface ProjectResources {
-  project: Project;
-  files: string;
-  sharedProfile: string;
-  profiles: Record<string, string>;
-}
 export interface ProjectFileScope {
   scope: ProjectScope;
   resourceId: string;
   bot?: string;
   runId?: string;
 }
-export type ProjectCommand =
-  | { type: 'projects.list' }
-  | { type: 'projects.status' }
-  | { type: 'projects.select'; bot: string; scope?: ProjectScope }
-  | { type: 'projects.write'; request: ProjectWrite }
-  | { type: 'projects.receipt'; requestId: string }
-  | { type: 'projects.resume'; requestId: string };
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const keys = (value: Record<string, unknown>, allowed: string[]) =>
@@ -135,42 +130,6 @@ export function isProjectWrite(value: unknown): value is ProjectWrite {
         : value.action === 'archive')
   );
 }
-export function isProjectCommand(value: unknown): value is ProjectCommand {
-  return (
-    object(value) &&
-    (['projects.list', 'projects.status'].includes(String(value.type))
-      ? keys(value, ['type'])
-      : value.type === 'projects.select'
-        ? keys(value, ['type', 'bot', 'scope']) &&
-          validAgentId(value.bot) &&
-          (value.scope === undefined || isProjectScope(value.scope))
-        : value.type === 'projects.write'
-          ? keys(value, ['type', 'request']) && isProjectWrite(value.request)
-          : ['projects.receipt', 'projects.resume'].includes(String(value.type)) &&
-            keys(value, ['type', 'requestId']) &&
-            validAgentId(value.requestId))
-  );
-}
-export function isProjectResources(value: unknown): value is ProjectResources {
-  return (
-    object(value) &&
-    keys(value, ['project', 'files', 'sharedProfile', 'profiles']) &&
-    isProject(value.project) &&
-    validAgentId(value.files) &&
-    validAgentId(value.sharedProfile) &&
-    object(value.profiles) &&
-    Object.keys(value.profiles).length <= 16 &&
-    Object.entries(value.profiles).every(([bot, id]) => validAgentId(bot) && validAgentId(id)) &&
-    new Set([value.files, value.sharedProfile, ...Object.values(value.profiles)]).size ===
-      Object.keys(value.profiles).length + 2 &&
-    value.project.grants.every(
-      (grant) =>
-        object(value.profiles) &&
-        Object.hasOwn(value.profiles, grant.bot) &&
-        validAgentId(value.profiles[grant.bot]),
-    )
-  );
-}
 export function isProjectFileScope(value: unknown): value is ProjectFileScope {
   return (
     object(value) &&
@@ -181,54 +140,6 @@ export function isProjectFileScope(value: unknown): value is ProjectFileScope {
     (value.runId === undefined || (validAgentId(value.runId) && validAgentId(value.bot)))
   );
 }
-export function projectPermits(
-  project: Project,
-  scope: ProjectScope,
-  bot: string,
-  access: ProjectAccess,
-) {
-  if (
-    project.status !== 'active' ||
-    project.id !== scope.projectId ||
-    project.revision !== scope.revision
-  )
-    return false;
-  const grant = project.grants.find((item) => item.bot === bot);
-  return (
-    !!grant &&
-    (access === 'browser' ? grant.browser : access === 'read' || grant.content === 'write')
-  );
-}
-
-export function projectReduction(previous: Project, next: Project) {
-  if (next.status !== 'active') return false;
-  if (
-    previous.environment.files !== next.environment.files ||
-    previous.environment.browser !== next.environment.browser
-  )
-    return false;
-  const grants = next.grants.every((grant) =>
-    previous.grants.some(
-      (old) =>
-        old.bot === grant.bot &&
-        (old.content === 'write' || grant.content === 'read') &&
-        (old.browser || !grant.browser),
-    ),
-  );
-  return (
-    grants &&
-    (previous.grants.length > next.grants.length ||
-      previous.grants.some((old) =>
-        next.grants.some(
-          (grant) =>
-            old.bot === grant.bot &&
-            ((old.content === 'write' && grant.content === 'read') ||
-              (old.browser && !grant.browser)),
-        ),
-      ))
-  );
-}
-
 export function sameProjectScope(
   first: ProjectScope | undefined,
   second: ProjectScope | undefined,
@@ -263,20 +174,6 @@ export function projectFileKey(value: ProjectFileRequest & { path: string }) {
     value.path,
   ]);
 }
-export function isProjectReceipt(value: unknown): value is ProjectReceipt {
-  return (
-    object(value) &&
-    keys(value, ['requestId', 'projectId', 'state', 'project', 'error']) &&
-    validAgentId(value.requestId) &&
-    validAgentId(value.projectId) &&
-    ['preparing', 'complete', 'failed'].includes(String(value.state)) &&
-    (value.state !== 'complete' ||
-      (isProject(value.project) && value.project.id === value.projectId)) &&
-    (value.project === undefined || isProject(value.project)) &&
-    (value.error === undefined || typeof value.error === 'string')
-  );
-}
-
 export function projectFileMatches(value: unknown, expected: ProjectFileRequest) {
   return (
     isProjectFileRequest(value) &&

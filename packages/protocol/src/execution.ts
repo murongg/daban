@@ -10,7 +10,6 @@ import {
 } from './index.js';
 import {
   isProjectFileScope,
-  isProjectResources,
   isProjectScope,
   type ProjectScope,
   projectCapability,
@@ -89,8 +88,6 @@ export interface ExecutionRun {
   limit: number;
 }
 export const executionMethods = [
-  'projects.sync',
-  'projects.bind',
   'computer.snapshot',
   'computer.status',
   'computer.request',
@@ -178,13 +175,6 @@ export function isExecutionParams(
   value: unknown,
 ): value is Record<string, unknown> {
   if (!executionRecord(value)) return false;
-  if (method === 'projects.sync') return isProjectResources(value);
-  if (method === 'projects.bind')
-    return (
-      executionKeys(value, ['bot', 'scope']) &&
-      validAgentId(value.bot) &&
-      (value.scope === undefined || isProjectScope(value.scope))
-    );
   if (method === 'computer.snapshot' || method === 'computer.status')
     return Object.keys(value).length === 0;
   if (method === 'computer.request')

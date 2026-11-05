@@ -196,6 +196,8 @@ export const english = {
   'automation.result.changed': 'Result changed',
   'automation.result.fault': 'Needs attention',
   'automation.result.recovered': 'Recovered',
+  'tasks.projectRetired':
+    'Project management was removed. History is retained; project tasks and files cannot resume through shared paths.',
   'projects.browserScope': 'Linux browser: {0}',
   'projects.storeUnavailable':
     'Project storage is unavailable. Original shared tasks and historical receipts remain available; check the environment before retrying project work.',

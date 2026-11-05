@@ -5,6 +5,90 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
 
+it.each(['goal.target', 'task.start'] as const)(
+  'a cached project Goal target cannot regain authority through %s on an older Host',
+  async (type) => {
+    const target = {
+      owner: {
+        bot: 'mock-bot',
+        chatRevision: 0,
+        project: { projectId: 'mock-retired-project', revision: 1 },
+      },
+      sessionId: 'mock-retired-session',
+      goalId: 'mock-retired-goal',
+      goalRevision: 1,
+      humanEpoch: 0,
+    };
+    const fetcher = vi.fn(async () => Response.json(target));
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher,
+    });
+    await expect(
+      client.invoke(
+        type === 'goal.target'
+          ? { type, owner: target.owner }
+          : {
+              type,
+              bot: 'mock-bot',
+              task: {
+                requestId: 'mock-retired-goal-request',
+                prompt: '/goal resume',
+                goalResume: target,
+              },
+            },
+      ),
+    ).rejects.toThrow('PROJECT_RETIRED');
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
+it('a cached retired task cannot be sent to an older host with broader project support', async () => {
+  const fetcher = vi.fn(async () => Response.json({}));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  await expect(
+    client.invoke({
+      type: 'task.start',
+      bot: 'mock-bot',
+      task: {
+        requestId: 'mock-retired-request',
+        prompt: 'SYNTHETIC RETIRED TASK',
+        project: { projectId: 'mock-retired-project', revision: 1 },
+      },
+    }),
+  ).rejects.toThrow('PROJECT_RETIRED');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it.each(['files.list', 'files.read', 'files.download'] as const)(
+  'refuses a retired locator before sending %s to the ordinary workspace',
+  async (type) => {
+    const fetcher = vi.fn(async () => Response.json({}));
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher,
+    });
+    const reference = {
+      project: { projectId: 'mock-retired-project', revision: 1 },
+      task: { bot: 'mock-bot', runId: 'mock-retired-run' },
+    };
+    await expect(
+      client.invoke(
+        type === 'files.list'
+          ? { type, ...reference }
+          : { type, path: 'same-name.txt', ...reference },
+      ),
+    ).rejects.toThrow('PROJECT_RETIRED');
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
 it('validates the approval mode and refuses it before sending to a runtime without policy support', async () => {
   const task = {
     requestId: 'mock-approval-task',
@@ -1579,11 +1663,13 @@ it('recognizes only an absent Goal target endpoint as legacy service support', a
 });
 
 it.each([true, false])(
-  'Goal target replies retain the captured project identity (same project=%s)',
+  'Goal target replies retain the captured ordinary identity (matching reply=%s)',
   async (same) => {
-    const owner = { bot: 'a', chatRevision: 0, project: { projectId: 'mock-alpha', revision: 1 } };
+    const owner = { bot: 'a', chatRevision: 0 };
     const target = {
-      owner: same ? owner : { ...owner, project: { projectId: 'mock-beta', revision: 1 } },
+      owner: same
+        ? owner
+        : { ...owner, project: { projectId: 'mock-retired-project', revision: 1 } },
       sessionId: 'mock-session',
       goalId: 'mock-goal',
       goalRevision: 1,

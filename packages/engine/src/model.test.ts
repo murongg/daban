@@ -1,17 +1,121 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { turnLimit } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
+import { migrate } from './database.js';
 import { GoalControls } from './goal-controls.js';
 import { editorShowsFile, ModelRuns, sdkPatch, verifyOutput, verifyTask } from './model.js';
 import { secureDirectory } from './private-files.js';
+import { migrations as projectMigrations } from './projects-migrations.js';
+import { projectItems } from './projects-schema.js';
 import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
 
+test('ordinary startup reads retired task history without changing the old project database', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-retired-project-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'model');
+  await mkdir(dir, { mode: 0o700 });
+  const file = path.join(dir, 'projects.sqlite');
+  const client = new DatabaseSync(file);
+  try {
+    const db = migrate(client, projectMigrations);
+    db.insert(projectItems)
+      .values({
+        id: 'mock-retired-project',
+        revision: 1,
+        value: JSON.stringify({
+          id: 'mock-retired-project',
+          name: 'SYNTHETIC RETIRED PROJECT',
+          revision: 1,
+          status: 'active',
+          grants: [],
+          environment: { files: 'project', browser: 'private' },
+        }),
+      })
+      .run();
+  } finally {
+    client.close();
+  }
+  await chmod(file, 0o600);
+  const original = await readFile(file);
+  const journal = new TaskJournal(path.join(dir, 'task-journal'));
+  await journal.load();
+  await journal.put({
+    bot: 'mock-bot',
+    runId: 'mock-retired-run',
+    requestId: 'mock-retired-request',
+    project: { projectId: 'mock-retired-project', revision: 1 },
+    sessionId: 'mock-retired-goal-session',
+    goal: {
+      id: 'mock-retired-goal',
+      revision: 1,
+      objective: 'SYNTHETIC PRIVATE GOAL',
+      phase: 'paused',
+      activation: 'disarmed',
+      rounds: 1,
+      limit: 3,
+    },
+    prompt: 'SYNTHETIC PRIVATE PROJECT HISTORY',
+    phase: 'completed',
+    running: false,
+    result: 'SYNTHETIC HISTORICAL RESULT',
+    error: '',
+    trace: [],
+  });
+  const workspace = path.join(root, 'workspace');
+  await mkdir(workspace, { mode: 0o700 });
+  await writeFile(path.join(workspace, 'ordinary.txt'), 'SYNTHETIC SHARED FILE');
+  const models = new ModelRuns({
+    settings: new ModelSettings(path.join(root, 'settings.json')),
+    dir,
+    workspace,
+    origin: 'http://127.0.0.1:12345',
+  });
+  try {
+    await models.ready;
+    expect(models.goals.prepare({ bot: 'mock-bot', chatRevision: 0 })).toBeUndefined();
+    expect((await models.chatHistory('mock-bot', 0)).items).toContainEqual(
+      expect.objectContaining({
+        runId: 'mock-retired-run',
+        project: { projectId: 'mock-retired-project', revision: 1 },
+        result: 'SYNTHETIC HISTORICAL RESULT',
+      }),
+    );
+    expect(await models.filesFor({}).read('ordinary.txt')).toMatchObject({
+      content: 'SYNTHETIC SHARED FILE',
+    });
+  } finally {
+    await models.close();
+  }
+  expect(await readFile(file)).toEqual(original);
+});
+
+test('retired file locators never fall through to the ordinary shared workspace', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-retired-file-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const models = new ModelRuns({
+    settings: new ModelSettings(path.join(root, 'settings.json')),
+    dir: path.join(root, 'model'),
+    workspace: path.join(root, 'workspace'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  try {
+    await models.ready;
+    expect(() =>
+      models.filesFor({
+        project: { projectId: 'mock-retired-project', revision: 1 },
+        task: { bot: 'mock-bot', runId: 'mock-retired-run' },
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'PROJECT_RETIRED' }));
+  } finally {
+    await models.close();
+  }
+});
 test.each(['unknown-effect', 'newer-authority'] as const)(
   'historical Goal recovery preserves %s without financial bookkeeping',
   async (mode) => {

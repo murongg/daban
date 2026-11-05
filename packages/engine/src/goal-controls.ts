@@ -10,6 +10,7 @@ import {
   isGoalResumeTarget,
 } from '@daban/protocol';
 import { and, eq } from 'drizzle-orm';
+import { Fault } from './control.js';
 import { configure, type Database, migrate } from './database.js';
 import { migrations } from './goal-controls-migrations.js';
 import { goalGrants, goalHumans, goalHumanTurns, goalLinks } from './goal-controls-schema.js';
@@ -22,11 +23,16 @@ export const goalOwnerKey = (owner: GoalOwner) =>
         owner.bot,
         owner.conversationId ?? null,
         owner.conversationId ? null : owner.chatRevision,
-        // Keep legacy hashes stable; project revisions partition the native session identity.
+        // Retain archived hashes so old scoped links cannot alias an ordinary Goal owner.
         ...(owner.project ? [owner.project.projectId, owner.project.revision] : []),
       ]),
     )
     .digest('hex');
+const activeGoalOwnerKey = (owner: GoalOwner) => {
+  if (!isGoalOwner(owner)) throw new Error('INVALID_GOAL_OWNER');
+  if (owner.project !== undefined) throw new Fault('PROJECT_RETIRED', 409);
+  return goalOwnerKey(owner);
+};
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class GoalControls {
   readonly ready: Promise<unknown>;
@@ -71,12 +77,12 @@ export class GoalControls {
       this.db
         .select()
         .from(goalHumans)
-        .where(eq(goalHumans.owner, goalOwnerKey(owner)))
+        .where(eq(goalHumans.owner, activeGoalOwnerKey(owner)))
         .get()?.epoch ?? 0
     );
   }
   private note(owner: GoalOwner, requestId: string) {
-    const key = goalOwnerKey(owner),
+    const key = activeGoalOwnerKey(owner),
       id = digest([key, requestId]);
     const prior = this.db.select().from(goalHumanTurns).where(eq(goalHumanTurns.id, id)).get();
     if (prior) return prior.epoch;
@@ -98,7 +104,7 @@ export class GoalControls {
     const link = this.db
       .select()
       .from(goalLinks)
-      .where(eq(goalLinks.owner, goalOwnerKey(owner)))
+      .where(eq(goalLinks.owner, activeGoalOwnerKey(owner)))
       .get();
     if (!link) return;
     return {
@@ -117,7 +123,7 @@ export class GoalControls {
   ) {
     if (!isGoalOwner(owner) || !Number.isSafeInteger(goal.revision) || goal.revision < 1)
       throw new Error('INVALID_GOAL_OWNER');
-    const key = goalOwnerKey(owner);
+    const key = activeGoalOwnerKey(owner);
     const prior = this.db.select().from(goalLinks).where(eq(goalLinks.owner, key)).get();
     // A projection updates identity facts, never Human permission.
     if (prior?.goal === goal.id && prior.session === session) {
@@ -146,7 +152,7 @@ export class GoalControls {
   }
   accept(target: GoalResumeTarget, requestId: string, run: string) {
     if (!isGoalResumeTarget(target)) throw new Error('INVALID_GOAL_TARGET');
-    const key = goalOwnerKey(target.owner),
+    const key = activeGoalOwnerKey(target.owner),
       id = digest([key, requestId]);
     const fingerprint = digest([
       key,
@@ -196,6 +202,10 @@ export class GoalControls {
         const grant = this.db.select().from(goalGrants).where(eq(goalGrants.id, id)).get();
         if (
           !grant ||
+          !isGoalResumeTarget(grant.target) ||
+          grant.target.owner.project !== undefined ||
+          // Dropping old JSON scope must not turn its persisted owner key into ordinary authority.
+          goalOwnerKey(grant.target.owner) !== grant.owner ||
           grant.claimed ||
           grant.run !== run ||
           grant.target.sessionId !== session ||

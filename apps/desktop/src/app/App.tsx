@@ -89,7 +89,6 @@ import {
   mergeAttachments,
   messageQueue,
   messageQueueLimit,
-  projectScope,
   type QueuedTask,
   reduce,
   type WorkspaceFile,
@@ -419,15 +418,16 @@ function Workbench() {
         ? queued.files.map((id) => state.files.find((file) => file.id === id))
         : state.attachments[botId].map((id) => state.files.find((f) => f.id === id))
     ).filter((f): f is WorkspaceFile => !!f);
+    if (queued?.project || attached.some((file) => file.runtimeScope !== undefined)) {
+      notify(t('tasks.projectRetired'));
+      return skipped;
+    }
     const task: TaskRequest = state.runtimeRequests[botId] ||
       continued || {
         ...(runtime.snapshot.protocolVersion >= 29
           ? { chatRevision: chatRevision(state, botId, runtime.snapshot.chats) }
           : {}),
         requestId: crypto.randomUUID(),
-        ...((queued ? queued.project : projectScope(state, botId))
-          ? { project: queued ? queued.project : projectScope(state, botId) }
-          : {}),
         ...(runtime.snapshot.protocolVersion >= 44
           ? {
               approvalMode: chatApprovalMode(
@@ -604,7 +604,6 @@ function Workbench() {
         id: crypto.randomUUID(),
         prompt,
         files: files.map((file) => file.id),
-        ...(projectScope(state, botId) ? { project: projectScope(state, botId) } : {}),
       },
     });
   }
@@ -623,7 +622,7 @@ function Workbench() {
     if (!item || item.files.length || item.verify) return;
     const task = agentTask(runtime.snapshot, botId);
     if (!sameProjectScope(item.project, task?.project)) {
-      notify(t('projects.stale'));
+      notify(t('tasks.projectRetired'));
       return;
     }
     if (!task?.running || !task.runId || task.conversationId) {
@@ -750,12 +749,10 @@ function Workbench() {
   }, [runtime, state, dispatch, notify]);
   const previewFile = useCallback(
     async (file: WorkspaceFile) => {
-      const source = updateState.current;
-      const scope = projectScope(source, source.selected);
-      const stillSelected = () =>
-        !file.runtimeScope?.project ||
-        (updateState.current.selected === source.selected &&
-          sameProjectScope(projectScope(updateState.current, source.selected), scope));
+      if (file.runtimeScope !== undefined) {
+        notify(t('tasks.projectRetired'));
+        return;
+      }
       if (imageMime(file.upload?.name || file.name)) {
         preview(file);
         return;
@@ -781,11 +778,10 @@ function Workbench() {
         const actual = await runtime.command<RuntimeFile>({
           type: 'files.read',
           path: file.runtimePath,
-          ...file.runtimeScope,
         });
-        if (stillSelected()) preview({ ...file, content: actual.content || '' });
+        preview({ ...file, content: actual.content || '' });
       } catch (error) {
-        if (stillSelected()) notify(runtimeError(error));
+        notify(runtimeError(error));
       }
     },
     [runtime.command, preview, notify],

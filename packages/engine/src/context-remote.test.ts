@@ -305,9 +305,6 @@ test('context and current main observations stay fresh while writes deduplicate 
         },
       },
       { method: 'goal.target', params: { owner: { bot: scope.bot, chatRevision: 0 } } },
-      { method: 'projects.list', params: {} },
-      { method: 'projects.status', params: {} },
-      { method: 'projects.receipt', params: { requestId: 'mock-project-request' } },
       { method: 'schedule.receipt', params: { id: 'mock-schedule', firing: 'mock-firing' } },
     ];
     for (const { method, params } of queries) {
@@ -323,16 +320,19 @@ test('context and current main observations stay fresh while writes deduplicate 
       const next = await gateway.invoke(keys.identity.id, 'mock-session', request);
       expect(next).not.toEqual(first);
     }
-    const selection = {
+    const start = {
       type: 'request',
-      id: 'mock-project-selection',
+      id: 'mock-ordinary-start',
       host: 'a'.repeat(64),
       workspace: 'mock-workspace',
-      method: 'projects.select',
-      params: { bot: scope.bot, scope: { projectId: 'mock-project', revision: 1 } },
+      method: 'task.start',
+      params: {
+        bot: scope.bot,
+        task: { requestId: 'mock-task-start', prompt: 'SYNTHETIC REQUEST' },
+      },
     };
-    const selected = await gateway.invoke(keys.identity.id, 'mock-session', selection);
-    expect(await gateway.invoke(keys.identity.id, 'mock-session', selection)).toEqual(selected);
+    const accepted = await gateway.invoke(keys.identity.id, 'mock-session', start);
+    expect(await gateway.invoke(keys.identity.id, 'mock-session', start)).toEqual(accepted);
     store.revoke(keys.identity.id);
     await expect(
       gateway.invoke(keys.identity.id, 'mock-session', {

@@ -22,7 +22,7 @@ import { isProjectFileRequest, isProjectScope } from './projects.js';
 
 export * from './projects.js';
 
-import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
+import type { ProjectFileRequest, ProjectScope } from './projects.js';
 
 export * from './goals.js';
 export * from './model-access.js';
@@ -1636,9 +1636,6 @@ export function recoveryReader(command: RuntimeCommand) {
     'search.status',
     'search.saved',
     'frame',
-    'projects.list',
-    'projects.status',
-    'projects.receipt',
     'files.list',
     'files.read',
     'files.download',
@@ -4067,7 +4064,6 @@ export type RuntimeCommand =
   | SearchCommand
   | GoalControlCommand
   | AutomationCommand
-  | ProjectCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
