@@ -28,10 +28,57 @@ interface Store {
   pending?: NoticeActivation;
   muted: { scope: string; bot: string }[];
 }
-type LegacyStore = Omit<Store, 'version' | 'muted'> & { version: 1 };
+interface RetiredActivation {
+  id: string;
+  scope: string;
+  target: { kind: 'automation' };
+}
+type SavedStore = Omit<Store, 'records' | 'pending'> & {
+  records: (NoticeActivation | RetiredActivation)[];
+  pending?: NoticeActivation | RetiredActivation;
+};
+type LegacyStore = Omit<SavedStore, 'version' | 'muted'> & { version: 1 };
 const digest = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
 const empty = (): Store => ({ version: 2, enabled: false, revision: 0, records: [], muted: [] });
-function store(value: unknown): value is Store | LegacyStore {
+function retiredActivation(value: unknown): value is RetiredActivation {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  if (!isNoticeActivation({ ...row, target: { kind: 'settings' } })) return false;
+  if (!row.target || typeof row.target !== 'object' || Array.isArray(row.target)) return false;
+  const target = row.target as Record<string, unknown>;
+  return (
+    Object.keys(target).every((key) =>
+      [
+        'kind',
+        'id',
+        'bot',
+        'schedule',
+        'phase',
+        'reason',
+        'runId',
+        'code',
+        'firing',
+        'createdAt',
+      ].includes(key),
+    ) &&
+    target.kind === 'automation' &&
+    validAgentId(target.id) &&
+    validAgentId(target.bot) &&
+    validAgentId(target.schedule) &&
+    typeof target.phase === 'string' &&
+    ['completed', 'failed', 'interrupted'].includes(target.phase) &&
+    typeof target.reason === 'string' &&
+    ['changed', 'fault', 'recovered'].includes(target.reason) &&
+    (target.runId === undefined || validAgentId(target.runId)) &&
+    (target.code === undefined ||
+      (typeof target.code === 'string' && /^[A-Z_]{1,100}$/.test(target.code))) &&
+    (target.firing === undefined || validAgentId(target.firing)) &&
+    (target.createdAt === undefined ||
+      (typeof target.createdAt === 'string' && Number.isFinite(Date.parse(target.createdAt))))
+  );
+}
+const savedActivation = (value: unknown) => isNoticeActivation(value) || retiredActivation(value);
+function store(value: unknown): value is SavedStore | LegacyStore {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
   return (
@@ -52,9 +99,9 @@ function store(value: unknown): value is Store | LegacyStore {
     Number(v.revision) < Number.MAX_SAFE_INTEGER &&
     Array.isArray(v.records) &&
     v.records.length <= 64 &&
-    Array.from(v.records).every(isNoticeActivation) &&
+    Array.from(v.records).every(savedActivation) &&
     new Set(v.records.map((row) => row.id)).size === v.records.length &&
-    (v.pending === undefined || isNoticeActivation(v.pending)) &&
+    (v.pending === undefined || savedActivation(v.pending)) &&
     (v.version === 1 ||
       (Array.isArray(v.muted) &&
         v.muted.length <= 1024 &&
@@ -163,7 +210,14 @@ export class Notifications {
     if (text !== undefined) {
       const value: unknown = JSON.parse(text);
       if (!store(value)) throw new Error('NOTIFICATION_STORE_UNAVAILABLE');
-      this.data = value.version === 1 ? { ...value, version: 2, muted: [] } : value;
+      // Retired targets remain valid stored metadata, but cannot navigate or disable ordinary notifications.
+      this.data = {
+        ...value,
+        version: 2,
+        muted: value.version === 1 ? [] : value.muted,
+        records: value.records.filter(isNoticeActivation),
+        pending: isNoticeActivation(value.pending) ? value.pending : undefined,
+      };
       this.fingerprint = digest(text);
     }
     if (this.data.enabled && process.platform === 'darwin' && this.supported()) {
