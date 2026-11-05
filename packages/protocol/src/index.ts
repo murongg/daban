@@ -31,8 +31,8 @@ import type { ProjectMemoryCommand } from './project-memory.js';
 import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
 
 export * from './goals.js';
-export * from './search.js';
 export * from './model-access.js';
+export * from './search.js';
 
 import type {
   ApprovalRulesCommand,
@@ -44,7 +44,6 @@ import { isMcpPurposeScope, isPolicyDecision } from './approval-rules.js';
 
 import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
-import type { SearchCommand } from './search.js';
 import {
   isModelAccess,
   isModelAttempts,
@@ -55,6 +54,7 @@ import {
   type ModelRemoveRequest,
   type ModelSavedRequest,
 } from './model-access.js';
+import type { SearchCommand } from './search.js';
 import {
   isSkillPackage,
   isSkillPackageInfo,
