@@ -388,3 +388,75 @@ it('keeps a search key only while Settings is open and never stops a background 
     ),
   ).toBe(false);
 });
+
+it('configures gallery connections inside settings and keeps credentials out of the UI cache', async () => {
+  const invoke = connect();
+  const reply = await invoke({ type: 'status' });
+  if (!reply.ok) throw Error('SYNTHETIC STATUS FAILED');
+  (reply.value as RuntimeSnapshot).botReleases = true;
+  invoke.mockImplementation(async (command) => {
+    if (command.type === 'status') return reply;
+    if (command.type === 'gallery.sources') return { ok: true, value: [] };
+    if (command.type === 'gallery.source.remove') return { ok: true, value: [] };
+    if (command.type === 'gallery.source.save')
+      return {
+        ok: true,
+        value: [
+          {
+            origin: command.origin,
+            sourceId: 'mock-source',
+            name: 'Synthetic gallery',
+            authenticated: true,
+          },
+        ],
+      };
+    return { ok: true, value: {} };
+  });
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  const settings = within(screen.getByRole('main'));
+  await userEvent.click(settings.getByRole('tab', { name: 'Bot 广场' }));
+  await userEvent.type(settings.getByLabelText('广场地址'), 'https://mock-gallery.example.test');
+  await userEvent.type(settings.getByLabelText('访问令牌（可选）'), 'SYNTHETIC GALLERY CREDENTIAL');
+  await userEvent.click(settings.getByRole('button', { name: '添加广场' }));
+  expect(await settings.findByText('Synthetic gallery')).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith({
+    type: 'gallery.source.save',
+    origin: 'https://mock-gallery.example.test',
+    token: 'SYNTHETIC GALLERY CREDENTIAL',
+  });
+  expect(settings.getByLabelText('访问令牌（可选）')).toHaveValue('');
+  expect(JSON.stringify(localStorage)).not.toContain('SYNTHETIC GALLERY CREDENTIAL');
+  await userEvent.click(settings.getByRole('button', { name: '移除此广场 Synthetic gallery' }));
+  await waitFor(() => expect(settings.queryByText('Synthetic gallery')).toBeNull());
+  expect(invoke).toHaveBeenCalledWith({
+    type: 'gallery.source.remove',
+    origin: 'https://mock-gallery.example.test',
+  });
+});
+
+it('opens source management from the gallery without leaving the configuration form in the catalog', async () => {
+  const invoke = connect();
+  const reply = await invoke({ type: 'status' });
+  if (!reply.ok) throw Error('SYNTHETIC STATUS FAILED');
+  (reply.value as RuntimeSnapshot).botReleases = true;
+  invoke.mockImplementation(async (command) =>
+    command.type === 'status'
+      ? reply
+      : { ok: true, value: command.type === 'gallery.sources' ? [] : {} },
+  );
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: 'Bot 广场' }));
+  expect(await screen.findByRole('button', { name: '管理来源' })).toBeVisible();
+  expect(screen.queryByLabelText('广场地址')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: '管理来源' }));
+  const dialog = await screen.findByRole('dialog', { name: '设置' });
+  expect(within(dialog).getByRole('tab', { name: 'Bot 广场' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  expect(within(dialog).getByLabelText('广场地址')).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByLabelText('广场地址')).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Bot 广场', level: 1 })).toBeVisible();
+});

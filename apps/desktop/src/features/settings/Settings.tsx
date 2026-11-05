@@ -8,6 +8,7 @@ import {
   Plug,
   Search as SearchIcon,
   Settings2,
+  Store,
   Sun,
   Trash2,
   Waypoints,
@@ -21,6 +22,7 @@ import { Dialog } from '../../components/controls/Dialog';
 import { Help } from '../../components/controls/Help';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
 import { ArchiveList } from '../bots/Archive';
+import { GallerySources } from '../bots/GallerySources';
 import { TrashList } from '../chat/ConversationTrash';
 import type { TrashController } from '../chat/useTrash';
 import { Diagnostics } from '../computer/Diagnostics';
@@ -56,6 +58,7 @@ export function Settings({
   onLifecycle,
   onRecovery,
   trash,
+  initialCategory = 'general',
 }: {
   state: State;
   dispatch: Dispatch<Action>;
@@ -65,6 +68,7 @@ export function Settings({
   onLifecycle?: (bot: string) => unknown;
   onRecovery?: () => unknown;
   trash?: TrashController;
+  initialCategory?: string;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -81,7 +85,7 @@ export function Settings({
   const [showPermissions, setShowPermissions] = useState(false);
   const computerLabel = nativeOnly ? t('localComputer.computer') : t('settings.localLinuxRuntime');
   const connectionError = runtime.snapshot.error;
-  const [category, setCategory] = useState('general');
+  const [category, setCategory] = useState(initialCategory);
   const [error, setError] = useState('');
   const [connectionDialog, setConnectionDialog] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
@@ -135,6 +139,12 @@ export function Settings({
           <Models />
         </div>
       ),
+    },
+    {
+      id: 'gallery',
+      label: t('common.botGallery'),
+      icon: Store,
+      content: <GallerySources active={category === 'gallery'} />,
     },
     {
       id: 'search',

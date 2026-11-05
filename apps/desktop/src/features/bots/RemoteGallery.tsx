@@ -7,7 +7,7 @@ import {
   isBotTemplateCommand,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { clientCache } from '../../app/cache';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { Dialog } from '../../components/controls/Dialog';
@@ -19,15 +19,27 @@ import './templates.css';
 import { ReleasePreview } from './ReleasePreview';
 import { type Prepared, pendingKey, readRelease, type Source, useTemplateWork } from './transfer';
 
-export function RemoteGallery({ onInstalled }: { onInstalled?: (profile: BotProfile) => unknown }) {
+export function RemoteGallery({
+  onInstalled,
+  onSettings,
+  active = true,
+}: {
+  onInstalled?: (profile: BotProfile) => unknown;
+  onSettings: () => unknown;
+  active?: boolean;
+}) {
   useLocale();
   const runtime = useRuntime();
   const cache = clientCache();
   const { busy, message, setMessage, run } = useTemplateWork();
   const [sources, setSources] = useState<Source[]>([]);
   const [origin, setOrigin] = useState('');
-  const [address, setAddress] = useState('');
-  const [token, setToken] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [loadingSources, setLoadingSources] = useState(false);
+  const reads = useRef(0);
+  const imports = useRef(0);
+  const selectedOrigin = useRef(origin);
+  selectedOrigin.current = origin;
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<GalleryTemplate[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -35,32 +47,51 @@ export function RemoteGallery({ onInstalled }: { onInstalled?: (profile: BotProf
   const [pending, setPending] = useState(() => cache.getItem(pendingKey));
   const enabled = runtime.enabled && runtime.snapshot.botReleases === true;
   const close = useCallback(() => setSelected(undefined), []);
+  const closeImport = useCallback(() => {
+    imports.current++;
+    setImportOpen(false);
+  }, []);
   useEffect(() => {
-    if (!enabled) return;
-    let active = true;
+    if (!enabled || !active) return;
+    const request = ++reads.current;
+    setLoadingSources(true);
     runtime
       .command<Source[]>({ type: 'gallery.sources' })
       .then((value) => {
-        if (active) {
-          setSources(value);
-          setOrigin(value[0]?.origin ?? '');
+        if (request !== reads.current) return;
+        const next =
+          value.find((source) => source.origin === selectedOrigin.current)?.origin ??
+          value[0]?.origin ??
+          '';
+        setSources(value);
+        setOrigin(next);
+        if (next !== selectedOrigin.current) {
+          setItems([]);
+          setCursor(null);
         }
+        setLoadingSources(false);
       })
       .catch((error) => {
-        if (active) setMessage(runtimeError(error));
+        if (request === reads.current) {
+          setLoadingSources(false);
+          setMessage(runtimeError(error));
+        }
       });
     return () => {
-      active = false;
+      reads.current++;
     };
-  }, [enabled, runtime.command, setMessage]);
+  }, [enabled, active, runtime.command, setMessage]);
   async function search(more = false) {
     if (!origin) return;
+    const request = ++reads.current;
     const page = await runtime.command<GalleryPage<GalleryTemplate>>({
       type: 'gallery.templates',
       origin,
       q: query,
       ...(more && cursor ? { cursor } : {}),
     });
+    // Settings or source navigation may have changed while the request was in flight.
+    if (request !== reads.current) return;
     setItems((previous) => (more ? [...previous, ...page.items] : page.items));
     setCursor(page.nextCursor);
   }
@@ -86,46 +117,12 @@ export function RemoteGallery({ onInstalled }: { onInstalled?: (profile: BotProf
   if (!enabled) return null;
   return (
     <section className="remote-gallery" aria-label={t('templates.source')}>
-      <h2>{t('templates.source')}</h2>
-      <p className="field-help">{t('templates.noSources')}</p>
-      <div className="template-source-fields">
-        <label className="field-label">
-          {t('templates.address')}
-          <input
-            className="field"
-            type="url"
-            value={address}
-            onChange={(event) => setAddress(event.target.value)}
-          />
-        </label>
-        <label className="field-label">
-          {t('templates.token')}
-          <input
-            className="field"
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-          />
-        </label>
-        <button
-          type="button"
-          className="secondary"
-          disabled={busy || !address}
-          onClick={() =>
-            run(async () => {
-              const value = await runtime.command<Source[]>({
-                type: 'gallery.source.save',
-                origin: new URL(address).origin,
-                ...(token ? { token } : {}),
-              });
-              setToken('');
-              setSources(value);
-              setOrigin(new URL(address).origin);
-            })
-          }
-        >
-          {t('templates.addSource')}
+      <div className="remote-gallery-actions">
+        <button type="button" className="text-button" onClick={onSettings}>
+          {t('templates.manageSources')}
+        </button>
+        <button type="button" className="text-button" onClick={() => setImportOpen(true)}>
+          {t('templates.import')}
         </button>
       </div>
       {!!sources.length && (
@@ -137,7 +134,9 @@ export function RemoteGallery({ onInstalled }: { onInstalled?: (profile: BotProf
               value: item.origin,
               label: `${item.name} · ${item.origin}`,
             }))}
+            disabled={busy || loadingSources}
             onValueChange={(value) => {
+              reads.current++;
               setOrigin(value);
               setItems([]);
               setCursor(null);
@@ -156,52 +155,49 @@ export function RemoteGallery({ onInstalled }: { onInstalled?: (profile: BotProf
           <button
             type="button"
             className="secondary"
-            disabled={busy}
+            disabled={busy || loadingSources}
             onClick={() => run(() => search())}
           >
             {t('templates.search')}
           </button>
-          <button
-            type="button"
-            className="text-button"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                const value = await runtime.command<Source[]>({
-                  type: 'gallery.source.remove',
-                  origin,
-                });
-                setSources(value);
-                setOrigin(value[0]?.origin ?? '');
-                setItems([]);
-              })
-            }
-          >
-            {t('templates.removeSource')}
-          </button>
         </div>
       )}
-      <div className="field-label">
-        {t('templates.import')}
-        <FilePicker
-          aria-label={t('templates.import')}
-          accept=".json,application/json"
-          disabled={busy || !!pending}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            event.target.value = '';
-            if (file)
-              run(async () => {
-                const release = await readRelease(file);
-                const preview = await runtime.command<Prepared>({
-                  type: 'bot.install.prepare',
-                  release,
+      {importOpen && (
+        <Dialog title={t('templates.import')} onClose={closeImport}>
+          <p className="dialog-description">{t('templates.previewImport')}</p>
+          <FilePicker
+            aria-label={t('templates.import')}
+            accept=".json,application/json"
+            disabled={busy || !!pending}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file)
+                run(async () => {
+                  const request = ++imports.current;
+                  try {
+                    const release = await readRelease(file);
+                    const preview = await runtime.command<Prepared>({
+                      type: 'bot.install.prepare',
+                      release,
+                    });
+                    // Dismissing the picker must not let a late read reopen another dialog.
+                    if (request !== imports.current) return;
+                    setImportOpen(false);
+                    setSelected(preview);
+                  } catch (error) {
+                    if (request === imports.current) throw error;
+                  }
                 });
-                setSelected(preview);
-              });
-          }}
-        />
-      </div>
+            }}
+          />
+          {message && (
+            <p className="form-error" role="status">
+              {message}
+            </p>
+          )}
+        </Dialog>
+      )}
       <div className="gallery-list">
         {items.map((item) => (
           <button
@@ -236,7 +232,7 @@ export function RemoteGallery({ onInstalled }: { onInstalled?: (profile: BotProf
       {cursor && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || loadingSources}
           className="secondary"
           onClick={() => run(() => search(true))}
         >

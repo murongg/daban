@@ -215,6 +215,7 @@ function Workbench() {
   const [settingsSurface, setSettingsSurface] = useState<'dialog' | 'page' | undefined>(
     legacySettings.current ? 'dialog' : undefined,
   );
+  const [settingsCategory, setSettingsCategory] = useState('general');
   const [creation, setCreation] = useState<{ group: boolean; preset?: BotPreset }>();
   const settingsOpen = !!settingsSurface;
   // The form is transient. Keeping the source view lets Cancel return without altering stored navigation.
@@ -311,6 +312,7 @@ function Workbench() {
   }, []);
   const closeSettings = useCallback(() => {
     setSettingsSurface(undefined);
+    setSettingsCategory('general');
     if (settingsSurface === 'page') {
       const opener = sidebarOverlay
         ? sidebarToggle.current
@@ -1085,6 +1087,7 @@ function Workbench() {
       state={state}
       dispatch={dispatch}
       onClose={closeSettings}
+      initialCategory={settingsCategory}
       inline={settingsSurface === 'page'}
       active={!modal && !trash.issue}
       trash={trash}
@@ -1346,6 +1349,7 @@ function Workbench() {
           onChats={openChats}
           onSettings={() => {
             setCreation(undefined);
+            setSettingsCategory('general');
             setSettingsSurface('page');
           }}
           onToggleList={
@@ -1359,20 +1363,20 @@ function Workbench() {
         <main className="main" inert={sidebarOverlay && sidebarOpen}>
           <RecoveryNotice open={() => setModal({ type: 'recovery' })} />
           {state.view === 'gallery' && (view === 'gallery' || view === 'create') && (
-            <>
-              {view === 'gallery' && (
-                <RemoteGallery
-                  onInstalled={(profile) => {
-                    dispatch({ type: 'profiles', profiles: [profile] });
-                    dispatch({ type: 'select', bot: profile.id });
-                  }}
-                />
-              )}
-              <Gallery
-                hidden={view === 'create'}
-                onUsePreset={(preset, opener) => openCreation(false, preset, opener)}
+            <div className="bot-gallery" hidden={view === 'create'}>
+              <RemoteGallery
+                active={!settingsOpen && view === 'gallery'}
+                onSettings={() => {
+                  setSettingsCategory('gallery');
+                  setSettingsSurface('dialog');
+                }}
+                onInstalled={(profile) => {
+                  dispatch({ type: 'profiles', profiles: [profile] });
+                  dispatch({ type: 'select', bot: profile.id });
+                }}
               />
-            </>
+              <Gallery onUsePreset={(preset, opener) => openCreation(false, preset, opener)} />
+            </div>
           )}
           {view === 'chat' ? (
             bot ? (
