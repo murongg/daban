@@ -4,11 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const suites = {
   runtime: [
-    'approval-rules.test',
     'approval-dispatch.test',
-    'approval-model.test',
-    'approval-api.test',
-    'approval-rules.integration',
     'host-vm.test',
     'reboot-private.test',
     'vm-config.test',

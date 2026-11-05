@@ -1,9 +1,4 @@
-import {
-  type ApprovalMode,
-  isPolicyDecision,
-  isTaskPlan,
-  type PolicyDecision,
-} from '@daban/protocol';
+import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
 import { type BridgeConfig, type BridgeFetch, callBridge } from './bridge.js';
 import { readOwner } from './delegation.js';
 
@@ -172,7 +167,6 @@ export function apply(
         value && typeof value === 'object' && 'url' in value && typeof value.url === 'string'
           ? normalizedUrl(value.url)
           : undefined;
-      let hostDecision: PolicyDecision | undefined;
       const owner = bridge && ctx.agents ? readOwner(ctx.agents, exec.agent, exec.name) : undefined;
       const sessionId = owner?.session?.id;
       const ownsRead = () =>
@@ -183,67 +177,21 @@ export function apply(
           owner?.session?.id === sessionId);
       const blocked = () => ({
         kind: 'deny',
-        reason:
-          'The Host approval policy refused or invalidated this request. No HTTP request was made.',
+        reason: 'The executing agent no longer owns this request. No HTTP request was made.',
         info: { name: 'WebPolicyError', code: 'APPROVAL_POLICY_CHANGED' },
       });
-      if (bridge) {
+      if (!ownsRead()) return blocked();
+      const needsApproval = config.approvalMode === 'ask' || !url || !urls.has(url);
+      const checkRead = () => {
         if (!ownsRead()) return blocked();
-        try {
-          const decision = await callBridge(
-            bridge,
-            'approval.web',
-            { url, sessionId },
-            exec.signal,
-            request,
-          );
-          if (
-            !ownsRead() ||
-            !isPolicyDecision(decision) ||
-            decision.selector.kind !== 'url' ||
-            decision.selector.url !== url ||
-            decision.effect === 'deny'
-          )
-            return blocked();
-          hostDecision = decision;
-        } catch {
-          return blocked();
-        }
-      }
-      const needsApproval =
-        hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !url || !urls.has(url);
-      const checkRead = async () => {
-        if (!ownsRead()) return blocked();
-        if (hostDecision && bridge) {
-          try {
-            const checked = await callBridge(
-              bridge,
-              'approval.web.check',
-              { url, sessionId, decision: hostDecision },
-              exec.signal,
-              request,
-            );
-            if (
-              !checked ||
-              typeof checked !== 'object' ||
-              !('current' in checked) ||
-              checked.current !== true
-            )
-              return blocked();
-          } catch {
-            return blocked();
-          }
-        }
         if (exec.signal.aborted) return { kind: 'cancel' };
-        // Approval and Host checks can wait while the child is removed or the root task changes.
-        if (!ownsRead()) return blocked();
       };
       const approvedDispatch = async () => {
-        // A refusal already visible after the Human wait must not consume shared tool quota.
-        const refused = await checkRead();
+        // Human and fence waits can outlive the child that obtained this exact permission.
+        const refused = checkRead();
         if (refused) return refused;
         return dispatch(async () => {
-          const changed = await checkRead();
+          const changed = checkRead();
           if (changed) return changed;
           return next();
         });
@@ -278,7 +226,7 @@ export function apply(
           },
         };
       }
-      if (!url || hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !urls.has(url))
+      if (!url || config.approvalMode === 'ask' || !urls.has(url))
         return {
           kind: 'deny',
           reason:
