@@ -47,6 +47,10 @@ jobs:
       - name: Verify idle-only host update handoff
         if: runner.os == 'macOS'
         run: node --experimental-sqlite --test packages/engine/dist/upgrade.integration.js
+      - name: Verify native SDK synthetic trajectory
+        env:
+          DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
+        run: node --experimental-sqlite --test packages/engine/dist/transcripts.integration.js
       - name: Linux integration regressions
         if: runner.os == 'Linux'
         run: |
