@@ -3,28 +3,20 @@ import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  type AutomationNotice,
   type AutomationSource,
-  isAutomationCode,
-  isAutomationNotice,
   isAutomationSource,
-  isAutomationView,
-  isMonitorPolicy,
   isScheduleInput,
   isSchedulePatch,
   isScheduleRule,
-  type MonitorPolicy,
   type Schedule,
-  type ScheduleInput,
   validAgentId,
 } from '@daban/protocol';
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
-import { type FileObserver, sampleFiles, signalDigest } from './automation.js';
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { errorCode, Fault } from './control.js';
 import { configure, type Database, migrate } from './database.js';
 import { nativeSchedules, type ScheduleDomain } from './schedule-domain.js';
 import { migrations } from './schedules-migrations.js';
-import { automationEvents, automations, firings, schedules } from './schedules-schema.js';
+import { firings, schedules } from './schedules-schema.js';
 
 export type { ScheduleDomain } from './schedule-domain.js';
 
@@ -35,8 +27,6 @@ interface Runner {
     bot: string,
     id: string,
   ): { runId: string; phase: string; error?: string } | undefined;
-  signal?(bot: string, runId: string, path: string): Promise<Uint8Array>;
-  monitoringAvailable?(): boolean;
   start(
     bot: string,
     task: { requestId: string; prompt: string },
@@ -46,7 +36,6 @@ interface Runner {
 }
 type Row = typeof schedules.$inferSelect;
 type Firing = typeof firings.$inferSelect;
-type Automation = typeof automations.$inferSelect;
 
 function legacy(client: DatabaseSync) {
   client.exec(`CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, bot TEXT NOT NULL, input TEXT NOT NULL, record TEXT NOT NULL, revision INTEGER NOT NULL, enabled INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL, updated TEXT NOT NULL);
@@ -55,8 +44,8 @@ function legacy(client: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS firing_pending ON firings(state,created);`);
 }
 
-// Host-created rowids persist the enqueue order even when clocks repeat or move backwards.
-const inserted = sql<number>`rowid`;
+// SQLite's implicit insertion order breaks ties between firings created in the same millisecond.
+const inserted = sql`rowid`;
 const encoded = (value: unknown) =>
   JSON.stringify(value, [
     'id',
@@ -73,11 +62,6 @@ const encoded = (value: unknown) =>
     'weekdays',
     'date',
     'expression',
-    'scope',
-    'projectId',
-    'revision',
-    'paths',
-    'pollSeconds',
   ]);
 const digest = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 40);
 export const scheduleKey = (runId: string, input: unknown) =>
@@ -94,9 +78,6 @@ export class Schedules {
   private chain: Promise<unknown> = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
-  private closing = false;
-  private readonly samples = new Map<string, AbortController>();
-  private readonly observations = new Set<Promise<unknown>>();
   private failure = '';
   private readonly clock: () => number;
   constructor(
@@ -105,7 +86,6 @@ export class Schedules {
       runner: Runner;
       clock?: () => number;
       domain?: Promise<ScheduleDomain>;
-      observation?: FileObserver;
     },
   ) {
     this.clock = options.clock || Date.now;
@@ -136,7 +116,32 @@ export class Schedules {
         throw new Fault('SCHEDULE_CORRUPT');
       throw error;
     }
-    for (const row of this.db.select().from(schedules).all()) this.decode(row);
+    this.db.transaction(
+      () => {
+        for (const row of this.db.select().from(schedules).all()) {
+          const input: unknown = JSON.parse(row.input);
+          if (
+            input &&
+            typeof input === 'object' &&
+            'rule' in input &&
+            input.rule &&
+            typeof input.rule === 'object' &&
+            'kind' in input.rule &&
+            input.rule.kind === 'file'
+          ) {
+            // Retire obsolete triggers without erasing their saved input or uncertain execution receipts.
+            if (!row.deleted || row.enabled)
+              this.db
+                .update(schedules)
+                .set({ enabled: 0, deleted: 1, revision: sql`${schedules.revision} + 1` })
+                .where(eq(schedules.id, row.id))
+                .run();
+            this.cancelPending(row.id);
+          } else this.decode(row);
+        }
+      },
+      { behavior: 'immediate' },
+    );
     // A prior claim may have started the model before crashing. Inspect its receipt; never issue it again.
     for (const row of this.active()) this.reconcile(row, true);
   }
@@ -170,286 +175,14 @@ export class Schedules {
       .where(and(eq(firings.schedule, id), eq(firings.state, 'pending')))
       .run();
   }
-  private state(id: string) {
-    const state = this.db.select().from(automations).where(eq(automations.schedule, id)).get();
-    if (
-      state &&
-      (!isAutomationView(this.automationView(state)) ||
-        !Number.isSafeInteger(state.resultFloor) ||
-        state.resultFloor < 0)
-    )
-      throw new Fault('SCHEDULE_CORRUPT');
-    return state;
-  }
-  private automationView(state: Automation) {
-    return {
-      configRevision: state.configRevision,
-      policy: JSON.parse(state.policy) as MonitorPolicy,
-      initialized: state.committed !== null,
-      cursor: state.cursor,
-      count: state.consecutive,
-      ...(state.committed ? { committed: state.committed } : {}),
-      ...(state.candidate ? { candidate: state.candidate } : {}),
-      ...(state.nextPoll ? { nextPollAt: new Date(state.nextPoll).toISOString() } : {}),
-      ...(state.observeError || state.resultError
-        ? { error: state.observeError || state.resultError! }
-        : {}),
-    };
-  }
-  private source(row: Firing) {
-    if (!row.source) return undefined;
-    const value: unknown = JSON.parse(row.source);
-    if (
-      !isAutomationSource(value) ||
-      value.scheduleId !== row.schedule ||
-      value.firingId !== row.id
-    )
-      throw new Fault('SCHEDULE_CORRUPT');
-    return value;
-  }
-  private resetConfiguration(id: string, policy?: MonitorPolicy) {
-    const previous = this.state(id);
-    this.samples.get(id)?.abort();
-    this.db
-      .insert(automations)
-      .values({
-        schedule: id,
-        configRevision: (previous?.configRevision ?? 0) + 1,
-        policy: JSON.stringify(
-          policy ?? (previous ? JSON.parse(previous.policy) : { kind: 'all' }),
-        ),
-      })
-      .onConflictDoUpdate({
-        target: automations.schedule,
-        set: {
-          configRevision: (previous?.configRevision ?? 0) + 1,
-          policy: JSON.stringify(
-            policy ?? (previous ? JSON.parse(previous.policy) : { kind: 'all' }),
-          ),
-          committed: null,
-          candidate: null,
-          consecutive: 0,
-          cursor: 0,
-          nextPoll: 0,
-          observeError: null,
-          resultDigest: null,
-          resultError: null,
-          resultFloor: 0,
-          notice: null,
-        },
-      })
-      .run();
-  }
-  private record(input: ScheduleInput, now: number) {
-    return input.rule.kind === 'file'
-      ? {
-          id: input.id,
-          title: input.title,
-          prompt: input.prompt,
-          kind: 'file-observation-v1',
-          scheduledAt: new Date(now).toISOString(),
-        }
-      : this.domain.create(input, now);
-  }
-  private requireFiles(row: Row) {
-    const { input } = this.decode(row);
-    if (input.rule.kind !== 'file') return;
-    if (!this.options.observation || this.options.observation.available?.() === false)
-      throw new Fault('AUTOMATION_FILES_UNAVAILABLE');
-    this.options.observation.authorize(input.bot, input.rule.scope);
-  }
-  private monitoringSupported(row: Row) {
-    const state = this.state(row.id);
-    return (
-      !state ||
-      (JSON.parse(state.policy) as MonitorPolicy).kind !== 'changes' ||
-      this.options.runner.monitoringAvailable?.() !== false
-    );
-  }
-  private pauseUnsupportedMonitor(row: Row) {
-    const state = this.state(row.id);
-    if (!state) return;
-    // Both callers commit the pause and notice in their existing immediate owner transaction.
-    const code = 'AUTOMATION_MONITOR_UNAVAILABLE';
-    const latest = this.db
-      .select({ order: inserted })
-      .from(firings)
-      .where(eq(firings.schedule, row.id))
-      .orderBy(desc(inserted))
-      .get();
-    if (state.resultError !== code) this.notice(row, state, 'fault', code);
-    this.db
-      .update(automations)
-      // Capability recovery needs a newly accepted firing, even if an old receipt arrives after it returns.
-      .set({
-        resultError: code,
-        resultFloor: Math.max(state.resultFloor, (latest?.order ?? 0) + 1),
-      })
-      .where(eq(automations.schedule, row.id))
-      .run();
-    const { input } = this.decode(row);
-    this.db
-      .update(schedules)
-      .set({
-        input: encoded({ ...input, enabled: false }),
-        enabled: 0,
-        revision: sql`${schedules.revision} + 1`,
-      })
-      .where(eq(schedules.id, row.id))
-      .run();
-    this.cancelPending(row.id);
-  }
-  monitor(id: string, revision: number, policy: unknown) {
-    if (
-      !validAgentId(id) ||
-      !Number.isSafeInteger(revision) ||
-      revision < 1 ||
-      !isMonitorPolicy(policy)
-    )
-      return Promise.reject(new Fault('INVALID_SCHEDULE', 400));
-    const copy: MonitorPolicy =
-      policy.kind === 'all' ? { kind: 'all' } : { kind: 'changes', signalPath: policy.signalPath };
-    return this.exclusive(() =>
-      this.db.transaction(
-        () => {
-          const row = this.row(id);
-          if (row.revision !== revision) throw new Fault('SCHEDULE_CONFLICT');
-          const state = this.state(id);
-          const previous: MonitorPolicy = state ? JSON.parse(state.policy) : { kind: 'all' };
-          if (
-            previous.kind === copy.kind &&
-            (copy.kind === 'all' ||
-              (previous.kind === 'changes' && previous.signalPath === copy.signalPath))
-          )
-            return this.view(row);
-          this.resetConfiguration(id, copy);
-          this.cancelPending(id);
-          const { input } = this.decode(row);
-          this.db
-            .update(schedules)
-            .set({
-              input: encoded({ ...input, enabled: false }),
-              enabled: 0,
-              revision: revision + 1,
-              updated: new Date(this.clock()).toISOString(),
-            })
-            .where(eq(schedules.id, id))
-            .run();
-          return this.view(this.row(id));
-        },
-        { behavior: 'immediate' },
-      ),
-    );
-  }
-  private receiptOwner(id: string) {
-    // Deleting a definition cannot erase the lookup/ack path for an already claimed, uncertain execution.
-    const row = this.db.select().from(schedules).where(eq(schedules.id, id)).get();
-    if (!row) throw new Fault('SCHEDULE_NOT_FOUND', 404);
-    return row;
-  }
-  receipt(id: string, firing: string) {
-    return this.exclusive(() => {
-      this.receiptOwner(id);
-      const row = this.firingRow(firing);
-      if (!row || row.schedule !== id) throw new Fault('SCHEDULE_NOT_FOUND', 404);
-      if (row.state === 'interrupted' || row.state === 'running' || row.state === 'claimed')
-        this.reconcile(row, true);
-      return this.firing(this.firingRow(firing)!);
-    });
-  }
-  private unknownKey(id: string) {
-    return `unknown-${digest(id)}`;
-  }
-  notices() {
-    return this.exclusive(() => {
-      const items: AutomationNotice[] = this.db
-        .select()
-        .from(automations)
-        .where(isNotNull(automations.notice))
-        .orderBy(desc(automations.noticeRevision))
-        .limit(1000)
-        .all()
-        .flatMap((state) => {
-          if (!state.notice) return [];
-          const notice: unknown = JSON.parse(state.notice);
-          if (!isAutomationNotice(notice)) throw new Fault('SCHEDULE_CORRUPT');
-          const row = this.db
-            .select()
-            .from(schedules)
-            .where(eq(schedules.id, state.schedule))
-            .get();
-          return row && !row.deleted ? [notice] : [];
-        });
-      for (const row of this.db
-        .select()
-        .from(firings)
-        .where(
-          and(
-            eq(firings.state, 'interrupted'),
-            isNull(firings.run),
-            isNotNull(firings.source),
-            eq(firings.unknownAck, 0),
-          ),
-        )
-        .orderBy(desc(firings.created), desc(inserted))
-        .limit(1000)
-        .all()) {
-        this.source(row);
-        items.unshift({
-          kind: 'automation',
-          id: this.unknownKey(row.id),
-          bot: row.bot,
-          schedule: row.schedule,
-          firing: row.id,
-          createdAt: row.created,
-          phase: 'interrupted',
-          reason: 'fault',
-          code: 'SCHEDULE_OUTCOME_UNKNOWN',
-        });
-      }
-      return items;
-    });
-  }
-  ack(id: string, notice: string) {
-    return this.exclusive(() => {
-      this.receiptOwner(id);
-      const state = this.state(id);
-      if (state?.notice && JSON.parse(state.notice).id === notice)
-        this.db.update(automations).set({ notice: null }).where(eq(automations.schedule, id)).run();
-      for (const row of this.db
-        .select({ id: firings.id })
-        .from(firings)
-        .where(
-          and(
-            eq(firings.schedule, id),
-            eq(firings.state, 'interrupted'),
-            isNull(firings.run),
-            isNotNull(firings.source),
-            eq(firings.unknownAck, 0),
-          ),
-        )
-        .all())
-        if (this.unknownKey(row.id) === notice)
-          this.db.update(firings).set({ unknownAck: 1 }).where(eq(firings.id, row.id)).run();
-      return { acknowledged: true };
-    });
-  }
   private decode(row: Row) {
     try {
       const input: unknown = JSON.parse(String(row.input));
       if (!isScheduleInput(input) || input.id !== row.id || input.bot !== row.bot)
         throw new Error('invalid schedule');
-      const raw = JSON.parse(String(row.record));
-      const record = input.rule.kind === 'file' ? raw : this.domain.decode(raw);
+      const record = this.domain.decode(JSON.parse(String(row.record)));
       if (record.id !== row.id || !Number.isFinite(Date.parse(record.scheduledAt)))
         throw new Error('invalid native schedule');
-      if (
-        input.rule.kind === 'file' &&
-        (record.kind !== 'file-observation-v1' ||
-          record.title !== input.title ||
-          record.prompt !== input.prompt)
-      )
-        throw new Error('invalid file schedule');
       return { input: { ...input, locked: input.locked ?? false }, record };
     } catch {
       throw new Fault('SCHEDULE_CORRUPT');
@@ -484,8 +217,7 @@ export class Schedules {
       revision: Number(row.revision),
       createdAt: String(row.created),
       updatedAt: String(row.updated),
-      ...(row.enabled === 1 && input.rule.kind !== 'file' ? { nextRunAt: record.scheduledAt } : {}),
-      ...(this.state(row.id) ? { automation: this.automationView(this.state(row.id)!) } : {}),
+      ...(row.enabled === 1 ? { nextRunAt: record.scheduledAt } : {}),
       history: this.db
         .select()
         .from(firings)
@@ -505,8 +237,6 @@ export class Schedules {
       state: row.state as Schedule['history'][number]['state'],
       ...(row.run ? { runId: String(row.run) } : {}),
       ...(row.error ? { error: String(row.error) } : {}),
-      ...(row.source ? { source: this.source(row)! } : {}),
-      ...(row.monitor ? { monitor: row.monitor as Schedule['history'][number]['monitor'] } : {}),
     };
   }
   list(actor?: ScheduleActor) {
@@ -532,7 +262,6 @@ export class Schedules {
             .all();
           const stamp = new Date(this.clock()).toISOString();
           for (const row of rows) {
-            this.samples.get(row.id)?.abort();
             const { input } = this.decode(row);
             // Human archive also pauses locked plans; it preserves their locks, definitions and due targets.
             this.db
@@ -599,10 +328,9 @@ export class Schedules {
       ...structuredClone(value),
       title: value.title.trim(),
       prompt: value.prompt.trim(),
-      enabled: value.rule.kind === 'file' ? false : (value.enabled ?? true),
+      enabled: value.enabled ?? true,
       locked: value.locked ?? false,
     };
-    if (input.rule.kind === 'file') input.rule.paths.sort();
     return this.exclusive(() =>
       this.db.transaction(
         () => {
@@ -621,7 +349,7 @@ export class Schedules {
           if (this.live(input.bot) >= 100 || (input.enabled && this.live(input.bot, true) >= 20))
             throw new Fault('SCHEDULE_LIMIT');
           const now = this.clock(),
-            record = this.record(input, now),
+            record = this.domain.create(input, now),
             stamp = new Date(now).toISOString();
           this.db
             .insert(schedules)
@@ -636,7 +364,6 @@ export class Schedules {
               updated: stamp,
             })
             .run();
-          if (input.rule.kind === 'file') this.resetConfiguration(input.id);
           return this.view(this.row(input.id));
         },
         { behavior: 'immediate' },
@@ -652,7 +379,6 @@ export class Schedules {
     )
       return Promise.reject(new Fault('INVALID_SCHEDULE', 400));
     const changes = structuredClone(patch);
-    if (changes.rule?.kind === 'file') changes.rule.paths.sort();
     return this.exclusive(() =>
       this.db.transaction(
         () => {
@@ -667,25 +393,7 @@ export class Schedules {
             prompt: (changes.prompt ?? input.prompt).trim(),
             enabled: changes.enabled ?? row.enabled === 1,
           };
-          const substantive =
-            (changes.rule !== undefined && encoded(changes.rule) !== encoded(input.rule)) ||
-            (changes.prompt !== undefined && next.prompt !== input.prompt);
-          const automated = !!this.state(id) || next.rule.kind === 'file';
-          const lockOnly = Object.keys(changes).every((key) => key === 'locked');
-          const enabledChanged = next.enabled !== (row.enabled === 1);
-          if (substantive && automated) next.enabled = false;
-          if (next.enabled && enabledChanged && !this.monitoringSupported(row))
-            throw new Fault('AUTOMATION_MONITOR_UNAVAILABLE');
-          if (next.rule.kind === 'file') {
-            next.rule.paths.sort();
-            if (next.enabled && changes.enabled === true && enabledChanged) {
-              if (!this.options.observation || this.options.observation.available?.() === false)
-                throw new Fault('AUTOMATION_FILES_UNAVAILABLE');
-              this.options.observation.authorize(next.bot, next.rule.scope);
-            }
-          }
-          // Edit protection must remain available while execution or the file source is unavailable.
-          if (next.enabled && !lockOnly) this.requireAdmission(input.bot);
+          if (next.enabled) this.requireAdmission(input.bot);
           if (encoded(next) === encoded({ ...input, enabled: row.enabled === 1 }))
             return this.view(row);
           if (next.enabled && row.enabled !== 1 && this.live(input.bot, true) >= 20)
@@ -695,7 +403,7 @@ export class Schedules {
             (changes.rule !== undefined && encoded(changes.rule) !== encoded(input.rule)) ||
             (next.enabled && row.enabled !== 1);
           const target = reset
-            ? this.record(next, this.clock())
+            ? this.domain.create(next, this.clock())
             : { ...record, title: next.title, prompt: next.prompt };
           this.db
             .update(schedules)
@@ -708,28 +416,7 @@ export class Schedules {
             })
             .where(eq(schedules.id, id))
             .run();
-          if (substantive && automated) this.resetConfiguration(id);
-          if (changes.enabled !== undefined && enabledChanged) {
-            this.samples.get(id)?.abort();
-            if (next.rule.kind === 'file' && next.enabled && !substantive)
-              this.db
-                .update(automations)
-                .set({
-                  committed: null,
-                  candidate: null,
-                  consecutive: 0,
-                  nextPoll: 0,
-                  observeError: null,
-                })
-                .where(eq(automations.schedule, id))
-                .run();
-          }
-          if (
-            automated
-              ? substantive || enabledChanged
-              : Object.keys(changes).some((key) => key !== 'locked')
-          )
-            this.cancelPending(id);
+          if (Object.keys(changes).some((key) => key !== 'locked')) this.cancelPending(id);
           return this.view(this.row(id));
         },
         { behavior: 'immediate' },
@@ -750,20 +437,13 @@ export class Schedules {
             .where(eq(schedules.id, id))
             .run();
           this.cancelPending(id);
-          this.samples.get(id)?.abort();
           return { id, removed: true };
         },
         { behavior: 'immediate' },
       ),
     );
   }
-  private enqueue(
-    row: Row,
-    id: string,
-    occurrence: string,
-    origin: AutomationSource['trigger'] = 'time',
-    event?: Pick<AutomationSource, 'fromCursor' | 'toCursor' | 'before' | 'after'>,
-  ) {
+  private enqueue(row: Row, id: string, occurrence: string, trigger: 'time' | 'manual' = 'time') {
     const existing = this.firingRow(id);
     if (existing) return this.firing(existing);
     const { input } = this.decode(row);
@@ -772,39 +452,7 @@ export class Schedules {
       .from(firings)
       .where(and(eq(firings.schedule, input.id), eq(firings.state, 'pending')))
       .get();
-    const state = this.state(input.id);
-    const source: AutomationSource = {
-      scheduleId: input.id,
-      firingId: id,
-      configRevision: state?.configRevision ?? 1,
-      trigger: origin,
-      policy: state ? JSON.parse(state.policy) : { kind: 'all' },
-      ...(input.rule.kind === 'file'
-        ? { scope: input.rule.scope, paths: [...input.rule.paths] }
-        : {}),
-      ...event,
-    };
     const prompt = `This is the user’s previously saved scheduled task: ${input.title}.\nScheduled trigger time: ${occurrence}.\nExecute the following instructions under the actual conditions of this turn. Ask if required input is missing, and do not claim completion based on history:\n${input.prompt}`;
-    if (pending && origin === 'file') {
-      const previous = this.firingRow(pending.id)!;
-      const prior = this.source(previous)!;
-      // Only unclaimed input is replaceable; cursors preserve A→B→A as distinct observations.
-      this.db
-        .update(firings)
-        .set({
-          prompt,
-          occurrence,
-          source: JSON.stringify({
-            ...source,
-            firingId: pending.id,
-            fromCursor: prior.fromCursor ?? source.fromCursor,
-            before: prior.before ?? source.before,
-          }),
-        })
-        .where(and(eq(firings.id, pending.id), eq(firings.state, 'pending')))
-        .run();
-      return this.firing(this.firingRow(pending.id)!);
-    }
     this.db
       .insert(firings)
       .values({
@@ -815,7 +463,13 @@ export class Schedules {
         created: new Date(this.clock()).toISOString(),
         state: pending ? 'coalesced' : 'pending',
         prompt,
-        source: source ? JSON.stringify(source) : null,
+        source: JSON.stringify({
+          scheduleId: row.id,
+          firingId: id,
+          configRevision: row.revision,
+          trigger,
+          policy: { kind: 'all' },
+        } satisfies AutomationSource),
       })
       .run();
     return this.firing(this.firingRow(id)!);
@@ -831,8 +485,6 @@ export class Schedules {
           if (previous) return this.firing(previous);
           const row = this.row(id);
           this.requireAdmission(String(row.bot));
-          if (!this.monitoringSupported(row)) throw new Fault('AUTOMATION_MONITOR_UNAVAILABLE');
-          this.requireFiles(row);
           return this.enqueue(row, key, new Date(this.clock()).toISOString(), 'manual');
         },
         { behavior: 'immediate' },
@@ -857,336 +509,12 @@ export class Schedules {
         state,
         run: receipt?.runId || null,
         error: receipt?.error?.slice(0, 1000) || (!receipt ? 'SCHEDULE_OUTCOME_UNKNOWN' : null),
-        ...(state !== row.state ? { monitor: null } : {}),
       })
       .where(eq(firings.id, String(row.id)))
       .run();
   }
-  private notice(
-    row: Row,
-    state: Automation,
-    reason: AutomationNotice['reason'],
-    code?: string,
-    runId?: string,
-  ) {
-    const revision = state.noticeRevision + 1;
-    const notice: AutomationNotice = {
-      kind: 'automation',
-      id: `auto-${digest(`${row.id}:${state.configRevision}:${revision}`)}`,
-      schedule: row.id,
-      bot: row.bot,
-      reason,
-      phase:
-        reason === 'fault'
-          ? code === 'SCHEDULE_OUTCOME_UNKNOWN'
-            ? 'interrupted'
-            : 'failed'
-          : 'completed',
-      ...(code ? { code } : {}),
-      ...(runId ? { runId } : {}),
-    };
-    this.db
-      .update(automations)
-      .set({ noticeRevision: revision, notice: JSON.stringify(notice) })
-      .where(eq(automations.schedule, row.id))
-      .run();
-  }
-  private observationFailure(row: Row, error: unknown) {
-    const state = this.state(row.id);
-    if (!state) return;
-    const raw = errorCode(error);
-    const code = isAutomationCode(raw) ? raw : 'AUTOMATION_READ_FAILED';
-    const permanent =
-      code.startsWith('PROJECT_') ||
-      code === 'BOT_UNAVAILABLE' ||
-      code === 'AUTOMATION_FILES_UNAVAILABLE';
-    this.db.transaction(() => {
-      if (state.observeError !== code) this.notice(row, state, 'fault', code);
-      this.db
-        .update(automations)
-        .set({ observeError: code, candidate: null, consecutive: 0 })
-        .where(eq(automations.schedule, row.id))
-        .run();
-      if (permanent) {
-        const { input } = this.decode(row);
-        this.db
-          .update(schedules)
-          .set({
-            enabled: 0,
-            input: encoded({ ...input, enabled: false }),
-            revision: sql`${schedules.revision} + 1`,
-          })
-          .where(eq(schedules.id, row.id))
-          .run();
-        this.cancelPending(row.id);
-      }
-    });
-  }
-  private async pollFiles() {
-    if (this.closing) return;
-    const candidates = await this.exclusive(() =>
-      this.db
-        .select()
-        .from(schedules)
-        .where(and(eq(schedules.enabled, 1), eq(schedules.deleted, 0)))
-        .all()
-        .flatMap((row) => {
-          const { input } = this.decode(row);
-          const state = this.state(row.id);
-          if (
-            input.rule.kind !== 'file' ||
-            !state ||
-            state.nextPoll > this.clock() ||
-            this.samples.has(row.id)
-          )
-            return [];
-          const controller = new AbortController();
-          this.samples.set(row.id, controller);
-          const nextPoll = this.clock() + input.rule.pollSeconds * 1000;
-          this.db
-            .update(automations)
-            .set({ nextPoll })
-            .where(eq(automations.schedule, row.id))
-            .run();
-          return [{ row, state, rule: input.rule, controller, nextPoll }];
-        }),
-    );
-    // Bound per-file response buffers across rules without introducing another execution queue.
-    for (let offset = 0; offset < candidates.length; offset += 4) {
-      if (this.closing) break;
-      await Promise.all(
-        candidates.slice(offset, offset + 4).map((capture) => {
-          const work = (async () => {
-            const signal = AbortSignal.any([capture.controller.signal, AbortSignal.timeout(15000)]);
-            try {
-              if (!this.options.observation || this.options.observation.available?.() === false)
-                throw new Fault('AUTOMATION_FILES_UNAVAILABLE');
-              const hash = await sampleFiles(
-                this.options.observation,
-                capture.row.bot,
-                capture.rule,
-                signal,
-              );
-              await this.exclusive(() => {
-                if (signal.aborted || this.closing) return;
-                const row = this.db
-                  .select()
-                  .from(schedules)
-                  .where(eq(schedules.id, capture.row.id))
-                  .get();
-                const state = this.state(capture.row.id);
-                if (
-                  !row ||
-                  row.deleted ||
-                  !row.enabled ||
-                  !state ||
-                  state.configRevision !== capture.state.configRevision ||
-                  state.nextPoll !== capture.nextPoll
-                )
-                  return;
-                this.requireFiles(row);
-                this.db.transaction(
-                  () => {
-                    if (state.observeError && !state.resultError)
-                      this.notice(row, state, 'recovered');
-                    const consecutive =
-                      state.candidate === hash ? Math.min(state.consecutive + 1, 2) : 1;
-                    const changed =
-                      consecutive === 2 && state.committed !== null && state.committed !== hash;
-                    const cursor = state.cursor + (changed ? 1 : 0);
-                    this.db
-                      .update(automations)
-                      .set({
-                        candidate: hash,
-                        consecutive,
-                        committed: consecutive === 2 ? hash : state.committed,
-                        cursor,
-                        observeError: null,
-                      })
-                      .where(eq(automations.schedule, row.id))
-                      .run();
-                    if (changed) {
-                      // A hash is a state, not an event identity: the cursor preserves observed A→B→A→B changes.
-                      const id = `file-${digest(`${row.id}:${state.configRevision}:${cursor}`)}`;
-                      const at = new Date(this.clock()).toISOString();
-                      this.db
-                        .insert(automationEvents)
-                        .values({
-                          id,
-                          schedule: row.id,
-                          configRevision: state.configRevision,
-                          cursor,
-                          before: state.committed!,
-                          after: hash,
-                          paths: JSON.stringify(capture.rule.paths),
-                          observed: at,
-                        })
-                        .onConflictDoNothing()
-                        .run();
-                      this.enqueue(row, id, at, 'file', {
-                        fromCursor: cursor,
-                        toCursor: cursor,
-                        before: state.committed!,
-                        after: hash,
-                      });
-                    }
-                  },
-                  { behavior: 'immediate' },
-                );
-              });
-            } catch (error) {
-              if (!capture.controller.signal.aborted && !this.closing)
-                await this.exclusive(() => {
-                  const row = this.db
-                    .select()
-                    .from(schedules)
-                    .where(eq(schedules.id, capture.row.id))
-                    .get();
-                  if (
-                    row &&
-                    !row.deleted &&
-                    row.enabled &&
-                    this.state(row.id)?.configRevision === capture.state.configRevision
-                  )
-                    this.observationFailure(row, error);
-                });
-            } finally {
-              if (this.samples.get(capture.row.id) === capture.controller)
-                this.samples.delete(capture.row.id);
-            }
-          })();
-          this.observations.add(work);
-          return work.finally(() => this.observations.delete(work));
-        }),
-      );
-    }
-  }
-  private async monitorResults() {
-    const rows = await this.exclusive(() =>
-      this.db
-        .select({ firing: firings, order: inserted })
-        .from(firings)
-        .where(
-          and(
-            isNotNull(firings.source),
-            isNull(firings.monitor),
-            inArray(firings.state, ['completed', 'failed', 'interrupted']),
-          ),
-        )
-        .orderBy(asc(inserted))
-        .limit(100)
-        .all(),
-    );
-    for (const { firing, order } of rows) {
-      const source = this.source(firing)!;
-      let hash: string | undefined;
-      let code: string | undefined;
-      if (firing.state === 'interrupted' && !firing.run) code = 'SCHEDULE_OUTCOME_UNKNOWN';
-      else if (firing.state !== 'completed')
-        code = isAutomationCode(firing.error) ? firing.error : 'AUTOMATION_RUN_FAILED';
-      else if (source.policy.kind === 'changes') {
-        try {
-          if (!firing.run || !this.options.runner.signal)
-            throw new Fault('AUTOMATION_SIGNAL_UNAVAILABLE');
-          hash = signalDigest(
-            await this.options.runner.signal(firing.bot, firing.run, source.policy.signalPath),
-          );
-        } catch {
-          code = 'AUTOMATION_SIGNAL_UNAVAILABLE';
-        }
-      }
-      await this.exclusive(() =>
-        this.db.transaction(
-          () => {
-            // Signal IO runs outside the owner queue; another tick may have committed this firing meanwhile.
-            const current = this.firingRow(firing.id);
-            if (
-              !current ||
-              current.monitor !== null ||
-              current.state !== firing.state ||
-              current.run !== firing.run
-            )
-              return;
-            const row = this.db
-              .select()
-              .from(schedules)
-              .where(eq(schedules.id, firing.schedule))
-              .get();
-            const state = this.state(firing.schedule);
-            // This floor survives receipt reconciliation; equal order lets a firing settle its own unknown.
-            if (
-              !row ||
-              row.deleted ||
-              !state ||
-              state.configRevision !== source.configRevision ||
-              order < state.resultFloor
-            ) {
-              this.db
-                .update(firings)
-                .set({ monitor: 'unchanged' })
-                .where(eq(firings.id, firing.id))
-                .run();
-              return;
-            }
-            const decision = code
-              ? 'fault'
-              : state.resultError
-                ? 'recovered'
-                : !state.resultDigest
-                  ? 'baseline'
-                  : hash !== state.resultDigest
-                    ? 'changed'
-                    : 'unchanged';
-            // All-mode runs must also settle a recorded unknown outcome and any ensuing failure.
-            const monitored =
-              source.policy.kind === 'changes' ||
-              code === 'SCHEDULE_OUTCOME_UNKNOWN' ||
-              state.resultError !== null;
-            if (monitored) {
-              if (
-                (code && code !== 'SCHEDULE_OUTCOME_UNKNOWN' && code !== state.resultError) ||
-                (!code &&
-                  !state.observeError &&
-                  (decision === 'changed' || decision === 'recovered'))
-              )
-                this.notice(
-                  row,
-                  state,
-                  code ? 'fault' : decision === 'recovered' ? 'recovered' : 'changed',
-                  code,
-                  firing.run ?? undefined,
-                );
-            }
-            this.db
-              .update(automations)
-              .set({
-                resultFloor: order,
-                ...(monitored
-                  ? { resultError: code ?? null, ...(hash ? { resultDigest: hash } : {}) }
-                  : {}),
-              })
-              .where(eq(automations.schedule, row.id))
-              .run();
-            this.db
-              .update(firings)
-              .set({
-                monitor: source.policy.kind === 'all' && !code ? 'all' : decision,
-                ...(code && source.policy.kind === 'changes' ? { error: code } : {}),
-              })
-              .where(eq(firings.id, firing.id))
-              .run();
-          },
-          { behavior: 'immediate' },
-        ),
-      );
-    }
-  }
   tick() {
-    return this.cycle();
-  }
-  private async cycle() {
-    await this.pollFiles();
-    await this.exclusive(async () => {
+    return this.exclusive(async () => {
       for (const row of this.active()) this.reconcile(row);
       this.db.transaction(
         () => {
@@ -1197,12 +525,7 @@ export class Schedules {
             .where(and(eq(schedules.enabled, 1), eq(schedules.deleted, 0)))
             .all()) {
             if (this.options.runner.admit?.(String(row.bot)) === false) continue;
-            const { input, record } = this.decode(row);
-            if (input.rule.kind === 'file') continue;
-            if (!this.monitoringSupported(row)) {
-              this.pauseUnsupportedMonitor(row);
-              continue;
-            }
+            const { record } = this.decode(row);
             if (Date.parse(record.scheduledAt) > now) continue;
             const due = this.domain.due(record, now);
             this.enqueue(row, `due-${digest(`${row.id}:${due.occurrenceAt}`)}`, due.occurrenceAt);
@@ -1230,18 +553,8 @@ export class Schedules {
         const bot = String(row.bot);
         if (this.options.runner.admit?.(bot) === false) continue;
         if (this.options.runner.running(bot)) continue;
-        const live = this.db.select().from(schedules).where(eq(schedules.id, row.schedule)).get();
-        if (!live || live.deleted) continue;
-        if (!this.monitoringSupported(live)) {
-          this.db.transaction(() => this.pauseUnsupportedMonitor(live), { behavior: 'immediate' });
-          continue;
-        }
-        try {
-          this.requireFiles(live);
-        } catch (error) {
-          this.observationFailure(live, error);
-          continue;
-        }
+        const owner = this.db.select().from(schedules).where(eq(schedules.id, row.schedule)).get();
+        if (!owner || owner.deleted) continue;
         // Commit the claim before model effects. Only a definite busy rejection is safe to requeue.
         if (
           !this.db
@@ -1252,6 +565,9 @@ export class Schedules {
         )
           continue;
         try {
+          const source: unknown = row.source ? JSON.parse(row.source) : undefined;
+          if (source !== undefined && !isAutomationSource(source))
+            throw new Fault('SCHEDULE_CORRUPT');
           await this.options.runner.start(
             bot,
             {
@@ -1259,7 +575,7 @@ export class Schedules {
               prompt: String(row.prompt),
             },
             undefined,
-            this.source(row),
+            source,
           );
           this.reconcile(row, true);
         } catch (error) {
@@ -1285,7 +601,6 @@ export class Schedules {
       }
       this.failure = '';
     });
-    await this.monitorResults();
   }
   start() {
     if (this.timer || this.closed) return;
@@ -1298,10 +613,6 @@ export class Schedules {
   }
   async close() {
     clearInterval(this.timer);
-    this.closing = true;
-    for (const sample of this.samples.values()) sample.abort();
-    await Promise.allSettled([...this.observations]);
-    this.samples.clear();
     await this.chain;
     await this.ready.catch(() => {});
     if (this.closed) return;

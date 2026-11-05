@@ -1,19 +1,6 @@
-import {
-  type AutomationCommand,
-  type AutomationNotice,
-  type AutomationSource,
-  type AutomationView,
-  type FileTrigger,
-  isAutomationNotice,
-  isAutomationSource,
-  isAutomationView,
-  isFileTrigger,
-  isMonitorDecision,
-  type MonitorDecision,
-} from './automation.js';
-import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+export { type AutomationSource, isAutomationSource } from './automation.js';
 
-export * from './automation.js';
+import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
 
 import { isProjectFileRequest, isProjectScope } from './projects.js';
 
@@ -1424,7 +1411,6 @@ export interface RuntimeTaskSummary {
   turns?: RunTurn[];
 }
 export type RuntimeNotice =
-  | AutomationNotice
   | {
       kind: 'task';
       id: string;
@@ -1439,7 +1425,6 @@ export interface RuntimeNoticeStatus {
   error?: string;
 }
 export function isRuntimeNotice(value: unknown): value is RuntimeNotice {
-  if (isAutomationNotice(value)) return true;
   if (
     !profileObject(value) ||
     !validAgentId(value.id) ||
@@ -1580,12 +1565,7 @@ export interface RuntimeSnapshot {
   browsers?: Partial<Record<RuntimeBot, BrowserState>>;
   groups?: { available: boolean; revision: number; items: Group[]; error?: string };
   knowledge?: { available: boolean; revision?: number; error?: string; documentParsing?: boolean };
-  schedules?: {
-    available: boolean;
-    items: Schedule[];
-    error?: string;
-    automation?: { changes: boolean; files: boolean; error?: string };
-  };
+  schedules?: { available: boolean; items: Schedule[]; error?: string };
   interactions?: Interaction[];
   software?: SoftwareState;
   phase: 'connecting' | 'ready' | 'offline' | 'unsupported';
@@ -1679,7 +1659,6 @@ export function recoveryReader(command: RuntimeCommand) {
     'group.receipt',
     'schedule.get',
     'schedule.preview',
-    'schedule.receipt',
     'mcp.list',
     'mcp.saved',
     'mcp.catalog',
@@ -3551,7 +3530,6 @@ export function isKnowledgeVersion(value: unknown): value is KnowledgeVersion {
   );
 }
 export type ScheduleRule =
-  | FileTrigger
   | { kind: 'every'; everySeconds: number }
   | { kind: 'daily'; time: string; timeZone: string }
   | { kind: 'weekly'; time: string; timeZone: string; weekdays: number[] }
@@ -3567,8 +3545,6 @@ export interface ScheduleInput {
   locked?: boolean;
 }
 export interface ScheduleFiring {
-  source?: AutomationSource;
-  monitor?: MonitorDecision;
   id: string;
   occurrenceAt: string;
   createdAt: string;
@@ -3586,7 +3562,6 @@ export interface ScheduleFiring {
   error?: string;
 }
 export interface Schedule extends ScheduleInput {
-  automation?: AutomationView;
   revision: number;
   enabled: boolean;
   nextRunAt?: string;
@@ -3599,7 +3574,6 @@ export type SchedulePatch = Partial<
 >;
 export function isScheduleRule(value: unknown): value is ScheduleRule {
   if (!profileObject(value)) return false;
-  if (value.kind === 'file') return isFileTrigger(value);
   if (value.kind === 'every')
     return (
       exactKeys(value, ['kind', 'everySeconds']) &&
@@ -3667,20 +3641,8 @@ export function isSchedulePatch(value: unknown): value is SchedulePatch {
 export function isScheduleFiring(item: unknown): item is ScheduleFiring {
   return (
     profileObject(item) &&
-    exactKeys(item, [
-      'id',
-      'requestId',
-      'occurrenceAt',
-      'createdAt',
-      'state',
-      'runId',
-      'error',
-      'source',
-      'monitor',
-    ]) &&
+    exactKeys(item, ['id', 'requestId', 'occurrenceAt', 'createdAt', 'state', 'runId', 'error']) &&
     validAgentId(item.id) &&
-    (item.source === undefined || isAutomationSource(item.source)) &&
-    (item.monitor === undefined || isMonitorDecision(item.monitor)) &&
     boundedText(item.requestId, 100) &&
     [
       'pending',
@@ -3702,10 +3664,9 @@ export function isScheduleFiring(item: unknown): item is ScheduleFiring {
 }
 export function isSchedule(value: unknown): value is Schedule {
   if (!profileObject(value)) return false;
-  const { revision, nextRunAt, createdAt, updatedAt, history, automation, ...input } = value;
+  const { revision, nextRunAt, createdAt, updatedAt, history, ...input } = value;
   return (
     isScheduleInput(input) &&
-    (automation === undefined || isAutomationView(automation)) &&
     typeof value.enabled === 'boolean' &&
     Number.isSafeInteger(revision) &&
     Number(revision) > 0 &&
@@ -4057,7 +4018,6 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
 }
 export type RuntimeCommand =
   | BudgetCommand
-  | AutomationCommand
   | ProjectCommand
   | VmCommand
   | NoteCommand

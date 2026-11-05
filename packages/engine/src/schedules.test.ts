@@ -10,7 +10,7 @@ import { expect, test } from 'vitest';
 import { privateMetadata, secureDirectory } from './private-files.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { type ScheduleDomain, Schedules } from './schedules.js';
-import { schedules } from './schedules-schema.js';
+import { firings, schedules } from './schedules-schema.js';
 
 const cases: { name: string; rule: ScheduleRule; times: string[] }[] = [
   {
@@ -231,6 +231,89 @@ async function fixture() {
     },
   };
 }
+
+test('an upgraded store keeps time schedules running alongside retired file rules and uncertain receipts', async () => {
+  const f = await fixture();
+  const id = 'mock-retired-file-rule';
+  const stamp = new Date(anchor).toISOString();
+  const saved = JSON.stringify({
+    ...input,
+    id,
+    enabled: true,
+    rule: {
+      kind: 'file',
+      scope: { projectId: 'mock-retired-project', revision: 1 },
+      paths: ['mock-input.txt'],
+      pollSeconds: 60,
+    },
+  });
+  try {
+    await f.store.create(input);
+    await f.store.close();
+    const client = new DatabaseSync(f.options.file);
+    const db = drizzle({ client });
+    db.insert(schedules)
+      .values({
+        id,
+        bot: input.bot,
+        input: saved,
+        record: JSON.stringify({
+          id,
+          title: input.title,
+          prompt: input.prompt,
+          kind: 'file-observation-v1',
+          scheduledAt: stamp,
+        }),
+        revision: 1,
+        enabled: 1,
+        created: stamp,
+        updated: stamp,
+      })
+      .run();
+    for (const state of ['pending', 'claimed']) {
+      db.insert(firings)
+        .values({
+          id: `mock-retired-${state}`,
+          schedule: id,
+          bot: input.bot,
+          occurrence: stamp,
+          created: stamp,
+          state,
+          prompt: 'SYNTHETIC RETIRED FILE TASK',
+        })
+        .run();
+    }
+    client.close();
+    await f.reopen();
+    expect((await f.store.list()).map((item) => item.id)).toEqual([input.id]);
+    f.setTime(anchor + 61000);
+    await f.store.tick();
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0].task.prompt).toContain(input.prompt);
+    await f.reopen();
+    await f.store.tick();
+    expect(f.calls).toHaveLength(1);
+    const check = new DatabaseSync(f.options.file);
+    try {
+      const database = drizzle({ client: check });
+      expect(database.select().from(schedules).where(eq(schedules.id, id)).get()).toMatchObject({
+        input: saved,
+        enabled: 0,
+        deleted: 1,
+      });
+      expect(
+        database.select().from(firings).where(eq(firings.id, 'mock-retired-pending')).get(),
+      ).toMatchObject({ state: 'cancelled' });
+      expect(
+        database.select().from(firings).where(eq(firings.id, 'mock-retired-claimed')).get(),
+      ).toMatchObject({ state: 'interrupted', error: 'SCHEDULE_OUTCOME_UNKNOWN' });
+    } finally {
+      check.close();
+    }
+  } finally {
+    await f.close();
+  }
+});
 
 test('Bot archive suspends owned schedules and unclaimed firings without erasing locks, history or another Bot', async () => {
   const f = await fixture();

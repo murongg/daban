@@ -42,6 +42,8 @@ The root `vitest.config.ts` owns all unit tests: the `desktop` project uses jsdo
 
 See [development](development.md) for commands and [project guidelines](../AGENTS.md) for language, package-boundary and verification rules. Project code is licensed under [AGPL-3.0-only](../LICENSE); third-party notices retain their original licenses.
 
+Ordinary time schedules retain durable firing/request identity and historical provenance. File-change triggers and quiet result monitoring are retired; old file rules are disabled without deleting saved definitions or execution receipts. Persistent approval rules are also retired, while ordinary per-request approval remains in the existing owner paths.
+
 Usage and budget ownership stays in the Host. `budgets.ts` records durable per-send reservations and raw provider usage; `usage.ts` meters actual SDK fetches below prompt-cache retries, and Risk reviews use the same ledger. Logical tasks, group stages and explicit Goal continuations inherit one captured budget and immutable price snapshots. Missing usage remains unknown; prices are estimates without currency conversion. Only verified request-count bounds can be strict. Token and fee bounds remain soft until provider billing bounds are verified.
 
 `budget-goals.ts` binds explicit Human continuation receipts to the native Goal, session, budget revision and current Human turn. It does not own Goal lifecycle or rounds. The existing `owned-goal-rounds` SDK hook checks the one-use Host permission immediately before native resume; quota increases and state observations alone never arm a Goal. Ordinary retries keep the native Goal read-only.
