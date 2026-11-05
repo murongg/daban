@@ -405,7 +405,7 @@ export function AppCatalog({
                 disabled={
                   busy ||
                   blocked ||
-                  !!pending ||
+                  unresolved ||
                   !canControl ||
                   !fresh ||
                   (auth.state === 'disconnected' && !disconnect) ||

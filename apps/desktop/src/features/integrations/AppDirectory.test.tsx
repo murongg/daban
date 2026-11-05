@@ -356,3 +356,21 @@ it('keeps a terminal authorization failure visible while allowing an explicit ch
   expect(screen.getByRole('textbox', { name: '连接名称' })).toHaveValue('Sentry');
   expect(f.commands.filter((command) => command.type === 'app.oauth.connect')).toHaveLength(1);
 });
+
+it('allows disconnecting an existing account after a separate authorization has terminated', async () => {
+  const f = fixture({ connected: true });
+  f.phase('failed');
+  show(f);
+  await userEvent.click(await screen.findByText('添加应用', { selector: 'summary' }));
+  await userEvent.click(screen.getByRole('button', { name: '连接 Sentry' }));
+  await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
+  await screen.findByText('授权失败，请重新发起。');
+  const disconnect = screen.getByRole('button', { name: '断开 Synthetic account' });
+  expect(disconnect).toBeEnabled();
+  await userEvent.click(disconnect);
+  await waitFor(() =>
+    expect(f.commands.filter((command) => command.type === 'app.disconnect')).toMatchObject([
+      { target: { bot: 'mock-a', connection: 'mock-linear', revision: 1 } },
+    ]),
+  );
+});
