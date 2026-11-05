@@ -12,7 +12,6 @@
   color: var(--ink);
 }
 .context-toolbar,
-.context-tabs,
 .context-source-heading,
 .context-refs {
   display: flex;
@@ -27,18 +26,6 @@
 .context-toolbar .select-field {
   flex: 1;
   min-width: 180px;
-}
-.context-tabs {
-  border-bottom: 1px solid var(--line);
-  margin: 18px 0;
-}
-.context-tabs button {
-  min-height: 40px;
-  color: var(--muted);
-}
-.context-tabs button[aria-pressed="true"] {
-  color: var(--ink);
-  border-bottom: 2px solid var(--ink);
 }
 .context-inspector h3 {
   margin: 18px 0 8px;
@@ -90,8 +77,18 @@
   color: var(--muted);
   padding-left: 20px;
   font-size: 12px;
-  margin: 20px 0 0;
+  margin: 8px 0 20px;
 }
 .context-source-text {
   margin-top: 20px;
+}
+.context-details {
+  margin-top: 20px;
+}
+.context-details > summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+.context-details dd {
+  overflow-wrap: anywhere;
 }

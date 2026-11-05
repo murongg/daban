@@ -21,6 +21,7 @@ function errorKey(error: unknown): MessageKey {
   const code = error instanceof Error ? error.message : '';
   if (code === 'CONTEXT_CAPTURE_EXPIRED') return 'context.expired';
   if (code === 'CONTEXT_SOURCE_UNAVAILABLE') return 'context.sourceUnavailable';
+  if (code === 'REMOTE_UNAUTHORIZED' || code === 'UNAUTHORIZED') return 'context.accessDenied';
   return 'context.readFailed';
 }
 
@@ -90,7 +91,7 @@ function SourceText({
             read(error ? text.length : next).catch(() => setError('context.readFailed'))
           }
         >
-          {t('context.more')}
+          {t(error ? 'context.retry' : 'context.more')}
         </button>
       )}
     </section>
@@ -98,7 +99,6 @@ function SourceText({
 }
 
 function Capture({ capture, scope }: { capture: ContextCapture; scope: TranscriptScope }) {
-  const [tab, setTab] = useState<'overview' | 'sources'>('overview');
   const [reference, setReference] = useState<ContextRef>();
   const number = (value?: number | null) =>
     value === undefined || value === null ? t('context.unknown') : value.toLocaleString();
@@ -112,115 +112,70 @@ function Capture({ capture, scope }: { capture: ContextCapture; scope: Transcrip
   };
   return (
     <>
-      <nav className="context-tabs" aria-label={t('context.title')}>
-        <button type="button" aria-pressed={tab === 'overview'} onClick={() => setTab('overview')}>
-          {t('context.overview')}
-        </button>
-        <button type="button" aria-pressed={tab === 'sources'} onClick={() => setTab('sources')}>
-          {t('context.sources')}
-        </button>
-      </nav>
-      {tab === 'overview' ? (
-        <>
-          <dl className="context-numbers">
-            {(
-              [
-                ['context.pressure', pressure?.pressureTokens],
-                ['context.projected', pressure?.projectedTokens],
-                ['context.sdkWindow', pressure?.contextWindow],
-                ['context.configuredWindow', capture.configuredWindow],
-                ['context.configuredOutput', capture.configuredOutput],
-              ] as const
-            ).map(([label, value]) => (
-              <div key={label}>
-                <dt>{t(label)}</dt>
-                <dd>{number(value)}</dd>
-              </div>
-            ))}
-          </dl>
-          {pressure && (
-            <p className="field-help">{t('context.sample', { 0: pressure.seq, 1: pressure.at })}</p>
-          )}
-          <h3>{t('context.breakdown')}</h3>
-          <dl className="context-numbers">
-            {(['systemTokens', 'toolsTokens', 'messageTokens'] as const).map((key) => (
-              <div key={key}>
-                <dt>{t(`context.${key}`)}</dt>
-                <dd>{number(breakdown?.[key])}</dd>
-              </div>
-            ))}
-          </dl>
-          {breakdown && (
-            <p className="field-help">
-              {t('context.sample', { 0: breakdown.seq, 1: breakdown.at })}
-            </p>
-          )}
-          <p className="field-help">{t('context.sdkBoundary')}</p>
-          {capture.boundary && (
-            <section>
-              <h3>
-                {t(capture.boundary.kind === 'summary' ? 'context.summary' : 'context.prune')}
-              </h3>
-              <p className="field-help">
-                {t('context.boundary', {
-                  0: capture.boundary.endSeq,
-                  1: capture.boundary.shadowedSeqs.join(', '),
-                  2: capture.boundary.omittedSeqs,
-                })}
-              </p>
-            </section>
-          )}
-        </>
-      ) : (
-        <>
-          <p className="field-help">{t('context.hostMethod')}</p>
-          <p className="field-help">{t('context.hostBoundary')}</p>
-          <ul className="context-sources">
-            {capture.sources.map((source) => (
-              <li key={source.category}>
-                <div className="context-source-heading">
-                  <h3>{t(`context.category.${source.category}`)}</h3>
-                  <span>
-                    {source.hostTokens === null
-                      ? t('context.unknown')
-                      : source.evidence === 'not-injected'
-                        ? t('context.notInjected')
-                        : t('context.estimated', { 0: source.hostTokens })}
-                  </span>
-                </div>
-                <p className="field-help">
+      <p>
+        {/* Missing boundary evidence cannot establish that compaction never happened. */}
+        {t(
+          capture.boundary?.kind === 'summary'
+            ? 'context.compactionSummary'
+            : capture.boundary?.kind === 'prune'
+              ? 'context.compactionPrune'
+              : 'context.compactionUnknown',
+        )}
+      </p>
+      <ul className="context-gaps">
+        {capture.gaps.map((gap) => (
+          <li key={gap}>{t(gaps[gap])}</li>
+        ))}
+      </ul>
+      <h3>{t('context.sources')}</h3>
+      <p className="field-help">{t('context.hostBoundary')}</p>
+      <p className="field-help">
+        {t(
+          capture.sources.some((source) => source.refs.length > 0)
+            ? 'context.originals'
+            : 'context.noOriginal',
+        )}
+      </p>
+      <ul className="context-sources">
+        {capture.sources.map((source) => {
+          const label = t(`context.category.${source.category}`);
+          return (
+            <li key={source.category}>
+              <div className="context-source-heading">
+                <h3>{label}</h3>
+                <span>
                   {t(
-                    source.membership === 'host-injected'
-                      ? 'context.hostInjected'
-                      : source.membership === 'saved-only'
-                        ? 'context.savedOnly'
-                        : 'context.unknown',
+                    source.evidence === 'not-injected'
+                      ? 'context.notInjected'
+                      : source.membership === 'host-injected'
+                        ? 'context.hostInjected'
+                        : source.membership === 'saved-only'
+                          ? 'context.savedOnly'
+                          : 'context.unknown',
                   )}
-                </p>
-                <p className="field-help">
-                  {t('context.savedCharacters', { 0: source.savedCharacters })}
-                </p>
+                </span>
+              </div>
+              {source.refs.length > 0 && (
                 <div className="context-refs">
-                  {source.refs.map((ref) => (
+                  {source.refs.map((ref, index) => (
                     <button
                       key={`${ref.scope.runId}:${ref.seq}`}
                       type="button"
+                      aria-label={t('context.sourceRefLabel', { 0: label, 1: index + 1 })}
                       onClick={() => setReference(ref)}
                     >
-                      {t('context.sourceRef', { 0: ref.seq })}
+                      {t('context.sourceRef', { 0: index + 1 })}
                     </button>
                   ))}
                 </div>
-                {source.omittedRefs > 0 && (
-                  <p className="field-help">
-                    {t('context.omittedRefs', { 0: source.omittedRefs })}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+              )}
+              {source.omittedRefs > 0 && (
+                <p className="field-help">{t('context.omittedRefs', { 0: source.omittedRefs })}</p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
       {reference && (
         <SourceText
           key={`${reference.scope.runId}:${reference.seq}`}
@@ -229,11 +184,82 @@ function Capture({ capture, scope }: { capture: ContextCapture; scope: Transcrip
           reference={reference}
         />
       )}
-      <ul className="context-gaps">
-        {capture.gaps.map((gap) => (
-          <li key={gap}>{t(gaps[gap])}</li>
-        ))}
-      </ul>
+      <details className="context-details">
+        <summary>{t('context.details')}</summary>
+        <dl className="context-numbers">
+          <div>
+            <dt>{t('context.revision')}</dt>
+            <dd>{capture.revision}</dd>
+          </div>
+          <div>
+            <dt>{t('context.recordedAt')}</dt>
+            <dd>{capture.at}</dd>
+          </div>
+        </dl>
+        <dl className="context-numbers">
+          {(
+            [
+              ['context.pressure', pressure?.pressureTokens],
+              ['context.projected', pressure?.projectedTokens],
+              ['context.sdkWindow', pressure?.contextWindow],
+              ['context.configuredWindow', capture.configuredWindow],
+              ['context.configuredOutput', capture.configuredOutput],
+            ] as const
+          ).map(([label, value]) => (
+            <div key={label}>
+              <dt>{t(label)}</dt>
+              <dd>{number(value)}</dd>
+            </div>
+          ))}
+        </dl>
+        {pressure && (
+          <p className="field-help">{t('context.sample', { 0: pressure.seq, 1: pressure.at })}</p>
+        )}
+        <h3>{t('context.breakdown')}</h3>
+        <dl className="context-numbers">
+          {(['systemTokens', 'toolsTokens', 'messageTokens'] as const).map((key) => (
+            <div key={key}>
+              <dt>{t(`context.${key}`)}</dt>
+              <dd>{number(breakdown?.[key])}</dd>
+            </div>
+          ))}
+        </dl>
+        {breakdown && (
+          <p className="field-help">{t('context.sample', { 0: breakdown.seq, 1: breakdown.at })}</p>
+        )}
+        <p className="field-help">{t('context.sdkBoundary')}</p>
+        {capture.boundary && (
+          <section>
+            <h3>{t(capture.boundary.kind === 'summary' ? 'context.summary' : 'context.prune')}</h3>
+            <p className="field-help">
+              {t('context.boundary', {
+                0: capture.boundary.endSeq,
+                1: capture.boundary.shadowedSeqs.join(', '),
+                2: capture.boundary.omittedSeqs,
+              })}
+            </p>
+          </section>
+        )}
+        <h3>{t('context.sourceEstimates')}</h3>
+        <p className="field-help">{t('context.hostMethod')}</p>
+        <dl className="context-numbers">
+          {capture.sources.map((source) => (
+            <div key={source.category}>
+              <dt>{t(`context.category.${source.category}`)}</dt>
+              <dd>
+                {source.hostTokens === null
+                  ? t('context.unknown')
+                  : source.evidence === 'not-injected'
+                    ? t('context.notInjected')
+                    : t('context.estimated', { 0: source.hostTokens })}
+                <p className="field-help">
+                  {t('context.savedCharacters', { 0: source.savedCharacters })}
+                </p>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </details>
     </>
   );
 }
@@ -292,9 +318,10 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
             }
             options={[
               { value: 'latest', label: t('context.latest') },
-              ...view.revisions.map((item) => ({
+              ...view.revisions.map((item, index) => ({
+                // Friendly list positions must not replace the archive's possibly sparse request revisions.
                 value: String(item),
-                label: t('context.captured', { 0: item }),
+                label: t('context.captured', { 0: index + 1 }),
               })),
             ]}
           />
@@ -325,8 +352,12 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
       )}
       {view?.state === 'captured' && (
         <>
-          <p className="field-help">{t('context.partial', { 0: view.selected.at })}</p>
-          {revision !== undefined && <p>{t('context.captured', { 0: view.selected.revision })}</p>}
+          <p className="field-help">{t('context.partial')}</p>
+          {revision !== undefined && (
+            <p>
+              {t('context.captured', { 0: view.revisions.indexOf(view.selected.revision) + 1 })}
+            </p>
+          )}
           {view.health === 'capture-failed' && <p role="status">{t('context.failed')}</p>}
           <Capture key={view.selected.revision} capture={view.selected} scope={scope} />
         </>
