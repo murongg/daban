@@ -6,11 +6,15 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
+import { TaskJournal } from './tasks.js';
+import { evaluateTrajectory, type TrajectoryCapture, type TrajectoryCase } from './trajectory.js';
 import { projectThinking, projectTranscript, Transcripts } from './transcripts.js';
 
 const sdkFile =
   process.env.DABAN_TEST_SDK ||
   '/opt/bot-prototype/dsh/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js';
+// An explicitly selected SDK is required evidence; only an unconfigured local installation may skip.
+assert.ok(!process.env.DABAN_TEST_SDK || existsSync(sdkFile), 'EXPLICIT_TEST_SDK_UNAVAILABLE');
 interface NativeHarness {
   start: () => Promise<unknown>;
   close: () => Promise<unknown>;
@@ -188,6 +192,8 @@ test('the installed native SDK records its actual tool, plan and reply events us
         if (entry) log.append(scope, entry);
       },
     });
+    await harness.close();
+    harness = undefined;
     log.finish(scope);
     assert.equal(
       result.finalResponse,
@@ -211,6 +217,95 @@ test('the installed native SDK records its actual tool, plan and reply events us
     assert.ok(content.includes('合成原生检查'));
     assert.ok(content.includes('合成原生思考 1'));
     assert.equal(content.includes('mock-local-provider-key'), false);
+    const journal = new TaskJournal(path.join(root, 'synthetic-journal'));
+    // This receipt describes the local SDK fixture, not production dispatch ownership.
+    await journal.put({
+      ...scope,
+      requestId: 'mock-native-request',
+      prompt: 'SYNTHETIC SDK',
+      kind: 'chat',
+      phase: 'completed',
+      running: false,
+      result: result.finalResponse,
+      error: '',
+      sessionId: session.id,
+      trace: [],
+    });
+    const receipt = await journal.read(scope.bot, scope.runId);
+    assert.equal(receipt?.phase, 'completed');
+    const spec: TrajectoryCase = {
+      schema: 1,
+      id: 'native-todo',
+      revision: 1,
+      input: {
+        prompt: 'SYNTHETIC SDK',
+        events: [{ kind: 'barrier', action: 'complete' }],
+        files: [],
+      },
+      steps: [
+        {
+          slot: 'todo',
+          tool: 'todo_write',
+          args: { todos: [{ content: '合成原生检查', status: 'completed' }] },
+          result: 'success',
+        },
+      ],
+      terminal: 'completed',
+      budget: { maxCalls: 1, maxModelRequests: 2 },
+      artifacts: [],
+      rules: [],
+      sensitive: [],
+    };
+    const capture: TrajectoryCapture = {
+      schema: 1,
+      origin: 'synthetic',
+      scope,
+      sessionId: session.id,
+      requestId: receipt!.requestId!,
+      drained: true,
+      lateEvents: 0,
+      pages: [page],
+      contents: page.items
+        .filter((item) => ['call', 'result', 'interaction'].includes(item.kind))
+        .map((item) => log.content(scope, item.seq)),
+      terminal: 'completed',
+      modelRequests: requests,
+      artifacts: [],
+      bindings: {},
+    };
+    const identity = { configHash: 'a'.repeat(64), codeRevision: 'mock-native-sdk' };
+    assert.equal(evaluateTrajectory(spec, capture, identity).verdict, 'pass');
+    const resultItem = page.items.find((item) => item.kind === 'result')!;
+    const missing = {
+      ...capture,
+      pages: [{ ...page, items: page.items.filter((item) => item.seq !== resultItem.seq) }],
+      contents: capture.contents.filter((item) => item.seq !== resultItem.seq),
+    };
+    assert.equal(evaluateTrajectory(spec, missing, identity).verdict, 'inconclusive');
+    const callItem = page.items.find((item) => item.kind === 'call')!;
+    const reordered = {
+      ...capture,
+      pages: [
+        {
+          ...page,
+          items: page.items.map((item) =>
+            item.seq === callItem.seq
+              ? { ...resultItem, seq: callItem.seq }
+              : item.seq === resultItem.seq
+                ? { ...callItem, seq: resultItem.seq }
+                : item,
+          ),
+        },
+      ],
+      contents: capture.contents.map((item) =>
+        item.seq === callItem.seq
+          ? { ...item, seq: resultItem.seq }
+          : item.seq === resultItem.seq
+            ? { ...item, seq: callItem.seq }
+            : item,
+      ),
+    };
+    assert.equal(evaluateTrajectory(spec, reordered, identity).verdict, 'fail');
   } finally {
     try {
       await harness?.close();

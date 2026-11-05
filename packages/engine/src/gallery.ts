@@ -193,6 +193,7 @@ export class GalleryStore {
           )
           .where(and(eq(galleryAuthSessions.id, id), gt(galleryAuthSessions.expiresAt, new Date())))
           .get();
+        // Callback checks only run at sign-in; allowlist changes must also apply to existing sessions.
         if (
           !row ||
           !githubAllowed(config, row.account.accountId, this.options.readMode === 'public')

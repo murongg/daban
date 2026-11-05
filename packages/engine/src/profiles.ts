@@ -18,6 +18,7 @@ import {
   type MemoryPage,
   type MemoryQuery,
   type MemoryVersion,
+  type ModelId,
   validAgentId,
 } from '@daban/protocol';
 import { Fault } from './control.js';
@@ -88,6 +89,7 @@ function snapshot(profile: BotProfile, source: MemoryVersion['source']): MemoryV
 
 export class BotProfiles {
   templateInstructions?: (bot: string) => string | undefined;
+  modelGuard?: (model: ModelId, write: () => Promise<BotProfile>) => Promise<BotProfile>;
   readonly ready: Promise<unknown>;
   private readonly records = new Map<string, BotProfile>();
   private readonly corrupt = new Set<string>();
@@ -146,7 +148,22 @@ export class BotProfiles {
       }
     }
   }
-  private async commit(
+  private commit(
+    profile: BotProfile,
+    signal?: AbortSignal,
+    origin = this.origins.get(profile.id),
+    source: 'edit' | 'agent' = 'edit',
+  ) {
+    const write = () => this.writeProfile(profile, signal, origin, source);
+    return this.modelGuard && profile.model && profile.model !== this.records.get(profile.id)?.model
+      ? this.modelGuard(profile.model, write)
+      : write();
+  }
+  modelReferences() {
+    // Removal reads the durable snapshot without waiting on a queued write that may be waiting for model admission.
+    return [...this.records.values()].flatMap((profile) => (profile.model ? [profile.model] : []));
+  }
+  private async writeProfile(
     profile: BotProfile,
     signal?: AbortSignal,
     origin = this.origins.get(profile.id),

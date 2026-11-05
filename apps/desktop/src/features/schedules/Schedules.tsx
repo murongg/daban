@@ -1,4 +1,11 @@
-import { agentId, type Schedule, type ScheduleInput, type ScheduleRule } from '@daban/protocol';
+import {
+  type AutomationNotice,
+  agentId,
+  type Schedule,
+  type ScheduleFiring,
+  type ScheduleInput,
+  type ScheduleRule,
+} from '@daban/protocol';
 import { Clock3, Lock, LockOpen, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import { type Dispatch, useEffect, useState } from 'react';
 import { profileInput } from '../../app/profiles';
@@ -18,6 +25,7 @@ import { NumberField } from '../../components/controls/NumberField';
 import { Select } from '../../components/controls/Select';
 import { TimeField } from '../../components/controls/TimeField';
 import { getLocale, t, useLocale } from '../../i18n/locale';
+import { Automation } from './Automation';
 
 function rule(form: RoutineDraft): ScheduleRule {
   const timeZone = form.zone ?? 'Asia/Shanghai';
@@ -41,6 +49,7 @@ function rule(form: RoutineDraft): ScheduleRule {
   return { kind: 'daily', time: form.time, timeZone };
 }
 function timing(value: ScheduleRule) {
+  if (value.kind === 'file') return t('automation.fileTiming', { 0: value.pollSeconds });
   if (value.kind === 'every') return t('schedules.everyMinutes', { 0: value.everySeconds / 60 });
   if (value.kind === 'cron') return `${value.expression} · ${value.timeZone}`;
   const prefix =
@@ -120,6 +129,14 @@ export function Schedules({
   const catalog = runtime.snapshot.schedules;
   const available = runtime.snapshot.protocolVersion >= 5 && catalog?.available && !bot.members;
   const items = (catalog?.items || []).filter((item) => item.bot === agentId(bot.id));
+  const unknownNotices = (runtime.snapshot.notices?.items || []).flatMap((notice) =>
+    notice.kind === 'automation' &&
+    notice.bot === agentId(bot.id) &&
+    notice.firing &&
+    notice.code === 'SCHEDULE_OUTCOME_UNKNOWN'
+      ? [notice]
+      : [],
+  );
   const [statuses, setStatuses] = useState<
     Record<string, { busy?: boolean; error?: string; conflict?: Schedule }>
   >({});
@@ -153,6 +170,22 @@ export function Schedules({
   }, [available, form.open, signature, bot.id, runtime.command]);
   const feedback = (target: string, value: (typeof statuses)[string]) =>
     setStatuses((current) => ({ ...current, [target]: value }));
+  async function checkNotice(notice: AutomationNotice) {
+    if (!notice.firing) return;
+    const target = bot.id;
+    feedback(target, { busy: true });
+    try {
+      const value = await runtime.command<ScheduleFiring>({
+        type: 'schedule.receipt',
+        id: notice.schedule,
+        firing: notice.firing,
+      });
+      notify(t('automation.receiptStatus', { 0: bot.name, 1: t(phases[value.state]) }));
+      feedback(target, {});
+    } catch (error) {
+      feedback(target, { error: runtimeError(error) });
+    }
+  }
   async function operate(
     item: Schedule,
     action: 'toggle' | 'remove' | 'run' | 'lock',
@@ -184,6 +217,7 @@ export function Schedules({
   }
   function edit(item: Schedule) {
     const value = item.rule;
+    if (value.kind === 'file') return;
     change({
       ...routineDraft(),
       open: true,
@@ -222,6 +256,18 @@ export function Schedules({
         </IconButton>
       </div>
       <p className="panel-description">{t('schedules.giveInstructionsOnceBotWillStartSchedule')}</p>
+      {available && (
+        <Automation
+          key={bot.id}
+          bot={agentId(bot.id)}
+          register={() =>
+            runtime.command({
+              type: 'bot.register',
+              profile: profileInput(bot, state.memories[bot.id]),
+            })
+          }
+        />
+      )}
       {!available && (
         <p className="form-error" role="alert">
           {bot.members
@@ -230,6 +276,44 @@ export function Schedules({
               ? t('schedules.updateLocalRuntimeUseScheduledTasks')
               : runtimeError(new Error(catalog?.error || 'SCHEDULE_UNAVAILABLE'))}
         </p>
+      )}
+      {!!unknownNotices.length && (
+        <section style={{ overflowWrap: 'anywhere' }} aria-label={t('automation.pending')}>
+          <h3>{t('automation.pending')}</h3>
+          <p className="inline-note">{t('automation.unknownHelp')}</p>
+          <ul>
+            {unknownNotices.map((notice) => (
+              <li key={notice.id}>
+                <span>
+                  {items.find((item) => item.id === notice.schedule)?.title ??
+                    (notice.createdAt
+                      ? t('automation.deletedRuleAt', { 0: localTime(notice.createdAt) })
+                      : t('automation.deletedRule'))}
+                </span>{' '}
+                <button
+                  className="secondary"
+                  type="button"
+                  disabled={!!status.busy}
+                  onClick={() => checkNotice(notice)}
+                >
+                  {t('automation.checkReceipt')}
+                </button>{' '}
+                <button
+                  className="text-button"
+                  type="button"
+                  disabled={!!status.busy}
+                  onClick={() =>
+                    runtime
+                      .command({ type: 'schedule.ack', id: notice.schedule, notice: notice.id })
+                      .catch((error) => feedback(bot.id, { error: runtimeError(error) }))
+                  }
+                >
+                  {t('automation.ack')}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       {status.error &&
         removal?.bot !== bot.id &&
@@ -301,7 +385,7 @@ export function Schedules({
               </IconButton>
               <IconButton
                 label={t('schedules.editScheduledTask', { 0: item.title })}
-                disabled={!!status.busy || !!form.pending}
+                disabled={!!status.busy || !!form.pending || item.rule.kind === 'file'}
                 onClick={() => edit(item)}
               >
                 <Pencil />
@@ -317,6 +401,7 @@ export function Schedules({
                 <Trash2 />
               </IconButton>
             </div>
+            <Automation key={`${bot.id}:${item.id}`} bot={agentId(bot.id)} item={item} />
             {!!item.history.length && (
               <details className="schedule-history">
                 <summary>{t('schedules.recentTriggers')}</summary>
@@ -328,6 +413,30 @@ export function Schedules({
                         'timeZone' in item.rule ? item.rule.timeZone : 'Asia/Shanghai',
                       )}{' '}
                       · {t(phases[firing.state])}
+                      {firing.monitor && <span> · {t(`automation.result.${firing.monitor}`)}</span>}
+                      {firing.source?.trigger === 'file' && (
+                        <span>
+                          {' '}
+                          ·{' '}
+                          {t('automation.cursors', {
+                            0: firing.source.fromCursor!,
+                            1: firing.source.toCursor!,
+                          })}
+                        </span>
+                      )}
+                      {firing.error === 'SCHEDULE_OUTCOME_UNKNOWN' && (
+                        <button
+                          className="text-button"
+                          type="button"
+                          onClick={() =>
+                            runtime
+                              .command({ type: 'schedule.receipt', id: item.id, firing: firing.id })
+                              .catch((error) => feedback(bot.id, { error: runtimeError(error) }))
+                          }
+                        >
+                          {t('automation.checkReceipt')}
+                        </button>
+                      )}
                       {firing.error && (
                         <p className="form-error">{runtimeError(new Error(firing.error))}</p>
                       )}
