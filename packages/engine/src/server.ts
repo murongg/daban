@@ -42,6 +42,9 @@ import {
   isProjectFileRequest,
   isRebootStatus,
   isRecoveryRequest,
+  isSearchCheckRequest,
+  isSearchReceiptQuery,
+  isSearchUpdate,
   isSetupStatus,
   isSkillBinding,
   isSkillContent,
@@ -92,6 +95,7 @@ import { type Browser, createBrowser } from './runtime.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
+import { SearchSettings } from './search-settings.js';
 import { ModelSettings } from './settings.js';
 import { skillHash, writeSkillZip } from './skill-package.js';
 import { type SoftwareBackend, SoftwareClient } from './software.js';
@@ -130,6 +134,8 @@ async function noticeStatus(
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
   '/api/goals/target',
+  '/api/search/status',
+  '/api/search/saved',
   '/api/model/saved',
   '/api/notes/status',
   '/api/notes/list',
@@ -302,6 +308,7 @@ export async function startPrototype({
   if (host && (computers || desktop)) throw new Fault('AGENT_REMOTE_REQUIRED');
   await mkdir(host ? modelDir : profileDir, { recursive: true, mode: 0o700 });
   const settings = new ModelSettings(path.join(modelDir, 'credentials.json'));
+  const searches = new SearchSettings(path.join(modelDir, 'search.json'), settings);
   const authority = new Authority(path.join(modelDir, 'control-token'));
   const appAuthority = host ? new Authority(path.join(modelDir, 'app-control-token')) : undefined;
   const token = authority.token;
@@ -1513,6 +1520,31 @@ export async function startPrototype({
               return json(res, await schedules.run(data.id, data.requestId));
             throw new Fault('INVALID_SCHEDULE', 400);
           }
+          if (url.pathname.startsWith('/api/search/')) {
+            if (url.search) throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+            const action = url.pathname.slice('/api/search/'.length);
+            if (!['status', 'configure', 'check', 'saved'].includes(action))
+              throw new Fault('NOT_FOUND', 404);
+            if (req.method !== (action === 'status' ? 'GET' : 'POST'))
+              throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (action === 'status') {
+              if (
+                req.headers['transfer-encoding'] ||
+                (req.headers['content-length'] && req.headers['content-length'] !== '0')
+              )
+                throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+              return json(res, await searches.status());
+            }
+            const data = await body(req, 16384);
+            if (action === 'configure' && isSearchUpdate(data))
+              return json(res, await searches.configure(data));
+            if (action === 'check' && isSearchCheckRequest(data))
+              // The Host owns a durably accepted check even if this requesting window or connection closes.
+              return json(res, await searches.check(data));
+            if (action === 'saved' && isSearchReceiptQuery(data))
+              return json(res, await searches.saved(data));
+            throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+          }
           if (
             [
               '/api/model/saved',
@@ -1669,6 +1701,7 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
+              searchSettings: true,
               ...(models ? { contextInspector: 1 } : {}),
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
@@ -2101,6 +2134,7 @@ export async function startPrototype({
           : new WorkspaceFiles(path.join(desktopDir, 'shared'));
       await files.prepare();
       models = new ModelRuns({
+        search: searches,
         ...(host ? { documents } : {}),
         software,
         admit: () =>

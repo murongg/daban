@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { defaultSdkFile } from './dsh.js';
 import { ModelRuns } from './model.js';
+import { SearchSettings } from './search-settings.js';
 import { ModelSettings } from './settings.js';
 
 const sdkFile = process.env.DABAN_TEST_SDK || defaultSdkFile;
@@ -158,7 +159,20 @@ for (const scenario of ['ordinary', 'clean', 'partial'] as const)
         requestId: 'mock-native-backup',
         model: 'provider:mock-native:mock-fallback',
       });
+      const search = new SearchSettings(path.join(root, 'search.json'), settings, {
+        query: async () => {
+          throw new Error('SYNTHETIC_UNEXPECTED_SEARCH');
+        },
+      });
+      await search.configure({
+        requestId: 'mock-independent-search',
+        revision: 0,
+        enabled: true,
+        provider: 'brave',
+        key: 'synthetic-native-search-only-key',
+      });
       models = new ModelRuns({
+        search,
         settings,
         sdkFile,
         origin,
@@ -171,6 +185,26 @@ for (const scenario of ['ordinary', 'clean', 'partial'] as const)
       });
       await models.jobs.get('mock-bot')!.done;
       const result = models.status().bots['mock-bot'];
+      const job = models.jobs.get('mock-bot')!;
+      const patches = await Promise.all(
+        (await readdir(job.privateDir))
+          .filter((name) => name.startsWith('computer') && name.endsWith('.patch.yml'))
+          .map((name) => readFile(path.join(job.privateDir, name), 'utf8')),
+      );
+      assert.equal(patches.length, scenario === 'clean' ? 2 : 1);
+      for (const patch of patches) {
+        assert.ok(!patch.includes('synthetic-native-search-only-key'));
+        const rows = JSON.parse(patch) as {
+          insert?: { id: string; config?: Record<string, unknown> }[];
+        }[];
+        const provider = rows
+          .flatMap((row) => row.insert || [])
+          .find((row) => row.id === 'host-search');
+        assert.ok(provider?.config);
+        assert.equal(provider.config.runId, accepted.runId);
+        assert.equal(provider.config.revision, 1);
+        assert.equal(provider.config.available, true);
+      }
       assert.equal(result.runId, accepted.runId);
       assert.equal(result.requestId, 'mock-native-request');
       if (scenario === 'ordinary') {

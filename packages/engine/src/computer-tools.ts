@@ -75,12 +75,14 @@ export interface ToolTrace {
   code?: string;
 }
 export interface ToolRun {
+  hostSearch?: true;
   project?: import('@daban/protocol').ProjectScope;
   id?: string;
   conversationId?: string;
   bot: string;
   abort: AbortController;
   toolCount: number;
+  countedCalls?: Set<string>;
   limit: number;
   seen: Record<string, number>;
   browserSeen?: BrowserBinding;

@@ -164,3 +164,22 @@ test('native search reaches the web progress and shared tool budget', () => {
   expect(run.trace[0].surface).toBe('web');
   expect(run.trace[0].phase).toBe('settled');
 });
+
+test('a Host-counted search still publishes native progress without spending its quota twice', () => {
+  const run: ToolRun = {
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    toolCount: 1,
+    limit: 2,
+    seen: {},
+    trace: [],
+    countedCalls: new Set([JSON.stringify(['mock-session', 'mock-search'])]),
+  };
+  observeTools(
+    run,
+    'mock-session',
+  )(call('mock-session', 'tool/call', { callId: 'mock-search', name: 'web_search' }));
+  expect(run.toolCount).toBe(1);
+  expect(run.trace).toHaveLength(1);
+  expect(run.trace[0].name).toBe('web_search');
+});

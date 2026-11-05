@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@daban/protocol": "0.1.8",
+    "@mixmark-io/domino": "2.2.0",
     "@modelcontextprotocol/client": "2.2.0",
     "drizzle-orm": "1.0.0-rc.5",
     "fflate": "0.8.3",

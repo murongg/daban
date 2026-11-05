@@ -10629,6 +10629,7 @@
       "version": "0.1.8",
       "dependencies": {
         "@daban/protocol": "file:../protocol",
+        "@mixmark-io/domino": "2.2.0",
         "@modelcontextprotocol/client": "2.2.0",
         "drizzle-orm": "1.0.0-rc.5",
         "officeparser": "8.2.0",

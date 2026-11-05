@@ -1,0 +1,24 @@
+.search-settings > .setting-row {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.search-settings .model-fields {
+  display: grid;
+  gap: 18px;
+}
+.search-enabled {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.search-key {
+  display: grid;
+  gap: 6px;
+}
+.search-settings .inline-form-actions {
+  flex-wrap: wrap;
+}
+.search-settings > .inline-note {
+  margin-top: 16px;
+}
