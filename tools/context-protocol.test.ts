@@ -20,6 +20,62 @@ import {
 import { expect, test } from 'vitest';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+test('ordinary time schedules remain readable through a closed retired-monitor wire view', () => {
+  const at = '2026-01-01T00:00:00.000Z';
+  const firing = {
+    id: 'mock-firing',
+    requestId: 'mock-fire-request',
+    occurrenceAt: at,
+    createdAt: at,
+    state: 'completed',
+    runId: scope.runId,
+  };
+  const schedule = {
+    id: 'mock-time',
+    bot: scope.bot,
+    title: 'Synthetic time plan',
+    prompt: 'SYNTHETIC REQUEST',
+    rule: { kind: 'every', everySeconds: 60 },
+    revision: 1,
+    enabled: true,
+    createdAt: at,
+    updatedAt: at,
+    history: [firing],
+  };
+  const source = {
+    scheduleId: schedule.id,
+    firingId: firing.id,
+    configRevision: 1,
+    trigger: 'time',
+    policy: { kind: 'all' },
+  };
+  const historical = {
+    ...schedule,
+    automation: {
+      configRevision: 1,
+      policy: { kind: 'all' },
+      initialized: false,
+      cursor: 0,
+      count: 0,
+    },
+    history: [{ ...firing, source, monitor: 'all' }],
+  };
+  const bytes = JSON.stringify(historical);
+  expect(remoteReplyFor('schedule.get', historical, {}, 2)).toEqual(schedule);
+  const snapshot = {
+    ...disconnected('ready'),
+    contextInspector: 1,
+    schedules: { available: true, items: [historical], automation: { changes: true, files: true } },
+  };
+  const projected = remoteReplyFor('status', snapshot, { contextInspector: 1 }, 2);
+  expect(projected).toEqual({
+    ...disconnected('ready'),
+    contextInspector: 1,
+    schedules: { available: true, items: [schedule] },
+  });
+  expect(isRemoteSnapshot(projected)).toBe(true);
+  expect(JSON.stringify(historical)).toBe(bytes);
+});
 test('a closed old combined hint preserves Context and Search without storing retired declarations', () => {
   const hint = {
     type: 'snapshot-capabilities',

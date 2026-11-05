@@ -8,6 +8,42 @@ import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+test('ordinary schedule reads use the basic Host contract without requesting retired monitor metadata', async () => {
+  const at = '2026-01-01T00:00:00.000Z';
+  const schedule = {
+    id: 'mock-time',
+    bot: scope.bot,
+    title: 'Synthetic plan',
+    prompt: 'SYNTHETIC REQUEST',
+    rule: { kind: 'every', everySeconds: 60 },
+    revision: 1,
+    enabled: true,
+    createdAt: at,
+    updatedAt: at,
+    history: [],
+  };
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (_url, options) =>
+      Response.json(
+        new Headers(options?.headers).has('x-daban-automation')
+          ? {
+              ...schedule,
+              automation: {
+                configRevision: 1,
+                policy: { kind: 'all' },
+                initialized: false,
+                cursor: 0,
+                count: 0,
+              },
+            }
+          : schedule,
+      ),
+  });
+  vi.spyOn(client, 'status').mockResolvedValue({ ...disconnected('ready'), protocolVersion: 42 });
+  expect(await client.invoke({ type: 'schedule.get', id: schedule.id })).toEqual(schedule);
+});
 
 test.each([
   {
