@@ -33,6 +33,21 @@ export class McpCatalogError extends Fault {
   }
 }
 
+interface McpJsonDiagnostic {
+  reason: 'json_depth' | 'json_type' | 'json_number' | 'json_prototype';
+  stage: 'value' | 'definition' | 'catalog';
+  path: string;
+  kind: ReturnType<typeof valueKind>;
+  depth: number;
+  limit?: number;
+}
+
+export class McpJsonError extends Fault {
+  constructor(readonly diagnostic: McpJsonDiagnostic) {
+    super('INVALID_MCP_JSON', 400);
+  }
+}
+
 function valueKind(value: unknown) {
   return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
 }
@@ -42,7 +57,24 @@ function rejectCatalog(diagnostic: McpCatalogDiagnostic): never {
 }
 
 export function canonicalJson(value: unknown, depth = 0): string {
-  if (depth > 16) throw new Fault('INVALID_MCP_JSON', 400);
+  return canonical(value, depth, 'value', 'value');
+}
+
+function canonical(
+  value: unknown,
+  depth: number,
+  path: string,
+  stage: McpJsonDiagnostic['stage'],
+): string {
+  if (depth > 16)
+    throw new McpJsonError({
+      reason: 'json_depth',
+      stage,
+      path,
+      kind: valueKind(value),
+      depth,
+      limit: 16,
+    });
   if (
     value === null ||
     typeof value === 'string' ||
@@ -51,7 +83,7 @@ export function canonicalJson(value: unknown, depth = 0): string {
   )
     return JSON.stringify(value);
   if (Array.isArray(value))
-    return `[${value.map((item) => canonicalJson(item, depth + 1)).join(',')}]`;
+    return `[${value.map((item, index) => canonical(item, depth + 1, `${path}.array[${index}]`, stage)).join(',')}]`;
   if (
     value &&
     typeof value === 'object' &&
@@ -60,11 +92,23 @@ export function canonicalJson(value: unknown, depth = 0): string {
     return `{${Object.keys(value)
       .sort()
       .map(
-        (key) =>
-          `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key], depth + 1)}`,
+        // Schema keys can contain credentials; diagnostics use sorted positions, never their names.
+        (key, index) =>
+          `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key], depth + 1, `${path}.object[${index}]`, stage)}`,
       )
       .join(',')}}`;
-  throw new Fault('INVALID_MCP_JSON', 400);
+  throw new McpJsonError({
+    reason:
+      typeof value === 'object'
+        ? 'json_prototype'
+        : typeof value === 'number'
+          ? 'json_number'
+          : 'json_type',
+    stage,
+    path,
+    kind: valueKind(value),
+    depth,
+  });
 }
 export const mcpDigest = (value: unknown) =>
   createHash('sha256').update(canonicalJson(value)).digest('hex');
@@ -154,7 +198,7 @@ export function mcpCatalog(
         description,
         inputSchema: value.inputSchema as Record<string, unknown>,
       };
-      const json = canonicalJson(definition);
+      const json = canonical(definition, 0, `tools[${index}]`, 'definition');
       if (Buffer.byteLength(json) > 32768) throw new Fault('MCP_CATALOG_LIMIT', 400);
       if (secrets.some((secret) => secret && json.includes(JSON.stringify(secret).slice(1, -1))))
         throw new Fault('MCP_SECRET_IN_CATALOG', 400);
@@ -168,7 +212,8 @@ export function mcpCatalog(
     .sort((a, b) => a.name.localeCompare(b.name));
   if (
     new Set(tools.map((tool) => tool.name)).size !== tools.length ||
-    Buffer.byteLength(canonicalJson(tools)) > 256000
+    // The catalog array still participates in the original depth16 bound after each definition passes.
+    Buffer.byteLength(canonical(tools, 0, 'tools', 'catalog')) > 256000
   )
     throw new Fault('MCP_CATALOG_LIMIT', 400);
   return tools;

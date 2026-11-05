@@ -5,7 +5,7 @@ import { errorCode, Fault } from './control.js';
 import { type Integrations, type McpSnapshot, mcpSecrets } from './integrations.js';
 import type { Interactions } from './interactions.js';
 import { McpRemote } from './mcp.js';
-import { McpCatalogError, mcpCatalog, mcpDigest } from './mcp-catalog.js';
+import { McpCatalogError, McpJsonError, mcpCatalog, mcpDigest } from './mcp-catalog.js';
 import type { McpFetchOptions } from './mcp-fetch.js';
 import { redact } from './redaction.js';
 
@@ -195,7 +195,7 @@ export class IntegrationTools {
       return await this.store.catalog(connection, revision, tools, view);
     } catch (error) {
       // Provider metadata may contain secrets; only our locally constructed numeric/type diagnostic is safe to log.
-      if (error instanceof McpCatalogError)
+      if (error instanceof McpCatalogError || error instanceof McpJsonError)
         console.warn('[mcp-catalog-rejected]', JSON.stringify(error.diagnostic));
       const code = signal.aborted ? 'MCP_CHECK_CANCELLED' : failure(error);
       await this.store.health(connection, revision, code).catch(() => {});

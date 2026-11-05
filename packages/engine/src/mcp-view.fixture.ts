@@ -9,11 +9,12 @@ import { fileURLToPath } from 'node:url';
 import type { McpCommand } from '@daban/protocol';
 import { IntegrationTools } from './integration-tools.js';
 import { privateClientOptions } from './private-channel.js';
+import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
 export async function createMcpViewFixture(count: number) {
   const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-mcp-view-'));
-  const dataRoot = path.join(temporary, 'data');
+  const dataRoot = await secureDirectory(path.join(temporary, 'data'));
   const scope = createHash('sha256').update(temporary).digest('hex');
   const socketPath =
     process.platform === 'win32'

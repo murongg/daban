@@ -1,11 +1,137 @@
 import { expect, test } from 'vitest';
-import { mcpCatalog, mcpDigest } from './mcp-catalog.js';
+import { canonicalJson, mcpCatalog, mcpDigest } from './mcp-catalog.js';
 
 const tool = {
   name: 'synthetic_echo',
   description: 'Synthetic tool description',
   inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
 };
+
+function nested(depth: number) {
+  let value: unknown = 'synthetic-private-leaf';
+  for (let index = 0; index < depth; index++) value = { [`synthetic-private-key-${index}`]: value };
+  return value;
+}
+
+test.each([
+  { value: undefined, reason: 'json_type', kind: 'undefined' },
+  { value: 1n, reason: 'json_type', kind: 'bigint' },
+  { value: Symbol('synthetic-private-symbol'), reason: 'json_type', kind: 'symbol' },
+  { value: () => 'synthetic-private-function', reason: 'json_type', kind: 'function' },
+  { value: Number.NaN, reason: 'json_number', kind: 'number' },
+  { value: Number.POSITIVE_INFINITY, reason: 'json_number', kind: 'number' },
+  { value: Number.NEGATIVE_INFINITY, reason: 'json_number', kind: 'number' },
+  { value: new Date(0), reason: 'json_prototype', kind: 'object' },
+  { value: new Map(), reason: 'json_prototype', kind: 'object' },
+  { value: new Set(), reason: 'json_prototype', kind: 'object' },
+  { value: new Uint8Array(1), reason: 'json_prototype', kind: 'object' },
+])(
+  'JSON rejection classifies $reason/$kind without exporting the value',
+  ({ value, reason, kind }) => {
+    try {
+      canonicalJson({ 'synthetic-private-field': value });
+      expect.unreachable('Unsupported JSON values must remain rejected');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'INVALID_MCP_JSON',
+        status: 400,
+        diagnostic: { reason, stage: 'value', path: 'value.object[0]', kind, depth: 1 },
+      });
+      expect(JSON.stringify(error)).not.toContain('synthetic-private');
+    }
+  },
+);
+
+test('JSON diagnostics retain the exact depth16 boundary and omit arbitrary keys at every level', () => {
+  expect(canonicalJson(nested(16))).toBe(JSON.stringify(nested(16)));
+  try {
+    canonicalJson(nested(17));
+    expect.unreachable('Depth17 must remain rejected');
+  } catch (error) {
+    expect(error).toMatchObject({
+      code: 'INVALID_MCP_JSON',
+      status: 400,
+      diagnostic: {
+        reason: 'json_depth',
+        stage: 'value',
+        path: `value${'.object[0]'.repeat(17)}`,
+        kind: 'string',
+        depth: 17,
+        limit: 16,
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain('synthetic-private');
+  }
+});
+
+test.each([
+  { depth: 15, stage: 'definition' },
+  { depth: 14, stage: 'catalog' },
+])(
+  'catalog JSON diagnostics identify the $stage serialization pass without changing its boundary',
+  ({ depth, stage }) => {
+    const input = [
+      { ...tool, inputSchema: { type: 'object', 'synthetic-private-field': nested(depth) } },
+    ];
+    try {
+      mcpCatalog('synthetic-connection', input, []);
+      expect.unreachable('Both definition and aggregate depth limits must remain enforced');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'INVALID_MCP_JSON',
+        status: 400,
+        diagnostic: { reason: 'json_depth', stage, kind: 'string', depth: 17, limit: 16 },
+      });
+      const diagnostic = (error as { diagnostic: { path: string } }).diagnostic;
+      expect(diagnostic.path).toMatch(/^tools(?:\[0\])?(?:\.(?:object|array)\[\d+\])+$/);
+      expect(JSON.stringify(diagnostic)).not.toContain('synthetic-private');
+    }
+    expect(
+      mcpCatalog(
+        'synthetic-connection',
+        [{ ...tool, inputSchema: { type: 'object', padding: nested(13) } }],
+        [],
+      ),
+    ).toHaveLength(1);
+  },
+);
+
+test('JSON diagnostics use numeric array positions and never inspect a private constructor name', () => {
+  class SyntheticPrivateClass {}
+  try {
+    canonicalJson([new SyntheticPrivateClass()]);
+    expect.unreachable('Non-plain objects must remain rejected');
+  } catch (error) {
+    expect(error).toMatchObject({
+      diagnostic: {
+        reason: 'json_prototype',
+        stage: 'value',
+        path: 'value.array[0]',
+        kind: 'object',
+        depth: 1,
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain('SyntheticPrivateClass');
+  }
+});
+
+test('valid JSON canonical output, tool aliases and digests remain byte-for-byte stable', () => {
+  const value = { z: ['synthetic', null, true, false, -2.5], a: { q: 1, b: 'quote"\n' } };
+  expect(canonicalJson(value)).toBe(
+    '{"a":{"b":"quote\\"\\n","q":1},"z":["synthetic",null,true,false,-2.5]}',
+  );
+  expect(mcpDigest(value)).toBe('5f1be9c3e7a2984ff7fc163171edfba70f9b71988586451b4786224ea96b8079');
+  const plain = Object.assign(Object.create(null) as Record<string, unknown>, { z: 2, a: 1 });
+  expect(canonicalJson(plain)).toBe('{"a":1,"z":2}');
+  expect(mcpCatalog('synthetic-connection', [{ ...tool, description: 'Synthetic' }], [])).toEqual([
+    {
+      ...tool,
+      description: 'Synthetic',
+      alias: 'ext_98ec0b8590d1d0004aa6',
+      digest: '0d0340e742031f925420f0d97fbd2922098261dd30923ec78e8cbf44dae65df9',
+    },
+  ]);
+});
 
 test.each([
   {
