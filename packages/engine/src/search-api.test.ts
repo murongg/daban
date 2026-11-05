@@ -9,11 +9,14 @@ import {
 } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
+import { secureDirectory } from './private-files.js';
 import { SearchClient } from './search.js';
 import { startPrototype } from './server.js';
 
 async function fixture(corrupt = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-search-api-'));
+  // Match Host boot: validate the private root before publishing any control token.
+  await secureDirectory(root);
   const modelDir = path.join(root, 'model');
   if (corrupt) {
     await mkdir(modelDir, { mode: 0o700 });

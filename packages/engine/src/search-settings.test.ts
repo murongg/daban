@@ -12,6 +12,7 @@ import {
 } from '@daban/protocol';
 import { afterEach, expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
+import { privateMetadata } from './private-files.js';
 import { SearchSettings } from './search-settings.js';
 import { ModelSettings } from './settings.js';
 
@@ -104,8 +105,8 @@ test('saved legacy key-only credentials stay as a fixed reference and are never 
   const text = await readFile(search.file, 'utf8');
   expect(text).toContain('deepseek-official');
   expect(text).not.toContain('synthetic-legacy-key');
-  expect((await stat(search.file)).mode & 0o777).toBe(0o600);
-  expect((await stat(root)).mode & 0o777).toBe(0o700);
+  expect(await privateMetadata(search.file, await stat(search.file), 0o600)).toBe(true);
+  expect(await privateMetadata(root, await stat(root), 0o700)).toBe(true);
 });
 test('same-ID saves replay their original receipt; conflicts and stale writes cannot replace it', async () => {
   const { search } = await fixture();
