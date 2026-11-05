@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GalleryStore, startGallery } from '@daban/engine/gallery';
+import { GalleryStore, galleryAuthConfig, startGallery } from '@daban/engine/gallery';
 
 async function main() {
   const directory = path.resolve(process.env.GALLERY_DATA_DIR ?? './gallery-data');
@@ -40,6 +40,13 @@ async function main() {
     port: Number(process.env.GALLERY_PORT ?? 8080),
     maxPackageBytes: Number(process.env.GALLERY_MAX_PACKAGE_BYTES ?? 104857600),
     webRoot: fileURLToPath(new URL('./web/', import.meta.url)),
+    auth: galleryAuthConfig({
+      GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
+      GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
+      BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
+      GALLERY_GITHUB_ADMIN_IDS: process.env.GALLERY_GITHUB_ADMIN_IDS,
+      GALLERY_GITHUB_ALLOWED_IDS: process.env.GALLERY_GITHUB_ALLOWED_IDS,
+    }),
   });
   process.stdout.write('Daban Bot Gallery ready\n');
   const close = () => {

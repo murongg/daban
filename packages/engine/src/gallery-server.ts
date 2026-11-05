@@ -7,6 +7,7 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { galleryOrigin } from '@daban/protocol';
 import { Fault } from './control.js';
 import { type GalleryOptions, GalleryStore } from './gallery.js';
+import type { GalleryAuthConfig } from './gallery-auth.js';
 import { createGalleryHandler } from './gallery-http.js';
 
 export interface GalleryServerOptions extends GalleryOptions {
@@ -14,6 +15,7 @@ export interface GalleryServerOptions extends GalleryOptions {
   port?: number;
   origin: string;
   webRoot?: string;
+  auth?: GalleryAuthConfig;
 }
 export async function startGallery(options: GalleryServerOptions) {
   const limit = options.maxPackageBytes ?? 104857600;
@@ -45,8 +47,11 @@ export async function startGallery(options: GalleryServerOptions) {
       );
       outgoing.statusCode = result.status;
       result.headers.forEach((value, key) => {
+        if (key.toLowerCase() === 'set-cookie') return;
         outgoing.setHeader(key, value);
       });
+      const cookies = result.headers.getSetCookie();
+      if (cookies.length) outgoing.setHeader('Set-Cookie', cookies);
       if (result.body)
         await pipeline(Readable.fromWeb(result.body as unknown as NodeReadableStream), outgoing);
       else outgoing.end();
@@ -78,36 +83,43 @@ export async function startGallery(options: GalleryServerOptions) {
   if (!address || typeof address === 'string') throw new Fault('INVALID_GALLERY_CONFIG');
   const url = `http://${options.host === '::1' ? '[::1]' : options.host === '0.0.0.0' || !options.host ? '127.0.0.1' : options.host}:${address.port}`;
   const origin = options.port === 0 && options.origin === 'http://127.0.0.1' ? url : options.origin;
-  handle = createGalleryHandler(store, {
-    origin,
-    assets: options.webRoot
-      ? async (request) => {
-          const route = new URL(request.url).pathname;
-          const root = path.resolve(options.webRoot!);
-          const asset =
-            route.startsWith('/assets/') ||
-            route.startsWith('/_next/static/') ||
-            route.startsWith('/avatars/') ||
-            route === '/brand.png';
-          const file = asset ? path.resolve(root, `.${route}`) : path.join(root, 'index.html');
-          if (!file.startsWith(`${root}${path.sep}`)) return new Response(null, { status: 404 });
-          const bytes = await readFile(file).catch(() => undefined);
-          return bytes
-            ? new Response(bytes, {
-                headers: {
-                  'Content-Type': file.endsWith('.js')
-                    ? 'text/javascript; charset=utf-8'
-                    : file.endsWith('.css')
-                      ? 'text/css; charset=utf-8'
-                      : file.endsWith('.png')
-                        ? 'image/png'
-                        : 'text/html; charset=utf-8',
-                },
-              })
-            : new Response(null, { status: 404 });
-        }
-      : undefined,
-  });
+  try {
+    handle = createGalleryHandler(store, {
+      origin,
+      auth: options.auth ? store.authentication(origin, options.auth) : undefined,
+      assets: options.webRoot
+        ? async (request) => {
+            const route = new URL(request.url).pathname;
+            const root = path.resolve(options.webRoot!);
+            const asset =
+              route.startsWith('/assets/') ||
+              route.startsWith('/_next/static/') ||
+              route.startsWith('/avatars/') ||
+              route === '/brand.png';
+            const file = asset ? path.resolve(root, `.${route}`) : path.join(root, 'index.html');
+            if (!file.startsWith(`${root}${path.sep}`)) return new Response(null, { status: 404 });
+            const bytes = await readFile(file).catch(() => undefined);
+            return bytes
+              ? new Response(bytes, {
+                  headers: {
+                    'Content-Type': file.endsWith('.js')
+                      ? 'text/javascript; charset=utf-8'
+                      : file.endsWith('.css')
+                        ? 'text/css; charset=utf-8'
+                        : file.endsWith('.png')
+                          ? 'image/png'
+                          : 'text/html; charset=utf-8',
+                  },
+                })
+              : new Response(null, { status: 404 });
+          }
+        : undefined,
+    });
+  } catch (error) {
+    await new Promise<unknown>((resolve) => server.close(() => resolve(undefined)));
+    store.close();
+    throw error;
+  }
   return {
     store,
     server,

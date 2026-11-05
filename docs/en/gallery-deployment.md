@@ -16,6 +16,27 @@ For frontend development, run the Node API with `GALLERY_PORT=8080` and `GALLERY
 | Web interface | Workers Static Assets | Same Node service |
 | Default package limit | 8 MiB | 100 MiB |
 
+## GitHub login and registration
+
+Both hosts use Better Auth with the same Drizzle schema. Create a [GitHub OAuth App](https://github.com/settings/developers) for each gallery origin. Set its homepage to your gallery and its authorization callback to `https://bots.example.test/api/auth/callback/github`, replacing the example origin. Local development uses the exact browser origin, for example `http://127.0.0.1:3000/api/auth/callback/github`. GitHub OAuth Apps have one callback URL; use separate apps for local and production environments.
+
+| Variable | Purpose |
+| --- | --- |
+| GITHUB_CLIENT_ID | OAuth App client ID |
+| GITHUB_CLIENT_SECRET | OAuth App client secret; server only |
+| BETTER_AUTH_SECRET | Random secret of at least 32 characters; generate with `openssl rand -base64 32` |
+| GALLERY_PUBLIC_ORIGIN | Exact browser origin, without a path or trailing slash; required for GitHub on both hosts |
+| GALLERY_GITHUB_ADMIN_IDS | Optional comma-separated numeric GitHub user IDs with global administration rights |
+| GALLERY_GITHUB_ALLOWED_IDS | Optional comma-separated numeric GitHub user IDs allowed to register and sign in |
+
+Configure all three credentials together. When all are absent, the gallery retains token-only authentication. Partial credentials or invalid ID lists stop authentication initialization. Never put secrets in client-side `NEXT_PUBLIC_*` variables, templates, source control, or build logs.
+
+“Continue with GitHub” signs in an existing account or registers a new one. The provider requests only `read:user` and `user:email`, with no repository permission. A public gallery accepts new GitHub users unless an allowlist is configured. A private gallery requires an allowed or administrator ID; an administrator is always allowed. IDs are stable numeric GitHub IDs, not usernames or emails. The first signup never becomes an administrator automatically.
+
+Each account receives one personal `gh-<id>` namespace, with a suffix if an old namespace already exists. Existing namespaces and machine tokens keep their permissions; matching usernames or emails do not claim them. Administrators can still manage automation tokens through “Use an access token.” Browser sessions expire after 12 hours and logout revokes them in the database. Email/password registration and email-based account linking are disabled. The gallery session API exposes publication permissions and a CSRF nonce, never OAuth credentials or the underlying session token.
+
+Keep `BETTER_AUTH_SECRET` stable across replicas and restarts and back it up securely alongside the database: it signs sessions and encrypts stored provider tokens. Apply the new gallery migration before deploying the Worker. Node applies additive migrations on startup. See the [Better Auth GitHub provider guide](https://better-auth.com/docs/authentication/github) for app setup.
+
 ## Cloudflare
 
 Build from the repository root, then provision resources in your own account:
@@ -40,7 +61,18 @@ npx wrangler deploy
 
 Save the generated 64-character hexadecimal token in a password manager and enter that same value at the secret prompt. Sign into the web interface with it. Administrators can issue namespace-scoped read or publication tokens and revoke them by ID. Tokens are displayed once and cannot be recovered. Rotate the bootstrap secret through Wrangler; previous bootstrap sessions stop working.
 
-The default read mode is private. To allow anonymous browsing, set GALLERY_READ_MODE to public and explicitly publish templates with public visibility. Private templates still require authorization. For a custom domain, set GALLERY_PUBLIC_ORIGIN to its exact HTTPS origin; otherwise the Worker uses the request origin. Web and API requests remain same-origin.
+The default read mode is private. To allow anonymous browsing, set GALLERY_READ_MODE to public and explicitly publish templates with public visibility. Private templates still require authorization. Set GALLERY_PUBLIC_ORIGIN to the exact HTTPS origin in `vars`; with GitHub authentication it is required. Token-only Workers can use the request origin when it is absent. Web and API requests remain same-origin.
+
+To enable GitHub, add `GALLERY_PUBLIC_ORIGIN` and the numeric admin/allow lists to `wrangler.jsonc`'s `vars`, then store credentials as Worker secrets and redeploy:
+
+```sh
+npx wrangler secret put GITHUB_CLIENT_ID
+npx wrangler secret put GITHUB_CLIENT_SECRET
+npx wrangler secret put BETTER_AUTH_SECRET
+npx wrangler deploy
+```
+
+`GALLERY_ADMIN_TOKEN` remains an optional recovery/automation credential when GitHub administrators are configured. Store local OAuth credentials in an ignored `.dev.vars` file and use a local OAuth App callback matching the Wrangler browser origin.
 
 ```sh
 npx wrangler d1 migrations apply daban-gallery --local
@@ -67,6 +99,8 @@ docker compose -f apps/gallery/compose.yaml exec gallery node main.js revoke-tok
 ```
 
 The container runs as a non-root user, stores data in /data, and binds its example host port to loopback. Configuration includes GALLERY_DATA_DIR, GALLERY_PORT (8080), GALLERY_PUBLIC_ORIGIN, GALLERY_READ_MODE (private) and GALLERY_MAX_PACKAGE_BYTES (104857600, which can be lowered).
+
+For GitHub, export the three credentials and your numeric admin/allow lists before starting Compose; the supplied Compose file passes them to the service. Direct Node deployment reads the same environment variables. Keep the public origin equal to the reverse proxy's HTTPS origin and preserve cookies and callback query parameters when forwarding requests. GitHub login requires outbound HTTPS access to GitHub.
 
 For direct Node deployment, build with `npm run build:gallery`, set the data directory and public origin, then run `npm start --workspace @daban/gallery`. `node --experimental-strip-types tools/gallery.ts` creates `outputs/gallery-standalone` with its own lockfile and vendored packages. Install its production dependencies with `npm ci --omit=dev --ignore-scripts`, then run `node main.js`.
 

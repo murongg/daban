@@ -889,6 +889,25 @@ input[type="checkbox"] {
   gap: 24px;
   margin-top: 28px;
 }
+.github-action {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 28px;
+}
+.token-login {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+.token-login summary {
+  cursor: pointer;
+}
+.login-method-loading {
+  margin-top: 24px;
+  color: var(--muted);
+}
 .login-form .button {
   width: 100%;
   min-height: 46px;

@@ -27,6 +27,10 @@ function Workspace({ fetcher }: { fetcher: typeof fetch }) {
   const [view, setView] = useState<View>('catalog'),
     [login, setLogin] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [authError, setAuthError] = useState(false);
+  useEffect(() => {
+    setAuthError(new URLSearchParams(location.search).has('auth_error'));
+  }, []);
   const logoutPending = useRef(false);
   const [selection, setSelection] = useState<{ item: GalleryTemplate; version?: string }>();
   const [items, setItems] = useState<GalleryTemplate[]>([]),
@@ -228,7 +232,7 @@ function Workspace({ fetcher }: { fetcher: typeof fetch }) {
         <div className="header-account">
           {session && (
             <div className="account-copy">
-              <strong data-account-name>{session.principalId}</strong>
+              <strong data-account-name>{session.user?.name ?? session.principalId}</strong>
               <span>{session.namespaces.join(' · ') || t('gallery.workspace')}</span>
             </div>
           )}
@@ -263,6 +267,11 @@ function Workspace({ fetcher }: { fetcher: typeof fetch }) {
         </div>
       </header>
       <main className="workspace" aria-busy={busy || undefined}>
+        {authError && (
+          <p className="status error" role="alert">
+            {t('gallery.githubFailed')}
+          </p>
+        )}
         <p className={`status ${failed ? 'error' : 'loading'}`} role="status" hidden={!feedback}>
           {feedback}
         </p>

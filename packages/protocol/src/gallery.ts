@@ -56,6 +56,7 @@ export interface GalleryPrincipal {
 export interface GallerySession extends GalleryPrincipal {
   expiresAt: string;
   csrfToken: string;
+  user?: { id: string; name: string; githubId: string };
 }
 export interface GalleryError {
   error: { code: string; message: string; requestId: string };

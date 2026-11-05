@@ -21,6 +21,27 @@ Bot 广场提供网页、模板目录、不可变发布版本、访问令牌和�
 
 两种方式使用同一份 v3 Bot 包和 `/api/v1` 协议。CF 的包上限受 Workers 内存约束；服务器通过 `/.well-known/daban-gallery.json` 公布实际上限。首版 CF 配置最多 8 MiB，可以调低；私有部署可以在 100 MiB 内调低。不需要模型服务、桌面客户端或 Linux VM 才能启动广场。
 
+## GitHub 登录与注册
+
+两种部署都通过 Better Auth 使用同一份 Drizzle 认证表。在 [GitHub 开发者设置](https://github.com/settings/developers)为广场创建 OAuth App，Homepage URL 填广场地址，Authorization callback URL 填 `https://bots.example.test/api/auth/callback/github`，将示例域名换成自己的。开发时使用浏览器的准确地址，例如 `http://127.0.0.1:3000/api/auth/callback/github`。GitHub OAuth App 只有一个回调地址，开发和生产分别创建应用。
+
+| 变量 | 用途 |
+| --- | --- |
+| GITHUB_CLIENT_ID | OAuth App 的 Client ID |
+| GITHUB_CLIENT_SECRET | OAuth App 的 Client Secret，仅服务端使用 |
+| BETTER_AUTH_SECRET | 至少 32 字符的随机密钥，可用 `openssl rand -base64 32` 生成 |
+| GALLERY_PUBLIC_ORIGIN | 浏览器访问的准确 origin，不带路径或末尾斜杠；两种部署启用 GitHub 时均必填 |
+| GALLERY_GITHUB_ADMIN_IDS | 可选，逗号分隔的 GitHub 数字用户 ID，授予全局管理权限 |
+| GALLERY_GITHUB_ALLOWED_IDS | 可选，逗号分隔的 GitHub 数字用户 ID，允许注册和登录 |
+
+三个凭据必须一起配置；全部不配时保留原有令牌登录。凭据缺失一部分或 ID 列表非法会使认证初始化失败。密钥不要放入 `NEXT_PUBLIC_*` 前端变量、模板包、Git 或构建日志。
+
+“使用 GitHub 继续”同时完成登录和首次注册，只申请 `read:user`、`user:email`，不申请仓库权限。公开广场默认允许注册，配置允许列表后只允许列表内用户；私有广场要求允许列表或管理员列表，管理员始终允许。列表使用稳定的数字用户 ID，不使用用户名或邮箱；首位注册者不会自动成为管理员。
+
+每个账户分配一个 `gh-<id>` 发布空间，遇到旧空间重名时自动加后缀。旧空间和机器令牌的权限保留，不按同名用户名或邮箱自动认领。管理员仍可通过“使用访问令牌”管理自动化凭据。浏览器会话固定有效 12 小时，退出时从数据库撤销；不提供邮箱密码注册和按邮箱关联账户。广场会话 API 只返回发布权限与 CSRF nonce，不返回 OAuth 凭据或底层会话令牌。
+
+`BETTER_AUTH_SECRET` 用于签名会话并加密保存的提供方令牌，重启和多实例部署应保持一致，与数据库一起妥善备份。CF 部署先应用新增广场 migration；Node 启动自动应用增量迁移。应用创建步骤可参考 [Better Auth GitHub 文档](https://better-auth.com/docs/authentication/github)。
+
 ## Cloudflare 部署
 
 先准备自己的 Cloudflare 账户、Workers、D1 与 R2 权限。从项目根目录构建：
@@ -47,7 +68,18 @@ npx wrangler deploy
 
 把生成的 64 位十六进制令牌保存到密码管理器，并在 `secret put` 的交互提示中输入同一份令牌。不要把它放到 wrangler.jsonc、Git、部署日志或模板包中。部署后在网页使用该令牌登录，“访问令牌管理”可以发放指定发布空间的只读或发布凭据；新凭据只显示一次，也可按令牌 ID 撤销。管理员引导令牌通过重新设置 secret 轮换，旧管理员会话随之失效。
 
-默认 `GALLERY_READ_MODE=private`，目录和包下载均要求认证。需要公开广场时将配置改为 public，并明确将模板设为公开；public 模式中的 private 模板仍要求权限。配置自定义域名时建议在 vars 中设置 `GALLERY_PUBLIC_ORIGIN` 为准确的 HTTPS origin；未设置时使用请求的 Worker origin。网页与 API 保持同源，避免跨域传递会话。
+默认 `GALLERY_READ_MODE=private`，目录和包下载均要求认证。需要公开广场时将配置改为 public，并明确将模板设为公开；public 模式中的 private 模板仍要求权限。在 vars 中设置 `GALLERY_PUBLIC_ORIGIN` 为准确的 HTTPS origin；启用 GitHub 时必填。仅令牌模式未设置时使用请求的 Worker origin。网页与 API 保持同源。
+
+启用 GitHub 时，将 `GALLERY_PUBLIC_ORIGIN`、数字管理员或允许列表写入 `wrangler.jsonc` 的 `vars`，凭据通过 Worker secret 配置，然后重新部署：
+
+```sh
+npx wrangler secret put GITHUB_CLIENT_ID
+npx wrangler secret put GITHUB_CLIENT_SECRET
+npx wrangler secret put BETTER_AUTH_SECRET
+npx wrangler deploy
+```
+
+配置 GitHub 管理员后，`GALLERY_ADMIN_TOKEN` 仍可作为可选的恢复或自动化凭据保留。开发 OAuth 凭据放入被忽略的 `.dev.vars`，使用回调地址与 Wrangler 浏览器地址一致的开发 OAuth App。
 
 本地开发与部署检查：
 
@@ -78,6 +110,8 @@ docker compose -f apps/gallery/compose.yaml exec gallery node main.js revoke-tok
 也可以不用容器，从根目录运行 `npm run build:gallery`，设置 `GALLERY_DATA_DIR`、`GALLERY_PUBLIC_ORIGIN` 后执行 `npm start --workspace @daban/gallery`。生成可搬运的 Node 包可用 `node --experimental-strip-types tools/gallery.ts`，产物位于 `outputs/gallery-standalone`，包含自己的锁文件和 vendor 依赖；在该目录 `npm ci --omit=dev --ignore-scripts` 后执行 `node main.js`。
 
 私有部署变量：
+
+启用 GitHub 时，在启动 Compose 前导出三个凭据和数字管理员或允许列表，提供的 Compose 文件会传入服务；直接运行 Node 使用同样的环境变量。公网 origin 应与反向代理的 HTTPS 地址一致，代理需保留 Cookie 和回调查询参数；服务端需要能通过 HTTPS 访问 GitHub。
 
 | 变量 | 默认值 |
 | --- | --- |
