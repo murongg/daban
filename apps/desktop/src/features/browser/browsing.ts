@@ -5,7 +5,7 @@ import {
   type RuntimeBot,
   validAgentId,
 } from '@daban/protocol';
-import { clientCache } from '../../app/cache';
+import { type ClientCache, clientCache } from '../../app/cache';
 
 type WithoutMeta<T> = T extends unknown ? Omit<T, 'id' | 'epoch'> : never;
 export type BrowserAnswer = WithoutMeta<BrowserAnswerRequest>;
@@ -16,9 +16,9 @@ export interface BrowserPending {
   epoch: number;
 }
 const key = 'daban-browser-pending-v1';
-function read(): Partial<Record<RuntimeBot, BrowserPending>> {
+function read(cache: ClientCache): Partial<Record<RuntimeBot, BrowserPending>> {
   try {
-    const raw = clientCache().getItem(key);
+    const raw = cache.getItem(key);
     if (!raw) return {};
     if (raw.length > 600000) throw new Error();
     const value = JSON.parse(raw);
@@ -47,27 +47,31 @@ function read(): Partial<Record<RuntimeBot, BrowserPending>> {
     throw new Error('BROWSER_REQUEST_STORAGE_UNAVAILABLE');
   }
 }
-function write(value: Partial<Record<RuntimeBot, BrowserPending>>) {
+function write(value: Partial<Record<RuntimeBot, BrowserPending>>, cache: ClientCache) {
   try {
-    clientCache().setItem(key, JSON.stringify(value));
+    cache.setItem(key, JSON.stringify(value));
   } catch {
     throw new Error('BROWSER_REQUEST_STORAGE_UNAVAILABLE');
   }
 }
-export function browserRequest(bot: RuntimeBot) {
-  const state = read();
+export function browserRequest(bot: RuntimeBot, cache = clientCache()) {
+  const state = read(cache);
   return Object.hasOwn(state, bot) ? state[bot] : undefined;
 }
-export function beginBrowserRequest(bot: RuntimeBot, pending: BrowserPending) {
-  const state = read();
+export function beginBrowserRequest(
+  bot: RuntimeBot,
+  pending: BrowserPending,
+  cache = clientCache(),
+) {
+  const state = read(cache);
   if (Object.hasOwn(state, bot)) throw new Error('BROWSER_OUTCOME_UNKNOWN');
-  write({ ...state, [bot]: pending });
+  write({ ...state, [bot]: pending }, cache);
 }
-export function clearBrowserRequest(bot: RuntimeBot, id: string) {
-  const state = read();
+export function clearBrowserRequest(bot: RuntimeBot, id: string, cache = clientCache()) {
+  const state = read(cache);
   if (!Object.hasOwn(state, bot) || state[bot]?.id !== id) return;
   delete state[bot];
-  write(state);
+  write(state, cache);
 }
 
 // Address edits remain in this renderer's memory; URL queries and human replies must not enter workspace exports.

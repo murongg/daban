@@ -137,6 +137,68 @@ import { controlSocket, prepareSocket } from './socket';
 import { readAgentToken, unixFetch } from './unix';
 
 const roots = new Set<string>();
+it('keeps each remote consumer format on its own local dispatch without changing local defaults', async () => {
+  const invoke = vi.fn(async () => []);
+  mocks.load.mockResolvedValue({
+    connect: async () => ({
+      status: async () => disconnected('ready'),
+      invoke,
+      releaseInputs: vi.fn(),
+    }),
+    close: vi.fn(),
+  });
+  const service = runtimeService('/mock/consumer-schema', 'file:///synthetic/index.html');
+  try {
+    await service.connect();
+    const command = { type: 'files.list' } as const;
+    await service.invokeLocal(command, undefined, 1);
+    await service.invokeLocal(command);
+    expect(invoke).toHaveBeenNthCalledWith(1, command, 1);
+    expect(invoke).toHaveBeenNthCalledWith(2, command, 2);
+  } finally {
+    await service.close();
+  }
+});
+it('routes an explicitly captured host without falling back to the local computer', async () => {
+  const frame = { url: 'file:///synthetic/index.html' };
+  const sender = { send: vi.fn(), mainFrame: frame };
+  mocks.windows.push({ webContents: sender });
+  const remoteSnapshot = disconnected('unsupported', 'synthetic-remote');
+  const request = vi.fn(async () => remoteSnapshot);
+  const service = runtimeService(
+    '/mock/remote-routing',
+    frame.url,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'darwin',
+    { request },
+  );
+  try {
+    const handler = mocks.handlers.get('daban:runtime')!;
+    expect(
+      await handler({ sender, senderFrame: frame }, { type: 'status' }, 'a'.repeat(64)),
+    ).toEqual({ ok: true, value: remoteSnapshot });
+    expect(request).toHaveBeenCalledWith({ type: 'status' }, 'a'.repeat(64));
+    expect(await handler({ sender, senderFrame: frame }, { type: 'status' }, '../other')).toEqual({
+      ok: false,
+      error: 'REMOTE_INVALID_HOST',
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(
+      await handler(
+        { sender, senderFrame: frame },
+        { type: 'clipboard.write', text: 'SYNTHETIC COPY' },
+        'a'.repeat(64),
+      ),
+    ).toEqual({ ok: true, value: { copied: true } });
+    expect(mocks.writeClipboard).toHaveBeenCalledWith('SYNTHETIC COPY');
+    expect(request).toHaveBeenCalledTimes(1);
+  } finally {
+    await service.close();
+  }
+});
 afterEach(async () => {
   vi.useRealTimers();
   mocks.daemonProgress = undefined;
@@ -870,7 +932,19 @@ it('opens OAuth only from trusted renderer IPC, strips its URL, and requires the
   const frame = { url: 'file:///mock/index.html' };
   const sender = { mainFrame: frame, send: vi.fn() };
   mocks.windows.push({ webContents: sender });
-  const service = runtimeService(f.root, frame.url, '/mock/resources', undefined, f.config);
+  const remoteRequest = vi.fn(async () => {
+    throw Error('OAUTH_INTERACTIVE_REQUIRED');
+  });
+  const service = runtimeService(
+    f.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    f.config,
+    undefined,
+    'darwin',
+    { request: remoteRequest },
+  );
   const receipt = {
     bot: 'mock-a',
     connection: 'mock-notion',
@@ -907,6 +981,19 @@ it('opens OAuth only from trusted renderer IPC, strips its URL, and requires the
   try {
     expect((await service.connect()).phase).toBe('ready');
     const invoke = mocks.handlers.get('daban:runtime')!;
+    const identityReads = f.requests.filter(
+      (request) => request.route === '/agent/identity',
+    ).length;
+    expect(await invoke({ sender, senderFrame: frame }, command, 'a'.repeat(64))).toEqual({
+      ok: false,
+      error: 'OAUTH_INTERACTIVE_REQUIRED',
+    });
+    expect(remoteRequest).toHaveBeenCalledOnce();
+    expect(f.requests.filter((request) => request.route === '/agent/identity')).toHaveLength(
+      identityReads,
+    );
+    expect(f.requests.some((request) => request.route === '/api/mcp/app')).toBe(false);
+    expect(mocks.openExternal.mock.calls.length).toBe(previous);
     expect(
       await invoke({ sender, senderFrame: { url: 'https://remote.example.test/' } }, command),
     ).toMatchObject({ ok: false, error: 'UNTRUSTED_SENDER' });

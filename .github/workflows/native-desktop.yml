@@ -51,7 +51,7 @@ jobs:
           DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
         run: |
           if (-not (Test-Path -LiteralPath $env:DABAN_TEST_SDK -PathType Leaf)) { throw "Installed DSH SDK is missing" }
-          node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/model-fallback.integration.js
+          node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/model-fallback.integration.js packages/engine/dist/context-inspector.integration.js packages/engine/dist/transcripts.integration.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify native lifecycle integrations
         run: |

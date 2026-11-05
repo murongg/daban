@@ -1,0 +1,33 @@
+services:
+  connect:
+    build:
+      context: ../..
+      dockerfile: apps/connect/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      CONNECT_DEVICES: ${CONNECT_DEVICES:?Set both device fingerprints}
+      TURN_URLS: ${TURN_URLS:?Set the public TURN URLs}
+      TURN_SECRET: ${TURN_SECRET:?Set the matching coturn secret}
+  tls:
+    image: caddy:2.10.2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      CONNECT_DOMAIN: ${CONNECT_DOMAIN:?Set the signaling domain}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy:/config
+  turn:
+    image: coturn/coturn:4.6.3
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${TURN_CONFIG:?Set the absolute coturn config path}:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf", "--log-file=stdout"]
+volumes:
+  certificates:
+  caddy:

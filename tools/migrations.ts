@@ -19,6 +19,7 @@ export const stores = [
   'integrations',
   'knowledge',
   'notes',
+  'remote',
   'projects',
   'schedules',
   'skills',

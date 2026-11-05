@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run build && npm start",
-    "build": "npm run lint && npm run build:engine && npm run build --workspace @daban/desktop && npm run build --workspace @daban/agent && npm run build --workspace @daban/runtime",
+    "build": "npm run lint && npm run build:engine && npm run build --workspace @daban/desktop && npm run build --workspace @daban/agent && npm run build --workspace @daban/runtime && npm run build --workspace @daban/connect",
     "preview": "npm run preview --workspace @daban/desktop",
     "test": "npm run build:agent && npm run build --workspace @daban/runtime && vitest run",
     "test:watch": "npm run build:protocol && vitest --project desktop",
@@ -34,7 +34,8 @@
     "build:engine": "npm run build:protocol && npm run build --workspace @daban/engine",
     "build:agent": "npm run build:engine && npm run build --workspace @daban/agent",
     "test:agent": "npm run build:agent && vitest run --project node dist-agent",
-    "bundle:windows": "npm run build && node --experimental-strip-types tools/windows.ts"
+    "bundle:windows": "npm run build && node --experimental-strip-types tools/windows.ts",
+    "test:remote": "npm run build:engine && npm run build --workspace @daban/desktop && npm run build --workspace @daban/connect && node --experimental-strip-types tools/remote.acceptance.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
@@ -60,6 +61,7 @@
     "apps/desktop",
     "apps/agent",
     "apps/runtime",
+    "apps/connect",
     "packages/protocol",
     "packages/engine"
   ],

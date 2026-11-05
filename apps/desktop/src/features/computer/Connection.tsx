@@ -6,6 +6,7 @@ import {
 } from '@daban/protocol';
 import { CircleAlert, Power } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCache } from '../../app/CacheProvider';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
@@ -61,6 +62,7 @@ function ConnectionControl({
   onRecovery?: () => unknown;
 }) {
   useLocale();
+  const storage = useCache();
   const runtime = useRuntime(),
     status = runtime.snapshot.computers;
   const computer = status?.items.find((item) => item.bot === bot) ?? {
@@ -90,7 +92,7 @@ function ConnectionControl({
     live.current = true;
     const sync = () => {
       try {
-        setPending(pendingComputer(bot));
+        setPending(pendingComputer(bot, storage));
         setStorageError(false);
       } catch (cause) {
         setStorageError(true);
@@ -98,7 +100,7 @@ function ConnectionControl({
       }
     };
     try {
-      restored.current = pendingComputer(bot)?.id;
+      restored.current = pendingComputer(bot, storage)?.id;
     } catch {}
     sync();
     const unwatch = watchComputers(sync);
@@ -106,11 +108,11 @@ function ConnectionControl({
       live.current = false;
       unwatch();
     };
-  }, [bot]);
+  }, [bot, storage]);
   const settle = useCallback(
     (ack: ComputerAck, nonce: ComputerPending) => {
       if (ack.receipt.phase === 'settled' || ack.receipt.phase === 'interrupted') {
-        clearComputer(bot, nonce.id);
+        clearComputer(bot, nonce.id, storage);
         if (live.current) {
           const message = ack.receipt.error ? runtimeError(new Error(ack.receipt.error)) : '';
           setError(message);
@@ -118,7 +120,7 @@ function ConnectionControl({
         }
       } else if (live.current) setError(t('computer.computerActionStillNeedsVerificationWillNot'));
     },
-    [bot, notify],
+    [bot, notify, storage],
   );
   const inspect = useCallback(
     async (nonce: ComputerPending) => {
@@ -129,14 +131,14 @@ function ConnectionControl({
           id: nonce.id,
           bot,
         });
-        if (pendingComputer(bot)?.id === nonce.id) settle(ack, nonce);
+        if (pendingComputer(bot, storage)?.id === nonce.id) settle(ack, nonce);
       } catch (cause) {
         if (live.current) setError(runtimeError(cause));
       } finally {
         if (live.current) setBusy(false);
       }
     },
-    [bot, runtime.command, settle],
+    [bot, runtime.command, settle, storage],
   );
   useEffect(() => {
     if (!ready || !pending || restored.current !== pending.id) return;
@@ -148,7 +150,7 @@ function ConnectionControl({
   async function run(action: 'connect' | 'stop') {
     if (busy || running || changing || !ready || !status?.available || storageError) return;
     try {
-      const existing = pendingComputer(bot);
+      const existing = pendingComputer(bot, storage);
       if (existing) {
         setPending(existing);
         setError(t('computer.computerActionNeedsVerificationCheckResultFirst'));
@@ -173,7 +175,7 @@ function ConnectionControl({
         revision: request.revision,
         ...(request.instance === undefined ? {} : { instance: request.instance }),
       };
-      beginComputer(nonce);
+      beginComputer(nonce, storage);
       setPending(nonce);
       setBusy(true);
       setError('');
@@ -183,7 +185,7 @@ function ConnectionControl({
         if (live.current) setStop(undefined);
       } catch (cause) {
         const code = cause instanceof Error ? cause.message : '';
-        if (definite.has(code)) clearComputer(bot, nonce.id);
+        if (definite.has(code)) clearComputer(bot, nonce.id, storage);
         if (live.current) {
           const message = definite.has(code)
             ? runtimeError(cause)

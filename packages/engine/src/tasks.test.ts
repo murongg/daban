@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
@@ -17,8 +17,208 @@ test('full guest instructions describe VM sudo and host approval without exposin
   expect(agentInstructionsFor(false)).toMatch(/installation requires software_install/);
 });
 
+import { captureContext, contextSources, emptyContextArchive } from './context-inspector.js';
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
+
+test('deep invalid optional archives never hide a valid core task or rescue an invalid core', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-deep-context-journal-'));
+  const core = {
+    bot: 'mock-bot',
+    runId: 'mock-run',
+    kind: 'chat',
+    chatRevision: 0,
+    phase: 'completed',
+    running: false,
+    prompt: 'SYNTHETIC REQUEST',
+    result: 'SYNTHETIC PRESERVED RESULT',
+    error: '',
+    trace: [],
+  };
+  const archive =
+    '{"version":1,"nextRevision":2,"captures":[{"toJSON":null,"x":' +
+    '['.repeat(12000) +
+    '0' +
+    ']'.repeat(12000) +
+    '}]}';
+  const encode = (phase: string) => {
+    const task = JSON.stringify({ ...core, phase });
+    return `{"version":1,"task":${task.slice(0, -1)},"contextCaptures":${archive}}}`;
+  };
+  const file = path.join(root, 'mock-run.json');
+  try {
+    expect(Buffer.byteLength(encode('completed'))).toBeLessThan(65536);
+    await writeFile(file, encode('completed'));
+    const journal = new TaskJournal(root);
+    await journal.load();
+    expect(await journal.read(core.bot, core.runId)).toMatchObject({
+      ...core,
+      contextCaptureFailed: true,
+    });
+    expect(await journal.read(core.bot, core.runId)).not.toHaveProperty('contextCaptures');
+    await writeFile(file, encode('mock-invalid'));
+    const invalid = new TaskJournal(root);
+    await invalid.load();
+    expect(await invalid.read(core.bot, core.runId)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('authoritative journal failures stay visible while diagnostic reads retain only durable records', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-context-write-queue-'));
+  const journal = new TaskJournal(root);
+  const record = {
+    bot: 'mock-bot',
+    runId: 'mock-run',
+    requestId: 'mock-request',
+    kind: 'chat' as const,
+    chatRevision: 0,
+    phase: 'completed',
+    running: false,
+    prompt: 'SYNTHETIC REQUEST',
+    result: 'SYNTHETIC COMMITTED RESULT',
+    error: '',
+    trace: [],
+  };
+  const next = { ...record, result: 'SYNTHETIC UNCOMMITTED RESULT' };
+  const blocked = path.join(root, `${record.runId}.json.tmp`);
+  try {
+    await journal.put(record);
+    await expect(journal.put({ ...record, trace: [1n] })).rejects.toMatchObject({
+      name: 'TypeError',
+    });
+    await mkdir(blocked);
+    let failure: unknown;
+    try {
+      await journal.put(next);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ code: expect.stringMatching(/^(EISDIR|EPERM|EACCES)$/) });
+    await expect(journal.read(record.bot, record.runId)).rejects.toBe(failure);
+    await expect(journal.all(record.bot)).rejects.toBe(failure);
+    const diagnostic = await journal.readCommitted(record.bot, record.runId);
+    expect(diagnostic).toEqual(record);
+    expect(await journal.readCommitted('mock-foreign', record.runId)).toBeUndefined();
+    expect(await journal.readCommitted(record.bot, 'mock-uncommitted')).toBeUndefined();
+    expect.assert(diagnostic);
+    diagnostic.result = 'SYNTHETIC LOCAL COPY EDIT';
+    expect(await journal.readCommitted(record.bot, record.runId)).toEqual(record);
+    await expect(journal.read(record.bot, record.runId)).rejects.toBe(failure);
+    expect(journal.findRequest(record.bot, record.requestId)).toEqual(record);
+    expect(
+      JSON.parse(await readFile(path.join(root, `${record.runId}.json`), 'utf8')).task,
+    ).toEqual(record);
+    await rm(blocked, { recursive: true, force: true });
+    await journal.put(next);
+    expect(await journal.read(record.bot, record.runId)).toEqual(next);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('journal preserves bounded captures across restart and isolates a corrupt archive', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-context-journal-'));
+  const captures = captureContext(emptyContextArchive(), {
+    at: '2026-01-01T00:00:00.000Z',
+    reason: 'turn',
+    coverage: 'partial',
+    turnId: 'mock-turn',
+    estimator: 'daban-text-v1',
+    configuredWindow: 16384,
+    configuredOutput: 1024,
+    sources: contextSources({ request: 'SYNTHETIC REQUEST' }),
+    gaps: ['sdk-envelope'],
+  });
+  const record = {
+    bot: 'mock-bot',
+    runId: 'mock-run',
+    chatRevision: 0,
+    kind: 'chat' as const,
+    phase: 'completed',
+    running: false,
+    prompt: 'SYNTHETIC REQUEST',
+    result: 'SYNTHETIC RESULT',
+    error: '',
+    trace: [],
+    contextCaptures: captures,
+  };
+  try {
+    const journal = new TaskJournal(root);
+    await journal.put(record);
+    expect(await journal.read(record.bot, record.runId)).toHaveProperty(
+      'contextCaptures',
+      captures,
+    );
+    const loaded = new TaskJournal(root);
+    await loaded.load();
+    expect(await loaded.read(record.bot, record.runId)).toHaveProperty('contextCaptures', captures);
+    const corruptions: unknown[] = [
+      { ...captures, nextRevision: 0 },
+      {
+        ...captures,
+        captures: captures.captures.map((capture) => ({ ...capture, reason: ['turn'] })),
+      },
+      {
+        ...captures,
+        captures: captures.captures.map((capture) => ({
+          ...capture,
+          reason: { toString: null, valueOf: null },
+        })),
+      },
+      {
+        ...captures,
+        captures: captures.captures.map((capture) => ({
+          ...capture,
+          sources: capture.sources.map((source) => ({
+            ...source,
+            membership: { toString: null, valueOf: null },
+          })),
+        })),
+      },
+    ];
+    const file = path.join(root, `${record.runId}.json`);
+    for (const contextCaptures of corruptions) {
+      await writeFile(file, JSON.stringify({ version: 1, task: { ...record, contextCaptures } }));
+      const corrupt = new TaskJournal(root);
+      await corrupt.load();
+      expect(await corrupt.read(record.bot, record.runId)).toMatchObject({
+        prompt: record.prompt,
+        result: record.result,
+        phase: 'completed',
+        running: false,
+        contextCaptureFailed: true,
+      });
+      expect(await corrupt.read(record.bot, record.runId)).not.toHaveProperty('contextCaptures');
+    }
+    await writeFile(
+      file,
+      JSON.stringify({ version: 1, task: { ...record, contextCaptures: undefined } }),
+    );
+    const legacy = new TaskJournal(root);
+    await legacy.load();
+    expect(await legacy.read(record.bot, record.runId)).toMatchObject({
+      prompt: record.prompt,
+      result: record.result,
+    });
+    expect(await legacy.read(record.bot, record.runId)).not.toHaveProperty('contextCaptureFailed');
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        task: { ...record, phase: 'mock-invalid', contextCaptures: corruptions[2] },
+      }),
+    );
+    const invalidCore = new TaskJournal(root);
+    await invalidCore.load();
+    expect(await invalidCore.read(record.bot, record.runId)).toBeUndefined();
+    const invalid = { ...record, contextCaptures: { ...captures, nextRevision: 0 } };
+    await expect(journal.put(invalid)).rejects.toMatchObject({ code: 'INVALID_CONTEXT_CAPTURE' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('task approval mode accepts only the three explicit user policies', () => {
   const task = { requestId: 'mock-policy-request', prompt: 'Synthetic task' };

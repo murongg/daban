@@ -266,7 +266,11 @@ export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
             </button>
           )}
           <button type="button" aria-pressed={source === 'local'} onClick={() => choose('local')}>
-            {local.platform === 'win32' ? t('localComputer.windows') : t('localComputer.mac')}
+            {local.platform === 'win32'
+              ? t('localComputer.windows')
+              : local.platform === 'linux'
+                ? t('localComputer.linux')
+                : t('localComputer.mac')}
           </button>
         </nav>
       )}

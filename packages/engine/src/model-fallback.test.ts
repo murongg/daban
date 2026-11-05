@@ -53,7 +53,10 @@ async function runScenario(
     | 'two-failures'
     | 'revoked'
     | 'local-selection'
-    | 'unknown-capability',
+    | 'unknown-capability'
+    | 'context'
+    | 'context-queued'
+    | 'context-queued-failure',
   plan?: ('plan' | 'text' | 'tool' | 'failure')[],
   plannedModel: 'mock-primary' | 'mock-fallback' = 'mock-primary',
 ) {
@@ -62,12 +65,18 @@ async function runScenario(
   const order: string[] = [];
   const sessions: string[] = [];
   const rounds: string[] = [];
+  const queuedContext = scenario === 'context-queued' || scenario === 'context-queued-failure';
   const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
     Response.json({ data: [{ id: 'mock-primary' }, { id: 'mock-fallback' }] }),
   );
   let models: ModelRuns;
   let originalToken = '';
   let originalSession = '';
+  const incomingPressure: unknown[] = [];
+  const incomingBreakdown: unknown[] = [];
+  const projections: unknown[] = [];
+  let releaseCapture: (() => unknown) | undefined;
+  let pendingContext: Promise<unknown> | undefined;
   const failure = {
     type: 'turn/end',
     data: {
@@ -79,6 +88,10 @@ async function runScenario(
     async start() {
       starts.push(this.options.model);
       order.push(`start:${this.options.model}`);
+      if (this.options.model === 'mock-fallback' && queuedContext) {
+        releaseCapture?.();
+        await pendingContext;
+      }
     }
     async close() {
       order.push(`close:${this.options.model}`);
@@ -142,6 +155,40 @@ async function runScenario(
           if (this.options.model === 'mock-primary') {
             originalToken = job.token;
             originalSession = id;
+            if (scenario === 'context' || queuedContext) {
+              const update = (key: string, value: unknown) =>
+                models.rpc(job.bot, `Bearer ${job.token}`, {
+                  id: `mock-primary-${key}`,
+                  method: 'context.update',
+                  params: {
+                    sessionId: id,
+                    turnId: 'mock-fallback-request',
+                    key,
+                    seq: 7,
+                    value,
+                  },
+                });
+              if (queuedContext) {
+                job.context!.writing = new Promise<unknown>((resolve, reject) => {
+                  releaseCapture = () =>
+                    scenario === 'context-queued-failure'
+                      ? reject(new Error('Synthetic retired capture failure'))
+                      : resolve(undefined);
+                });
+                pendingContext = update('contextPressure', { pressureTokens: 900 }).catch(
+                  (error: unknown) => ({ error }),
+                );
+                await Promise.resolve();
+                expect(job.context?.seqs.contextPressure).toBe(7);
+              } else {
+                await update('contextPressure', { pressureTokens: 900 });
+                await update('contextBreakdown', {
+                  systemTokens: 0,
+                  toolsTokens: 0,
+                  messageTokens: 700,
+                });
+              }
+            }
             if (plan && plannedModel === this.options.model) return planned();
             if (scenario === 'text' || scenario === 'cleared-text' || scenario === 'thinking')
               await models.rpc(job.bot, `Bearer ${job.token}`, {
@@ -206,6 +253,31 @@ async function runScenario(
               },
             }),
           ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+          if (scenario === 'context' || queuedContext) {
+            incomingPressure.push(structuredClone(job.context?.pressure));
+            incomingBreakdown.push(structuredClone(job.context?.breakdown));
+            const params = {
+              sessionId: id,
+              turnId: 'mock-fallback-request',
+              key: 'contextPressure',
+              seq: 0,
+              value: { pressureTokens: 100 },
+            };
+            await expect(
+              models.rpc(job.bot, `Bearer ${job.token}`, {
+                id: 'mock-retired-root',
+                method: 'context.update',
+                params: { ...params, sessionId: originalSession },
+              }),
+            ).rejects.toMatchObject({ code: 'INVALID_CONTEXT_UPDATE' });
+            projections.push(
+              await models.rpc(job.bot, `Bearer ${job.token}`, {
+                id: 'mock-fallback-projection',
+                method: 'context.update',
+                params,
+              }),
+            );
+          }
           if (plan && plannedModel === this.options.model) return planned();
           return {
             sessionId: id,
@@ -276,14 +348,43 @@ async function runScenario(
       order,
       sessions,
       rounds,
+      incomingPressure,
+      incomingBreakdown,
+      projections,
       toolCount: job.toolCount,
       settings: await settings.status(true),
     };
   } finally {
+    releaseCapture?.();
+    await pendingContext;
     if (models!) await models.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 }
+
+for (const scenario of ['context', 'context-queued', 'context-queued-failure'] as const)
+  test(`${scenario} cannot carry SDK samples or queued captures into a fallback attempt`, async () => {
+    const result = await runScenario(scenario);
+    expect(result.result.phase, result.result.error).toBe('completed');
+    expect(result.starts).toEqual(['mock-primary', 'mock-fallback']);
+    expect(result.incomingPressure).toEqual([undefined]);
+    expect(result.incomingBreakdown).toEqual([undefined]);
+    expect(result.projections).toMatchObject([{ result: { accepted: true } }]);
+    const captures = result.record?.contextCaptures?.captures ?? [];
+    const turns = captures.filter((capture) => capture.reason === 'turn');
+    expect(turns).toHaveLength(2);
+    expect(turns[1].pressure).toBeUndefined();
+    expect(turns[1].breakdown).toBeUndefined();
+    expect(captures.at(-1)?.pressure).toMatchObject({ seq: 0, pressureTokens: 100 });
+    expect(captures.at(-1)?.breakdown).toBeUndefined();
+    if (scenario !== 'context')
+      expect(captures.some((capture) => capture.pressure?.seq === 7)).toBe(false);
+    else expect(captures.some((capture) => capture.pressure?.seq === 7)).toBe(true);
+    if (scenario === 'context-queued-failure') {
+      expect(result.record?.contextCaptureFailed).toBe(true);
+      expect(captures.at(-1)?.gaps).toContain('capture-failed');
+    }
+  });
 
 test('clean provider failure closes the primary and succeeds once inside the original task and receipt', async () => {
   const result = await runScenario('clean');

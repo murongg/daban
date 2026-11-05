@@ -10,7 +10,7 @@ import {
   workCommentQueryKey,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
-import { clientCache } from '../../app/cache';
+import { useCache } from '../../app/CacheProvider';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { type Action, reduce, type State } from '../../app/state';
 import { serialize, storageKey } from '../../app/storage';
@@ -39,6 +39,7 @@ export function useComments(
   item: WorkItem,
   observe: (item: WorkItem) => unknown,
 ) {
+  const storage = useCache();
   const runtime = useRuntime(),
     card = commentCard(state.comments, item.id);
   const current = useRef(state);
@@ -189,7 +190,7 @@ export function useComments(
     if (!saved || commentKey(saved.request) !== commentKey(input.request)) return;
     try {
       // Persist the exact intent before dispatch: an uncertain reply must recover this request rather than create another.
-      clientCache().setItem(storageKey, serialize(updated));
+      storage.setItem(storageKey, serialize(updated));
     } catch {
       setError(t('discussion.operationRecordsCouldNotSavedLocallyComment'));
       return;

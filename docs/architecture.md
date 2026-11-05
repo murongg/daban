@@ -23,6 +23,7 @@ apps/
     public/                Icons, avatars and provider assets
   agent/                   Host service, model credentials, DSH, approvals and VM management
   runtime/                 Linux execution-service entry point
+  connect/                 Device-proof signaling and temporary TURN credential service
 packages/
   engine/                  Implementations with separate host and executor entry graphs
   protocol/                Public types, wire contracts and validation
@@ -37,6 +38,11 @@ Feature-specific tests and styles stay beside their feature. Tests that cover se
 `shared` is local to the desktop application. It holds framework-independent code used by both Electron and the renderer; it is not a new workspace package. Renderer controls depend on the locale adapter, while feature code uses the application runtime and state. `app` composes these features.
 
 Applications depend on the public exports of `@daban/engine` and `@daban/protocol`. They do not import one another. The engine retains separate public host and executor entry points and its verified deployment layout; organizing renderer files does not move model credentials or approvals into the VM.
+
+
+Remote access uses the public `@daban/engine/remote` and `@daban/protocol` contracts. Device identities, pairing ACLs and mutation receipts remain in the trusted host. Sandboxed Electron peers carry business data and a separate native video stream; native consent, input ownership and fresh observations remain host checks. The Connect service imports only the small `@daban/engine/connect` crypto entry, with no task-execution endpoint. The dedicated Linux cloud entry reuses the native Host and X11 desktop, while the existing VM executor remains separate. See [remote computers](zh-CN/remote-computers.md) for deployment and current verification limits.
+
+Snapshot consumers advertise optional `schema: 2` through the existing per-session `snapshot-capabilities` hint. The `contextInspector`, `preflight` and `fileReview` accept keys retain their independent meanings. Controllers send the original hint before its versioned extension so older Hosts can retain the supported form without an acknowledgment. Schema selection controls typed wire views, not authority; it resets with the connection. Legacy views omit unsupported metadata and project file links rather than converting scoped locators into shared paths. Each invoke captures its consumer format, and receipt results are projected again at delivery so replay never redispatches a write.
 
 The root `vitest.config.ts` owns all unit tests: the `desktop` project uses jsdom, while the `node` project runs compiled agent/engine tests and TypeScript tooling tests. Linux and browser integration tests retain the Node test runner. `apps/desktop/vite.config.ts` owns the renderer build, and `apps/desktop/electron/vite.config.ts` owns main/preload bundling. Root scripts continue building protocol, engine and applications in dependency order.
 

@@ -1586,6 +1586,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
 export interface RuntimeSnapshot {
   appConnections?: AppConnectionsCapability;
   approvalRules?: ApprovalRulesStatus;
+  contextInspector?: 1;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1687,6 +1688,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'budget.settings',
     'budget.read',
     'transcript.statistics',
+    'context.inspect',
+    'context.source',
     'transcript.list',
     'transcript.content',
     'memory.history',
@@ -4129,6 +4132,8 @@ export type RuntimeCommand =
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
   | { type: 'transcript.statistics'; query: TranscriptQuery }
+  | { type: 'context.inspect'; query: import('./context-inspector.js').ContextQuery }
+  | { type: 'context.source'; query: import('./context-inspector.js').ContextSourceQuery }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }
@@ -4247,8 +4252,8 @@ export type RuntimeCommand =
   | ({ type: 'files.download'; path: string } & ProjectFileRequest);
 export type RuntimeReply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 export interface RuntimeBridge {
-  invoke<T = unknown>(command: RuntimeCommand): Promise<RuntimeReply<T>>;
-  subscribe(callback: (snapshot: RuntimeSnapshot) => unknown): () => unknown;
+  invoke<T = unknown>(command: RuntimeCommand, host?: string | null): Promise<RuntimeReply<T>>;
+  subscribe(callback: (snapshot: RuntimeSnapshot) => unknown, host?: string | null): () => unknown;
 }
 export const runtimeTargets: Readonly<Record<string, RuntimeBot>> = Object.assign(
   Object.create(null) as Record<string, RuntimeBot>,
@@ -4576,3 +4581,9 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
 }
 
 export * from './budgets.js';
+export * from './command.js';
+export * from './context-inspector.js';
+export * from './peer.js';
+export * from './receipt.js';
+export * from './remote.js';
+export * from './remote-snapshot.js';

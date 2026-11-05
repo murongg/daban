@@ -5,7 +5,16 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   base: './',
-  build: { outDir: '../../dist', emptyOutDir: true },
+  build: {
+    outDir: '../../dist',
+    emptyOutDir: true,
+    rolldownOptions: {
+      input: {
+        index: fileURLToPath(new URL('index.html', import.meta.url)),
+        peer: fileURLToPath(new URL('peer.html', import.meta.url)),
+      },
+    },
+  },
   plugins: [
     react(),
     {

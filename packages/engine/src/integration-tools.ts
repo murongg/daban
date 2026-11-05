@@ -161,12 +161,16 @@ export class IntegrationTools {
       }
     return new McpRemote(config, { upstream, onDispatch, authorize });
   }
-  private async authenticated(connection: string) {
+  private async authenticated(connection: string, assertAuthority?: () => unknown) {
+    assertAuthority?.();
     const config = await this.store.privateConfig(connection);
+    assertAuthority?.();
     if (config.authKind !== 'oauth') return config;
     if (!this.options.authorization) throw new Fault('OAUTH_RECONNECT_REQUIRED');
     const bearer = await this.options.authorization(connection);
+    assertAuthority?.();
     const current = await this.store.privateConfig(connection);
+    assertAuthority?.();
     if (current.revision !== config.revision || current.deleted || !current.authenticated)
       throw new Fault('MCP_AUTHORITY_CHANGED');
     return { ...current, bearer };
@@ -355,8 +359,12 @@ export class IntegrationTools {
       }
       assertAuthority();
       await this.store.assertLive(run.bot, connection, operation);
-      const config = await this.authenticated(connection.connection);
+      assertAuthority();
+      // Token resolution can yield or refresh; project/policy authority and bindings must survive every wait.
+      const config = await this.authenticated(connection.connection, assertAuthority);
+      assertAuthority();
       await this.store.assertLive(run.bot, connection, operation);
+      assertAuthority();
       const secrets = mcpSecrets(config);
       remote = await this.remote(
         config,

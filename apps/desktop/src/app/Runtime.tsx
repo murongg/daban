@@ -2,6 +2,7 @@ import {
   type BrowserBinding,
   type DesktopInput,
   disconnected,
+  isLocalComputerStatus,
   type RuntimeBot,
   type RuntimeCommand,
   type RuntimeSnapshot,
@@ -47,28 +48,67 @@ const Context = createContext<Connection>({
   input: unavailable,
   browserInput: unavailable,
 });
-export function RuntimeProvider({ children }: { children: ReactNode }) {
+export function RuntimeProvider({
+  children,
+  host = null,
+}: {
+  children: ReactNode;
+  host?: string | null;
+}) {
   useLocale();
   const [bridge] = useState(() => window.daban?.runtime);
   const [snapshot, setSnapshot] = useState(() => disconnected(bridge ? 'connecting' : 'offline'));
   const tails = useRef(new Map<RuntimeBot, Promise<unknown>>());
+  const active = useRef(true);
+  const target = useRef({ host, generation: 0 });
+  if (target.current.host !== host)
+    target.current = { host, generation: target.current.generation + 1 };
+  const generation = target.current.generation;
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
   const command = useCallback(
     async <T = unknown>(value: RuntimeCommand): Promise<T> => {
       if (!bridge) throw new Error('RUNTIME_OFFLINE');
-      const reply = await bridge.invoke<T>(value);
+      const release =
+        (value.type === 'input' &&
+          (value.input.type === 'release' ||
+            (value.input.type === 'pointer' && value.input.phase === 'up'))) ||
+        (value.type === 'local.input' &&
+          value.input.type === 'pointer' &&
+          value.input.phase === 'up') ||
+        (value.type === 'browser.input' &&
+          value.input.type === 'pointer' &&
+          value.input.phase === 'up');
+      if ((!active.current || target.current.generation !== generation) && !release)
+        throw Error('RUNTIME_SCOPE_CHANGED');
+      const reply = host ? await bridge.invoke<T>(value, host) : await bridge.invoke<T>(value);
+      const current = active.current && target.current.generation === generation;
+      // A reply belongs to the initiating Host generation, even if A → B → A reuses its host id.
+      if (!current && !release) throw Error('RUNTIME_SCOPE_CHANGED');
       if (!reply.ok) throw new Error(reply.error);
-      if (value.type === 'status' || value.type === 'connect')
+      if (current && value.type.startsWith('local.') && isLocalComputerStatus(reply.value))
+        setSnapshot((state) => ({
+          ...state,
+          localComputer: reply.value as typeof state.localComputer,
+        }));
+      if (current && (value.type === 'status' || value.type === 'connect'))
         setSnapshot(reply.value as RuntimeSnapshot);
       return reply.value;
     },
-    [bridge],
+    [bridge, host, generation],
   );
   useEffect(() => {
     if (!bridge) return;
+    setSnapshot(disconnected('connecting'));
     let live = true;
-    const unsubscribe = bridge.subscribe((state) => {
+    const receive = (state: RuntimeSnapshot) => {
       if (live) setSnapshot(state);
-    });
+    };
+    const unsubscribe = host ? bridge.subscribe(receive, host) : bridge.subscribe(receive);
     command<RuntimeSnapshot>({ type: 'status' }).catch(() => {
       // Keep the message ID so a language switch also updates an existing connection error.
       if (live)
@@ -83,7 +123,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
       live = false;
       unsubscribe();
     };
-  }, [bridge, command]);
+  }, [bridge, command, host]);
   const input = useCallback(
     (bot: RuntimeBot, epoch: number, value: DesktopInput, instance?: string) => {
       // Capture the target and lease before enqueueing. A late packet must never inherit a new Bot or new owner.
@@ -138,6 +178,8 @@ export function runtimeMessage(code: string, fallback = code) {
     AGENT_LEGACY_RESTART_UNAVAILABLE: t('agentUpgrade.manual'),
     AGENT_LEGACY_SCHEDULES_ACTIVE: t('agentUpgrade.schedules'),
     AGENT_UPDATE_BUSY: t('agentUpgrade.busy'),
+    LOCAL_WAYLAND_UNAVAILABLE: t('localComputer.waylandUnavailable'),
+    LOCAL_DISPLAY_UNAVAILABLE: t('localComputer.displayUnavailable'),
     LOCAL_PLATFORM_UNSUPPORTED: t('localComputer.platformUnsupported'),
     LOCAL_SCREEN_PERMISSION: t('localComputer.screenRequired'),
     LOCAL_ACCESSIBILITY_PERMISSION: t('localComputer.inputRequired'),

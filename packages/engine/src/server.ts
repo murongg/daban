@@ -34,6 +34,8 @@ import {
   isBudgetPolicy,
   isChatRequest,
   isComputerRequest,
+  isContextQuery,
+  isContextSourceQuery,
   isDocumentUpload,
   isExecutionSnapshot,
   isGoalBudgetOwner,
@@ -68,6 +70,7 @@ import {
   isWorkCommentWrite,
   isWorkQuery,
   isWorkWrite,
+  legacySchedule,
   legacyWorkItem,
   legacyWorkList,
   legacyWorkReceipt,
@@ -131,11 +134,7 @@ async function groupStatus(groups: Groups | undefined, modern: boolean) {
 function scheduleReply(item: Schedule, modern: boolean) {
   if (modern) return item;
   if (item.rule.kind === 'file') throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
-  const { automation: _automation, ...legacy } = item;
-  return {
-    ...legacy,
-    history: legacy.history.map(({ source: _source, monitor: _monitor, ...entry }) => entry),
-  };
+  return legacySchedule(item);
 }
 async function scheduleStatus(
   schedules: Schedules | undefined,
@@ -216,6 +215,8 @@ const recoveryReads = new Set([
   '/api/chats/receipt',
   '/api/chats/history',
   '/api/transcripts/statistics',
+  '/api/context/inspect',
+  '/api/context/source',
   '/api/transcripts/list',
   '/api/transcripts/content',
   '/api/memory/history',
@@ -1488,6 +1489,15 @@ export async function startPrototype({
               return json(res, await models.transcriptContent(data.scope, data.seq, data.offset));
             throw new Fault('INVALID_TRANSCRIPT_QUERY', 400);
           }
+          if (url.pathname.startsWith('/api/context/') && req.method === 'POST') {
+            if (!models) throw new Fault('CONTEXT_CAPTURE_UNAVAILABLE', 503);
+            const data = await body(req);
+            if (url.pathname === '/api/context/inspect' && isContextQuery(data))
+              return json(res, await models.inspectContext(data));
+            if (url.pathname === '/api/context/source' && isContextSourceQuery(data))
+              return json(res, await models.contextSource(data));
+            throw new Fault('INVALID_CONTEXT_QUERY', 400);
+          }
           if (url.pathname.startsWith('/api/chats/') && req.method === 'POST') {
             if (!models) throw new Fault('CHAT_UNAVAILABLE', 503);
             const data = await body(req);
@@ -2015,6 +2025,7 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
+              ...(models ? { contextInspector: 1 } : {}),
               interactions: models ? (await models.interactions.list()).map(interactionView) : [],
               ...(modernApprovals && models
                 ? { approvalRules: await models.approvalRules.status() }

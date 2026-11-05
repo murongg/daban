@@ -30,6 +30,14 @@
     "test": "npm run test:runtime --prefix ../.."
   },
   "exports": {
+    "./connect": {
+      "types": "./dist/connect.d.ts",
+      "import": "./dist/connect.js"
+    },
+    "./remote": {
+      "types": "./dist/remote.d.ts",
+      "import": "./dist/remote.js"
+    },
     "./archive": {
       "types": "./dist/archive.d.ts",
       "import": "./dist/archive.js"

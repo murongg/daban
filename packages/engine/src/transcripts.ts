@@ -333,20 +333,24 @@ export class Transcripts {
     // Content offsets are JavaScript UTF-16 offsets, not SQLite's Unicode code-point length().
     const encoded = JSON.stringify({ ...meta, characters: text.length });
     const old = this.db
-      .select({ meta: transcriptEvents.meta, body: transcriptEvents.body })
+      .select({
+        seq: transcriptEvents.seq,
+        meta: transcriptEvents.meta,
+        body: transcriptEvents.body,
+      })
       .from(transcriptEvents)
       .where(and(eq(transcriptEvents.run, scope.runId), eq(transcriptEvents.source, source)))
       .get();
     if (old) {
       if (old.meta !== encoded || old.body !== text) throw new Fault('TRANSCRIPT_EVENT_CONFLICT');
-      return;
+      return metadata(old.seq, old.meta);
     }
     const last = this.db
       .select({ seq: max(transcriptEvents.seq) })
       .from(transcriptEvents)
       .where(eq(transcriptEvents.run, scope.runId));
     // The next sequence number is computed inside the INSERT so allocation stays one statement.
-    this.db
+    const inserted = this.db
       .insert(transcriptEvents)
       .values({
         run: scope.runId,
@@ -355,7 +359,19 @@ export class Transcripts {
         meta: encoded,
         body: text,
       })
-      .run();
+      .returning({ seq: transcriptEvents.seq })
+      .get();
+    return metadata(inserted.seq, encoded);
+  }
+  item(scope: TranscriptScope, seq: number) {
+    if (!this.find(scope) || !integer(seq) || !seq) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
+    const row = this.db
+      .select({ meta: transcriptEvents.meta })
+      .from(transcriptEvents)
+      .where(and(eq(transcriptEvents.run, scope.runId), eq(transcriptEvents.seq, seq)))
+      .get();
+    if (!row) throw new Fault('TRANSCRIPT_NOT_FOUND', 404);
+    return metadata(seq, row.meta);
   }
   finish(scope: TranscriptScope) {
     if (this.find(scope)?.state !== 'recording') throw new Fault('TRANSCRIPT_CLOSED');

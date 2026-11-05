@@ -27,6 +27,7 @@ import { type Dispatch, type RefObject, useCallback, useEffect, useMemo, useStat
 import { WindowList } from '../components/collection/WindowList';
 import { IconButton } from '../components/controls/Button';
 import { Avatar, Brand } from '../features/bots/Avatar';
+import { RemoteButton } from '../features/computer/Remote';
 import { t, useLocale } from '../i18n/locale';
 import { useRuntime } from './Runtime';
 import { SectionDialog, type SectionEdit } from './SectionDialog';
@@ -281,6 +282,7 @@ export function Sidebar({
             <X />
           </IconButton>
         </header>
+        <RemoteButton />
         <div className="search-wrap">
           <Search />
           <input

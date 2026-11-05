@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "preview": "vite preview --host 127.0.0.1 --port 5174 --strictPort",
-    "build": "tsc -p tsconfig.json && vite build && vite build --config electron/vite.config.ts && vite build --config electron/vite.config.ts --mode preload",
+    "build": "tsc -p tsconfig.json && vite build && vite build --config electron/vite.config.ts && vite build --config electron/vite.config.ts --mode preload && vite build --config electron/vite.config.ts --mode peer-preload",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --root ../.. --config vitest.config.ts apps/desktop",
     "start": "electron ."
@@ -47,6 +47,7 @@
   },
   "optionalDependencies": {
     "@computer-use/libnut-darwin": "2.7.1",
+    "@computer-use/libnut-linux": "2.7.1",
     "@computer-use/libnut-win32": "2.7.1"
   },
   "license": "AGPL-3.0-only"

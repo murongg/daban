@@ -10,7 +10,7 @@ import {
   recoveryBlocked,
 } from '@daban/protocol';
 import { type Dispatch, useCallback, useEffect, useRef, useState } from 'react';
-import { clientCache } from '../../app/cache';
+import { useCache } from '../../app/CacheProvider';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { type Action, reduce, type State } from '../../app/state';
 import { serialize, storageKey } from '../../app/storage';
@@ -64,6 +64,7 @@ export function useCopy(
   kind: 'bot' | 'group',
   { state, dispatch, open, close, notify }: CopyProps,
 ) {
+  const storage = useCache();
   const runtime = useRuntime();
   const stored = kind === 'bot' ? state.botCopy : state.groupCopy;
   const pending = useRef<CopyRequest | undefined>(stored),
@@ -176,7 +177,7 @@ export function useCopy(
       action = hold(request);
     try {
       // Persist before the effect, and never create a placeholder that legacy registration could occupy.
-      clientCache().setItem(storageKey, serialize(reduce(state, action)));
+      storage.setItem(storageKey, serialize(reduce(state, action)));
     } catch {
       setError(t('copies.copyRequestCouldNotSavedLocallyFree'));
       return;

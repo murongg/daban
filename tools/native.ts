@@ -15,7 +15,9 @@ export async function packageNative(
       ? '@computer-use/libnut-darwin'
       : platform === 'win32'
         ? '@computer-use/libnut-win32'
-        : undefined;
+        : platform === 'linux'
+          ? '@computer-use/libnut-linux'
+          : undefined;
   if (!dependency) return;
   const versions = new Map<string, string>();
   async function copy(name: string, from: string, optional = false): Promise<unknown> {
@@ -100,7 +102,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exit(result.status ?? 1);
   } else if (mode === 'abi') {
     const name =
-      process.platform === 'win32' ? '@computer-use/libnut-win32' : '@computer-use/libnut-darwin';
+      process.platform === 'win32'
+        ? '@computer-use/libnut-win32'
+        : process.platform === 'linux'
+          ? '@computer-use/libnut-linux'
+          : '@computer-use/libnut-darwin';
     const value: unknown = requireDesktop(name);
     for (const method of ['moveMouse', 'keyTap', 'typeString', 'getActiveWindow'])
       if (!value || typeof value !== 'object' || typeof Reflect.get(value, method) !== 'function')

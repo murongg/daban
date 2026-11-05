@@ -1,0 +1,16 @@
+services:
+  computer:
+    build:
+      context: ../..
+      dockerfile: apps/desktop/Dockerfile
+    # libnut 2.7.1 currently distributes an x86-64 Linux binary.
+    platform: linux/amd64
+    init: false
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      DABAN_CONNECT_SERVER: ${DABAN_CONNECT_SERVER:?Set your HTTPS Connect origin}
+    volumes:
+      - computer:/data
+volumes:
+  computer:

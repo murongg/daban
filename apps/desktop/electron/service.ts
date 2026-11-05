@@ -14,6 +14,7 @@ import {
   isLocalComputerCommand,
   isNotionAuthorizeUrl,
   isRebootStatus,
+  isRemoteSnapshot,
   type McpCommand,
   modelCatalog,
   modelHasVision,
@@ -23,6 +24,7 @@ import {
   type RuntimeSnapshot,
   recoveryBlocked,
   recoveryReader,
+  remoteDeviceId,
   type SetupStatus,
 } from '@daban/protocol';
 import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron';
@@ -66,6 +68,7 @@ export function runtimeService(
   agent?: AgentConfig,
   local?: LocalComputer,
   platform: NodeJS.Platform = process.platform,
+  remote?: { request(command: RuntimeCommand, host: string): Promise<unknown> },
 ) {
   const dataRoot = agent?.dataRoot ?? join(userData, 'agent');
   const vmConfig = agent?.vmConfig ?? join(userData, 'runtime.json');
@@ -518,7 +521,11 @@ export function runtimeService(
     });
     return connecting;
   }
-  async function dispatch(command: RuntimeCommand): Promise<unknown> {
+  async function dispatch(
+    command: RuntimeCommand,
+    _device?: unknown,
+    schema: 1 | 2 = 2,
+  ): Promise<unknown> {
     if (isAppCommand(command) && !['app.catalog', 'app.oauth.status'].includes(command.type))
       throw new Error('OAUTH_INTERACTIVE_REQUIRED');
     if (updating) {
@@ -609,6 +616,15 @@ export function runtimeService(
       if (command.type === 'local.status') return local.status();
       if (command.type === 'local.permissions') return local.requestPermissions();
       if (command.type === 'local.preview') return local.preview(command.session, command.revision);
+      if (command.type === 'local.observe')
+        return local.observeHuman(command.session, command.revision);
+      if (command.type === 'local.input')
+        return local.inputHuman(
+          command.session,
+          command.revision,
+          command.observation,
+          command.input,
+        );
       if (command.type === 'local.connect') {
         await refresh();
         const profile = state.profiles.find((profile) => profile.id === command.bot);
@@ -779,8 +795,13 @@ export function runtimeService(
       if (recoveryBlocked({ ...state, reboot })) throw new Error('RUNTIME_RECOVERY_PENDING');
     }
     const epoch = connection;
-    const transcript = command.type === 'transcript.list' || command.type === 'transcript.content';
-    const result = await client.invoke(command);
+    const transcript = [
+      'transcript.list',
+      'transcript.content',
+      'context.inspect',
+      'context.source',
+    ].includes(command.type);
+    const result = await client.invoke(command, schema);
     // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.
     if (transcript && (closed || epoch !== connection)) throw new Error('RUNTIME_OFFLINE');
     if (!transcript && !['frame', 'files.list', 'files.read'].includes(command.type))
@@ -823,7 +844,7 @@ export function runtimeService(
     if (closed || client !== owner || connection !== epoch) throw new Error('RUNTIME_OFFLINE');
     const result = isAppCommand(command)
       ? await owner.appInteractive(command, proof)
-      : await owner.invoke(command, proof);
+      : await owner.mcpInteractive(command, proof);
     if (closed || client !== owner || connection !== epoch) throw new Error('RUNTIME_OFFLINE');
     if (command.type !== 'app.oauth.start') return result;
     if (
@@ -850,7 +871,7 @@ export function runtimeService(
     }
     return result.receipt;
   }
-  ipcMain.handle('daban:runtime', async (event, value): Promise<RuntimeReply> => {
+  ipcMain.handle('daban:runtime', async (event, value, target: unknown): Promise<RuntimeReply> => {
     const frame = event.senderFrame;
     if (
       !trustedSender(
@@ -865,6 +886,17 @@ export function runtimeService(
       return { ok: false, error: 'UNTRUSTED_SENDER' };
     try {
       const command = parseCommand(value);
+      if (target !== undefined && target !== null) {
+        if (!remoteDeviceId(target)) throw Error('REMOTE_INVALID_HOST');
+        // These human UI actions belong to the controller even when its workspace is remote.
+        if (command.type === 'clipboard.write' || command.type === 'link.open')
+          return { ok: true, value: await dispatch(command) };
+        if (!remote) throw Error('REMOTE_UNAVAILABLE');
+        const result = await remote.request(command, target);
+        if ((command.type === 'status' || command.type === 'connect') && !isRemoteSnapshot(result))
+          throw Error('INVALID_RUNTIME_STATE');
+        return { ok: true, value: result };
+      }
       // This closure is entered only after validating the owned renderer frame; invokeLocal/remote dispatch cannot mint it.
       const result =
         (isAppCommand(command) && !['app.catalog', 'app.oauth.status'].includes(command.type)) ||
@@ -936,6 +968,13 @@ export function runtimeService(
     }
   }
   return {
+    invokeLocal: dispatch,
+    localSnapshot: () => state,
+    publishRemote(value: unknown, host: string) {
+      if (closed || !remoteDeviceId(host) || !isRemoteSnapshot(value)) return;
+      for (const window of BrowserWindow.getAllWindows())
+        window.webContents.send('daban:runtime-state', value, host);
+    },
     connect,
     releaseInputs,
     async prepareUpdate() {
