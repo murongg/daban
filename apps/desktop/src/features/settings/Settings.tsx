@@ -7,6 +7,7 @@ import {
   Moon,
   Plug,
   Settings2,
+  Store,
   Sun,
   Waypoints,
 } from 'lucide-react';
@@ -18,6 +19,7 @@ import { serialize } from '../../app/storage';
 import { Dialog } from '../../components/controls/Dialog';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
 import { ArchiveList } from '../bots/Archive';
+import { GallerySources } from '../bots/GallerySources';
 import { Budgets } from '../budgets/Budgets';
 import { Diagnostics } from '../computer/Diagnostics';
 import { RecoveryEntry } from '../computer/Recovery';
@@ -40,6 +42,7 @@ export function Settings({
   active = true,
   onLifecycle,
   onRecovery,
+  initialCategory = 'general',
 }: {
   state: State;
   dispatch: Dispatch<Action>;
@@ -47,6 +50,7 @@ export function Settings({
   active?: boolean;
   onLifecycle?: (bot: string) => unknown;
   onRecovery?: () => unknown;
+  initialCategory?: string;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -58,7 +62,7 @@ export function Settings({
     !!preparation &&
     ['downloading', 'extracting', 'verifying', 'cancelling'].includes(preparation.phase);
   const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
-  const [category, setCategory] = useState('general');
+  const [category, setCategory] = useState(initialCategory);
   const [error, setError] = useState('');
   const [connectionDialog, setConnectionDialog] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
@@ -124,6 +128,13 @@ export function Settings({
           <Budgets />
         </>
       ),
+    },
+    {
+      id: 'gallery',
+      label: t('common.botGallery'),
+      icon: Store,
+      description: t('templates.settingsDescription'),
+      content: <GallerySources active={category === 'gallery'} />,
     },
     {
       id: 'projects',

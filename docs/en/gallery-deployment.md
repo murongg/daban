@@ -106,7 +106,7 @@ For direct Node deployment, build with `npm run build:gallery`, set the data dir
 
 ## Using the gallery
 
-Add its origin and optional token in Daban's Bot Gallery. Review a specific version before installing it as a new Bot. That screen also accepts offline v3 packages. Saved Bot profiles expose template authoring, package download, publication, update previews and configuration history.
+Add its origin and optional token under Settings → Bot gallery. The catalog's Manage sources action opens the same settings. Select a source in Bot Gallery and review a specific version before installing it as a new Bot. Import template package opens the offline v3 package picker only when requested. Saved Bot profiles expose template authoring, package download, publication, update previews and configuration history.
 
 Default working preferences are authored separately from learned personal memory. Downloading or publishing freezes a release; changed content requires a new version. Repeating an identical publication is safe. Updates compare the installed baseline, personal changes and target release. Conflicting items require explicit choices. New or changed skills stay disabled until reviewed; rollback does not revive old skill consent.
 

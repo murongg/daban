@@ -1,4 +1,13 @@
 export const english = {
+  'templates.manageSources': 'Manage sources',
+  'templates.settingsDescription':
+    'Connect official or self-hosted galleries and manage their access credentials.',
+  'templates.connectionHelp':
+    'Enter the gallery origin without /api/v1. Public galleries do not require a token.',
+  'templates.savedCredential': 'Access token saved',
+  'templates.sourcesUnavailable': 'Update the background service to configure gallery sources.',
+  'templates.previewImport':
+    'Choose a Bot template package to review its contents before installing.',
   'templates.bindSource': 'Bind verified update source',
   'templates.visibility': 'Visibility for a new template',
   'templates.public': 'Public',

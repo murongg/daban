@@ -1,6 +1,12 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'templates.manageSources': '管理来源',
+  'templates.settingsDescription': '连接官方或自建广场，管理地址和访问凭据。',
+  'templates.connectionHelp': '填写广场主页地址，无需添加 /api/v1。公开广场可以不填令牌。',
+  'templates.savedCredential': '已保存访问令牌',
+  'templates.sourcesUnavailable': '更新后台服务后即可配置广场来源。',
+  'templates.previewImport': '选择 Bot 模板包，核对内容后再安装。',
   'templates.bindSource': '绑定已核对的更新源',
   'templates.visibility': '新模板可见范围',
   'templates.public': '公开',

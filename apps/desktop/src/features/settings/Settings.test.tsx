@@ -5,7 +5,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -265,4 +265,84 @@ it('explains native-only setup without offering Linux installation or VM recover
     within(panel).getByText('在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。'),
   ).toBeVisible();
   expect(within(dialog).queryByRole('button', { name: '检查并恢复' })).toBeNull();
+});
+
+it('configures gallery connections inside settings and keeps credentials out of the UI cache', async () => {
+  const invoke = connect();
+  const reply = await invoke({ type: 'status' });
+  if (!reply.ok) throw Error('SYNTHETIC STATUS FAILED');
+  (reply.value as RuntimeSnapshot).botReleases = true;
+  invoke.mockImplementation(async (command) => {
+    if (command.type === 'status') return reply;
+    if (command.type === 'gallery.sources') return { ok: true, value: [] };
+    if (command.type === 'gallery.source.remove') return { ok: true, value: [] };
+    if (command.type === 'gallery.source.save')
+      return {
+        ok: true,
+        value: [
+          {
+            origin: command.origin,
+            sourceId: 'mock-source',
+            name: 'Synthetic gallery',
+            authenticated: true,
+          },
+        ],
+      };
+    return { ok: true, value: {} };
+  });
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  const dialog = await screen.findByRole('dialog', { name: '设置' });
+  await userEvent.click(within(dialog).getByRole('tab', { name: 'Bot 广场' }));
+  await userEvent.type(
+    within(dialog).getByLabelText('广场地址'),
+    'https://mock-gallery.example.test',
+  );
+  await userEvent.type(
+    within(dialog).getByLabelText('访问令牌（可选）'),
+    'SYNTHETIC GALLERY CREDENTIAL',
+  );
+  await userEvent.click(within(dialog).getByRole('button', { name: '添加广场' }));
+  expect(await within(dialog).findByText('Synthetic gallery')).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith({
+    type: 'gallery.source.save',
+    origin: 'https://mock-gallery.example.test',
+    token: 'SYNTHETIC GALLERY CREDENTIAL',
+  });
+  expect(within(dialog).getByLabelText('访问令牌（可选）')).toHaveValue('');
+  expect(JSON.stringify(localStorage)).not.toContain('SYNTHETIC GALLERY CREDENTIAL');
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: '移除此广场 Synthetic gallery' }),
+  );
+  await waitFor(() => expect(within(dialog).queryByText('Synthetic gallery')).toBeNull());
+  expect(invoke).toHaveBeenCalledWith({
+    type: 'gallery.source.remove',
+    origin: 'https://mock-gallery.example.test',
+  });
+});
+
+it('opens source management from the gallery without leaving the configuration form in the catalog', async () => {
+  const invoke = connect();
+  const reply = await invoke({ type: 'status' });
+  if (!reply.ok) throw Error('SYNTHETIC STATUS FAILED');
+  (reply.value as RuntimeSnapshot).botReleases = true;
+  invoke.mockImplementation(async (command) =>
+    command.type === 'status'
+      ? reply
+      : { ok: true, value: command.type === 'gallery.sources' ? [] : {} },
+  );
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: 'Bot 广场' }));
+  expect(await screen.findByRole('button', { name: '管理来源' })).toBeVisible();
+  expect(screen.queryByLabelText('广场地址')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: '管理来源' }));
+  const dialog = await screen.findByRole('dialog', { name: '设置' });
+  expect(within(dialog).getByRole('tab', { name: 'Bot 广场' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  expect(within(dialog).getByLabelText('广场地址')).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByLabelText('广场地址')).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Bot 广场', level: 1 })).toBeVisible();
 });

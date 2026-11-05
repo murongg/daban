@@ -195,8 +195,10 @@ function Workbench() {
     }, []),
   );
   const [settingsOpen, setSettingsOpen] = useState(legacySettings.current);
+  const [settingsCategory, setSettingsCategory] = useState('general');
   const dispatch = useCallback((action: Action) => {
     if (action.type === 'view' && action.view === 'settings') {
+      setSettingsCategory('general');
       setSettingsOpen(true);
       return;
     }
@@ -1095,15 +1097,20 @@ function Workbench() {
             />
           )
         ) : state.view === 'gallery' ? (
-          <>
+          <div className="bot-gallery">
             <RemoteGallery
+              active={!settingsOpen}
+              onSettings={() => {
+                setSettingsCategory('gallery');
+                setSettingsOpen(true);
+              }}
               onInstalled={(profile) => {
                 dispatch({ type: 'profiles', profiles: [profile] });
                 dispatch({ type: 'select', bot: profile.id });
               }}
             />
             <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
-          </>
+          </div>
         ) : state.view === 'tasks' ? (
           <Tasks state={state} dispatch={dispatch} work={work} />
         ) : state.view === 'inbox' ? (
@@ -1122,6 +1129,7 @@ function Workbench() {
           state={state}
           dispatch={dispatch}
           onClose={closeSettings}
+          initialCategory={settingsCategory}
           active={!modal}
           onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
           onRecovery={() => setModal({ type: 'recovery' })}
