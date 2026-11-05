@@ -1349,7 +1349,6 @@ it.each([false, true])(
       goalId: 'mock-goal',
       goalRevision: 2,
       humanEpoch: 1,
-      budget: { budgetId: 'mock-budget', revision: 1 },
     };
     const invoke = vi.fn(async (command: RuntimeCommand) =>
       command.type === 'task.start'
@@ -1359,7 +1358,7 @@ it.each([false, true])(
             value:
               command.type === 'status'
                 ? snapshot
-                : command.type === 'budget.goal'
+                : command.type === 'goal.target'
                   ? legacy
                     ? null
                     : target
@@ -1378,7 +1377,7 @@ it.each([false, true])(
     await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
     await userEvent.click(await screen.findByRole('button', { name: '重试发送' }));
     const calls = invoke.mock.calls.map(([value]) => value);
-    expect(calls.filter((value) => value.type === 'budget.goal')).toHaveLength(1);
+    expect(calls.filter((value) => value.type === 'goal.target')).toHaveLength(1);
     const sends = calls.filter((value) => value.type === 'task.start');
     expect(sends).toHaveLength(2);
     expect(sends[0]).toEqual(sends[1]);
@@ -1387,52 +1386,63 @@ it.each([false, true])(
   },
 );
 
-it('captures the selected project in an explicit Human Goal target without adding automation authority', async () => {
-  const state = seedDemoState();
-  const project = { projectId: 'mock-project', revision: 1 };
-  state.projectScopes = { research: project };
-  localStorage.setItem(seedStorageKey, seedSerialize(state));
-  const snapshot = disconnected('ready');
-  snapshot.protocolVersion = 45;
-  snapshot.model.configured = true;
-  const target = {
-    owner: { bot: 'a', chatRevision: 0, project },
-    sessionId: 'mock-project-session',
-    goalId: 'mock-project-goal',
-    goalRevision: 1,
-    humanEpoch: 0,
-    budget: { budgetId: 'mock-project-budget', revision: 1 },
-  };
-  const invoke = vi.fn(async (command: RuntimeCommand) =>
-    command.type === 'task.start'
-      ? { ok: false as const, error: 'RUNTIME_UNAVAILABLE' }
-      : {
-          ok: true as const,
-          value:
-            command.type === 'status'
-              ? snapshot
-              : command.type === 'budget.goal'
-                ? target
-                : command.type === 'projects.list'
-                  ? []
-                  : command.type === 'projects.status'
-                    ? { available: true, execution: true }
-                    : {},
-        },
-  );
-  Object.defineProperty(window, 'daban', {
-    configurable: true,
-    value: {
-      platform: 'darwin',
-      runtime: { invoke, subscribe: () => () => undefined } as unknown as RuntimeBridge,
-    },
-  });
-  render(<App />);
-  await userEvent.type(await screen.findByRole('textbox', { name: '发送消息' }), '/goal resume');
-  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
-  const calls = invoke.mock.calls.map(([command]) => command);
-  expect(calls).toContainEqual({ type: 'budget.goal', owner: target.owner });
-  const send = calls.find((command) => command.type === 'task.start');
-  expect(send).toMatchObject({ type: 'task.start', task: { project, goalResume: target } });
-  expect(send && 'automation' in send).toBe(false);
-});
+it.each([false, true])(
+  'a restored project selection cannot change a new task scope (scoped attachment=%s)',
+  async (scopedAttachment) => {
+    const state = {
+      ...seedDemoState(),
+      projectScopes: { research: { projectId: 'mock-retired-project', revision: 1 } },
+    };
+    if (scopedAttachment) {
+      state.files.push({
+        id: 'mock-retired-file',
+        name: 'same-name.txt',
+        kind: 'TXT',
+        size: '24 B',
+        modified: 'synthetic',
+        content: 'SYNTHETIC PRIVATE BYTES',
+        runtimePath: 'same-name.txt',
+        runtimeScope: { project: state.projectScopes.research },
+      });
+      state.attachments.research = ['mock-retired-file'];
+    }
+    localStorage.setItem(seedStorageKey, seedSerialize(state));
+    const snapshot = disconnected('ready');
+    snapshot.protocolVersion = 45;
+    snapshot.model.configured = true;
+    const invoke = vi.fn(async (command: RuntimeCommand) =>
+      command.type === 'task.start'
+        ? { ok: false as const, error: 'RUNTIME_UNAVAILABLE' }
+        : {
+            ok: true as const,
+            value: command.type === 'status' ? snapshot : {},
+          },
+    );
+    Object.defineProperty(window, 'daban', {
+      configurable: true,
+      value: {
+        platform: 'darwin',
+        runtime: { invoke, subscribe: () => () => undefined } as unknown as RuntimeBridge,
+      },
+    });
+    render(<App />);
+    await userEvent.type(
+      await screen.findByRole('textbox', { name: '发送消息' }),
+      'SYNTHETIC ORDINARY TASK',
+    );
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    const sends = invoke.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command.type === 'task.start');
+    if (scopedAttachment) {
+      expect(sends).toHaveLength(0);
+      expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(
+        'SYNTHETIC ORDINARY TASK',
+      );
+      return;
+    }
+    expect(sends).toHaveLength(1);
+    expect(sends[0]).toMatchObject({ task: { prompt: 'SYNTHETIC ORDINARY TASK' } });
+    if (sends[0].type === 'task.start') expect(sends[0].task.project).toBeUndefined();
+  },
+);

@@ -68,6 +68,7 @@ export const callReceipts = sqliteTable(
     tool: text().notNull(),
     phase: text().notNull(),
     preview: text().notNull(),
+    // Retain the historical column and migration so existing receipt databases still open.
     policyDecision: text(),
     result: text(),
     error: text(),

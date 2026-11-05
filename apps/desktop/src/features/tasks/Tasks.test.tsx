@@ -563,15 +563,3 @@ it('shows the six workflow columns only when the runtime supports them', async (
     within(screen.getByRole('region', { name: '已关闭' })).getByText('合成已关闭'),
   ).toBeVisible();
 });
-
-it('keeps execution and delivery separate from saving a task, including on an older service', async () => {
-  const live = connect([item('mock-delivery', '合成交付任务')], 45);
-  render(<App />);
-  await tasks();
-  await userEvent.click(await screen.findByRole('button', { name: '查看 合成交付任务' }));
-  const region = await screen.findByRole('region', { name: '执行与交付' });
-  expect(within(region).getByText('当前服务不支持任务交付，仍可编辑任务卡。')).toBeVisible();
-  expect(
-    live.calls.some((call) => call.type.startsWith('delivery.') || call.type === 'task.start'),
-  ).toBe(false);
-});

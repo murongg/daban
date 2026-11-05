@@ -61,6 +61,7 @@ function barrier() {
 }
 const roots: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   waitingRead.file = '';
   waitingRead.wait = undefined;
   transport.resolve.mockReset();
@@ -77,6 +78,8 @@ test.each(['retired', 'cancelled', 'timeout', 'certificate'] as const)(
     const tls = new PassThrough();
     const handshake = barrier();
     const abort = new AbortController();
+    const deadline = new AbortController();
+    if (mode === 'timeout') vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
     transport.resolve.mockResolvedValue([{ address: '8.8.8.8', family: 4 }]);
     transport.dial.mockResolvedValue(socket);
     transport.tls.mockImplementation(() => {
@@ -105,7 +108,7 @@ test.each(['retired', 'cancelled', 'timeout', 'certificate'] as const)(
         });
       },
     );
-    const pending = new SearchClient(undefined, mode === 'timeout' ? 20 : 30000).query(
+    const pending = new SearchClient().query(
       'duckduckgo',
       '',
       'synthetic query',
@@ -124,6 +127,7 @@ test.each(['retired', 'cancelled', 'timeout', 'certificate'] as const)(
       current = false;
       tls.emit('secureConnect');
     } else if (mode === 'cancelled') abort.abort();
+    else if (mode === 'timeout') deadline.abort(new Error('Synthetic deadline'));
     else if (mode === 'certificate') tls.emit('error', new Error('Synthetic certificate refused'));
     const codes = {
       retired: 'UNAUTHORIZED',

@@ -19,13 +19,8 @@ import {
   isComputerRequest,
   isDocumentUpload,
   isExecutionRequest,
-  isProjectFileScope,
   isSkillPackage,
   modelExecutionCapability,
-  type ProjectFileScope,
-  type ProjectScope,
-  projectCapability,
-  projectReduction,
   skillPackageCapability,
   taskRunCapability,
   validAgentId,
@@ -41,7 +36,6 @@ import { syncDirectory } from './durability.js';
 import { Machine } from './machine.js';
 import type { ProcessSnapshot } from './processes.js';
 import { ProcessManager } from './processes.js';
-import { ProjectResources } from './project-resources.js';
 import type { WorkspaceDirectory } from './workspace.js';
 import { WorkspaceFiles } from './workspace.js';
 
@@ -61,7 +55,6 @@ interface GuestRun {
   draining?: Promise<unknown>;
 }
 interface Handle {
-  project?: ProjectFileScope;
   directory: WorkspaceDirectory;
   queue: Promise<unknown>;
   abort: AbortController;
@@ -179,34 +172,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
   const authority = new Authority(path.join(directory, 'token'));
   const viewers = new ViewerGrants();
   const workspace = new WorkspaceFiles(shared);
-  const legacyRoot = await workspace.base();
-  const projects = new ProjectResources(path.join(directory, 'projects'), {
-    legacyRoot,
-    prepare: (profile) => machine.checkProfile(profile, computers.control),
-    changing: (previous, next) => {
-      if (!previous || projectReduction(previous.project, next.project)) return;
-      const bots = new Set(
-        [...previous.project.grants, ...next.project.grants].map((grant) => grant.bot),
-      );
-      for (const bot of bots) {
-        try {
-          computers.assertStable(bot);
-        } catch {
-          throw new Fault('PROJECT_BUSY');
-        }
-      }
-      if (
-        [...bots].some(
-          (bot) =>
-            computers.available(bot) ||
-            [...runs.values()].some((value) => value.run.bot === bot && !value.closing),
-        )
-      )
-        throw new Fault('PROJECT_BUSY');
-    },
-  });
-  // Legacy receipts remain available even when the project mirror fails closed.
-  await projects.ready.catch(() => undefined);
+  await workspace.base();
   const processes = new ProcessManager({ directory: path.join(directory, 'processes'), boot });
   const documents = new Documents();
   const runs = new Map<string, GuestRun>();
@@ -225,7 +191,6 @@ export async function startExecutor(options: ExecutorOptions = {}) {
   const operationContext = new AsyncLocalStorage<string>();
   let computers: Computers;
   let machine: Machine;
-  const bindings = new Map<string, ProjectScope>();
   let tools: AgentTools;
   let ready = false;
   let origin = '';
@@ -245,7 +210,6 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         if (!instance) throw new Fault('UNAUTHORIZED', 403);
         if (!ready) throw new Fault('EXECUTION_STARTING', 503);
         computers.assertInstance(bot, instance);
-        assertBound(bot, true);
         const browser = computers.browserFor(bot);
         if (url.search) throw new Fault('INVALID_REQUEST', 400);
         if (request.method === 'GET' && !action) {
@@ -341,11 +305,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
       },
     });
     await computers.ready;
-    tools = new AgentTools(computers.facade, workspace, { projects });
-    if (tools.computer)
-      tools.computer.authorize = async (run) => {
-        if (run.project) projects.get(run.project, run.bot);
-      };
+    tools = new AgentTools(computers.facade, workspace);
     tools.shellRunner = async (run, command) => {
       // Concurrent calls keep their own durable process identity across service replacement.
       const id = operationContext.getStore();
@@ -360,53 +320,8 @@ export async function startExecutor(options: ExecutorOptions = {}) {
     await processes.close();
     throw error;
   }
-  function bindProject(bot: string, scope?: ProjectScope) {
-    // A connecting screen must never combine its old HOME with a newly selected profile.
-    try {
-      computers.assertStable(bot);
-    } catch {
-      throw new Fault('PROJECT_BUSY');
-    }
-    if (scope) projects.get(scope, bot);
-    const key = scope ? `${scope.projectId}:${scope.revision}` : 'legacy-shared';
-    if (machine.binding(bot) === key) return { bot, ...(scope ? { scope } : {}) };
-    if (
-      computers.available(bot) ||
-      [...runs.values()].some((value) => value.run.bot === bot && !value.closing)
-    )
-      throw new Fault('PROJECT_BUSY');
-    if (scope) {
-      const resources = projects.get(scope, bot);
-      const grant = resources.project.grants.find((item) => item.bot === bot)!;
-      machine.bind(bot, {
-        key,
-        workspace: projects.files({ scope, resourceId: resources.files, bot }),
-        ...(grant.browser ? { profile: projects.profile(scope, bot) } : {}),
-      });
-      bindings.set(bot, structuredClone(scope));
-    } else {
-      machine.bind(bot);
-      bindings.delete(bot);
-    }
-    return { bot, ...(scope ? { scope } : {}) };
-  }
-  function assertBound(bot: string, browser = false) {
-    const scope = bindings.get(bot);
-    if (scope) projects.get(scope, bot, browser ? 'browser' : 'read');
-  }
   async function scoped(params: Record<string, unknown>) {
-    if (isProjectFileScope(params.project)) {
-      if (Array.isArray(params.parts)) {
-        const reference = params.project;
-        if (
-          JSON.stringify(params.parts) !==
-          JSON.stringify(['model-runs', reference.runId, reference.bot])
-        )
-          throw new Fault('PROJECT_ACCESS_DENIED', 403);
-        return new WorkspaceFiles(projects.runs(reference), projects.runs(reference));
-      }
-      return projects.workspace(params.project, params.root, params.canonical);
-    }
+    if (params.project !== undefined) throw new Fault('PROJECT_RETIRED', 409);
     if (params.root === undefined) {
       if (params.canonical !== undefined && params.canonical !== (await workspace.base()))
         throw new Fault('WORKSPACE_MOVED');
@@ -581,17 +496,8 @@ export async function startExecutor(options: ExecutorOptions = {}) {
   }
   async function call(request: ExecutionRequest, signal: AbortSignal): Promise<unknown> {
     const { method, params } = request;
-    const projectBound =
-      (method === 'tools.open' && params.project !== undefined) ||
-      method.startsWith('projects.') ||
-      isProjectFileScope(params.project) ||
-      !!handles.get(String(params.handleId))?.project ||
-      !!runs.get(String(params.runId))?.run.project;
-    if (projectBound && (request.boot !== boot || request.nonce !== nonce))
-      throw new Fault('EXECUTION_GUEST_RESTARTED');
-    if (method === 'projects.sync') return projects.sync(params);
-    if (method === 'projects.bind')
-      return bindProject(String(params.bot), params.scope as ProjectScope | undefined);
+    // Retained resource metadata must never select a live workspace after retirement.
+    if (params.project !== undefined) throw new Fault('PROJECT_RETIRED', 409);
     if (method === 'computer.snapshot') {
       const raw = await computers.snapshot();
       const result: ExecutionSnapshot = {
@@ -606,7 +512,6 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           browserTaskCapability,
           taskRunCapability,
           fileObservationCapability,
-          ...(projects.available() ? [projectCapability] : []),
         ],
         computer: {
           mode: raw.mode,
@@ -648,7 +553,6 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         return enqueue(handle, async () => {
           const combined = AbortSignal.any([signal, handle.abort.signal]);
           combined.throwIfAborted();
-          if (handle.project) projects.get(handle.project.scope, handle.project.bot);
           if (method === 'workspace.verify') await handle.directory.verify();
           else
             await handle.directory.write(
@@ -682,7 +586,6 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         const handleId = randomUUID();
         handles.set(handleId, {
           directory: task,
-          ...(isProjectFileScope(params.project) ? { project: params.project } : {}),
           queue: Promise.resolve(),
           abort: new AbortController(),
           closing: false,
@@ -709,16 +612,11 @@ export async function startExecutor(options: ExecutorOptions = {}) {
         if (await retired(id)) throw new Fault('EXECUTION_RUN_CLOSED');
         const fields = params as unknown as ExecutionRun;
         const taskRunId = fields.taskRunId ?? fields.id;
-        bindProject(fields.bot, fields.project);
-        const base = fields.project
-          ? projects.workdir(projects.reference(fields.project, fields.bot, taskRunId))
-          : await workspace.base();
+        const base = await workspace.base();
         const canonical = await new WorkspaceFiles(fields.workdir, fields.canonicalRoot).base();
-        if (fields.project ? canonical !== base : !canonical.startsWith(base + path.sep))
-          throw new Fault('EXECUTION_WORKSPACE_SCOPE');
+        if (!canonical.startsWith(base + path.sep)) throw new Fault('EXECUTION_WORKSPACE_SCOPE');
         const run: AgentToolRun = {
           ...fields,
-          ...(fields.project ? { taskRunId } : {}),
           ...(fields.prompt ? { task: { requestId: taskRunId, prompt: fields.prompt } } : {}),
           abort: new AbortController(),
           toolCount: 0,
@@ -856,16 +754,6 @@ export async function startExecutor(options: ExecutorOptions = {}) {
     if (!target.startsWith('/') || target.startsWith('//'))
       throw new Fault('EXECUTION_INVALID_ROUTE', 400);
     const url = new URL(target, origin);
-    const bound = url.pathname.match(/^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(.+)$/);
-    if (
-      bound &&
-      !(
-        (bound[2] === 'input' && executionRecord(data.input) && data.input.type === 'release') ||
-        (bound[2] === 'control' && data.owner === 'agent')
-      )
-    )
-      assertBound(bound[1], bound[2].startsWith('browser'));
-
     if (
       method === 'POST' &&
       !url.search &&

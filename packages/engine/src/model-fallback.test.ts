@@ -1,4 +1,3 @@
-import type { DeliveryReference } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { canFallback, type FallbackInput, fallbackIssue } from './model-fallback.js';
 
@@ -54,22 +53,30 @@ async function runScenario(
     | 'two-failures'
     | 'revoked'
     | 'local-selection'
-    | 'unknown-capability',
+    | 'unknown-capability'
+    | 'context'
+    | 'context-queued'
+    | 'context-queued-failure',
   plan?: ('plan' | 'text' | 'tool' | 'failure')[],
   plannedModel: 'mock-primary' | 'mock-fallback' = 'mock-primary',
-  claimedDelivery = false,
 ) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-model-fallback-'));
   const starts: string[] = [];
   const order: string[] = [];
   const sessions: string[] = [];
   const rounds: string[] = [];
+  const queuedContext = scenario === 'context-queued' || scenario === 'context-queued-failure';
   const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
     Response.json({ data: [{ id: 'mock-primary' }, { id: 'mock-fallback' }] }),
   );
   let models: ModelRuns;
   let originalToken = '';
   let originalSession = '';
+  const incomingPressure: unknown[] = [];
+  const incomingBreakdown: unknown[] = [];
+  const projections: unknown[] = [];
+  let releaseCapture: (() => unknown) | undefined;
+  let pendingContext: Promise<unknown> | undefined;
   const failure = {
     type: 'turn/end',
     data: {
@@ -81,6 +88,10 @@ async function runScenario(
     async start() {
       starts.push(this.options.model);
       order.push(`start:${this.options.model}`);
+      if (this.options.model === 'mock-fallback' && queuedContext) {
+        releaseCapture?.();
+        await pendingContext;
+      }
     }
     async close() {
       order.push(`close:${this.options.model}`);
@@ -102,41 +113,6 @@ async function runScenario(
         run: async (_input: unknown, observer: { onNotification: (note: unknown) => unknown }) => {
           rounds.push(this.options.model);
           const job = models.jobs.get('mock-bot')!;
-          if (claimedDelivery) {
-            const params = {
-              scope: job.budget,
-              modelAttemptId: job.attemptId,
-              attemptId: `mock-wire-${rounds.length}`,
-              requestHash: 'a'.repeat(64),
-              rootSessionId: id,
-              sessionId: id,
-              purpose: 'main',
-            };
-            const rpc = (method: string, params: Record<string, unknown>) =>
-              models.rpc(job.bot, `Bearer ${job.token}`, {
-                id: `mock-budget-${rounds.length}`,
-                method,
-                params,
-              });
-            await rpc('budget.reserve', params);
-            await rpc('budget.dispatched', {
-              scope: job.budget,
-              modelAttemptId: job.attemptId,
-              attemptId: params.attemptId,
-            });
-            await rpc('budget.report', {
-              scope: job.budget,
-              runId: job.id,
-              attemptId: params.attemptId,
-              usage: {
-                state: 'reported',
-                inputTokens: 5,
-                outputTokens: 1,
-                cacheReadTokens: 0,
-                cacheWriteTokens: 0,
-              },
-            });
-          }
           const planned = async () => {
             const round = rounds.filter((model) => model === this.options.model).length;
             const step = plan?.[round - 1];
@@ -179,6 +155,40 @@ async function runScenario(
           if (this.options.model === 'mock-primary') {
             originalToken = job.token;
             originalSession = id;
+            if (scenario === 'context' || queuedContext) {
+              const update = (key: string, value: unknown) =>
+                models.rpc(job.bot, `Bearer ${job.token}`, {
+                  id: `mock-primary-${key}`,
+                  method: 'context.update',
+                  params: {
+                    sessionId: id,
+                    turnId: 'mock-fallback-request',
+                    key,
+                    seq: 7,
+                    value,
+                  },
+                });
+              if (queuedContext) {
+                job.context!.writing = new Promise<unknown>((resolve, reject) => {
+                  releaseCapture = () =>
+                    scenario === 'context-queued-failure'
+                      ? reject(new Error('Synthetic retired capture failure'))
+                      : resolve(undefined);
+                });
+                pendingContext = update('contextPressure', { pressureTokens: 900 }).catch(
+                  (error: unknown) => ({ error }),
+                );
+                await Promise.resolve();
+                expect(job.context?.seqs.contextPressure).toBe(7);
+              } else {
+                await update('contextPressure', { pressureTokens: 900 });
+                await update('contextBreakdown', {
+                  systemTokens: 0,
+                  toolsTokens: 0,
+                  messageTokens: 700,
+                });
+              }
+            }
             if (plan && plannedModel === this.options.model) return planned();
             if (scenario === 'text' || scenario === 'cleared-text' || scenario === 'thinking')
               await models.rpc(job.bot, `Bearer ${job.token}`, {
@@ -243,6 +253,31 @@ async function runScenario(
               },
             }),
           ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+          if (scenario === 'context' || queuedContext) {
+            incomingPressure.push(structuredClone(job.context?.pressure));
+            incomingBreakdown.push(structuredClone(job.context?.breakdown));
+            const params = {
+              sessionId: id,
+              turnId: 'mock-fallback-request',
+              key: 'contextPressure',
+              seq: 0,
+              value: { pressureTokens: 100 },
+            };
+            await expect(
+              models.rpc(job.bot, `Bearer ${job.token}`, {
+                id: 'mock-retired-root',
+                method: 'context.update',
+                params: { ...params, sessionId: originalSession },
+              }),
+            ).rejects.toMatchObject({ code: 'INVALID_CONTEXT_UPDATE' });
+            projections.push(
+              await models.rpc(job.bot, `Bearer ${job.token}`, {
+                id: 'mock-fallback-projection',
+                method: 'context.update',
+                params,
+              }),
+            );
+          }
           if (plan && plannedModel === this.options.model) return planned();
           return {
             sessionId: id,
@@ -297,47 +332,11 @@ async function runScenario(
       origin: 'http://127.0.0.1:12345',
       localComputer,
     });
-    const task = {
+    const accepted = await models.start('mock-bot', {
       requestId: 'mock-fallback-request',
       prompt: 'Synthetic accepted input',
       files: [{ name: 'mock-input.txt', content: 'Synthetic attachment' }],
-    };
-    let delivery: DeliveryReference | undefined;
-    if (claimedDelivery) {
-      await models.work.write(
-        {
-          id: 'mock-work-create',
-          item: 'mock-work',
-          revision: 0,
-          action: 'create',
-          value: {
-            title: 'Synthetic fallback delivery',
-            description: '',
-            progress: '',
-            status: 'todo',
-          },
-        },
-        { kind: 'human' },
-      );
-      const receipt = await models.work.deliveryEffect((store) =>
-        store.start({
-          requestId: task.requestId,
-          workId: 'mock-work',
-          workRevision: 1,
-          checklistRevision: 0,
-          bot: 'mock-bot',
-        }),
-      );
-      expect.assert(receipt.state === 'complete' && 'attempt' in receipt);
-      delivery = {
-        workId: receipt.attempt.workId,
-        attemptId: receipt.attempt.attemptId,
-        requestId: receipt.attempt.requestId,
-      };
-    }
-    const accepted = delivery
-      ? await models.startHuman('mock-bot', task, undefined, undefined, { delivery })
-      : await models.start('mock-bot', task);
+    });
     const job = models.jobs.get('mock-bot')!;
     await job.done;
     const record = await models.journal.read(job.bot, job.id);
@@ -349,16 +348,43 @@ async function runScenario(
       order,
       sessions,
       rounds,
+      incomingPressure,
+      incomingBreakdown,
+      projections,
       toolCount: job.toolCount,
-      delivery,
-      budget: job.budget && models.budgets.view(job.budget.budgetId),
       settings: await settings.status(true),
     };
   } finally {
+    releaseCapture?.();
+    await pendingContext;
     if (models!) await models.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 }
+
+for (const scenario of ['context', 'context-queued', 'context-queued-failure'] as const)
+  test(`${scenario} cannot carry SDK samples or queued captures into a fallback attempt`, async () => {
+    const result = await runScenario(scenario);
+    expect(result.result.phase, result.result.error).toBe('completed');
+    expect(result.starts).toEqual(['mock-primary', 'mock-fallback']);
+    expect(result.incomingPressure).toEqual([undefined]);
+    expect(result.incomingBreakdown).toEqual([undefined]);
+    expect(result.projections).toMatchObject([{ result: { accepted: true } }]);
+    const captures = result.record?.contextCaptures?.captures ?? [];
+    const turns = captures.filter((capture) => capture.reason === 'turn');
+    expect(turns).toHaveLength(2);
+    expect(turns[1].pressure).toBeUndefined();
+    expect(turns[1].breakdown).toBeUndefined();
+    expect(captures.at(-1)?.pressure).toMatchObject({ seq: 0, pressureTokens: 100 });
+    expect(captures.at(-1)?.breakdown).toBeUndefined();
+    if (scenario !== 'context')
+      expect(captures.some((capture) => capture.pressure?.seq === 7)).toBe(false);
+    else expect(captures.some((capture) => capture.pressure?.seq === 7)).toBe(true);
+    if (scenario === 'context-queued-failure') {
+      expect(result.record?.contextCaptureFailed).toBe(true);
+      expect(captures.at(-1)?.gaps).toContain('capture-failed');
+    }
+  });
 
 test('clean provider failure closes the primary and succeeds once inside the original task and receipt', async () => {
   const result = await runScenario('clean');
@@ -742,20 +768,3 @@ for (const scenario of [
       await rm(root, { recursive: true, force: true });
     }
   });
-
-test('delivery fallback retains one Work claim and cumulative budget while physical attempts rotate', async () => {
-  const result = await runScenario('clean', undefined, 'mock-primary', true);
-  expect(result.starts).toEqual(['mock-primary', 'mock-fallback']);
-  expect(result.record?.delivery).toEqual(result.delivery);
-  expect(result.record?.attemptSummary).toHaveLength(2);
-  expect(
-    result.record?.attemptSummary?.every(
-      (attempt) => attempt.attemptId !== result.delivery?.attemptId,
-    ),
-  ).toBe(true);
-  expect(result.budget).toMatchObject({
-    requests: 2,
-    reported: { inputTokens: 10, outputTokens: 2 },
-  });
-  expect(result.record?.budget).toEqual(result.budget?.scope);
-});

@@ -67,6 +67,11 @@ test('native image prompts use immutable bytes, keep group ownership and retry t
     const job = models.jobs.get('mock-a')!;
     await job.done;
     expect(job.phase).toBe('completed');
+    const captured = (await models.journal.read('mock-a', job.id))?.contextCaptures?.captures.at(
+      -1,
+    );
+    expect(captured?.gaps).toContain('images');
+    expect(captured?.sources[8].hostTokens).toBeNull();
     expect.assert(Array.isArray(prompts[0]));
     expect(prompts[0].slice(1)).toStrictEqual(
       images.map((image) => ({ type: 'image', data: image.data, mimeType: imageMime(image.name) })),

@@ -1,0 +1,120 @@
+.remote-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 10px;
+  padding: 9px 10px;
+  width: calc(100% - 28px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.remote-selector span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dialog.remote-dialog {
+  width: 700px;
+}
+.remote-panel {
+  display: grid;
+  gap: 14px;
+}
+.remote-panel p {
+  margin: 5px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.remote-device-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.remote-device-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.remote-device-row strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.remote-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+.remote-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.remote-section label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.remote-section input,
+.remote-section textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--canvas);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+.remote-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.remote-fingerprint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.remote-panel code {
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-size: 10px;
+}
+.remote-pair-request {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.live-screen video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.remote-video-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.remote-video-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}

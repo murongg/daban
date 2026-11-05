@@ -62,6 +62,14 @@ export function tables(client: DatabaseSync | Database) {
     .map((row) => row.name);
 }
 
+export function migrationApplied(db: Database, migration: { name: string; hash: string }) {
+  return !!db
+    .select({ name: journal.name })
+    .from(journal)
+    .where(and(eq(journal.name, migration.name), eq(journal.hash, migration.hash)))
+    .get();
+}
+
 export function checkpoint(db: Database) {
   const row = db.$client.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
   return row?.busy === 0;
@@ -81,6 +89,7 @@ export function migrate(
   client: DatabaseSync,
   migrations: readonly Migration[],
   legacy?: (client: DatabaseSync) => unknown,
+  retired: readonly { name: string; hash: string }[] = [],
 ) {
   const db = connect(client);
   const [baseline] = migrations;
@@ -105,9 +114,19 @@ export function migrate(
           tx.insert(journal).values(record(baseline)).run();
         }
       }
-      const applied = tx.select({ name: journal.name }).from(journal).all();
+      const applied = tx.select({ name: journal.name, hash: journal.hash }).from(journal).all();
       const known = new Set(migrations.map((migration) => migration.name));
-      if (applied.some((row) => row.name === null || !known.has(row.name)))
+      // Retired feature migrations are recognized only as existing data; never execute them on new files.
+      if (
+        applied.some(
+          (row) =>
+            row.name === null ||
+            (!known.has(row.name) &&
+              !retired.some(
+                (migration) => migration.name === row.name && migration.hash === row.hash,
+              )),
+        )
+      )
         throw new Error('DATABASE_NEWER');
       const done = new Set(applied.map((row) => row.name));
       for (const migration of migrations) {

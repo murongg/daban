@@ -47,7 +47,7 @@ async function fixture(
     rpcs.push(rpc);
     if (options.holdFence && rpc.method === 'attempt.fence') await held;
     if (options.holdQuery && rpc.method === 'search.query') await held;
-    if (rpc.method === 'budget.tool' && options.lostClaim)
+    if (rpc.method === 'search.claim' && options.lostClaim)
       throw new Error('SYNTHETIC_CLAIM_ACK_LOST');
     return Response.json({
       id: rpc.id,
@@ -56,7 +56,7 @@ async function fixture(
           ? { sources: [], truncated: false }
           : {
               accepted: true,
-              ...(rpc.method === 'budget.tool'
+              ...(rpc.method === 'search.claim'
                 ? {
                     searchReceipt: {
                       claimId: createHash('sha256').update(String(rpc.params.callId)).digest('hex'),
@@ -82,7 +82,6 @@ async function fixture(
     {
       ...config,
       attemptId: 'mock-physical-attempt',
-      budget: { budgetId: 'mock-budget', revision: 1 },
       limit: 60,
       urls: [],
     },
@@ -129,13 +128,23 @@ async function fixture(
   };
 }
 
+test('search authorization is bound to its registry execution without a budget service', async () => {
+  const f = await fixture();
+  expect(await f.pre()).toMatchObject({ kind: 'allow' });
+  expect(await f.query()).toEqual({ sources: [], truncated: false });
+  expect(f.rpcs.find((rpc) => rpc.method === 'search.claim')?.params).toMatchObject({
+    sessionId: f.root.session.id,
+    search: { executionSessionId: f.child.session.id, queries: ['synthetic one', 'synthetic two'] },
+  });
+});
+
 test('one registry token joins one pending search claim before the first fence await', async () => {
   const f = await fixture({ holdFence: true });
   const first = f.pre();
   const second = f.pre();
   f.release();
   await Promise.all([first, second]);
-  const claims = f.rpcs.filter((rpc) => rpc.method === 'budget.tool');
+  const claims = f.rpcs.filter((rpc) => rpc.method === 'search.claim');
   expect(claims).toHaveLength(1);
   expect(claims[0].params).toMatchObject({
     sessionId: f.root.session.id,
@@ -147,7 +156,7 @@ test('a search provider consumes the exact Host receipt of its real execution', 
   const f = await fixture();
   await f.pre();
   await f.query();
-  const claim = f.rpcs.find((rpc) => rpc.method === 'budget.tool');
+  const claim = f.rpcs.find((rpc) => rpc.method === 'search.claim');
   expect.assert(claim);
   const claimId = createHash('sha256').update(String(claim.params.callId)).digest('hex');
   expect(f.rpcs.find((rpc) => rpc.method === 'search.query')?.params).toEqual({
@@ -162,12 +171,25 @@ test('a missing handoff cannot borrow authority from a tool call id', async () =
   expect(f.rpcs).toHaveLength(0);
 });
 
+test('an ordinary registry token cannot be retargeted into a search handoff', async () => {
+  const f = await fixture();
+  await f.pre({ ...f.exec, name: 'synthetic_read' });
+  expect(await f.pre()).toMatchObject({ kind: 'deny' });
+  await expect(f.query()).rejects.toMatchObject({ code: 'SEARCH_INVALID_QUERY' });
+});
+
+test('a prepared search token cannot authorize a different tool on a repeated pre-execute', async () => {
+  const f = await fixture();
+  await f.pre();
+  expect(await f.pre({ ...f.exec, name: 'synthetic_write' })).toMatchObject({ kind: 'deny' });
+});
+
 test('a lost search claim acknowledgement remains denied without another claim or UUID', async () => {
   const f = await fixture({ lostClaim: true });
   expect(await f.pre()).toMatchObject({ kind: 'deny' });
   expect(await f.pre()).toMatchObject({ kind: 'deny' });
   await expect(f.query()).rejects.toBeDefined();
-  expect(f.rpcs.filter((rpc) => rpc.method === 'budget.tool')).toHaveLength(1);
+  expect(f.rpcs.filter((rpc) => rpc.method === 'search.claim')).toHaveLength(1);
   expect(f.rpcs.some((rpc) => rpc.method === 'search.query')).toBe(false);
 });
 
@@ -177,7 +199,7 @@ test('reused provider ids with different registry tokens keep distinct claims', 
   await Promise.all([f.pre(), f.pre(second)]);
   await Promise.all([f.query(), f.query(second)]);
   expect(
-    new Set(f.rpcs.filter((rpc) => rpc.method === 'budget.tool').map((rpc) => rpc.params.callId))
+    new Set(f.rpcs.filter((rpc) => rpc.method === 'search.claim').map((rpc) => rpc.params.callId))
       .size,
   ).toBe(2);
   expect(

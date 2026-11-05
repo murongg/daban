@@ -1,0 +1,18 @@
+[Unit]
+Description=Daban dedicated cloud desktop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/daban
+EnvironmentFile=%h/.config/daban/host.env
+ExecStart=/usr/bin/dbus-run-session -- /usr/local/bin/node --experimental-strip-types tools/cloud.ts
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target

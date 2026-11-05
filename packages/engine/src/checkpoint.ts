@@ -1,4 +1,11 @@
-import { isReplyStream, isRunTurn, isTaskPlan, turnLimit, validAgentId } from '@daban/protocol';
+import {
+  type ContextBoundary,
+  isReplyStream,
+  isRunTurn,
+  isTaskPlan,
+  turnLimit,
+  validAgentId,
+} from '@daban/protocol';
 import { contextPrefix } from './context.js';
 import type { TaskRecord } from './tasks.js';
 
@@ -25,7 +32,9 @@ export function isConversationCheckpoint(value: unknown): value is ConversationC
 }
 
 export class CheckpointTracker {
-  private prune?: { sequence: number; node: number };
+  boundary?: ContextBoundary;
+  boundaryIncomplete = false;
+  private prune?: { sequence: number; node: number; nodes?: number[] };
   private pending?: {
     id: string;
     turn: number | null;
@@ -33,6 +42,7 @@ export class CheckpointTracker {
     range?: { start: number; end: number };
     candidate?: ConversationCheckpoint;
     replaced: boolean;
+    nodes?: number[];
   };
   constructor(
     private readonly session: string,
@@ -50,13 +60,23 @@ export class CheckpointTracker {
     const event = note.params.event;
     if (!sequence(event.seq) || !object(event.data)) return;
     const data = event.data;
+    const nodes =
+      Array.isArray(data.shadowedSeqs) &&
+      data.shadowedSeqs.every(sequence) &&
+      new Set(data.shadowedSeqs).size === data.shadowedSeqs.length
+        ? (data.shadowedSeqs as number[])
+        : undefined;
+    if (this.prunedResult(note) && this.prune) {
+      this.commitBoundary('prune', event.seq, this.prune.nodes);
+      return;
+    }
     if (event.type === 'compaction/prune') {
       if (
         object(data.shadowedRange) &&
         sequence(data.shadowedRange.start) &&
         data.shadowedRange.start === data.shadowedRange.end
       )
-        this.prune = { sequence: event.seq, node: data.shadowedRange.start };
+        this.prune = { sequence: event.seq, node: data.shadowedRange.start, nodes };
       return;
     }
     if (
@@ -79,7 +99,8 @@ export class CheckpointTracker {
       object(data.shadowedRange) &&
       sequence(data.shadowedRange.start) &&
       sequence(data.shadowedRange.end) &&
-      data.shadowedRange.start <= data.shadowedRange.end &&
+      // These are position endpoints, not a numeric interval: a previous replacement may put a higher seq first.
+      data.shadowedRange.start < pending.start &&
       data.shadowedRange.end < pending.start
     ) {
       const candidate = {
@@ -90,6 +111,7 @@ export class CheckpointTracker {
       if (isConversationCheckpoint(candidate)) {
         pending.candidate = candidate;
         pending.range = { start: data.shadowedRange.start, end: data.shadowedRange.end };
+        pending.nodes = nodes;
       }
     } else if (
       event.type === 'user/message' &&
@@ -111,9 +133,21 @@ export class CheckpointTracker {
         data.turn === pending.turn &&
         pending.replaced &&
         pending.candidate
-      )
+      ) {
+        this.commitBoundary('summary', event.seq, pending.nodes);
         return { ...pending.candidate, sequence: event.seq };
+      }
     }
+  }
+  private commitBoundary(kind: ContextBoundary['kind'], endSeq: number, nodes?: number[]) {
+    if (this.boundary && endSeq <= this.boundary.endSeq) return;
+    this.boundaryIncomplete = nodes === undefined;
+    this.boundary = {
+      kind,
+      endSeq,
+      shadowedSeqs: nodes?.slice(0, 32) ?? [],
+      omittedSeqs: Math.max(0, (nodes?.length ?? 0) - 32),
+    };
   }
   prunedResult(note: unknown) {
     if (

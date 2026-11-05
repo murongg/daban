@@ -74,9 +74,11 @@ import { useWork } from '../features/tasks/work';
 import { syncLocale, t, useLocale } from '../i18n/locale';
 import { Actions } from './Actions';
 import { useAttention } from './attention';
+import { useCache } from './CacheProvider';
 import { clientCache } from './cache';
 import { profileInput, useProfiles } from './profiles';
-import { RuntimeProvider, runtimeError, useRuntime } from './Runtime';
+import { RemoteProvider, RemoteWorkspace } from './Remote';
+import { runtimeError, useRuntime } from './Runtime';
 import { Sidebar } from './Sidebar';
 import {
   type Action,
@@ -87,7 +89,6 @@ import {
   mergeAttachments,
   messageQueue,
   messageQueueLimit,
-  projectScope,
   type QueuedTask,
   reduce,
   type WorkspaceFile,
@@ -142,9 +143,9 @@ function definiteInsertError(error: unknown) {
 function uncertainInsertError(error: unknown) {
   return error instanceof Error && error.message === 'MODEL_INSERT_UNCERTAIN';
 }
-function load() {
+function load(cache = clientCache()) {
   try {
-    const state = restore(clientCache().getItem(storageKey));
+    const state = restore(cache.getItem(storageKey));
     return window.innerWidth < 1080 ? { ...state, panel: null } : state;
   } catch {
     return initialState();
@@ -161,19 +162,22 @@ export function App() {
   return (
     <I18nProvider locale={locale}>
       <UpdateProvider>
-        <RuntimeProvider>
-          <UpdateNotice />
-          <AgentUpgradeNotice />
-          <Onboarding>
-            <Workbench />
-          </Onboarding>
-        </RuntimeProvider>
+        <RemoteProvider>
+          <RemoteWorkspace>
+            <UpdateNotice />
+            <AgentUpgradeNotice />
+            <Onboarding>
+              <Workbench />
+            </Onboarding>
+          </RemoteWorkspace>
+        </RemoteProvider>
       </UpdateProvider>
     </I18nProvider>
   );
 }
 function Workbench() {
   useLocale();
+  const cache = useCache();
   const runtime = useRuntime();
   const submitting = useRef(new Set<string>());
   const draining = useRef(new Set<string>());
@@ -181,7 +185,7 @@ function Workbench() {
   const verifyingInserts = useRef(new Set<string>());
   const legacySettings = useRef(false);
   const [state, update] = useReducer(reduce, undefined, () => {
-    const restored = load();
+    const restored = load(cache);
     legacySettings.current = restored.view === 'settings';
     // Cache migration must not mark the obscured conversation read through a navigation action.
     return legacySettings.current ? { ...restored, view: 'chat' as const } : restored;
@@ -190,8 +194,8 @@ function Workbench() {
   updateState.current = state;
   useUpdateSave(
     useCallback(() => {
-      clientCache().setItem(storageKey, serialize(updateState.current));
-    }, []),
+      cache.setItem(storageKey, serialize(updateState.current));
+    }, [cache]),
   );
   const [settingsOpen, setSettingsOpen] = useState(legacySettings.current);
   const dispatch = useCallback((action: Action) => {
@@ -414,15 +418,16 @@ function Workbench() {
         ? queued.files.map((id) => state.files.find((file) => file.id === id))
         : state.attachments[botId].map((id) => state.files.find((f) => f.id === id))
     ).filter((f): f is WorkspaceFile => !!f);
+    if (queued?.project || attached.some((file) => file.runtimeScope !== undefined)) {
+      notify(t('tasks.projectRetired'));
+      return skipped;
+    }
     const task: TaskRequest = state.runtimeRequests[botId] ||
       continued || {
         ...(runtime.snapshot.protocolVersion >= 29
           ? { chatRevision: chatRevision(state, botId, runtime.snapshot.chats) }
           : {}),
         requestId: crypto.randomUUID(),
-        ...((queued ? queued.project : projectScope(state, botId))
-          ? { project: queued ? queued.project : projectScope(state, botId) }
-          : {}),
         ...(runtime.snapshot.protocolVersion >= 44
           ? {
               approvalMode: chatApprovalMode(
@@ -459,7 +464,7 @@ function Workbench() {
         !task.goalResume
       ) {
         const targetGoal = await runtime.command({
-          type: 'budget.goal',
+          type: 'goal.target',
           owner: {
             bot: target,
             chatRevision: task.chatRevision ?? 0,
@@ -599,7 +604,6 @@ function Workbench() {
         id: crypto.randomUUID(),
         prompt,
         files: files.map((file) => file.id),
-        ...(projectScope(state, botId) ? { project: projectScope(state, botId) } : {}),
       },
     });
   }
@@ -618,7 +622,7 @@ function Workbench() {
     if (!item || item.files.length || item.verify) return;
     const task = agentTask(runtime.snapshot, botId);
     if (!sameProjectScope(item.project, task?.project)) {
-      notify(t('projects.stale'));
+      notify(t('tasks.projectRetired'));
       return;
     }
     if (!task?.running || !task.runId || task.conversationId) {
@@ -745,12 +749,10 @@ function Workbench() {
   }, [runtime, state, dispatch, notify]);
   const previewFile = useCallback(
     async (file: WorkspaceFile) => {
-      const source = updateState.current;
-      const scope = projectScope(source, source.selected);
-      const stillSelected = () =>
-        !file.runtimeScope?.project ||
-        (updateState.current.selected === source.selected &&
-          sameProjectScope(projectScope(updateState.current, source.selected), scope));
+      if (file.runtimeScope !== undefined) {
+        notify(t('tasks.projectRetired'));
+        return;
+      }
       if (imageMime(file.upload?.name || file.name)) {
         preview(file);
         return;
@@ -776,11 +778,10 @@ function Workbench() {
         const actual = await runtime.command<RuntimeFile>({
           type: 'files.read',
           path: file.runtimePath,
-          ...file.runtimeScope,
         });
-        if (stillSelected()) preview({ ...file, content: actual.content || '' });
+        preview({ ...file, content: actual.content || '' });
       } catch (error) {
-        if (stillSelected()) notify(runtimeError(error));
+        notify(runtimeError(error));
       }
     },
     [runtime.command, preview, notify],
@@ -795,7 +796,7 @@ function Workbench() {
   }, [state.theme]);
   useEffect(() => {
     try {
-      clientCache().setItem(storageKey, serialize(state));
+      cache.setItem(storageKey, serialize(state));
       storageFailed.current = false;
     } catch {
       if (!storageFailed.current) {
@@ -803,7 +804,7 @@ function Workbench() {
         notify(t('app.localStorageUnavailableFullExportWorkspaceRefreshing'));
       }
     }
-  }, [state, notify]);
+  }, [state, notify, cache]);
   useEffect(() => {
     if (!toast) return;
     const timeout = setTimeout(() => setToast(''), 4500);
@@ -1096,7 +1097,7 @@ function Workbench() {
         ) : state.view === 'gallery' ? (
           <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
         ) : state.view === 'tasks' ? (
-          <Tasks state={state} dispatch={dispatch} work={work} notify={notify} />
+          <Tasks state={state} dispatch={dispatch} work={work} />
         ) : state.view === 'inbox' ? (
           <Inbox
             state={state}

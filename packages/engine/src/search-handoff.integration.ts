@@ -99,8 +99,7 @@ test('the real SDK patch-loader shares native and PTC registry handoffs across t
       assert.equal(request.headers.authorization, `Bearer synthetic-${scope}`);
       rpcs.push({ root: scope, rpc });
       let result: unknown = { accepted: true };
-      if (rpc.method === 'budget.tool') {
-        assert.deepEqual(rpc.params.scope, { budgetId: `synthetic-${scope}-budget`, revision: 1 });
+      if (rpc.method === 'search.claim') {
         assert.equal(rpc.params.modelAttemptId, `synthetic-${scope}-attempt`);
         assert.equal(rpc.params.sessionId, `synthetic-${scope}-session`);
         if (rpc.params.search !== undefined) {
@@ -170,14 +169,13 @@ test('the real SDK patch-loader shares native and PTC registry handoffs across t
           searchMaxResults: 5,
         }),
         {
-          id: 'daban-budget',
+          id: 'daban-policy',
           name: pathToFileURL(path.join(pluginDir, 'policy.js')).href,
           config: {
             ...bridge,
             limit: 60,
             urls: [],
             attemptId: `synthetic-${id}-attempt`,
-            budget: { budgetId: `synthetic-${id}-budget`, revision: 1 },
           },
         },
         {
@@ -247,11 +245,11 @@ test('the real SDK patch-loader shares native and PTC registry handoffs across t
       assert.equal(denied.isError, true);
     }
     assert.deepEqual(failures, []);
-    const claims = rpcs.filter(({ rpc }) => rpc.method === 'budget.tool');
+    const claims = rpcs.filter(({ rpc }) => rpc.method === 'search.claim');
     const queries = rpcs.filter(({ rpc }) => rpc.method === 'search.query');
-    assert.equal(claims.length, 5);
+    assert.equal(claims.length, 4);
     assert.equal(queries.length, 4);
-    assert.equal(new Set(claims.map(({ rpc }) => rpc.params.callId)).size, 5);
+    assert.equal(new Set(claims.map(({ rpc }) => rpc.params.callId)).size, 4);
     assert.equal(new Set(queries.map(({ rpc }) => rpc.params.claimId)).size, 4);
     for (const [index, id] of ['root-a', 'root-b'].entries()) {
       const sessions = claims

@@ -55,7 +55,6 @@ function fixture() {
       limit: 60,
       urls: [],
       attemptId: 'mock-attempt',
-      budget: { budgetId: 'mock-budget', revision: 1 },
     },
     async (_url, init) => {
       const rpc = JSON.parse(String(init.body)) as {
@@ -66,7 +65,7 @@ function fixture() {
       const claimId = createHash('sha256')
         .update(rpc.params.callId || '')
         .digest('hex');
-      if (rpc.method === 'budget.tool') claims.push(claimId);
+      if (rpc.method === 'search.claim') claims.push(claimId);
       return Response.json({ id: rpc.id, result: { accepted: true, searchReceipt: { claimId } } });
     },
   );

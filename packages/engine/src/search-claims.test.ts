@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { defaultBudgetPolicy } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { observeTools } from './events.js';
 import { ModelRuns } from './model.js';
@@ -62,18 +61,14 @@ async function fixture(limit = 3, local = false) {
   });
   await models.ready;
   if (local) vi.spyOn(models.tools, 'localSelected').mockReturnValue(true);
-  models.budgets.configure(
-    0,
-    { ...defaultBudgetPolicy, toolLimit: limit },
-    [],
-    'synthetic-budget-policy',
-  );
   await models.startHuman('mock-bot', {
     requestId: 'synthetic-search-task',
     prompt: 'Synthetic research.',
   });
   await ready;
   const job = models.jobs.get('mock-bot')!;
+  job.limit = limit;
+  const ordinals = new Map<string, number>();
   const auth = `Bearer ${job.token}`;
   let rpcId = 0;
   const rpc = (method: string, params: Record<string, unknown>) =>
@@ -81,14 +76,18 @@ async function fixture(limit = 3, local = false) {
   const claim = (
     id = 'synthetic-execution',
     declaration: unknown = { executionSessionId: job.sessionId, queries: ['synthetic query'] },
-  ) =>
-    rpc('budget.tool', {
-      scope: job.budget,
+  ) => {
+    if (!ordinals.has(id)) ordinals.set(id, ordinals.size + 1);
+    const ordinal = ordinals.get(id)!;
+    job.attemptToolCount = Math.max(job.attemptToolCount ?? 0, ordinal);
+    return rpc('search.claim', {
       modelAttemptId: job.attemptId,
       sessionId: job.sessionId,
       callId: id,
+      toolCount: ordinal,
       ...(declaration === null ? {} : { search: declaration }),
     });
+  };
   const receipt = async (id?: string, queries?: string[]) => {
     const result = await claim(id, {
       executionSessionId: job.sessionId,
@@ -133,8 +132,8 @@ test('search dispatch requires its original persisted execution and one contribu
   const f = await fixture();
   try {
     const id = await f.receipt();
-    expect(f.models.budgets.tools(f.job.budget!.budgetId)).toBe(1);
-    expect(f.job.toolCount).toBe(1);
+
+    expect(f.job.attemptToolCount).toBe(1);
     expect((await f.models.journal.read(f.job.bot, f.job.id))?.toolCount).toBe(1);
     expect(await f.query(id)).toMatchObject({
       result: { sources: [{ url: 'https://source.example.test/exact' }] },
@@ -142,7 +141,50 @@ test('search dispatch requires its original persisted execution and one contribu
     await f.query(id);
     expect(f.supplier).toHaveBeenCalledTimes(1);
     expect(f.job.fence).toBe('tool');
-    expect(f.job.toolCount).toBe(1);
+    expect(f.job.attemptToolCount).toBe(1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('persisted progress alone never authorizes a guessed search execution', async () => {
+  const f = await fixture();
+  try {
+    await f.rpc('attempt.fence', {
+      sessionId: f.job.sessionId,
+      attemptId: f.job.attemptId,
+      kind: 'tool',
+      toolCount: 1,
+    });
+    const guessed = createHash('sha256')
+      .update(JSON.stringify([f.job.id, f.job.attemptId, 'synthetic-execution']))
+      .digest('hex');
+    expect(await f.query(guessed)).toHaveProperty('error');
+    expect(f.supplier).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test('a lost Host index cannot rebind a persisted admission or change its declared queries', async () => {
+  const f = await fixture();
+  try {
+    const id = await f.receipt();
+    await expect(
+      f.claim('synthetic-execution', {
+        executionSessionId: f.job.sessionId,
+        queries: ['synthetic changed'],
+      }),
+    ).rejects.toMatchObject({ code: 'SEARCH_INVALID_QUERY' });
+    f.job.searchExecutions?.clear();
+    await expect(f.claim()).rejects.toMatchObject({ code: 'SEARCH_INVALID_QUERY' });
+    expect(await f.query(id)).toHaveProperty('error');
+    expect((await f.models.journal.read(f.job.bot, f.job.id))?.searchClaims).toContainEqual({
+      id,
+      attemptId: f.job.attemptId,
+      ordinal: 1,
+    });
+    expect(f.supplier).not.toHaveBeenCalled();
   } finally {
     await f.close();
   }
@@ -167,7 +209,7 @@ test('Host restart preserves consumption and unknown recovery fences but invalid
     });
     try {
       await restarted.ready;
-      expect(restarted.budgets.tools(f.job.budget!.budgetId)).toBe(1);
+
       expect((await restarted.journal.recovery(f.job.bot, f.job.id))?.blocked).toBe(true);
       await expect(
         restarted.rpc(f.job.bot, auth, {
@@ -185,26 +227,6 @@ test('Host restart preserves consumption and unknown recovery fences but invalid
   }
 });
 
-test('ordinary and search declarations cannot rebind the same claim, including an orphaned durable row', async () => {
-  const f = await fixture();
-  try {
-    await f.claim('synthetic-ordinary', null);
-    await expect(f.claim('synthetic-ordinary')).rejects.toMatchObject({
-      code: 'INVALID_BUDGET_TOOL',
-    });
-    const id = createHash('sha256')
-      .update(JSON.stringify([f.job.budget!.budgetId, f.job.attemptId, 'synthetic-orphan']))
-      .digest('hex');
-    f.models.budgets.tool(f.job.budget!, id);
-    await expect(f.claim('synthetic-orphan')).rejects.toMatchObject({
-      code: 'INVALID_BUDGET_TOOL',
-    });
-    expect(f.supplier).not.toHaveBeenCalled();
-  } finally {
-    await f.close();
-  }
-});
-
 test('the last admitted tool batch completes declared queries and the next execution is refused', async () => {
   const f = await fixture(1);
   try {
@@ -212,7 +234,7 @@ test('the last admitted tool batch completes declared queries and the next execu
     expect(await f.query(id, 'synthetic first')).toHaveProperty('result');
     expect(await f.query(id, 'synthetic second')).toHaveProperty('result');
     await expect(f.claim('synthetic-excess')).rejects.toThrow();
-    expect(f.models.budgets.tools(f.job.budget!.budgetId)).toBe(1);
+
     expect(f.supplier).toHaveBeenCalledTimes(2);
   } finally {
     await f.close();
@@ -228,9 +250,9 @@ test('search receipts wait for contribution durability and retain failed publica
       return original(record);
     });
     await expect(f.claim()).rejects.toThrow();
-    expect(f.models.budgets.tools(f.job.budget!.budgetId)).toBe(1);
+
     await expect(f.claim()).rejects.toThrow();
-    expect(f.job.toolCount).toBe(1);
+    expect(f.job.attemptToolCount).toBe(1);
     expect(f.supplier).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   } finally {
@@ -243,6 +265,7 @@ test('retired search authority cannot publish a cached result and run history st
   try {
     f.job.activityBase = { toolCount: 3, activeMs: 0 };
     f.job.toolCount = 3;
+    f.job.attemptToolBase = 3;
     const id = await f.receipt();
     expect((await f.models.journal.read(f.job.bot, f.job.id))?.toolCount).toBe(1);
     await f.query(id);
@@ -268,30 +291,11 @@ test('a guessed claim hash cannot use a failed contribution barrier to dispatch'
     });
     await expect(f.claim()).rejects.toThrow();
     const id = createHash('sha256')
-      .update(JSON.stringify([f.job.budget!.budgetId, f.job.attemptId, 'synthetic-execution']))
+      .update(JSON.stringify([f.job.id, f.job.attemptId, 'synthetic-execution']))
       .digest('hex');
     expect(await f.query(id)).toHaveProperty('error');
     expect(f.supplier).not.toHaveBeenCalled();
     vi.restoreAllMocks();
-  } finally {
-    await f.close();
-  }
-});
-
-test('current ledger revision gates a previously admitted search without another debit', async () => {
-  const f = await fixture();
-  try {
-    const id = await f.receipt();
-    const view = f.models.budgets.view(f.job.budget!.budgetId);
-    f.models.budgets.increase(
-      view.scope.budgetId,
-      view.scope.revision,
-      { ...view.policy, toolLimit: 4 },
-      'synthetic-increase',
-    );
-    expect(await f.query(id)).toHaveProperty('error');
-    expect(f.supplier).not.toHaveBeenCalled();
-    expect(f.models.budgets.tools(view.scope.budgetId)).toBe(1);
   } finally {
     await f.close();
   }
@@ -348,43 +352,6 @@ test('unknown search results stay consumed across new RPC identities and block c
   }
 });
 
-test.each([false, true])(
-  'first-await claim reservations cannot change declaration kind (search first=%s)',
-  async (searchFirst) => {
-    const f = await fixture();
-    let release = () => {};
-    try {
-      const gate = new Promise<undefined>((resolve) => {
-        release = () => resolve(undefined);
-      });
-      const original = f.models.journal.put.bind(f.models.journal);
-      let first = true;
-      vi.spyOn(f.models.journal, 'put').mockImplementation(async (record) => {
-        if (first) {
-          first = false;
-          await gate;
-        }
-        return original(record);
-      });
-      const ordinary = f.claim('synthetic-shared', searchFirst ? undefined : null);
-      await new Promise(setImmediate);
-      await expect(
-        f.claim('synthetic-shared', searchFirst ? null : undefined),
-      ).rejects.toMatchObject({
-        code: 'INVALID_BUDGET_TOOL',
-      });
-      release();
-      await ordinary;
-      expect(f.models.budgets.tools(f.job.budget!.budgetId)).toBe(1);
-      expect(f.supplier).not.toHaveBeenCalled();
-      vi.restoreAllMocks();
-    } finally {
-      release();
-      await f.close();
-    }
-  },
-);
-
 test('local desktop session binding retains the independently captured search configuration', async () => {
   const f = await fixture(3, true);
   try {
@@ -405,22 +372,6 @@ test('local desktop session binding retains the independently captured search co
     const next = f.models.jobs.get('mock-bot')!;
     await next.done;
     expect(next.binding).not.toBe(binding);
-  } finally {
-    await f.close();
-  }
-});
-
-test('a retired delivery Work cannot authorize a new paid query from an otherwise current job', async () => {
-  const f = await fixture();
-  try {
-    const id = await f.receipt();
-    f.job.delivery = {
-      workId: 'synthetic-missing-work',
-      attemptId: 'synthetic-missing-attempt',
-      requestId: 'synthetic-missing-request',
-    };
-    expect(await f.query(id)).toHaveProperty('error');
-    expect(f.supplier).not.toHaveBeenCalled();
   } finally {
     await f.close();
   }
@@ -474,8 +425,8 @@ test('a post-claim search configuration refusal keeps its canonical run contribu
       provider: 'brave',
     });
     await expect(f.claim()).rejects.toThrow();
-    expect(f.models.budgets.tools(f.job.budget!.budgetId)).toBe(1);
-    expect(f.job.toolCount).toBe(1);
+
+    expect(f.job.attemptToolCount).toBe(1);
     expect((await f.models.journal.read(f.job.bot, f.job.id))?.toolCount).toBe(1);
     expect(f.supplier).not.toHaveBeenCalled();
   } finally {

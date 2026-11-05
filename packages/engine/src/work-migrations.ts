@@ -15,16 +15,4 @@ export const migrations: Migration[] = [
     hash: 'a37953f21ae8c398d29780511cea8d661c3f41e0d40c81445bbd82fea877b0c4',
     name: '20261103131245_baseline',
   },
-  {
-    sql: [
-      'CREATE TABLE `work_checklists` (\n\t`workId` text PRIMARY KEY,\n\t`revision` integer NOT NULL,\n\t`items` text NOT NULL,\n\tCONSTRAINT `fk_work_checklists_workId_work_items_id_fk` FOREIGN KEY (`workId`) REFERENCES `work_items`(`id`)\n) STRICT;\n',
-      '\nCREATE TABLE `work_decisions` (\n\t`attemptId` text PRIMARY KEY,\n\t`requestId` text NOT NULL UNIQUE,\n\t`value` text NOT NULL,\n\tCONSTRAINT `fk_work_decisions_attemptId_work_deliveries_id_fk` FOREIGN KEY (`attemptId`) REFERENCES `work_deliveries`(`id`)\n) STRICT;\n',
-      '\nCREATE TABLE `work_deliveries` (\n\t`seq` integer PRIMARY KEY AUTOINCREMENT,\n\t`id` text NOT NULL UNIQUE,\n\t`workId` text NOT NULL,\n\t`requestId` text NOT NULL UNIQUE,\n\t`activeWorkId` text UNIQUE,\n\t`value` text NOT NULL,\n\tCONSTRAINT `fk_work_deliveries_workId_work_items_id_fk` FOREIGN KEY (`workId`) REFERENCES `work_items`(`id`)\n) STRICT;\n',
-      '\nCREATE TABLE `work_delivery_operations` (\n\t`id` text PRIMARY KEY,\n\t`workId` text NOT NULL,\n\t`signature` text NOT NULL,\n\t`value` text NOT NULL,\n\tCONSTRAINT `fk_work_delivery_operations_workId_work_items_id_fk` FOREIGN KEY (`workId`) REFERENCES `work_items`(`id`)\n) STRICT;\n',
-    ],
-    bps: true,
-    folderMillis: 1793790199000,
-    hash: '953f308483fe2f9ba2aaa249640be39844a56b8bcf0fc6c24ad8a77c724b80d2',
-    name: '20261104110319_delivery',
-  },
 ];

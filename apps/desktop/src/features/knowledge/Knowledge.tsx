@@ -19,7 +19,6 @@ import {
   type KnowledgeDraft,
   knowledgeDirty,
   knowledgeDraft,
-  projectScope,
   type State,
 } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
@@ -33,7 +32,6 @@ import {
   knowledgeAccept,
   readUtf8,
 } from '../files/files';
-import { ProjectKnowledge } from './ProjectKnowledge';
 
 export function Knowledge({
   state,
@@ -311,9 +309,6 @@ export function Knowledge({
           { 0: bot.name },
         )}
       </p>
-      {!bot.members && (
-        <ProjectKnowledge scope={projectScope(state, bot.id)} bot={agentId(bot.id)} />
-      )}
       {!available && (
         <p className="form-error" role="alert">
           {bot.members

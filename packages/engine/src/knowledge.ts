@@ -22,8 +22,6 @@ import { errorCode, Fault } from './control.js';
 import { configure, type Database, migrate } from './database.js';
 import { migrations } from './knowledge-migrations.js';
 import { documents, knowledgeImports, revisions, sources } from './knowledge-schema.js';
-import { ProjectMemory } from './project-memory.js';
-import type { Projects } from './projects.js';
 
 interface Cause {
   kind: 'user' | 'bot';
@@ -41,35 +39,11 @@ function legacy(client: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS document_owner ON documents(bot,deleted,updated);`);
 }
 export class Knowledge {
-  readonly project: ProjectMemory;
   readonly ready: Promise<unknown>;
   private db!: Database;
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
-  constructor(
-    readonly file: string,
-    projects?: Pick<Projects, 'assertScope' | 'assertHumanScope' | 'get' | 'available'>,
-  ) {
-    this.project = new ProjectMemory(
-      {
-        run: (action) => this.enqueue(() => action(this.db)),
-        source: (input) => {
-          const row = this.row(input.bot, input.document.id);
-          if (row.deleted || row.revision !== input.expectedRevision)
-            throw new Fault('PROJECT_MEMORY_SOURCE_CHANGED');
-          const version = this.db
-            .select()
-            .from(revisions)
-            .where(
-              and(eq(revisions.document, row.id), eq(revisions.revision, input.document.revision)),
-            )
-            .get();
-          if (!version || version.deleted) throw new Fault('PROJECT_MEMORY_SOURCE_CHANGED');
-          return { title: version.path, content: version.content, origin: input };
-        },
-      },
-      projects,
-    );
+  constructor(readonly file: string) {
     this.ready = this.load();
     this.ready.catch(() => {});
   }
@@ -104,7 +78,12 @@ export class Knowledge {
     const client = new DatabaseSync(this.file);
     try {
       configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
-      this.db = migrate(client, migrations, legacy);
+      this.db = migrate(client, migrations, legacy, [
+        {
+          name: '20261104182542_project-memory',
+          hash: '400df9992d2b2580a503ea138acbd6f35cd332c02c44483e188c1768ea2570b4',
+        },
+      ]);
     } catch (error) {
       client.close();
       if (
@@ -117,9 +96,6 @@ export class Knowledge {
   }
   private exclusive<T>(bot: string, action: () => T | Promise<T>, cause?: Cause): Promise<T> {
     if (!validAgentId(bot)) return Promise.reject(new Fault('INVALID_KNOWLEDGE', 400));
-    return this.enqueue(action, cause);
-  }
-  private enqueue<T>(action: () => T | Promise<T>, cause?: Cause): Promise<T> {
     const pending = this.chain.then(async () => {
       await this.ready;
       if (this.closed) throw new Fault('KNOWLEDGE_CLOSED');

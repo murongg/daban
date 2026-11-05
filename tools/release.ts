@@ -22,14 +22,8 @@ export function macVersion(version: string) {
 }
 async function main() {
   const tag = process.env.RELEASE_TAG ?? '';
-  const packages = [
-    '.',
-    'apps/desktop',
-    'apps/agent',
-    'apps/runtime',
-    'packages/engine',
-    'packages/protocol',
-  ];
+  const project = JSON.parse(await readFile('package.json', 'utf8')) as { workspaces: string[] };
+  const packages = ['.', ...project.workspaces];
   const versions = await Promise.all(
     packages.map(
       async (directory) =>

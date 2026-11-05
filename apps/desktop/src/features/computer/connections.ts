@@ -1,5 +1,5 @@
 import { type ComputerRequest, isComputerRequest, validAgentId } from '@daban/protocol';
-import { clientCache } from '../../app/cache';
+import { type ClientCache, clientCache } from '../../app/cache';
 
 export type ComputerPending = Pick<
   ComputerRequest,
@@ -7,9 +7,9 @@ export type ComputerPending = Pick<
 >;
 const key = 'daban-computer-pending-v1';
 const event = 'daban:computer-pending';
-function read(): Record<string, ComputerPending> {
+function read(cache: ClientCache): Record<string, ComputerPending> {
   try {
-    const raw = clientCache().getItem(key);
+    const raw = cache.getItem(key);
     if (!raw) return {};
     if (raw.length > 600000) throw new Error();
     const value: unknown = JSON.parse(raw);
@@ -36,9 +36,9 @@ function read(): Record<string, ComputerPending> {
     throw new Error('COMPUTER_REQUEST_STORAGE_UNAVAILABLE');
   }
 }
-function write(value: Record<string, ComputerPending>) {
+function write(value: Record<string, ComputerPending>, cache: ClientCache) {
   try {
-    clientCache().setItem(key, JSON.stringify(value));
+    cache.setItem(key, JSON.stringify(value));
     window.dispatchEvent(new Event(event));
   } catch {
     throw new Error('COMPUTER_REQUEST_STORAGE_UNAVAILABLE');
@@ -46,7 +46,7 @@ function write(value: Record<string, ComputerPending>) {
 }
 export function watchComputers(changed: () => unknown) {
   const storage = (value: StorageEvent) => {
-    if (value.key === key) changed();
+    if (value.key === key || value.key?.endsWith(`.${key}`)) changed();
   };
   window.addEventListener(event, changed);
   window.addEventListener('storage', storage);
@@ -55,11 +55,11 @@ export function watchComputers(changed: () => unknown) {
     window.removeEventListener('storage', storage);
   };
 }
-export function pendingComputer(bot: string) {
-  const state = read();
+export function pendingComputer(bot: string, cache = clientCache()) {
+  const state = read(cache);
   return Object.hasOwn(state, bot) ? state[bot] : undefined;
 }
-export function beginComputer(input: ComputerPending) {
+export function beginComputer(input: ComputerPending, cache = clientCache()) {
   const pending: ComputerPending = {
     id: input.id,
     bot: input.bot,
@@ -68,13 +68,13 @@ export function beginComputer(input: ComputerPending) {
     ...(input.instance === undefined ? {} : { instance: input.instance }),
   };
   if (!isComputerRequest(pending)) throw new Error('INVALID_COMPUTER_REQUEST');
-  const state = read();
+  const state = read(cache);
   if (Object.hasOwn(state, pending.bot)) throw new Error('COMPUTER_OUTCOME_UNKNOWN');
-  write({ ...state, [pending.bot]: pending });
+  write({ ...state, [pending.bot]: pending }, cache);
 }
-export function clearComputer(bot: string, id: string) {
-  const state = read();
+export function clearComputer(bot: string, id: string, cache = clientCache()) {
+  const state = read(cache);
   if (!Object.hasOwn(state, bot) || state[bot].id !== id) return;
   delete state[bot];
-  write(state);
+  write(state, cache);
 }

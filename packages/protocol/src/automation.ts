@@ -1,5 +1,15 @@
 import { validAgentId } from './id.js';
+import type { Schedule } from './index.js';
 import { isProjectScope, type ProjectScope } from './projects.js';
+
+export function legacySchedule(item: Schedule) {
+  // Callers reject or omit file triggers before projecting the remaining legacy-compatible metadata.
+  const { automation: _automation, ...legacy } = item;
+  return {
+    ...legacy,
+    history: legacy.history.map(({ source: _source, monitor: _monitor, ...entry }) => entry),
+  };
+}
 
 export const automationCapability = 'schedule-automation-v1';
 export const fileObservationCapability = 'file-observation-read-v1';

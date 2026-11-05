@@ -6,10 +6,6 @@ import { DatabaseSync } from 'node:sqlite';
 import type { ProjectScope } from '@daban/protocol';
 import {
   type AutomationSource,
-  type BudgetScope,
-  type DeliveryReference,
-  deliveryReferenceKey,
-  type GoalResumeTarget,
   type Group,
   type GroupActionAck,
   type GroupActionReceipt,
@@ -20,10 +16,8 @@ import {
   type GroupMessage,
   type GroupPage,
   type GroupSend,
-  goalResumeKey,
   groupCopyKey,
   isAutomationSource,
-  isDeliveryReference,
   isGroup,
   isGroupActionReceipt,
   isGroupActionRequest,
@@ -43,11 +37,10 @@ import {
 import { and, asc, count, desc, eq, inArray, lt, lte, type SQL, sql } from 'drizzle-orm';
 import type { Attachments } from './attachments.js';
 import { errorCode, Fault } from './control.js';
-import { configure, type Database, migrate } from './database.js';
+import { configure, type Database, migrate, migrationApplied } from './database.js';
 import { migrations } from './groups-migrations.js';
 import {
   groupActions,
-  groupBudgetResumes,
   groupCollaborations,
   groupDefs,
   groupDeliveries,
@@ -56,12 +49,10 @@ import {
   groupMeta,
   groupTurns,
 } from './groups-schema.js';
-import type { ConversationScope, RunProvenance, RunReceipt } from './tasks.js';
+import type { ConversationScope, RunReceipt } from './tasks.js';
 
 export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
-  budgetResumeIssue?(bot: string, runId: string, goal?: GoalResumeTarget): string | undefined;
-  budget?(group: string, sourceId: string): BudgetScope;
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
   directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
   source?(
@@ -71,13 +62,10 @@ export interface GroupRunner {
   ):
     | {
         intentId: string;
-        delivery?: DeliveryReference;
-        budget?: BudgetScope;
         project?: ProjectScope;
         automation?: AutomationSource;
       }
     | undefined;
-  projectScope?(bot: string, scope: ProjectScope): unknown;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
@@ -86,7 +74,7 @@ export interface GroupRunner {
     bot: string,
     task: TaskRequest,
     scope: ConversationScope,
-    provenance?: RunProvenance,
+    automation?: AutomationSource,
   ): Promise<unknown>;
   stopRequest(bot: string, requestId: string, conversationId: string): Promise<unknown>;
 }
@@ -113,17 +101,6 @@ const object = (value: unknown): value is Record<string, unknown> =>
 const live = [...activeStates];
 const claimed = ['claimed', 'running'];
 const waiting = ['pending', 'running'];
-
-function storedDelivery(value: string | null) {
-  if (value === null) return undefined;
-  try {
-    const reference: unknown = JSON.parse(value);
-    if (isDeliveryReference(reference)) return reference;
-  } catch {
-    // Invalid ownership must not turn accepted collaboration into unrelated ordinary work.
-  }
-  throw new Fault('GROUP_STORAGE_FAILED');
-}
 
 function legacy(client: DatabaseSync) {
   client.exec(`CREATE TABLE IF NOT EXISTS group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL,copy_origin TEXT);
@@ -181,15 +158,64 @@ export class Groups {
     const client = new DatabaseSync(this.file);
     try {
       configure(client, { journal: 'WAL', foreignKeys: true });
-      this.db = migrate(client, migrations, legacy);
+      this.db = migrate(client, migrations, legacy, [
+        {
+          name: '20261104110815_delivery-reference',
+          hash: 'c2725ed1a22a373fa6331400c96f8caf3dc2bed8417eda602708f07b4ccaa345',
+        },
+        {
+          name: '20261105075222_delivery-origins',
+          hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        },
+      ]);
       this.db.insert(groupMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
     } catch (error) {
       client.close();
       throw error;
     }
+    // This removed column has no active schema mapping. Read it only to retire queued effects from closed Delivery provenance.
+    if (
+      migrationApplied(this.db, {
+        name: '20261104110815_delivery-reference',
+        hash: 'c2725ed1a22a373fa6331400c96f8caf3dc2bed8417eda602708f07b4ccaa345',
+      })
+    ) {
+      const retired = this.db.all<{ grp: string; turn: string }>(
+        sql`SELECT grp, turn FROM group_collaborations WHERE delivery IS NOT NULL`,
+      );
+      for (const row of retired)
+        this.db.transaction((tx) => {
+          const deliveries = tx
+            .update(groupDeliveries)
+            .set({ state: 'cancelled', error: 'DELIVERY_RETIRED' })
+            .where(
+              and(
+                eq(groupDeliveries.grp, row.grp),
+                eq(groupDeliveries.source, row.turn),
+                inArray(groupDeliveries.state, live),
+              ),
+            )
+            .run();
+          const turns = tx
+            .update(groupTurns)
+            .set({ state: 'cancelled' })
+            .where(
+              and(
+                eq(groupTurns.grp, row.grp),
+                eq(groupTurns.id, row.turn),
+                inArray(groupTurns.state, waiting),
+              ),
+            )
+            .run();
+          // Invalidate cached pages on retirement, while keeping ordinary reopens idempotent.
+          if (Number(deliveries.changes) + Number(turns.changes) > 0)
+            tx.update(groupMeta)
+              .set({ revision: sql`${groupMeta.revision} + 1` })
+              .where(eq(groupMeta.id, 1))
+              .run();
+        });
+    }
     for (const row of this.db.select().from(groupDefs).all()) this.definition(row);
-    for (const row of this.db.select().from(groupCollaborations).all())
-      storedDelivery(row.delivery);
     for (const row of this.db
       .select()
       .from(groupDeliveries)
@@ -416,37 +442,6 @@ export class Groups {
       ...(rows.length > limit ? { nextBefore: messages[0].sequence } : {}),
     };
   }
-  private deliveryReference(group: string, source: string) {
-    const row = this.db
-      .select()
-      .from(groupCollaborations)
-      .where(and(eq(groupCollaborations.grp, group), eq(groupCollaborations.turn, source)))
-      .get();
-    return row ? storedDelivery(row.delivery) : undefined;
-  }
-  deliveryProgress(reference: DeliveryReference) {
-    if (!isDeliveryReference(reference))
-      return Promise.reject(new Fault('INVALID_DELIVERY_REFERENCE', 400));
-    return this.exclusive(() =>
-      this.db
-        .select()
-        .from(groupCollaborations)
-        .all()
-        .filter((row) => {
-          const origin = storedDelivery(row.delivery);
-          return origin && deliveryReferenceKey(origin) === deliveryReferenceKey(reference);
-        })
-        .map((row) => {
-          const turn = this.turn(row.grp, row.turn);
-          return {
-            groupId: row.grp,
-            sourceId: row.turn,
-            state: turn.state,
-            stages: this.stages(row.grp, row.turn).map((stage) => this.delivery(stage)),
-          };
-        }),
-    );
-  }
   read(id: string, before?: number, limit?: number) {
     return this.exclusive(() => this.page(id, before, limit));
   }
@@ -512,10 +507,8 @@ export class Groups {
     for (const member of members)
       if (!(await this.runner.member(member))) throw new Fault('GROUP_MEMBER_REQUIRED');
   }
-  private projectMembers(project: ProjectScope | undefined, members: string[]) {
-    if (!project) return;
-    if (!this.runner.projectScope) throw new Fault('PROJECT_ACCESS_DENIED', 403);
-    for (const bot of members) this.runner.projectScope(bot, project);
+  private projectMembers(project: ProjectScope | undefined, _members: string[]) {
+    if (project) throw new Fault('PROJECT_RETIRED', 409);
   }
   private admitCreation(members: string[]) {
     // Directory awaits must finish first; commit in this same turn before lifecycle permission can change.
@@ -640,22 +633,13 @@ export class Groups {
             {
               bot: source.bot,
               name: author.name,
-              budget: this.runner.source?.(source.bot, source.runId)?.budget,
             },
             automation,
           );
           // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
           this.db
             .insert(groupCollaborations)
-            .values({
-              source: identity,
-              grp: id,
-              turn: sourceId,
-              signature,
-              delivery: this.runner.source?.(source.bot, source.runId)?.delivery
-                ? deliveryReferenceKey(this.runner.source(source.bot, source.runId)!.delivery!)
-                : null,
-            })
+            .values({ source: identity, grp: id, turn: sourceId, signature })
             .run();
           return { group, sourceId, reused: false };
         },
@@ -877,7 +861,7 @@ export class Groups {
   }
   private enqueue(
     value: GroupSend,
-    author?: { bot: string; name: string; budget?: BudgetScope },
+    author?: { bot: string; name: string },
     automation?: AutomationSource,
   ) {
     const group = this.group(value.group),
@@ -953,7 +937,6 @@ export class Groups {
       .values({
         grp: group.id,
         id: value.id,
-        budget: author?.budget ?? this.runner.budget?.(group.id, value.id),
         prompt: value.prompt,
         recipients: JSON.stringify(value.recipients),
         signature,
@@ -1285,25 +1268,17 @@ export class Groups {
               id: group.id,
               context,
               sourceId: String(turn.id),
-              ...(turn.budget ? { budget: turn.budget } : {}),
             },
-            {
-              automation: this.automationSource(turn.automation),
-              delivery: this.deliveryReference(group.id, String(turn.id)),
-            },
+            this.automationSource(turn.automation),
           );
           this.reconcile(row, true);
         } catch (error) {
           if (this.runner.findRequest(String(row.bot), requestId(row))) this.reconcile(row, true);
           // Definite admission refusals issued no model effect, so retain the original queue identity.
           else if (
-            [
-              'MODEL_ALREADY_RUNNING',
-              'BOT_CHANGING',
-              'RUNTIME_RECOVERY_PENDING',
-              'BUDGET_LIMIT_REACHED',
-              'BUDGET_REVISION_CONFLICT',
-            ].includes(errorCode(error) || '')
+            ['MODEL_ALREADY_RUNNING', 'BOT_CHANGING', 'RUNTIME_RECOVERY_PENDING'].includes(
+              errorCode(error) || '',
+            )
           )
             this.db.transaction(
               () => {
@@ -1334,92 +1309,7 @@ export class Groups {
       this.failure = '';
     });
   }
-  private resumeRecord(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
-    const prior = this.db
-      .select()
-      .from(groupBudgetResumes)
-      .where(eq(groupBudgetResumes.id, id))
-      .get();
-    if (
-      prior &&
-      prior.signature !== JSON.stringify([scope.budgetId, scope.revision, goalResumeKey(goal)])
-    )
-      throw new Fault('BUDGET_CONTINUE_CONFLICT', 409);
-    return prior !== undefined;
-  }
-  budgetResume(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
-    return this.exclusive(() => this.resumeRecord(scope, id, goal));
-  }
-  resumeBudget(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
-    if (!validAgentId(id)) return Promise.reject(new Fault('INVALID_BUDGET_CONTINUATION', 400));
-    return this.exclusive(() =>
-      this.db.transaction(
-        () => {
-          const signature = JSON.stringify([scope.budgetId, scope.revision, goalResumeKey(goal)]);
-          if (this.resumeRecord(scope, id, goal)) return true;
-          const turns = this.db
-            .select()
-            .from(groupTurns)
-            .all()
-            .filter((turn) => turn.budget?.budgetId === scope.budgetId);
-          if (!turns.length) return false;
-          for (const turn of turns) {
-            const group = this.group(turn.grp);
-            if (group.archived) throw new Fault('GROUP_ARCHIVED');
-            const stages = this.stages(turn.grp, turn.id);
-            if (stages.some((stage) => this.runner.running(stage.bot)))
-              throw new Fault('BUDGET_TASK_RUNNING', 409);
-            const failed = stages.find(
-              (stage) =>
-                ['failed', 'interrupted'].includes(stage.state) &&
-                !stages.some((next) => next.retryStage === stage.id),
-            );
-            if (failed) {
-              const issue = failed.run
-                ? this.runner.budgetResumeIssue?.(failed.bot, failed.run, goal)
-                : undefined;
-              if (issue) throw new Fault(issue, 409);
-              // A new delivery keeps the failed reply and its receipt intact; only an explicit human continuation can retry it.
-              this.db
-                .insert(groupDeliveries)
-                .values({
-                  id: `budget-${digest([id, failed.id])}`,
-                  grp: failed.grp,
-                  source: failed.source,
-                  bot: failed.bot,
-                  position: failed.position,
-                  state: 'pending',
-                  retryOf: goal ? undefined : (failed.run ?? undefined),
-                  goalResume: goal,
-                  retryStage: failed.id,
-                  context: failed.context,
-                  name: failed.name,
-                })
-                .run();
-              for (const stage of stages.filter(
-                (stage) => stage.position > failed.position && stage.state === 'cancelled',
-              ))
-                this.db
-                  .update(groupDeliveries)
-                  .set({ state: 'pending', error: null })
-                  .where(eq(groupDeliveries.id, stage.id))
-                  .run();
-            }
-            const waiting = !!failed || stages.some((stage) => stage.state === 'pending');
-            this.db
-              .update(groupTurns)
-              .set({ budget: scope, ...(waiting ? { state: 'pending' } : {}) })
-              .where(and(eq(groupTurns.grp, turn.grp), eq(groupTurns.id, turn.id)))
-              .run();
-          }
-          this.db.insert(groupBudgetResumes).values({ id, signature }).run();
-          this.changed();
-          return true;
-        },
-        { behavior: 'immediate' },
-      ),
-    );
-  }
+
   async cancel(group: string, sourceId: string) {
     if (!validAgentId(sourceId)) throw new Fault('INVALID_GROUP_MESSAGE', 400);
     const active = await this.exclusive(() =>

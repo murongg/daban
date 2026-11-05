@@ -1,4 +1,4 @@
-import type { BudgetScope, GoalResumeTarget } from '@daban/protocol';
+import type { GoalResumeTarget } from '@daban/protocol';
 import { sql } from 'drizzle-orm';
 import {
   check,
@@ -31,7 +31,8 @@ export const groupTurns = sqliteTable(
   {
     grp: text().notNull(),
     id: text().notNull(),
-    budget: text({ mode: 'json' }).$type<BudgetScope>(),
+    // Retain the shipped column so removing the product never deletes existing user data.
+    legacyBudget: text('budget', { mode: 'json' }).$type<unknown>(),
     prompt: text().notNull(),
     recipients: text().notNull(),
     signature: text().notNull(),
@@ -94,7 +95,6 @@ export const groupHandoffs = sqliteTable('group_handoffs', {
 });
 
 export const groupCollaborations = sqliteTable('group_collaborations', {
-  delivery: text(),
   source: text().primaryKey(),
   grp: text().notNull(),
   turn: text().notNull(),
@@ -110,7 +110,7 @@ export const groupMeta = sqliteTable(
   (table) => [check('group_meta_singleton', sql`${table.id} = 1`)],
 );
 
-export const groupBudgetResumes = sqliteTable('group_budget_resumes', {
+export const legacyBudgetResumes = sqliteTable('group_budget_resumes', {
   id: text().primaryKey(),
   signature: text().notNull(),
 });

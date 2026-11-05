@@ -28,6 +28,62 @@ const owner = {
   redact: (value: string) => value.replaceAll('synthetic-secret', '[redacted]'),
 };
 
+test('committed boundaries use surface identities even when position endpoints descend', () => {
+  const tracker = new CheckpointTracker('mock-session', (value) => value);
+  const event = (type: string, seq: number, data: unknown, extra: object = {}) =>
+    tracker.observe({
+      method: 'session.event',
+      params: { sessionId: 'mock-session', event: { type, seq, data, ...extra } },
+    });
+  event('compaction/start', 100, { compactionId: 'mock-summary', turn: 1 });
+  event('compaction/summary', 101, {
+    compactionId: 'mock-summary',
+    summary: [{ type: 'text', text: 'SYNTHETIC SUMMARY' }],
+    rawOutput: 'SYNTHETIC PRIVATE',
+    shadowedRange: { start: 90, end: 20 },
+    shadowedSeqs: [90, 10, 20],
+  });
+  expect(tracker.boundary).toBeUndefined();
+  event(
+    'user/message',
+    102,
+    {},
+    { surfaceOp: { op: 'replace', startSeq: 90, endSeq: 20 }, sourceEventSeqs: [100, 101] },
+  );
+  expect(tracker.boundary).toBeUndefined();
+  expect(event('compaction/end', 103, { compactionId: 'mock-summary', turn: 1 })).toMatchObject({
+    sequence: 103,
+  });
+  expect(tracker.boundary).toEqual({
+    kind: 'summary',
+    endSeq: 103,
+    shadowedSeqs: [90, 10, 20],
+    omittedSeqs: 0,
+  });
+  expect(JSON.stringify(tracker.boundary)).not.toContain('SYNTHETIC');
+  event('compaction/prune', 104, { shadowedRange: { start: 50, end: 50 }, shadowedSeqs: [50] });
+  event(
+    'tool/result',
+    105,
+    {},
+    { surfaceOp: { op: 'replace', startSeq: 50, endSeq: 50 }, sourceEventSeqs: [50] },
+  );
+  expect(tracker.boundary).toEqual({
+    kind: 'prune',
+    endSeq: 105,
+    shadowedSeqs: [50],
+    omittedSeqs: 0,
+  });
+  const committed = tracker.boundary;
+  event(
+    'tool/result',
+    105,
+    {},
+    { surfaceOp: { op: 'replace', startSeq: 50, endSeq: 50 }, sourceEventSeqs: [50] },
+  );
+  expect(tracker.boundary).toBe(committed);
+});
+
 test('partial and error references in a multi-turn checkpoint can be read through history', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-checkpoint-reader-'));
   const journal = new TaskJournal(root);

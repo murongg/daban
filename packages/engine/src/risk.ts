@@ -2,8 +2,7 @@ import { lookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ModelApi } from '@daban/protocol';
-import { modelApi } from '@daban/protocol';
-import type { CommandDecision, CommandReview, CommandRisk } from './commands.js';
+import type { CommandDecision, CommandReview } from './commands.js';
 import { inferenceRequest, inferenceText } from './inference.js';
 import { McpFetch } from './mcp-fetch.js';
 
@@ -326,19 +325,11 @@ export class Risk {
       };
       resolve?: (request: CommandReview) => Promise<ReviewModel | null>;
       fetcher?: (url: string, init: RequestInit) => Promise<Response>;
-      meter?: (
-        request: CommandReview,
-        api: ModelApi,
-        fetcher: (url: string, init: RequestInit) => Promise<Response>,
-      ) => (url: string, init: RequestInit) => Promise<Response>;
     },
   ) {}
-  review = async (request: CommandReview, signal?: AbortSignal): Promise<CommandDecision> =>
-    (await this.details(request, signal)).decision;
-  details = async (request: CommandReview, signal?: AbortSignal): Promise<CommandRisk> => {
+  review = async (request: CommandReview, signal?: AbortSignal): Promise<CommandDecision> => {
     signal?.throwIfAborted();
-    if (request.tool === 'process_input' || sensitive.test(request.command))
-      return { decision: 'ask', reason: 'forced-human' };
+    if (request.tool === 'process_input' || sensitive.test(request.command)) return 'ask';
     try {
       // A Bot's in-flight command must not follow a different supplier selected after its task started.
       const config = await (this.options.resolve
@@ -346,14 +337,13 @@ export class Risk {
         : this.options.settings.resolve()
       ).catch(() => null);
       signal?.throwIfAborted();
-      if (config?.secrets.some((key) => request.command.includes(key)))
-        return { decision: 'ask', reason: 'forced-human' };
+      if (config?.secrets.some((key) => request.command.includes(key))) return 'ask';
       const parsed = literalCommands(request.command);
       const commands = parsed?.commands;
       if (
         commands?.some((words) => words.some((word) => sensitive.test(path.posix.normalize(word))))
       )
-        return { decision: 'ask', reason: 'forced-human' };
+        return 'ask';
       // Globs can inject executable flags or output filenames into these programs, despite looking like a read.
       if (
         parsed?.globs &&
@@ -376,11 +366,14 @@ export class Risk {
           ].includes(path.posix.basename(words[0])),
         )
       )
-        return { decision: 'ask', reason: 'forced-human' };
-      if (commands?.every(readonly)) return { decision: 'allow', reason: 'literal-read' };
-      if (mustAsk(request.command, commands) || !inlineReviewable(request.command, commands))
-        return { decision: 'ask', reason: 'forced-human' };
-      if (!config) return { decision: 'ask', reason: 'unavailable' };
+        return 'ask';
+      if (commands?.every(readonly)) return 'allow';
+      if (
+        mustAsk(request.command, commands) ||
+        !config ||
+        !inlineReviewable(request.command, commands)
+      )
+        return 'ask';
       const native = inferenceRequest(config, {
         system: policy,
         prompt: JSON.stringify({
@@ -404,11 +397,10 @@ export class Risk {
             ),
           );
           if (!object(value) || (value.proxy != null && typeof value.proxy !== 'string'))
-            return { decision: 'ask', reason: 'unavailable' };
+            return 'ask';
           upstream = typeof value.proxy === 'string' ? value.proxy : undefined;
         } catch (error) {
-          if (!object(error) || error.code !== 'ENOENT')
-            return { decision: 'ask', reason: 'unavailable' };
+          if (!object(error) || error.code !== 'ENOENT') return 'ask';
         }
         // Endpoints come only from explicit host settings, never from model commands or guest data.
         fetcher = upstream
@@ -420,16 +412,14 @@ export class Risk {
             }).fetch
           : fetch;
       }
-      const send = this.options.meter
-        ? this.options.meter(request, modelApi(config), fetcher)
-        : fetcher;
+      const send = fetcher;
       const response = await send(endpoint, {
         ...native.init,
         signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)]),
       });
       if (!response.ok || !response.body) {
         await response.body?.cancel();
-        return { decision: 'ask', reason: 'unavailable' };
+        return 'ask';
       }
       const chunks: Buffer[] = [];
       let bytes = 0;
@@ -441,27 +431,19 @@ export class Risk {
         }
       } catch {
         await response.body.cancel().catch(() => {});
-        return { decision: 'ask', reason: 'unavailable' };
+        return 'ask';
       }
       const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       const decision = inferenceText(config.api, value);
-      if (decision === null) return { decision: 'ask', reason: 'unavailable' };
+      if (decision === null) return 'ask';
       const verdict: unknown = JSON.parse(decision);
       // Only an exact low verdict grants automatic execution; malformed/uncertain reviews ask a human.
       return object(verdict) && Object.keys(verdict).length === 1 && verdict.risk === 'low'
-        ? { decision: 'allow', reason: 'model-low' }
-        : {
-            decision: 'ask',
-            reason:
-              object(verdict) &&
-              Object.keys(verdict).length === 1 &&
-              (verdict.risk === 'high' || verdict.risk === 'unknown')
-                ? 'forced-human'
-                : 'unavailable',
-          };
+        ? 'allow'
+        : 'ask';
     } catch {
       signal?.throwIfAborted();
-      return { decision: 'ask', reason: 'unavailable' };
+      return 'ask';
     }
   };
 }

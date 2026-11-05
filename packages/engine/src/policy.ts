@@ -1,15 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import {
-  type ApprovalMode,
-  type BudgetScope,
-  isPolicyDecision,
-  isTaskPlan,
-  type PolicyDecision,
-} from '@daban/protocol';
+import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
 import { type BridgeConfig, type BridgeFetch, callBridge } from './bridge.js';
 import { readOwner } from './delegation.js';
 
-export const name = 'daban-budget';
+export const name = 'daban-policy';
 export const inject = ['tools', 'approval', 'agents'];
 interface Execution {
   readonly token?: symbol;
@@ -134,13 +128,12 @@ export function apply(
     urls: string[];
     approvalMode?: ApprovalMode;
     attemptId?: string;
-    budget?: BudgetScope;
   } & Partial<BridgeConfig>,
   request: BridgeFetch = fetch,
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
-  // Waiting on a guard cannot retarget the captured physical attempt or its shared budget.
+  // Waiting on a guard cannot retarget the captured physical attempt.
   config = structuredClone(config);
   const bridge = config.url
     ? {
@@ -151,8 +144,11 @@ export function apply(
       }
     : undefined;
   let calls = 0;
-  const executions = new Map<symbol, string>();
+  const executions = new Map<symbol, number>();
   const searchResults = new Map<symbol, Promise<unknown>>();
+  // Ordinals measure progress; a separate UUID binds Search authority to one registry execution.
+  const executionKeys = new Map<symbol, string>();
+  const executionKinds = new Map<symbol, string>();
   const ownedTokens = new Set<symbol>();
   let active = true;
   ctx.effect?.(() => () => {
@@ -164,9 +160,35 @@ export function apply(
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
   ctx.on('tools/pre-execute', async (exec: Execution, next: () => Promise<unknown>) => {
     if (exec.signal.aborted) return { kind: 'cancel' };
-    // Register identity and the search flight before any fence await; scheduler preparation and dispatch are separate phases.
+    const declaration = exec.name === 'web_search' ? searchDeclaration(ctx, exec) : undefined;
+    const searchDenied = () => ({
+      kind: 'deny',
+      reason: 'SEARCH_INVALID_QUERY',
+      info: { name: 'SearchError', code: 'SEARCH_INVALID_QUERY' },
+    });
+    if (typeof exec.token === 'symbol') {
+      const kind = executionKinds.get(exec.token);
+      if (kind !== undefined && kind !== exec.name) return searchDenied();
+      executionKinds.set(exec.token, exec.name);
+    }
     const prior = typeof exec.token === 'symbol' ? searchResults.get(exec.token) : undefined;
-    if (prior) return prior;
+    if (prior) {
+      const saved = bridge ? readSearchClaim(exec.token, bridge) : undefined;
+      if (
+        !saved?.current() ||
+        !declaration ||
+        saved.agent !== declaration.agent ||
+        saved.root !== declaration.root ||
+        JSON.stringify(saved.queries) !== JSON.stringify(declaration.queries)
+      )
+        return searchDenied();
+      return prior;
+    }
+    if (declaration) {
+      const current = declaration.current;
+      declaration.current = () => active && current();
+    }
+    // Provider call IDs repeat across responses and children. The SDK registry owns this token for one execution.
     let executionId = typeof exec.token === 'symbol' ? executions.get(exec.token) : undefined;
     if (!executionId) {
       if (calls >= config.limit)
@@ -176,40 +198,23 @@ export function apply(
           info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
         };
       calls++;
-      if (typeof exec.token === 'symbol') {
-        executionId = randomUUID();
-        executions.set(exec.token, executionId);
-      }
-    }
-    const declaration = exec.name === 'web_search' ? searchDeclaration(ctx, exec) : undefined;
-    if (declaration) {
-      const current = declaration.current;
-      declaration.current = () => active && current();
+      // A repeated pre-execute retains its ordinal even when the durable fence acknowledgement was lost.
+      executionId = calls;
+      if (typeof exec.token === 'symbol') executions.set(exec.token, executionId);
     }
     let grant: ((receipt: { claimId: string }) => unknown) | undefined;
     let refuse: (() => unknown) | undefined;
-    const searchDenied = () => ({
-      kind: 'deny',
-      reason: 'SEARCH_INVALID_QUERY',
-      info: { name: 'SearchError', code: 'SEARCH_INVALID_QUERY' },
-    });
     if (exec.name === 'web_search') {
-      if (
-        !declaration ||
-        typeof exec.token !== 'symbol' ||
-        !bridge ||
-        !config.budget ||
-        !config.attemptId
-      )
+      if (!declaration || typeof exec.token !== 'symbol' || !bridge || !config.attemptId)
         return searchDenied();
       const receipt = new Promise<{ claimId: string }>((resolve, reject) => {
         grant = resolve;
         refuse = () => reject(new Error('SEARCH_INVALID_QUERY'));
       });
-      // Policy reports denial; provider may never run to consume this same rejected handoff.
       receipt.catch(() => undefined);
       searchClaims.set(exec.token, { bridge, claim: { ...declaration, receipt } });
       ownedTokens.add(exec.token);
+      if (!executionKeys.has(exec.token)) executionKeys.set(exec.token, randomUUID());
     }
     const runPolicy = async () => {
       const fence = async () => {
@@ -222,7 +227,12 @@ export function apply(
           const result = await callBridge(
             { ...config, url: config.url },
             'attempt.fence',
-            { sessionId: rootSession, attemptId: config.attemptId, kind: 'tool' },
+            {
+              sessionId: rootSession,
+              attemptId: config.attemptId,
+              kind: 'tool',
+              toolCount: executionId,
+            },
             exec.signal,
             request,
           );
@@ -242,67 +252,43 @@ export function apply(
         }
       };
       const dispatch = async (effect = next) => {
-        let claimId: string | undefined;
-        if (declaration && !declaration.current()) return searchDenied();
-        if (config.budget) {
+        // Approval waits happen after the first fence; only this attempt may enter the body.
+        const changedAttempt = await fence();
+        if (changedAttempt) return changedAttempt;
+        if (exec.signal.aborted) return { kind: 'cancel' };
+        if (declaration) {
+          if (!declaration.current() || typeof exec.token !== 'symbol') return searchDenied();
           try {
-            const roots = ctx.agents?.roots();
-            const rootSession = roots?.length === 1 ? roots[0].session?.id : undefined;
-            if (!config.url || !rootSession || !executionId)
-              throw new Error('BUDGET_OWNER_UNAVAILABLE');
             const result = await callBridge(
-              { ...config, url: config.url },
-              'budget.tool',
+              { ...config, url: config.url! },
+              'search.claim',
               {
-                scope: config.budget,
                 modelAttemptId: config.attemptId,
-                sessionId: rootSession,
-                callId: executionId,
-                ...(declaration
-                  ? {
-                      search: {
-                        executionSessionId: declaration.executionSessionId,
-                        queries: declaration.queries,
-                      },
-                    }
-                  : {}),
+                sessionId: declaration.sessionId,
+                callId: executionKeys.get(exec.token),
+                toolCount: executionId,
+                search: {
+                  executionSessionId: declaration.executionSessionId,
+                  queries: declaration.queries,
+                },
               },
               exec.signal,
               request,
             );
             if (
-              !result ||
-              typeof result !== 'object' ||
-              !('accepted' in result) ||
-              result.accepted !== true
+              !object(result) ||
+              result.accepted !== true ||
+              !object(result.searchReceipt) ||
+              typeof result.searchReceipt.claimId !== 'string' ||
+              !/^[a-f0-9]{64}$/.test(result.searchReceipt.claimId)
             )
-              throw new Error('BUDGET_TOOL_LIMIT');
-            if (declaration) {
-              if (
-                !declaration.current() ||
-                !('searchReceipt' in result) ||
-                !object(result.searchReceipt) ||
-                typeof result.searchReceipt.claimId !== 'string' ||
-                !/^[a-f0-9]{64}$/.test(result.searchReceipt.claimId)
-              )
-                throw new Error('SEARCH_INVALID_QUERY');
-              claimId = result.searchReceipt.claimId;
-            }
+              throw new Error('SEARCH_INVALID_QUERY');
+            if (!declaration.current()) throw new Error('SEARCH_INVALID_QUERY');
+            grant?.({ claimId: result.searchReceipt.claimId });
           } catch {
-            return {
-              kind: 'deny',
-              reason: 'BUDGET_TOOL_LIMIT',
-              info: { name: 'BudgetError', code: 'BUDGET_TOOL_LIMIT' },
-            };
+            refuse?.();
+            return searchDenied();
           }
-        }
-        // The budget/approval waits happen after the first fence; only this attempt may enter the body.
-        const changedAttempt = await fence();
-        if (changedAttempt) return changedAttempt;
-        if (exec.signal.aborted) return { kind: 'cancel' };
-        if (declaration) {
-          if (!declaration.current() || !claimId) return searchDenied();
-          grant?.({ claimId });
         }
         return effect();
       };
@@ -339,7 +325,6 @@ export function apply(
           value && typeof value === 'object' && 'url' in value && typeof value.url === 'string'
             ? normalizedUrl(value.url)
             : undefined;
-        let hostDecision: PolicyDecision | undefined;
         const owner =
           bridge && ctx.agents ? readOwner(ctx.agents, exec.agent, exec.name) : undefined;
         const sessionId = owner?.session?.id;
@@ -351,67 +336,21 @@ export function apply(
             owner?.session?.id === sessionId);
         const blocked = () => ({
           kind: 'deny',
-          reason:
-            'The Host approval policy refused or invalidated this request. No HTTP request was made.',
+          reason: 'The executing agent no longer owns this request. No HTTP request was made.',
           info: { name: 'WebPolicyError', code: 'APPROVAL_POLICY_CHANGED' },
         });
-        if (bridge) {
+        if (!ownsRead()) return blocked();
+        const needsApproval = config.approvalMode === 'ask' || !url || !urls.has(url);
+        const checkRead = () => {
           if (!ownsRead()) return blocked();
-          try {
-            const decision = await callBridge(
-              bridge,
-              'approval.web',
-              { url, sessionId },
-              exec.signal,
-              request,
-            );
-            if (
-              !ownsRead() ||
-              !isPolicyDecision(decision) ||
-              decision.selector.kind !== 'url' ||
-              decision.selector.url !== url ||
-              decision.effect === 'deny'
-            )
-              return blocked();
-            hostDecision = decision;
-          } catch {
-            return blocked();
-          }
-        }
-        const needsApproval =
-          hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !url || !urls.has(url);
-        const checkRead = async () => {
-          if (!ownsRead()) return blocked();
-          if (hostDecision && bridge) {
-            try {
-              const checked = await callBridge(
-                bridge,
-                'approval.web.check',
-                { url, sessionId, decision: hostDecision },
-                exec.signal,
-                request,
-              );
-              if (
-                !checked ||
-                typeof checked !== 'object' ||
-                !('current' in checked) ||
-                checked.current !== true
-              )
-                return blocked();
-            } catch {
-              return blocked();
-            }
-          }
           if (exec.signal.aborted) return { kind: 'cancel' };
-          // Approval and Host checks can wait while the child is removed or the root task changes.
-          if (!ownsRead()) return blocked();
         };
         const approvedDispatch = async () => {
-          // A refusal already visible after the Human wait must not consume shared tool quota.
-          const refused = await checkRead();
+          // Human and fence waits can outlive the child that obtained this exact permission.
+          const refused = checkRead();
           if (refused) return refused;
           return dispatch(async () => {
-            const changed = await checkRead();
+            const changed = checkRead();
             if (changed) return changed;
             return next();
           });
@@ -446,12 +385,7 @@ export function apply(
             },
           };
         }
-        if (
-          !url ||
-          hostDecision?.effect === 'ask' ||
-          config.approvalMode === 'ask' ||
-          !urls.has(url)
-        )
+        if (!url || config.approvalMode === 'ask' || !urls.has(url))
           return {
             kind: 'deny',
             reason:
@@ -463,12 +397,13 @@ export function apply(
       return dispatch();
     };
     if (!declaration || typeof exec.token !== 'symbol') return runPolicy();
+    // Share one claim Promise before any fence await; preparation and dispatch reuse the registry token.
     const result = Promise.resolve()
       .then(runPolicy)
       .then(
-        (decision) => {
-          if (!object(decision) || decision.kind !== 'allow') refuse?.();
-          return decision;
+        (value) => {
+          if (object(value) && value.kind !== 'allow') refuse?.();
+          return value;
         },
         (error: unknown) => {
           refuse?.();

@@ -1,4 +1,77 @@
 import { validAgentId } from './index.js';
+import { isProjectScope, type ProjectScope } from './projects.js';
+
+export interface GoalOwner {
+  /** Archived identity only; it cannot authorize a current Goal control. */
+  project?: ProjectScope;
+  bot: string;
+  chatRevision?: number;
+  conversationId?: string;
+}
+export interface GoalResumeTarget {
+  owner: GoalOwner;
+  sessionId: string;
+  goalId: string;
+  goalRevision: number;
+  humanEpoch: number;
+}
+const object = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+export function isGoalOwner(value: unknown): value is GoalOwner {
+  return (
+    object(value) &&
+    Object.keys(value).every((key) =>
+      ['bot', 'chatRevision', 'conversationId', 'project'].includes(key),
+    ) &&
+    validAgentId(value.bot) &&
+    (value.project === undefined || isProjectScope(value.project)) &&
+    (value.conversationId === undefined
+      ? Number.isSafeInteger(value.chatRevision) && Number(value.chatRevision) >= 0
+      : validAgentId(value.conversationId) && value.chatRevision === undefined)
+  );
+}
+export function isGoalResumeTarget(value: unknown): value is GoalResumeTarget {
+  return (
+    object(value) &&
+    Object.keys(value).every((key) =>
+      ['owner', 'sessionId', 'goalId', 'goalRevision', 'humanEpoch'].includes(key),
+    ) &&
+    isGoalOwner(value.owner) &&
+    typeof value.sessionId === 'string' &&
+    value.sessionId.length > 0 &&
+    value.sessionId.length <= 1024 &&
+    !value.sessionId.includes('\0') &&
+    validAgentId(value.goalId) &&
+    Number.isSafeInteger(value.goalRevision) &&
+    Number(value.goalRevision) > 0 &&
+    Number.isSafeInteger(value.humanEpoch) &&
+    Number(value.humanEpoch) >= 0
+  );
+}
+export function goalResumeKey(target?: GoalResumeTarget) {
+  return JSON.stringify(
+    target
+      ? [
+          target.owner.bot,
+          target.owner.conversationId ?? null,
+          target.owner.chatRevision ?? null,
+          target.sessionId,
+          target.goalId,
+          target.goalRevision,
+          target.humanEpoch,
+          ...(target.owner.project
+            ? [target.owner.project.projectId, target.owner.project.revision]
+            : []),
+        ]
+      : null,
+  );
+}
+export type GoalControlCommand = { type: 'goal.target'; owner: GoalOwner };
+export const isGoalControlCommand = (value: unknown): value is GoalControlCommand =>
+  object(value) &&
+  Object.keys(value).every((key) => ['type', 'owner'].includes(key)) &&
+  value.type === 'goal.target' &&
+  isGoalOwner(value.owner);
 
 export interface GoalProgress {
   id: string;

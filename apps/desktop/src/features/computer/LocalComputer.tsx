@@ -9,12 +9,14 @@ import {
 } from '@daban/protocol';
 import { Check, CircleAlert, Monitor, Pause, Play, Power, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useRemote } from '../../app/Remote';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
 import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { t } from '../../i18n/locale';
 import { modelName } from '../models/model-options';
+import { NativeDesktop } from './NativeDesktop';
 
 type Consent = {
   command: Extract<LocalComputerCommand, { type: 'local.connect' }>;
@@ -22,6 +24,7 @@ type Consent = {
   model: string;
 };
 export function LocalComputer({ bot }: { bot: Bot }) {
+  const remoteHost = useRemote().state?.selected;
   const runtime = useRuntime(),
     status = runtime.snapshot.localComputer,
     target = agentId(bot.id);
@@ -35,7 +38,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
   const selected = profile?.model || bot.model || runtime.snapshot.model.model;
   const vision = modelHasVision(selected, modelCatalog(runtime.snapshot.model.connections));
   const task = agentTask(runtime.snapshot, bot.id);
-  const shortcut = status?.platform === 'win32' ? 'Ctrl + Alt + Esc' : 'Ctrl + Option + Esc';
+  const shortcut = status?.platform === 'darwin' ? 'Ctrl + Option + Esc' : 'Ctrl + Alt + Esc';
   const permissions = status?.permissions.screen && status.permissions.accessibility;
   const other = status?.session && !session;
   const sessionId = session?.id,
@@ -105,7 +108,13 @@ export function LocalComputer({ bot }: { bot: Bot }) {
   return (
     <div className="panel-section local-computer">
       <div className="panel-heading">
-        <h2>{status.platform === 'win32' ? t('localComputer.windows') : t('localComputer.mac')}</h2>
+        <h2>
+          {status.platform === 'win32'
+            ? t('localComputer.windows')
+            : status.platform === 'linux'
+              ? t('localComputer.linux')
+              : t('localComputer.mac')}
+        </h2>
         <Monitor size={18} />
       </div>
       <p className="panel-description">{t('localComputer.description')}</p>
@@ -119,7 +128,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
             {status.permissions.accessibility ? <Check /> : <CircleAlert />}
             {t('localComputer.inputPermission')}
           </span>
-          {!permissions && (
+          {!permissions && !remoteHost && (
             <button
               type="button"
               className="text-button"
@@ -131,6 +140,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
           )}
         </div>
       )}
+      {!permissions && remoteHost && <p className="inline-note">{t('remote.permissionsOnHost')}</p>}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -175,7 +185,15 @@ export function LocalComputer({ bot }: { bot: Bot }) {
             {session.owner === 'agent' ? t('localComputer.pause') : t('localComputer.resume')}
           </button>
           <p className="field-help">{t('localComputer.shortcut', { 0: shortcut })}</p>
-          {frame ? (
+          {remoteHost ? (
+            <NativeDesktop
+              key={session.id}
+              session={session}
+              name={bot.name}
+              platform={status.platform}
+              notify={setError}
+            />
+          ) : frame ? (
             <figure className="local-observation">
               <img src={frame.image} alt={t('localComputer.lastObservation')} />
               <figcaption>{t('localComputer.lastObservation')}</figcaption>

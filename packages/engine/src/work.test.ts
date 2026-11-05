@@ -126,11 +126,7 @@ test('a pre-ORM schema3 work file keeps items, receipts and authority after the 
     const db = new DatabaseSync(file, { readOnly: true });
     try {
       expect(tables(db)).toStrictEqual([
-        'work_checklists',
         'work_comments',
-        'work_decisions',
-        'work_deliveries',
-        'work_delivery_operations',
         'work_items',
         'work_meta',
         'work_operations',

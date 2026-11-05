@@ -248,7 +248,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   };
   policy(
     ctx as unknown as Parameters<typeof policy>[0],
-    { ...bridge, limit: job.limit, urls, attemptId: job.attemptId, budget: job.budget },
+    { ...bridge, limit: job.limit, urls, attemptId: job.attemptId },
     request,
   );
   await searchProvider(
@@ -607,7 +607,12 @@ test('the installed DSH pipeline keeps parallel tool batches separate and enforc
       2,
       'two admitted executions project once each; the invalid five-query declaration obtains no claim',
     );
-    assert.equal(f.models.budgets.tools(job.budget!.budgetId), 2);
+    assert.equal(
+      job.attemptToolCount,
+      3,
+      'registry progress includes the rejected call but grants no search authority',
+    );
+    assert.equal(job.searchClaims?.length, 2);
     await f.finish();
   } finally {
     await p?.close();
@@ -645,7 +650,7 @@ test('default keyless DuckDuckGo uses the stock SDK search pipeline and one shar
       assert.equal(call.headers.has('x-subscription-token'), false);
     }
     assert.equal(job.toolCount, 1);
-    assert.equal(f.models.budgets.tools(job.budget!.budgetId), 1);
+    assert.equal(job.attemptToolCount, 1);
     assert.equal(new Set(p.rpcs.map((rpc) => rpc.params.claimId)).size, 1);
     const fetched = await p.execute('web_fetch', { url: sourceUrl }, 'mock-keyless-source-read');
     assert.equal(fetched.isError, false, JSON.stringify(fetched.error));

@@ -64,11 +64,12 @@ async function fixture() {
   await started;
   const job = models.jobs.get('mock-bot');
   expect.assert(job?.sessionId && job.token);
+  job.attemptToolCount = 1;
   const accepted = await models.rpc('mock-bot', `Bearer ${job.token}`, {
     id: 'mock-search-claim',
-    method: 'budget.tool',
+    method: 'search.claim',
     params: {
-      scope: job.budget,
+      toolCount: 1,
       modelAttemptId: job.attemptId,
       sessionId: job.sessionId,
       callId: 'mock-search-execution',

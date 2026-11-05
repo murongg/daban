@@ -1,5 +1,4 @@
 import path from 'node:path';
-import type { ProjectFileScope } from '@daban/protocol';
 import { type RuntimeDownload, type SkillPackage, skillPackageCapability } from '@daban/protocol';
 import { Fault } from './control.js';
 import type { AgentWorkspace, TaskDirectory, WorkspaceFile } from './workspace.js';
@@ -24,13 +23,9 @@ export class RemoteWorkspace implements AgentWorkspace {
     public root = '',
     private readonly canonical?: string,
     private readonly initialRoot?: string,
-    private readonly project?: ProjectFileScope,
-    private readonly authorize?: () => unknown,
   ) {}
   private params(extra: Record<string, unknown> = {}) {
-    this.authorize?.();
     return {
-      ...(this.project ? { project: this.project } : {}),
       ...(this.root ? { root: this.root } : {}),
       ...(this.canonical ? { canonical: this.canonical } : {}),
       ...extra,
@@ -50,14 +45,7 @@ export class RemoteWorkspace implements AgentWorkspace {
     return root;
   }
   scope(root: string, canonical?: string) {
-    return new RemoteWorkspace(
-      this.execution,
-      root,
-      canonical,
-      undefined,
-      this.project,
-      this.authorize,
-    );
+    return new RemoteWorkspace(this.execution, root, canonical, undefined);
   }
   async create(parts: string[]): Promise<TaskDirectory> {
     const reference = (await this.execution.call(
@@ -73,7 +61,6 @@ export class RemoteWorkspace implements AgentWorkspace {
     )
       throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
     const call = (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
-      if (method !== 'workspace.close') this.authorize?.();
       return this.execution.call(method, { handleId: reference.handleId, ...params }, signal);
     };
     return {

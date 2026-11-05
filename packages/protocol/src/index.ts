@@ -1,8 +1,4 @@
-export * from './delivery.js';
-
-import type { DeliveryCommand } from './delivery.js';
-
-export * from './approval-rules.js';
+export * from './search.js';
 
 import {
   type AutomationCommand,
@@ -17,30 +13,19 @@ import {
   isMonitorDecision,
   type MonitorDecision,
 } from './automation.js';
-import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+import type { GoalControlCommand, GoalResumeTarget } from './goals.js';
+import type { SearchCommand } from './search.js';
 
 export * from './automation.js';
 
 import { isProjectFileRequest, isProjectScope } from './projects.js';
 
-export * from './project-memory.js';
 export * from './projects.js';
 
-import type { ProjectMemoryCommand } from './project-memory.js';
-
-import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
+import type { ProjectFileRequest, ProjectScope } from './projects.js';
 
 export * from './goals.js';
 export * from './model-access.js';
-export * from './search.js';
-
-import type {
-  ApprovalRulesCommand,
-  ApprovalRulesStatus,
-  McpPurposeScope,
-  PolicyDecision,
-} from './approval-rules.js';
-import { isMcpPurposeScope, isPolicyDecision } from './approval-rules.js';
 
 import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
@@ -54,7 +39,6 @@ import {
   type ModelRemoveRequest,
   type ModelSavedRequest,
 } from './model-access.js';
-import type { SearchCommand } from './search.js';
 import {
   isSkillPackage,
   isSkillPackageInfo,
@@ -246,7 +230,6 @@ export type McpStatus =
   | { available: true; revision: number }
   | { available: false; error: 'MCP_STORE_UNAVAILABLE' };
 export interface McpReceipt {
-  policyDecision?: PolicyDecision;
   id: string;
   bot: string;
   run: string;
@@ -525,7 +508,6 @@ export function isMcpReceipt(value: unknown): value is McpReceipt {
   return (
     profileObject(value) &&
     browserKeys(value, [
-      'policyDecision',
       'id',
       'bot',
       'run',
@@ -544,10 +526,6 @@ export function isMcpReceipt(value: unknown): value is McpReceipt {
     typeof value.session === 'string' &&
     value.session.length <= 200 &&
     mcpRevision(value.configRevision) &&
-    (value.policyDecision === undefined ||
-      (isPolicyDecision(value.policyDecision) &&
-        value.policyDecision.scope.kind === 'bot' &&
-        value.policyDecision.scope.bot === value.bot)) &&
     typeof value.tool === 'string' &&
     !!value.tool &&
     value.tool.length <= 200 &&
@@ -1584,8 +1562,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
 }
 export interface RuntimeSnapshot {
   searchSettings?: true;
-  delivery?: true;
-  approvalRules?: ApprovalRulesStatus;
+  contextInspector?: 1;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1653,14 +1630,12 @@ export function recoveryBlocked(snapshot: Pick<RuntimeSnapshot, 'reboot' | 'reco
   );
 }
 export function recoveryReader(command: RuntimeCommand) {
-  if (command.type === 'search.status' || command.type === 'search.saved') return true;
   if (command.type === 'model.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
+    'search.status',
+    'search.saved',
     'frame',
-    'projects.list',
-    'projects.status',
-    'projects.receipt',
     'files.list',
     'files.read',
     'files.download',
@@ -1672,13 +1647,6 @@ export function recoveryReader(command: RuntimeCommand) {
     'bot.receipt',
     'bot.copy.receipt',
     'group.copy.receipt',
-    'delivery.get',
-    'delivery.receipt',
-    'delivery.checklist.get',
-    'delivery.checklist.receipt',
-    'delivery.file.bind-receipt',
-    'delivery.decision-receipt',
-    'delivery.stop-receipt',
     'work.list',
     'work.read',
     'work.receipt',
@@ -1690,9 +1658,10 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
-    'budget.settings',
-    'budget.read',
+    'goal.target',
     'transcript.statistics',
+    'context.inspect',
+    'context.source',
     'transcript.list',
     'transcript.content',
     'memory.history',
@@ -2914,7 +2883,7 @@ export interface UserQuestion {
 }
 export type UserReply =
   | { kind: 'answer'; answers: { id: string; selected: string[]; custom?: string }[] }
-  | { kind: 'decision'; allow: boolean; confirmPurpose?: true };
+  | { kind: 'decision'; allow: boolean };
 export type InteractionInput = { id: string; sessionId: string } & (
   | { kind: 'question'; questions: UserQuestion[] }
   | { kind: 'approval'; tool: 'web_fetch'; url: string }
@@ -2941,8 +2910,6 @@ export type InteractionInput = { id: string; sessionId: string } & (
     }
 );
 export type Interaction = InteractionInput & {
-  purposeScope?: McpPurposeScope;
-  policyDecision?: PolicyDecision;
   decisionSource?: 'policy';
   conversationId?: string;
   bot: string;
@@ -3087,12 +3054,7 @@ export function isInteractionInput(value: unknown): value is InteractionInput {
 export function isUserReply(value: unknown): value is UserReply {
   if (!profileObject(value)) return false;
   if (value.kind === 'decision')
-    return (
-      exactKeys(value, ['kind', 'allow', 'confirmPurpose']) &&
-      typeof value.allow === 'boolean' &&
-      (value.confirmPurpose === undefined ||
-        (value.confirmPurpose === true && value.allow === true))
-    );
+    return exactKeys(value, ['kind', 'allow']) && typeof value.allow === 'boolean';
   return (
     value.kind === 'answer' &&
     exactKeys(value, ['kind', 'answers']) &&
@@ -3115,17 +3077,9 @@ export function isUserReply(value: unknown): value is UserReply {
     new Set(value.answers.map((answer) => answer.id)).size === value.answers.length
   );
 }
-export function matchesReply(
-  input: InteractionInput & { purposeScope?: McpPurposeScope },
-  reply: unknown,
-): reply is UserReply {
+export function matchesReply(input: InteractionInput, reply: unknown): reply is UserReply {
   if (!isUserReply(reply)) return false;
-  if (input.kind === 'approval')
-    return (
-      reply.kind === 'decision' &&
-      (!reply.confirmPurpose ||
-        (input.tool === 'mcp_call' && isMcpPurposeScope(input.purposeScope)))
-    );
+  if (input.kind === 'approval') return reply.kind === 'decision';
   return (
     reply.kind === 'answer' &&
     reply.answers.length === input.questions.length &&
@@ -3150,29 +3104,17 @@ export function isInteraction(value: unknown): value is Interaction {
     updatedAt,
     conversationId,
     decisionSource,
-    policyDecision,
-    purposeScope,
     ...input
   } = value;
   return (
     isInteractionInput(input) &&
-    (purposeScope === undefined ||
-      (isMcpPurposeScope(purposeScope) &&
-        input.kind === 'approval' &&
-        input.tool === 'mcp_call' &&
-        isPolicyDecision(policyDecision))) &&
-    (policyDecision === undefined ||
-      (isPolicyDecision(policyDecision) &&
-        policyDecision.scope.kind === 'bot' &&
-        policyDecision.scope.bot === bot)) &&
     (decisionSource === undefined ||
       (decisionSource === 'policy' &&
         input.kind === 'approval' &&
         status === 'resolved' &&
         profileObject(reply) &&
         reply.kind === 'decision' &&
-        reply.allow === true &&
-        reply.confirmPurpose === undefined)) &&
+        reply.allow === true)) &&
     validAgentId(bot) &&
     validAgentId(runId) &&
     (conversationId === undefined || validAgentId(conversationId)) &&
@@ -3181,12 +3123,7 @@ export function isInteraction(value: unknown): value is Interaction {
     Number.isFinite(Date.parse(createdAt)) &&
     boundedText(updatedAt, 100) &&
     Number.isFinite(Date.parse(updatedAt)) &&
-    (status === 'resolved'
-      ? matchesReply(
-          { ...input, ...(isMcpPurposeScope(purposeScope) ? { purposeScope } : {}) },
-          reply,
-        )
-      : reply === undefined)
+    (status === 'resolved' ? matchesReply(input, reply) : reply === undefined)
   );
 }
 export type ApprovalMode = 'ask' | 'auto' | 'full';
@@ -4124,12 +4061,9 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
-  | DeliveryCommand
-  | ApprovalRulesCommand
-  | ProjectMemoryCommand
-  | BudgetCommand
+  | SearchCommand
+  | GoalControlCommand
   | AutomationCommand
-  | ProjectCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4137,6 +4071,8 @@ export type RuntimeCommand =
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
   | { type: 'transcript.statistics'; query: TranscriptQuery }
+  | { type: 'context.inspect'; query: import('./context-inspector.js').ContextQuery }
+  | { type: 'context.source'; query: import('./context-inspector.js').ContextSourceQuery }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }
@@ -4186,7 +4122,6 @@ export type RuntimeCommand =
   | { type: 'group.cancel'; group: string; sourceId: string }
   | { type: 'group.action'; request: GroupActionRequest }
   | { type: 'group.receipt'; group: string; id: string }
-  | SearchCommand
   | { type: 'model.configure'; input: ModelUpdate }
   | { type: 'model.saved'; input: ModelSavedRequest }
   | { type: 'model.fallback.configure'; input: ModelFallbackRequest }
@@ -4255,8 +4190,8 @@ export type RuntimeCommand =
   | ({ type: 'files.download'; path: string } & ProjectFileRequest);
 export type RuntimeReply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 export interface RuntimeBridge {
-  invoke<T = unknown>(command: RuntimeCommand): Promise<RuntimeReply<T>>;
-  subscribe(callback: (snapshot: RuntimeSnapshot) => unknown): () => unknown;
+  invoke<T = unknown>(command: RuntimeCommand, host?: string | null): Promise<RuntimeReply<T>>;
+  subscribe(callback: (snapshot: RuntimeSnapshot) => unknown, host?: string | null): () => unknown;
 }
 export const runtimeTargets: Readonly<Record<string, RuntimeBot>> = Object.assign(
   Object.create(null) as Record<string, RuntimeBot>,
@@ -4583,4 +4518,9 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
   );
 }
 
-export * from './budgets.js';
+export * from './command.js';
+export * from './context-inspector.js';
+export * from './peer.js';
+export * from './receipt.js';
+export * from './remote.js';
+export * from './remote-snapshot.js';
