@@ -87,6 +87,8 @@ const emptyPage = (
 export class FileReviews {
   readonly ready: Promise<unknown>;
   private writing: Promise<unknown> = Promise.resolve();
+  private readonly pending = new Set<Promise<unknown>>();
+  private closing?: Promise<unknown>;
   private readonly now: () => number;
   constructor(
     readonly directory: string,
@@ -220,10 +222,25 @@ export class FileReviews {
     }
     await this.cleanup();
   }
-  private enqueue<T>(operation: () => Promise<T>) {
-    const result = this.writing.then(operation, operation);
-    this.writing = result.catch(() => undefined);
+  private accept<T>(operation: () => Promise<T>) {
+    if (this.closing) return Promise.reject(new Fault('FILE_REVIEW_CLOSED', 503));
+    // Reads can expire evidence too; track their lifetime without serializing them behind writes.
+    const result: Promise<T> = Promise.resolve()
+      .then(operation)
+      .finally(() => this.pending.delete(result));
+    this.pending.add(result);
     return result;
+  }
+  private enqueue<T>(operation: () => Promise<T>) {
+    return this.accept(() => {
+      const write = async () => {
+        await this.ready;
+        return operation();
+      };
+      const result = this.writing.then(write, write);
+      this.writing = result.catch(() => undefined);
+      return result;
+    });
   }
   private async report(head: Head, revision: number, verifyBlobs = true): Promise<Report> {
     if (head.state === 'expired' || !head.published.includes(revision))
@@ -402,7 +419,6 @@ export class FileReviews {
     return checked.map((capture) => ({ ...structuredClone(capture), texts: [] }));
   }
   async begin(scope: TranscriptScope, sharedPaths: string[] = []): Promise<ReviewPointer> {
-    await this.ready;
     return this.enqueue(async () => {
       if (!isTranscriptScope(scope) || !isReviewSelection({ sharedPaths }))
         throw new Fault('INVALID_FILE_REVIEW', 400);
@@ -452,7 +468,6 @@ export class FileReviews {
     captures: ReviewCapture[],
     roots: ReviewRoots,
   ): Promise<ReviewPointer> {
-    await this.ready;
     return this.enqueue(async () => {
       const head = await this.head(scope);
       if (!head) throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
@@ -485,7 +500,6 @@ export class FileReviews {
     captures: ReviewCapture[],
     reasons: ReviewReason[] = [],
   ): Promise<ReviewPointer> {
-    await this.ready;
     return this.enqueue(async () => {
       const head = await this.head(scope);
       if (!head) throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
@@ -527,7 +541,6 @@ export class FileReviews {
     });
   }
   async finalizing(scope: TranscriptScope): Promise<ReviewPointer> {
-    await this.ready;
     return this.enqueue(async () => {
       const head = await this.head(scope);
       if (!head) throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
@@ -537,7 +550,6 @@ export class FileReviews {
     });
   }
   async unavailable(scope: TranscriptScope, reason: ReviewReason): Promise<ReviewPointer> {
-    await this.ready;
     return this.enqueue(async () => {
       const head = await this.head(scope);
       if (!head) throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
@@ -562,7 +574,10 @@ export class FileReviews {
       .update(`${keyFor(head.scope)}:${position}`)
       .digest('hex')}`;
   }
-  async read(query: ReviewQuery): Promise<ReviewPage> {
+  read(query: ReviewQuery): Promise<ReviewPage> {
+    return this.accept(() => this.readPage(query));
+  }
+  private async readPage(query: ReviewQuery): Promise<ReviewPage> {
     await this.ready;
     let head: Head | undefined;
     try {
@@ -615,7 +630,10 @@ export class FileReviews {
     if (!entry) throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
     return { head, report, entry };
   }
-  async diff(query: ReviewFileQuery): Promise<ReviewDiff> {
+  diff(query: ReviewFileQuery): Promise<ReviewDiff> {
+    return this.accept(() => this.readDiff(query));
+  }
+  private async readDiff(query: ReviewFileQuery): Promise<ReviewDiff> {
     await this.ready;
     try {
       const { head, report, entry } = await this.entry(query);
@@ -645,7 +663,13 @@ export class FileReviews {
       return { ...query, state: 'unavailable', reason: 'corrupt' };
     }
   }
-  async current(
+  current(
+    query: ReviewFileQuery,
+    reader: (root: ReviewRoot, paths: string[]) => Promise<ReviewCapture>,
+  ): Promise<ReviewCurrent> {
+    return this.accept(() => this.readCurrent(query, reader));
+  }
+  private async readCurrent(
     query: ReviewFileQuery,
     reader: (root: ReviewRoot, paths: string[]) => Promise<ReviewCapture>,
   ): Promise<ReviewCurrent> {
@@ -728,5 +752,12 @@ export class FileReviews {
         await unlink(path.join(directory, file)).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== 'ENOENT') throw error;
         });
+  }
+  close() {
+    // Seal admission synchronously, including calls already waiting for initialization.
+    this.closing ??= Promise.allSettled([this.ready, ...this.pending]).then(([initialized]) => {
+      if (initialized.status === 'rejected') throw initialized.reason;
+    });
+    return this.closing;
   }
 }

@@ -4672,6 +4672,8 @@ export class ModelRuns {
     // Each store must close even when another owner fails, including unavailable optional services.
     if (![...this.jobs.values()].some((job) => job.running)) this.releaseModelReferences();
     for (const owner of [
+      // In-flight review reads can still consult project grants; drain them before those stores close.
+      this.reviews,
       this.approvalRules,
       this.budgets,
       this.tools.integrations,

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ReviewCapture } from '@daban/protocol';
 import { expect, type TestContext, test, vi } from 'vitest';
+import { FileReviews } from './file-review.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 import { WorkspaceFiles } from './workspace.js';
@@ -224,6 +225,24 @@ test('a stopped run still attempts final capture with a fresh signal', async (t)
   await expect.poll(() => events.includes('execute')).toBe(true);
   await models.stop('a');
   expect(events.filter((event) => event === 'task')).toHaveLength(2);
+});
+
+test('host shutdown preserves the stopped task end observation before closing review admission', async (t) => {
+  const { models, events } = await fixture(t, { stop: true });
+  await models.start('a', {
+    requestId: 'mock-shutdown-review',
+    prompt: 'Synthetic work.',
+    files: [{ name: 'input.txt', content: 'SYNTHETIC INPUT' }],
+  });
+  await expect.poll(() => events.includes('execute')).toBe(true);
+  const job = models.jobs.get('a')!;
+  await models.close();
+  expect(job.phase).toBe('stopped');
+  expect(events.indexOf('drain')).toBeLessThan(events.lastIndexOf('task'));
+  const reopened = new FileReviews(models.reviews.directory);
+  const page = await reopened.read({ scope: { bot: 'a', runId: job.id, chatRevision: 0 } });
+  expect(page).toMatchObject({ state: 'complete' });
+  expect(page.after?.find((entry) => entry.area === 'task')).toMatchObject({ capture: 'complete' });
 });
 test('shared selection is request identity and cannot be silently replaced on duplicate admission', async (t) => {
   const { models, events } = await fixture(t);
