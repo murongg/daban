@@ -42,6 +42,10 @@ The root `vitest.config.ts` owns all unit tests: the `desktop` project uses jsdo
 
 See [development](development.md) for commands and [project guidelines](../AGENTS.md) for language, package-boundary and verification rules. Project code is licensed under [AGPL-3.0-only](../LICENSE); third-party notices retain their original licenses.
 
+Usage and budget ownership stays in the Host. `budgets.ts` records durable per-send reservations and raw provider usage; `usage.ts` meters actual SDK fetches below prompt-cache retries, and Risk reviews use the same ledger. Logical tasks, group stages and explicit Goal continuations inherit one captured budget and immutable price snapshots. Missing usage remains unknown; prices are estimates without currency conversion. Only verified request-count bounds can be strict. Token and fee bounds remain soft until provider billing bounds are verified.
+
+`budget-goals.ts` binds explicit Human continuation receipts to the native Goal, session, budget revision and current Human turn. It does not own Goal lifecycle or rounds. The existing `owned-goal-rounds` SDK hook checks the one-use Host permission immediately before native resume; quota increases and state observations alone never arm a Goal. Ordinary retries keep the native Goal read-only.
+
 ## Project resources
 
 `Projects` in the host owns project IDs, explicit Bot grants, revisions and durable change receipts in `projects.sqlite`. Membership is part of the validated project document; callers use `assertScope` or `assertHumanScope`, not its tables. The old shared workspace and browser keep their original paths and logins, with a symbolic `legacy-shared` resource registration. New projects do not copy credentials or private Bot data. A failed project store or mirror disables project access while legacy file ports and historical task receipts remain available.

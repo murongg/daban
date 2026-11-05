@@ -10,10 +10,11 @@ import {
   type ProjectDocument,
   type ProjectScope,
   projectCapability,
+  taskRunCapability,
   validAgentId,
 } from '@daban/protocol';
 import { expect, type TestContext, test, vi } from 'vitest';
-import type { AgentToolRun } from './agent-tools.js';
+import { type AgentToolRun, executionAttemptId } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
 import * as guest from './executor.js';
 import { GroupTools } from './group-tools.js';
@@ -44,9 +45,10 @@ async function fixture(t: TestContext) {
     }
   });
   let handles = 0;
+  const executionCalls: { method: string; params: Record<string, unknown> }[] = [];
   // The host consumes a POSIX guest protocol even on Windows; its memory policy needs no host-side guest daemon.
   const execution = {
-    snapshot: { capabilities: [projectCapability, modelExecutionCapability] },
+    snapshot: { capabilities: [projectCapability, modelExecutionCapability, taskRunCapability] },
     async call(method: string, params: Record<string, unknown>, signal?: AbortSignal) {
       signal?.throwIfAborted();
       const request = {
@@ -57,6 +59,7 @@ async function fixture(t: TestContext) {
         params,
       };
       if (!isExecutionRequest(request)) throw Error(`MOCK_INVALID_EXECUTION_REQUEST:${method}`);
+      executionCalls.push({ method, params: structuredClone(params) });
       const binding = isProjectFileScope(params.project) ? params.project : undefined;
       const base =
         typeof params.root === 'string'
@@ -179,6 +182,7 @@ async function fixture(t: TestContext) {
     groups,
     dispatches,
     inputs,
+    executionCalls,
     document: receipt.document,
     async run(
       bot: string,
@@ -258,14 +262,24 @@ test('project tools require an accepted scope and real reads; proposal authorshi
   expect((await f.models.journal.read('mock-alpha', firstJob.id))?.projectDocuments).toStrictEqual([
     { id: f.document.id, revision: 1 },
   ]);
+  const saved = await f.models.journal.read('mock-alpha', firstJob.id);
+  expect(saved?.budget).toEqual(firstJob.budget);
+  expect(saved?.attemptSummary?.[0].attemptId).toBe(firstJob.attemptId);
+  expect(firstJob.executionId).toBe(executionAttemptId(firstJob.id, firstJob.attemptId!));
   expect(
-    (
-      await f.models.tools.invoke(firstJob, 'project_memory_read', {
-        id: f.document.id,
-        revision: 1,
-      })
-    ).isError,
-  ).toBe(true);
+    f.executionCalls.find(
+      (call) => call.method === 'tools.open' && call.params.taskRunId === firstJob.id,
+    )?.params,
+  ).toMatchObject({
+    id: firstJob.executionId,
+    taskRunId: firstJob.id,
+  });
+  await expect(
+    f.models.tools.invoke(firstJob, 'project_memory_read', {
+      id: f.document.id,
+      revision: 1,
+    }),
+  ).rejects.toMatchObject({ code: 'MODEL_CANCELLED' });
   expect(candidate).toBeDefined();
   await f.run('mock-beta', async (run) => {
     const own = output<{ candidates: MemoryCandidate[] }>(
@@ -374,4 +388,171 @@ test('memory model coverage does not start the POSIX guest service on its host',
     expect(document.content).toBe(f.document.content);
   });
   expect(start).not.toHaveBeenCalled();
+});
+
+test('an asynchronous project catalog cannot send through a retired physical attempt', async (t) => {
+  const f = await fixture(t);
+  const context = f.models.knowledge.project.context.bind(f.models.knowledge.project);
+  f.models.knowledge.project.context = async (project, bot) => {
+    const value = await context(project, bot);
+    const job = f.models.jobs.get(bot)!;
+    job.attemptActive = false;
+    return value;
+  };
+  const job = await f.run('mock-alpha', async () => undefined, scope, true);
+  expect(f.inputs).toStrictEqual([]);
+  expect(job.error).toBe('MODEL_CANCELLED');
+  expect(job.attemptSummary).toHaveLength(1);
+});
+
+test('a revoked project cannot obtain a physical send permit after its budget reservation', async (t) => {
+  const f = await fixture(t);
+  let denied: string | undefined;
+  let sends = 0;
+  let budgetRoot: string | undefined;
+  let reservedPhase: string | undefined;
+  let auth = '';
+  const job = await f.run(
+    'mock-alpha',
+    async () => {
+      const current = f.models.jobs.get('mock-alpha')!;
+      const budget = current.budget!;
+      budgetRoot = f.models.budgets.view(budget.budgetId).rootId;
+      auth = `Bearer ${current.token}`;
+      const rpc = (method: string, params: Record<string, unknown>) =>
+        f.models.rpc(current.bot, auth, { id: 'mock-memory-wire', method, params });
+      const reservation = {
+        scope: budget,
+        modelAttemptId: current.attemptId,
+        attemptId: 'mock-physical-send',
+        requestHash: 'a'.repeat(64),
+        rootSessionId: current.sessionId,
+        sessionId: current.sessionId,
+        purpose: 'main',
+      };
+      await rpc('budget.reserve', { ...reservation, attemptId: 'mock-original-send' });
+      expect(
+        await rpc('budget.dispatched', {
+          scope: budget,
+          modelAttemptId: current.attemptId,
+          attemptId: 'mock-original-send',
+        }),
+      ).toMatchObject({ result: { send: true } });
+      await rpc('budget.reserve', reservation);
+      await f.models.projects.write({
+        requestId: 'mock-revoke-before-dispatch',
+        projectId: scope.projectId,
+        expectedRevision: 1,
+        action: 'update',
+        value: { name: 'Synthetic revoked project', grants: [{ bot: 'mock-beta' }] },
+      });
+      try {
+        const result = (await rpc('budget.dispatched', {
+          scope: budget,
+          modelAttemptId: current.attemptId,
+          attemptId: 'mock-physical-send',
+        })) as { result: { send: boolean } };
+        if (result.result.send) sends++;
+      } catch (error) {
+        denied = error instanceof Error ? error.message : String(error);
+      }
+      reservedPhase = f.models.budgets
+        .view(budget.budgetId)
+        .receipts.find((receipt) => receipt.attemptId === reservation.attemptId)?.phase;
+    },
+    scope,
+    true,
+  );
+  expect(denied).toBe('PROJECT_SCOPE_STALE');
+  expect(sends).toBe(0);
+  expect(reservedPhase).toBe('reserved');
+  expect(
+    await f.models.rpc(job.bot, auth, {
+      id: 'mock-late-original-usage',
+      method: 'budget.report',
+      params: {
+        scope: job.budget,
+        runId: job.id,
+        attemptId: 'mock-original-send',
+        usage: {
+          state: 'reported',
+          inputTokens: 8,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+      },
+    }),
+  ).toMatchObject({ result: { accepted: true } });
+  const ledger = f.models.budgets.view(job.budget!.budgetId);
+  expect(ledger.rootId).toBe(budgetRoot);
+  expect(ledger.receipts).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        runId: job.id,
+        modelAttemptId: job.attemptId,
+        rootSessionId: job.sessionId,
+        attemptId: 'mock-physical-send',
+      }),
+    ]),
+  );
+  expect(ledger.reported.inputTokens).toBe(8);
+  const saved = await f.models.journal.read(job.bot, job.id);
+  expect(saved?.budget).toEqual(job.budget);
+  expect(saved?.intentId).toBe(job.intentId);
+  expect(saved?.requestId).toBe(job.requestId);
+});
+
+test('a Goal reconciliation replay keeps budget identity without exposing internal project read evidence', async (t) => {
+  const f = await fixture(t);
+  const first = await f.run('mock-alpha', async (run) => {
+    await f.models.tools.invoke(run, 'project_memory_read', { id: f.document.id, revision: 1 });
+  });
+  const owner = { bot: first.bot, chatRevision: first.chatRevision!, project: scope };
+  f.models.budgets.goals.observe(
+    owner,
+    first.sessionId!,
+    { id: 'mock-memory-goal', revision: 1 },
+    first.budget!,
+    true,
+  );
+  const target = await f.models.goalTarget(owner);
+  const request = {
+    requestId: 'mock-memory-goal-resume',
+    prompt: '/goal resume',
+    project: scope,
+    goalResume: target,
+  };
+  await f.models.startHuman(first.bot, request);
+  const winner = f.models.jobs.get(first.bot)!;
+  await winner.done;
+  // This synthetic Harness does not execute native Goal resume; the recorded failed result must stay failed.
+  expect(winner.error).toBe('GOAL_INCOMPLETE');
+  expect(winner.phase).toBe('failed');
+  const saved = await f.models.journal.read(winner.bot, winner.id);
+  expect(saved?.projectDocuments).toStrictEqual([{ id: f.document.id, revision: 1 }]);
+  f.models.jobs.delete(first.bot);
+  const find = f.models.journal.findRequest.bind(f.models.journal);
+  let lookups = 0;
+  // A concurrent winner can become visible while Goal reconciliation awaits journal I/O.
+  const replay = vi
+    .spyOn(f.models.journal, 'findRequest')
+    .mockImplementation((bot, id) =>
+      id === request.requestId && lookups++ === 0 ? undefined : find(bot, id),
+    );
+  try {
+    const receipt = await f.models.startHuman(first.bot, request);
+    expect(lookups).toBeGreaterThanOrEqual(2);
+    expect(receipt).not.toHaveProperty('projectDocuments');
+    expect(receipt).toMatchObject({
+      runId: winner.id,
+      budget: winner.budget,
+      attemptSummary: winner.attemptSummary,
+    });
+    expect((await f.models.journal.read(winner.bot, winner.id))?.projectDocuments).toEqual(
+      saved?.projectDocuments,
+    );
+  } finally {
+    replay.mockRestore();
+  }
 });

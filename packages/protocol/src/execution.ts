@@ -1,3 +1,4 @@
+import { fileObservationCapability } from './automation.js';
 import { validAgentId } from './id.js';
 import type { BrowserState, ComputerStatus, ModelId } from './index.js';
 import {
@@ -19,6 +20,9 @@ import { isSkillPackage, skillPackageCapability } from './skills.js';
 export const executionVersion = 1;
 export const modelExecutionCapability = 'model-capabilities-v1';
 export const browserTaskCapability = 'browser-task-v1';
+// These peers distinguish task directories from attempt leases and accept captured tool budgets up to 10000.
+export const taskRunCapability = 'task-run-v1';
+export const legacyExecutionToolLimit = 1000;
 export const executionCapabilities = [
   'workspace',
   'tools',
@@ -72,6 +76,8 @@ export interface ExecutionSnapshot {
   status: ComputerStatus;
 }
 export interface ExecutionRun {
+  /** Accepted task directory owner; id remains the physical attempt lease. */
+  taskRunId?: string;
   project?: ProjectScope;
   id: string;
   bot: string;
@@ -142,6 +148,7 @@ export function isExecutionRun(value: unknown): value is ExecutionRun {
     executionRecord(value) &&
     executionKeys(value, [
       'id',
+      'taskRunId',
       'bot',
       'workdir',
       'canonicalRoot',
@@ -152,6 +159,8 @@ export function isExecutionRun(value: unknown): value is ExecutionRun {
       'limit',
     ]) &&
     (value.project === undefined || isProjectScope(value.project)) &&
+    (value.taskRunId === undefined ||
+      (isProjectScope(value.project) && validAgentId(value.taskRunId))) &&
     validAgentId(value.id) &&
     validAgentId(value.bot) &&
     absolute(value.workdir) &&
@@ -161,7 +170,7 @@ export function isExecutionRun(value: unknown): value is ExecutionRun {
     (value.prompt === undefined || (text(value.prompt, 12000) && !!value.prompt.trim())) &&
     integer(value.limit) &&
     Number(value.limit) >= 1 &&
-    Number(value.limit) <= 1000
+    Number(value.limit) <= 10000
   );
 }
 export function isExecutionParams(
@@ -204,13 +213,7 @@ export function isExecutionParams(
     );
   if (method === 'workspace.read' || method === 'workspace.download')
     return (
-      executionKeys(value, [
-        'root',
-        'canonical',
-        'project',
-        'path',
-        ...(method === 'workspace.read' ? ['limit'] : []),
-      ]) &&
+      executionKeys(value, ['root', 'canonical', 'project', 'path', 'limit']) &&
       scope(value) &&
       text(value.path, 512) &&
       (value.limit === undefined ||
@@ -333,7 +336,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 4 ||
+    value.capabilities.length > executionCapabilities.length + 6 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
       [
@@ -342,6 +345,8 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         skillPackageCapability,
         browserTaskCapability,
         projectCapability,
+        fileObservationCapability,
+        taskRunCapability,
       ].includes(capability),
     ) ||
     !executionCapabilities.every(

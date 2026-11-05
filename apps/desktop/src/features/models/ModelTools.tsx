@@ -4,6 +4,7 @@ import {
   isModelInspectionRequest,
   type ModelCapabilities,
   type ModelDefinition,
+  type ModelDiagnoseRequest,
   type ModelInspection,
   type ModelInspectionRequest,
 } from '@daban/protocol';
@@ -13,11 +14,14 @@ import { runtimeError, useRuntime } from '../../app/Runtime';
 import { t, useLocale } from '../../i18n/locale';
 import { ModelIcon } from './ModelIcon';
 import { ModelInputs } from './ModelInputs';
+import { modelProbe, modelProbeSettled } from './model-probe';
 
 type Query = Pick<ModelInspectionRequest, 'connection' | 'revision' | 'apiKey'>;
 function useInspection(query: Query, enabled: boolean, scope = '') {
   const runtime = useRuntime();
-  const identity = JSON.stringify([query, scope]);
+  const identity = JSON.stringify([query, scope, runtime.snapshot.model.modelAccess?.scope]);
+  const pending = useRef<{ identity: string; input: ModelDiagnoseRequest } | undefined>(undefined);
+  const [unconfirmed, setUnconfirmed] = useState<string>();
   const current = useRef(identity);
   current.current = identity;
   const active = useRef(enabled);
@@ -59,7 +63,35 @@ function useInspection(query: Query, enabled: boolean, scope = '') {
       sequence.current === request;
     setState({ identity, busy: kind });
     try {
-      const result = await runtime.command<ModelInspection>({ type: 'model.inspect', input });
+      let result: ModelInspection;
+      const access = runtime.snapshot.model.modelAccess;
+      if (kind === 'test' && access) {
+        const existing = pending.current?.identity === identity ? pending.current : undefined;
+        const intent: ModelDiagnoseRequest = existing?.input || {
+          scope: access.scope,
+          requestId: crypto.randomUUID(),
+          revision: input.revision,
+          probeRevision: runtime.snapshot.model.probeRevision || 0,
+          connection: input.connection,
+          model: model || '',
+          ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+          kind: 'inference',
+        };
+        pending.current = { identity, input: intent };
+        setUnconfirmed(identity);
+        const diagnostic = await modelProbe(runtime.command, intent, !!existing);
+        if (pending.current?.input.requestId === intent.requestId) {
+          pending.current = undefined;
+          setUnconfirmed(undefined);
+        }
+        result = {
+          kind: 'test',
+          revision: intent.revision,
+          model: model || '',
+          latencyMs: diagnostic.latencyMs,
+          checkedAt: diagnostic.checkedAt,
+        };
+      } else result = await runtime.command<ModelInspection>({ type: 'model.inspect', input });
       if (
         !isModelInspection(result) ||
         result.kind !== kind ||
@@ -73,6 +105,10 @@ function useInspection(query: Query, enabled: boolean, scope = '') {
       setState({ identity, result });
       return result;
     } catch (error) {
+      if (kind === 'test' && pending.current?.identity === identity && modelProbeSettled(error)) {
+        pending.current = undefined;
+        setUnconfirmed(undefined);
+      }
       if (valid()) setState({ identity, error: runtimeError(error) });
     } finally {
       if (sequence.current === request) {
@@ -84,7 +120,14 @@ function useInspection(query: Query, enabled: boolean, scope = '') {
       }
     }
   }
-  return { identity, busy: live?.busy, error: live?.error, result: live?.result, run };
+  return {
+    identity,
+    busy: live?.busy,
+    error: live?.error,
+    result: live?.result,
+    unconfirmed: unconfirmed === identity,
+    run,
+  };
 }
 function Feedback({ error }: { error?: string }) {
   return error ? (
@@ -291,12 +334,16 @@ export function ModelInspector({
         <button
           className="text-button"
           type="button"
-          aria-label={t('models.testModel', { 0: index + 1 })}
+          aria-label={
+            tool.unconfirmed ? t('models.queryDiagnostic') : t('models.testModel', { 0: index + 1 })
+          }
           disabled={disabled || !!tool.busy || !model.id.trim()}
           onClick={() => run('test')}
         >
           {tool.busy === 'test' && <LoaderCircle size={14} className="model-tool-spinner" />}
-          {tool.busy === 'test' ? t('models.testing') : t('models.test')}
+          {tool.busy === 'test'
+            ? t('models.testing')
+            : t(tool.unconfirmed ? 'models.queryDiagnostic' : 'models.test')}
         </button>
         <button
           className="text-button"

@@ -58,6 +58,66 @@ export const english = {
   'projectMemory.newMemory': 'Create a memory document',
   'projectMemory.accept': 'Accept as project memory',
   'projectMemory.reject': 'Reject suggestion',
+  'automation.acceptedRevision': 'Accepted project grant revision: {0}',
+  'automation.scopeChanged':
+    'The project grant changed. Review and accept its current revision; saving other fields never upgrades the accepted scope.',
+  'automation.acceptScope': 'Accept current project grant',
+  'automation.savedActive': 'Saved. The schedule remains enabled.',
+  'automation.restoreAll': 'Restore standard notifications',
+  'automation.monitorUnavailable':
+    'Scoped result reads are unavailable; monitoring is paused. Update the executor and explicitly reenable, or restore standard notifications.',
+  'automation.deletedRule': 'Deleted rule',
+  'automation.deletedRuleAt': 'Deleted rule · {0}',
+  'automation.pending': 'Unconfirmed executions',
+  'automation.unknownHelp':
+    'These executions may already have produced effects. Checking or acknowledging never reruns them; deleting a rule preserves its original receipt.',
+  'automation.receiptStatus': 'Original execution receipt for {0}: {1}',
+  'automation.newFile': 'New file monitor',
+  'automation.settings': 'Monitoring settings',
+  'automation.title': 'Monitor name',
+  'automation.instructions': 'Saved task instructions',
+  'automation.project': 'Project and grant revision',
+  'automation.selectProject': 'Select an authorized project',
+  'automation.paths': 'Project-relative file paths, one per line',
+  'automation.pollSeconds': 'Polling interval (seconds)',
+  'automation.fileHelp':
+    'Monitor 1–20 explicit files, up to 1 MiB each and 4 MiB total. Two matching initial reads establish the baseline; later stable changes run the task. Polling may miss changes between samples and is not a file audit. Runs may incur model costs.',
+  'automation.filesUnavailable':
+    'File triggers require project authorization and scoped file reads in the execution environment. Ordinary time schedules remain available.',
+  'automation.saveFile': 'Save file monitor',
+  'automation.saved':
+    'Saved paused. Review the configuration and enable it explicitly. Running tasks retain their accepted snapshot.',
+  'automation.changesOnly': 'Notify only when results change',
+  'automation.signalPath': 'Result signal file',
+  'automation.signalHelp':
+    'Use one UTF-8 output file from this run, up to 64 KiB. The first successful result and equal results stay quiet. New failures, recovery and requests for attention still surface. OS delivery is not guaranteed; history and pending notices remain available.',
+  'automation.savePolicy': 'Save monitoring policy',
+  'automation.fileTiming': 'File changes · sample every {0} seconds',
+  'automation.observing':
+    'Baseline established; waiting for stable changes. Locking restricts Bot edits and does not pause observation or execution.',
+  'automation.baselinePending':
+    'Waiting for two matching samples after enabling; initial sampling does not run a task.',
+  'automation.cursors': 'Events {0}–{1}',
+  'automation.checkReceipt': 'Check original run receipt',
+  'automation.ack': 'Acknowledge notice',
+  'automation.noticeChanged': 'Monitoring result changed',
+  'automation.noticeFault': 'Monitor needs attention',
+  'automation.noticeRecovered': 'Monitoring recovered',
+  'automation.noticeBody': 'Open the original schedule, run history and pending notice.',
+  'automation.upgradeRequired': 'Update the execution service to use this monitoring capability.',
+  'automation.signalUnavailable':
+    'Result signal unavailable. Check this run’s output, file size and UTF-8 content. The previous successful baseline is retained.',
+  'automation.filesTooLarge':
+    'Monitored files exceed the 1 MiB per-file or 4 MiB total limit. Adjust the files before retrying.',
+  'automation.readFailed':
+    'File sampling failed. The committed baseline is unchanged; the next poll will retry.',
+  'automation.runFailed': 'The monitoring run failed. Check the original task history.',
+  'automation.result.all': 'Standard notifications',
+  'automation.result.baseline': 'Quiet: initial result baseline',
+  'automation.result.unchanged': 'Quiet: result unchanged',
+  'automation.result.changed': 'Result changed',
+  'automation.result.fault': 'Needs attention',
+  'automation.result.recovered': 'Recovered',
   'projects.browserScope': 'Linux browser: {0}',
   'projects.storeUnavailable':
     'Project storage is unavailable. Original shared tasks and historical receipts remain available; check the environment before retrying project work.',
@@ -3387,6 +3447,157 @@ export const english = {
   'tasks.updatedAndCompletedAt': 'Updated at {0} · Completed at {1}',
   'tasks.currentRevisionSummary': '{0} · {1}',
   'tasks.currentDeletedRevisionSummary': '{0} · {1} (in Trash)',
+  'models.fallbackTitle': 'Fallback model',
+  'models.fallbackOff': 'Automatic fallback off',
+  'models.fallbackSave': 'Save fallback policy',
+  'models.fallbackConfirmTitle': 'Enable fallback model?',
+  'models.fallbackEnable': 'Enable fallback model',
+  'models.fallbackConsent':
+    'If the primary fails before output or tools and has stopped, switch to {0} at most once. Task context and attachments may be sent to its connection.',
+  'models.fallbackHint':
+    'Off by default. Fallback retains the task, permissions and remaining budget. Output or tool activity requires explicit recovery.',
+  'models.fallbackSaved': 'Fallback policy saved for the next task.',
+  'models.fallbackInvalid': 'Choose a different, configured API model as the fallback.',
+  'models.unknownTools': 'Tool support is unknown; tasks with tools will not switch automatically.',
+  'models.credentialsSaved': 'API key saved',
+  'models.cliDisabled':
+    'CLI sign-in has not passed restricted-tool verification. Use an API connection.',
+  'models.removeConnection': 'Remove {0}',
+  'models.removeTitle': 'Remove model connection?',
+  'models.removeConfirm':
+    'Remove local credentials for {0}. Bot, fallback, search or running-task references prevent removal.',
+  'models.disconnectAll': 'Disconnect all models',
+  'models.connectionRemoved': 'Connection removed.',
+  'models.connectionReferenced':
+    'Connection is still referenced by {0}. Change those bindings first.',
+  'models.reference.default': 'the default model',
+  'models.reference.bot': 'Bot models',
+  'models.reference.fallback': 'the fallback model',
+  'models.reference.search': 'search',
+  'models.reference.running': 'running tasks',
+  'models.queryReceipt': 'Check save receipt',
+  'models.queryDiagnostic': 'Check diagnostic receipt',
+  'models.operationUnknown':
+    'The outcome is unconfirmed. Keep the existing configuration and query the receipt without resending validation.',
+  'models.probeDirectory': 'Check model directory',
+  'models.probeInference': 'Test inference (may incur charges)',
+  'models.directoryPassed': 'Directory visible · {0}. This does not prove inference works.',
+  'models.inferencePassed': 'Inference passed · {0}',
+  'models.inferenceCostHint':
+    'Inference testing sends a short request and may incur charges. An uncertain outcome is checked through its original receipt.',
+  'models.configureCostHint':
+    'Saving validates the models and may send a small inference request when a directory endpoint is absent.',
+  'models.busy': 'Another model configuration is being validated. Wait and check its receipt.',
+  'models.diagnosticsChanged':
+    'The diagnostic revision changed. Check the latest receipt before choosing a new test.',
+  'models.credentialsRevoked':
+    'The captured credentials changed or were removed. No further attempt was started.',
+  'models.fallbackUnavailable':
+    'The fallback is no longer available. The task stopped; check the connection and remaining budget.',
+  'models.shutdownUnconfirmed':
+    'The previous attempt could not be confirmed stopped, so the fallback was not started.',
+  'models.fenceUnavailable':
+    'Tool ownership could not be durably confirmed. The tool was not executed; inspect the task record.',
+  'models.attempts': 'Model attempts',
+  'models.actualModel': 'Actual model: {0}',
+  'models.usageUnknown': 'Billable usage is unconfirmed. Failed requests may still incur charges.',
+  'models.failure.auth': 'authentication failed',
+  'models.failure.quota': 'quota exhausted',
+  'models.failure.rateLimit': 'rate limited',
+  'models.failure.unavailable': 'service unavailable',
+  'models.failure.timeout': 'model request timed out',
+  'models.failure.unknown': 'outcome unknown',
+  'models.recoverSelected': 'Continue with selected model',
+  'models.unknownToolRecovery':
+    'Inspect progress and operation receipts first. Tools with unknown outcomes cannot be rerun directly.',
+  'models.removeAction': 'Remove connection',
+  'models.fallbackVisionRequired':
+    "The fallback does not support this task's image input. Task context was not sent.",
+  'models.fallbackContextRequired':
+    'The fallback context window is too small. Task context was not sent.',
+  'models.fallbackToolsRequired':
+    'The fallback does not support the required tools. Task context was not sent.',
+  'models.fallbackToolsUnknown':
+    'Fallback tool support is unconfirmed. Tasks with tools do not switch automatically.',
+  'budgets.title': 'Usage and budgets',
+  'budgets.defaults': 'Default budget',
+  'budgets.defaultsHelp':
+    'Applies to newly accepted logical tasks. Existing tasks retain their limits and price snapshots.',
+  'budgets.strictUnavailable':
+    'Hard request limits support verified routes only. Token and fee bounds remain unverified.',
+  'budgets.tools': 'Tool call limit',
+  'budgets.seconds': 'Active execution seconds',
+  'budgets.rounds': 'Goal continuation rounds',
+  'budgets.requests': 'Model requests',
+  'budgets.tokens': 'Token soft threshold',
+  'budgets.currency': 'Currency',
+  'budgets.amount': 'Estimated cost soft threshold',
+  'budgets.mode': 'Budget mode',
+  'budgets.observe': 'Record usage and soft warnings',
+  'budgets.strict': 'Limit model requests',
+  'budgets.unlimited': 'No limit',
+  'budgets.invalid':
+    'Enter valid limits. Strict mode supports request counts only. Amounts allow six decimal places.',
+  'budgets.unavailable': 'Budgets are unavailable on this service.',
+  'budgets.saved': 'Default budget saved. Existing tasks retain their limits.',
+  'budgets.saveFailed':
+    'Save is unconfirmed. The original request is retained for checking and retry.',
+  'budgets.saving': 'Saving…',
+  'budgets.retrySave': 'Check and retry',
+  'budgets.save': 'Save default budget',
+  'budgets.prices': 'Manual price snapshots',
+  'budgets.pricesHelp':
+    'Prices per million tokens in the currency above. Enter every bucket; use 0 only when confirmed free. Saving never queries a model service.',
+  'budgets.route': 'Model route',
+  'budgets.priceInput': 'Uncached input price',
+  'budgets.priceOutput': 'Output price (including reasoning)',
+  'budgets.priceRead': 'Cache read price',
+  'budgets.priceWrite': 'Cache write price',
+  'budgets.addPrice': 'Add price to draft',
+  'budgets.removePrice': 'Remove price',
+  'budgets.legacy': 'Provider usage was not recorded',
+  'budgets.estimateDisclaimer': 'Costs are estimates, not provider bills.',
+  'budgets.partial':
+    'Metering coverage is incomplete. Only recorded usage is shown; missing data does not mean zero usage or free requests.',
+  'budgets.warning':
+    'The budget reached its 80% warning threshold. Soft thresholds do not stop tasks.',
+  'budgets.reportedTokens': 'Reported tokens',
+  'budgets.estimated': 'Estimate for reported usage',
+  'budgets.reserved': 'In-flight and unknown reserves',
+  'budgets.unknown': 'Unknown',
+  'budgets.unknownRequests': 'Unknown requests: {0}',
+  'budgets.unknownCosts': 'Unknown cost items: {0}',
+  'budgets.reservedTokens': 'Retained token reservation: {0}',
+  'budgets.receipts': 'Per-request receipts',
+  'budgets.purpose': 'Purpose',
+  'budgets.phase': 'Status',
+  'budgets.increase': 'Increase budget and continue',
+  'budgets.increaseHelp':
+    'Keeps the same logical task and usage. Continuing accepts conservative occupancy for unknown requests and never resends a request to recover metering.',
+  'budgets.increaseRejected':
+    'This increase was not applied. Edit the draft or reload the current budget before submitting again.',
+  'budgets.continueFailed':
+    'Continuation is unconfirmed. The original increase is retained; retrying does not reset usage or increase the budget twice.',
+  'budgets.purpose.main': 'Main model',
+  'budgets.purpose.subtask': 'Temporary subtask',
+  'budgets.purpose.compaction': 'Context compaction',
+  'budgets.purpose.review': 'Risk review',
+  'budgets.purpose.fallback': 'Model fallback',
+  'budgets.purpose.sessionTitle': 'Session title',
+  'budgets.phase.reserved': 'Reserved',
+  'budgets.phase.dispatched': 'Dispatched',
+  'budgets.phase.settled': 'Settled',
+  'budgets.phase.released': 'Released',
+  'budgets.phase.unknown': 'Unknown',
+  'budgets.reload': 'Reload budget',
+  'budgets.otherFees':
+    'Estimates use complete provider token reports and manual prices only. Other unknown charges are excluded.',
+  'budgets.currentLimits':
+    'Accepted limits: {0} tools, {1} active seconds, {2} goal continuation rounds.',
+  'budgets.historyUnmetered':
+    'Earlier requests were not recorded. Historical usage and costs remain unknown and are excluded from these totals.',
+  'budgets.staleContinue':
+    'The budget revision changed before this continuation started. Reload the current limits before continuing.',
 };
 
 export type MessageKey = keyof typeof english;

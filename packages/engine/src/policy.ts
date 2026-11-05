@@ -1,8 +1,11 @@
-import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
+import { randomUUID } from 'node:crypto';
+import { type ApprovalMode, type BudgetScope, isTaskPlan } from '@daban/protocol';
+import { type BridgeConfig, callBridge } from './bridge.js';
 
 export const name = 'daban-budget';
-export const inject = ['tools', 'approval'];
+export const inject = ['tools', 'approval', 'agents'];
 interface Execution {
+  readonly token?: symbol;
   signal: AbortSignal;
   name: string;
   arguments: unknown;
@@ -11,6 +14,7 @@ interface Execution {
 }
 
 interface Context {
+  agents?: { roots: () => { session: { id: string } }[] };
   on: (
     ...hook:
       | ['tools/pre-execute', (exec: Execution, next: () => Promise<unknown>) => Promise<unknown>]
@@ -50,22 +54,100 @@ export function requestedUrls(prompt: string) {
 }
 export function apply(
   ctx: Context,
-  config: { limit: number; urls: string[]; approvalMode?: ApprovalMode },
+  config: {
+    limit: number;
+    urls: string[];
+    approvalMode?: ApprovalMode;
+    attemptId?: string;
+    budget?: BudgetScope;
+  } & Partial<BridgeConfig>,
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
   let calls = 0;
+  const executions = new Map<symbol, string>();
   // Search authority belongs to this accepted run and must not survive SDK session resumes.
   const urls = new Set(config.urls);
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
   ctx.on('tools/pre-execute', async (exec: Execution, next: () => Promise<unknown>) => {
     if (exec.signal.aborted) return { kind: 'cancel' };
-    if (++calls > config.limit)
-      return {
-        kind: 'deny',
-        reason: 'TOOL_LIMIT',
-        info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
-      };
+    // Provider call IDs repeat across responses and children. The SDK registry owns this token for one execution.
+    let executionId = typeof exec.token === 'symbol' ? executions.get(exec.token) : undefined;
+    const dispatch = async () => {
+      if (config.budget) {
+        try {
+          const roots = ctx.agents?.roots();
+          if (!config.url || roots?.length !== 1 || !executionId)
+            throw new Error('BUDGET_OWNER_UNAVAILABLE');
+          const result = await callBridge(
+            { ...config, url: config.url },
+            'budget.tool',
+            {
+              scope: config.budget,
+              modelAttemptId: config.attemptId,
+              sessionId: roots[0].session.id,
+              callId: executionId,
+            },
+            exec.signal,
+          );
+          if (
+            !result ||
+            typeof result !== 'object' ||
+            !('accepted' in result) ||
+            result.accepted !== true
+          )
+            throw new Error('BUDGET_TOOL_LIMIT');
+        } catch {
+          return {
+            kind: 'deny',
+            reason: 'BUDGET_TOOL_LIMIT',
+            info: { name: 'BudgetError', code: 'BUDGET_TOOL_LIMIT' },
+          };
+        }
+      }
+      return next();
+    };
+
+    if (config.attemptId) {
+      try {
+        const roots = ctx.agents?.roots();
+        if (!config.url || roots?.length !== 1) throw new Error('MODEL_FENCE_UNAVAILABLE');
+        // Even read-only/native tools and approval requests close the clean window before their body can begin.
+        const result = await callBridge(
+          { ...config, url: config.url },
+          'attempt.fence',
+          { sessionId: roots[0].session.id, attemptId: config.attemptId, kind: 'tool' },
+          exec.signal,
+        );
+        if (
+          !result ||
+          typeof result !== 'object' ||
+          !('accepted' in result) ||
+          result.accepted !== true
+        )
+          throw new Error('MODEL_FENCE_UNAVAILABLE');
+      } catch {
+        return {
+          kind: 'deny',
+          reason: 'MODEL_FENCE_UNAVAILABLE',
+          info: { name: 'AttemptFenceError', code: 'MODEL_FENCE_UNAVAILABLE' },
+        };
+      }
+    }
+    if (!executionId) {
+      if (calls >= config.limit)
+        return {
+          kind: 'deny',
+          reason: 'TOOL_LIMIT',
+          info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
+        };
+      calls++;
+      // A lost Host acknowledgement can retry this token, but cannot consume another local or shared claim.
+      if (typeof exec.token === 'symbol') {
+        executionId = randomUUID();
+        executions.set(exec.token, executionId);
+      }
+    }
     if (
       ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete'].includes(exec.name)
     )
@@ -103,7 +185,7 @@ export function apply(
           reason: JSON.stringify({ url }),
           signal: exec.signal,
         });
-        if (decision === 'allowed-once' && !exec.signal.aborted) return next();
+        if (decision === 'allowed-once' && !exec.signal.aborted) return dispatch();
         return {
           kind: 'deny',
           reason:
@@ -131,7 +213,7 @@ export function apply(
           info: { name: 'WebPolicyError', code: 'WEB_URL_NOT_AUTHORIZED' },
         };
     }
-    return next();
+    return dispatch();
   });
   ctx.on(
     'tools/post-execute',

@@ -1,0 +1,47 @@
+.budget-fields,
+.budget-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 16px;
+}
+.budget-fields {
+  margin-block: 16px;
+}
+.budget-totals {
+  margin-block: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.budget-totals dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.budget-totals dd {
+  margin: 6px 0 0;
+}
+.budget-usage {
+  margin-block: 20px;
+}
+.budget-usage h3 {
+  margin: 0 0 8px;
+}
+.budget-receipts {
+  overflow-x: auto;
+  margin-block: 12px;
+}
+.budget-receipts th,
+.budget-receipts td {
+  padding: 8px 16px 8px 0;
+  text-align: start;
+  white-space: nowrap;
+}
+.budget-prices {
+  padding: 0;
+  list-style: none;
+}
+.budget-prices li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block: 12px;
+}

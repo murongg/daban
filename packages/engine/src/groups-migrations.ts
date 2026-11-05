@@ -21,4 +21,30 @@ export const migrations: Migration[] = [
     hash: '8705404575e4b0f0e81e16dea21658f37cfb03c39412f39a4b53e991ccfb6999',
     name: '20261103131026_baseline',
   },
+  {
+    sql: ['ALTER TABLE `group_turns` ADD `automation` text;'],
+    bps: true,
+    folderMillis: 1793804381000,
+    hash: 'bf74740e706e8977cc94315b6cbced57c582f3851f018354a5376e348774909a',
+    name: '20261104145941_automation-origin',
+  },
+  {
+    sql: [
+      'CREATE TABLE `group_budget_resumes` (\n\t`id` text PRIMARY KEY,\n\t`signature` text NOT NULL\n);\n',
+      '\nALTER TABLE `group_deliveries` ADD `retryOf` text;',
+      '\nALTER TABLE `group_deliveries` ADD `retryStage` text;',
+      '\nALTER TABLE `group_turns` ADD `budget` text;',
+    ],
+    bps: true,
+    folderMillis: 1793808181000,
+    hash: '73a6b4ae1371df4c37c14e465519149ef857f6b61dfa7db1d0259f81067bd4d2',
+    name: '20261104160301_budgets',
+  },
+  {
+    sql: ['ALTER TABLE `group_deliveries` ADD `goalResume` text;'],
+    bps: true,
+    folderMillis: 1793810871000,
+    hash: '3dbc311e82a8b80a9075c60975db32c22f888e584a27e7116d0ef2e380292e5a',
+    name: '20261104164751_goal-target',
+  },
 ];

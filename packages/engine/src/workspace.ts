@@ -34,7 +34,7 @@ export interface AgentWorkspace {
   create(parts: string[]): Promise<TaskDirectory>;
   list(): Promise<WorkspaceFile[]>;
   read(relative: string, limit?: number): Promise<WorkspaceFile & { content: string }>;
-  download(relative: string): Promise<RuntimeDownload>;
+  download(relative: string, limit?: number, signal?: AbortSignal): Promise<RuntimeDownload>;
   scope(root: string, canonical?: string): AgentWorkspace;
   stageSkill?(bundle: SkillPackage, signal?: AbortSignal): Promise<string>;
 }
@@ -201,8 +201,10 @@ export class WorkspaceFiles implements AgentWorkspace {
       throw new Fault('FILE_NOT_TEXT', 400);
     }
   }
-  async download(relative: string): Promise<RuntimeDownload> {
-    const { data, ...file } = await this.bytes(relative, documentLimit);
+  async download(relative: string, limit = documentLimit): Promise<RuntimeDownload> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > documentLimit)
+      throw new Fault('INVALID_FILE', 400);
+    const { data, ...file } = await this.bytes(relative, limit);
     return {
       ...file,
       data: data.toString('base64'),
