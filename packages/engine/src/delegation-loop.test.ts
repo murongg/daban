@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
+import { errorCode } from './control.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -15,6 +16,7 @@ test.each([false, true])(
     timeout: 60000,
   },
   async (cancel) => {
+    const started = performance.now();
     const root = await mkdtemp(path.join(tmpdir(), 'mock-delegation-loop-'));
     let models: ModelRuns | undefined;
     let entered!: () => unknown;
@@ -42,6 +44,23 @@ test.each([false, true])(
       approvalRequests = 0;
     const webSessions: unknown[] = [];
     const toolResults = new Set<string>();
+    let phase = 'fixture',
+      lastError: string | undefined;
+    const mark = (event: string, state: Record<string, string | number | boolean> = {}) => {
+      phase = event;
+      process.stderr.write(
+        `[delegation-phase] ${JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started), cancel, rootCalls, childCalls, wireCalls, webCalls: webSessions.length, approvalRequests, lastError, jobAborted: models?.jobs.get('mock-bot')?.abort.signal.aborted, ...state })}\n`,
+      );
+    };
+    const failed = (error: unknown) => {
+      const code = errorCode(error);
+      lastError = code && /^[A-Z][A-Z0-9_]{0,79}$/.test(code) ? code : 'UNCLASSIFIED';
+    };
+    const closeError = (error: unknown) => {
+      failed(error);
+      mark('close.error', { activePhase: phase });
+      throw error;
+    };
     const server = createServer(async (req, res) => {
       try {
         const chunks: Buffer[] = [];
@@ -50,11 +69,33 @@ test.each([false, true])(
         const input = chunks.length ? JSON.parse(bytes.toString('utf8')) : {};
         if (req.url?.startsWith('/mcp/')) {
           if (input.method === 'approval.web') webSessions.push(input.params?.sessionId);
+          const webCall = webSessions.length;
+          if (input.method === 'approval.web')
+            mark('web.begin', {
+              webCall,
+              rootSessionMatches:
+                typeof input.params?.sessionId === 'string' &&
+                input.params.sessionId === models?.jobs.get('mock-bot')?.sessionId,
+            });
           if (input.method === 'interaction.open' && input.params?.kind === 'approval')
             approvalRequests++;
           const reply = (await models!.rpc('mock-bot', req.headers.authorization, input)) as {
-            result?: { accepted?: boolean; send?: boolean };
+            result?: { accepted?: boolean; send?: boolean; effect?: unknown; reasonCode?: unknown };
+            error?: { code?: unknown };
           };
+          if (input.method === 'approval.web') {
+            // Reading the existing reply adds no store read or ordering barrier to the suspected race.
+            const effect = reply.result?.effect;
+            if (reply.error !== undefined) lastError = 'RPC_ERROR';
+            mark('web.settled', {
+              webCall,
+              effect:
+                effect === 'allow' || effect === 'deny' || effect === 'ask' ? effect : 'other',
+              ruleDenied: reply.result?.reasonCode === 'ruleDenied',
+              rpcError: reply.error !== undefined,
+              rpcErrorCode: typeof reply.error?.code === 'number' ? reply.error.code : 0,
+            });
+          }
           if (input.method === 'budget.reserve' && reply.result?.accepted) {
             const params = input.params as {
               attemptId: string;
@@ -117,10 +158,12 @@ test.each([false, true])(
             if (!name) throw new Error('SYNTHETIC CHILD TOOL CATALOG MISSING');
             args = { path: 'forbidden.txt', content: 'SYNTHETIC FORBIDDEN WRITE' };
           } else if (childCalls === 2) {
+            mark('child.web-offered');
             name = 'web_fetch';
             args = { url: 'https://example.test/mock-child-read' };
           } else if (childCalls === 3) {
-            await models!.approvalRules.write({
+            mark('rule.ask.begin', { expectedRevision: 1 });
+            const changed = await models!.approvalRules.write({
               requestId: 'mock-ask-child-read',
               expectedRevision: 1,
               scope: { kind: 'bot', bot: 'mock-bot' },
@@ -134,6 +177,7 @@ test.each([false, true])(
                 selector: { kind: 'url', url: 'https://example.test/mock-child-read' },
               },
             });
+            mark('rule.ask.applied', { revision: changed.revision });
             name = 'web_fetch';
             args = { url: 'https://example.test/mock-child-read' };
           }
@@ -162,6 +206,8 @@ test.each([false, true])(
           `data: ${JSON.stringify({ id: 'mock-completion', object: 'chat.completion.chunk', created: 1, model: 'mock-reader', choices: [{ index: 0, delta: {}, finish_reason: name ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`,
         );
       } catch (error) {
+        failed(error);
+        mark('provider.error', { activePhase: phase });
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: String(error) }));
       }
@@ -198,7 +244,8 @@ test.each([false, true])(
         workspace: path.join(root, 'shared'),
         sdkFile: createRequire(import.meta.url).resolve('@deepseek-ai/dsh-sdk-client'),
       });
-      await models.approvalRules.write({
+      mark('rule.deny.begin', { expectedRevision: 0 });
+      const initial = await models.approvalRules.write({
         requestId: 'mock-deny-child-read',
         expectedRevision: 0,
         scope: { kind: 'bot', bot: 'mock-bot' },
@@ -212,17 +259,25 @@ test.each([false, true])(
           selector: { kind: 'url', url: 'https://example.test/mock-child-read' },
         },
       });
+      mark('rule.deny.applied', { revision: initial.revision });
       await models.start('mock-bot', {
         requestId: 'mock-reader-task',
         prompt:
           'SYNTHETIC ROOT TASK: delegate a short check of https://example.test/mock-child-read and report.',
       });
       const job = models.jobs.get('mock-bot')!;
+      mark('root.accepted', {
+        rootSessionPresent: typeof job.sessionId === 'string',
+        running: job.running,
+      });
       if (cancel) {
+        mark('cancel.wait');
         await Promise.all([childEntered, rootHeld]);
+        mark('cancel.ready');
         await models.stop('mock-bot');
         release();
         await job.done;
+        mark('root.settled', { modelPhase: job.phase, running: job.running });
         expect(job.phase).toBe('stopped');
         expect(job.running).toBe(false);
         const budget = models.budgets.view(job.budget!.budgetId);
@@ -268,18 +323,35 @@ test.each([false, true])(
         return;
       }
       await job.done;
+      mark('root.settled', {
+        modelPhase: job.phase,
+        running: job.running,
+        jobErrorPresent: !!job.error,
+      });
       expect(job.phase, job.error).toBe('completed');
       expect(childCalls).toBeGreaterThanOrEqual(4);
       expect(webSessions).toEqual([job.sessionId, job.sessionId]);
-      expect(
-        (await models.interactions.list()).some(
+      const interactions = await models.interactions.list();
+      const denied = interactions.some(
+        (item) =>
+          item.policyDecision?.reasonCode === 'ruleDenied' &&
+          item.reply?.kind === 'decision' &&
+          !item.reply.allow,
+      );
+      mark('receipts.read', {
+        records: interactions.length,
+        denied,
+        rootBoundDenied: interactions.some(
           (item) =>
+            item.bot === job.bot &&
+            item.runId === job.id &&
             item.policyDecision?.reasonCode === 'ruleDenied' &&
             item.reply?.kind === 'decision' &&
             !item.reply.allow,
         ),
-        'Missing the root-bound rule-denied receipt',
-      ).toBe(true);
+        pending: interactions.some((item) => item.status === 'pending'),
+      });
+      expect(denied, 'Missing the root-bound rule-denied receipt').toBe(true);
       expect([...toolResults]).toContain(
         'Error: The user declined this exact one-time web request. No HTTP request was made. Do not retry it unless the user explicitly asks.',
       );
@@ -302,12 +374,25 @@ test.each([false, true])(
       await expect(readFile(path.join(job.workdir, 'forbidden.txt'))).rejects.toMatchObject({
         code: 'ENOENT',
       });
+      mark('verified');
+    } catch (error) {
+      failed(error);
+      mark('test.error', { activePhase: phase });
+      throw error;
     } finally {
       release();
-      await models?.close();
-      server.closeAllConnections();
-      await new Promise((resolve) => server.close(resolve));
-      await rm(root, { recursive: true, force: true });
+      try {
+        mark('close.model');
+        await models?.close().catch(closeError);
+        mark('close.server');
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve)).catch(closeError);
+        mark('close.files');
+        await rm(root, { recursive: true, force: true }).catch(closeError);
+        mark('closed');
+      } finally {
+        mark('test.finished');
+      }
     }
   },
 );
