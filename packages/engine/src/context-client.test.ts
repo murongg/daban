@@ -9,6 +9,55 @@ import { startPrototype } from './server.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 
+test.each([
+  {
+    type: 'goal.target',
+    owner: { bot: scope.bot, chatRevision: 0, project: { projectId: 'mock-retired', revision: 1 } },
+  },
+  {
+    type: 'task.start',
+    bot: scope.bot,
+    task: {
+      requestId: 'mock-start',
+      prompt: 'SYNTHETIC REQUEST',
+      project: { projectId: 'mock-retired', revision: 1 },
+    },
+  },
+  {
+    type: 'files.read',
+    path: 'same-name.txt',
+    project: { projectId: 'mock-retired', revision: 1 },
+  },
+  {
+    type: 'task.start',
+    bot: scope.bot,
+    task: {
+      requestId: 'mock-resume',
+      prompt: 'SYNTHETIC REQUEST',
+      goalResume: {
+        owner: {
+          bot: scope.bot,
+          chatRevision: 0,
+          project: { projectId: 'mock-retired', revision: 1 },
+        },
+        sessionId: 'mock-session',
+        goalId: 'mock-goal',
+        goalRevision: 1,
+        humanEpoch: 0,
+      },
+    },
+  },
+])('retired scoped $type cannot fall through to an older Host transport', async (input) => {
+  const fetcher = vi.fn(async () => Response.json({}));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  await expect(client.invoke(parseRuntimeCommand(input))).rejects.toThrow('PROJECT_RETIRED');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
 test('a retained Goal target read freezes its owner and validates the published response', async () => {
   let release = () => {};
   const token = new Promise<string>((resolve) => {
