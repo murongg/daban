@@ -1,40 +1,13 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  approvalRulesCapability,
-  disconnected,
-  type Interaction,
-  isInteraction,
-  type McpReceipt,
-  type PolicyDecision,
-  remoteReplyFor,
-  remoteSnapshotFor,
-} from '@daban/protocol';
+import { type Interaction, isInteraction, type McpReceipt, remoteReplyFor } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { RemoteGateway } from './remote-gateway.js';
 import { RemoteKeys } from './remote-identity.js';
 import { RemoteStore } from './remote-store.js';
 
-const decision: PolicyDecision = {
-  effect: 'ask',
-  source: 'mode',
-  reasonCode: 'baselineAsked',
-  matchedRules: [],
-  policyRevision: 0,
-  requestHash: 'c'.repeat(64),
-  scope: { kind: 'bot', bot: 'mock-bot' },
-  trigger: 'interactive',
-  selector: {
-    kind: 'mcp',
-    connection: 'mock-connection',
-    configRevision: 1,
-    catalogDigest: 'a'.repeat(64),
-    tool: 'synthetic_write',
-    inputHash: 'b'.repeat(64),
-  },
-};
-const pending: Interaction = {
+const resolved: Interaction = {
   id: 'mock-card',
   sessionId: 'mock-session',
   kind: 'approval',
@@ -49,48 +22,51 @@ const pending: Interaction = {
   inputHash: 'b'.repeat(64),
   bot: 'mock-bot',
   runId: 'mock-run',
-  status: 'pending',
+  status: 'resolved',
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
+  reply: { kind: 'decision', allow: true },
+};
+const historical = {
+  ...resolved,
+  policyDecision: { source: 'retired-rule' },
   purposeScope: { taskId: 'mock-run', turnId: 'mock-turn' },
-  policyDecision: decision,
 };
 
-test('AP views preserve ordinary one-time replies without altering stored purpose or permission', () => {
-  expect(isInteraction(pending)).toBe(true);
-  const resolved: Interaction = {
-    ...pending,
-    status: 'resolved',
-    reply: { kind: 'decision', allow: true, confirmPurpose: true },
-  };
-  const canonical = JSON.stringify(resolved);
-  const legacy = remoteReplyFor('interaction.reply', resolved, {}, 2);
-  expect(legacy).not.toHaveProperty('purposeScope');
-  expect(legacy).not.toHaveProperty('policyDecision');
-  expect(legacy).toHaveProperty('reply', { kind: 'decision', allow: true });
+test('historical approval replies have a strict basic outbound view without mutating stored data', () => {
+  const before = JSON.stringify(historical);
+  const projected = remoteReplyFor('interaction.reply', historical, {}, 2);
+  expect(projected).toEqual(resolved);
+  expect(isInteraction(projected)).toBe(true);
+  expect(JSON.stringify(historical)).toBe(before);
   expect(
-    remoteReplyFor('interaction.reply', resolved, {}, 2, {
-      approvalRules: approvalRulesCapability,
-    }),
+    isInteraction(
+      remoteReplyFor(
+        'interaction.reply',
+        {
+          ...historical,
+          privateSdk: 'SYNTHETIC PRIVATE',
+        },
+        {},
+        2,
+      ),
+    ),
+  ).toBe(false);
+  expect(
+    remoteReplyFor(
+      'interaction.reply',
+      {
+        ...historical,
+        reply: { kind: 'decision', allow: true, confirmPurpose: true },
+      },
+      {},
+      2,
+    ),
   ).toEqual(resolved);
-  expect(JSON.stringify(resolved)).toBe(canonical);
-  const snapshot = {
-    ...disconnected('ready'),
-    approvalRules: { capability: approvalRulesCapability, available: true, revision: 0 },
-    interactions: [pending],
-    delivery: true,
-    searchSettings: true,
-  };
-  expect(remoteSnapshotFor(snapshot, {}, 2)).not.toHaveProperty('approvalRules');
-  expect(remoteSnapshotFor(snapshot, {}, 2)).not.toHaveProperty('interactions.0.purposeScope');
-  const partial = remoteSnapshotFor(snapshot, {}, 2, { approvalRules: approvalRulesCapability });
-  expect(partial).toHaveProperty('interactions.0.purposeScope', pending.purposeScope);
-  expect(partial).not.toHaveProperty('delivery');
-  expect(partial).not.toHaveProperty('searchSettings');
 });
 
-test('cached modern approval writes project for a downgraded peer without redispatch and revoke still wins', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-format-replay-'));
+test('cached historical approvals project after lookup while revoke and single dispatch remain enforced', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-basic-replay-'));
   const keys = await RemoteKeys.open(path.join(root, 'controller'), 'Synthetic controller');
   const store = new RemoteStore({
     file: path.join(root, 'remote.sqlite'),
@@ -100,14 +76,9 @@ test('cached modern approval writes project for a downgraded peer without redisp
   await store.ready;
   store.pair(keys.identity, 'controller');
   let writes = 0;
-  const resolved: Interaction = {
-    ...pending,
-    status: 'resolved',
-    reply: { kind: 'decision', allow: true, confirmPurpose: true },
-  };
   const gateway = new RemoteGateway(store, async () => {
     writes++;
-    return resolved;
+    return historical;
   });
   const request = {
     type: 'request',
@@ -115,23 +86,16 @@ test('cached modern approval writes project for a downgraded peer without redisp
     host: 'a'.repeat(64),
     workspace: 'mock-workspace',
     method: 'interaction.reply',
-    params: { bot: pending.bot, runId: pending.runId, id: pending.id, reply: resolved.reply },
+    params: { bot: resolved.bot, runId: resolved.runId, id: resolved.id, reply: resolved.reply },
   };
   try {
-    expect(
-      await gateway.invoke(keys.identity.id, 'mock-modern', request, {
-        schema: 2,
-        formats: { approvalRules: approvalRulesCapability },
-      }),
-    ).toEqual(resolved);
-    const cached = await gateway.invoke(keys.identity.id, 'mock-old', request, 2);
-    const legacy = remoteReplyFor('interaction.reply', cached, {}, 2);
-    expect(legacy).toHaveProperty('reply', { kind: 'decision', allow: true });
-    expect(legacy).not.toHaveProperty('policyDecision');
+    await gateway.invoke(keys.identity.id, 'mock-first', request, 2);
+    const cached = await gateway.invoke(keys.identity.id, 'mock-reconnect', request, 2);
+    expect(remoteReplyFor('interaction.reply', cached, {}, 2)).toEqual(resolved);
     expect(writes).toBe(1);
-    expect(resolved.reply).toHaveProperty('confirmPurpose', true);
+    expect(historical).toHaveProperty('purposeScope');
     store.revoke(keys.identity.id);
-    await expect(gateway.invoke(keys.identity.id, 'mock-old', request, 2)).rejects.toThrow(
+    await expect(gateway.invoke(keys.identity.id, 'mock-reconnect', request, 2)).rejects.toThrow(
       'REMOTE_UNAUTHORIZED',
     );
   } finally {
@@ -140,42 +104,25 @@ test('cached modern approval writes project for a downgraded peer without redisp
   }
 });
 
-test('MCP policy data uses the declared format and Delivery provenance is never flattened', () => {
+test('historical MCP receipts keep basic identity and result without retaining a rule decision', () => {
   const receipt: McpReceipt = {
     id: 'mock-call',
-    bot: pending.bot,
-    run: pending.runId,
-    session: pending.sessionId,
-    connection: pending.connection,
+    bot: resolved.bot,
+    run: resolved.runId,
+    session: resolved.sessionId,
+    connection: 'mock-connection',
     configRevision: 1,
     tool: 'synthetic_write',
     phase: 'settled',
     preview: 'Synthetic result',
-    createdAt: pending.createdAt,
-    updatedAt: pending.updatedAt,
-    policyDecision: decision,
+    createdAt: resolved.createdAt,
+    updatedAt: resolved.updatedAt,
   };
-  expect(remoteReplyFor('mcp.receipt', receipt, {}, 2)).not.toHaveProperty('policyDecision');
-  expect(
-    remoteReplyFor('mcp.calls', { bot: pending.bot, items: [receipt] }, {}, 2),
-  ).not.toHaveProperty('items.0.policyDecision');
-  expect(
-    remoteReplyFor('mcp.receipt', receipt, {}, 2, { approvalRules: approvalRulesCapability }),
-  ).toEqual(receipt);
-  const delivery = {
-    workId: 'mock-work',
-    attempts: [
-      {
-        attemptId: 'mock-attempt',
-        workId: 'mock-work',
-        requestId: 'mock-request',
-        phase: 'unknown',
-        source: 'model-report',
-      },
-    ],
-  };
-  const bytes = JSON.stringify(delivery);
-  expect(() => remoteReplyFor('delivery.get', delivery, {}, 2)).toThrow('RUNTIME_TOO_OLD');
-  expect(remoteReplyFor('delivery.get', delivery, {}, 2, { delivery: true })).toEqual(delivery);
-  expect(JSON.stringify(delivery)).toBe(bytes);
+  const archived = { ...receipt, policyDecision: { source: 'retired-rule' } };
+  expect(remoteReplyFor('mcp.receipt', archived, {}, 2)).toEqual(receipt);
+  expect(remoteReplyFor('mcp.calls', { bot: resolved.bot, items: [archived] }, {}, 2)).toEqual({
+    bot: resolved.bot,
+    items: [receipt],
+  });
+  expect(archived).toHaveProperty('policyDecision');
 });

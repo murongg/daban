@@ -453,7 +453,7 @@ test('restart retains a durable clean fence for explicit recovery while interrup
   }
 });
 
-test('a corrupt authoritative budget identity cannot be loaded as a legacy unmetered task', async () => {
+test('obsolete financial metadata does not hide saved task history or rewrite its original bytes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-budget-journal-'));
   try {
     const task = {
@@ -469,10 +469,13 @@ test('a corrupt authoritative budget identity cannot be loaded as a legacy unmet
       trace: [],
       budget: { budgetId: 'synthetic-budget', revision: -1 },
     };
-    await writeFile(path.join(root, `${task.runId}.json`), JSON.stringify({ version: 1, task }));
+    const file = path.join(root, `${task.runId}.json`);
+    const original = JSON.stringify({ version: 1, task });
+    await writeFile(file, original);
     const journal = new TaskJournal(root);
     await journal.load();
-    expect(journal.findRequest(task.bot, task.requestId)).toBeUndefined();
+    expect(journal.findRequest(task.bot, task.requestId)).toMatchObject(task);
+    expect(await readFile(file, 'utf8')).toBe(original);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

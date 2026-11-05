@@ -13,10 +13,36 @@ import {
   recoveryReader,
   remoteReplyFor,
   remoteSnapshotFor,
+  snapshotConsumer,
+  supportedSnapshotCapabilities,
+  supportedSnapshotFormats,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+test('a closed old combined hint preserves Context and Search without storing retired declarations', () => {
+  const hint = {
+    type: 'snapshot-capabilities',
+    host: 'a'.repeat(64),
+    workspace: 'mock-workspace',
+    schema: 2,
+    accept: { contextInspector: 1, preflight: 1, fileReview: 1 },
+    formats: { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true },
+  };
+  expect.assert(isRemoteSnapshotCapabilities(hint));
+  expect(snapshotConsumer(hint).formats).toEqual({ searchSettings: true });
+  expect(supportedSnapshotFormats).toEqual({ searchSettings: true });
+  expect(supportedSnapshotCapabilities).toEqual({ contextInspector: 1 });
+  expect(
+    isRemoteSnapshotCapabilities({ ...hint, formats: { ...hint.formats, privateSdk: true } }),
+  ).toBe(false);
+  expect(
+    isRemoteSnapshotCapabilities({
+      ...hint,
+      formats: { ...hint.formats, approvalRules: 'unknown' },
+    }),
+  ).toBe(false);
+});
 test('the retained Goal target read uses the published goal-controls command and recovery path', () => {
   const command = { type: 'goal.target', owner: { bot: scope.bot, chatRevision: 0 } };
   expect(parseRuntimeCommand(command)).toEqual(command);
@@ -36,16 +62,13 @@ test('the published keyless Search status is valid without claiming a configured
     }),
   ).toBe(true);
 });
+test.each([{ type: 'search.status' }])(
+  'published pure reader $type keeps the existing recovery-read behavior',
+  (command) => {
+    expect(recoveryReader(parseRuntimeCommand(command))).toBe(true);
+  },
+);
 test.each([
-  { type: 'approval.rules.list', scope: { kind: 'bot', bot: 'mock-bot' } },
-  { type: 'projectMemory.status' },
-  { type: 'search.status' },
-  { type: 'delivery.get', query: { workId: 'mock-work' } },
-])('published pure reader $type keeps the existing recovery-read behavior', (command) => {
-  expect(recoveryReader(parseRuntimeCommand(command))).toBe(true);
-});
-test.each([
-  { type: 'budget.settings' },
   { type: 'projects.list' },
   {
     type: 'model.saved',
@@ -112,16 +135,14 @@ test('schema 2 extends the same closed hint without changing the three read-only
     expect(isRemoteSnapshotCapabilities(invalid)).toBe(false);
 });
 
-test('schema2 is not proof of the later published AP, Delivery or Search wire formats', () => {
+test('schema2 is not proof of the retained independent Search wire format', () => {
   const baseline = disconnected('ready');
   const current = {
     ...baseline,
-    delivery: true,
     searchSettings: true,
-    approvalRules: { capability: 'approval-rules-v3', available: true, revision: 0 },
   };
   expect(remoteSnapshotFor(current, {}, 2)).toEqual(baseline);
-  const formats = { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true };
+  const formats = { searchSettings: true };
   const hint = {
     type: 'snapshot-capabilities',
     host: 'a'.repeat(64),
@@ -472,7 +493,7 @@ test('never provides role or preference body refs and rejects oversized wire cap
   expect(isContextCapture(large)).toBe(false);
 });
 
-test('snapshot acceptance is an exact hint and copies only the three negotiated optional fields', () => {
+test('snapshot acceptance preserves Context and rejects unknown producer metadata', () => {
   const hint = {
     type: 'snapshot-capabilities',
     host: 'a'.repeat(64),
@@ -492,8 +513,6 @@ test('snapshot acceptance is an exact hint and copies only the three negotiated 
   const original = {
     ...disconnected('ready'),
     contextInspector: 1,
-    preflight: 1,
-    fileReview: 1,
     unexpected: 'must-still-be-rejected',
   };
   expect(remoteSnapshotFor(original)).toEqual({
@@ -505,7 +524,7 @@ test('snapshot acceptance is an exact hint and copies only the three negotiated 
     contextInspector: 1,
     unexpected: original.unexpected,
   });
-  expect(original).toMatchObject({ contextInspector: 1, preflight: 1, fileReview: 1 });
+  expect(original).toMatchObject({ contextInspector: 1 });
   expect(isRemoteSnapshot(remoteSnapshotFor(original, { contextInspector: 1 }))).toBe(false);
 });
 

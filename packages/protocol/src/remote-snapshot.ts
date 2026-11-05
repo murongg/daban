@@ -1,9 +1,5 @@
 import {
-  approvalInteractionFor,
-  approvalMcpFor,
-  approvalRulesCapability,
   type Group,
-  isApprovalRulesStatus,
   isAutomationNotice,
   isBotProfile,
   isBrowserState,
@@ -15,6 +11,8 @@ import {
   isGroupPage,
   isInteraction,
   isLocalComputerStatus,
+  isMcpHistory,
+  isMcpReceipt,
   isMcpStatus,
   isModelAccess,
   isModelAttempts,
@@ -67,6 +65,50 @@ function legacyTask(value: RuntimeTask) {
   return { ...row, files: legacyFiles(row.files), history: row.history.map(legacySummary) };
 }
 
+function basicApprovalReply(method: string, value: unknown): unknown {
+  if (!object(value)) return value;
+  // Cached replies can predate rule removal. This is an outbound view, never a new approval input.
+  if (method === 'interaction.reply') {
+    const { policyDecision: _policy, purposeScope, reply, ...rest } = value;
+    let savedReply = reply;
+    if (object(reply) && reply.confirmPurpose !== undefined) {
+      const { confirmPurpose, ...decision } = reply;
+      if (
+        confirmPurpose !== true ||
+        decision.kind !== 'decision' ||
+        decision.allow !== true ||
+        rest.decisionSource !== undefined ||
+        rest.kind !== 'approval' ||
+        rest.tool !== 'mcp_call' ||
+        !object(purposeScope) ||
+        !exact(purposeScope, ['taskId', 'turnId']) ||
+        !validAgentId(purposeScope.taskId) ||
+        !validAgentId(purposeScope.turnId)
+      )
+        return value;
+      savedReply = decision;
+    }
+    const projected = { ...rest, ...(savedReply === undefined ? {} : { reply: savedReply }) };
+    return isInteraction(projected) ? projected : value;
+  }
+  if (method === 'mcp.receipt') {
+    const { policyDecision: _policy, ...projected } = value;
+    return isMcpReceipt(projected) ? projected : value;
+  }
+  if (method === 'mcp.calls' && Array.isArray(value.items)) {
+    const projected = {
+      ...value,
+      items: value.items.map((item: unknown) => {
+        if (!object(item)) return item;
+        const { policyDecision: _policy, ...receipt } = item;
+        return receipt;
+      }),
+    };
+    return isMcpHistory(projected) ? projected : value;
+  }
+  return value;
+}
+
 export function remoteReplyFor(
   method: string,
   value: unknown,
@@ -80,15 +122,9 @@ export function remoteReplyFor(
       throw Error('REMOTE_INVALID_SNAPSHOT');
     return remoteSnapshotFor(value, accept, schema, formats);
   }
-  const approvals = formats.approvalRules === approvalRulesCapability;
-  if (method.startsWith('approval.rules.') && !approvals) throw Error('APPROVAL_UPGRADE_REQUIRED');
-  if (method.startsWith('delivery.') && formats.delivery !== true) throw Error('RUNTIME_TOO_OLD');
   if (method.startsWith('search.') && formats.searchSettings !== true)
     throw Error('RUNTIME_TOO_OLD');
-  if (!approvals) {
-    if (isInteraction(value)) return approvalInteractionFor(value, false);
-    if (method === 'mcp.calls' || method === 'mcp.receipt') return approvalMcpFor(value, false);
-  }
+  value = basicApprovalReply(method, value);
   if (schema === 2) return value;
   if (isModelStatus(value)) return legacyModel({ ...value });
   if (isChatPage(value)) return { ...value, items: value.items.map(legacySummary) };
@@ -122,11 +158,10 @@ export function remoteReplyFor(
   return value;
 }
 
-export const snapshotCapabilityKeys = ['contextInspector', 'preflight', 'fileReview'] as const;
+export const snapshotCapabilityKeys = ['contextInspector'] as const;
+const retiredCapabilityKeys = ['preflight', 'fileReview'] as const;
 export type SnapshotAccept = Partial<Record<(typeof snapshotCapabilityKeys)[number], 1>>;
 export interface SnapshotFormats {
-  approvalRules?: typeof approvalRulesCapability;
-  delivery?: true;
   searchSettings?: true;
 }
 export interface SnapshotConsumer {
@@ -135,8 +170,6 @@ export interface SnapshotConsumer {
 }
 export type RuntimeConsumer = 1 | 2 | SnapshotConsumer;
 export const supportedSnapshotFormats: SnapshotFormats = {
-  approvalRules: approvalRulesCapability,
-  delivery: true,
   searchSettings: true,
 };
 export function snapshotConsumer(value?: RuntimeConsumer): SnapshotConsumer {
@@ -144,13 +177,17 @@ export function snapshotConsumer(value?: RuntimeConsumer): SnapshotConsumer {
   if (value === undefined) return { schema: 2, formats: { ...supportedSnapshotFormats } };
   if (typeof value === 'number')
     return { ...(value === 2 ? { schema: 2 as const } : {}), formats: {} };
-  return { ...(value.schema === 2 ? { schema: 2 as const } : {}), formats: { ...value.formats } };
+  return {
+    ...(value.schema === 2 ? { schema: 2 as const } : {}),
+    formats: value.formats?.searchSettings === true ? { searchSettings: true } : {},
+  };
 }
 function isSnapshotFormats(value: unknown): value is SnapshotFormats {
+  // Former literals are decode-only; released controllers must still negotiate retained Context/Search.
   return (
     object(value) &&
     exact(value, ['approvalRules', 'delivery', 'searchSettings']) &&
-    (value.approvalRules === undefined || value.approvalRules === approvalRulesCapability) &&
+    (value.approvalRules === undefined || value.approvalRules === 'approval-rules-v3') &&
     (value.delivery === undefined || value.delivery === true) &&
     (value.searchSettings === undefined || value.searchSettings === true)
   );
@@ -165,8 +202,6 @@ export interface RemoteSnapshotCapabilities {
 }
 export const supportedSnapshotCapabilities: SnapshotAccept = {
   contextInspector: 1,
-  preflight: 1,
-  fileReview: 1,
 };
 export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSnapshotCapabilities {
   return (
@@ -179,7 +214,8 @@ export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSna
     /^[a-f0-9]{64}$/.test(value.host) &&
     validAgentId(value.workspace) &&
     object(value.accept) &&
-    exact(value.accept, [...snapshotCapabilityKeys]) &&
+    // Old combined hints must still negotiate retained Context; retired keys never enter session state.
+    exact(value.accept, [...snapshotCapabilityKeys, ...retiredCapabilityKeys]) &&
     Object.values(value.accept).every((version) => version === 1)
   );
 }
@@ -193,15 +229,7 @@ export function remoteSnapshotFor(
   const wire = { ...value };
   // Only negotiated additions are omitted. Unknown fields still reach the strict consumer validator and are rejected.
   for (const key of snapshotCapabilityKeys) if (accept[key] !== 1) delete wire[key];
-  if (formats.delivery !== true) delete wire.delivery;
   if (formats.searchSettings !== true) delete wire.searchSettings;
-  if (formats.approvalRules !== approvalRulesCapability) {
-    delete wire.approvalRules;
-    if (Array.isArray(value.interactions))
-      wire.interactions = value.interactions.map((item: unknown) =>
-        isInteraction(item) ? approvalInteractionFor(item, false) : item,
-      );
-  }
   if (schema !== 2 && object(value.model)) {
     // Original Context peers still use a closed model schema; the feature hint alone is not a schema proof.
     wire.model = legacyModel(value.model);
@@ -391,11 +419,7 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
     !exact(value, [
       'phase',
       'contextInspector',
-      'approvalRules',
-      'delivery',
       'searchSettings',
-      'fileReview',
-      'preflight',
       'error',
       'protocolVersion',
       'model',
@@ -430,13 +454,6 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
   if (
     !['connecting', 'ready', 'offline', 'unsupported'].includes(String(value.phase)) ||
     (value.contextInspector !== undefined && value.contextInspector !== 1) ||
-    (value.preflight !== undefined && value.preflight !== 1) ||
-    (value.fileReview !== undefined &&
-      (!object(value.fileReview) ||
-        !exact(value.fileReview, ['available']) ||
-        typeof value.fileReview.available !== 'boolean')) ||
-    (value.approvalRules !== undefined && !isApprovalRulesStatus(value.approvalRules)) ||
-    (value.delivery !== undefined && value.delivery !== true) ||
     (value.searchSettings !== undefined && value.searchSettings !== true) ||
     !integer(value.protocolVersion) ||
     !optional(value.error, (error) => text(error, 512)) ||

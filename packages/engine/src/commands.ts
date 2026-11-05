@@ -5,7 +5,6 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type ApprovalMode, isInteractionInput, validAgentId } from '@daban/protocol';
 import { and, eq, notInArray } from 'drizzle-orm';
-import { commandHash, type RulePolicy } from './approval-rules.js';
 import { migrations } from './commands-migrations.js';
 import { commands } from './commands-schema.js';
 import type { ToolResult } from './computer-tools.js';
@@ -39,10 +38,6 @@ export interface CommandReview {
   target: 'linux-vm';
 }
 export type CommandDecision = 'allow' | 'ask' | 'deny';
-export interface CommandRisk {
-  decision: CommandDecision;
-  reason: import('@daban/protocol').CommandRiskReason;
-}
 const failure = (code: string): ToolResult => ({
   isError: true,
   content: [{ type: 'text', text: code }],
@@ -75,12 +70,8 @@ export class Commands {
     readonly options: {
       file: string;
       interactions: Interactions;
-      review?: (
-        request: CommandReview,
-        signal?: AbortSignal,
-      ) => Promise<CommandDecision | CommandRisk>;
+      review?: (request: CommandReview, signal?: AbortSignal) => Promise<CommandDecision>;
       assertLive?: (run: CommandRun) => unknown;
-      policy?: RulePolicy;
     },
   ) {
     this.ready = this.load();
@@ -150,7 +141,7 @@ export class Commands {
     tool: string,
     args: Record<string, unknown>,
     wireId: string | undefined,
-    dispatch: (assertPolicy?: () => unknown) => Promise<ToolResult>,
+    dispatch: (assertAuthority?: () => unknown) => Promise<ToolResult>,
   ): Promise<ToolResult> {
     let request: CommandReview;
     try {
@@ -230,7 +221,7 @@ export class Commands {
     id: string,
     fingerprint: string,
     request: CommandReview,
-    dispatch: (assertPolicy?: () => unknown) => Promise<ToolResult>,
+    dispatch: (assertAuthority?: () => unknown) => Promise<ToolResult>,
   ) {
     let dispatched = false;
     try {
@@ -248,53 +239,15 @@ export class Commands {
       this.db!.insert(commands)
         .values({ id, fingerprint, request: canonical(request), phase: 'reviewing' })
         .run();
-      const reviewed =
+      const decision =
         request.approvalMode === 'ask'
           ? 'ask'
           : request.approvalMode === 'full'
             ? 'allow'
             : await (this.options.review?.(structuredClone(request), run.abort.signal) ?? 'ask');
-      const baseline = typeof reviewed === 'string' ? reviewed : reviewed.decision;
-      const riskReason = typeof reviewed === 'string' ? undefined : reviewed.reason;
-      const policyDecision = await this.options.policy?.review(
-        run,
-        {
-          kind: 'command',
-          tool: request.tool as 'shell' | 'process_start' | 'process_input',
-          commandHash: commandHash(request.command),
-          cwd: run.canonicalRoot ?? request.cwd,
-        },
-        baseline,
-        false,
-        riskReason,
-      );
-      const decision = policyDecision?.effect ?? baseline;
-      if (policyDecision)
-        this.db!.update(commands)
-          .set({ policyDecision: JSON.stringify(policyDecision) })
-          .where(eq(commands.id, id))
-          .run();
       this.live(run);
-      if (decision !== 'allow' && decision !== 'ask') {
-        if (policyDecision)
-          await this.options.interactions.open(
-            run.bot,
-            run.id!,
-            {
-              id,
-              sessionId: run.sessionId!,
-              kind: 'approval',
-              tool: 'vm_command',
-              command: request.command,
-              cwd: request.cwd,
-              purpose: request.purpose,
-              target: request.target,
-            },
-            run.conversationId,
-            policyDecision,
-          );
+      if (decision !== 'allow' && decision !== 'ask')
         return this.finish(id, 'denied', failure('COMMAND_APPROVAL_REJECTED'));
-      }
       if (decision === 'ask') {
         const previous = (await this.options.interactions.list()).find((item) => item.id === id);
         if (previous) return this.finish(id, 'unknown', failure('COMMAND_OUTCOME_UNKNOWN'));
@@ -312,7 +265,6 @@ export class Commands {
             target: request.target,
           },
           run.conversationId,
-          policyDecision,
         );
         run.waitingForComputer = true;
         run.onComputerWait?.();
@@ -340,17 +292,16 @@ export class Commands {
         }
       }
       this.live(run);
-      const assertPolicy = () => {
+      const assertAuthority = () => {
         try {
           this.live(run);
-          if (policyDecision) this.options.policy!.assertCurrent(run, policyDecision);
         } catch (error) {
           // This callback runs before the transport sends; a failed guard proves no effect was issued.
           dispatched = false;
           throw error;
         }
       };
-      assertPolicy();
+      assertAuthority();
       // Persist the one-use claim before crossing into the guest; a restart may only inspect this receipt.
       const claimed = this.db!.update(commands)
         .set({ phase: 'dispatching', decision })
@@ -359,9 +310,9 @@ export class Commands {
       if (Number(claimed.changes) !== 1) return failure('COMMAND_OUTCOME_UNKNOWN');
       await new Promise((resolve) => setImmediate(resolve));
       this.live(run);
-      assertPolicy();
+      assertAuthority();
       dispatched = true;
-      const result = await dispatch(assertPolicy);
+      const result = await dispatch(assertAuthority);
       return this.finish(id, 'settled', result);
     } catch (error) {
       const code = run.abort.signal.aborted

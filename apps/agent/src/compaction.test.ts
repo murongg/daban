@@ -325,18 +325,6 @@ for (const needsSummary of [false, true])
     expect.assert(pruned, 'the normal continuation must see the pruned result');
     expect.assert(recovered, 'the marker must remain readable from the original saved tool output');
     expect(summaries > 0).toBe(needsSummary);
-    const budget = agent.models.budgets.view(first.budget!.budgetId);
-    expect(budget.requests).toBe(requests.length);
-    expect(budget.receipts.filter((receipt) => receipt.purpose === 'compaction')).toHaveLength(
-      summaries,
-    );
-    expect(
-      budget.unknownCount,
-      JSON.stringify(
-        budget.receipts.map((receipt) => ({ phase: receipt.phase, usage: receipt.usage })),
-      ),
-    ).toBe(0);
-    expect(budget.availability).toBe('recorded');
     expect(normal).toBe(4);
     const saved = await agent.models.journal.read('mock-bot', first.id);
     if (needsSummary)

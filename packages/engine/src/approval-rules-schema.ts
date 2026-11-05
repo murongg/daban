@@ -1,5 +1,7 @@
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
+// Migration metadata only: no runtime store opens or evaluates these retired rule tables.
+
 export const approvalRules = sqliteTable('approval_rules', {
   id: text().primaryKey(),
   scopeKey: text('bot').notNull(),

@@ -1,153 +1,9 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { approvalRulesCapability, disconnected } from '@daban/protocol';
+import { disconnected } from '@daban/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
-
-it('requires the rule capability and validates Bot and request identity on rule replies', async () => {
-  let reply: unknown = { scope: { kind: 'bot', bot: 'mock-bot' }, revision: 0, rules: [] };
-  const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(reply));
-  const client = new RuntimeClient({
-    origin: 'http://127.0.0.1:18766',
-    tokenProvider: async () => 'a'.repeat(64),
-    fetcher,
-  });
-  const snapshot = {
-    ...disconnected('ready'),
-    approvalRules: {
-      capability: approvalRulesCapability as typeof approvalRulesCapability,
-      available: true,
-      revision: 0,
-    },
-  };
-  const state = vi.spyOn(client, 'status').mockResolvedValue(disconnected('ready'));
-  const command = {
-    type: 'approval.rules.list' as const,
-    scope: { kind: 'bot' as const, bot: 'mock-bot' },
-  };
-  await expect(client.invoke(command)).rejects.toThrow('APPROVAL_UPGRADE_REQUIRED');
-  expect(fetcher).not.toHaveBeenCalled();
-  state.mockResolvedValue(snapshot);
-  expect(await client.invoke(command)).toEqual(reply);
-  const projectCommand = {
-    type: 'approval.rules.list' as const,
-    scope: { kind: 'project' as const, scope: { projectId: 'mock-project', revision: 1 } },
-  };
-  reply = {
-    scope: { kind: 'project', scope: { projectId: 'mock-other', revision: 1 } },
-    revision: 0,
-    rules: [],
-  };
-  await expect(client.invoke(projectCommand)).rejects.toThrow('INVALID_RUNTIME_STATE');
-  reply = {
-    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 2 } },
-    revision: 0,
-    rules: [],
-  };
-  await expect(client.invoke(projectCommand)).rejects.toThrow('INVALID_RUNTIME_STATE');
-  reply = { scope: projectCommand.scope, revision: 0, rules: [] };
-  expect(await client.invoke(projectCommand)).toEqual(reply);
-  reply = { scope: { kind: 'bot', bot: 'mock-other' }, revision: 0, rules: [] };
-  await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
-  reply = {
-    requestId: 'mock-foreign',
-    id: 'mock-rule',
-    scope: command.scope,
-    revision: 1,
-    deleted: true,
-  };
-  await expect(
-    client.invoke({ type: 'approval.rules.receipt', scope: command.scope, requestId: 'mock-save' }),
-  ).rejects.toThrow('INVALID_RUNTIME_STATE');
-  reply = {
-    requestId: 'mock-save',
-    id: 'mock-other-rule',
-    scope: command.scope,
-    revision: 1,
-    deleted: true,
-  };
-  await expect(
-    client.invoke({
-      type: 'approval.rules.write',
-      request: {
-        requestId: 'mock-save',
-        expectedRevision: 0,
-        scope: command.scope,
-        action: 'delete',
-        id: 'mock-rule',
-      },
-    }),
-  ).rejects.toThrow('INVALID_RUNTIME_STATE');
-  expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get('x-daban-approval-rules')).toBe(
-    approvalRulesCapability,
-  );
-});
-
-it.each(['reordered selector', 'unexpected expiry', 'unexpected purpose'] as const)(
-  'correlates the complete normalized rule intent: %s',
-  async (change) => {
-    const scope = { kind: 'bot' as const, bot: 'mock-bot' };
-    const rule = {
-      id: 'mock-rule',
-      name: 'Synthetic exact rule',
-      enabled: true,
-      effect: 'ask' as const,
-      trigger: 'interactive' as const,
-      selector: {
-        kind: 'mcp' as const,
-        connection: 'mock-connection',
-        configRevision: 1,
-        catalogDigest: 'a'.repeat(64),
-        tool: 'synthetic_echo',
-        inputHash: 'b'.repeat(64),
-      },
-    };
-    const request = {
-      requestId: 'mock-edit',
-      expectedRevision: 0,
-      scope,
-      action: 'save' as const,
-      rule,
-    };
-    const reply = {
-      requestId: request.requestId,
-      revision: 1,
-      scope,
-      id: rule.id,
-      rule: {
-        ...rule,
-        scope,
-        revision: 1,
-        selector:
-          change === 'reordered selector'
-            ? {
-                inputHash: 'b'.repeat(64),
-                tool: 'synthetic_echo',
-                catalogDigest: 'a'.repeat(64),
-                configRevision: 1,
-                connection: 'mock-connection',
-                kind: 'mcp' as const,
-              }
-            : rule.selector,
-        ...(change === 'unexpected expiry' ? { expiresAt: '2027-01-01T00:00:00Z' } : {}),
-        ...(change === 'unexpected purpose' ? { purposeConfirmed: true as const } : {}),
-      },
-    };
-    const client = new RuntimeClient({
-      origin: 'http://127.0.0.1:18766',
-      tokenProvider: async () => 'a'.repeat(64),
-      fetcher: async () => Response.json(reply),
-    });
-    vi.spyOn(client, 'status').mockResolvedValue({
-      ...disconnected('ready'),
-      approvalRules: { capability: approvalRulesCapability, available: true, revision: 0 },
-    });
-    const result = client.invoke({ type: 'approval.rules.write', request });
-    if (change === 'reordered selector') await expect(result).resolves.toEqual(reply);
-    else await expect(result).rejects.toThrow('INVALID_RUNTIME_STATE');
-  },
-);
 
 it('validates the approval mode and refuses it before sending to a runtime without policy support', async () => {
   const task = {
@@ -1716,7 +1572,7 @@ it('recognizes only an absent Goal target endpoint as legacy service support', a
       tokenProvider: async () => 'a'.repeat(64),
       fetcher: async () => Response.json({ error }, { status }),
     });
-    const call = client.invoke({ type: 'budget.goal', owner: { bot: 'a', chatRevision: 0 } });
+    const call = client.invoke({ type: 'goal.target', owner: { bot: 'a', chatRevision: 0 } });
     if (error === 'NOT_FOUND') await expect(call).resolves.toBeNull();
     else await expect(call).rejects.toThrow();
   }
@@ -1732,7 +1588,6 @@ it.each([true, false])(
       goalId: 'mock-goal',
       goalRevision: 1,
       humanEpoch: 0,
-      budget: { budgetId: 'mock-budget', revision: 1 },
     };
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json(target),
@@ -1742,8 +1597,8 @@ it.each([true, false])(
       tokenProvider: async () => 'a'.repeat(64),
       fetcher,
     });
-    expect(parseCommand({ type: 'budget.goal', owner })).toEqual({ type: 'budget.goal', owner });
-    const reply = client.invoke({ type: 'budget.goal', owner });
+    expect(parseCommand({ type: 'goal.target', owner })).toEqual({ type: 'goal.target', owner });
+    const reply = client.invoke({ type: 'goal.target', owner });
     if (same) await expect(reply).resolves.toEqual(target);
     else await expect(reply).rejects.toThrow('INVALID_GOAL_TARGET');
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ owner });

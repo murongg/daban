@@ -25,6 +25,7 @@ import {
   remoteServer,
   type SnapshotAccept,
   type SnapshotFormats,
+  snapshotConsumer,
   supportedSnapshotCapabilities,
   supportedSnapshotFormats,
   validAgentId,
@@ -712,9 +713,9 @@ export class RemoteAccess {
         value.host === this.keys.identity.id &&
         value.workspace === session.workspace
       ) {
-        session.snapshotAccept = structuredClone(value.accept);
+        session.snapshotAccept = value.accept.contextInspector === 1 ? { contextInspector: 1 } : {};
         session.snapshotSchema = value.schema;
-        session.snapshotFormats = structuredClone(value.formats ?? {});
+        session.snapshotFormats = snapshotConsumer(value).formats;
       }
       return;
     }

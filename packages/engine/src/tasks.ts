@@ -3,7 +3,6 @@ import path from 'node:path';
 import type {
   ApprovalMode,
   BotProfile,
-  BudgetScope,
   GoalProgress,
   ModelAttempt,
   ModelId,
@@ -22,7 +21,6 @@ import {
   type AutomationSource,
   isApprovalMode,
   isAutomationSource,
-  isBudgetScope,
   isGoalProgress,
   isGoalResumeTarget,
   isModelAttempts,
@@ -270,7 +268,8 @@ export interface TaskRecord {
   contextCaptures?: ContextArchive;
   contextCaptureFailed?: true;
   approvalMode?: ApprovalMode;
-  budget?: BudgetScope;
+  /** Legacy metadata is preserved, but never consulted for execution or quota. */
+  budget?: unknown;
   activeMs?: number;
   attemptSummary?: ModelAttempt[];
   automation?: AutomationSource;
@@ -354,7 +353,6 @@ export function taskActivity(record: Pick<TaskRecord, 'trace' | 'executedCount'>
   };
 }
 export interface ConversationScope {
-  budget?: BudgetScope;
   sourceId?: string;
   id: string;
   context: string;
@@ -470,9 +468,6 @@ export class TaskJournal {
           )
         )
           delete task.turns;
-        // An invalid authoritative identity cannot be downgraded to an unmetered legacy task.
-        if (task.budget !== undefined && !isBudgetScope(task.budget))
-          throw new Fault('INVALID_BUDGET_SCOPE', 400);
         if (task.checkpoint !== undefined && !isConversationCheckpoint(task.checkpoint))
           delete task.checkpoint;
         if (task.contextCaptureFailed !== true) delete task.contextCaptureFailed;
@@ -507,8 +502,6 @@ export class TaskJournal {
         ))
     )
       throw new Fault('INVALID_CONTEXT_CAPTURE', 400);
-    if (value.budget !== undefined && !isBudgetScope(value.budget))
-      throw new Fault('INVALID_BUDGET_SCOPE', 400);
     if (
       value.activeMs !== undefined &&
       (!Number.isSafeInteger(value.activeMs) || value.activeMs < 0)

@@ -58,6 +58,28 @@ test('keyless Search stays usable through the canonical client with the current 
   expect(await client.invoke({ type: 'search.status' })).toEqual(status);
 });
 
+test('Goal target reads refuse a different owner and only a missing endpoint has the legacy null fallback', async () => {
+  const owner = { bot: scope.bot, chatRevision: 0 };
+  let response = Response.json({
+    owner: { ...owner, bot: 'mock-foreign' },
+    sessionId: 'mock-session',
+    goalId: 'mock-goal',
+    goalRevision: 1,
+    humanEpoch: 0,
+  });
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async () => response,
+  });
+  const command = parseRuntimeCommand({ type: 'goal.target', owner });
+  await expect(client.invoke(command)).rejects.toThrow('INVALID_GOAL_TARGET');
+  response = Response.json({ error: 'NOT_FOUND' }, { status: 404 });
+  expect(await client.invoke(command)).toBeNull();
+  response = Response.json({ error: 'GOAL_TARGET_UNAVAILABLE' }, { status: 503 });
+  await expect(client.invoke(command)).rejects.toThrow('GOAL_TARGET_UNAVAILABLE');
+});
+
 test('consumer formatting is immutable per invoke and cannot leak between concurrent peers', async () => {
   const headers: (string | null)[] = [];
   const client = new RuntimeClient({
@@ -74,29 +96,6 @@ test('consumer formatting is immutable per invoke and cannot leak between concur
     client.invoke({ type: 'files.list' }, 2),
   ]);
   expect(headers.sort()).toEqual([null, 'schedule-automation-v1'].sort());
-});
-
-test('AP format declaration stays independent of schema2 and local current defaults', async () => {
-  const headers: (string | null)[] = [];
-  const client = new RuntimeClient({
-    origin: 'http://127.0.0.1:12345',
-    tokenProvider: async () => 'a'.repeat(64),
-    fetcher: async (_url, options) => {
-      headers.push(new Headers(options?.headers).get('x-daban-approval-rules'));
-      await Promise.resolve();
-      return Response.json([]);
-    },
-  });
-  await Promise.all([
-    client.invoke({ type: 'files.list' }, 2),
-    client.invoke(
-      { type: 'files.list' },
-      { schema: 2, formats: { approvalRules: 'approval-rules-v3' } },
-    ),
-    client.invoke({ type: 'files.list' }),
-  ]);
-  expect(headers.filter((value) => value === null)).toHaveLength(1);
-  expect(headers.filter((value) => value === 'approval-rules-v3')).toHaveLength(2);
 });
 
 test('real Host state normalization retains capability and reads legacy records without starting work', async () => {
@@ -122,12 +121,6 @@ test('real Host state normalization retains capability and reads legacy records 
     });
     const client = new RuntimeClient({ origin: app.url, tokenProvider: async () => app.token });
     expect(await client.status()).toMatchObject({ phase: 'ready', contextInspector: 1 });
-    expect((await client.status()).approvalRules?.capability).toBe('approval-rules-v3');
-    expect((await client.status(2)).approvalRules).toBeUndefined();
-    expect(
-      (await client.status({ schema: 2, formats: { approvalRules: 'approval-rules-v3' } }))
-        .approvalRules?.capability,
-    ).toBe('approval-rules-v3');
     expect(await client.invoke({ type: 'context.inspect', query: { scope } })).toEqual({
       scope,
       state: 'unavailable',

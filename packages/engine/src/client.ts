@@ -1,21 +1,14 @@
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import {
-  approvalRulesCapability,
   automationCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
-  deliveryAction,
-  deliveryKey,
   diagnosticModel,
   disconnected,
   groupCopyKey,
   imageProtocol,
-  isApprovalRuleReceipt,
-  isApprovalRulesCommand,
-  isApprovalRulesSnapshot,
-  isApprovalRulesStatus,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
@@ -31,19 +24,12 @@ import {
   isBrowserReceipt,
   isBrowserState,
   isBrowserView,
-  isBudgetScope,
-  isBudgetSettings,
-  isBudgetView,
   isChatAck,
   isChatPage,
   isChatStatus,
   isComputerAck,
   isComputerStatus,
   isContextView,
-  isDeliveryChecklist,
-  isDeliveryCommand,
-  isDeliveryPage,
-  isDeliveryReceipt,
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
@@ -69,7 +55,6 @@ import {
   isMcpReceipt,
   isMcpSaved,
   isMcpStatus,
-  isMemoryCandidate,
   isMemoryPage,
   isModelAccess,
   isModelAttempts,
@@ -85,14 +70,6 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
-  isPolicyDecision,
-  isProjectDocument,
-  isProjectDocumentInfo,
-  isProjectDocumentVersion,
-  isProjectMemoryAvailability,
-  isProjectMemoryCommand,
-  isProjectMemoryReceipt,
-  isProjectPublicationPreview,
   isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
@@ -121,7 +98,6 @@ import {
   isTaskReceipt,
   isTranscriptContent,
   isTranscriptPage,
-  isTranscriptScope,
   isWorkCommentCommand,
   isWorkCommentList,
   isWorkCommentReceipt,
@@ -129,13 +105,10 @@ import {
   isWorkList,
   isWorkReceipt,
   isWorkStatus,
-  matchesApprovalReceipt,
-  matchesProjectMemoryReceipt,
   noteKey,
   noteQueryKey,
   parseBotJSON,
   projectFileMatches,
-  projectMemoryFingerprint,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
@@ -143,8 +116,6 @@ import {
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
-  recoveryReader,
-  sameApprovalScope,
   sameProjectScope,
   sameTranscriptScope,
   snapshotConsumer,
@@ -372,9 +343,6 @@ export class RuntimeClient {
         host: this.serverHost,
         'x-prototype-token': token,
         ...(format.schema === 2 ? { 'x-daban-automation': automationCapability } : {}),
-        ...(format.formats?.approvalRules === approvalRulesCapability
-          ? { 'x-daban-approval-rules': approvalRulesCapability }
-          : {}),
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
@@ -430,11 +398,7 @@ export class RuntimeClient {
         this.api('/api/model/settings'),
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
-        approvalRules?: unknown;
-        delivery?: unknown;
         searchSettings?: unknown;
-        preflight?: unknown;
-        fileReview?: unknown;
         contextInspector?: unknown;
         clientProtocol?: number;
         botCapabilities?: unknown;
@@ -550,25 +514,9 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
-      if (raw.delivery !== undefined && raw.delivery !== true) throw Error('INVALID_RUNTIME_STATE');
-      if (raw.delivery === true) snapshot.delivery = true;
       if (raw.searchSettings !== undefined && raw.searchSettings !== true)
         throw Error('INVALID_RUNTIME_STATE');
       if (raw.searchSettings === true) snapshot.searchSettings = true;
-      if (raw.preflight !== undefined && raw.preflight !== 1) throw Error('INVALID_RUNTIME_STATE');
-      if (raw.preflight === 1) snapshot.preflight = 1;
-      if (raw.fileReview !== undefined) {
-        const availability = raw.fileReview;
-        if (
-          !availability ||
-          typeof availability !== 'object' ||
-          Object.keys(availability).some((key) => key !== 'available') ||
-          !('available' in availability) ||
-          typeof availability.available !== 'boolean'
-        )
-          throw Error('INVALID_RUNTIME_STATE');
-        snapshot.fileReview = { available: availability.available };
-      }
       if (raw.contextInspector !== undefined && raw.contextInspector !== 1)
         throw new Error('INVALID_RUNTIME_STATE');
       if (raw.contextInspector === 1) snapshot.contextInspector = 1;
@@ -629,15 +577,6 @@ export class RuntimeClient {
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
-      if (raw.approvalRules !== undefined)
-        snapshot.approvalRules = isApprovalRulesStatus(raw.approvalRules)
-          ? raw.approvalRules
-          : {
-              capability: approvalRulesCapability,
-              available: false,
-              revision: 0,
-              error: 'INVALID_RUNTIME_STATE',
-            };
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
           ? raw.software
@@ -918,168 +857,25 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       return value;
     }
-    if (isDeliveryCommand(command)) {
-      if (format.formats?.delivery !== true) throw Error('RUNTIME_TOO_OLD');
+    if (command.type === 'goal.target') {
       const captured = structuredClone(command);
-      const state = await this.status(format);
-      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
-      if (state.delivery !== true) throw new Error('RUNTIME_TOO_OLD');
-      if (recoveryBlocked(state) && !recoveryReader(captured))
-        throw new Error('RUNTIME_RECOVERY_PENDING');
-      const action = captured.type.slice(9);
-      const route =
-        (
-          {
-            'checklist.get': 'checklist/get',
-            'checklist.write': 'checklist/write',
-            'checklist.receipt': 'checklist/receipt',
-            'file.bind': 'file/bind',
-            'file.bind-receipt': 'file/bind-receipt',
-          } as Record<string, string>
-        )[action] ?? action;
-      const value = await workApi(
-        `/api/delivery/${route}`,
-        'query' in captured ? captured.query : captured.request,
-        state.protocolVersion,
-      );
-      if (captured.type === 'delivery.get') {
-        if (
-          !isDeliveryPage(value) ||
-          value.workId !== captured.query.workId ||
-          value.attempts.length > (captured.query.limit ?? 20) ||
-          (captured.query.before !== undefined &&
-            value.attempts.some((attempt) => attempt.sequence >= captured.query.before!))
-        )
-          throw new Error('INVALID_DELIVERY_PAGE');
-      } else if (captured.type === 'delivery.checklist.get') {
-        if (!isDeliveryChecklist(value) || value.workId !== captured.query.workId)
-          throw new Error('INVALID_DELIVERY_CHECKLIST');
-      } else {
-        const owner = deliveryAction(action);
-        if (
-          !isDeliveryReceipt(value) ||
-          deliveryKey(owner, value.request) !== deliveryKey(owner, captured.request) ||
-          (!action.endsWith('receipt') && value.state !== 'complete')
-        )
-          throw new Error('INVALID_DELIVERY_RECEIPT');
-        if (value.state === 'complete' && 'attempt' in value) {
-          if (
-            ('attemptId' in captured.request &&
-              value.attempt.attemptId !== captured.request.attemptId) ||
-            (owner === 'start' &&
-              (value.attempt.requestId !== captured.request.requestId ||
-                !('bot' in captured.request) ||
-                value.attempt.bot !== captured.request.bot))
-          )
-            throw new Error('INVALID_DELIVERY_RECEIPT');
-        }
-      }
-      return value;
-    }
-    if (isApprovalRulesCommand(command)) {
-      if (format.formats?.approvalRules !== approvalRulesCapability)
-        throw Error('APPROVAL_UPGRADE_REQUIRED');
-      const captured = structuredClone(command);
-      const scope =
-        captured.type === 'approval.rules.write' ? captured.request.scope : captured.scope;
-      const state = await this.status(format);
-      if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
-        throw Error('APPROVAL_UPGRADE_REQUIRED');
-      if (!state.approvalRules.available) throw Error('APPROVAL_RULES_UNAVAILABLE');
-      const value = await api(
-        `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
-        captured,
-      );
-      const valid =
-        captured.type === 'approval.rules.list'
-          ? isApprovalRulesSnapshot(value) && sameApprovalScope(value.scope, scope)
-          : captured.type === 'approval.rules.preview'
-            ? isPolicyDecision(value) &&
-              sameApprovalScope(value.scope, scope) &&
-              value.trigger === captured.trigger &&
-              JSON.stringify(value.selector) === JSON.stringify(captured.selector)
-            : captured.type === 'approval.rules.write'
-              ? matchesApprovalReceipt(value, captured.request)
-              : isApprovalRuleReceipt(value) &&
-                sameApprovalScope(value.scope, scope) &&
-                value.requestId === captured.requestId;
-      if (!valid) throw Error('INVALID_RUNTIME_STATE');
-      return value;
-    }
-    if (command.type.startsWith('budget.')) {
-      const captured = structuredClone(command);
-      let value: unknown;
-      if (captured.type === 'budget.goal') {
-        const target: unknown = await api('/api/budgets/goal', {
-          owner: captured.owner,
-        }).catch((error) => {
-          // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
-          if (error instanceof Error && error.message === 'NOT_FOUND') return null;
-          throw error;
-        });
-        if (target === null) return null;
-        if (
-          !isGoalResumeTarget(target) ||
-          target.owner.bot !== captured.owner.bot ||
-          target.owner.chatRevision !== captured.owner.chatRevision ||
-          target.owner.conversationId !== captured.owner.conversationId ||
-          !sameProjectScope(target.owner.project, captured.owner.project)
-        )
-          throw new Error('INVALID_GOAL_TARGET');
-        return target;
-      }
-      if (captured.type === 'budget.settings') value = await api('/api/budgets/settings', {});
-      else if (captured.type === 'budget.configure')
-        value = await api('/api/budgets/configure', captured.request);
-      else if (captured.type === 'budget.read')
-        value = await api('/api/budgets/read', captured.query);
-      else if (captured.type === 'budget.increase')
-        value = await api('/api/budgets/increase', captured.request);
-      else if (captured.type === 'budget.continue') {
-        const reply: unknown = await api('/api/budgets/continue', {
-          scope: captured.scope,
-          budget: captured.budget,
-          id: captured.id,
-          ...(captured.goalResume ? { goalResume: captured.goalResume } : {}),
-        });
-        if (
-          !reply ||
-          typeof reply !== 'object' ||
-          !('budget' in reply) ||
-          !isBudgetScope(reply.budget) ||
-          reply.budget.budgetId !== captured.budget.budgetId ||
-          reply.budget.revision !== captured.budget.revision ||
-          !('owner' in reply) ||
-          !isTranscriptScope(reply.owner) ||
-          !sameTranscriptScope(reply.owner, captured.scope) ||
-          !('id' in reply) ||
-          reply.id !== captured.id ||
-          !('queued' in reply) ||
-          typeof reply.queued !== 'boolean'
-        )
-          throw new Error('INVALID_BUDGET_CONTINUATION');
-        return reply;
-      } else throw new Error('INVALID_COMMAND');
-      if (captured.type === 'budget.settings' || captured.type === 'budget.configure') {
-        if (!isBudgetSettings(value)) throw new Error('INVALID_BUDGET_SETTINGS');
-      } else if (value !== null) {
-        if (!isBudgetView(value)) throw new Error('INVALID_BUDGET_VIEW');
-        const owner =
-          captured.type === 'budget.read'
-            ? captured.query.scope
-            : captured.type === 'budget.increase'
-              ? captured.request.scope
-              : undefined;
-        if (!owner || !value.owner || !sameTranscriptScope(value.owner, owner))
-          throw new Error('INVALID_BUDGET_OWNER');
-        if (
-          captured.type === 'budget.increase' &&
-          (value.scope.budgetId !== captured.request.budgetId ||
-            value.scope.revision !== captured.request.revision + 1)
-        )
-          throw new Error('INVALID_BUDGET_ACK');
-      }
-      return value;
+      const target: unknown = await api('/api/goals/target', {
+        owner: captured.owner,
+      }).catch((error) => {
+        // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
+        if (error instanceof Error && error.message === 'NOT_FOUND') return null;
+        throw error;
+      });
+      if (target === null) return null;
+      if (
+        !isGoalResumeTarget(target) ||
+        target.owner.bot !== captured.owner.bot ||
+        target.owner.chatRevision !== captured.owner.chatRevision ||
+        target.owner.conversationId !== captured.owner.conversationId ||
+        !sameProjectScope(target.owner.project, captured.owner.project)
+      )
+        throw new Error('INVALID_GOAL_TARGET');
+      return target;
     }
 
     if (this.agent && command.type.startsWith('recovery.')) {
@@ -2217,109 +2013,6 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
-    }
-    if (isProjectMemoryCommand(command)) {
-      const captured = structuredClone(command);
-      const signature =
-        captured.type === 'projectMemory.write' || captured.type === 'projectMemory.decide'
-          ? await projectMemoryFingerprint(captured.request)
-          : undefined;
-      const { type, ...payload } = captured;
-      const value = await api(
-        `/api/project-memory/${type.slice('projectMemory.'.length)}`,
-        payload,
-      );
-      const invalid = () => {
-        throw new Error('INVALID_PROJECT_MEMORY_RESPONSE');
-      };
-      if (captured.type === 'projectMemory.status') {
-        if (!isProjectMemoryAvailability(value)) invalid();
-      } else {
-        const scope = 'scope' in captured ? captured.scope : captured.request.scope;
-        if (captured.type === 'projectMemory.preview') {
-          if (!isProjectPublicationPreview(value) || !sameProjectScope(value.scope, scope))
-            invalid();
-        } else if (captured.type === 'projectMemory.list') {
-          if (
-            !Array.isArray(value) ||
-            value.length > 100 ||
-            !value.every(
-              (item) => isProjectDocumentInfo(item) && item.projectId === scope.projectId,
-            )
-          )
-            invalid();
-        } else if (captured.type === 'projectMemory.read') {
-          if (
-            !isProjectDocument(value) ||
-            value.projectId !== scope.projectId ||
-            value.id !== captured.document.id ||
-            value.revision !== captured.document.revision
-          )
-            invalid();
-        } else if (captured.type === 'projectMemory.versions') {
-          if (
-            !Array.isArray(value) ||
-            value.length > 20 ||
-            !value.every(
-              (item) =>
-                isProjectDocumentVersion(item) &&
-                item.projectId === scope.projectId &&
-                item.id === captured.id &&
-                (captured.before === undefined || item.revision < captured.before),
-            )
-          )
-            invalid();
-        } else if (captured.type === 'projectMemory.candidate') {
-          if (
-            !isMemoryCandidate(value) ||
-            value.projectId !== scope.projectId ||
-            value.id !== captured.id
-          )
-            invalid();
-        } else if (captured.type === 'projectMemory.candidates') {
-          if (
-            !Array.isArray(value) ||
-            value.length > 200 ||
-            !value.every(
-              (item) =>
-                isMemoryCandidate(item) &&
-                item.projectId === scope.projectId &&
-                item.state === (captured.state ?? 'pending'),
-            )
-          )
-            invalid();
-        } else {
-          const requestId =
-            captured.type === 'projectMemory.receipt'
-              ? captured.requestId
-              : captured.request.requestId;
-          if (
-            !isProjectMemoryReceipt(value) ||
-            value.requestId !== requestId ||
-            value.scope.projectId !== scope.projectId
-          )
-            invalid();
-          if (
-            captured.type === 'projectMemory.receipt' &&
-            captured.signature !== undefined &&
-            isProjectMemoryReceipt(value) &&
-            value.state === 'complete' &&
-            value.signature !== captured.signature
-          )
-            invalid();
-          if (
-            captured.type !== 'projectMemory.receipt' &&
-            !matchesProjectMemoryReceipt(
-              value,
-              captured.type === 'projectMemory.write' ? 'write' : 'decide',
-              captured.request,
-              signature!,
-            )
-          )
-            invalid();
-        }
-      }
-      return value;
     }
     if (command.type === 'projects.status') return api('/api/projects/status', {});
     if (command.type === 'projects.select')

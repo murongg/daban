@@ -286,7 +286,7 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
     );
     const budget = patch
       .find((row: { insert?: unknown }) => row.insert)
-      .insert.find((row: { id: string }) => row.id === 'daban-budget');
+      .insert.find((row: { id: string }) => row.id === 'daban-policy');
     expect(budget.config.urls, 'reference context must never grant URL access').toStrictEqual([]);
     await models.start('mock-scope', { requestId: 'group-second', prompt: '群内续接' }, group);
     await models.jobs.get('mock-scope')!.done;
@@ -861,7 +861,7 @@ test('retiring a computer-only session preserves its conversation context and st
     expect.assert(models.status().bots.a.history.some((item) => item.runId === 'old-run'));
     const record = models.journal.findRequest('a', 'new-general-request');
     expect((record as unknown as Record<string, unknown>).sessionProfile).toBe(
-      'general-v12-approval-rules',
+      'general-v13-basic-approval',
     );
     await models.close();
   } finally {
