@@ -80,6 +80,70 @@ afterEach(() => {
   remote.state = undefined;
 });
 
+it('puts changed files and diffs first while evidence metadata stays collapsed', async () => {
+  const invoke = bridge((command) =>
+    command.type === 'files.review.diff'
+      ? {
+          ...command.query,
+          state: 'text',
+          lines: [
+            { kind: 'remove', text: 'SYNTHETIC BEFORE\n' },
+            { kind: 'add', text: 'SYNTHETIC AFTER\n' },
+          ],
+        }
+      : page(),
+  );
+  render(
+    <RuntimeProvider>
+      <FileReview scope={scope} />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: '文件审阅' }));
+  expect(await screen.findByRole('heading', { name: 'mock.txt' })).toBeVisible();
+  expect(screen.getByText('a'.repeat(64))).not.toBeVisible();
+  expect(screen.getByText(/2026-01-01T00:00:00Z/)).not.toBeVisible();
+  expect(screen.getByText('变化表示两次观察不同，不能据此归因于单个 Bot。')).not.toBeVisible();
+  expect(screen.getByRole('button', { name: '刷新证据' }).textContent).toBe('');
+  const diff = screen.getByRole('button', { name: '查看差异 mock.txt' });
+  expect(diff).toHaveAccessibleDescription('任务目录');
+  expect(diff).toHaveAttribute('aria-expanded', 'false');
+  expect(invoke.mock.calls.some(([command]) => command.type === 'files.review.diff')).toBe(false);
+  await user.click(diff);
+  expect(await screen.findByText(/SYNTHETIC BEFORE/)).toBeVisible();
+  expect(screen.getByText(/SYNTHETIC AFTER/)).toBeVisible();
+  expect(diff).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByText('a'.repeat(64))).not.toBeVisible();
+  await user.click(screen.getByLabelText('文件信息 mock.txt'));
+  expect(screen.getByText('a'.repeat(64))).toBeVisible();
+  await user.click(screen.getByText('证据详情'));
+  expect(screen.getByText(/2026-01-01T00:00:00Z/)).toBeVisible();
+  expect(screen.getByText('变化表示两次观察不同，不能据此归因于单个 Bot。')).toBeVisible();
+});
+
+it('keeps unchanged files available through a named icon toggle', async () => {
+  const unchanged = { ...present, path: 'z-unchanged.txt', sha256: 'c'.repeat(64) };
+  bridge(() => ({
+    ...page(),
+    counts: { ...page().counts, unchanged: 1 },
+    items: [...page().items, { before: unchanged, after: unchanged, kind: 'unchanged' }],
+  }));
+  render(
+    <RuntimeProvider>
+      <FileReview scope={scope} />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: '文件审阅' }));
+  expect(await screen.findByRole('heading', { name: 'mock.txt' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'z-unchanged.txt' })).not.toBeInTheDocument();
+  const toggle = screen.getByRole('button', { name: '显示未变项' });
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await user.click(toggle);
+  expect(screen.getByRole('heading', { name: 'z-unchanged.txt' })).toBeVisible();
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+});
+
 it('a workspace change closes the old evidence view and fences its late reply even for equal task IDs', async () => {
   const identity = { id: 'a'.repeat(64), publicKey: 'SYNTHETIC KEY', name: 'SYNTHETIC HOST' };
   remote.state = {
@@ -123,6 +187,7 @@ it('a workspace change closes the old evidence view and fences its late reply ev
   );
   expect(screen.queryByRole('dialog', { name: '文件审阅' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '文件审阅' }));
+  await user.click(await screen.findByText('证据详情'));
   expect(await screen.findByText('证据版本 #2')).toBeVisible();
   await act(async () => {
     finish(page());
@@ -170,6 +235,7 @@ it('reads immutable evidence and current state separately, preserving literal di
   );
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: '文件审阅' }));
+  await user.click(await screen.findByText('证据详情'));
   expect(await screen.findByText('证据版本 #1')).toBeVisible();
   expect(screen.getByText('变化表示两次观察不同，不能据此归因于单个 Bot。')).toBeVisible();
   await user.click(screen.getByRole('button', { name: '查看差异 mock.txt' }));
@@ -243,6 +309,7 @@ it('rejects a different revision on the next page and refreshes as one report', 
   await user.click(await screen.findByRole('button', { name: '文件审阅' }));
   await user.click(await screen.findByRole('button', { name: '读取下一页文件' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('文件证据版本已不可用，请刷新。');
+  await user.click(screen.getByText('证据详情'));
   expect(screen.getByText('证据版本 #1')).toBeVisible();
   expect(invoke).toHaveBeenCalledWith({
     type: 'files.review.read',
@@ -301,6 +368,7 @@ it('refreshes all evidence together and ignores a late prior revision', async ()
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: '文件审阅' }));
   await user.click(screen.getByRole('button', { name: '刷新证据' }));
+  await user.click(await screen.findByText('证据详情'));
   expect(await screen.findByText('证据版本 #2')).toBeVisible();
   await act(async () => finish(page(1)));
   expect(screen.queryByText('证据版本 #1')).not.toBeInTheDocument();
@@ -375,6 +443,7 @@ it('retires an open report when the task scope changes and ignores its late resp
   );
   expect(screen.queryByRole('dialog', { name: '文件审阅' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: '文件审阅' }));
+  await user.click(await screen.findByText('证据详情'));
   expect(await screen.findByText('证据版本 #2')).toBeVisible();
   await act(async () => finish(page()));
   expect(screen.queryByText('证据版本 #1')).not.toBeInTheDocument();

@@ -5,6 +5,9 @@ export const english = {
   'fileReview.queueNeedsRun':
     'Reviewing shared files needs a new task baseline; this message cannot be inserted into a running task.',
 
+  'fileReview.details': 'Evidence details',
+  'fileReview.fileDetails': 'File information {0}',
+  'fileReview.partialEvidence': 'Partial evidence',
   'fileReview.title': 'File review',
   'fileReview.unsupported': 'This service does not support file review.',
   'fileReview.offline': 'Connect to the service to read file evidence.',

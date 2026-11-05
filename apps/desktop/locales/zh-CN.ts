@@ -5,6 +5,9 @@ export const chinese = {
   'fileReview.selectionStale': '共享文件选择属于旧聊天。请移除该队列项，在当前聊天重新选择并发送。',
   'fileReview.queueNeedsRun': '共享文件审阅需要新的任务基线，不能插入正在运行的任务。',
 
+  'fileReview.details': '证据详情',
+  'fileReview.fileDetails': '文件信息 {0}',
+  'fileReview.partialEvidence': '部分证据',
   'fileReview.title': '文件审阅',
   'fileReview.unsupported': '此服务尚不支持文件审阅。',
   'fileReview.offline': '连接服务后可读取文件证据。',

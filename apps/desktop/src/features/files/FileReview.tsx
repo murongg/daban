@@ -17,13 +17,29 @@ import {
   sameTranscriptScope,
   type TranscriptScope,
 } from '@daban/protocol';
-import { Files } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ChevronDown,
+  CircleAlert,
+  CircleHelp,
+  Equal,
+  Eye,
+  EyeOff,
+  Files,
+  Info,
+  Minus,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ScanLine,
+} from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useRemote } from '../../app/Remote';
 import { useRuntime } from '../../app/Runtime';
 import { reviewTarget } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
+import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
+import { Tooltip } from '../../components/controls/Tooltip';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import './file-review.css';
 
@@ -57,6 +73,13 @@ const stateKeys: Record<ReviewState, MessageKey> = {
   interrupted: 'fileReview.state.interrupted',
   unavailable: 'fileReview.state.unavailable',
   expired: 'fileReview.state.expired',
+};
+const changeIcons = {
+  created: Plus,
+  modified: Pencil,
+  deleted: Minus,
+  unchanged: Equal,
+  unknown: CircleHelp,
 };
 
 function errorKey(error: unknown): MessageKey {
@@ -107,16 +130,10 @@ function Snapshots({ side, items }: { side: 'before' | 'after'; items?: ReviewSn
   );
 }
 
-function Item({
-  change,
-  query,
-  side,
-}: {
-  change: ReviewChange;
-  query: ReviewFileQuery;
-  side: 'changes' | 'before' | 'after';
-}) {
+function Item({ change, query }: { change: ReviewChange; query: ReviewFileQuery }) {
   const { command } = useRuntime();
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
   const [diff, setDiff] = useState<ReviewDiff>();
   const [current, setCurrent] = useState<ReviewCurrent>();
   const [busy, setBusy] = useState<'diff' | 'current'>();
@@ -162,90 +179,120 @@ function Item({
       if (ticket === epoch.current) setBusy(undefined);
     }
   }
+  async function toggleDiff() {
+    setExpanded(!expanded);
+    if (!expanded && !diff && !busy) await read('diff');
+  }
+  const ChangeIcon = changeIcons[change.kind];
   return (
-    <>
+    <div className="file-review-file">
       <div className="file-review-heading">
-        <h3>{query.path}</h3>
-        <span>{t(`fileReview.kind.${change.kind}`)}</span>
+        <h3 aria-label={query.path}>
+          <button
+            type="button"
+            className="file-review-open"
+            aria-label={t('fileReview.diff', { 0: query.path })}
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            aria-describedby={`${contentId}-area`}
+            disabled={busy === 'current'}
+            onClick={() => toggleDiff().catch(() => setError('fileReview.readFailed'))}
+          >
+            <Tooltip label={t(`fileReview.kind.${change.kind}`)}>
+              <span
+                className={`file-review-kind file-review-kind-${change.kind}`}
+                role="img"
+                aria-label={t(`fileReview.kind.${change.kind}`)}
+              >
+                <ChangeIcon size={15} aria-hidden="true" />
+              </span>
+            </Tooltip>
+            <span className="file-review-name">
+              {query.path}
+              <small id={`${contentId}-area`}>{t(`fileReview.${query.area}`)}</small>
+            </span>
+            <ChevronDown size={15} className="file-review-chevron" aria-hidden="true" />
+          </button>
+        </h3>
+        <IconButton
+          label={t('fileReview.current', { 0: query.path })}
+          disabled={!!busy}
+          aria-busy={busy === 'current'}
+          aria-describedby={`${contentId}-area`}
+          onClick={() => read('current').catch(() => setError('fileReview.readFailed'))}
+        >
+          <ScanLine size={15} aria-hidden="true" />
+        </IconButton>
       </div>
-      <p className="field-help">{t(`fileReview.${query.area}`)}</p>
-      <dl className="file-review-evidence">
-        {side !== 'after' && (
+      <details className="file-review-file-details">
+        {/* Keep the native summary discoverable by the dialog's keyboard focus management. */}
+        <Tooltip label={t('fileReview.fileDetails', { 0: query.path })}>
+          <summary
+            className="icon-button file-review-metadata-toggle"
+            aria-label={t('fileReview.fileDetails', { 0: query.path })}
+            aria-describedby={`${contentId}-area`}
+          >
+            <Info size={15} aria-hidden="true" />
+          </summary>
+        </Tooltip>
+        <dl className="file-review-evidence">
           <div>
             <dt>{t('fileReview.before')}</dt>
             <dd>
               <Evidence file={change.before} />
             </dd>
           </div>
-        )}
-        {side !== 'before' && (
           <div>
             <dt>{t('fileReview.after')}</dt>
             <dd>
               <Evidence file={change.after} />
             </dd>
           </div>
-        )}
-      </dl>
-      <div className="file-review-actions">
-        <button
-          type="button"
-          className="text-button"
-          disabled={!!busy}
-          onClick={() => read('diff').catch(() => setError('fileReview.readFailed'))}
-        >
-          {t('fileReview.diff', { 0: query.path })}
-        </button>
-        <button
-          type="button"
-          className="text-button"
-          disabled={!!busy}
-          onClick={() => read('current').catch(() => setError('fileReview.readFailed'))}
-        >
-          {t('fileReview.current', { 0: query.path })}
-        </button>
-      </div>
+        </dl>
+      </details>
       {busy && <p role="status">{t('fileReview.loading')}</p>}
       {error && <p role="alert">{t(error)}</p>}
       {current && <p role="status">{t(`fileReview.current.${current.state}`)}</p>}
-      {diff?.state === 'unavailable' && <p role="status">{t(reasonKeys[diff.reason])}</p>}
-      {diff?.state === 'text' && (
-        <section
-          className="file-review-diff"
-          aria-label={t('fileReview.diff', { 0: query.path })}
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Long read-only evidence needs a named keyboard-scrollable region.
-          tabIndex={0}
-        >
-          <WindowList
-            scope={`diff:${query.revision}:${query.area}:${query.path}`}
-            estimate={28}
-            items={diff.lines.map((line, index) => ({ ...line, number: index + 1 }))}
-            getKey={(line) => String(line.number)}
-            renderItem={(line) => {
-              const ending = line.text.endsWith('\r\n')
-                ? 'CRLF'
-                : line.text.endsWith('\n')
-                  ? 'LF'
-                  : t('fileReview.noNewline');
-              return (
-                <div className={`file-review-line file-review-line-${line.kind}`}>
-                  <code>
-                    {line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '}
-                    {line.text}
-                  </code>
-                  <abbr
-                    className="file-review-ending"
-                    title={t('fileReview.lineEnding', { 0: ending })}
-                  >
-                    {ending}
-                  </abbr>
-                </div>
-              );
-            }}
-          />
-        </section>
-      )}
-    </>
+      <div id={contentId} hidden={!expanded}>
+        {diff?.state === 'unavailable' && <p role="status">{t(reasonKeys[diff.reason])}</p>}
+        {diff?.state === 'text' && (
+          <section
+            className="file-review-diff"
+            aria-label={t('fileReview.diff', { 0: query.path })}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Long read-only evidence needs a named keyboard-scrollable region.
+            tabIndex={0}
+          >
+            <WindowList
+              scope={`diff:${query.revision}:${query.area}:${query.path}`}
+              estimate={28}
+              items={diff.lines.map((line, index) => ({ ...line, number: index + 1 }))}
+              getKey={(line) => String(line.number)}
+              renderItem={(line) => {
+                const ending = line.text.endsWith('\r\n')
+                  ? 'CRLF'
+                  : line.text.endsWith('\n')
+                    ? 'LF'
+                    : t('fileReview.noNewline');
+                return (
+                  <div className={`file-review-line file-review-line-${line.kind}`}>
+                    <code>
+                      {line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' '}
+                      {line.text}
+                    </code>
+                    <abbr
+                      className="file-review-ending"
+                      title={t('fileReview.lineEnding', { 0: ending })}
+                    >
+                      {ending}
+                    </abbr>
+                  </div>
+                );
+              }}
+            />
+          </section>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -253,7 +300,6 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
   const runtime = useRuntime();
   const [view, setView] = useState<ReviewPage>();
   const report = useRef<ReviewPage | undefined>(undefined);
-  const [side, setSide] = useState<'changes' | 'before' | 'after'>('changes');
   const [unchanged, setUnchanged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<MessageKey>();
@@ -313,9 +359,7 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
       epoch.current++;
     };
   }, [read]);
-  const items =
-    view?.items.filter((item) => side !== 'changes' || unchanged || item.kind !== 'unchanged') ??
-    [];
+  const items = view?.items.filter((item) => unchanged || item.kind !== 'unchanged') ?? [];
   const noChanges =
     view?.state === 'complete' &&
     view.counts.created + view.counts.modified + view.counts.deleted + view.counts.unknown === 0 &&
@@ -325,18 +369,60 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
   const incompleteBaseline =
     view?.state === 'recording' &&
     (!view.before?.length || view.before.some((item) => item.capture !== 'complete'));
+  const partial =
+    view &&
+    (view.effects !== 'complete' ||
+      view.counts.unknown > 0 ||
+      [...(view.before ?? []), ...(view.after ?? [])].some((item) => item.capture !== 'complete'));
+  const failed = view && ['unavailable', 'expired', 'interrupted'].includes(view.state);
   return (
     <Dialog title={t('fileReview.title')} onClose={onClose} wide className="file-review">
-      <p className="field-help">{t('fileReview.boundary')}</p>
-      <p className="field-help">{t('fileReview.attribution')}</p>
-      <button
-        type="button"
-        className="secondary"
-        aria-busy={busy}
-        onClick={() => read().catch(() => setError('fileReview.readFailed'))}
-      >
-        {t('fileReview.refresh')}
-      </button>
+      <div className="file-review-toolbar">
+        <dl className="file-review-counts">
+          {view &&
+            (['created', 'modified', 'deleted', 'unknown', 'unchanged'] as const)
+              .filter((kind) => view.counts[kind] > 0)
+              .map((kind) => {
+                const ChangeIcon = changeIcons[kind];
+                return (
+                  <Tooltip key={kind} label={t(`fileReview.kind.${kind}`)}>
+                    <div className={`file-review-kind-${kind}`}>
+                      <dt>
+                        <ChangeIcon
+                          size={14}
+                          role="img"
+                          aria-label={t(`fileReview.kind.${kind}`)}
+                        />
+                      </dt>
+                      <dd>{view.counts[kind]}</dd>
+                    </div>
+                  </Tooltip>
+                );
+              })}
+        </dl>
+        <div className="file-review-controls">
+          {view && (
+            <IconButton
+              label={t('fileReview.unchanged')}
+              aria-pressed={unchanged}
+              onClick={() => setUnchanged(!unchanged)}
+            >
+              {unchanged ? (
+                <Eye size={16} aria-hidden="true" />
+              ) : (
+                <EyeOff size={16} aria-hidden="true" />
+              )}
+            </IconButton>
+          )}
+          <IconButton
+            label={t('fileReview.refresh')}
+            aria-busy={busy}
+            onClick={() => read().catch(() => setError('fileReview.readFailed'))}
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+          </IconButton>
+        </div>
+      </div>
       {busy && <p role="status">{t('fileReview.loading')}</p>}
       {error && (
         <p className="form-error" role="alert">
@@ -345,70 +431,34 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
       )}
       {view && (
         <>
-          <div className="file-review-heading">
-            <p>{t('fileReview.revision', { 0: view.revision })}</p>
-            <p role="status">
-              {t(incompleteBaseline ? 'fileReview.baselineIncomplete' : stateKeys[view.state])}
+          {(view.state !== 'complete' || partial) && (
+            <p className="file-review-status" role="status">
+              <CircleAlert size={14} aria-hidden="true" />
+              {t(
+                incompleteBaseline
+                  ? 'fileReview.baselineIncomplete'
+                  : view.state === 'complete'
+                    ? 'fileReview.partialEvidence'
+                    : stateKeys[view.state],
+              )}
             </p>
-          </div>
-          {view.reasons.map((reason) => (
-            <p className="field-help" key={reason}>
-              {t(reasonKeys[reason])}
-            </p>
-          ))}
+          )}
+          {failed &&
+            view.reasons.map((reason) => (
+              <p className="field-help" key={reason}>
+                {t(reasonKeys[reason])}
+              </p>
+            ))}
           {view.state === 'unavailable' ? (
             <p>{t('fileReview.unavailable')}</p>
           ) : view.state === 'expired' ? (
             <p>{t('fileReview.expired')}</p>
           ) : (
             <>
-              <p className="field-help">
-                {t('fileReview.writers', { 0: t(`fileReview.writers.${view.writers}`) })}
-              </p>
-              <p className="field-help">
-                {t('fileReview.effects', { 0: t(`fileReview.coverage.${view.effects}`) })}
-              </p>
-              <div className="file-review-snapshots">
-                <Snapshots side="before" items={view.before} />
-                <Snapshots side="after" items={view.after} />
-              </div>
-              <dl className="file-review-counts">
-                {(['created', 'modified', 'deleted', 'unchanged', 'unknown'] as const).map(
-                  (kind) => (
-                    <div key={kind}>
-                      <dt>{t(`fileReview.kind.${kind}`)}</dt>
-                      <dd>{view.counts[kind]}</dd>
-                    </div>
-                  ),
-                )}
-              </dl>
-              <nav className="file-review-actions" aria-label={t('fileReview.title')}>
-                {(['changes', 'before', 'after'] as const).map((tab) => (
-                  <button
-                    type="button"
-                    key={tab}
-                    className="text-button"
-                    aria-pressed={side === tab}
-                    onClick={() => setSide(tab)}
-                  >
-                    {t(`fileReview.${tab}`)}
-                  </button>
-                ))}
-              </nav>
-              {side === 'changes' && (
-                <label className="file-review-toggle">
-                  <input
-                    type="checkbox"
-                    checked={unchanged}
-                    onChange={(event) => setUnchanged(event.target.checked)}
-                  />
-                  {t('fileReview.unchanged')}
-                </label>
-              )}
               <WindowList
                 tag="ul"
                 className="file-review-items"
-                scope={`${JSON.stringify(scope)}:${view.revision}:${side}`}
+                scope={`${JSON.stringify(scope)}:${view.revision}`}
                 items={items}
                 getKey={(item) => `${item.before.area}:${item.before.path}`}
                 renderItem={(item) => (
@@ -416,7 +466,6 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
                     <Item
                       key={`${view.revision}:${reviewFileKey(item.before)}`}
                       change={item}
-                      side={side}
                       query={{
                         scope,
                         revision: view.revision,
@@ -444,6 +493,35 @@ function Panel({ scope, onClose }: { scope: TranscriptScope; onClose: () => unkn
               )}
             </>
           )}
+          <details className="file-review-details">
+            <summary>
+              <Info size={14} aria-hidden="true" />
+              <span>{t('fileReview.details')}</span>
+              <ChevronDown size={14} aria-hidden="true" />
+            </summary>
+            <p className="field-help">
+              <span>{t('fileReview.revision', { 0: view.revision })}</span> ·{' '}
+              {t(stateKeys[view.state])}
+            </p>
+            <p className="field-help">{t('fileReview.boundary')}</p>
+            <p className="field-help">{t('fileReview.attribution')}</p>
+            <p className="field-help">
+              {t('fileReview.writers', { 0: t(`fileReview.writers.${view.writers}`) })}
+            </p>
+            <p className="field-help">
+              {t('fileReview.effects', { 0: t(`fileReview.coverage.${view.effects}`) })}
+            </p>
+            {!failed &&
+              view.reasons.map((reason) => (
+                <p className="field-help" key={reason}>
+                  {t(reasonKeys[reason])}
+                </p>
+              ))}
+            <div className="file-review-snapshots">
+              <Snapshots side="before" items={view.before} />
+              <Snapshots side="after" items={view.after} />
+            </div>
+          </details>
         </>
       )}
     </Dialog>
