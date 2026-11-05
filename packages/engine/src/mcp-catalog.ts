@@ -40,6 +40,43 @@ interface McpJsonDiagnostic {
   kind: ReturnType<typeof valueKind>;
   depth: number;
   limit?: number;
+  measurement?: CatalogMeasurement;
+}
+
+const observationLimits = { depthCeiling: 64, nodeLimit: 524288 } as const;
+const observationStopCodes = [
+  'INVALID_MCP_CATALOG',
+  'INVALID_MCP_JSON',
+  'MCP_CATALOG_LIMIT',
+  'MCP_SECRET_IN_CATALOG',
+  'MCP_OBSERVATION_DEPTH_LIMIT',
+  'MCP_OBSERVATION_NODE_LIMIT',
+  'MCP_OBSERVATION_UNAVAILABLE',
+] as const;
+type CatalogMeasurement = typeof observationLimits &
+  (
+    | {
+        status: 'complete';
+        toolCount: number;
+        schemaDepth: number;
+        definitionDepth: number;
+        catalogDepth: number;
+        maxDefinitionBytes: number;
+        catalogBytes: number;
+      }
+    | { status: 'incomplete'; stopCode: (typeof observationStopCodes)[number] }
+  );
+interface CatalogObservation {
+  nodes: number;
+  definitionDepth: number;
+  catalogDepth: number;
+  maxDefinitionBytes: number;
+  catalogBytes: number;
+}
+interface CanonicalBudget {
+  remaining: number;
+  depth: number;
+  observation: CatalogObservation;
 }
 
 export class McpJsonError extends Fault {
@@ -56,6 +93,21 @@ function rejectCatalog(diagnostic: McpCatalogDiagnostic): never {
   throw new McpCatalogError(diagnostic);
 }
 
+function spend(bytes: number, budget: CanonicalBudget) {
+  if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > budget.remaining)
+    throw new Fault('MCP_CATALOG_LIMIT', 400);
+  budget.remaining -= bytes;
+}
+
+function scalar(value: string | number | boolean | null, budget?: CanonicalBudget) {
+  // JSON encoding cannot be shorter than its UTF16 input plus quotes; bound allocation before escaping.
+  if (budget && typeof value === 'string' && value.length + 2 > budget.remaining)
+    throw new Fault('MCP_CATALOG_LIMIT', 400);
+  const json = JSON.stringify(value);
+  if (budget) spend(Buffer.byteLength(json), budget);
+  return json;
+}
+
 export function canonicalJson(value: unknown, depth = 0): string {
   return canonical(value, depth, 'value', 'value');
 }
@@ -65,8 +117,14 @@ function canonical(
   depth: number,
   path: string,
   stage: McpJsonDiagnostic['stage'],
+  budget?: CanonicalBudget,
 ): string {
-  if (depth > 16)
+  if (budget) {
+    if (++budget.observation.nodes > observationLimits.nodeLimit)
+      throw new Fault('MCP_OBSERVATION_NODE_LIMIT', 400);
+    if (depth > observationLimits.depthCeiling) throw new Fault('MCP_OBSERVATION_DEPTH_LIMIT', 400);
+    budget.depth = Math.max(budget.depth, depth);
+  } else if (depth > 16)
     throw new McpJsonError({
       reason: 'json_depth',
       stage,
@@ -81,22 +139,39 @@ function canonical(
     typeof value === 'boolean' ||
     (typeof value === 'number' && Number.isFinite(value))
   )
-    return JSON.stringify(value);
-  if (Array.isArray(value))
+    return scalar(value, budget);
+  if (Array.isArray(value)) {
+    if (budget) {
+      const length = value.length;
+      spend(2 + Math.max(0, length - 1), budget);
+      const items: string[] = [];
+      // Fix the bounded length before iteration; Array.map could allocate from an untrusted length first.
+      for (let index = 0; index < length; index++)
+        items.push(
+          index in value
+            ? canonical(value[index], depth + 1, `${path}.array[${index}]`, stage, budget)
+            : '',
+        );
+      return `[${items.join(',')}]`;
+    }
     return `[${value.map((item, index) => canonical(item, depth + 1, `${path}.array[${index}]`, stage)).join(',')}]`;
+  }
   if (
     value &&
     typeof value === 'object' &&
     [Object.prototype, null].includes(Object.getPrototypeOf(value))
-  )
-    return `{${Object.keys(value)
+  ) {
+    const keys = Object.keys(value);
+    if (budget) spend(2 + Math.max(0, keys.length - 1) + keys.length, budget);
+    return `{${keys
       .sort()
       .map(
         // Schema keys can contain credentials; diagnostics use sorted positions, never their names.
         (key, index) =>
-          `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key], depth + 1, `${path}.object[${index}]`, stage)}`,
+          `${scalar(key, budget)}:${canonical((value as Record<string, unknown>)[key], depth + 1, `${path}.object[${index}]`, stage, budget)}`,
       )
       .join(',')}}`;
+  }
   throw new McpJsonError({
     reason:
       typeof value === 'object'
@@ -117,6 +192,64 @@ export function mcpCatalog(
   input: unknown,
   secrets: readonly string[],
   view: McpView = 'apps',
+): McpTool[] {
+  try {
+    return catalog(connection, input, secrets, view);
+  } catch (error) {
+    if (
+      error instanceof McpJsonError &&
+      error.diagnostic.reason === 'json_depth' &&
+      error.diagnostic.stage !== 'value'
+    )
+      error.diagnostic.measurement = observeCatalog(connection, input, secrets, view);
+    // Observation is evidence only; a complete measurement must never become an accepted catalog.
+    throw error;
+  }
+}
+
+function observeCatalog(
+  connection: string,
+  input: unknown,
+  secrets: readonly string[],
+  view: McpView,
+): CatalogMeasurement {
+  const observation: CatalogObservation = {
+    nodes: 0,
+    definitionDepth: 0,
+    catalogDepth: 0,
+    maxDefinitionBytes: 0,
+    catalogBytes: 2,
+  };
+  try {
+    const tools = catalog(connection, input, secrets, view, observation);
+    return {
+      ...observationLimits,
+      status: 'complete',
+      toolCount: tools.length,
+      schemaDepth: Math.max(0, observation.definitionDepth - 1),
+      definitionDepth: observation.definitionDepth,
+      catalogDepth: observation.catalogDepth,
+      maxDefinitionBytes: observation.maxDefinitionBytes,
+      catalogBytes: observation.catalogBytes,
+    };
+  } catch (error) {
+    const stopCode = observationStopCodes.find(
+      (code) => error instanceof Fault && error.code === code,
+    );
+    return {
+      ...observationLimits,
+      status: 'incomplete',
+      stopCode: stopCode ?? 'MCP_OBSERVATION_UNAVAILABLE',
+    };
+  }
+}
+
+function catalog(
+  connection: string,
+  input: unknown,
+  secrets: readonly string[],
+  view: McpView,
+  observation?: CatalogObservation,
 ): McpTool[] {
   if (!Array.isArray(input))
     rejectCatalog({ reason: 'catalog_type', path: 'tools', kind: valueKind(input) });
@@ -198,23 +331,53 @@ export function mcpCatalog(
         description,
         inputSchema: value.inputSchema as Record<string, unknown>,
       };
-      const json = canonical(definition, 0, `tools[${index}]`, 'definition');
+      // Apply the remaining catalog allowance while encoding each definition, before shared graphs can expand.
+      const budget = observation
+        ? {
+            remaining: Math.min(32768, 256000 - observation.catalogBytes - Number(index > 0)),
+            depth: 0,
+            observation,
+          }
+        : undefined;
+      const json = canonical(definition, 0, `tools[${index}]`, 'definition', budget);
       if (Buffer.byteLength(json) > 32768) throw new Fault('MCP_CATALOG_LIMIT', 400);
       if (secrets.some((secret) => secret && json.includes(JSON.stringify(secret).slice(1, -1))))
         throw new Fault('MCP_SECRET_IN_CATALOG', 400);
+      // Diagnostic traversal retains references to avoid expanding shared input graphs through cloning.
+      const inputSchema = observation
+        ? definition.inputSchema
+        : structuredClone(definition.inputSchema);
+      const alias = `ext_${mcpDigest([connection, value.name]).slice(0, 20)}`;
+      const digest = observation
+        ? createHash('sha256').update(json).digest('hex')
+        : mcpDigest(definition);
+      if (observation && budget) {
+        const bytes = Buffer.byteLength(json);
+        // Merging two JSON objects removes two braces and adds one comma.
+        const extra = Buffer.byteLength(JSON.stringify({ alias, digest })) - 1;
+        observation.catalogBytes += bytes + extra + Number(index > 0);
+        if (observation.catalogBytes > 256000) throw new Fault('MCP_CATALOG_LIMIT', 400);
+        observation.definitionDepth = Math.max(observation.definitionDepth, budget.depth);
+        observation.maxDefinitionBytes = Math.max(observation.maxDefinitionBytes, bytes);
+      }
       return {
         ...definition,
-        inputSchema: structuredClone(definition.inputSchema),
-        alias: `ext_${mcpDigest([connection, value.name]).slice(0, 20)}`,
-        digest: mcpDigest(definition),
+        inputSchema,
+        alias,
+        digest,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+  const budget = observation ? { remaining: 256000, depth: 0, observation } : undefined;
   if (
     new Set(tools.map((tool) => tool.name)).size !== tools.length ||
     // The catalog array still participates in the original depth16 bound after each definition passes.
-    Buffer.byteLength(canonical(tools, 0, 'tools', 'catalog')) > 256000
+    Buffer.byteLength(canonical(tools, 0, 'tools', 'catalog', budget)) > 256000
   )
     throw new Fault('MCP_CATALOG_LIMIT', 400);
+  if (observation && budget) {
+    observation.catalogDepth = budget.depth;
+    observation.catalogBytes = 256000 - budget.remaining;
+  }
   return tools;
 }

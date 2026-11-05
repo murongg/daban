@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { canonicalJson, mcpCatalog, mcpDigest } from './mcp-catalog.js';
 
 const tool = {
@@ -12,6 +12,378 @@ function nested(depth: number) {
   for (let index = 0; index < depth; index++) value = { [`synthetic-private-key-${index}`]: value };
   return value;
 }
+
+function deepDefinition(name: string, nesting: number) {
+  return {
+    ...tool,
+    name,
+    inputSchema: { type: 'object', 'synthetic-private-schema': nested(nesting) },
+  };
+}
+
+function rejectedCatalog(input: unknown, secrets: readonly string[] = []) {
+  try {
+    mcpCatalog('synthetic-measurement', input, secrets);
+  } catch (error) {
+    return error;
+  }
+  return expect.unreachable('Measurement must not make the depth16 catalog acceptable');
+}
+
+test.each([
+  {
+    nesting: [15, 20],
+    stage: 'definition',
+    schemaDepth: 21,
+    definitionDepth: 22,
+    catalogDepth: 23,
+  },
+  { nesting: [14], stage: 'catalog', schemaDepth: 15, definitionDepth: 16, catalogDepth: 17 },
+])(
+  'a rejected $stage pass can report complete catalog measurements without accepting it',
+  ({ nesting, stage, schemaDepth, definitionDepth, catalogDepth }) => {
+    const input = nesting.map((depth, index) =>
+      deepDefinition(`synthetic-private-tool-${index}`, depth),
+    );
+    const error = rejectedCatalog(input);
+    expect(error).toMatchObject({
+      code: 'INVALID_MCP_JSON',
+      status: 400,
+      diagnostic: {
+        reason: 'json_depth',
+        stage,
+        depth: 17,
+        limit: 16,
+        measurement: {
+          status: 'complete',
+          toolCount: input.length,
+          schemaDepth,
+          definitionDepth,
+          catalogDepth,
+          maxDefinitionBytes: Math.max(
+            ...input.map((entry) => Buffer.byteLength(JSON.stringify(entry))),
+          ),
+          catalogBytes: Buffer.byteLength(
+            JSON.stringify(
+              input.map((entry) => ({
+                ...entry,
+                alias: `ext_${'0'.repeat(20)}`,
+                digest: '0'.repeat(64),
+              })),
+            ),
+          ),
+          depthCeiling: 64,
+          nodeLimit: 524288,
+        },
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain('synthetic-private');
+  },
+);
+
+test('observation stops at its own finite ceiling without claiming the catalog maximum', () => {
+  const error = rejectedCatalog([
+    deepDefinition('synthetic-first', 15),
+    deepDefinition('synthetic-later', 63),
+  ]);
+  expect(error).toMatchObject({
+    code: 'INVALID_MCP_JSON',
+    status: 400,
+    diagnostic: {
+      reason: 'json_depth',
+      stage: 'definition',
+      depth: 17,
+      limit: 16,
+      measurement: {
+        status: 'incomplete',
+        stopCode: 'MCP_OBSERVATION_DEPTH_LIMIT',
+        depthCeiling: 64,
+        nodeLimit: 524288,
+      },
+    },
+  });
+  expect(error).not.toHaveProperty('diagnostic.measurement.schemaDepth');
+  expect(error).not.toHaveProperty('diagnostic.measurement.definitionDepth');
+  expect(error).not.toHaveProperty('diagnostic.measurement.catalogDepth');
+});
+
+test.each([61, 62])(
+  'the observation ceiling includes the catalog wrapper for nesting%i',
+  (nesting) => {
+    const error = rejectedCatalog([deepDefinition('synthetic-boundary', nesting)]);
+    expect(error).toMatchObject({ code: 'INVALID_MCP_JSON', diagnostic: { depth: 17, limit: 16 } });
+    if (nesting === 61)
+      expect(error).toMatchObject({
+        diagnostic: {
+          measurement: {
+            status: 'complete',
+            schemaDepth: 62,
+            definitionDepth: 63,
+            catalogDepth: 64,
+          },
+        },
+      });
+    else {
+      expect(error).toMatchObject({
+        diagnostic: {
+          measurement: { status: 'incomplete', stopCode: 'MCP_OBSERVATION_DEPTH_LIMIT' },
+        },
+      });
+      expect(error).not.toHaveProperty('diagnostic.measurement.catalogDepth');
+    }
+  },
+);
+
+test('unexpected observation errors cannot export their text or impersonate local stop codes', () => {
+  const later = {
+    ...tool,
+    get inputSchema(): Record<string, unknown> {
+      throw Object.assign(Error('synthetic-private-error'), { code: 'MCP_CATALOG_LIMIT' });
+    },
+  };
+  const error = rejectedCatalog([deepDefinition('synthetic-first', 15), later]);
+  expect(error).toMatchObject({
+    code: 'INVALID_MCP_JSON',
+    diagnostic: {
+      depth: 17,
+      limit: 16,
+      measurement: { status: 'incomplete', stopCode: 'MCP_OBSERVATION_UNAVAILABLE' },
+    },
+  });
+  expect(JSON.stringify(error)).not.toContain('synthetic-private');
+});
+
+test('complete byte metrics retain UTF8, escaped controls and lone-surrogate JSON semantics', () => {
+  let value: unknown = '合成\n"\\😀\ud800';
+  for (let index = 0; index < 15; index++) value = { synthetic: value };
+  const definition = { ...tool, inputSchema: { type: 'object', padding: value } };
+  const error = rejectedCatalog([definition]);
+  expect(error).toMatchObject({
+    diagnostic: {
+      measurement: {
+        status: 'complete',
+        maxDefinitionBytes: Buffer.byteLength(JSON.stringify(definition)),
+        catalogBytes: Buffer.byteLength(
+          JSON.stringify([
+            { ...definition, alias: `ext_${'0'.repeat(20)}`, digest: '0'.repeat(64) },
+          ]),
+        ),
+      },
+    },
+  });
+});
+
+test.each([
+  {
+    later: { ...tool, inputSchema: { type: 'object', 'synthetic-private-field': undefined } },
+    stopCode: 'INVALID_MCP_JSON',
+  },
+  {
+    later: { ...tool, inputSchema: { type: 'object', 'synthetic-private-field': new Date(0) } },
+    stopCode: 'INVALID_MCP_JSON',
+  },
+  {
+    later: { ...tool, inputSchema: { type: 'object', 'synthetic-private-field': Number.NaN } },
+    stopCode: 'INVALID_MCP_JSON',
+  },
+  {
+    later: { ...tool, description: 'synthetic-private-secret' },
+    stopCode: 'MCP_SECRET_IN_CATALOG',
+  },
+  {
+    later: { ...tool, inputSchema: { type: 'object', padding: 'x'.repeat(32768) } },
+    stopCode: 'MCP_CATALOG_LIMIT',
+  },
+  { later: { ...tool, name: 'synthetic-first' }, stopCode: 'MCP_CATALOG_LIMIT' },
+  {
+    later: { ...tool, description: 'synthetic-private-description'.padEnd(2001, 'x') },
+    stopCode: 'INVALID_MCP_CATALOG',
+  },
+])(
+  'a later $stopCode prevents a complete measurement and preserves the original depth rejection',
+  ({ later, stopCode }) => {
+    const error = rejectedCatalog(
+      [deepDefinition('synthetic-first', 15), later],
+      ['synthetic-private-secret'],
+    );
+    expect(error).toMatchObject({
+      code: 'INVALID_MCP_JSON',
+      status: 400,
+      diagnostic: {
+        reason: 'json_depth',
+        stage: 'definition',
+        depth: 17,
+        limit: 16,
+        measurement: { status: 'incomplete', stopCode, depthCeiling: 64, nodeLimit: 524288 },
+      },
+    });
+    expect(error).not.toHaveProperty('diagnostic.measurement.catalogDepth');
+    expect(JSON.stringify(error)).not.toContain('synthetic-private');
+  },
+);
+
+test('a complete depth scan cannot hide the unchanged total catalog byte rejection', () => {
+  const input = [
+    deepDefinition('synthetic-first', 15),
+    ...Array.from({ length: 76 }, (_, index) => ({
+      ...tool,
+      name: `synthetic-later-${index}`,
+      description: 'x'.repeat(1800),
+      inputSchema: { type: 'object', padding: 'y'.repeat(1800) },
+    })),
+  ];
+  const error = rejectedCatalog(input);
+  expect(error).toMatchObject({
+    code: 'INVALID_MCP_JSON',
+    status: 400,
+    diagnostic: {
+      reason: 'json_depth',
+      depth: 17,
+      limit: 16,
+      measurement: {
+        status: 'incomplete',
+        stopCode: 'MCP_CATALOG_LIMIT',
+        depthCeiling: 64,
+        nodeLimit: 524288,
+      },
+    },
+  });
+  expect(error).not.toHaveProperty('diagnostic.measurement.catalogDepth');
+});
+
+test('a wide invalid catalog stops within the observation work or byte budget', () => {
+  let reads = 0;
+  const padding = new Proxy(Array<number>(600000).fill(0), {
+    get(target, key, receiver): unknown {
+      if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const error = rejectedCatalog([
+    deepDefinition('synthetic-first', 15),
+    { ...tool, inputSchema: { type: 'object', padding } },
+  ]);
+  expect(error).toMatchObject({
+    code: 'INVALID_MCP_JSON',
+    diagnostic: {
+      depth: 17,
+      limit: 16,
+      measurement: {
+        status: 'incomplete',
+        nodeLimit: 524288,
+        stopCode: expect.stringMatching(/^(MCP_CATALOG_LIMIT|MCP_OBSERVATION_NODE_LIMIT)$/),
+      },
+    },
+  });
+  expect(reads).toBeLessThanOrEqual(524289);
+  expect(error).not.toHaveProperty('diagnostic.measurement.catalogDepth');
+});
+
+test.each(['value', 'key'] as const)(
+  'observation refuses a huge %s before JSON string encoding',
+  (position) => {
+    const huge = 'x'.repeat(1048576);
+    const stringify = JSON.stringify;
+    let encodes = 0;
+    const spy = vi.spyOn(JSON, 'stringify').mockImplementation((value: unknown) => {
+      if (value === huge) {
+        encodes++;
+        throw Error('SYNTHETIC_OVERSIZED_SCALAR_ENCODED');
+      }
+      return stringify(value);
+    });
+    try {
+      const schema =
+        position === 'value'
+          ? { type: 'object', padding: huge }
+          : { type: 'object', [huge]: 'synthetic' };
+      const error = rejectedCatalog([
+        deepDefinition('synthetic-first', 15),
+        { ...tool, inputSchema: schema },
+      ]);
+      expect(error).toMatchObject({
+        code: 'INVALID_MCP_JSON',
+        diagnostic: {
+          limit: 16,
+          measurement: { status: 'incomplete', stopCode: 'MCP_CATALOG_LIMIT' },
+        },
+      });
+      expect(encodes).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
+
+test('each repeated shared string is charged before a definition can amplify its output', () => {
+  const shared = 'x'.repeat(12000);
+  const stringify = JSON.stringify;
+  let encodes = 0;
+  const spy = vi.spyOn(JSON, 'stringify').mockImplementation((value: unknown) => {
+    if (value === shared) encodes++;
+    return stringify(value);
+  });
+  try {
+    const branch = { value: shared };
+    const error = rejectedCatalog([
+      deepDefinition('synthetic-first', 15),
+      { ...tool, inputSchema: { type: 'object', padding: Array(40).fill(branch) } },
+    ]);
+    expect(error).toMatchObject({
+      code: 'INVALID_MCP_JSON',
+      diagnostic: {
+        limit: 16,
+        measurement: { status: 'incomplete', stopCode: 'MCP_CATALOG_LIMIT' },
+      },
+    });
+    expect(encodes).toBeLessThanOrEqual(2);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test('the catalog byte budget stops shared-scalar amplification across individually valid definitions', () => {
+  const shared = 'x'.repeat(12000);
+  const stringify = JSON.stringify;
+  let encodes = 0;
+  const spy = vi.spyOn(JSON, 'stringify').mockImplementation((value: unknown) => {
+    if (value === shared) encodes++;
+    return stringify(value);
+  });
+  try {
+    const error = rejectedCatalog([
+      deepDefinition('synthetic-first', 15),
+      ...Array.from({ length: 30 }, (_, index) => ({
+        ...tool,
+        name: `synthetic-shared-${index}`,
+        inputSchema: { type: 'object', padding: shared },
+      })),
+    ]);
+    expect(error).toMatchObject({
+      code: 'INVALID_MCP_JSON',
+      diagnostic: {
+        limit: 16,
+        measurement: { status: 'incomplete', stopCode: 'MCP_CATALOG_LIMIT' },
+      },
+    });
+    expect(encodes).toBeLessThanOrEqual(21);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test('generic request digests keep depth16 and never start catalog observation', () => {
+  try {
+    mcpDigest(nested(17));
+    expect.unreachable('Request fingerprint depth17 must remain rejected');
+  } catch (error) {
+    expect(error).toMatchObject({
+      code: 'INVALID_MCP_JSON',
+      diagnostic: { stage: 'value', depth: 17, limit: 16 },
+    });
+    expect(error).not.toHaveProperty('diagnostic.measurement');
+  }
+});
 
 test.each([
   { value: undefined, reason: 'json_type', kind: 'undefined' },

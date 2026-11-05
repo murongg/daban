@@ -248,6 +248,67 @@ test.each([
   },
 );
 
+test('complete depth observation stays local to one rejected probe and never replaces reviewed authority', async () => {
+  const f = await fixture();
+  await f.tools.close();
+  let lists = 0,
+    effects = 0;
+  const definitions = [15, 20].map((depth, index) => {
+    let nested: unknown = 'synthetic-private-leaf';
+    for (let level = 0; level < depth; level++) nested = { 'synthetic-private-key': nested };
+    return {
+      ...offered[0],
+      name: `synthetic-private-tool-${index}`,
+      inputSchema: { type: 'object', 'synthetic-private-schema': nested },
+    };
+  });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const tools = new IntegrationTools(f.store, f.interactions, {
+    remote: async () => ({
+      start: async () => {},
+      tools: async () => {
+        lists++;
+        return definitions;
+      },
+      call: async () => {
+        effects++;
+        throw Error('SYNTHETIC_MUST_NOT_DISPATCH');
+      },
+      close: async () => {},
+    }),
+  });
+  try {
+    await expect(tools.probe('mock-connection', 1)).rejects.toMatchObject({
+      code: 'INVALID_MCP_JSON',
+    });
+    expect(warn).toHaveBeenCalledOnce();
+    const diagnostic: unknown = JSON.parse(String(warn.mock.calls[0][1]));
+    expect(diagnostic).toMatchObject({
+      reason: 'json_depth',
+      depth: 17,
+      limit: 16,
+      measurement: {
+        status: 'complete',
+        toolCount: 2,
+        schemaDepth: 21,
+        definitionDepth: 22,
+        catalogDepth: 23,
+      },
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('synthetic-private');
+    expect((await f.store.catalogView('mock-connection')).tools.map((entry) => entry.name)).toEqual(
+      ['synthetic_echo'],
+    );
+    expect((await f.store.capture(f.run.bot)).connections).toEqual(f.run.integrations.connections);
+    expect(lists).toBe(1);
+    expect(effects).toBe(0);
+  } finally {
+    warn.mockRestore();
+    await tools.close();
+    await f.close();
+  }
+});
+
 test('external tools stay lazy and per-Bot; only a committed one-time decision permits dispatch, and exact retries read the receipt', async () => {
   const f = await fixture();
   try {
