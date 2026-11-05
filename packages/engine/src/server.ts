@@ -5,6 +5,9 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  approvalInteractionFor,
+  approvalMcpFor,
+  approvalRulesCapability,
   automationCapability,
   type BudgetIncreaseRequest,
   botBundleLimit,
@@ -12,6 +15,8 @@ import {
   type Group,
   type GroupPage,
   goalResumeKey,
+  type Interaction,
+  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -81,6 +86,7 @@ import {
   sameProjectScope,
   validAgentId,
 } from '@daban/protocol';
+import { approvalCommand } from './approval-api.js';
 import { Authority, ViewerGrants } from './authority.js';
 import { Commands } from './commands.js';
 import { Computers } from './computers.js';
@@ -180,6 +186,9 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/approval-rules/list',
+  '/api/approval-rules/receipt',
+  '/api/approval-rules/preview',
   '/api/budgets/goal',
   '/api/budgets/settings',
   '/api/budgets/read',
@@ -659,6 +668,9 @@ export async function startPrototype({
           return json(res, value);
         }
         const groupProtocol = req.headers['x-daban-client-protocol'];
+        const modernApprovals = req.headers['x-daban-approval-rules'] === approvalRulesCapability;
+        const interactionView = (item: Interaction) =>
+          approvalInteractionFor(item, modernApprovals);
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
             ? Number(groupProtocol)
@@ -1018,6 +1030,18 @@ export async function startPrototype({
             if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
             return json(res, await diagnostics.inspect());
           }
+          if (url.pathname.startsWith('/api/approval-rules/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (!models) throw new Fault('APPROVAL_RULES_UNAVAILABLE', 503);
+            const command = await body(req);
+            if (
+              url.search ||
+              !isApprovalRulesCommand(command) ||
+              command.type !== `approval.rules.${url.pathname.slice('/api/approval-rules/'.length)}`
+            )
+              throw new Fault('INVALID_APPROVAL_RULE', 400);
+            return json(res, await approvalCommand(models, command));
+          }
           if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
             if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
             const data = await body(req);
@@ -1030,7 +1054,10 @@ export async function startPrototype({
             const cancel = () => controller.abort();
             res.once('close', cancel);
             try {
-              return json(res, await integrationCommand(models, data, controller.signal));
+              const result = await integrationCommand(models, data, controller.signal);
+              if (data.type === 'mcp.calls' || data.type === 'mcp.receipt')
+                return json(res, approvalMcpFor(result, modernApprovals));
+              return json(res, result);
             } finally {
               res.off('close', cancel);
             }
@@ -1915,7 +1942,10 @@ export async function startPrototype({
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
               ...(models ? { contextInspector: 1 } : {}),
-              interactions: models ? await models.interactions.list() : [],
+              interactions: models ? (await models.interactions.list()).map(interactionView) : [],
+              ...(modernApprovals && models
+                ? { approvalRules: await models.approvalRules.status() }
+                : {}),
               schedules: await scheduleStatus(
                 schedules,
                 req.headers['x-daban-automation'] === automationCapability,
@@ -2008,12 +2038,15 @@ export async function startPrototype({
                 Object.keys(data).some((key) => !['id', 'runId', 'reply'].includes(key)) ||
                 !validAgentId(data.id) ||
                 !validAgentId(data.runId) ||
-                !isUserReply(data.reply)
+                !isUserReply(data.reply) ||
+                (!modernApprovals && data.reply.kind === 'decision' && data.reply.confirmPurpose)
               )
                 throw new Fault('INVALID_INTERACTION_REPLY', 400);
               return json(
                 res,
-                await models.interactions.reply(id, data.runId, data.id, data.reply),
+                interactionView(
+                  await models.interactions.reply(id, data.runId, data.id, data.reply),
+                ),
               );
             }
             if (action === 'profile' && models) {
@@ -2379,11 +2412,12 @@ export async function startPrototype({
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),
           interactions: models.interactions,
+          policy: models.rulePolicy,
           review: new Risk({
             settings,
             meter: (request, api, fetcher) => models!.meterReview(request, api, fetcher),
             resolve: async (request) => models?.reviewModel(request.bot, request.runId) ?? null,
-          }).review,
+          }).details,
           assertLive: (run) => {
             if (replacingRecovery || !recovery!.admit())
               throw new Fault('RUNTIME_RECOVERY_PENDING');

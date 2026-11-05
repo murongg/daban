@@ -9,12 +9,21 @@ import {
   isRemoteSnapshot,
   isRemoteSnapshotCapabilities,
   parseRuntimeCommand,
+  recoveryReader,
   remoteReplyFor,
   remoteSnapshotFor,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+test.each([
+  { type: 'approval.rules.list', scope: { kind: 'bot', bot: 'mock-bot' } },
+  { type: 'projectMemory.status' },
+  { type: 'search.status' },
+  { type: 'delivery.get', query: { workId: 'mock-work' } },
+])('published pure reader $type keeps the existing recovery-read behavior', (command) => {
+  expect(recoveryReader(parseRuntimeCommand(command))).toBe(true);
+});
 test.each([
   { type: 'budget.settings' },
   { type: 'projects.list' },
@@ -79,6 +88,34 @@ test('schema 2 extends the same closed hint without changing the three read-only
     { ...hint, schema: '2' },
     { ...hint, token: 'synthetic-private' },
     { ...hint, accept: { modelAccess: 1 } },
+  ])
+    expect(isRemoteSnapshotCapabilities(invalid)).toBe(false);
+});
+
+test('schema2 is not proof of the later published AP, Delivery or Search wire formats', () => {
+  const baseline = disconnected('ready');
+  const current = {
+    ...baseline,
+    delivery: true,
+    searchSettings: true,
+    approvalRules: { capability: 'approval-rules-v3', available: true, revision: 0 },
+  };
+  expect(remoteSnapshotFor(current, {}, 2)).toEqual(baseline);
+  const formats = { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true };
+  const hint = {
+    type: 'snapshot-capabilities',
+    host: 'a'.repeat(64),
+    workspace: 'mock-workspace',
+    accept: { contextInspector: 1 },
+    schema: 2,
+    formats,
+  };
+  expect(isRemoteSnapshotCapabilities(hint)).toBe(true);
+  for (const invalid of [
+    { ...hint, formats: { approvalRules: true } },
+    { ...hint, formats: { delivery: 'all' } },
+    { ...hint, formats: { searchSettings: false } },
+    { ...hint, formats: { authorization: true } },
   ])
     expect(isRemoteSnapshotCapabilities(invalid)).toBe(false);
 });

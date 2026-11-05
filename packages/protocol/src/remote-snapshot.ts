@@ -1,5 +1,9 @@
 import {
+  approvalInteractionFor,
+  approvalMcpFor,
+  approvalRulesCapability,
   type Group,
+  isApprovalRulesStatus,
   isAutomationNotice,
   isBotProfile,
   isBrowserState,
@@ -68,12 +72,22 @@ export function remoteReplyFor(
   value: unknown,
   accept: SnapshotAccept = {},
   schema?: 2,
+  formats: SnapshotFormats = {},
 ): unknown {
   if (method === 'status' || method === 'connect') {
     // Validate the producer's current typed data before projecting for a less strict old consumer.
-    if (!isRemoteSnapshot(remoteSnapshotFor(value, accept, 2)))
+    if (!isRemoteSnapshot(remoteSnapshotFor(value, accept, 2, supportedSnapshotFormats)))
       throw Error('REMOTE_INVALID_SNAPSHOT');
-    return remoteSnapshotFor(value, accept, schema);
+    return remoteSnapshotFor(value, accept, schema, formats);
+  }
+  const approvals = formats.approvalRules === approvalRulesCapability;
+  if (method.startsWith('approval.rules.') && !approvals) throw Error('APPROVAL_UPGRADE_REQUIRED');
+  if (method.startsWith('delivery.') && formats.delivery !== true) throw Error('RUNTIME_TOO_OLD');
+  if (method.startsWith('search.') && formats.searchSettings !== true)
+    throw Error('RUNTIME_TOO_OLD');
+  if (!approvals) {
+    if (isInteraction(value)) return approvalInteractionFor(value, false);
+    if (method === 'mcp.calls' || method === 'mcp.receipt') return approvalMcpFor(value, false);
   }
   if (schema === 2) return value;
   if (isModelStatus(value)) return legacyModel({ ...value });
@@ -110,20 +124,57 @@ export function remoteReplyFor(
 
 export const snapshotCapabilityKeys = ['contextInspector', 'preflight', 'fileReview'] as const;
 export type SnapshotAccept = Partial<Record<(typeof snapshotCapabilityKeys)[number], 1>>;
+export interface SnapshotFormats {
+  approvalRules?: typeof approvalRulesCapability;
+  delivery?: true;
+  searchSettings?: true;
+}
+export interface SnapshotConsumer {
+  schema?: 2;
+  formats?: SnapshotFormats;
+}
+export type RuntimeConsumer = 1 | 2 | SnapshotConsumer;
+export const supportedSnapshotFormats: SnapshotFormats = {
+  approvalRules: approvalRulesCapability,
+  delivery: true,
+  searchSettings: true,
+};
+export function snapshotConsumer(value?: RuntimeConsumer): SnapshotConsumer {
+  // Missing context means an ordinary local/current client, not an undeclared remote parser.
+  if (value === undefined) return { schema: 2, formats: { ...supportedSnapshotFormats } };
+  if (typeof value === 'number')
+    return { ...(value === 2 ? { schema: 2 as const } : {}), formats: {} };
+  return { ...(value.schema === 2 ? { schema: 2 as const } : {}), formats: { ...value.formats } };
+}
+function isSnapshotFormats(value: unknown): value is SnapshotFormats {
+  return (
+    object(value) &&
+    exact(value, ['approvalRules', 'delivery', 'searchSettings']) &&
+    (value.approvalRules === undefined || value.approvalRules === approvalRulesCapability) &&
+    (value.delivery === undefined || value.delivery === true) &&
+    (value.searchSettings === undefined || value.searchSettings === true)
+  );
+}
 export interface RemoteSnapshotCapabilities {
   type: 'snapshot-capabilities';
   host: string;
   workspace: string;
   accept: SnapshotAccept;
   schema?: 2;
+  formats?: SnapshotFormats;
 }
-export const supportedSnapshotCapabilities: SnapshotAccept = { contextInspector: 1 };
+export const supportedSnapshotCapabilities: SnapshotAccept = {
+  contextInspector: 1,
+  preflight: 1,
+  fileReview: 1,
+};
 export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSnapshotCapabilities {
   return (
     object(value) &&
-    exact(value, ['type', 'host', 'workspace', 'accept', 'schema']) &&
+    exact(value, ['type', 'host', 'workspace', 'accept', 'schema', 'formats']) &&
     value.type === 'snapshot-capabilities' &&
     (value.schema === undefined || value.schema === 2) &&
+    (value.formats === undefined || isSnapshotFormats(value.formats)) &&
     typeof value.host === 'string' &&
     /^[a-f0-9]{64}$/.test(value.host) &&
     validAgentId(value.workspace) &&
@@ -136,11 +187,21 @@ export function remoteSnapshotFor(
   value: unknown,
   accept: SnapshotAccept = {},
   schema?: 2,
+  formats: SnapshotFormats = {},
 ): unknown {
   if (!object(value)) return value;
   const wire = { ...value };
   // Only negotiated additions are omitted. Unknown fields still reach the strict consumer validator and are rejected.
   for (const key of snapshotCapabilityKeys) if (accept[key] !== 1) delete wire[key];
+  if (formats.delivery !== true) delete wire.delivery;
+  if (formats.searchSettings !== true) delete wire.searchSettings;
+  if (formats.approvalRules !== approvalRulesCapability) {
+    delete wire.approvalRules;
+    if (Array.isArray(value.interactions))
+      wire.interactions = value.interactions.map((item: unknown) =>
+        isInteraction(item) ? approvalInteractionFor(item, false) : item,
+      );
+  }
   if (schema !== 2 && object(value.model)) {
     // Original Context peers still use a closed model schema; the feature hint alone is not a schema proof.
     wire.model = legacyModel(value.model);
@@ -330,6 +391,11 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
     !exact(value, [
       'phase',
       'contextInspector',
+      'approvalRules',
+      'delivery',
+      'searchSettings',
+      'fileReview',
+      'preflight',
       'error',
       'protocolVersion',
       'model',
@@ -364,6 +430,14 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
   if (
     !['connecting', 'ready', 'offline', 'unsupported'].includes(String(value.phase)) ||
     (value.contextInspector !== undefined && value.contextInspector !== 1) ||
+    (value.preflight !== undefined && value.preflight !== 1) ||
+    (value.fileReview !== undefined &&
+      (!object(value.fileReview) ||
+        !exact(value.fileReview, ['available']) ||
+        typeof value.fileReview.available !== 'boolean')) ||
+    (value.approvalRules !== undefined && !isApprovalRulesStatus(value.approvalRules)) ||
+    (value.delivery !== undefined && value.delivery !== true) ||
+    (value.searchSettings !== undefined && value.searchSettings !== true) ||
     !integer(value.protocolVersion) ||
     !optional(value.error, (error) => text(error, 512)) ||
     typeof value.sharedLogin !== 'boolean' ||

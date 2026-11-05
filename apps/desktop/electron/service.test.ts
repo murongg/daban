@@ -154,7 +154,7 @@ it('keeps each remote consumer format on its own local dispatch without changing
     await service.invokeLocal(command, undefined, 1);
     await service.invokeLocal(command);
     expect(invoke).toHaveBeenNthCalledWith(1, command, 1);
-    expect(invoke).toHaveBeenNthCalledWith(2, command, 2);
+    expect(invoke).toHaveBeenNthCalledWith(2, command, undefined);
   } finally {
     await service.close();
   }

@@ -6,5 +6,6 @@ export const commands = sqliteTable('commands', {
   request: text().notNull(),
   phase: text().notNull(),
   decision: text(),
+  policyDecision: text(),
   result: text(),
 });
