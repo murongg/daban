@@ -43,52 +43,19 @@ jobs:
       - run: npm run build
       - name: Verify real Windows prerequisite observation without elevation
         run: node --experimental-strip-types --test tools/windows.integration.ts
-      - name: Test desktop bindings and authority
-        run: npx vitest run apps/desktop/electron/runtime.test.ts apps/desktop/electron/native.test.ts apps/desktop/electron/driver.test.ts apps/desktop/electron/local-computer.test.ts apps/desktop/electron/local-server.test.ts apps/desktop/electron/native-daemon.test.ts apps/desktop/electron/agent-setup.test.ts apps/desktop/electron/service.test.ts apps/desktop/electron/notification-main.test.ts apps/desktop/electron/components.test.ts apps/desktop/electron/component-install.test.ts apps/desktop/electron/host-selection.test.ts apps/desktop/electron/environment-client.test.ts apps/desktop/src/features/computer/LocalComputer.test.tsx --maxWorkers=2
-      - name: Test Windows release tooling against a disposable local remote
-        run: npx vitest run --project node tools/bump.test.ts --maxWorkers=2
-      - name: Test managed VM settings and mode switching
-        run: npx vitest run apps/desktop/electron/vm-config.test.ts apps/desktop/electron/vm-settings.test.ts apps/desktop/electron/service-vm.test.ts apps/desktop/src/features/settings/VirtualMachine.test.tsx --maxWorkers=2
-      - name: Test VM host transport, SSH ownership and restart receipts
-        run: npx vitest run --project node dist-agent/ssh.test.js dist-agent/main-vm.test.js dist-agent/failure-private.test.js packages/engine/dist/host-vm.test.js packages/engine/dist/reboot-private.test.js packages/engine/dist/vm-config.test.js --maxWorkers=2
-      - name: Test managed QEMU installation, Windows preflight and ordinary-user setup
-        run: |
-          npx vitest run --project node dist-agent/qemu.test.js dist-agent/qemu-store.test.js dist-agent/qmp.test.js dist-agent/seed.test.js dist-agent/qemu-install.test.js dist-agent/qemu-setup.test.js dist-agent/qemu-assets.test.js dist-agent/windows.test.js packages/engine/dist/setup-status.test.js packages/engine/dist/environment-api.test.js packages/engine/dist/archive.test.js tools/qemu-release.test.ts tools/component-release.test.ts --maxWorkers=2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx vitest run --project desktop apps/desktop/src/features/onboarding/WindowsSetup.test.tsx apps/desktop/src/features/onboarding/LinuxSetup.test.tsx apps/desktop/electron/restart.test.ts --maxWorkers=2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Test standalone Linux bundle
-        run: npx vitest run --project node tools/linux.test.ts tools/sdk.test.ts dist-agent/sdk.test.js --maxWorkers=2
-      - name: Test collaboration and conversation approvals on Windows
-        run: |
-          npx vitest run --project node packages/engine/dist/group-create.test.js packages/engine/dist/groups-model.test.js packages/engine/dist/groups.test.js packages/engine/dist/commands.test.js packages/engine/dist/policy.test.js packages/engine/dist/interactions.test.js packages/engine/dist/interaction-model.test.js packages/engine/dist/tasks.test.js --maxWorkers=2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npx vitest run --project desktop apps/desktop/src/features/chat/ApprovalMode.test.tsx apps/desktop/src/features/chat/Streaming.test.tsx apps/desktop/src/features/groups/Groups.test.tsx apps/desktop/src/features/groups/Mentions.test.tsx apps/desktop/src/app/state.test.ts apps/desktop/src/i18n/Locale.test.tsx --maxWorkers=2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Test Drizzle stores and legacy upgrades on Windows
-        run: npx vitest run --project node packages/engine/dist/database.test.js packages/engine/dist/chats.test.js packages/engine/dist/groups.test.js packages/engine/dist/commands.test.js packages/engine/dist/integrations.test.js packages/engine/dist/work.test.js packages/engine/dist/skills.test.js packages/engine/dist/schedules.test.js packages/engine/dist/knowledge.test.js packages/engine/dist/transcripts.test.js packages/engine/dist/notes.test.js packages/engine/dist/connections.test.js packages/engine/dist/attachments.test.js packages/engine/dist/tab-store.test.js --maxWorkers=2
-      - name: Verify Linux task paths from a Windows model host
-        run: npx vitest run --project node packages/engine/dist/model.test.js --testNamePattern="model preparation and output collection use guest workspace references" --maxWorkers=2
-      - name: Test native-only startup and encrypted private transport
-        run: npx vitest run --project node packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/component-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js --maxWorkers=2
-      - name: Test runtime component cleanup with a real Windows executable lock
-        run: npx vitest run --project node tools/components.test.ts --maxWorkers=2
-      - name: Verify model icons and configuration
-        run: npx vitest run apps/desktop/src/features/models/ModelInputs.test.tsx apps/desktop/src/features/models/Providers.test.tsx apps/desktop/src/features/models/BotModels.test.tsx apps/desktop/src/features/models/Models.test.tsx --maxWorkers=2
-      - name: Verify skill package UI and bindings
-        run: npx vitest run apps/desktop/electron/skills.test.ts apps/desktop/electron/portable.test.ts apps/desktop/src/features/skills/SkillInstall.test.tsx apps/desktop/src/features/skills/SkillMetadata.test.tsx --maxWorkers=2
-      - name: Verify standard skill packages
-        run: npx vitest run --project node packages/engine/dist/skill-defaults.test.js packages/engine/dist/skill-discovery.test.js packages/engine/dist/skill-package.test.js packages/engine/dist/skills-packages.test.js packages/engine/dist/skill-tools.test.js packages/engine/dist/skill-sources.test.js packages/engine/dist/workspace-skills.test.js --maxWorkers=2
-      - name: Verify native DSH tool loop
+      - name: Run Windows regression suite
+        run: npx vitest run --maxWorkers=2
+      - name: Verify native API fallback with the installed SDK
         timeout-minutes: 3
+        env:
+          DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
         run: |
-          npx vitest run --project node dist-agent/native-loop.test.js dist-agent/calendar.test.js dist-agent/update.test.js packages/engine/dist/upgrade.test.js packages/engine/dist/web.test.js packages/engine/dist/web-read.test.js packages/engine/dist/schedules.test.js packages/engine/dist/documents.test.js --maxWorkers=2
+          if (-not (Test-Path -LiteralPath $env:DABAN_TEST_SDK -PathType Leaf)) { throw "Installed DSH SDK is missing" }
+          node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/model-fallback.integration.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify native lifecycle integrations
+        run: |
           node --experimental-sqlite --test packages/engine/dist/upgrade.integration.js packages/engine/dist/schedules.integration.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Verify bundled native cryptography
-        run: |
-          npx vitest run --project node tools/native.test.ts tools/preload.test.ts tools/roles.test.ts --maxWorkers=2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --experimental-strip-types --test tools/roles.integration.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -255,3 +255,67 @@ test('search journal metadata survives restart while invalid optional metadata n
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('restart retains a durable clean fence for explicit recovery while interrupting every running attempt', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-clean-restart-'));
+  try {
+    const journal = new TaskJournal(root);
+    await journal.load();
+    await journal.put({
+      bot: 'mock-bot',
+      runId: 'mock-run',
+      prompt: 'Synthetic accepted request',
+      phase: 'running',
+      running: true,
+      result: '',
+      error: '',
+      trace: [],
+      createdAt: new Date().toISOString(),
+      activeMs: 1200,
+      attemptSummary: [
+        {
+          attemptId: 'mock-attempt',
+          model: 'deepseek-flash',
+          phase: 'running',
+          fence: 'clean',
+          usage: 'unknown',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    const restored = new TaskJournal(root);
+    await restored.load();
+    expect(restored.findRequest('mock-bot', 'mock-run')).toBeUndefined();
+    const record = await restored.read('mock-bot', 'mock-run');
+    expect(record?.phase).toBe('interrupted');
+    expect(record?.attemptSummary?.[0]).toMatchObject({ phase: 'interrupted', fence: 'clean' });
+    expect(record?.activeMs).toBeGreaterThanOrEqual(1200);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a corrupt authoritative budget identity cannot be loaded as a legacy unmetered task', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-budget-journal-'));
+  try {
+    const task = {
+      bot: 'mock-bot',
+      runId: 'synthetic-budget-run',
+      requestId: 'synthetic-request',
+      prompt: 'SYNTHETIC TASK',
+      kind: 'chat',
+      phase: 'completed',
+      running: false,
+      result: 'SYNTHETIC RESULT',
+      error: '',
+      trace: [],
+      budget: { budgetId: 'synthetic-budget', revision: -1 },
+    };
+    await writeFile(path.join(root, `${task.runId}.json`), JSON.stringify({ version: 1, task }));
+    const journal = new TaskJournal(root);
+    await journal.load();
+    expect(journal.findRequest(task.bot, task.requestId)).toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

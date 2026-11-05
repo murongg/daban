@@ -10,6 +10,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const engine = path.join(root, 'packages/engine');
 export const stores = [
   'attachments',
+  'budgets',
   'chats',
   'commands',
   'connections',
@@ -17,6 +18,7 @@ export const stores = [
   'integrations',
   'knowledge',
   'notes',
+  'projects',
   'schedules',
   'skills',
   'tab-store',
