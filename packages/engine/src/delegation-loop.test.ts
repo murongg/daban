@@ -62,36 +62,59 @@ test.each([false, true])(
       throw error;
     };
     const server = createServer(async (req, res) => {
+      // Keep request linkage local: other handlers can change the shared phase during the RPC await.
+      let rpcKind = 'provider',
+        webCall = 0,
+        rootSessionMatches = false;
       try {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(Buffer.from(chunk));
         const bytes = Buffer.concat(chunks);
         const input = chunks.length ? JSON.parse(bytes.toString('utf8')) : {};
         if (req.url?.startsWith('/mcp/')) {
+          rpcKind =
+            input.method === 'approval.web'
+              ? 'approval.web'
+              : typeof input.method === 'string' && input.method.startsWith('budget.')
+                ? 'budget'
+                : typeof input.method === 'string' && input.method.startsWith('interaction.')
+                  ? 'interaction'
+                  : 'other-rpc';
           if (input.method === 'approval.web') webSessions.push(input.params?.sessionId);
-          const webCall = webSessions.length;
-          if (input.method === 'approval.web')
-            mark('web.begin', {
-              webCall,
-              rootSessionMatches:
-                typeof input.params?.sessionId === 'string' &&
-                input.params.sessionId === models?.jobs.get('mock-bot')?.sessionId,
-            });
+          if (input.method === 'approval.web') {
+            webCall = webSessions.length;
+            rootSessionMatches =
+              typeof input.params?.sessionId === 'string' &&
+              input.params.sessionId === models?.jobs.get('mock-bot')?.sessionId;
+            mark('web.begin', { webCall, rootSessionMatches });
+          }
           if (input.method === 'interaction.open' && input.params?.kind === 'approval')
             approvalRequests++;
           const reply = (await models!.rpc('mock-bot', req.headers.authorization, input)) as {
-            result?: { accepted?: boolean; send?: boolean; effect?: unknown; reasonCode?: unknown };
+            result?: {
+              accepted?: boolean;
+              send?: boolean;
+              effect?: unknown;
+              reasonCode?: unknown;
+              policyRevision?: unknown;
+            };
             error?: { code?: unknown };
           };
           if (input.method === 'approval.web') {
             // Reading the existing reply adds no store read or ordering barrier to the suspected race.
             const effect = reply.result?.effect;
+            const revision = reply.result?.policyRevision;
             if (reply.error !== undefined) lastError = 'RPC_ERROR';
             mark('web.settled', {
               webCall,
+              rootSessionMatches,
               effect:
                 effect === 'allow' || effect === 'deny' || effect === 'ask' ? effect : 'other',
               ruleDenied: reply.result?.reasonCode === 'ruleDenied',
+              policyRevision:
+                typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0
+                  ? revision
+                  : -1,
               rpcError: reply.error !== undefined,
               rpcErrorCode: typeof reply.error?.code === 'number' ? reply.error.code : 0,
             });
@@ -207,7 +230,7 @@ test.each([false, true])(
         );
       } catch (error) {
         failed(error);
-        mark('provider.error', { activePhase: phase });
+        mark('provider.error', { activePhase: phase, rpcKind, webCall, rootSessionMatches });
         res.writeHead(500, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ error: String(error) }));
       }
@@ -338,6 +361,12 @@ test.each([false, true])(
           item.reply?.kind === 'decision' &&
           !item.reply.allow,
       );
+      const ruleDeniedRecords = interactions.filter(
+        (item) => item.policyDecision?.reasonCode === 'ruleDenied',
+      );
+      const ownedDenials = ruleDeniedRecords.filter(
+        (item) => item.bot === job.bot && item.runId === job.id,
+      );
       mark('receipts.read', {
         records: interactions.length,
         denied,
@@ -345,10 +374,29 @@ test.each([false, true])(
           (item) =>
             item.bot === job.bot &&
             item.runId === job.id &&
+            item.sessionId === job.sessionId &&
             item.policyDecision?.reasonCode === 'ruleDenied' &&
             item.reply?.kind === 'decision' &&
             !item.reply.allow,
         ),
+        ruleDeniedRecords: ruleDeniedRecords.length,
+        rootOwnerMatchCount: ownedDenials.length,
+        rootSessionMatchCount: ownedDenials.filter((item) => item.sessionId === job.sessionId)
+          .length,
+        deniedResolved: ruleDeniedRecords.filter((item) => item.status === 'resolved').length,
+        deniedPending: ruleDeniedRecords.filter((item) => item.status === 'pending').length,
+        deniedCancelled: ruleDeniedRecords.filter((item) => item.status === 'cancelled').length,
+        deniedInterrupted: ruleDeniedRecords.filter((item) => item.status === 'interrupted').length,
+        deniedMissingReply: ruleDeniedRecords.filter((item) => item.reply === undefined).length,
+        deniedNegativeReply: ruleDeniedRecords.filter(
+          (item) => item.reply?.kind === 'decision' && !item.reply.allow,
+        ).length,
+        deniedPositiveReply: ruleDeniedRecords.filter(
+          (item) => item.reply?.kind === 'decision' && item.reply.allow,
+        ).length,
+        deniedOtherReply: ruleDeniedRecords.filter(
+          (item) => item.reply !== undefined && item.reply.kind !== 'decision',
+        ).length,
         pending: interactions.some((item) => item.status === 'pending'),
       });
       expect(denied, 'Missing the root-bound rule-denied receipt').toBe(true);
