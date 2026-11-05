@@ -23,7 +23,10 @@ export * from './automation.js';
 
 import { isProjectFileRequest, isProjectScope } from './projects.js';
 
+export * from './project-memory.js';
 export * from './projects.js';
+
+import type { ProjectMemoryCommand } from './project-memory.js';
 
 import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
 
@@ -4123,6 +4126,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
 export type RuntimeCommand =
   | DeliveryCommand
   | ApprovalRulesCommand
+  | ProjectMemoryCommand
   | BudgetCommand
   | AutomationCommand
   | ProjectCommand

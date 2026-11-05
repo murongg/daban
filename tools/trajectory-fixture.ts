@@ -109,6 +109,16 @@ export async function readTrajectoryArtifact(
     )
       return unknown('changed');
     if (bytes.length > artifactLimit) return unknown('too-large');
+    // Metadata can stay equal across a same-sized rewrite. Seek from zero without replaying the injected reader.
+    const confirmation = await readBounded(handle);
+    const confirmedHandle = await handle.stat({ bigint: true });
+    const confirmedPath = await lstat(file, { bigint: true });
+    if (
+      !bytes.equals(confirmation) ||
+      !unchanged(opened, confirmedHandle) ||
+      !unchanged(opened, confirmedPath)
+    )
+      return unknown('changed');
     for (const parent of parents) {
       const stat = await lstat(parent.directory, { bigint: true });
       if (!stat.isDirectory() || stat.isSymbolicLink() || !unchanged(parent.stat, stat))

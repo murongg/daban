@@ -137,6 +137,11 @@ export const suites = {
     'memory.test',
     'history.test',
     'knowledge.test',
+    'project-memory.test',
+    'project-memory-api.test',
+    'project-memory-model.test',
+    'project-memory.integration',
+    'project-memory-upload.integration',
     'knowledge-tools.test',
     'attachments.test',
     'images.test',
@@ -216,6 +221,10 @@ export function runTests(
           .filter((file) => file.endsWith('.test'))
           .map((file) => `packages/engine/dist/${file}.js`),
       ],
+      ...(process.platform === 'linux' &&
+      files.some((file) => file === 'project-memory-upload.integration')
+        ? [['--experimental-strip-types', 'tools/project-memory-upload.ts']]
+        : []),
       [
         '--experimental-sqlite',
         '--test',
