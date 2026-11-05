@@ -90,6 +90,7 @@ export const suites = {
     'usage-wire.test',
     'usage-retry.test',
     'budgets.integration',
+    'budgets-client.integration',
     'agent-tools.test',
     'profiles.test',
     'copies.test',

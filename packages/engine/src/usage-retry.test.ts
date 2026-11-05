@@ -10,10 +10,15 @@ import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
-for (const limit of [1, 2])
-  test(`real SDK recovery hook admits every physical send and enforces shared request limit ${limit}`, {
-    timeout: 60000,
-  }, async () => {
+test.each([
+  ['openai-completions', 1],
+  ['openai-completions', 2],
+  ['openai-responses', 1],
+  ['openai-responses', 2],
+] as const)(
+  'real SDK %s recovery admits every physical send and enforces shared request limit %i',
+  { timeout: 60000 },
+  async (api, limit) => {
     const root = await mkdtemp(path.join(tmpdir(), 'synthetic-budget-retry-'));
     let models: ModelRuns | undefined;
     let sends = 0,
@@ -49,6 +54,9 @@ for (const limit of [1, 2])
           response.end(JSON.stringify(result));
           return;
         }
+        expect(request.url).toBe(
+          api === 'openai-responses' ? '/v1/responses' : '/v1/chat/completions',
+        );
         sends++;
         observations.push(dispatches);
         if (sends === 1) {
@@ -60,10 +68,48 @@ for (const limit of [1, 2])
           );
           return;
         }
-        response.writeHead(200, { 'content-type': 'text/event-stream' });
-        response.end(
-          `data: ${JSON.stringify({ id: 'synthetic-response', object: 'chat.completion.chunk', created: 1, model: 'synthetic-model', choices: [{ index: 0, delta: { role: 'assistant', content: 'SYNTHETIC RETRY COMPLETE' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } } })}\n\ndata: [DONE]\n\n`,
-        );
+        if (api === 'openai-completions') {
+          response.writeHead(200, { 'content-type': 'text/event-stream' });
+          response.end(
+            `data: ${JSON.stringify({ id: 'synthetic-response', object: 'chat.completion.chunk', created: 1, model: 'synthetic-model', choices: [{ index: 0, delta: { role: 'assistant', content: 'SYNTHETIC RETRY COMPLETE' }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } } })}\n\ndata: [DONE]\n\n`,
+          );
+        } else {
+          response.writeHead(200, { 'content-type': 'text/event-stream' });
+          const item = {
+            id: 'msg_synthetic',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'SYNTHETIC RETRY COMPLETE', annotations: [] }],
+          };
+          for (const event of [
+            { type: 'response.created', response: { id: 'resp_synthetic', status: 'in_progress' } },
+            { type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } },
+            {
+              type: 'response.output_text.delta',
+              output_index: 0,
+              content_index: 0,
+              delta: 'SYNTHETIC RETRY COMPLETE',
+            },
+            { type: 'response.output_item.done', output_index: 0, item },
+            {
+              type: 'response.completed',
+              response: {
+                id: 'resp_synthetic',
+                status: 'completed',
+                output: [item],
+                usage: {
+                  input_tokens: 10,
+                  output_tokens: 2,
+                  total_tokens: 12,
+                  input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+                },
+              },
+            },
+          ])
+            response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+          response.end();
+        }
       } catch {
         response.writeHead(503, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ error: 'SYNTHETIC_ADMISSION_REFUSED' }));
@@ -84,6 +130,7 @@ for (const limit of [1, 2])
         connection: {
           id: 'synthetic-provider',
           name: 'Synthetic provider',
+          api,
           baseURL: `${origin}/v1`,
           models: [
             {
@@ -147,6 +194,10 @@ for (const limit of [1, 2])
         JSON.stringify({ phase: job.phase, error: job.error, attempts: job.attemptSummary }),
       ).toBe(limit);
       expect(budget.requests).toBe(sends);
+      expect(
+        budget.receipts.every((receipt) => receipt.scope.budgetId === job.budget!.budgetId),
+      ).toBe(true);
+      expect(budget.receipts.every((receipt) => receipt.routeKey.includes(api))).toBe(true);
       expect(observations).toEqual(Array.from({ length: sends }, (_, index) => index + 1));
       expect(budget.unknownCount).toBe(1);
       if (limit === 1) {
@@ -162,4 +213,5 @@ for (const limit of [1, 2])
       await new Promise((resolve) => server.close(resolve));
       await rm(root, { recursive: true, force: true });
     }
-  });
+  },
+);
