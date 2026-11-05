@@ -78,7 +78,12 @@ export class Knowledge {
     const client = new DatabaseSync(this.file);
     try {
       configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
-      this.db = migrate(client, migrations, legacy);
+      this.db = migrate(client, migrations, legacy, [
+        {
+          name: '20261104182542_project-memory',
+          hash: '400df9992d2b2580a503ea138acbd6f35cd332c02c44483e188c1768ea2570b4',
+        },
+      ]);
     } catch (error) {
       client.close();
       if (

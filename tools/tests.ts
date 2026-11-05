@@ -18,6 +18,7 @@ export const suites = {
     'upgrade.integration',
     'bundle-migration.test',
     'database.test',
+    'retired-stores.test',
     'commands.test',
     'risk.test',
     'documents.test',
@@ -148,6 +149,8 @@ export const suites = {
   ],
   integrations: [
     'oauth-store.test',
+    'oauth-providers.test',
+    'oauth-client.test',
     'oauth-fetch.test',
     'oauth.test',
     'oauth-api.test',

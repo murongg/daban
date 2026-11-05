@@ -37,7 +37,7 @@ import {
 import { and, asc, count, desc, eq, inArray, lt, lte, type SQL, sql } from 'drizzle-orm';
 import type { Attachments } from './attachments.js';
 import { errorCode, Fault } from './control.js';
-import { configure, type Database, migrate } from './database.js';
+import { configure, type Database, migrate, migrationApplied } from './database.js';
 import { migrations } from './groups-migrations.js';
 import {
   groupActions,
@@ -158,11 +158,62 @@ export class Groups {
     const client = new DatabaseSync(this.file);
     try {
       configure(client, { journal: 'WAL', foreignKeys: true });
-      this.db = migrate(client, migrations, legacy);
+      this.db = migrate(client, migrations, legacy, [
+        {
+          name: '20261104110815_delivery-reference',
+          hash: 'c2725ed1a22a373fa6331400c96f8caf3dc2bed8417eda602708f07b4ccaa345',
+        },
+        {
+          name: '20261105075222_delivery-origins',
+          hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        },
+      ]);
       this.db.insert(groupMeta).values({ id: 1, revision: 0 }).onConflictDoNothing().run();
     } catch (error) {
       client.close();
       throw error;
+    }
+    // This removed column has no active schema mapping. Read it only to retire queued effects from closed Delivery provenance.
+    if (
+      migrationApplied(this.db, {
+        name: '20261104110815_delivery-reference',
+        hash: 'c2725ed1a22a373fa6331400c96f8caf3dc2bed8417eda602708f07b4ccaa345',
+      })
+    ) {
+      const retired = this.db.all<{ grp: string; turn: string }>(
+        sql`SELECT grp, turn FROM group_collaborations WHERE delivery IS NOT NULL`,
+      );
+      for (const row of retired)
+        this.db.transaction((tx) => {
+          const deliveries = tx
+            .update(groupDeliveries)
+            .set({ state: 'cancelled', error: 'DELIVERY_RETIRED' })
+            .where(
+              and(
+                eq(groupDeliveries.grp, row.grp),
+                eq(groupDeliveries.source, row.turn),
+                inArray(groupDeliveries.state, live),
+              ),
+            )
+            .run();
+          const turns = tx
+            .update(groupTurns)
+            .set({ state: 'cancelled' })
+            .where(
+              and(
+                eq(groupTurns.grp, row.grp),
+                eq(groupTurns.id, row.turn),
+                inArray(groupTurns.state, waiting),
+              ),
+            )
+            .run();
+          // Invalidate cached pages on retirement, while keeping ordinary reopens idempotent.
+          if (Number(deliveries.changes) + Number(turns.changes) > 0)
+            tx.update(groupMeta)
+              .set({ revision: sql`${groupMeta.revision} + 1` })
+              .where(eq(groupMeta.id, 1))
+              .run();
+        });
     }
     for (const row of this.db.select().from(groupDefs).all()) this.definition(row);
     for (const row of this.db

@@ -266,6 +266,8 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  /** Archived provenance is a recovery refusal, never current Delivery authority. */
+  delivery?: unknown;
   contextCaptures?: ContextArchive;
   contextCaptureFailed?: true;
   approvalMode?: ApprovalMode;
@@ -532,6 +534,7 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'delivery',
       'budget',
       'activeMs',
       'attemptSummary',
@@ -686,7 +689,8 @@ export class TaskJournal {
       if (task.runId === record.runId) contribution = { toolCount: tools, activeMs: counters[2] };
       if (!Number.isSafeInteger(toolCount) || !Number.isSafeInteger(activeMs))
         throw new Fault('INVALID_RETRY', 400);
-      blocked ||= modelRecoveryBlocked(task);
+      // Retired Delivery history cannot acquire ordinary retry authority.
+      blocked ||= task.delivery !== undefined || modelRecoveryBlocked(task);
     }
     return {
       record: structuredClone(record),
