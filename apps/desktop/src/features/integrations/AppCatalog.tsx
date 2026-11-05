@@ -11,7 +11,7 @@ import type {
 } from '@daban/protocol';
 import { isAppCatalog, isAppDirectory } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRuntime } from '../../app/Runtime';
+import { runtimeError, useRuntime } from '../../app/Runtime';
 import { Dialog } from '../../components/controls/Dialog';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 
@@ -49,6 +49,8 @@ const activePhase = (receipt?: AppOAuthReceipt) =>
   !!receipt && ['preparing', 'waiting', 'exchanging'].includes(receipt.phase);
 function errorText(error: unknown) {
   const code = error instanceof Error ? error.message : '';
+  if (['MCP_NAME_CONFLICT', 'MCP_CONNECTION_LIMIT', 'MCP_STORAGE_LIMIT'].includes(code))
+    return runtimeError(error);
   return t(
     code === 'OAUTH_BROWSER_UNAVAILABLE'
       ? 'apps.browserUnavailable'
@@ -211,7 +213,31 @@ export function AppCatalog({
           ? { type: 'app.oauth.start' as const, input: { ...input, app: 'notion' as const } }
           : undefined;
     if (!command) throw Error('OAUTH_UPGRADE_REQUIRED');
-    await accept(await runtime.command<AppOAuthReceipt>(command), input);
+    try {
+      await accept(await runtime.command<AppOAuthReceipt>(command), input);
+    } catch (cause) {
+      // These rejections precede reservation/provider IO. Ambiguous replies retain the original nonce instead.
+      if (
+        cause instanceof Error &&
+        [
+          'MCP_NAME_CONFLICT',
+          'MCP_CONNECTION_LIMIT',
+          'MCP_STORAGE_LIMIT',
+          'OAUTH_CONFLICT',
+          'OAUTH_CONNECTION_MISMATCH',
+          'MCP_NOT_FOUND',
+          'MCP_SHARED_READ_ONLY',
+        ].includes(cause.message) &&
+        live.current &&
+        owner.current === bot &&
+        currentPending.current?.requestId === input.requestId
+      ) {
+        currentPending.current = undefined;
+        setPending(undefined);
+        if (input.revision === 0) setEditor({ app: input.app, name: input.name ?? '' });
+      }
+      throw cause;
+    }
   }
   useEffect(() => {
     if (!receipt || !pending || !activePhase(receipt)) return;
@@ -433,7 +459,7 @@ export function AppCatalog({
           </button>
         )}
       </details>
-      {error && (
+      {error && !editor && (
         <p role="alert" className="form-error">
           {error}
         </p>
@@ -508,6 +534,11 @@ export function AppCatalog({
           onClose={() => setEditor(undefined)}
           closeDisabled={busy}
         >
+          {error && (
+            <p role="alert" className="form-error">
+              {error}
+            </p>
+          )}
           <form
             onSubmit={async (event) => {
               event.preventDefault();

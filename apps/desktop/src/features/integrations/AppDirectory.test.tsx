@@ -83,6 +83,7 @@ function fixture({ native = true, connected = false, failure = '' } = {}) {
     attemptsMore: false,
   };
   let unknown = false;
+  let nameConflict = false;
   let phase: AppOAuthPhase = 'waiting';
   let started: AppConnect | undefined;
   const receipt = (input: AppConnect) => ({
@@ -122,6 +123,10 @@ function fixture({ native = true, connected = false, failure = '' } = {}) {
         },
       };
     if (command.type === 'app.oauth.connect') {
+      if (nameConflict) {
+        nameConflict = false;
+        return { ok: false, error: 'MCP_NAME_CONFLICT' };
+      }
       started = command.input;
       if (unknown) {
         unknown = false;
@@ -158,6 +163,9 @@ function fixture({ native = true, connected = false, failure = '' } = {}) {
     directory,
     row,
     changed,
+    rejectName: () => {
+      nameConflict = true;
+    },
     unknown: () => {
       unknown = true;
     },
@@ -313,4 +321,23 @@ it('shows one account row and changes the primary next step only after an explic
   );
   expect(f.commands.filter((c) => c.type === 'mcp.check')).toHaveLength(1);
   expect(f.commands.some((c) => c.type === 'mcp.bind')).toBe(false);
+});
+
+it('returns a definite name conflict to the editor instead of trapping an unstarted authorization nonce', async () => {
+  const f = fixture();
+  f.rejectName();
+  show(f);
+  await userEvent.click(await screen.findByRole('button', { name: '连接 Linear' }));
+  await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
+  const editor = await screen.findByRole('dialog');
+  expect(within(editor).getByRole('alert')).toHaveTextContent('名称');
+  const name = within(editor).getByRole('textbox', { name: '连接名称' });
+  await userEvent.clear(name);
+  await userEvent.type(name, 'Synthetic second account');
+  await userEvent.click(within(editor).getByRole('button', { name: '在系统浏览器中授权' }));
+  await screen.findByText('请在系统浏览器中完成授权');
+  const starts = f.commands.filter((command) => command.type === 'app.oauth.connect');
+  expect(starts).toHaveLength(2);
+  expect(starts[1].input.name).toBe('Synthetic second account');
+  expect(starts[1].input.requestId).not.toBe(starts[0].input.requestId);
 });
