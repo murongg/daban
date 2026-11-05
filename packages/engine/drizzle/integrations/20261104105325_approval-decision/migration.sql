@@ -1,0 +1,1 @@
+ALTER TABLE `call_receipts` ADD `policyDecision` text;

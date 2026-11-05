@@ -63,7 +63,7 @@ test('only the saved output of the accepted run is a signal; replacing its bytes
       memory: '',
       color: 'mint',
     });
-    await models.start('mock-bot', task, undefined, source);
+    await models.start('mock-bot', task, undefined, { automation: source });
     const job = models.jobs.get('mock-bot')!;
     await job.done;
     expect(job.phase, job.error).toBe('completed');

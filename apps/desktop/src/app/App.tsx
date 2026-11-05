@@ -1096,7 +1096,7 @@ function Workbench() {
         ) : state.view === 'gallery' ? (
           <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
         ) : state.view === 'tasks' ? (
-          <Tasks state={state} dispatch={dispatch} work={work} />
+          <Tasks state={state} dispatch={dispatch} work={work} notify={notify} />
         ) : state.view === 'inbox' ? (
           <Inbox
             state={state}

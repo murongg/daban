@@ -2,14 +2,21 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
+  approvalRulesCapability,
   automationCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  deliveryAction,
+  deliveryKey,
   diagnosticModel,
   disconnected,
   groupCopyKey,
   imageProtocol,
+  isApprovalRuleReceipt,
+  isApprovalRulesCommand,
+  isApprovalRulesSnapshot,
+  isApprovalRulesStatus,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
@@ -33,6 +40,10 @@ import {
   isChatStatus,
   isComputerAck,
   isComputerStatus,
+  isDeliveryChecklist,
+  isDeliveryCommand,
+  isDeliveryPage,
+  isDeliveryReceipt,
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
@@ -73,6 +84,7 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isPolicyDecision,
   isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
@@ -118,6 +130,8 @@ import {
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  recoveryReader,
+  sameApprovalScope,
   sameProjectScope,
   sameTranscriptScope,
   unavailableLocalComputer,
@@ -127,6 +141,7 @@ import {
   workKey,
   workQueryKey,
 } from '@daban/protocol';
+import { matchesApprovalReceipt } from '../shared/approval';
 import type { MessageKey } from '../shared/locale';
 import { isTaskReceipt } from '../shared/receipt';
 
@@ -340,6 +355,7 @@ export class RuntimeClient {
         'x-daban-automation': automationCapability,
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
+        'x-daban-approval-rules': approvalRulesCapability,
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: data === undefined ? undefined : JSON.stringify(data),
@@ -388,6 +404,7 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         clientProtocol?: number;
+        approvalRules?: unknown;
         botCapabilities?: unknown;
         searchSettings?: unknown;
         localComputer?: unknown;
@@ -417,6 +434,7 @@ export class RuntimeClient {
           documentParsing?: unknown;
         };
         work?: unknown;
+        delivery?: unknown;
         notes?: unknown;
         mode?: string;
         computerError?: unknown;
@@ -503,6 +521,9 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      if (raw.delivery !== undefined && raw.delivery !== true)
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (raw.delivery === true) snapshot.delivery = true;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
       if (raw.searchSettings === true) snapshot.searchSettings = true;
@@ -560,6 +581,15 @@ export class RuntimeClient {
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
+      if (raw.approvalRules !== undefined)
+        snapshot.approvalRules = isApprovalRulesStatus(raw.approvalRules)
+          ? raw.approvalRules
+          : {
+              capability: approvalRulesCapability,
+              available: false,
+              revision: 0,
+              error: 'INVALID_RUNTIME_STATE',
+            };
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
           ? raw.software
@@ -831,6 +861,91 @@ export class RuntimeClient {
         value.checkRevision !== captured.input.checkRevision + 1
       )
         throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    if (isDeliveryCommand(command)) {
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.delivery !== true) throw new Error('RUNTIME_TOO_OLD');
+      if (recoveryBlocked(state) && !recoveryReader(captured))
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      const action = captured.type.slice(9);
+      const route =
+        (
+          {
+            'checklist.get': 'checklist/get',
+            'checklist.write': 'checklist/write',
+            'checklist.receipt': 'checklist/receipt',
+            'file.bind': 'file/bind',
+            'file.bind-receipt': 'file/bind-receipt',
+          } as Record<string, string>
+        )[action] ?? action;
+      const value = await this.workApi(
+        `/api/delivery/${route}`,
+        'query' in captured ? captured.query : captured.request,
+        state.protocolVersion,
+      );
+      if (captured.type === 'delivery.get') {
+        if (
+          !isDeliveryPage(value) ||
+          value.workId !== captured.query.workId ||
+          value.attempts.length > (captured.query.limit ?? 20) ||
+          (captured.query.before !== undefined &&
+            value.attempts.some((attempt) => attempt.sequence >= captured.query.before!))
+        )
+          throw new Error('INVALID_DELIVERY_PAGE');
+      } else if (captured.type === 'delivery.checklist.get') {
+        if (!isDeliveryChecklist(value) || value.workId !== captured.query.workId)
+          throw new Error('INVALID_DELIVERY_CHECKLIST');
+      } else {
+        const owner = deliveryAction(action);
+        if (
+          !isDeliveryReceipt(value) ||
+          deliveryKey(owner, value.request) !== deliveryKey(owner, captured.request) ||
+          (!action.endsWith('receipt') && value.state !== 'complete')
+        )
+          throw new Error('INVALID_DELIVERY_RECEIPT');
+        if (value.state === 'complete' && 'attempt' in value) {
+          if (
+            ('attemptId' in captured.request &&
+              value.attempt.attemptId !== captured.request.attemptId) ||
+            (owner === 'start' &&
+              (value.attempt.requestId !== captured.request.requestId ||
+                !('bot' in captured.request) ||
+                value.attempt.bot !== captured.request.bot))
+          )
+            throw new Error('INVALID_DELIVERY_RECEIPT');
+        }
+      }
+      return value;
+    }
+    if (isApprovalRulesCommand(command)) {
+      const captured = structuredClone(command);
+      const scope =
+        captured.type === 'approval.rules.write' ? captured.request.scope : captured.scope;
+      const state = await this.status();
+      if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
+        throw new Error('APPROVAL_UPGRADE_REQUIRED');
+      if (!state.approvalRules.available) throw new Error('APPROVAL_RULES_UNAVAILABLE');
+      const value = await this.api(
+        `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
+        captured,
+      );
+      const valid =
+        captured.type === 'approval.rules.list'
+          ? isApprovalRulesSnapshot(value) && sameApprovalScope(value.scope, scope)
+          : captured.type === 'approval.rules.preview'
+            ? isPolicyDecision(value) &&
+              sameApprovalScope(value.scope, scope) &&
+              value.trigger === captured.trigger &&
+              JSON.stringify(value.selector) === JSON.stringify(captured.selector)
+            : captured.type === 'approval.rules.write'
+              ? matchesApprovalReceipt(value, captured.request)
+              : isApprovalRuleReceipt(value) &&
+                sameApprovalScope(value.scope, scope) &&
+                value.requestId === captured.requestId;
+      if (!valid) throw new Error('INVALID_RUNTIME_STATE');
       return value;
     }
     if (command.type.startsWith('budget.')) {

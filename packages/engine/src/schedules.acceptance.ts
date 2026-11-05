@@ -9,6 +9,15 @@ import { Schedules } from './schedules.js';
 import { ModelSettings } from './settings.js';
 import type { RawModelTask } from './snapshot.js';
 
+function scheduleRunner(models: ModelRuns): ConstructorParameters<typeof Schedules>[0]['runner'] {
+  return {
+    running: (bot) => models.running(bot),
+    findRequest: (bot, request) => models.findRequest(bot, request),
+    start: (bot, task, _scope, source) =>
+      models.start(bot, task, undefined, { automation: source }),
+  };
+}
+
 // Paid manual check: real wall-clock timers and DSH, synthetic task content only.
 export async function acceptSchedules(output = '/tmp/daban-schedules-live.json') {
   assert.equal(process.platform, 'linux');
@@ -53,7 +62,10 @@ export async function acceptSchedules(output = '/tmp/daban-schedules-live.json')
     };
     models = new ModelRuns(modelOptions);
     await models.ready;
-    const options = { file: path.join(directory, 'schedules.sqlite'), runner: models };
+    const options = {
+      file: path.join(directory, 'schedules.sqlite'),
+      runner: scheduleRunner(models),
+    };
     schedules = new Schedules(options);
     for (const bot of ['alpha', 'beta'])
       await schedules.create({
@@ -125,7 +137,7 @@ export async function acceptSchedules(output = '/tmp/daban-schedules-live.json')
     await models.close();
     models = new ModelRuns(modelOptions);
     await models.ready;
-    schedules = new Schedules({ ...options, runner: models });
+    schedules = new Schedules({ ...options, runner: scheduleRunner(models) });
     await schedules.tick();
     assert.equal(
       (await schedules.list()).reduce((total, item) => total + item.history.length, 0),

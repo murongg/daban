@@ -8,6 +8,7 @@ import { Groups } from './groups.js';
 import { inferenceFixture } from './inference.fixture.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
+import type { RunProvenance } from './tasks.js';
 
 const source: AutomationSource = {
   scheduleId: 'mock-schedule',
@@ -77,9 +78,9 @@ test('group collaborators inherit trusted trigger origin across restart and do n
       _bot: string,
       task: TaskRequest,
       scope: { id: string; context: string },
-      origin?: AutomationSource,
+      origin?: RunProvenance,
     ) => {
-      calls.push(origin);
+      calls.push(origin?.automation);
       receipts.set(task.requestId, {
         runId: `mock-run-${calls.length}`,
         phase: 'completed',
@@ -164,7 +165,7 @@ test('a scheduled firing shares its default SDK tool allowance with a named memb
     groupRunning: (group) => models.groupRunning(group),
     admit: (bot) => models.admit(bot),
     findRequest: (bot, request) => models.findRequest(bot, request),
-    start: (bot, task, scope, automation) => models.start(bot, task, scope, automation),
+    start: (bot, task, scope, provenance) => models.start(bot, task, scope, provenance),
     stopRequest: (bot, request, group) => models.stopRequest(bot, request, group),
   });
   const schedules = new Schedules({
@@ -178,7 +179,7 @@ test('a scheduled firing shares its default SDK tool allowance with a named memb
       running: (bot) => models.running(bot),
       admit: (bot) => models.admit(bot),
       findRequest: (bot, request) => models.findRequest(bot, request),
-      start: (bot, task, _scope, automation) => models.start(bot, task, undefined, automation),
+      start: (bot, task, _scope, automation) => models.start(bot, task, undefined, { automation }),
     },
   });
   try {

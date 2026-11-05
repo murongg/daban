@@ -18,6 +18,7 @@ import type { Action, State } from '../../app/state';
 import { serialize } from '../../app/storage';
 import { Dialog } from '../../components/controls/Dialog';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
+import { Rules } from '../approvals/Rules';
 import { ArchiveList } from '../bots/Archive';
 import { Budgets } from '../budgets/Budgets';
 import { Diagnostics } from '../computer/Diagnostics';
@@ -246,6 +247,13 @@ export function Settings({
       icon: Plug,
       description: t('settings.connectMcpServicesManageExternalToolsBots'),
       content: <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />,
+    },
+    {
+      id: 'approval-rules',
+      label: t('rules.title'),
+      icon: Settings2,
+      description: t('rules.settingsHint'),
+      content: <Rules bots={state.bots} />,
     },
     {
       id: 'archive',

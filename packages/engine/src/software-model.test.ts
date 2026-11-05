@@ -13,8 +13,8 @@ const plan: SoftwarePlan = {
   targets: [{ name: 'mock-calculator', version: '1.0-1' }],
   packages: [{ name: 'mock-calculator', version: '1.0-1' }],
   source: 'debian',
-  createdAt: '2026-01-01T00:00:00Z',
-  expiresAt: '2026-01-01T00:10:00Z',
+  createdAt: '2099-01-01T00:00:00Z',
+  expiresAt: '2099-01-01T00:10:00Z',
   digest: 'a'.repeat(64),
 };
 test('model RPC cannot forge installation consent; only the routed server tool can create the bound approval', async () => {

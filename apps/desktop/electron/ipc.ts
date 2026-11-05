@@ -1,5 +1,6 @@
 import {
   isApprovalMode,
+  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -19,6 +20,7 @@ import {
   isBudgetCommand,
   isChatRequest,
   isComputerRequest,
+  isDeliveryCommand,
   isDocumentUpload,
   isGoalResumeTarget,
   isGroupActionRequest,
@@ -88,7 +90,9 @@ export function safeRelative(value: unknown): value is string {
   );
 }
 export function parseCommand(value: unknown): RuntimeCommand {
+  if (isApprovalRulesCommand(value)) return value;
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('delivery.')) return isDeliveryCommand(value) ? value : fail();
   if (isAutomationCommand(value)) return value;
   if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();

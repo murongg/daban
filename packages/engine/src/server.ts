@@ -5,6 +5,7 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  approvalRulesCapability,
   automationCapability,
   type BudgetIncreaseRequest,
   botBundleLimit,
@@ -12,6 +13,8 @@ import {
   type Group,
   type GroupPage,
   goalResumeKey,
+  type Interaction,
+  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -30,6 +33,7 @@ import {
   isBudgetPolicy,
   isChatRequest,
   isComputerRequest,
+  isDeliveryCommand,
   isDocumentUpload,
   isExecutionSnapshot,
   isGoalBudgetOwner,
@@ -81,10 +85,12 @@ import {
   sameProjectScope,
   validAgentId,
 } from '@daban/protocol';
+import { approvalCommand } from './approval-api.js';
 import { Authority, ViewerGrants } from './authority.js';
 import { Commands } from './commands.js';
 import { Computers } from './computers.js';
 import { errorCode, Fault } from './control.js';
+import { Delivery } from './delivery.js';
 import { createDesktop, Desktop, type DesktopOptions } from './desktop.js';
 import { Diagnostics, desktopDependencies } from './diagnostics.js';
 import { Documents } from './documents.js';
@@ -185,6 +191,9 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/approval-rules/list',
+  '/api/approval-rules/receipt',
+  '/api/approval-rules/preview',
   '/api/budgets/goal',
   '/api/budgets/settings',
   '/api/budgets/read',
@@ -196,6 +205,13 @@ const recoveryReads = new Set([
   '/api/notes/list',
   '/api/notes/read',
   '/api/notes/receipt',
+  '/api/delivery/get',
+  '/api/delivery/receipt',
+  '/api/delivery/checklist/get',
+  '/api/delivery/checklist/receipt',
+  '/api/delivery/file/bind-receipt',
+  '/api/delivery/decision-receipt',
+  '/api/delivery/stop-receipt',
   '/api/work/list',
   '/api/work/read',
   '/api/work/receipt',
@@ -387,6 +403,7 @@ export async function startPrototype({
   let models: ModelRuns | undefined;
   let schedules: Schedules | undefined;
   let groups: Groups | undefined;
+  let delivery: Delivery | undefined;
   let lifecycle: BotLifecycle | undefined;
   let recovery: Recovery | undefined;
   let commands: Commands | undefined;
@@ -666,6 +683,20 @@ export async function startPrototype({
           return json(res, value);
         }
         const groupProtocol = req.headers['x-daban-client-protocol'];
+        const modernApprovals = req.headers['x-daban-approval-rules'] === approvalRulesCapability;
+        const interactionView = (item: Interaction) => {
+          if (modernApprovals) return item;
+          const { policyDecision: _policy, purposeScope: _purpose, reply, ...legacy } = item;
+          return {
+            ...legacy,
+            ...(reply
+              ? {
+                  reply:
+                    reply.kind === 'decision' ? { kind: reply.kind, allow: reply.allow } : reply,
+                }
+              : {}),
+          };
+        };
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
             ? Number(groupProtocol)
@@ -937,6 +968,36 @@ export async function startPrototype({
                 : await models.notes.receipt(command.bot, command.request, { kind: 'human' }),
             );
           }
+          if (url.pathname.startsWith('/api/delivery/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_DELIVERY_REQUEST', 400);
+            if (!models) throw new Fault('WORK_UNAVAILABLE', 503);
+            const data = await body(req);
+            const action = (
+              {
+                '/api/delivery/get': 'get',
+                '/api/delivery/start': 'start',
+                '/api/delivery/receipt': 'receipt',
+                '/api/delivery/decide': 'decide',
+                '/api/delivery/decision-receipt': 'decision-receipt',
+                '/api/delivery/stop': 'stop',
+                '/api/delivery/stop-receipt': 'stop-receipt',
+                '/api/delivery/checklist/get': 'checklist.get',
+                '/api/delivery/checklist/write': 'checklist.write',
+                '/api/delivery/checklist/receipt': 'checklist.receipt',
+                '/api/delivery/file/bind': 'file.bind',
+                '/api/delivery/file/bind-receipt': 'file.bind-receipt',
+              } as Record<string, string>
+            )[url.pathname];
+            if (!action) throw new Fault('INVALID_DELIVERY_REQUEST', 400);
+            const command: unknown = {
+              type: `delivery.${action}`,
+              ...(['get', 'checklist.get'].includes(action) ? { query: data } : { request: data }),
+            };
+            if (!isDeliveryCommand(command)) throw new Fault('INVALID_DELIVERY_REQUEST', 400);
+            if (!delivery) throw new Fault('DELIVERY_UNAVAILABLE', 503);
+            return json(res, await delivery.command(command));
+          }
           if (url.pathname.startsWith('/api/work/')) {
             if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
             if (url.search) throw new Fault('INVALID_WORK_REQUEST', 400);
@@ -1025,6 +1086,18 @@ export async function startPrototype({
             if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
             return json(res, await diagnostics.inspect());
           }
+          if (url.pathname.startsWith('/api/approval-rules/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (!models) throw new Fault('APPROVAL_RULES_UNAVAILABLE', 503);
+            const command = await body(req);
+            if (
+              url.search ||
+              !isApprovalRulesCommand(command) ||
+              command.type !== `approval.rules.${url.pathname.slice('/api/approval-rules/'.length)}`
+            )
+              throw new Fault('INVALID_APPROVAL_RULE', 400);
+            return json(res, await approvalCommand(models, command));
+          }
           if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
             if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
             const data = await body(req);
@@ -1037,7 +1110,34 @@ export async function startPrototype({
             const cancel = () => controller.abort();
             res.once('close', cancel);
             try {
-              return json(res, await integrationCommand(models, data, controller.signal));
+              const result = await integrationCommand(models, data, controller.signal);
+              if (
+                !modernApprovals &&
+                data.type === 'mcp.receipt' &&
+                result &&
+                typeof result === 'object' &&
+                'policyDecision' in result
+              ) {
+                const { policyDecision: _decision, ...legacy } = result;
+                return json(res, legacy);
+              }
+              if (
+                !modernApprovals &&
+                data.type === 'mcp.calls' &&
+                result &&
+                typeof result === 'object' &&
+                'items' in result &&
+                Array.isArray(result.items)
+              )
+                return json(res, {
+                  ...result,
+                  items: result.items.map((item) => {
+                    if (!('policyDecision' in item)) return item;
+                    const { policyDecision: _decision, ...legacy } = item;
+                    return legacy;
+                  }),
+                });
+              return json(res, result);
             } finally {
               res.off('close', cancel);
             }
@@ -1344,7 +1444,7 @@ export async function startPrototype({
                   },
                   undefined,
                   command.budget,
-                  record.automation,
+                  { automation: record.automation, delivery: record.delivery },
                 );
                 return json(res, {
                   budget: command.budget,
@@ -1925,6 +2025,7 @@ export async function startPrototype({
                   ? { computers: runtime.status() }
                   : {}),
               groups: await groupStatus(groups, modernGroups),
+              ...(delivery ? { delivery: true } : {}),
               work: models
                 ? await models.work.status()
                 : { available: false, error: 'WORK_UNAVAILABLE' },
@@ -1938,7 +2039,10 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
-              interactions: models ? await models.interactions.list() : [],
+              interactions: models ? (await models.interactions.list()).map(interactionView) : [],
+              ...(modernApprovals && models
+                ? { approvalRules: await models.approvalRules.status() }
+                : {}),
               schedules: await scheduleStatus(
                 schedules,
                 req.headers['x-daban-automation'] === automationCapability,
@@ -2031,12 +2135,15 @@ export async function startPrototype({
                 Object.keys(data).some((key) => !['id', 'runId', 'reply'].includes(key)) ||
                 !validAgentId(data.id) ||
                 !validAgentId(data.runId) ||
-                !isUserReply(data.reply)
+                !isUserReply(data.reply) ||
+                (!modernApprovals && data.reply.kind === 'decision' && data.reply.confirmPurpose)
               )
                 throw new Fault('INVALID_INTERACTION_REPLY', 400);
               return json(
                 res,
-                await models.interactions.reply(id, data.runId, data.id, data.reply),
+                interactionView(
+                  await models.interactions.reply(id, data.runId, data.id, data.reply),
+                ),
               );
             }
             if (action === 'profile' && models) {
@@ -2403,11 +2510,12 @@ export async function startPrototype({
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),
           interactions: models.interactions,
+          policy: models.rulePolicy,
           review: new Risk({
             settings,
             meter: (request, api, fetcher) => models!.meterReview(request, api, fetcher),
             resolve: async (request) => models?.reviewModel(request.bot, request.runId) ?? null,
-          }).review,
+          }).details,
           assertLive: (run) => {
             if (replacingRecovery || !recovery!.admit())
               throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -2441,7 +2549,7 @@ export async function startPrototype({
                 chatRevision: models!.chats.current(bot).revision,
               },
               undefined,
-              source,
+              { automation: source },
             ),
         },
       });
@@ -2464,14 +2572,15 @@ export async function startPrototype({
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
-          start: (bot, task, scope, automation) =>
+          start: (bot, task, scope, provenance) =>
             task.goalResume
-              ? models!.startHuman(bot, task, scope, scope.budget, automation)
-              : models!.start(bot, task, scope, automation),
+              ? models!.startHuman(bot, task, scope, scope.budget, provenance)
+              : models!.start(bot, task, scope, provenance),
           stopRequest: (bot, id, group) => models!.stopRequest(bot, id, group),
         },
         models.attachments,
       );
+      delivery = new Delivery(models, groups, files);
       models.attachmentPinned = (owner, id) => groups!.inputBusy(owner, id);
       try {
         await groups.ready;

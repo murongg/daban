@@ -1526,6 +1526,8 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
   expect(budget.config).toStrictEqual({
     limit: 60,
     urls: ['https://example.test/'],
+    url: 'http://127.0.0.1:12345/mcp/chief',
+    capability: 'synthetic-capability',
   });
   const diagnostic = sdkPatch('http://127.0.0.1:12345', 'a', 'synthetic-capability');
   expect.assert(

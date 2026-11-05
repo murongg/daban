@@ -7,6 +7,8 @@ import type { ProjectScope } from '@daban/protocol';
 import {
   type AutomationSource,
   type BudgetScope,
+  type DeliveryReference,
+  deliveryReferenceKey,
   type GoalResumeTarget,
   type Group,
   type GroupActionAck,
@@ -21,6 +23,7 @@ import {
   goalResumeKey,
   groupCopyKey,
   isAutomationSource,
+  isDeliveryReference,
   isGroup,
   isGroupActionReceipt,
   isGroupActionRequest,
@@ -53,7 +56,7 @@ import {
   groupMeta,
   groupTurns,
 } from './groups-schema.js';
-import type { ConversationScope, RunReceipt } from './tasks.js';
+import type { ConversationScope, RunProvenance, RunReceipt } from './tasks.js';
 
 export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
@@ -68,6 +71,7 @@ export interface GroupRunner {
   ):
     | {
         intentId: string;
+        delivery?: DeliveryReference;
         budget?: BudgetScope;
         project?: ProjectScope;
         automation?: AutomationSource;
@@ -82,7 +86,7 @@ export interface GroupRunner {
     bot: string,
     task: TaskRequest,
     scope: ConversationScope,
-    automation?: AutomationSource,
+    provenance?: RunProvenance,
   ): Promise<unknown>;
   stopRequest(bot: string, requestId: string, conversationId: string): Promise<unknown>;
 }
@@ -109,6 +113,17 @@ const object = (value: unknown): value is Record<string, unknown> =>
 const live = [...activeStates];
 const claimed = ['claimed', 'running'];
 const waiting = ['pending', 'running'];
+
+function storedDelivery(value: string | null) {
+  if (value === null) return undefined;
+  try {
+    const reference: unknown = JSON.parse(value);
+    if (isDeliveryReference(reference)) return reference;
+  } catch {
+    // Invalid ownership must not turn accepted collaboration into unrelated ordinary work.
+  }
+  throw new Fault('GROUP_STORAGE_FAILED');
+}
 
 function legacy(client: DatabaseSync) {
   client.exec(`CREATE TABLE IF NOT EXISTS group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL,copy_origin TEXT);
@@ -173,6 +188,8 @@ export class Groups {
       throw error;
     }
     for (const row of this.db.select().from(groupDefs).all()) this.definition(row);
+    for (const row of this.db.select().from(groupCollaborations).all())
+      storedDelivery(row.delivery);
     for (const row of this.db
       .select()
       .from(groupDeliveries)
@@ -399,6 +416,37 @@ export class Groups {
       ...(rows.length > limit ? { nextBefore: messages[0].sequence } : {}),
     };
   }
+  private deliveryReference(group: string, source: string) {
+    const row = this.db
+      .select()
+      .from(groupCollaborations)
+      .where(and(eq(groupCollaborations.grp, group), eq(groupCollaborations.turn, source)))
+      .get();
+    return row ? storedDelivery(row.delivery) : undefined;
+  }
+  deliveryProgress(reference: DeliveryReference) {
+    if (!isDeliveryReference(reference))
+      return Promise.reject(new Fault('INVALID_DELIVERY_REFERENCE', 400));
+    return this.exclusive(() =>
+      this.db
+        .select()
+        .from(groupCollaborations)
+        .all()
+        .filter((row) => {
+          const origin = storedDelivery(row.delivery);
+          return origin && deliveryReferenceKey(origin) === deliveryReferenceKey(reference);
+        })
+        .map((row) => {
+          const turn = this.turn(row.grp, row.turn);
+          return {
+            groupId: row.grp,
+            sourceId: row.turn,
+            state: turn.state,
+            stages: this.stages(row.grp, row.turn).map((stage) => this.delivery(stage)),
+          };
+        }),
+    );
+  }
   read(id: string, before?: number, limit?: number) {
     return this.exclusive(() => this.page(id, before, limit));
   }
@@ -599,7 +647,15 @@ export class Groups {
           // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
           this.db
             .insert(groupCollaborations)
-            .values({ source: identity, grp: id, turn: sourceId, signature })
+            .values({
+              source: identity,
+              grp: id,
+              turn: sourceId,
+              signature,
+              delivery: this.runner.source?.(source.bot, source.runId)?.delivery
+                ? deliveryReferenceKey(this.runner.source(source.bot, source.runId)!.delivery!)
+                : null,
+            })
             .run();
           return { group, sourceId, reused: false };
         },
@@ -1231,7 +1287,10 @@ export class Groups {
               sourceId: String(turn.id),
               ...(turn.budget ? { budget: turn.budget } : {}),
             },
-            this.automationSource(turn.automation),
+            {
+              automation: this.automationSource(turn.automation),
+              delivery: this.deliveryReference(group.id, String(turn.id)),
+            },
           );
           this.reconcile(row, true);
         } catch (error) {
