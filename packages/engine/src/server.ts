@@ -54,6 +54,7 @@ import {
   legacyWorkList,
   legacyWorkReceipt,
   managedProtocol,
+  mcpAppsView,
   parseBotJSON,
   type RebootStatus,
   type RuntimeCommand,
@@ -972,6 +973,10 @@ export async function startPrototype({
               data.type !== `mcp.${url.pathname.slice('/api/mcp/'.length)}`
             )
               throw new Fault('INVALID_MCP_CONFIG', 400);
+            // Both client generations send protocol28; this header selects metadata only, never OAuth authority.
+            const mcpView = req.headers[mcpAppsView.header];
+            if (mcpView !== undefined && mcpView !== mcpAppsView.value)
+              throw new Fault('INVALID_MCP_VIEW', 400);
             const controller = new AbortController();
             const cancel = () => controller.abort();
             res.once('close', cancel);
@@ -985,6 +990,7 @@ export async function startPrototype({
                   appAuthority?.accepts(req.headers['x-daban-app-control'])
                     ? 'interactive'
                     : 'service',
+                  mcpView === mcpAppsView.value ? 'apps' : 'bearer',
                 ),
               );
             } finally {

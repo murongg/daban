@@ -140,6 +140,12 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
   digest: string;
 }
+export const mcpCatalogToolLimit = 128;
+// The absent view header preserves the closed 64-tool Bearer response understood by older clients.
+export const legacyMcpCatalogToolLimit = 64;
+export const mcpAppsView = { header: 'x-daban-mcp-view', value: 'apps' } as const;
+export type McpView = 'bearer' | 'apps';
+
 export interface McpConnection {
   ownerBot?: string;
   id: string;
@@ -346,7 +352,7 @@ export function isMcpConnection(value: unknown): value is McpConnection {
     typeof value.deleted === 'boolean' &&
     ['unchecked', 'ready', 'unavailable'].includes(String(value.health)) &&
     browserNumber(value.toolCount) &&
-    Number(value.toolCount) <= 64 &&
+    Number(value.toolCount) <= mcpCatalogToolLimit &&
     (value.catalogDigest === undefined || mcpHash(value.catalogDigest)) &&
     (value.health !== 'ready' || mcpHash(value.catalogDigest)) &&
     (value.checkedAt === undefined || mcpDate(value.checkedAt)) &&

@@ -1,11 +1,13 @@
 import {
   isAppOAuthReceipt,
   isMcpAssignments,
+  isMcpBindingInput,
   isMcpCatalog,
   isMcpConnection,
   isMcpHistory,
   isMcpSaved,
   isNotionAuthorizeUrl,
+  mcpAppsView,
 } from '@daban/protocol';
 import { expect, it } from 'vitest';
 import { parseCommand } from './ipc';
@@ -198,6 +200,36 @@ const saved = {
   current: connection,
 };
 
+it.each([77, 128])(
+  'validates all %i candidate tools in the public list and catalog envelopes',
+  (count) => {
+    const candidates = Array.from({ length: count }, (_, index) => ({
+      ...tool,
+      name: `synthetic_capacity_${index}`,
+      alias: `ext_${index.toString(16).padStart(20, '0')}`,
+    }));
+    const current = { ...connection, toolCount: count };
+    expect(isMcpConnection(current)).toBe(true);
+    expect(isMcpCatalog({ current, tools: candidates })).toBe(true);
+  },
+);
+
+it('keeps the candidate catalog finite and the independent binding budget at 32', () => {
+  expect(isMcpConnection({ ...connection, toolCount: 129 })).toBe(false);
+  const input = {
+    connection: connection.id,
+    configRevision: 1,
+    bindingRevision: 0,
+    catalogDigest: connection.catalogDigest,
+    enabled: true,
+    tools: Array.from({ length: 32 }, (_, index) => `synthetic_capacity_${index}`),
+  };
+  expect(isMcpBindingInput(input)).toBe(true);
+  expect(isMcpBindingInput({ ...input, tools: [...input.tools, 'synthetic_capacity_32'] })).toBe(
+    false,
+  );
+});
+
 it('accepts closed MCP metadata and exact owner envelopes but never private config or extra authority', () => {
   expect(isMcpConnection(connection)).toBe(true);
   expect(
@@ -287,6 +319,7 @@ it('versions MCP transport and rejects stale, foreign or credential-bearing repl
   let protocol = 20;
   let returned: unknown = saved;
   const posted: unknown[] = [];
+  const sentHeaders: Headers[] = [];
   const client = new RuntimeClient({
     origin: 'http://127.0.0.1:18766',
     fetcher: async (url, init) => {
@@ -300,6 +333,7 @@ it('versions MCP transport and rejects stale, foreign or credential-bearing repl
           model: 'deepseek-flash',
         });
       if (init?.method === 'POST') {
+        sentHeaders.push(new Headers(init.headers));
         posted.push({ path: new URL(url).pathname, body: JSON.parse(String(init.body)) });
         return Response.json(returned);
       }
@@ -332,6 +366,8 @@ it('versions MCP transport and rejects stale, foreign or credential-bearing repl
   expect((await client.status()).mcp?.available).toBe(true);
   expect(await client.invoke(command)).toEqual(saved);
   expect(posted.at(-1)).toEqual({ path: '/api/mcp/save', body: command });
+  expect(sentHeaders.at(-1)?.get(mcpAppsView.header)).toBe(mcpAppsView.value);
+  expect(sentHeaders.at(-1)?.get('x-daban-client-protocol')).toBe('28');
   returned = { ...saved, current: { ...connection, bearer: 'synthetic-secret' } };
   await expect(client.invoke(command)).rejects.toThrow('INVALID_RUNTIME_STATE');
   returned = { ...saved, receipt: { ...saved.receipt, id: 'mock-foreign-save' } };

@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import type { McpTool } from '@daban/protocol';
+import {
+  legacyMcpCatalogToolLimit,
+  type McpTool,
+  type McpView,
+  mcpCatalogToolLimit,
+} from '@daban/protocol';
 import { Fault } from './control.js';
 
 export type { McpTool } from '@daban/protocol';
@@ -67,11 +72,13 @@ export function mcpCatalog(
   connection: string,
   input: unknown,
   secrets: readonly string[],
+  view: McpView = 'apps',
 ): McpTool[] {
   if (!Array.isArray(input))
     rejectCatalog({ reason: 'catalog_type', path: 'tools', kind: valueKind(input) });
-  if (input.length > 64)
-    rejectCatalog({ reason: 'tool_count', path: 'tools', actual: input.length, limit: 64 });
+  const limit = view === 'bearer' ? legacyMcpCatalogToolLimit : mcpCatalogToolLimit;
+  if (input.length > limit)
+    rejectCatalog({ reason: 'tool_count', path: 'tools', actual: input.length, limit });
   const tools = input
     .map((raw: unknown, index) => {
       const path = `tools[${index}]`;

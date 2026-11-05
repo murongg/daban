@@ -1,6 +1,6 @@
-import type { AppCommand, McpCommand } from '@daban/protocol';
+import type { AppCommand, McpCommand, McpView } from '@daban/protocol';
 import { appCatalog } from './app-catalog.js';
-import { Fault } from './control.js';
+import { errorCode, Fault } from './control.js';
 import type { ModelRuns } from './model.js';
 
 export async function appCommand(
@@ -38,36 +38,46 @@ export async function integrationCommand(
   command: McpCommand,
   signal?: AbortSignal,
   origin: 'interactive' | 'service' = 'service',
+  view: McpView = 'apps',
 ) {
   if (command.bot !== undefined && !(await models.profiles.get(command.bot)))
     throw new Fault('MCP_BOT_NOT_FOUND', 404);
   const store = models.integrations;
   switch (command.type) {
     case 'mcp.list':
-      return store.list(command.includeDeleted, command.bot);
-    case 'mcp.save':
+      return store.list(command.includeDeleted, command.bot, view);
+    case 'mcp.save': {
+      if (view === 'bearer') {
+        try {
+          await store.read(command.input.id, command.bot, view);
+        } catch (error) {
+          if (errorCode(error) !== 'MCP_NOT_FOUND') throw error;
+        }
+      }
       return store.save(command.input, command.bot);
+    }
     case 'mcp.saved':
-      return store.saved(command.id, command.connection, command.bot);
+      return store.saved(command.id, command.connection, command.bot, view);
     case 'mcp.catalog':
-      return store.catalogView(command.id, command.bot);
-    case 'mcp.check':
-      if (command.bot && !(await store.read(command.id, command.bot)).ownerBot)
-        throw new Fault('MCP_SHARED_READ_ONLY', 409);
-      await store.read(command.id, command.bot);
+      return store.catalogView(command.id, command.bot, view);
+    case 'mcp.check': {
+      const current = await store.read(command.id, command.bot, view);
+      if (command.bot && !current.ownerBot) throw new Fault('MCP_SHARED_READ_ONLY', 409);
       if (!models.tools.integrations) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
-      return models.tools.integrations.probe(command.id, command.revision, signal);
+      return models.tools.integrations.probe(command.id, command.revision, signal, view);
+    }
     case 'mcp.bindings':
-      return store.assignments(command.bot);
+      return store.assignments(command.bot, view);
     case 'mcp.bind':
+      await store.read(command.input.connection, command.bot, view);
       return { bot: command.bot, entry: await store.bind(command.bot, command.input) };
     case 'mcp.archive':
-      await store.read(command.id, command.bot);
+      await store.read(command.id, command.bot, view);
       if ((await store.privateConfig(command.id)).authKind === 'oauth' && origin !== 'interactive')
         throw new Fault('OAUTH_INTERACTIVE_REQUIRED', 403);
       return store.archive(command.id, command.revision, command.bot);
     case 'mcp.restore':
-      await store.read(command.id, command.bot);
+      await store.read(command.id, command.bot, view);
       if ((await store.privateConfig(command.id)).authKind === 'oauth' && origin !== 'interactive')
         throw new Fault('OAUTH_INTERACTIVE_REQUIRED', 403);
       return store.restore(command.id, command.revision, command.bot);

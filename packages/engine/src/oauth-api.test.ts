@@ -39,6 +39,7 @@ test('Host app reads are public metadata while OAuth mutations require independe
             host: '127.0.0.1:8766',
             'x-prototype-token': token,
             'content-type': 'application/json',
+            'x-daban-mcp-view': 'apps',
             ...(interactive ? { 'x-daban-app-control': interactive } : {}),
           },
         },

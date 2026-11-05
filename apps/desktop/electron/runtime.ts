@@ -100,6 +100,7 @@ import {
   isWorkList,
   isWorkReceipt,
   isWorkStatus,
+  mcpAppsView,
   noteKey,
   noteQueryKey,
   parseBotJSON,
@@ -1183,13 +1184,10 @@ export class RuntimeClient {
         current.botCapabilities !== true
       )
         throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api(
-        `/api/mcp/${command.type.slice(4)}`,
-        command,
-        true,
-        28,
-        appProof ? { 'x-daban-app-control': appProof } : {},
-      );
+      const value = await this.api(`/api/mcp/${command.type.slice(4)}`, command, true, 28, {
+        [mcpAppsView.header]: mcpAppsView.value,
+        ...(appProof ? { 'x-daban-app-control': appProof } : {}),
+      });
       let valid = false;
       switch (command.type) {
         case 'mcp.list':

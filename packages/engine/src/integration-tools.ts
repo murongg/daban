@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import type { McpView } from '@daban/protocol';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
 import { type Integrations, type McpSnapshot, mcpSecrets } from './integrations.js';
@@ -164,11 +165,11 @@ export class IntegrationTools {
       throw new Fault('MCP_AUTHORITY_CHANGED');
     return { ...current, bearer };
   }
-  probe(connection: string, revision: number, caller?: AbortSignal) {
+  probe(connection: string, revision: number, caller?: AbortSignal, view: McpView = 'apps') {
     if (this.closed) return Promise.reject(new Fault('MCP_CLOSED'));
     if (this.probes.has(connection)) return Promise.reject(new Fault('MCP_CHECK_PENDING'));
     const controller = new AbortController();
-    const promise = this.check(connection, revision, controller, caller).finally(() => {
+    const promise = this.check(connection, revision, controller, caller, view).finally(() => {
       this.probes.delete(connection);
     });
     this.probes.set(connection, { controller, promise });
@@ -179,6 +180,7 @@ export class IntegrationTools {
     revision: number,
     controller: AbortController,
     caller?: AbortSignal,
+    view: McpView = 'apps',
   ) {
     const signal = AbortSignal.any([controller.signal, ...(caller ? [caller] : [])]);
     let remote: Remote | undefined;
@@ -190,7 +192,7 @@ export class IntegrationTools {
       await remote.start(signal);
       const tools = await remote.tools(signal);
       signal.throwIfAborted();
-      return await this.store.catalog(connection, revision, tools);
+      return await this.store.catalog(connection, revision, tools, view);
     } catch (error) {
       // Provider metadata may contain secrets; only our locally constructed numeric/type diagnostic is safe to log.
       if (error instanceof McpCatalogError)

@@ -13,10 +13,12 @@ import {
   isAppOAuthStart,
   isAppTarget,
   isMcpReceipt,
+  legacyMcpCatalogToolLimit,
   type McpBindingInput,
   type McpConnection,
   type McpReceipt,
   type McpSave,
+  type McpView,
   validAgentId,
 } from '@daban/protocol';
 import { and, count, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
@@ -989,6 +991,22 @@ export class Integrations {
       updatedAt: String(row.updated),
     };
   }
+  private publicView(row: Row, view: McpView) {
+    // This is a decoder projection, not deletion: app clients and storage retain every connection.
+    // Validate before projecting so an unsupported view cannot hide corrupt stored state.
+    const connection = this.public(row);
+    if (
+      view === 'bearer' &&
+      (row.authKind !== 'bearer' || connection.toolCount > legacyMcpCatalogToolLimit)
+    )
+      return undefined;
+    return connection;
+  }
+  private requireView(row: Row, view: McpView) {
+    const connection = this.publicView(row, view);
+    if (!connection) throw new Fault('MCP_APP_VIEW_REQUIRED');
+    return connection;
+  }
   async status() {
     await this.ready;
     try {
@@ -997,11 +1015,11 @@ export class Integrations {
       return { available: false, error: 'MCP_STORE_UNAVAILABLE' };
     }
   }
-  async read(id: string, bot?: string) {
+  async read(id: string, bot?: string, view: McpView = 'apps') {
     await this.ready;
-    return this.public(this.scoped(id, bot));
+    return this.requireView(this.scoped(id, bot), view);
   }
-  async list(includeDeleted = false, bot?: string) {
+  async list(includeDeleted = false, bot?: string, view: McpView = 'apps') {
     await this.ready;
     if (bot !== undefined && !validAgentId(bot)) throw new Fault('INVALID_MCP_CONFIG', 400);
     return {
@@ -1012,19 +1030,22 @@ export class Integrations {
         .where(and(eq(integrations.deleted, Number(includeDeleted)), this.visible(bot)))
         .orderBy(integrations.name)
         .all()
-        .map((row) => this.public(row)),
+        .flatMap((row) => {
+          const connection = this.publicView(row, view);
+          return connection ? [connection] : [];
+        }),
     };
   }
   async privateConfig(id: string) {
     await this.ready;
     return this.config(this.row(id));
   }
-  async catalogView(id: string, bot?: string) {
+  async catalogView(id: string, bot?: string, view: McpView = 'apps') {
     await this.ready;
     const row = this.scoped(id, bot);
-    return { current: this.public(row), tools: this.config(row).tools };
+    return { current: this.requireView(row, view), tools: this.config(row).tools };
   }
-  async saved(id: string, connection: string, bot?: string) {
+  async saved(id: string, connection: string, bot?: string, view: McpView = 'apps') {
     await this.ready;
     if (!validAgentId(id) || !validAgentId(connection)) throw new Fault('INVALID_MCP_CONFIG', 400);
     const receipt = this.available()
@@ -1035,7 +1056,7 @@ export class Integrations {
     if (!receipt) throw new Fault('MCP_SAVE_NOT_FOUND', 404);
     return {
       receipt: { id, connection, revision: Number(receipt.revision) },
-      current: this.public(this.scoped(connection, bot)),
+      current: this.requireView(this.scoped(connection, bot), view),
     };
   }
   async save(input: McpSave, bot?: string) {
@@ -1163,13 +1184,13 @@ export class Integrations {
       current: this.public(this.row(input.id)),
     };
   }
-  async catalog(id: string, expected: number, input: unknown) {
+  async catalog(id: string, expected: number, input: unknown, view: McpView = 'apps') {
     await this.ready;
     const row = this.row(id);
     if (row.revision !== expected) throw new Fault('MCP_CONFLICT');
     if (row.deleted === 1) throw new Fault('MCP_ARCHIVED');
     const config = this.config(row),
-      tools = mcpCatalog(id, input, mcpSecrets(config)),
+      tools = mcpCatalog(id, input, mcpSecrets(config), view),
       digest = mcpDigest(tools),
       changed = digest !== row.digest;
     this.transaction(() =>
@@ -1210,7 +1231,7 @@ export class Integrations {
       .where(and(eq(integrationBindings.bot, bot), eq(integrationBindings.connection, id)))
       .get();
   }
-  async assignments(bot: string) {
+  async assignments(bot: string, view: McpView = 'apps') {
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('INVALID_MCP_CONFIG', 400);
     return {
@@ -1222,21 +1243,24 @@ export class Integrations {
         .where(and(eq(integrations.deleted, 0), this.visible(bot)))
         .orderBy(integrations.name)
         .all()
-        .map((row) => {
-          const connection = this.public(row),
-            binding = this.binding(bot, connection.id);
-          return {
-            connection,
-            revision: Number(binding?.revision ?? 0),
-            enabled: binding?.enabled === 1,
-            tools: binding ? (JSON.parse(String(binding.tools)) as string[]) : [],
-            catalogDigest: binding?.digest ? String(binding.digest) : undefined,
-            available:
-              binding?.enabled === 1 &&
-              this.config(row).authenticated &&
-              binding.configRevision === connection.revision &&
-              binding.digest === connection.catalogDigest,
-          };
+        .flatMap((row) => {
+          const connection = this.publicView(row, view);
+          if (!connection) return [];
+          const binding = this.binding(bot, connection.id);
+          return [
+            {
+              connection,
+              revision: Number(binding?.revision ?? 0),
+              enabled: binding?.enabled === 1,
+              tools: binding ? (JSON.parse(String(binding.tools)) as string[]) : [],
+              catalogDigest: binding?.digest ? String(binding.digest) : undefined,
+              available:
+                binding?.enabled === 1 &&
+                this.config(row).authenticated &&
+                binding.configRevision === connection.revision &&
+                binding.digest === connection.catalogDigest,
+            },
+          ];
         }),
     };
   }

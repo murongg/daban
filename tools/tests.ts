@@ -136,6 +136,7 @@ export const suites = {
     'office.integration',
     'network.test',
     'mcp-catalog.test',
+    'mcp-view.test',
     'mcp-fetch.test',
     'mcp.test',
     'integrations.test',

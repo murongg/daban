@@ -17,8 +17,8 @@ test.each([
     diagnostic: { reason: 'catalog_type', path: 'tools', kind: 'string' },
   },
   {
-    input: Array.from({ length: 65 }, () => tool),
-    diagnostic: { reason: 'tool_count', path: 'tools', actual: 65, limit: 64 },
+    input: Array.from({ length: 129 }, () => tool),
+    diagnostic: { reason: 'tool_count', path: 'tools', actual: 129, limit: 128 },
   },
   {
     input: [[]],
@@ -158,3 +158,82 @@ test('valid catalog boundaries preserve the complete definition, stable alias an
     ),
   ).toThrowError('MCP_SECRET_IN_CATALOG');
 });
+
+test.each([77, 128])(
+  'a bounded candidate catalog retains all %i tools and their complete digest',
+  (count) => {
+    const input = Array.from({ length: count }, (_, index) => ({
+      ...tool,
+      name: `synthetic_capacity_${index}`,
+    }));
+    const catalog = mcpCatalog('synthetic-capacity', input, []);
+    expect(catalog).toHaveLength(count);
+    const changed = input.map((entry, index) =>
+      index === count - 1 ? { ...entry, description: 'Synthetic changed final tool' } : entry,
+    );
+    const revised = mcpCatalog('synthetic-capacity', changed, []);
+    expect(mcpDigest(catalog)).not.toBe(mcpDigest(revised));
+    expect(catalog.map((entry) => entry.alias)).toEqual(revised.map((entry) => entry.alias));
+  },
+);
+
+test('candidate capacity still rejects 129 tools before processing individual definitions', () => {
+  try {
+    mcpCatalog(
+      'synthetic-capacity',
+      Array.from({ length: 129 }, () => tool),
+      [],
+    );
+    expect.unreachable('The bounded catalog must reject its first excess item');
+  } catch (error) {
+    expect(error).toMatchObject({
+      code: 'INVALID_MCP_CATALOG',
+      diagnostic: { reason: 'tool_count', actual: 129, limit: 128 },
+    });
+  }
+});
+
+test('a larger candidate count cannot evade the unchanged total-byte budget', () => {
+  const input = Array.from({ length: 77 }, (_, index) => ({
+    name: `synthetic_capacity_${index}`,
+    description: 'x'.repeat(1800),
+    inputSchema: {
+      type: 'object',
+      properties: { value: { type: 'string', description: 'y'.repeat(1800) } },
+    },
+  }));
+  expect(() => mcpCatalog('synthetic-capacity', input, [])).toThrowError('MCP_CATALOG_LIMIT');
+});
+
+test.each(['duplicate', 'schema', 'secret'] as const)(
+  'the final candidate tool still participates in %s rejection',
+  (invalid) => {
+    const input = Array.from({ length: 77 }, (_, index) => ({
+      ...tool,
+      name: `synthetic_capacity_${index}`,
+    }));
+    if (invalid === 'duplicate') input[76] = { ...input[76], name: input[0].name };
+    if (invalid === 'schema')
+      input[76] = { ...input[76], inputSchema: { ...tool.inputSchema, type: 'array' } };
+    if (invalid === 'secret')
+      input[76] = { ...input[76], description: 'synthetic-capacity-secret' };
+    const code =
+      invalid === 'duplicate'
+        ? 'MCP_CATALOG_LIMIT'
+        : invalid === 'secret'
+          ? 'MCP_SECRET_IN_CATALOG'
+          : 'INVALID_MCP_CATALOG';
+    expect(() =>
+      mcpCatalog('synthetic-capacity', input, ['synthetic-capacity-secret']),
+    ).toThrowError(code);
+    if (invalid === 'schema') {
+      try {
+        mcpCatalog('synthetic-capacity', input, []);
+      } catch (error) {
+        expect(error).toMatchObject({
+          diagnostic: { reason: 'schema_type', path: 'tools[76].inputSchema.type' },
+        });
+      }
+    }
+  },
+);
