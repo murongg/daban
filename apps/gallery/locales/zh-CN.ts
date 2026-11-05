@@ -1,5 +1,7 @@
 import type { en } from './en';
 export const zh: Record<keyof typeof en, string> = {
+  'gallery.lightTheme': '切换浅色主题',
+  'gallery.darkTheme': '切换深色主题',
   'gallery.authTitle': '登录 Daban Bot 广场',
   'gallery.githubContinue': '使用 GitHub 继续',
   'gallery.githubHint': '使用 GitHub 登录或创建账户。私有广场需管理员授权。',

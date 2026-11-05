@@ -7,6 +7,7 @@ import { Detail } from './Detail';
 import { Login } from './Login';
 import { Messages, useMessages } from './Messages';
 import { Publish } from './Publish';
+import { Theme } from './Theme';
 import { Tokens } from './Tokens';
 import { Avatar, Button, Icon } from './Ui';
 
@@ -230,6 +231,7 @@ function Workspace({ fetcher }: { fetcher: typeof fetch }) {
           )}
         </nav>
         <div className="header-account">
+          <Theme />
           {session && (
             <div className="account-copy">
               <strong data-account-name>{session.user?.name ?? session.principalId}</strong>

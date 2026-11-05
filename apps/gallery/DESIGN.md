@@ -142,7 +142,7 @@ This app-scoped record describes the built `src/app`, React components in `src/w
 - Large medium-weight headings, generous space, and a full-width search capsule.
 - Soft avatar-led tiles with compact horizontal phone layouts.
 - Pill actions, navigation, badges, and detail tabs.
-- Persistent Daban robot identity and equivalent system dark-theme states.
+- Persistent Daban robot identity and equivalent light/dark theme states.
 
 ## Colors
 
@@ -154,7 +154,7 @@ This app-scoped record describes the built `src/app`, React components in `src/w
 
 `canvas` is the page, header, form, and dialog surface. `soft` holds catalog tiles, the search capsule, secondary actions, current navigation, and the download panel; `hover` supplies quiet feedback. `ink` carries headings and active controls; `muted` carries descriptions and metadata. `line` separates detail and form regions; `line-strong` defines fields and technical disclosures.
 
-`danger` and `danger-soft` remain semantic error and destructive-action colors. The `-dark` frontmatter entries record mode equivalents applied by `prefers-color-scheme: dark`; source CSS reuses the same semantic custom-property names. Robot artwork supplies identity color without expanding the interface palette.
+`danger` and `danger-soft` remain semantic error and destructive-action colors. The `-dark` frontmatter entries record mode equivalents selected through the root `data-theme` attribute; source CSS reuses the same semantic custom-property names. Appearance follows the system until the visitor selects light or dark with the header control, then remembers that choice locally. The static export restores the preference before styles and hydration using a same-origin script, retaining the strict CSP. Robot artwork supplies identity color without expanding the interface palette.
 
 **The Neutral Action Rule.** Primary actions use the strong neutral pair; robot colors distinguish identities rather than capability, trust, or action priority.
 
@@ -194,7 +194,7 @@ Capsules define actions, search, navigation, tabs, badges, and file-selector but
 
 - **Buttons:** Minimum height (42px), comfortable padding, normal label weight, strong neutral primary actions, soft secondary actions, and transparent quiet actions. Destructive outlines retain a fine border and semantic red text. Disabled opacity is (0.45).
 - **Search and fields:** Search is a full-width soft capsule with one inset action and focus around the whole boundary. Other fields retain a canvas background, fine border, and labels separated by (10px). Phone fields use (16px) text. Errors remain beside the relevant form; uploads retain the native file selector.
-- **Header navigation:** Text-only pill items use the soft surface for current selection and hover. Account identity truncates within a bounded area; supporting account text hides on narrow screens. There is one account action.
+- **Header navigation:** Text-only pill items use the soft surface for current selection and hover. Account identity truncates within a bounded area; supporting account text hides on narrow screens. There is one account action and an adjacent 44px circular sun/moon control whose accessible name describes the next appearance.
 - **Catalog tiles:** The whole tile opens details. Existing robot artwork leads the name, useful summary, publisher, and exact version. Desktop avatars are (88px × 96px); phone tiles use (56px × 64px). Opening details focuses the heading; returning restores the selected tile.
 - **Badges and tabs:** Small capsule badges use the canvas against the soft download panel; withdrawn status uses error colors. Selected detail tabs use the strong pair, with soft unselected tabs. Version history stays separate, and technical identifiers remain under disclosures.
 - **Login dialog:** Labelled native dialog with otter mark, close control, credential field, and full-width action. Its width is `min(440px, calc(100vw - 32px))`, with padding (36px), reducing to (30px) on mobile. Preserve Escape dismissal, modal focus, and focus restoration.
