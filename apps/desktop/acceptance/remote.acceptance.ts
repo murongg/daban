@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { RemoteAccess } from '@daban/engine/remote';
-import type { RemoteIceServer } from '@daban/protocol';
+import { type Discovery, RemoteAccess } from '@daban/engine/remote';
+import type { RemoteEndpoint, RemoteIceServer } from '@daban/protocol';
 import { app, BrowserWindow } from 'electron';
 import { PeerWorker } from '../electron/peer';
 
@@ -133,11 +133,29 @@ async function verify() {
       resolve(undefined);
     };
   });
+  const offers = new Map<string, RemoteEndpoint>();
+  const discovery = (): Discovery => {
+    let published: string | undefined;
+    const unpublish = async () => {
+      if (published) offers.delete(published);
+      published = undefined;
+    };
+    return {
+      publish: async (value) => {
+        published = value.host.id;
+        offers.set(published, value);
+      },
+      find: async () => [...offers.values()],
+      unpublish,
+      close: unpublish,
+    };
+  };
   const host = new RemoteAccess({
     directory: path.join(root!, 'host'),
     name: 'Synthetic RTC host',
     platform: process.platform,
     peer: hostPeer,
+    discovery: discovery(),
     media: async () => hostPeer,
     dispatch: async (command) => {
       if (command.type === 'task.start') {
@@ -153,6 +171,7 @@ async function verify() {
     name: 'Synthetic RTC controller',
     platform: process.platform,
     peer: controllerPeer,
+    discovery: discovery(),
     dispatch: async () => {
       throw Error('WRONG_LOCAL_TARGET');
     },
@@ -160,9 +179,9 @@ async function verify() {
   try {
     await Promise.all([host.ready, controller.ready]);
     await host.command({ type: 'host', enabled: true });
-    const invitation = (await host.command({ type: 'invite' })).invitation;
-    assert.ok(invitation);
-    const pairing = controller.command({ type: 'pair', invitation });
+    const code = (await host.command({ type: 'invite' })).pairingCode?.code;
+    assert.ok(code && /^\d{6}$/.test(code));
+    const pairing = controller.command({ type: 'pair', code });
     const deadline = Date.now() + 15000;
     while (host.state().pending.length === 0 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 20));

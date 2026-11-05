@@ -19,6 +19,10 @@ export interface RemoteInvitation {
   certificate: string;
   alternatives?: string[];
 }
+export type RemoteEndpoint = Pick<
+  RemoteInvitation,
+  'host' | 'server' | 'certificate' | 'alternatives'
+>;
 export interface RemoteIceServer {
   urls: string[];
   username?: string;
@@ -118,7 +122,8 @@ export interface RemoteState {
   pending: RemotePairRequest[];
   controllers?: RemoteIdentity[];
   viewer?: RemoteViewer;
-  invitation?: string;
+  pairingCode?: { code: string; expiresAt: number };
+  pairedHost?: string;
 }
 export type RemoteCommand =
   | { type: 'view'; host: string; request: RemoteMediaRequest }
@@ -126,7 +131,7 @@ export type RemoteCommand =
   | { type: 'status' }
   | { type: 'host'; enabled: boolean }
   | { type: 'invite' }
-  | { type: 'pair'; invitation: string }
+  | { type: 'pair'; code: string }
   | { type: 'approve'; id: string; accepted: boolean }
   | { type: 'select'; host: string | null }
   | { type: 'revoke'; device: string };
@@ -196,7 +201,7 @@ export function remoteServer(value: string) {
   return url.origin;
 }
 
-function invitation(value: unknown): value is RemoteInvitation {
+export function isRemoteInvitation(value: unknown): value is RemoteInvitation {
   if (
     !record(value) ||
     !exact(value, [
@@ -232,7 +237,7 @@ function invitation(value: unknown): value is RemoteInvitation {
   }
 }
 export function remoteInvitation(value: RemoteInvitation) {
-  if (!invitation(value)) throw new Error('REMOTE_INVALID_INVITATION');
+  if (!isRemoteInvitation(value)) throw new Error('REMOTE_INVALID_INVITATION');
   return `daban://pair#${encodeURIComponent(JSON.stringify(value))}`;
 }
 export function parseRemoteInvitation(value: string, now = Date.now()): RemoteInvitation {
@@ -249,7 +254,11 @@ export function parseRemoteInvitation(value: string, now = Date.now()): RemoteIn
   )
     throw new Error('REMOTE_INVALID_INVITATION');
   const parsed: unknown = JSON.parse(decodeURIComponent(url.hash.slice(1)));
-  if (!invitation(parsed) || parsed.expiresAt <= now || parsed.expiresAt > now + 10 * 60_000)
+  if (
+    !isRemoteInvitation(parsed) ||
+    parsed.expiresAt <= now ||
+    parsed.expiresAt > now + 10 * 60_000
+  )
     throw new Error('REMOTE_INVITATION_EXPIRED');
   return parsed;
 }
@@ -379,7 +388,11 @@ export function isRemoteCommand(value: unknown): value is RemoteCommand {
     case 'host':
       return exact(value, ['type', 'enabled']) && typeof value.enabled === 'boolean';
     case 'pair':
-      return exact(value, ['type', 'invitation']) && text(value.invitation, 8192);
+      return (
+        exact(value, ['type', 'code']) &&
+        typeof value.code === 'string' &&
+        /^\d{6}$/.test(value.code)
+      );
     case 'approve':
       return (
         exact(value, ['type', 'id', 'accepted']) &&

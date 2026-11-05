@@ -3,11 +3,11 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { builtinModules, createRequire } from 'node:module';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rolldown } from 'rolldown';
+import { build } from 'vite';
 
 const project = fileURLToPath(new URL('..', import.meta.url));
 const output = path.join(project, 'outputs/remote');
@@ -19,14 +19,21 @@ const root = await mkdtemp(path.join(output, 'rtc-'));
 let turn: ChildProcess | undefined;
 try {
   await rm(path.join(output, 'webrtc.json'), { force: true });
-  const bundle = await rolldown({
-    input: path.join(project, 'apps/desktop/acceptance/remote.acceptance.ts'),
-    platform: 'node',
-    external: (id) => id === 'electron' || id.startsWith('node:') || builtinModules.includes(id),
-  });
   const entry = path.join(root, 'acceptance.cjs');
-  await bundle.write({ file: entry, format: 'cjs' });
-  await bundle.close();
+  // Exercise the same resolver as the shipped Electron main, including Node-only package exports.
+  await build({
+    configFile: path.join(project, 'apps/desktop/electron/vite.config.ts'),
+    logLevel: 'silent',
+    build: {
+      outDir: root,
+      emptyOutDir: false,
+      lib: {
+        entry: path.join(project, 'apps/desktop/acceptance/remote.acceptance.ts'),
+        formats: ['cjs'],
+        fileName: () => 'acceptance.cjs',
+      },
+    },
+  });
   const probe = net.createServer();
   await new Promise<undefined>((resolve) => probe.listen(0, '127.0.0.1', () => resolve(undefined)));
   const address = probe.address();

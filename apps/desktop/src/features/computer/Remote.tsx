@@ -1,4 +1,3 @@
-import { parseRemoteInvitation } from '@daban/protocol';
 import {
   ArrowLeft,
   Check,
@@ -8,12 +7,13 @@ import {
   Link,
   Monitor,
   Plus,
+  RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useRemote } from '../../app/Remote';
 import { Dialog } from '../../components/controls/Dialog';
-import { t, useLocale } from '../../i18n/locale';
+import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import './remote.css';
 
 type Page = 'devices' | 'join' | 'share';
@@ -22,7 +22,7 @@ export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'h
   const remote = useRemote();
   const [open, setOpen] = useState(false),
     [page, setPage] = useState<Page>('devices');
-  const [invitation, setInvitation] = useState('');
+  const [pairingCode, setPairingCode] = useState('');
   const [busy, setBusy] = useState(false),
     [copied, setCopied] = useState(false),
     [error, setError] = useState('');
@@ -35,9 +35,9 @@ export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'h
       intent.current++;
     };
   }, []);
-  const linkField = useRef<HTMLTextAreaElement>(null);
+  const codeField = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (open && page === 'join') linkField.current?.focus({ preventScroll: true });
+    if (open && page === 'join') codeField.current?.focus({ preventScroll: true });
   }, [open, page]);
   const state = remote.state;
   if (!state)
@@ -61,7 +61,10 @@ export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'h
     setCopied(false);
     setBusy(false);
   }
-  async function run(work: (current: () => boolean) => Promise<unknown>) {
+  async function run(
+    work: (current: () => boolean) => Promise<unknown>,
+    fallback: MessageKey = 'remote.connectionFailed',
+  ) {
     if (busy) return;
     const ticket = ++intent.current;
     const current = () => mounted.current && intent.current === ticket;
@@ -73,56 +76,53 @@ export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'h
       if (!current()) return;
       const code = cause instanceof Error ? cause.message : '';
       setError(
-        code === 'REMOTE_INVITATION_EXPIRED' || code === 'REMOTE_INVALID_INVITATION'
-          ? t('remote.linkInvalid')
-          : code === 'REMOTE_PAIR_REFUSED'
-            ? t('remote.pairRefused')
-            : code === 'REMOTE_LAN_NETWORK_UNAVAILABLE'
-              ? t('remote.networkUnavailable')
-              : code === 'REMOTE_CERTIFICATE_CHANGED' ||
-                  code === 'REMOTE_REPAIR_REQUIRED' ||
-                  code === 'REMOTE_UNAUTHORIZED'
-                ? t('remote.repairRequired')
-                : code === 'REMOTE_OUTCOME_UNKNOWN'
-                  ? t('remote.outcomeUnknown')
-                  : t('remote.connectionFailed'),
+        code === 'REMOTE_CODE_EXPIRED'
+          ? t('remote.codeExpired')
+          : code === 'REMOTE_CODE_INVALID' || code === 'REMOTE_CODE_NOT_FOUND'
+            ? t('remote.codeInvalid')
+            : code === 'REMOTE_CODE_ATTEMPTS'
+              ? t('remote.codeAttempts')
+              : code === 'REMOTE_CODE_AMBIGUOUS'
+                ? t('remote.codeAmbiguous')
+                : code === 'REMOTE_DISCOVERY_UNAVAILABLE'
+                  ? t('remote.discoveryFailed')
+                  : code === 'REMOTE_PAIR_REFUSED'
+                    ? t('remote.pairRefused')
+                    : code === 'REMOTE_LAN_NETWORK_UNAVAILABLE'
+                      ? t('remote.networkUnavailable')
+                      : code === 'REMOTE_CERTIFICATE_CHANGED' ||
+                          code === 'REMOTE_REPAIR_REQUIRED' ||
+                          code === 'REMOTE_UNAUTHORIZED'
+                        ? t('remote.repairRequired')
+                        : code === 'REMOTE_OUTCOME_UNKNOWN'
+                          ? t('remote.outcomeUnknown')
+                          : t(fallback),
       );
     } finally {
       if (current()) setBusy(false);
     }
   }
-  async function copyLink(current: () => boolean) {
-    let next = state!;
-    if (!next.hosting) next = await remote.command({ type: 'host', enabled: true });
-    let link = next.invitation;
-    try {
-      if (!link) throw Error('NO_LINK');
-      parseRemoteInvitation(link);
-    } catch {
-      link = (await remote.command({ type: 'invite' })).invitation;
-    }
-    if (!link) throw Error('REMOTE_INVALID_INVITATION');
-    // Closing the dialog cancels the clipboard effect, while an explicitly enabled Host stays available.
-    if (!current()) return;
+  async function prepareCode() {
+    if (!state!.hosting) await remote.command({ type: 'host', enabled: true });
+    await remote.command({ type: 'invite' });
+  }
+  async function copyCode(current: () => boolean) {
+    const value = state!.pairingCode;
+    if (!value || value.expiresAt <= Date.now()) throw Error('REMOTE_CODE_EXPIRED');
     const runtime = window.daban?.runtime;
     if (runtime) {
-      const result = await runtime.invoke({ type: 'clipboard.write', text: link });
+      const result = await runtime.invoke({ type: 'clipboard.write', text: value.code });
       if (!result.ok) throw Error(result.error);
-    } else await navigator.clipboard.writeText(link);
+    } else await navigator.clipboard.writeText(value.code);
     if (current()) setCopied(true);
   }
   async function join(current: () => boolean) {
-    const link = invitation.trim();
-    let host: string;
-    try {
-      host = parseRemoteInvitation(link).host.id;
-    } catch {
-      throw Error('REMOTE_INVALID_INVITATION');
-    }
-    await remote.command({ type: 'pair', invitation: link });
+    if (!/^\d{6}$/.test(pairingCode)) throw Error('REMOTE_CODE_INVALID');
+    const result = await remote.command({ type: 'pair', code: pairingCode });
     // A late approval adds the saved device, but cannot steal navigation after the user cancels.
     if (!current()) return;
-    await remote.command({ type: 'select', host });
+    if (!result.pairedHost) throw Error('REMOTE_CODE_INVALID');
+    await remote.command({ type: 'select', host: result.pairedHost });
     if (current()) close();
   }
   return (
@@ -270,21 +270,29 @@ export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'h
                 {page === 'join' ? (
                   <>
                     <p>{t('remote.joinHint')}</p>
-                    <label htmlFor="remote-invitation">{t('remote.invitation')}</label>
-                    <textarea
-                      ref={linkField}
-                      id="remote-invitation"
+                    <label htmlFor="remote-code">{t('remote.pairingCode')}</label>
+                    <input
+                      ref={codeField}
+                      id="remote-code"
+                      className="remote-code-input"
                       data-autofocus
-                      rows={3}
-                      value={invitation}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      pattern="[0-9]{6}"
+                      disabled={busy}
+                      value={pairingCode}
                       spellCheck={false}
-                      placeholder={t('remote.linkPlaceholder')}
-                      onChange={(event) => setInvitation(event.target.value)}
+                      placeholder={t('remote.codePlaceholder')}
+                      onChange={(event) =>
+                        setPairingCode(event.target.value.replace(/\D/g, '').slice(0, 6))
+                      }
                     />
                     <button
                       type="button"
                       className="primary remote-main-action"
-                      disabled={busy || !invitation.trim()}
+                      disabled={busy || !/^\d{6}$/.test(pairingCode)}
                       onClick={() => {
                         run(join).catch(() => {});
                       }}
@@ -303,25 +311,49 @@ export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'h
                       />
                       <span>{t(state.hosting ? 'remote.available' : 'remote.notSharing')}</span>
                     </div>
+                    {state.pairingCode && (
+                      <div className="remote-code-display">
+                        <output aria-label={t('remote.pairingCode')}>
+                          {state.pairingCode.code.slice(0, 3)} {state.pairingCode.code.slice(3)}
+                        </output>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label={t('remote.copyCode')}
+                          disabled={busy}
+                          onClick={() => {
+                            run(copyCode, 'remote.copyFailed').catch(() => {});
+                          }}
+                        >
+                          {copied ? <Check size={18} /> : <Copy size={18} />}
+                        </button>
+                      </div>
+                    )}
                     <button
                       type="button"
                       className="primary remote-main-action"
                       disabled={busy}
                       onClick={() => {
-                        run(copyLink).catch(() => {});
+                        run(prepareCode, 'remote.sharingFailed').catch(() => {});
                       }}
                     >
-                      {copied ? <Check size={16} /> : <Copy size={16} />}{' '}
+                      <RefreshCw size={16} />{' '}
                       {busy
                         ? t('remote.preparing')
-                        : t(state.hosting ? 'remote.copyLink' : 'remote.enableAndCopy')}
+                        : t(
+                            state.pairingCode
+                              ? 'remote.refreshCode'
+                              : state.hosting
+                                ? 'remote.generateCode'
+                                : 'remote.enableAndGenerate',
+                          )}
                     </button>
                     {copied && (
                       <p role="status" className="remote-copy-feedback">
-                        {t('remote.linkCopied')}
+                        {t('remote.codeCopied')}
                       </p>
                     )}
-                    <p>{t('remote.linkHint')}</p>
+                    <p>{t('remote.codeHint')}</p>
                     {state.hosting && (
                       <button
                         type="button"

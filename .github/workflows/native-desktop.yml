@@ -71,6 +71,8 @@ jobs:
         run: npx vitest run --project node packages/engine/dist/model.test.js --testNamePattern="model preparation and output collection use guest workspace references" --maxWorkers=2
       - name: Test native-only startup and encrypted private transport
         run: npx vitest run --project node packages/engine/dist/private-channel.test.js packages/engine/dist/private-files.test.js packages/engine/dist/component-files.test.js packages/engine/dist/durability.test.js packages/engine/dist/native-agent.test.js --maxWorkers=2
+      - name: Test LAN code pairing and discovery
+        run: npx vitest run --project node packages/engine/dist/pairing.test.js packages/engine/dist/lan-discovery.test.js packages/engine/dist/lan.test.js --maxWorkers=2
       - name: Test runtime component cleanup with a real Windows executable lock
         run: npx vitest run --project node tools/components.test.ts --maxWorkers=2
       - name: Verify model icons and configuration

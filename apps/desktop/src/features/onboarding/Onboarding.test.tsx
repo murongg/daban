@@ -317,7 +317,7 @@ it('switches computers from the setup header without losing a model draft', asyn
   await userEvent.click(computer);
   expect(screen.getByRole('dialog', { name: '远程电脑' })).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '连接另一台电脑' }));
-  expect(screen.getByRole('textbox', { name: '连接链接' })).toHaveFocus();
+  expect(screen.getByRole('textbox', { name: '配对码' })).toHaveFocus();
   await userEvent.keyboard('{Escape}');
   expect(key).toHaveValue('SYNTHETIC-ONBOARDING-DRAFT');
   expect(computer).toHaveFocus();

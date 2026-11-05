@@ -91,6 +91,28 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+.remote-code-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 14px 0;
+}
+.remote-code-display output {
+  font-size: 34px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+}
+.remote-section .remote-code-input {
+  text-align: center;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2em;
+}
+.remote-section .remote-code-input::placeholder {
+  letter-spacing: normal;
+}
 .remote-fingerprint {
   display: flex;
   flex-wrap: wrap;

@@ -1,9 +1,4 @@
-import {
-  parseRemoteInvitation,
-  type RemoteBridge,
-  type RemoteState,
-  remoteInvitation,
-} from '@daban/protocol';
+import type { RemoteBridge, RemoteState } from '@daban/protocol';
 import { createRoot } from 'react-dom/client';
 import { RemoteProvider } from '../../src/app/Remote';
 import { RemoteButton } from '../../src/features/computer/Remote';
@@ -43,6 +38,9 @@ const state: RemoteState = {
         },
       ]
     : [],
+  ...(query.has('sharing')
+    ? { pairingCode: { code: '123456', expiresAt: Date.now() + 300000 } }
+    : {}),
 };
 const remote: RemoteBridge = {
   invoke: async (command) => {
@@ -50,30 +48,15 @@ const remote: RemoteBridge = {
     if (command.type === 'host') {
       state.hosting = command.enabled;
       state.server = command.enabled ? 'https://127.0.0.1:45678' : '';
+      if (!command.enabled) state.pairingCode = undefined;
     }
     if (command.type === 'pair') {
-      const link = parseRemoteInvitation(command.invitation);
-      if (!state.hosts.some((host) => host.identity.id === link.host.id))
-        state.hosts.push({
-          identity: link.host,
-          server: link.server,
-          certificate: link.certificate,
-          workspace: link.host.id,
-          platform: 'win32',
-          state: 'connected',
-          transport: 'direct',
-        });
+      if (command.code !== '123456') throw Error('REMOTE_CODE_NOT_FOUND');
+      state.pairedHost = state.hosts[0].identity.id;
     }
     if (command.type === 'approve') state.pending = [];
     if (command.type === 'invite')
-      state.invitation = remoteInvitation({
-        version: 2,
-        host: state.identity,
-        server: state.server,
-        certificate: '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n',
-        code: 'synthetic-preview-secret-0123456789',
-        expiresAt: Date.now() + 300000,
-      });
+      state.pairingCode = { code: '123456', expiresAt: Date.now() + 300000 };
     return structuredClone(state);
   },
   subscribe: () => () => {},

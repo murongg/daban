@@ -5,22 +5,24 @@ export const english = {
   'remote.connectAnother': 'Connect another computer',
   'remote.allowThisComputer': 'Allow connections to this computer',
   'remote.joinHint':
-    'Enable connections on the other computer, copy its connection link, and paste it here.',
-  'remote.shareHint':
-    'Share a connection link with another computer on your network. You approve each new device.',
-  'remote.linkPlaceholder': 'Paste the other computer’s connection link',
+    'Enter the six-digit code shown on the other computer. Daban finds it on your local network.',
+  'remote.shareHint': 'Enter the code below on the other computer. You approve each new device.',
+  'remote.codePlaceholder': '6 digits',
   'remote.connect': 'Connect',
-  'remote.waitingApproval': 'Waiting for approval…',
+  'remote.waitingApproval': 'Connecting and waiting for approval…',
   'remote.waitingHint':
     'Approve the connection on the other computer. Closing this dialog cancels automatic navigation.',
   'remote.available': 'Connections enabled',
   'remote.notSharing': 'Connections disabled',
-  'remote.copyLink': 'Copy connection link',
-  'remote.enableAndCopy': 'Enable and copy link',
+  'remote.pairingCode': 'Pairing code',
+  'remote.copyCode': 'Copy pairing code',
+  'remote.enableAndGenerate': 'Enable and generate code',
+  'remote.generateCode': 'Generate code',
+  'remote.refreshCode': 'Refresh code',
   'remote.preparing': 'Preparing…',
-  'remote.linkCopied': 'Copied. Paste it on the other computer.',
-  'remote.linkHint':
-    'The link expires in five minutes. Paired devices can reconnect from the list.',
+  'remote.codeCopied': 'Pairing code copied',
+  'remote.codeHint':
+    'The code expires in five minutes. Paired devices can reconnect from the list.',
   'remote.requestFrom': '“{0}” wants to connect',
   'remote.approvalHint':
     'Approval grants workspace access. Desktop control still needs separate permission.',
@@ -29,7 +31,16 @@ export const english = {
   'remote.address': 'Local connection address:',
   'remote.authorizedDevice': 'Authorized to access this computer',
   'remote.connected': 'Connected',
-  'remote.linkInvalid': 'The link is invalid or expired. Copy a new link on the other computer.',
+  'remote.codeInvalid':
+    'No matching code found. Check the digits and network, and generate a code on the host.',
+  'remote.codeExpired': 'The code expired. Refresh it on the host and try again.',
+  'remote.codeAttempts': 'Too many attempts. Refresh the code on the host.',
+  'remote.codeAmbiguous':
+    'Multiple computers have this code. Refresh it on the host and try again.',
+  'remote.discoveryFailed':
+    'Local discovery is unavailable. Allow Daban to access your local network and retry.',
+  'remote.sharingFailed': 'Could not enable local access. Try again or restart Daban.',
+  'remote.copyFailed': 'Could not copy the code. Retry or enter it manually.',
   'remote.networkUnavailable':
     'No local network is available. Connect to Wi-Fi or Ethernet and try again.',
   'remote.repairRequired':
@@ -66,7 +77,6 @@ export const english = {
   'remote.offline': 'Offline',
   'remote.connecting': 'Connecting',
   'remote.remove': 'Remove connection',
-  'remote.invitation': 'Connection link',
   'remote.disableHost': 'Disable remote access',
   'remote.fingerprint': 'Host fingerprint',
   'remote.allowPair': 'Approve pairing',

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { RequestListener } from 'node:http';
+import type { IncomingMessage, RequestListener } from 'node:http';
 import { createServer as createSecureServer } from 'node:https';
 import {
   isRemoteSignal,
@@ -9,12 +9,25 @@ import {
   remoteMessageLimit,
 } from '@daban/protocol';
 import WebSocket, { WebSocketServer } from 'ws';
+import type { PairingHost } from './pairing.js';
 import { remoteProof, validRemoteIdentity, verifyRemoteProof } from './remote-crypto.js';
 
 export interface LanServerOptions {
   port: number;
   tls: { key: string; cert: string };
   owner: string;
+  pairing?: PairingHost;
+}
+async function pairingBody(request: IncomingMessage) {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  for await (const raw of request) {
+    const chunk = Buffer.from(raw);
+    length += chunk.length;
+    if (length > 2048) throw Error('REMOTE_CODE_INVALID');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
 }
 export async function startLanSignal(options: LanServerOptions) {
   if (!/^[a-f0-9]{64}$/.test(options.owner)) throw Error('REMOTE_LAN_CONFIG_INVALID');
@@ -39,7 +52,46 @@ export async function startLanSignal(options: LanServerOptions) {
   const listener: RequestListener = (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    if (request.method === 'GET' && request.url === '/health') {
+    if (
+      request.method === 'POST' &&
+      options.pairing &&
+      (request.url === '/v1/pair/start' || request.url === '/v1/pair/finish')
+    ) {
+      const address = (request.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+      if (!remoteLanServer(`https://${address}`)) {
+        response.writeHead(403).end();
+        return;
+      }
+      pairingBody(request)
+        .then((body) => {
+          if (response.destroyed) return;
+          let value: unknown;
+          if (request.url === '/v1/pair/start') {
+            if (
+              !body ||
+              typeof body !== 'object' ||
+              Array.isArray(body) ||
+              Object.keys(body).length
+            )
+              throw Error('REMOTE_CODE_INVALID');
+            value = options.pairing!.begin();
+          } else value = options.pairing!.finish(body);
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify(value));
+        })
+        .catch((cause) => {
+          if (response.destroyed || response.headersSent) return;
+          const error =
+            cause instanceof Error &&
+            /^REMOTE_CODE_(?:INVALID|EXPIRED|ATTEMPTS)$/.test(cause.message)
+              ? cause.message
+              : 'REMOTE_CODE_INVALID';
+          response.writeHead(error === 'REMOTE_CODE_ATTEMPTS' ? 429 : 400, {
+            'Content-Type': 'application/json',
+          });
+          response.end(JSON.stringify({ error }));
+        });
+    } else if (request.method === 'GET' && request.url === '/health') {
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ service: 'daban-lan', version: 2 }));
     } else {

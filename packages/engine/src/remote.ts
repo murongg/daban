@@ -1,4 +1,5 @@
 export { RuntimeClient } from './client.js';
+export type { Discovery } from './lan-discovery.js';
 export { RemoteAccess } from './remote-access.js';
 export {
   remoteDigest,

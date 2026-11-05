@@ -3,9 +3,10 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 import path from 'node:path';
-import { remoteLanServer } from '@daban/protocol';
+import { type RemoteIdentity, remoteLanServer } from '@daban/protocol';
 import { generate } from 'selfsigned';
 import { startLanSignal } from './lan-server.js';
+import { PairingHost } from './pairing.js';
 import { privateMetadata, secureDirectory } from './private-files.js';
 
 interface Identity {
@@ -70,7 +71,7 @@ async function identity(directory: string, owner: string): Promise<Identity> {
   }
 }
 
-export async function startLan(directory: string, owner: string, preferredPort = 0) {
+export async function startLan(directory: string, owner: RemoteIdentity, preferredPort = 0) {
   const addresses = [
     ...new Set(
       Object.values(networkInterfaces())
@@ -83,16 +84,22 @@ export async function startLan(directory: string, owner: string, preferredPort =
     ),
   ].slice(0, 8);
   if (!addresses.length) throw Error('REMOTE_LAN_NETWORK_UNAVAILABLE');
-  const keys = await identity(directory, owner);
+  const keys = await identity(directory, owner.id);
+  const pairing = new PairingHost({ host: owner, certificate: keys.certificate });
   const service = await startLanSignal({
     port: preferredPort,
     tls: { key: keys.privateKey, cert: keys.certificate },
-    owner,
+    owner: owner.id,
+    pairing,
   });
   return {
     certificate: keys.certificate,
     origins: addresses.map((address) => `https://${address}:${service.port}`),
     port: service.port,
-    close: service.close,
+    pairing,
+    async close() {
+      pairing.stop();
+      await service.close();
+    },
   };
 }

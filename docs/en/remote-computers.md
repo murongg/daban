@@ -4,13 +4,13 @@ The first version connects computers on the same local network. Install matching
 
 ## First connection
 
-1. On the host, open **Remote computers → Allow connections to this computer**, then **Enable and copy link**.
-2. On the controller, open **Remote computers → Connect another computer**, paste the link and connect. This entry is available during onboarding, without configuring a local model first.
+1. On the host, open **Remote computers → Allow connections to this computer**, then **Enable and generate code**.
+2. On the controller, open **Remote computers → Connect another computer**, enter the host’s six digits and connect. During onboarding, use the **Running locally** selector in the header; a local model is not required first.
 3. Verify the requesting device on the host and approve it. The controller opens its workspace automatically.
 
-Links expire after five minutes and pair one new device. They contain public identity and certificate information plus a high-entropy, single-use pairing secret. Send the link directly to your own other device. Private keys remain on their owner.
+Codes expire after five minutes and are consumed when a new device is approved. Refresh the code on the host after too many attempts or expiry. The digits are not broadcast in plaintext, private keys stay local, and the host still approves every new device.
 
-The operating system may request private-network or local-network permission. Both computers must be mutually reachable; guest Wi-Fi and network isolation may prevent access.
+The operating system may request private-network or local-network permission. Discovery uses local multicast; guest Wi-Fi, multicast isolation and firewall restrictions may prevent discovery.
 
 ## Later use
 
@@ -34,12 +34,12 @@ The host window can be closed while connections are enabled. Quitting Daban, sig
 
 ## Compatibility and limits
 
-- Earlier test links require updating both apps and copying a new LAN link. Existing identities, models, files and workspace data are retained. Old connection records prompt re-pairing.
-- The supported network is a mutually reachable IPv4 LAN. Initial pairing uses a copied link; there is no automatic discovery, account system or short numeric code.
+- Update both apps to the same test build and use a six-digit code for new pairing. Earlier links are no longer used for new devices. Existing identities, models, files and workspace data remain; early records without a certificate still require pairing again.
+- The supported network is a mutually reachable IPv4 LAN. Discovery finds Daban hosts with an active pairing code; no account or extra service is required.
 - Public-network access, external Connect/TURN services and unattended cloud deployment are outside version one.
 - Existing macOS/Windows native drivers are reused. Linux currently supports X11/x86-64; Wayland is unsupported.
 - Automated verification uses synthetic content. Two physical devices and native input still require corresponding hardware acceptance.
 
 ## Developer verification
 
-`npm run test:remote` exercises real TLS workspace traffic and synthetic video. Its local coturn is a media-test fixture only; the running client does not need coturn. After `npm run dev:web`, `/preview/remote.html` shows the synthetic interface; use `lang=en` and `theme=dark` for language/theme checks.
+`npm run test:remote` uses the production Electron bundler to exercise six-digit pairing, real TLS workspace traffic and synthetic video. Its local coturn is a media-test fixture only; the running client does not need coturn. After `npm run dev:web`, `/preview/remote.html` shows the synthetic interface; use `lang=en` and `theme=dark` for language/theme checks.

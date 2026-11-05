@@ -10,6 +10,11 @@ export default defineConfig(({ mode }) => {
   const entry = mode === 'peer-preload' ? 'peer-preload' : preload ? 'preload' : 'main';
   return {
     publicDir: false,
+    resolve: {
+      // Electron's Node entries need server exports; browser conditions replace ws with a client-only stub.
+      conditions: ['node'],
+      mainFields: ['module', 'main'],
+    },
     build: {
       target: 'node22',
       outDir: join(root, '../../dist-electron'),

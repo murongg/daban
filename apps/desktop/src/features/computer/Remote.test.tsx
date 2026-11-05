@@ -1,11 +1,10 @@
-import {
-  type RemoteBridge,
-  type RemoteCommand,
-  type RemoteState,
-  type RuntimeBridge,
-  type RuntimeCommand,
-  type RuntimeReply,
-  remoteInvitation,
+import type {
+  RemoteBridge,
+  RemoteCommand,
+  RemoteState,
+  RuntimeBridge,
+  RuntimeCommand,
+  RuntimeReply,
 } from '@daban/protocol';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -34,22 +33,7 @@ function fixture() {
       },
     ],
   };
-  const link = remoteInvitation({
-    version: 2,
-    host: state.hosts[0].identity,
-    server: 'https://127.0.0.1:45678',
-    certificate: '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n',
-    code: 'synthetic-pairing-secret-0123456789',
-    expiresAt: Date.now() + 300000,
-  });
-  const hostLink = remoteInvitation({
-    version: 2,
-    host: state.identity,
-    server: 'https://127.0.0.1:45678',
-    certificate: '-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n',
-    code: 'synthetic-host-secret-01234567890123',
-    expiresAt: Date.now() + 300000,
-  });
+  const pairingCode = '123456';
   const clipboard = vi.fn(async (_command: RuntimeCommand) => ({
     ok: true as const,
     value: { copied: true },
@@ -62,7 +46,9 @@ function fixture() {
     if (command.type === 'host') {
       state.hosting = command.enabled;
     }
-    if (command.type === 'invite') state.invitation = hostLink;
+    if (command.type === 'invite')
+      state.pairingCode = { code: pairingCode, expiresAt: Date.now() + 300000 };
+    if (command.type === 'pair') state.pairedHost = state.hosts[0].identity.id;
     if (command.type === 'select') state.selected = command.host;
     return structuredClone(state);
   });
@@ -71,7 +57,7 @@ function fixture() {
     configurable: true,
     value: { remote: bridge, runtime },
   });
-  return { state, invoke, link, hostLink, clipboard };
+  return { state, invoke, pairingCode, clipboard };
 }
 it('opens a paired host workspace through an explicit device action', async () => {
   const f = fixture();
@@ -96,11 +82,10 @@ it('keeps adding a host separate from enabling remote control of this computer',
   );
   await userEvent.click(await screen.findByRole('button', { name: '当前电脑：本机' }));
   await userEvent.click(screen.getByRole('button', { name: '连接另一台电脑' }));
-  expect(screen.getByRole('textbox', { name: '连接链接' })).toHaveFocus();
-  const invitation = f.link;
-  await userEvent.type(screen.getByRole('textbox', { name: '连接链接' }), invitation);
+  expect(screen.getByRole('textbox', { name: '配对码' })).toHaveFocus();
+  await userEvent.type(screen.getByRole('textbox', { name: '配对码' }), f.pairingCode);
   await userEvent.click(screen.getByRole('button', { name: '连接' }));
-  await waitFor(() => expect(f.invoke).toHaveBeenCalledWith({ type: 'pair', invitation }));
+  await waitFor(() => expect(f.invoke).toHaveBeenCalledWith({ type: 'pair', code: f.pairingCode }));
   expect(f.invoke.mock.calls.some(([command]) => command.type === 'host')).toBe(false);
   await waitFor(() =>
     expect(f.invoke).toHaveBeenCalledWith({ type: 'select', host: 'b'.repeat(64) }),
@@ -120,7 +105,7 @@ it('reports unavailable pairing state while keeping the local workspace usable',
   expect(screen.getByText('Synthetic local workspace')).toBeVisible();
 });
 
-it('enables LAN hosting and copies a link without asking for a service address', async () => {
+it('shows a six-digit code and only copies it on an explicit copy action', async () => {
   const f = fixture();
   render(
     <RemoteProvider>
@@ -129,11 +114,14 @@ it('enables LAN hosting and copies a link without asking for a service address',
   );
   await userEvent.click(await screen.findByRole('button', { name: '当前电脑：本机' }));
   await userEvent.click(screen.getByRole('button', { name: '允许连接本机' }));
-  await userEvent.click(screen.getByRole('button', { name: '开启并复制连接链接' }));
+  await userEvent.click(screen.getByRole('button', { name: '开启并生成配对码' }));
   await waitFor(() => expect(f.invoke).toHaveBeenCalledWith({ type: 'host', enabled: true }));
   expect(f.invoke).toHaveBeenCalledWith({ type: 'invite' });
-  expect(f.clipboard).toHaveBeenCalledWith({ type: 'clipboard.write', text: f.hostLink });
-  expect(screen.getByRole('status')).toHaveTextContent('已复制');
+  expect(await screen.findByLabelText('配对码')).toHaveTextContent('123 456');
+  expect(f.clipboard).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: '复制配对码' }));
+  expect(f.clipboard).toHaveBeenCalledWith({ type: 'clipboard.write', text: f.pairingCode });
+  expect(screen.getByText('已复制配对码')).toBeVisible();
   expect(screen.getByText('设备与授权').closest('details')).not.toHaveAttribute('open');
 });
 
@@ -144,7 +132,10 @@ it('does not navigate on a late pairing approval after the dialog is closed', as
     approve = () => resolve(undefined);
   });
   f.invoke.mockImplementation(async (command) => {
-    if (command.type === 'pair') await pending;
+    if (command.type === 'pair') {
+      await pending;
+      f.state.pairedHost = f.state.hosts[0].identity.id;
+    }
     return structuredClone(f.state);
   });
   render(
@@ -154,7 +145,7 @@ it('does not navigate on a late pairing approval after the dialog is closed', as
   );
   await userEvent.click(await screen.findByRole('button', { name: '当前电脑：本机' }));
   await userEvent.click(screen.getByRole('button', { name: '连接另一台电脑' }));
-  await userEvent.type(screen.getByRole('textbox', { name: '连接链接' }), f.link);
+  await userEvent.type(screen.getByRole('textbox', { name: '配对码' }), f.pairingCode);
   await userEvent.click(screen.getByRole('button', { name: '连接' }));
   await userEvent.keyboard('{Escape}');
   await act(async () => {
@@ -164,7 +155,7 @@ it('does not navigate on a late pairing approval after the dialog is closed', as
   expect(f.invoke.mock.calls.some(([command]) => command.type === 'select')).toBe(false);
 });
 
-it('reports malformed links without making a pairing request', async () => {
+it('requires six digits before making a pairing request', async () => {
   const f = fixture();
   render(
     <RemoteProvider>
@@ -173,9 +164,8 @@ it('reports malformed links without making a pairing request', async () => {
   );
   await userEvent.click(await screen.findByRole('button', { name: '当前电脑：本机' }));
   await userEvent.click(screen.getByRole('button', { name: '连接另一台电脑' }));
-  await userEvent.type(screen.getByRole('textbox', { name: '连接链接' }), 'synthetic invalid link');
-  await userEvent.click(screen.getByRole('button', { name: '连接' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('链接无效');
+  await userEvent.type(screen.getByRole('textbox', { name: '配对码' }), '12345');
+  expect(screen.getByRole('button', { name: '连接' })).toBeDisabled();
   expect(f.invoke.mock.calls.some(([command]) => command.type === 'pair')).toBe(false);
 });
 it('preserves a bounded refusal code wrapped by Electron IPC', async () => {
@@ -192,7 +182,23 @@ it('preserves a bounded refusal code wrapped by Electron IPC', async () => {
   );
   await userEvent.click(await screen.findByRole('button', { name: '当前电脑：本机' }));
   await userEvent.click(screen.getByRole('button', { name: '连接另一台电脑' }));
-  await userEvent.type(screen.getByRole('textbox', { name: '连接链接' }), f.link);
+  await userEvent.type(screen.getByRole('textbox', { name: '配对码' }), f.pairingCode);
   await userEvent.click(screen.getByRole('button', { name: '连接' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('拒绝');
+});
+it('reports a local service startup failure without blaming the other computer network', async () => {
+  const f = fixture();
+  f.invoke.mockImplementation(async (command) => {
+    if (command.type === 'host') throw TypeError('SYNTHETIC SERVICE STARTUP FAILURE');
+    return structuredClone(f.state);
+  });
+  render(
+    <RemoteProvider>
+      <RemoteButton />
+    </RemoteProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '当前电脑：本机' }));
+  await userEvent.click(screen.getByRole('button', { name: '允许连接本机' }));
+  await userEvent.click(screen.getByRole('button', { name: '开启并生成配对码' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('无法开启本机接入');
 });

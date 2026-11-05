@@ -3,10 +3,10 @@ import path from 'node:path';
 import {
   disconnected,
   isRemoteCommand,
+  isRemoteInvitation,
   isRemoteMediaRequest,
   isRemoteRpcRequest,
   type PeerEvent,
-  parseRemoteInvitation,
   RemoteFrames,
   type RemoteHost,
   type RemoteIdentity,
@@ -22,11 +22,12 @@ import {
   type RuntimeCommand,
   remoteFileChunk,
   remoteFrames,
-  remoteInvitation,
   remoteTransferLimit,
   validAgentId,
 } from '@daban/protocol';
 import { startLan } from './lan.js';
+import { type Discovery, LanDiscovery } from './lan-discovery.js';
+import { redeemPairing } from './pairing.js';
 import { remoteProof, validRemoteIdentity, verifyRemoteProof } from './remote-crypto.js';
 import { RemoteGateway } from './remote-gateway.js';
 import { RemoteKeys } from './remote-identity.js';
@@ -102,6 +103,7 @@ export class RemoteAccess {
   private poll?: ReturnType<typeof setInterval>;
   private polling = false;
   private unsubscribe?: () => unknown;
+  private readonly discovery: Discovery;
   constructor(
     private readonly options: {
       directory: string;
@@ -114,8 +116,10 @@ export class RemoteAccess {
       snapshot?(value: unknown, host: string): unknown;
       media?(device: RemoteIdentity, request: RemoteMediaRequest): Promise<RemotePeerPort>;
       currentMedia?(request: RemoteMediaRequest): boolean;
+      discovery?: Discovery;
     },
   ) {
+    this.discovery = options.discovery ?? new LanDiscovery();
     this.ready = this.load();
   }
   private async load() {
@@ -168,6 +172,7 @@ export class RemoteAccess {
   }
   state(): RemoteState {
     if (!this.keys) throw Error('REMOTE_NOT_READY');
+    const pairingCode = this.lan?.pairing.state();
     for (const [id, request] of this.pending)
       if (request.expiresAt <= Date.now()) this.pending.delete(id);
     return structuredClone({
@@ -183,9 +188,7 @@ export class RemoteAccess {
       })),
       controllers: this.controllers(),
       ...(this.viewer ? { viewer: this.viewer } : {}),
-      ...(this.invitation && this.invitation.expiresAt > Date.now()
-        ? { invitation: remoteInvitation(this.invitation) }
-        : {}),
+      ...(pairingCode ? { pairingCode } : {}),
     });
   }
   controllers() {
@@ -251,8 +254,14 @@ export class RemoteAccess {
     await this.ready;
     if (this.stopped) throw Error('REMOTE_CONNECTION_CLOSED');
     if (!isRemoteCommand(command)) throw Error('REMOTE_INVALID_COMMAND');
-    if (command.type === 'host') {
-      const operation = this.hostOperation.catch(() => {}).then(() => this.configureHost(command));
+    if (command.type === 'host' || command.type === 'invite') {
+      // Code publication and listener shutdown share one lifecycle, even when a dialog is reopened mid-request.
+      const operation = this.hostOperation
+        .catch(() => {})
+        .then(() => {
+          if (this.stopped) throw Error('REMOTE_CONNECTION_CLOSED');
+          return command.type === 'host' ? this.configureHost(command) : this.createCode();
+        });
       this.hostOperation = operation;
       await operation;
       this.changed();
@@ -307,26 +316,33 @@ export class RemoteAccess {
       }
       case 'status':
         break;
-      case 'invite': {
-        if (!this.enabled) throw Error('REMOTE_HOST_DISABLED');
-        await this.ensureLan();
-        const lan = this.lan;
-        if (!lan) throw Error('REMOTE_LAN_NETWORK_UNAVAILABLE');
-        await this.connection(this.server).start();
-        this.invitation = {
-          version: 2,
-          certificate: lan.certificate,
-          alternatives: lan.origins.slice(1),
-          host: this.keys.identity,
-          server: this.server,
-          code: randomBytes(32).toString('base64url'),
-          expiresAt: Date.now() + 300_000,
-        };
-        break;
+      case 'pair': {
+        const candidates = (await this.discovery.find())
+          .filter((item) => item.host.id !== this.keys.identity.id)
+          .slice(0, 8);
+        const results = await Promise.allSettled(
+          candidates.map((item) => redeemPairing(item, command.code)),
+        );
+        const matches = results
+          .filter((result) => result.status === 'fulfilled')
+          .map((result) => result.value);
+        if (this.stopped) throw Error('REMOTE_CONNECTION_CLOSED');
+        if (matches.length > 1) throw Error('REMOTE_CODE_AMBIGUOUS');
+        if (!matches.length) {
+          if (
+            results.some(
+              (result) =>
+                result.status === 'rejected' &&
+                result.reason instanceof Error &&
+                result.reason.message === 'REMOTE_CODE_ATTEMPTS',
+            )
+          )
+            throw Error('REMOTE_CODE_ATTEMPTS');
+          throw Error('REMOTE_CODE_NOT_FOUND');
+        }
+        await this.pair(matches[0]);
+        return { ...this.state(), pairedHost: matches[0].host.id };
       }
-      case 'pair':
-        await this.pair(command.invitation);
-        break;
       case 'approve':
         await this.approve(command.id, command.accepted);
         break;
@@ -358,6 +374,36 @@ export class RemoteAccess {
     this.changed();
     return this.state();
   }
+  private async createCode() {
+    if (!this.enabled) throw Error('REMOTE_HOST_DISABLED');
+    await this.ensureLan();
+    const lan = this.lan;
+    if (!lan) throw Error('REMOTE_LAN_NETWORK_UNAVAILABLE');
+    await this.connection(this.server).start();
+    this.invitation = {
+      version: 2,
+      certificate: lan.certificate,
+      alternatives: lan.origins.slice(1),
+      host: this.keys.identity,
+      server: this.server,
+      code: randomBytes(32).toString('base64url'),
+      expiresAt: Date.now() + 300000,
+    };
+    this.pending.clear();
+    lan.pairing.activate(this.invitation);
+    try {
+      await this.discovery.publish({
+        host: this.keys.identity,
+        server: this.server,
+        certificate: lan.certificate,
+        alternatives: lan.origins.slice(1),
+      });
+    } catch (error) {
+      lan.pairing.stop();
+      this.invitation = undefined;
+      throw error;
+    }
+  }
   private async configureHost(command: { type: 'host'; enabled: boolean }) {
     if (this.enabled && command.enabled) {
       await this.ensureLan();
@@ -367,6 +413,7 @@ export class RemoteAccess {
     this.invitation = undefined;
     this.pending.clear();
     if (!this.enabled) {
+      await this.discovery.unpublish();
       for (const session of [...this.sessions.values()])
         if (session.role === 'host') await this.drop(session.id);
       if (this.lan) {
@@ -392,7 +439,7 @@ export class RemoteAccess {
       const preferred = Number(this.store.setting('lan.port') ?? '0');
       if (!Number.isInteger(preferred) || preferred < 0 || preferred > 65535)
         throw Error('REMOTE_LAN_CONFIG_INVALID');
-      const lan = await startLan(this.options.directory, this.keys.identity.id, preferred);
+      const lan = await startLan(this.options.directory, this.keys.identity, preferred);
       this.lan = lan;
       this.server = lan.origins[0];
       this.store.saveSetting('lan.port', String(lan.port));
@@ -417,6 +464,11 @@ export class RemoteAccess {
   }
   private async maintain() {
     if (this.stopped) return;
+    if (this.invitation && !this.lan?.pairing.state()) {
+      this.invitation = undefined;
+      await this.discovery.unpublish();
+      this.changed();
+    }
     if (this.enabled && !this.lan) await this.ensureLan().catch(() => {});
     if (
       this.selected &&
@@ -463,8 +515,9 @@ export class RemoteAccess {
       map.set(id, { resolve, reject, timer });
     });
   }
-  private async pair(text: string) {
-    const invitation = parseRemoteInvitation(text);
+  private async pair(invitation: RemoteInvitation) {
+    if (!isRemoteInvitation(invitation) || invitation.expiresAt <= Date.now())
+      throw Error('REMOTE_CODE_EXPIRED');
     if (!validRemoteIdentity(invitation.host)) throw Error('REMOTE_INVALID_IDENTITY');
     if (invitation.host.id === this.keys.identity.id) throw Error('REMOTE_SELF_PAIR');
     if (invitation.certificate) {
@@ -495,6 +548,8 @@ export class RemoteAccess {
     if (accepted) {
       this.store.pair(request.identity, 'controller');
       this.invitation = undefined;
+      this.lan?.pairing.stop();
+      await this.discovery.unpublish();
       this.pending.clear();
     }
     const workspace = this.keys.identity.id;
@@ -1112,8 +1167,9 @@ export class RemoteAccess {
   async close() {
     await this.ready;
     if (this.stopped) return;
-    await this.hostOperation.catch(() => {});
     this.stopped = true;
+    await this.hostOperation.catch(() => {});
+    await this.discovery.close();
     clearInterval(this.poll);
     this.unsubscribe?.();
     for (const id of [...this.sessions.keys()]) await this.drop(id);

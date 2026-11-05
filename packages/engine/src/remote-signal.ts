@@ -16,6 +16,19 @@ export interface RemoteSigner {
   identity: RemoteIdentity;
   sign(text: string): string;
 }
+export function pinnedAgent(pem: string) {
+  const certificate = new X509Certificate(pem);
+  return new HttpsAgent({
+    ca: pem,
+    rejectUnauthorized: true,
+    minVersion: 'TLSv1.2',
+    // Discovery is untrusted until code authentication; every connection still pins its advertised leaf.
+    checkServerIdentity: (_hostname, peer) =>
+      peer.fingerprint256 === certificate.fingerprint256
+        ? undefined
+        : Error('REMOTE_CERTIFICATE_CHANGED'),
+  });
+}
 export class SignalConnection {
   private socket?: WebSocket;
   private stopped = false;
@@ -49,25 +62,11 @@ export class SignalConnection {
   private open(): Promise<RemoteIceServer[]> {
     const url = new URL('/v1/signal', this.options.server);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    const certificate = this.options.certificate
-      ? new X509Certificate(this.options.certificate)
-      : undefined;
     const socket = new WebSocket(url, {
-      handshakeTimeout: certificate ? 3000 : 15000,
+      handshakeTimeout: 3000,
       maxPayload: remoteMessageLimit,
       perMessageDeflate: false,
-      agent: certificate
-        ? new HttpsAgent({
-            ca: this.options.certificate,
-            rejectUnauthorized: true,
-            minVersion: 'TLSv1.2',
-            // The link pins this Host's leaf; a changed LAN address does not grant trust to another certificate.
-            checkServerIdentity: (_hostname, peer) =>
-              peer.fingerprint256 === certificate.fingerprint256
-                ? undefined
-                : Error('REMOTE_CERTIFICATE_CHANGED'),
-          })
-        : undefined,
+      agent: pinnedAgent(this.options.certificate),
     });
     const previous = this.socket;
     this.socket = socket;

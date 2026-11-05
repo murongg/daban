@@ -9,21 +9,23 @@
   "dependencies": {
     "@daban/protocol": "0.1.7",
     "@modelcontextprotocol/client": "2.2.0",
+    "bonjour-service": "1.4.4",
     "drizzle-orm": "1.0.0-rc.5",
+    "fast-srp-hap": "2.0.4",
     "fflate": "0.8.3",
     "officeparser": "8.2.0",
     "playwright": "1.62.1",
     "quickjs-emscripten": "0.32.0",
     "selfsigned": "5.5.0",
-    "yaml": "2.9.1",
-    "ws": "8.22.1"
+    "ws": "8.22.1",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.2.0",
+    "@types/ws": "8.18.2",
     "drizzle-kit": "1.0.0-rc.5",
-    "vitest": "5.0.5",
-    "@types/ws": "8.18.2"
+    "vitest": "5.0.5"
   },
   "version": "0.1.7",
   "scripts": {
