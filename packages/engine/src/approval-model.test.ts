@@ -213,8 +213,11 @@ async function mcpFixture(
       if (method === 'workspace.list') return [];
       if (method === 'tools.open') {
         const owner = models.jobs.get(String(params.bot));
-        expect(params.taskRunId).toBe(owner?.id);
-        expect(params.id).toBe(owner?.executionId);
+        expect.assert(owner);
+        expect(params.id).toBe(owner.executionId);
+        // Only project-scoped leases carry the separate logical task binding.
+        if (owner.project) expect(params.taskRunId).toBe(owner.id);
+        else expect(params.taskRunId).toBeUndefined();
         expect(params.id).not.toBe(params.taskRunId);
         return { tools: [] };
       }
@@ -1059,6 +1062,28 @@ test('the portable Host executor fixture keeps real project and purpose admissio
     });
     await pending;
     expect(transport.effects).toBe(1);
+    await f.call(2);
+    expect(await f.card(2)).toMatchObject({
+      decisionSource: 'policy',
+      policyDecision: { trigger: 'automation', reasonCode: 'ruleAllowed' },
+    });
+    expect(transport.effects).toBe(2);
+    await f.nextTask();
+    expect(f.job.project).toBeUndefined();
+    expect(f.job.automation).toBeUndefined();
+    const human = f.call(3);
+    const humanCard = await f.card(3);
+    expect(humanCard).toMatchObject({
+      status: 'pending',
+      policyDecision: { trigger: 'interactive', matchedRules: [] },
+    });
+    expect(transport.effects).toBe(2);
+    await f.models.interactions.reply(f.job.bot, f.job.id, humanCard.id, {
+      kind: 'decision',
+      allow: false,
+    });
+    await human;
+    expect(transport.effects).toBe(2);
   } finally {
     await f.close();
   }
