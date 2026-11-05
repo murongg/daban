@@ -1,4 +1,6 @@
 export const en = {
+  'gallery.lightTheme': 'Switch to light theme',
+  'gallery.darkTheme': 'Switch to dark theme',
   'gallery.authTitle': 'Sign in to Daban',
   'gallery.githubContinue': 'Continue with GitHub',
   'gallery.githubHint':

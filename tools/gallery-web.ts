@@ -2,11 +2,12 @@ import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { applyGalleryTheme } from '../apps/gallery/src/web/appearance.ts';
 
 export function externalizeNextHTML(html: string) {
   const assets = new Map<string, string>();
   // Next owns these bootstrap payloads. Externalize them so the gallery keeps script-src 'self'.
-  const result = html.replace(
+  let result = html.replace(
     /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
     (tag, attributes: string, content: string) => {
       if (
@@ -21,6 +22,13 @@ export function externalizeNextHTML(html: string) {
       return `<script${attributes} src="/${file}"></script>`;
     },
   );
+  if (/<head>/i.test(result)) {
+    const content = `(${applyGalleryTheme.toString()})();`;
+    const digest = createHash('sha256').update(content).digest('hex');
+    const file = `_next/static/bootstrap/${digest}.js`;
+    assets.set(file, content);
+    result = result.replace(/<head>/i, `<head><script src="/${file}"></script>`);
+  }
   return { html: result, assets: [...assets].map(([file, content]) => ({ path: file, content })) };
 }
 async function exportWeb() {

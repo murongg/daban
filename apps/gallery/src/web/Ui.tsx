@@ -1,6 +1,8 @@
 import { type ButtonHTMLAttributes, cloneElement, type ReactElement, useId } from 'react';
 
 const paths = {
+  moon: 'M20.8 13.2A8.5 8.5 0 0 1 10.8 3.2a8.5 8.5 0 1 0 10 10Z',
+  sun: 'M12 3V1M12 23v-2M3 12H1M23 12h-2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
   gallery: 'M3 10h18M4 10v10h16V10M3 10l2-6h14l2 6M8 20v-6h5v6',
   search: 'M20 20l-4-4M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0',
   plus: 'M12 5v14M5 12h14',

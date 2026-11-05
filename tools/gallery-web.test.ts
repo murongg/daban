@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { expect, test } from 'vitest';
 import { externalizeNextHTML } from './gallery-web';
 
@@ -13,4 +14,20 @@ test('static Next bootstrap scripts become same-origin assets under the existing
   expect(result.assets[0].content).toBe(code);
   expect(result.assets[0].path).toMatch(/^_next\/static\/bootstrap\/[a-f0-9]{64}\.js$/);
   expect(result.html.match(/src="\/_next\/static\/bootstrap\//g)).toHaveLength(2);
+});
+
+test('theme preference is restored by a same-origin script before styles and hydration', () => {
+  const result = externalizeNextHTML(
+    '<html><head><link rel="stylesheet" href="/mock.css"></head><body></body></html>',
+  );
+  expect(result.html).toMatch(
+    /<head><script src="\/_next\/static\/bootstrap\/[a-f0-9]{64}\.js"><\/script><link/,
+  );
+  expect(result.assets).toHaveLength(1);
+  const root = { dataset: {} as Record<string, string> };
+  runInNewContext(result.assets[0].content, {
+    window: { localStorage: { getItem: () => 'dark' }, matchMedia: () => ({ matches: false }) },
+    document: { documentElement: root },
+  });
+  expect(root.dataset.theme).toBe('dark');
 });
