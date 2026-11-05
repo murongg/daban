@@ -20,7 +20,6 @@ import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app
 import { IconButton } from '../../components/controls/Button';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { taskPhase } from '../../i18n/tasks';
-import { Usage } from '../budgets/Usage';
 import { modelName } from '../models/model-options';
 
 const failureLabels: Record<NonNullable<ModelAttempt['failure']>, MessageKey> = {
@@ -358,7 +357,6 @@ function Reader({
         <RefreshCw />
       </IconButton>
       <Statistics scope={target} refresh={page} />
-      <Usage scope={target} running={page?.state === 'recording'} />
       {page?.state === 'unavailable' && (
         <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}

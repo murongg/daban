@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
-  approvalRulesCapability,
   automationCapability,
   botBundleLimit,
   botBundleText,
@@ -11,10 +10,6 @@ import {
   disconnected,
   groupCopyKey,
   imageProtocol,
-  isApprovalRuleReceipt,
-  isApprovalRulesCommand,
-  isApprovalRulesSnapshot,
-  isApprovalRulesStatus,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
@@ -30,9 +25,6 @@ import {
   isBrowserReceipt,
   isBrowserState,
   isBrowserView,
-  isBudgetScope,
-  isBudgetSettings,
-  isBudgetView,
   isChatAck,
   isChatPage,
   isChatStatus,
@@ -78,7 +70,6 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
-  isPolicyDecision,
   isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
@@ -103,7 +94,6 @@ import {
   isTaskPlan,
   isTranscriptContent,
   isTranscriptPage,
-  isTranscriptScope,
   isWorkCommentCommand,
   isWorkCommentList,
   isWorkCommentReceipt,
@@ -121,7 +111,6 @@ import {
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
-  sameApprovalScope,
   sameProjectScope,
   sameTranscriptScope,
   unavailableLocalComputer,
@@ -131,7 +120,6 @@ import {
   workKey,
   workQueryKey,
 } from '@daban/protocol';
-import { matchesApprovalReceipt } from '../shared/approval';
 import type { MessageKey } from '../shared/locale';
 import { isTaskReceipt } from '../shared/receipt';
 
@@ -345,7 +333,6 @@ export class RuntimeClient {
         'x-daban-automation': automationCapability,
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
-        'x-daban-approval-rules': approvalRulesCapability,
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
       },
       body: data === undefined ? undefined : JSON.stringify(data),
@@ -392,7 +379,6 @@ export class RuntimeClient {
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
         clientProtocol?: number;
-        approvalRules?: unknown;
         botCapabilities?: unknown;
         localComputer?: unknown;
         chats?: unknown;
@@ -563,15 +549,6 @@ export class RuntimeClient {
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
-      if (raw.approvalRules !== undefined)
-        snapshot.approvalRules = isApprovalRulesStatus(raw.approvalRules)
-          ? raw.approvalRules
-          : {
-              capability: approvalRulesCapability,
-              available: false,
-              revision: 0,
-              error: 'INVALID_RUNTIME_STATE',
-            };
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
           ? raw.software
@@ -801,110 +778,32 @@ export class RuntimeClient {
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
     // Older Hosts may still execute cached scoped requests; refuse them before transport.
-    if (command.type === 'task.start' && command.task.project !== undefined)
+    if (
+      command.type === 'task.start' &&
+      (command.task.project !== undefined || command.task.goalResume?.owner.project !== undefined)
+    )
       throw Error('PROJECT_RETIRED');
-    if (isApprovalRulesCommand(command)) {
+    if (command.type === 'goal.target' && command.owner.project !== undefined)
+      throw Error('PROJECT_RETIRED');
+    if (command.type === 'goal.target') {
       const captured = structuredClone(command);
-      const scope =
-        captured.type === 'approval.rules.write' ? captured.request.scope : captured.scope;
-      const state = await this.status();
-      if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
-        throw new Error('APPROVAL_UPGRADE_REQUIRED');
-      if (!state.approvalRules.available) throw new Error('APPROVAL_RULES_UNAVAILABLE');
-      const value = await this.api(
-        `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
-        captured,
-      );
-      const valid =
-        captured.type === 'approval.rules.list'
-          ? isApprovalRulesSnapshot(value) && sameApprovalScope(value.scope, scope)
-          : captured.type === 'approval.rules.preview'
-            ? isPolicyDecision(value) &&
-              sameApprovalScope(value.scope, scope) &&
-              value.trigger === captured.trigger &&
-              JSON.stringify(value.selector) === JSON.stringify(captured.selector)
-            : captured.type === 'approval.rules.write'
-              ? matchesApprovalReceipt(value, captured.request)
-              : isApprovalRuleReceipt(value) &&
-                sameApprovalScope(value.scope, scope) &&
-                value.requestId === captured.requestId;
-      if (!valid) throw new Error('INVALID_RUNTIME_STATE');
-      return value;
-    }
-    if (command.type.startsWith('budget.')) {
-      const captured = structuredClone(command);
-      let value: unknown;
-      if (captured.type === 'budget.goal') {
-        const target: unknown = await this.api('/api/budgets/goal', {
-          owner: captured.owner,
-        }).catch((error) => {
-          // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
-          if (error instanceof Error && error.message === 'NOT_FOUND') return null;
-          throw error;
-        });
-        if (target === null) return null;
-        if (
-          !isGoalResumeTarget(target) ||
-          target.owner.bot !== captured.owner.bot ||
-          target.owner.chatRevision !== captured.owner.chatRevision ||
-          target.owner.conversationId !== captured.owner.conversationId ||
-          !sameProjectScope(target.owner.project, captured.owner.project)
-        )
-          throw new Error('INVALID_GOAL_TARGET');
-        return target;
-      }
-      if (captured.type === 'budget.settings') value = await this.api('/api/budgets/settings', {});
-      else if (captured.type === 'budget.configure')
-        value = await this.api('/api/budgets/configure', captured.request);
-      else if (captured.type === 'budget.read')
-        value = await this.api('/api/budgets/read', captured.query);
-      else if (captured.type === 'budget.increase')
-        value = await this.api('/api/budgets/increase', captured.request);
-      else if (captured.type === 'budget.continue') {
-        const reply: unknown = await this.api('/api/budgets/continue', {
-          scope: captured.scope,
-          budget: captured.budget,
-          id: captured.id,
-          ...(captured.goalResume ? { goalResume: captured.goalResume } : {}),
-        });
-        if (
-          !reply ||
-          typeof reply !== 'object' ||
-          !('budget' in reply) ||
-          !isBudgetScope(reply.budget) ||
-          reply.budget.budgetId !== captured.budget.budgetId ||
-          reply.budget.revision !== captured.budget.revision ||
-          !('owner' in reply) ||
-          !isTranscriptScope(reply.owner) ||
-          !sameTranscriptScope(reply.owner, captured.scope) ||
-          !('id' in reply) ||
-          reply.id !== captured.id ||
-          !('queued' in reply) ||
-          typeof reply.queued !== 'boolean'
-        )
-          throw new Error('INVALID_BUDGET_CONTINUATION');
-        return reply;
-      } else throw new Error('INVALID_COMMAND');
-      if (captured.type === 'budget.settings' || captured.type === 'budget.configure') {
-        if (!isBudgetSettings(value)) throw new Error('INVALID_BUDGET_SETTINGS');
-      } else if (value !== null) {
-        if (!isBudgetView(value)) throw new Error('INVALID_BUDGET_VIEW');
-        const owner =
-          captured.type === 'budget.read'
-            ? captured.query.scope
-            : captured.type === 'budget.increase'
-              ? captured.request.scope
-              : undefined;
-        if (!owner || !value.owner || !sameTranscriptScope(value.owner, owner))
-          throw new Error('INVALID_BUDGET_OWNER');
-        if (
-          captured.type === 'budget.increase' &&
-          (value.scope.budgetId !== captured.request.budgetId ||
-            value.scope.revision !== captured.request.revision + 1)
-        )
-          throw new Error('INVALID_BUDGET_ACK');
-      }
-      return value;
+      const target: unknown = await this.api('/api/goals/target', {
+        owner: captured.owner,
+      }).catch((error) => {
+        // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
+        if (error instanceof Error && error.message === 'NOT_FOUND') return null;
+        throw error;
+      });
+      if (target === null) return null;
+      if (
+        !isGoalResumeTarget(target) ||
+        target.owner.bot !== captured.owner.bot ||
+        target.owner.chatRevision !== captured.owner.chatRevision ||
+        target.owner.conversationId !== captured.owner.conversationId ||
+        !sameProjectScope(target.owner.project, captured.owner.project)
+      )
+        throw new Error('INVALID_GOAL_TARGET');
+      return target;
     }
 
     if (this.agent && command.type.startsWith('recovery.')) {

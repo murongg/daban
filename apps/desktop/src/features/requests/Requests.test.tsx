@@ -5,7 +5,6 @@ import { demoState as seedDemoState } from '../../test/fixtures';
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
 
 import {
-  approvalRulesCapability,
   disconnected,
   type Interaction,
   type RuntimeBridge,
@@ -71,7 +70,6 @@ it('shows the exact external connection, tool and argument preview before a scop
   const invoke = connect([request]);
   render(<App />);
   expect(await screen.findByRole('heading', { name: '调用外部工具' })).toBeVisible();
-  expect(screen.queryByRole('button', { name: '确认当前任务用途并允许' })).not.toBeInTheDocument();
   expect(screen.getByText('合成连接 · synthetic_echo')).toBeVisible();
   expect(screen.getByText('https://mcp.example.test')).toBeVisible();
   expect(screen.getByText(/SYNTHETIC-PREVIEW/)).not.toBeVisible();
@@ -93,103 +91,6 @@ const base = {
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
-it('creates a rule for the captured current project without approving the request', async () => {
-  const selector = { kind: 'url' as const, url: 'https://example.test/project' };
-  const request: Interaction = {
-    ...base,
-    id: 'mock-project-card',
-    bot: 'a',
-    runId: 'mock-run-a',
-    kind: 'approval',
-    tool: 'web_fetch',
-    url: selector.url,
-    policyDecision: {
-      effect: 'ask',
-      source: 'risk',
-      reasonCode: 'baselineAsked',
-      matchedRules: [],
-      policyRevision: 0,
-      requestHash: 'c'.repeat(64),
-      scope: { kind: 'bot', bot: 'a' },
-      project: { projectId: 'mock-project', revision: 2 },
-      trigger: 'interactive',
-      selector,
-    },
-  };
-  const invoke = connect([request]);
-  render(<App />);
-  await screen.findByRole('button', { name: '从此次请求创建精确规则' });
-  await userEvent.click(screen.getByRole('button', { name: /当前 Bot 选择 Bot 或项目/ }));
-  await userEvent.click(await screen.findByRole('option', { name: /当前项目 · mock-project/ }));
-  await userEvent.click(screen.getByRole('button', { name: '从此次请求创建精确规则' }));
-  expect(await screen.findByRole('dialog', { name: '新建规则' })).toBeVisible();
-  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
-    type: 'approval.rules.list',
-    scope: { kind: 'project', scope: { projectId: 'mock-project', revision: 2 } },
-  });
-  expect(
-    invoke.mock.calls.some(([command]) =>
-      ['interaction.reply', 'approval.rules.write', 'task.start'].includes(command.type),
-    ),
-  ).toBe(false);
-});
-it('separates current-task purpose consent from allowing once and saving a rule', async () => {
-  const selector = {
-    kind: 'mcp' as const,
-    connection: 'mock-connection',
-    configRevision: 2,
-    catalogDigest: 'a'.repeat(64),
-    tool: 'synthetic_write',
-    inputHash: 'b'.repeat(64),
-  };
-  const request: Interaction = {
-    ...base,
-    id: 'mock-purpose-card',
-    bot: 'a',
-    runId: 'mock-run-a',
-    kind: 'approval',
-    tool: 'mcp_call',
-    connection: selector.connection,
-    configRevision: 2,
-    catalogDigest: selector.catalogDigest,
-    name: '合成连接',
-    origin: 'https://mcp.example.test',
-    operation: selector.tool,
-    arguments: '{"value":"SYNTHETIC"}',
-    inputHash: selector.inputHash,
-    purposeScope: { taskId: 'mock-task-a', turnId: 'mock-task-a' },
-    policyDecision: {
-      effect: 'ask',
-      source: 'risk',
-      reasonCode: 'baselineAsked',
-      matchedRules: [{ id: 'mock-allow', revision: 1, name: '合成精确规则', effect: 'allow' }],
-      policyRevision: 1,
-      requestHash: 'c'.repeat(64),
-      scope: { kind: 'bot', bot: 'a' },
-      trigger: 'interactive',
-      selector,
-    },
-  };
-  const invoke = connect([request]);
-  render(<App />);
-  expect(await screen.findByRole('button', { name: '仅允许这一次' })).toBeVisible();
-  expect(screen.getByRole('button', { name: '从此次请求创建精确规则' })).toBeVisible();
-  const confirm = screen.getByRole('button', { name: '确认当前任务用途并允许' });
-  expect(within(confirm.closest('article')!).getByText('请为合成示例记录一个值。')).toBeVisible();
-  expect(confirm).toHaveAccessibleDescription(/当前任务的这一轮/);
-  await userEvent.click(confirm);
-  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
-    type: 'interaction.reply',
-    bot: 'a',
-    runId: 'mock-run-a',
-    id: request.id,
-    reply: { kind: 'decision', allow: true, confirmPurpose: true },
-  });
-  expect(invoke.mock.calls.some(([command]) => command.type === 'approval.rules.write')).toBe(
-    false,
-  );
-  expect(await screen.findByText('已确认本轮任务用途')).toBeVisible();
-});
 const question: Interaction = {
   ...base,
   id: 'mock-question',
@@ -220,11 +121,9 @@ function connect(
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 4;
   snapshot.model.configured = true;
-  snapshot.approvalRules = { capability: approvalRulesCapability, available: true, revision: 1 };
   snapshot.interactions = requests;
   snapshot.software = software;
   snapshot.agents.a = {
-    turns: [{ id: 'mock-task-a', prompt: '请为合成示例记录一个值。', result: '' }],
     phase: 'waiting',
     running: true,
     runId: 'mock-run-a',
@@ -244,8 +143,6 @@ function connect(
   };
   const subscribers = new Set<(snapshot: RuntimeSnapshot) => unknown>();
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
-    if (command.type === 'approval.rules.list')
-      return { ok: true, value: { scope: command.scope, revision: 0, rules: [] } };
     if (command.type === 'interaction.reply') {
       const current = snapshot.interactions!.find((item) => item.id === command.id)!;
       const updated = { ...current, status: 'resolved' as const, reply: command.reply };

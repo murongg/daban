@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { type BudgetScope, type Group, isGroupPage, type TaskRequest } from '@daban/protocol';
+import { type Group, isGroupPage, type TaskRequest } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
@@ -37,7 +37,7 @@ async function fixture(project?: { projectId: string; revision: number }) {
   let activeRun = 'mock-run';
   let intentId = 'mock-intent';
   let reading: (() => unknown) | undefined;
-  const calls: { bot: string; task: TaskRequest; context: string; budget?: BudgetScope }[] = [];
+  const calls: { bot: string; task: TaskRequest; context: string }[] = [];
   const runtime = {
     member: async (id: string) => members.find((member) => member.id === id),
     directory: async () => {
@@ -48,7 +48,6 @@ async function fixture(project?: { projectId: string; revision: number }) {
       bot === 'mock-alpha' && runId === activeRun
         ? {
             intentId,
-            budget: { budgetId: 'synthetic-origin-budget', revision: 1 },
             ...(project ? { project } : {}),
           }
         : undefined,
@@ -56,16 +55,11 @@ async function fixture(project?: { projectId: string; revision: number }) {
     groupRunning: () => false,
     admit: (bot: string) => !blocked.has(bot),
     findRequest: () => undefined,
-    start: async (
-      bot: string,
-      task: TaskRequest,
-      scope: { context: string; budget?: BudgetScope },
-    ) => {
+    start: async (bot: string, task: TaskRequest, scope: { context: string }) => {
       calls.push({
         bot,
         task,
         context: scope.context,
-        ...(scope.budget ? { budget: scope.budget } : {}),
       });
     },
     stopRequest: async () => {},
@@ -312,25 +306,6 @@ test('the maximum shared summary remains a valid executable task without truncat
     expect(f.calls[0].task.prompt).toHaveLength(12000);
     expect(f.calls[0].task.prompt).toBe(message);
     expect(isGroupPage(await f.groups.read(created.group.id))).toBe(true);
-  } finally {
-    await f.close();
-  }
-});
-
-test('collaboration persists trusted origin budget through restart and all sequential stages', async () => {
-  const f = await fixture();
-  try {
-    await f.tools.invoke(f.run, 'group_create', request);
-    await f.reopen();
-    await f.groups.tick();
-    expect(f.calls.length).toBeGreaterThan(0);
-    expect(f.calls[0].budget).toEqual({ budgetId: 'synthetic-origin-budget', revision: 1 });
-    await expect(
-      f.groups.collaborate(
-        { bot: 'mock-alpha', runId: 'mock-run' },
-        { ...request, budgetId: 'forged' },
-      ),
-    ).rejects.toThrow();
   } finally {
     await f.close();
   }

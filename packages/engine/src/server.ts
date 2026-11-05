@@ -5,16 +5,11 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  approvalRulesCapability,
   automationCapability,
-  type BudgetIncreaseRequest,
   botBundleLimit,
   type ExecutionSnapshot,
   type Group,
   type GroupPage,
-  goalResumeKey,
-  type Interaction,
-  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -28,15 +23,11 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
-  isBudgetCommand,
-  isBudgetConfigure,
-  isBudgetPolicy,
   isChatRequest,
   isComputerRequest,
   isDocumentUpload,
   isExecutionSnapshot,
-  isGoalBudgetOwner,
-  isGoalResumeTarget,
+  isGoalOwner,
   isGroupCopyRequest,
   isGroupSend,
   isKnowledgeContent,
@@ -60,7 +51,6 @@ import {
   isTaskInsert,
   isTranscriptContentQuery,
   isTranscriptQuery,
-  isTranscriptScope,
   isUserReply,
   isWorkCommentQuery,
   isWorkCommentWrite,
@@ -77,10 +67,8 @@ import {
   type RuntimeNoticeStatus,
   type Schedule,
   type SetupStatus,
-  sameProjectScope,
   validAgentId,
 } from '@daban/protocol';
-import { approvalCommand } from './approval-api.js';
 import { Authority, ViewerGrants } from './authority.js';
 import { Commands } from './commands.js';
 import { Computers } from './computers.js';
@@ -184,12 +172,7 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
-  '/api/approval-rules/list',
-  '/api/approval-rules/receipt',
-  '/api/approval-rules/preview',
-  '/api/budgets/goal',
-  '/api/budgets/settings',
-  '/api/budgets/read',
+  '/api/goals/target',
   '/api/model/saved',
   '/api/notes/status',
   '/api/notes/list',
@@ -660,20 +643,6 @@ export async function startPrototype({
           return json(res, value);
         }
         const groupProtocol = req.headers['x-daban-client-protocol'];
-        const modernApprovals = req.headers['x-daban-approval-rules'] === approvalRulesCapability;
-        const interactionView = (item: Interaction) => {
-          if (modernApprovals) return item;
-          const { policyDecision: _policy, purposeScope: _purpose, reply, ...legacy } = item;
-          return {
-            ...legacy,
-            ...(reply
-              ? {
-                  reply:
-                    reply.kind === 'decision' ? { kind: reply.kind, allow: reply.allow } : reply,
-                }
-              : {}),
-          };
-        };
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
             ? Number(groupProtocol)
@@ -1013,18 +982,6 @@ export async function startPrototype({
             if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
             return json(res, await diagnostics.inspect());
           }
-          if (url.pathname.startsWith('/api/approval-rules/')) {
-            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
-            if (!models) throw new Fault('APPROVAL_RULES_UNAVAILABLE', 503);
-            const command = await body(req);
-            if (
-              url.search ||
-              !isApprovalRulesCommand(command) ||
-              command.type !== `approval.rules.${url.pathname.slice('/api/approval-rules/'.length)}`
-            )
-              throw new Fault('INVALID_APPROVAL_RULE', 400);
-            return json(res, await approvalCommand(models, command));
-          }
           if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
             if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
             const data = await body(req);
@@ -1037,34 +994,7 @@ export async function startPrototype({
             const cancel = () => controller.abort();
             res.once('close', cancel);
             try {
-              const result = await integrationCommand(models, data, controller.signal);
-              if (
-                !modernApprovals &&
-                data.type === 'mcp.receipt' &&
-                result &&
-                typeof result === 'object' &&
-                'policyDecision' in result
-              ) {
-                const { policyDecision: _decision, ...legacy } = result;
-                return json(res, legacy);
-              }
-              if (
-                !modernApprovals &&
-                data.type === 'mcp.calls' &&
-                result &&
-                typeof result === 'object' &&
-                'items' in result &&
-                Array.isArray(result.items)
-              )
-                return json(res, {
-                  ...result,
-                  items: result.items.map((item) => {
-                    if (!('policyDecision' in item)) return item;
-                    const { policyDecision: _decision, ...legacy } = item;
-                    return legacy;
-                  }),
-                });
-              return json(res, result);
+              return json(res, await integrationCommand(models, data, controller.signal));
             } finally {
               res.off('close', cancel);
             }
@@ -1230,177 +1160,12 @@ export async function startPrototype({
               throw new Fault('INVALID_MEMORY_QUERY', 400);
             return json(res, await models.profiles.history(data.bot, data.query));
           }
-          if (url.pathname.startsWith('/api/budgets/') && req.method === 'POST') {
-            if (!models) throw new Fault('BUDGET_UNAVAILABLE', 503);
+          if (url.pathname === '/api/goals/target' && req.method === 'POST') {
+            if (!models) throw new Fault('GOAL_TARGET_UNAVAILABLE', 503);
             const data = await body(req);
-            try {
-              if (
-                url.pathname === '/api/budgets/goal' &&
-                Object.keys(data).every((key) => key === 'owner') &&
-                isGoalBudgetOwner(data.owner)
-              )
-                return json(res, await models.goalTarget(data.owner));
-              if (url.pathname === '/api/budgets/settings' && Object.keys(data).length === 0)
-                return json(res, models.budgets.settings());
-              if (url.pathname === '/api/budgets/configure' && isBudgetConfigure(data))
-                return json(
-                  res,
-                  models.budgets.configure(
-                    data.revision,
-                    data.policy,
-                    data.prices,
-                    data.id,
-                    data.scope,
-                  ),
-                );
-              if (url.pathname === '/api/budgets/read' && isTranscriptQuery(data))
-                return json(res, await models.budget(data.scope));
-              if (
-                url.pathname === '/api/budgets/increase' &&
-                Object.keys(data).every((k) =>
-                  ['budgetId', 'id', 'scope', 'revision', 'policy', 'goalResume'].includes(k),
-                ) &&
-                validAgentId(data.id) &&
-                isTranscriptScope(data.scope) &&
-                Number.isSafeInteger(data.revision) &&
-                isBudgetPolicy(data.policy) &&
-                (data.goalResume === undefined || isGoalResumeTarget(data.goalResume))
-              ) {
-                const input = data as unknown as BudgetIncreaseRequest;
-                const current = await models.budget(input.scope);
-                if (!current) throw new Fault('BUDGET_NOT_FOUND', 404);
-                if (current.scope.budgetId !== input.budgetId)
-                  throw new Fault('BUDGET_OWNER_CONFLICT', 403);
-                if (
-                  input.goalResume &&
-                  current.scope.revision === input.revision &&
-                  goalResumeKey(input.goalResume) !== goalResumeKey(current.goalResume)
-                )
-                  throw new Fault('GOAL_TARGET_CHANGED', 409);
-                const view = models.budgets.increase(
-                  current.scope.budgetId,
-                  input.revision,
-                  input.policy,
-                  input.id,
-                  () =>
-                    ![...models!.jobs.values()].some(
-                      (job) =>
-                        job.budget?.budgetId === current.scope.budgetId && models!.running(job.bot),
-                    ),
-                  input.scope,
-                  input.goalResume,
-                );
-                return json(res, { ...view, owner: input.scope });
-              }
-              if (url.pathname === '/api/budgets/continue') {
-                if (Object.hasOwn(data, 'type')) throw new Fault('INVALID_BUDGET_REQUEST', 400);
-                const command = { type: 'budget.continue', ...data };
-                if (!isBudgetCommand(command) || command.type !== 'budget.continue')
-                  throw new Fault('INVALID_BUDGET_REQUEST', 400);
-                const current = await models.budget(command.scope);
-                if (!current || current.scope.budgetId !== command.budget.budgetId)
-                  throw new Fault('BUDGET_OWNER_CONFLICT', 403);
-                if (
-                  command.goalResume &&
-                  (command.goalResume.owner.bot !== command.scope.bot ||
-                    command.goalResume.owner.conversationId !== command.scope.conversationId ||
-                    (command.goalResume.owner.chatRevision ?? 0) !==
-                      (command.scope.chatRevision ?? 0) ||
-                    command.goalResume.budget?.budgetId !== command.budget.budgetId ||
-                    command.goalResume.budget.revision !== command.budget.revision)
-                )
-                  throw new Fault('GOAL_TARGET_CHANGED', 409);
-                const record = await models.journal.read(command.scope.bot, command.scope.runId);
-                if (
-                  command.goalResume &&
-                  !sameProjectScope(command.goalResume.owner.project, record?.project)
-                )
-                  throw new Fault('GOAL_TARGET_CHANGED', 409);
-                const acceptedIncrease = models.budgets.continuationReceipt(
-                  command.budget,
-                  command.id,
-                  command.scope,
-                );
-                if (
-                  goalResumeKey(acceptedIncrease.goalResume) !== goalResumeKey(command.goalResume)
-                )
-                  throw new Fault('GOAL_TARGET_CHANGED', 409);
-
-                if (
-                  groups &&
-                  (await groups.budgetResume(command.budget, command.id, command.goalResume))
-                )
-                  return json(res, {
-                    budget: command.budget,
-                    owner: command.scope,
-                    id: command.id,
-                    queued: true,
-                  });
-                const accepted = models.findRequest(command.scope.bot, `budget-${command.id}`);
-                if (!accepted && current.scope.revision !== command.budget.revision)
-                  throw new Fault('BUDGET_CONTINUE_STALE', 409);
-                if (!accepted) {
-                  if (!command.goalResume)
-                    models.budgets.activate(command.budget, command.id, command.scope);
-                  if (
-                    groups &&
-                    (await groups.resumeBudget(command.budget, command.id, command.goalResume))
-                  )
-                    return json(res, {
-                      budget: command.budget,
-                      owner: command.scope,
-                      id: command.id,
-                      queued: true,
-                    });
-                }
-                if (!record || record.conversationId)
-                  throw new Fault('BUDGET_CONTINUE_UNAVAILABLE', 409);
-                if (record.goalSession && current.goalResume && !command.goalResume)
-                  throw new Fault('GOAL_TARGET_REQUIRED', 409);
-                const receipt = await models.startHuman(
-                  command.scope.bot,
-                  {
-                    requestId: `budget-${command.id}`,
-                    ...(command.goalResume
-                      ? { goalResume: command.goalResume }
-                      : { retryOf: command.scope.runId }),
-                    prompt: command.goalResume ? '/goal resume' : record.prompt,
-                    chatRevision: command.scope.chatRevision,
-                    ...(record.project ? { project: record.project } : {}),
-                    ...(record.approvalMode ? { approvalMode: record.approvalMode } : {}),
-                  },
-                  undefined,
-                  command.budget,
-                  record.automation,
-                );
-                return json(res, {
-                  budget: command.budget,
-                  owner: command.scope,
-                  id: command.id,
-                  queued: false,
-                  runId: receipt.runId,
-                });
-              }
-              throw new Fault('INVALID_BUDGET_REQUEST', 400);
-            } catch (error) {
-              if (error instanceof Fault) throw error;
-              const code =
-                error instanceof Error && /^(?:BUDGET|INVALID_BUDGET)[A-Z_]*$/.test(error.message)
-                  ? error.message
-                  : 'BUDGET_UNAVAILABLE';
-              throw new Fault(
-                code,
-                ['BUDGET_OWNER_CONFLICT', 'BUDGET_CONTINUE_UNACCEPTED'].includes(code)
-                  ? 403
-                  : /NOT_FOUND/.test(code)
-                    ? 404
-                    : /CONFLICT|INCREASE_REQUIRED|TASK_RUNNING|IMMUTABLE|CONTINUE_STALE/.test(code)
-                      ? 409
-                      : /INVALID|STRICT_UNAVAILABLE/.test(code)
-                        ? 400
-                        : 503,
-              );
-            }
+            if (Object.keys(data).some((key) => key !== 'owner') || !isGoalOwner(data.owner))
+              throw new Fault('INVALID_GOAL_TARGET', 400);
+            return json(res, await models.goalTarget(data.owner));
           }
           if (url.pathname.startsWith('/api/transcripts/') && req.method === 'POST') {
             if (!models) throw new Fault('TRANSCRIPT_UNAVAILABLE', 503);
@@ -1481,10 +1246,7 @@ export async function startPrototype({
               const page = await groups.send(data);
               if (models && isGroupSend(data))
                 for (const bot of data.recipients)
-                  models.budgets.goals.noteHuman(
-                    { bot, conversationId: data.group },
-                    `group-${data.id}`,
-                  );
+                  models.goals.noteHuman({ bot, conversationId: data.group }, `group-${data.id}`);
               return json(res, groupReply(page, modernGroups));
             }
             if (action === 'action') return json(res, await groups.action(data));
@@ -1920,10 +1682,7 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models ? await models.profiles.list() : [],
-              interactions: models ? (await models.interactions.list()).map(interactionView) : [],
-              ...(modernApprovals && models
-                ? { approvalRules: await models.approvalRules.status() }
-                : {}),
+              interactions: models ? await models.interactions.list() : [],
               schedules: await scheduleStatus(
                 schedules,
                 req.headers['x-daban-automation'] === automationCapability,
@@ -2016,15 +1775,12 @@ export async function startPrototype({
                 Object.keys(data).some((key) => !['id', 'runId', 'reply'].includes(key)) ||
                 !validAgentId(data.id) ||
                 !validAgentId(data.runId) ||
-                !isUserReply(data.reply) ||
-                (!modernApprovals && data.reply.kind === 'decision' && data.reply.confirmPurpose)
+                !isUserReply(data.reply)
               )
                 throw new Fault('INVALID_INTERACTION_REPLY', 400);
               return json(
                 res,
-                interactionView(
-                  await models.interactions.reply(id, data.runId, data.id, data.reply),
-                ),
+                await models.interactions.reply(id, data.runId, data.id, data.reply),
               );
             }
             if (action === 'profile' && models) {
@@ -2390,12 +2146,10 @@ export async function startPrototype({
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),
           interactions: models.interactions,
-          policy: models.rulePolicy,
           review: new Risk({
             settings,
-            meter: (request, api, fetcher) => models!.meterReview(request, api, fetcher),
             resolve: async (request) => models?.reviewModel(request.bot, request.runId) ?? null,
-          }).details,
+          }).review,
           assertLive: (run) => {
             if (replacingRecovery || !recovery!.admit())
               throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -2445,16 +2199,13 @@ export async function startPrototype({
           member: (bot) => models!.profiles.get(bot),
           directory: () => models!.profiles.list(),
           source: (bot, runId, group) => models!.groupSource(bot, runId, group),
-          budget: (group, source) => models!.groupBudget(group, source),
-          budgetResumeIssue: (bot, runId, goal) => models!.budgetResumeIssue(bot, runId, goal),
-
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
           start: (bot, task, scope, automation) =>
             task.goalResume
-              ? models!.startHuman(bot, task, scope, scope.budget, automation)
+              ? models!.startHuman(bot, task, scope, automation)
               : models!.start(bot, task, scope, automation),
           stopRequest: (bot, id, group) => models!.stopRequest(bot, id, group),
         },

@@ -12,8 +12,8 @@ const plan: SoftwarePlan = {
   targets: [{ name: 'mock-calculator', version: '1.0-1' }],
   packages: [{ name: 'mock-calculator', version: '1.0-1' }],
   source: 'debian',
-  createdAt: '2026-01-01T00:00:00Z',
-  expiresAt: '2026-01-01T00:20:00Z',
+  createdAt: '2099-01-01T00:00:00Z',
+  expiresAt: '2099-01-01T00:20:00Z',
   digest: 'a'.repeat(64),
 };
 async function fixture() {
@@ -132,6 +132,25 @@ test('a lost dispatch reply is inspected and never automatically retried after a
     expect(calls).toBe(1);
     await f.call();
     expect(calls).toBe(1);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+test('one-time consent cannot install a dependency plan changed before the backend send', async () => {
+  const f = await fixture();
+  try {
+    const pending = f.call();
+    const card = await f.pending();
+    f.set({
+      plan: { ...plan, packages: [{ name: 'mock-other-package', version: '2.0-1' }] },
+      phase: 'planned',
+      updatedAt: plan.createdAt,
+    });
+    await f.cards.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
+    const result = await pending;
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain('SOFTWARE_PLAN_CHANGED');
+    expect(f.counts().effects).toBe(0);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }

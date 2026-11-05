@@ -6,6 +6,7 @@ import { turnLimit } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { migrate } from './database.js';
+import { GoalControls } from './goal-controls.js';
 import { editorShowsFile, ModelRuns, sdkPatch, verifyOutput, verifyTask } from './model.js';
 import { secureDirectory } from './private-files.js';
 import { migrations as projectMigrations } from './projects-migrations.js';
@@ -49,6 +50,16 @@ test('ordinary startup reads retired task history without changing the old proje
     runId: 'mock-retired-run',
     requestId: 'mock-retired-request',
     project: { projectId: 'mock-retired-project', revision: 1 },
+    sessionId: 'mock-retired-goal-session',
+    goal: {
+      id: 'mock-retired-goal',
+      revision: 1,
+      objective: 'SYNTHETIC PRIVATE GOAL',
+      phase: 'paused',
+      activation: 'disarmed',
+      rounds: 1,
+      limit: 3,
+    },
     prompt: 'SYNTHETIC PRIVATE PROJECT HISTORY',
     phase: 'completed',
     running: false,
@@ -67,6 +78,7 @@ test('ordinary startup reads retired task history without changing the old proje
   });
   try {
     await models.ready;
+    expect(models.goals.prepare({ bot: 'mock-bot', chatRevision: 0 })).toBeUndefined();
     expect((await models.chatHistory('mock-bot', 0)).items).toContainEqual(
       expect.objectContaining({
         runId: 'mock-retired-run',
@@ -104,6 +116,175 @@ test('retired file locators never fall through to the ordinary shared workspace'
     await models.close();
   }
 });
+test.each(['unknown-effect', 'newer-authority'] as const)(
+  'historical Goal recovery preserves %s without financial bookkeeping',
+  async (mode) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-goal-unknown-'));
+    const dir = path.join(root, 'model');
+    const journal = new TaskJournal(path.join(dir, 'task-journal'));
+    await journal.put({
+      bot: 'a',
+      runId: 'synthetic-prior-run',
+      requestId: 'synthetic-prior-request',
+      prompt: 'SYNTHETIC TASK',
+      kind: 'chat',
+      phase: 'interrupted',
+      running: false,
+      result: '',
+      error: 'TASK_INTERRUPTED',
+      sessionId: 'synthetic-goal-session',
+      createdAt: '2026-01-01T00:00:00Z',
+      chatRevision: 0,
+      goalSession: true,
+      goal: {
+        id: 'synthetic-goal',
+        revision: 1,
+        objective: 'SYNTHETIC GOAL',
+        phase: 'paused',
+        activation: 'disarmed',
+        rounds: 1,
+        limit: 3,
+      },
+      trace: [
+        {
+          name: 'shell',
+          surface: 'workspace',
+          phase: 'running',
+          at: '2026-01-01T00:00:00Z',
+          code: 'EXECUTION_OUTCOME_UNKNOWN',
+        },
+      ],
+    });
+    if (mode === 'newer-authority') {
+      const controls = new GoalControls(path.join(dir, 'goals.sqlite'));
+      await controls.ready;
+      controls.observe(
+        { bot: 'a', chatRevision: 0 },
+        'synthetic-newer-session',
+        { id: 'synthetic-newer-goal', revision: 2 },
+        true,
+      );
+      controls.close();
+    }
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+      Response.json({ data: [{ id: 'synthetic-model' }] }),
+    );
+    await settings.save({ apiKey: 'synthetic-provider-key' });
+    let starts = 0;
+    class Harness {
+      async start() {
+        starts++;
+      }
+      async close() {}
+      session(id = 'synthetic-goal-session') {
+        return { id, run: async () => ({ sessionId: id, finalResponse: 'SYNTHETIC RESUME' }) };
+      }
+      async resumeSession(id: string) {
+        return this.session(id);
+      }
+    }
+    const models = new ModelRuns({
+      settings,
+      Harness,
+      dir,
+      workspace: path.join(root, 'workspace'),
+      origin: 'http://127.0.0.1:12345',
+    });
+    try {
+      const target = await models.goalTarget({ bot: 'a', chatRevision: 0 });
+      if (mode === 'newer-authority') {
+        expect(target.goalId).toBe('synthetic-newer-goal');
+        expect(starts).toBe(0);
+        return;
+      }
+      await expect(
+        models.startHuman('a', {
+          requestId: 'synthetic-resume',
+          prompt: '/goal resume',
+          chatRevision: 0,
+          goalResume: target,
+        }),
+      ).rejects.toMatchObject({ code: 'TASK_OUTCOME_UNKNOWN' });
+      expect(starts).toBe(0);
+      expect(models.goals.epoch(target.owner)).toBe(target.humanEpoch);
+    } finally {
+      await models.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(['corrupt', 'legacy'] as const)(
+  'an obsolete %s financial sidecar cannot block an ordinary task or be rewritten by execution',
+  async (kind) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-obsolete-sidecar-'));
+    const dir = path.join(root, 'model');
+    await secureDirectory(dir);
+    const sidecar = path.join(dir, 'budgets.sqlite');
+    const snapshot = JSON.stringify({ currency: 'USD', input: 1000000 });
+    if (kind === 'legacy') {
+      const legacy = new DatabaseSync(sidecar);
+      try {
+        for (const name of ['20261104160300_initial', '20261104163747_goal-grants'])
+          legacy.exec(
+            await readFile(
+              new URL(`../drizzle/budgets/${name}/migration.sql`, import.meta.url),
+              'utf8',
+            ),
+          );
+        legacy
+          .prepare('INSERT INTO budget_prices(id,snapshot) VALUES(?,?)')
+          .run('synthetic-price', snapshot);
+      } finally {
+        legacy.close();
+      }
+    } else await writeFile(sidecar, 'SYNTHETIC OBSOLETE FINANCIAL SIDECAR', { mode: 0o600 });
+    const original = await readFile(sidecar);
+    const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
+      Response.json({ data: [{ id: 'synthetic-model' }] }),
+    );
+    await settings.save({ apiKey: 'synthetic-provider-key' });
+    class Harness {
+      async start() {}
+      async close() {}
+      session(id = 'synthetic-session') {
+        return { id, run: async () => ({ sessionId: id, finalResponse: 'SYNTHETIC COMPLETE' }) };
+      }
+      async resumeSession(id: string) {
+        return this.session(id);
+      }
+    }
+    const models = new ModelRuns({
+      settings,
+      Harness,
+      dir,
+      workspace: path.join(root, 'workspace'),
+      origin: 'http://127.0.0.1:12345',
+    });
+    try {
+      await models.start('a', { requestId: 'synthetic-ordinary-task', prompt: 'SYNTHETIC TASK' });
+      const job = models.jobs.get('a')!;
+      await job.done;
+      expect(job.phase, job.error).toBe('completed');
+      expect(job.result).toBe('SYNTHETIC COMPLETE');
+      expect(await readFile(sidecar)).toEqual(original);
+      if (kind === 'legacy') {
+        const legacy = new DatabaseSync(sidecar, { readOnly: true });
+        try {
+          expect(
+            legacy.prepare('SELECT snapshot FROM budget_prices WHERE id=?').get('synthetic-price')
+              ?.snapshot,
+          ).toBe(snapshot);
+        } finally {
+          legacy.close();
+        }
+      }
+    } finally {
+      await models.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test('initialization failures preserve redacted startup diagnostics and reclaim the private checkpoint', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-model-startup-log-'));
@@ -1594,7 +1775,7 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
     sendOriginalQuestion: false,
   });
   expect.assert(plugins.some((row) => row.name === '@deepseek-ai/dsh-tool-call-timeout-policy'));
-  const budget = plugins.find((row) => row.id === 'daban-budget');
+  const budget = plugins.find((row) => row.id === 'daban-policy');
   expect.assert(budget && 'config' in budget);
   expect(budget.config).toStrictEqual({
     limit: 60,

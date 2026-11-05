@@ -1349,7 +1349,6 @@ it.each([false, true])(
       goalId: 'mock-goal',
       goalRevision: 2,
       humanEpoch: 1,
-      budget: { budgetId: 'mock-budget', revision: 1 },
     };
     const invoke = vi.fn(async (command: RuntimeCommand) =>
       command.type === 'task.start'
@@ -1359,7 +1358,7 @@ it.each([false, true])(
             value:
               command.type === 'status'
                 ? snapshot
-                : command.type === 'budget.goal'
+                : command.type === 'goal.target'
                   ? legacy
                     ? null
                     : target
@@ -1378,7 +1377,7 @@ it.each([false, true])(
     await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
     await userEvent.click(await screen.findByRole('button', { name: '重试发送' }));
     const calls = invoke.mock.calls.map(([value]) => value);
-    expect(calls.filter((value) => value.type === 'budget.goal')).toHaveLength(1);
+    expect(calls.filter((value) => value.type === 'goal.target')).toHaveLength(1);
     const sends = calls.filter((value) => value.type === 'task.start');
     expect(sends).toHaveLength(2);
     expect(sends[0]).toEqual(sends[1]);

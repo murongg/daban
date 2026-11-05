@@ -13,8 +13,8 @@ const sdkFile = process.env.DABAN_TEST_SDK || defaultSdkFile;
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
-for (const scenario of ['clean', 'partial'] as const)
-  test(`native API ${scenario} recovery uses a real SDK process and an entirely synthetic provider`, {
+for (const scenario of ['ordinary', 'clean', 'partial'] as const)
+  test(`native API ${scenario} execution uses a real SDK process and an entirely synthetic provider`, {
     skip: !existsSync(sdkFile),
     timeout: 60000,
   }, async () => {
@@ -72,7 +72,7 @@ for (const scenario of ['clean', 'partial'] as const)
         assert.ok(object(body) && typeof body.model === 'string' && body.stream === true);
         calls.push(body.model);
         assert.ok(calls.length <= 2);
-        if (body.model === 'mock-primary') {
+        if (body.model === 'mock-primary' && scenario !== 'ordinary') {
           if (scenario === 'partial') {
             response.writeHead(200, { 'content-type': 'text/event-stream' });
             const delivered = new Promise<boolean>((resolve) => {
@@ -98,13 +98,20 @@ for (const scenario of ['clean', 'partial'] as const)
           );
           return;
         }
-        assert.equal(body.model, 'mock-fallback');
+        assert.equal(body.model, scenario === 'ordinary' ? 'mock-primary' : 'mock-fallback');
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         const emit = (delta: object, finishReason: string | null) =>
           response.write(
             `data: ${JSON.stringify({ id: 'mock-native-response', object: 'chat.completion.chunk', created: 1800000000, model: body.model, choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`,
           );
-        emit({ role: 'assistant', content: 'SYNTHETIC FALLBACK COMPLETE' }, null);
+        emit(
+          {
+            role: 'assistant',
+            content:
+              scenario === 'ordinary' ? 'SYNTHETIC DIRECT COMPLETE' : 'SYNTHETIC FALLBACK COMPLETE',
+          },
+          null,
+        );
         emit({}, 'stop');
         response.end('data: [DONE]\n\n');
       } catch (error) {
@@ -164,14 +171,14 @@ for (const scenario of ['clean', 'partial'] as const)
       });
       await models.jobs.get('mock-bot')!.done;
       const result = models.status().bots['mock-bot'];
-      const budget = models.budgets.view(models.jobs.get('mock-bot')!.budget!.budgetId);
-      assert.equal(budget.requests, calls.length);
-      assert.equal(budget.unknownCount, calls.length);
-      assert.equal(methods.filter((m) => m.method === 'budget.reserve').length, calls.length);
-      assert.equal(methods.filter((m) => m.method === 'budget.dispatched').length, calls.length);
       assert.equal(result.runId, accepted.runId);
       assert.equal(result.requestId, 'mock-native-request');
-      if (scenario === 'clean') {
+      if (scenario === 'ordinary') {
+        assert.equal(result.phase, 'completed', result.error || 'Synthetic direct task failed');
+        assert.equal(result.result, 'SYNTHETIC DIRECT COMPLETE');
+        assert.deepEqual(calls, ['mock-primary']);
+        assert.equal(result.attemptSummary?.length, 1);
+      } else if (scenario === 'clean') {
         assert.equal(
           result.phase,
           'completed',
