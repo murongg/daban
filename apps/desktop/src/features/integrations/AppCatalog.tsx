@@ -267,9 +267,15 @@ export function AppCatalog({
   if (!available) return null;
   const directory = catalog && 'protocol' in catalog ? catalog : undefined;
   const apps: AppDirectoryEntry[] = catalog?.apps ?? [];
-  const disabled = busy || blocked || !!pending || !!disconnect;
+  const unresolved = !!pending && (!receipt || activePhase(receipt));
+  const disabled = busy || blocked || unresolved || !!disconnect;
   function open(app: AppDirectoryEntry) {
     if (app.id === 'custom-mcp') return;
+    // A completed attempt does not lock other accounts; an unknown or active start keeps its nonce and blocks new starts.
+    if (pending && receipt && !activePhase(receipt)) {
+      currentPending.current = undefined;
+      setPending(undefined);
+    }
     let name = app.publisher;
     for (let index = 2; rows.some((row) => row.name === name); index++)
       name = `${app.publisher} ${index}`;

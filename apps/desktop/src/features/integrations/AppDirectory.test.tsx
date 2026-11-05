@@ -214,6 +214,7 @@ it('keeps an unknown start nonce, then retries a terminal expired attempt with a
   await userEvent.click(await screen.findByRole('button', { name: '连接 Linear' }));
   await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
   await screen.findByRole('alert');
+  expect(screen.getByRole('button', { name: '连接 Sentry' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: '核对并重新打开本次授权' }));
   await screen.findByText('请在系统浏览器中完成授权');
   const starts = f.commands.filter((c) => c.type === 'app.oauth.connect');
@@ -340,4 +341,18 @@ it('returns a definite name conflict to the editor instead of trapping an unstar
   expect(starts).toHaveLength(2);
   expect(starts[1].input.name).toBe('Synthetic second account');
   expect(starts[1].input.requestId).not.toBe(starts[0].input.requestId);
+});
+
+it('keeps a terminal authorization failure visible while allowing an explicit choice of another provider', async () => {
+  const f = fixture();
+  f.phase('failed');
+  show(f);
+  await userEvent.click(await screen.findByRole('button', { name: '连接 Linear' }));
+  await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
+  await screen.findByText('授权失败，请重新发起。');
+  const next = screen.getByRole('button', { name: '连接 Sentry' });
+  expect(next).toBeEnabled();
+  await userEvent.click(next);
+  expect(screen.getByRole('textbox', { name: '连接名称' })).toHaveValue('Sentry');
+  expect(f.commands.filter((command) => command.type === 'app.oauth.connect')).toHaveLength(1);
 });
