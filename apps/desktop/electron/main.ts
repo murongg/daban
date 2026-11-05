@@ -334,9 +334,9 @@ if (primary) {
         name: hostname(),
         platform: process.platform,
         peer: peerWorker,
-        dispatch: async (command, device) => {
+        dispatch: async (command, device, schema) => {
           if (!service) throw Error('RUNTIME_OFFLINE');
-          const result = await service.invokeLocal(command);
+          const result = await service.invokeLocal(command, device, schema);
           if (
             device &&
             (command.type === 'local.connect' || command.type === 'local.resume') &&

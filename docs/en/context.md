@@ -33,6 +33,8 @@ Source counts do not prove retention after compaction. Attachment references do 
 
 Summary and prune boundaries appear only after commitment. Their SDK node identities are not transcript sequence numbers and cannot be used for navigation. At most 20 captures are retained, with further reference and boundary limits; an evicted capture produces an explicit expiration error. Capture failures affect diagnostics only, and previously saved evidence remains historical.
 
+When a fallback opens another native model session, its SDK samples remain unknown until that session publishes its own. Previously saved captures remain available as history.
+
 ## Context and output budgets
 
 Review the context window and output limit in [Models](models.md). An excessive value can cause rejection; a small value can constrain work prematurely. Automatic matching is a reference, with the configured service determining actual limits.

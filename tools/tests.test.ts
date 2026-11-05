@@ -107,3 +107,16 @@ test('rejects unknown suite names before starting any test process', () => {
       }),
     ).toThrowError(/Unknown test suite/);
 });
+
+test('trajectory evaluation participates in the existing runtime stage', () => {
+  expect(suites.runtime).toContain('trajectory.test');
+  const calls: string[][] = [];
+  expect(
+    runTests('runtime', [], (args) => {
+      calls.push(args);
+      return { status: 0 };
+    }),
+  ).toBe(0);
+  expect(calls[0]).toContain('packages/engine/dist/trajectory.test.js');
+  expect(calls).toHaveLength(10);
+});

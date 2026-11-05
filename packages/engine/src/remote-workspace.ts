@@ -1,10 +1,14 @@
 import path from 'node:path';
+import type { ProjectFileScope } from '@daban/protocol';
 import { type RuntimeDownload, type SkillPackage, skillPackageCapability } from '@daban/protocol';
 import { Fault } from './control.js';
 import type { AgentWorkspace, TaskDirectory, WorkspaceFile } from './workspace.js';
 
 export interface WorkspaceExecutor {
-  readonly snapshot?: { capabilities: string[] };
+  readonly snapshot?: {
+    capabilities: string[];
+    computer?: import('@daban/protocol').ExecutionComputerSnapshot;
+  };
   call(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
 }
 interface DirectoryReference {
@@ -20,9 +24,13 @@ export class RemoteWorkspace implements AgentWorkspace {
     public root = '',
     private readonly canonical?: string,
     private readonly initialRoot?: string,
+    private readonly project?: ProjectFileScope,
+    private readonly authorize?: () => unknown,
   ) {}
   private params(extra: Record<string, unknown> = {}) {
+    this.authorize?.();
     return {
+      ...(this.project ? { project: this.project } : {}),
       ...(this.root ? { root: this.root } : {}),
       ...(this.canonical ? { canonical: this.canonical } : {}),
       ...extra,
@@ -42,7 +50,14 @@ export class RemoteWorkspace implements AgentWorkspace {
     return root;
   }
   scope(root: string, canonical?: string) {
-    return new RemoteWorkspace(this.execution, root, canonical);
+    return new RemoteWorkspace(
+      this.execution,
+      root,
+      canonical,
+      undefined,
+      this.project,
+      this.authorize,
+    );
   }
   async create(parts: string[]): Promise<TaskDirectory> {
     const reference = (await this.execution.call(
@@ -57,8 +72,10 @@ export class RemoteWorkspace implements AgentWorkspace {
       typeof reference.handleId !== 'string'
     )
       throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
-    const call = (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) =>
-      this.execution.call(method, { handleId: reference.handleId, ...params }, signal);
+    const call = (method: string, params: Record<string, unknown> = {}, signal?: AbortSignal) => {
+      if (method !== 'workspace.close') this.authorize?.();
+      return this.execution.call(method, { handleId: reference.handleId, ...params }, signal);
+    };
     return {
       root: reference.root,
       path: reference.path,
@@ -78,10 +95,11 @@ export class RemoteWorkspace implements AgentWorkspace {
       this.params({ path: relative, ...(limit === undefined ? {} : { limit }) }),
     )) as WorkspaceFile & { content: string };
   }
-  async download(relative: string) {
+  async download(relative: string, limit?: number, signal?: AbortSignal) {
     return (await this.execution.call(
       'workspace.download',
-      this.params({ path: relative }),
+      this.params({ path: relative, ...(limit === undefined ? {} : { limit }) }),
+      signal,
     )) as RuntimeDownload;
   }
   async stageSkill(bundle: SkillPackage, signal?: AbortSignal) {

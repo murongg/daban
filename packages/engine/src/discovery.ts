@@ -10,6 +10,11 @@ import {
 } from '@daban/protocol';
 import { Fault } from './control.js';
 import { inferenceRequest, inferenceText } from './inference.js';
+export class ModelRequestUnknown extends Fault {
+  constructor(code = 'MODEL_API_UNAVAILABLE') {
+    super(code, 502);
+  }
+}
 
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -305,7 +310,7 @@ export class ModelDiscovery {
       };
     } catch (error) {
       if (error instanceof Fault) throw error;
-      throw new Fault(signal.aborted ? 'MODEL_API_TIMEOUT' : 'MODEL_API_UNAVAILABLE', 502);
+      throw new ModelRequestUnknown(signal.aborted ? 'MODEL_API_TIMEOUT' : 'MODEL_API_UNAVAILABLE');
     }
   }
 }
