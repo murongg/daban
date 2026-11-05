@@ -1,8 +1,11 @@
 import { lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
+  ApprovalMode,
   BotProfile,
+  BudgetScope,
   GoalProgress,
+  ModelAttempt,
   ModelId,
   ProjectScope,
   ReplyStream,
@@ -16,17 +19,24 @@ import type {
   TaskTrace,
 } from '@daban/protocol';
 import {
+  type AutomationSource,
   isApprovalMode,
+  isAutomationSource,
+  isBudgetScope,
   isGoalProgress,
+  isGoalResumeTarget,
+  isModelAttempts,
   isProjectScope,
   isReplyStream,
   isRunInsert,
   isRunTurn,
   isSessionStats,
   isTaskFile,
+  modelRecoveryBlocked,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
+import { type AutomationOutput, isAutomationOutput } from './automation.js';
 import { isConversationCheckpoint } from './checkpoint.js';
 import { Fault } from './control.js';
 
@@ -42,6 +52,7 @@ export function validateTask(input: unknown): TaskRequest {
     Object.keys(value).some(
       (k) =>
         ![
+          'goalResume',
           'requestId',
           'prompt',
           'retryOf',
@@ -71,6 +82,7 @@ export function validateTask(input: unknown): TaskRequest {
     fail();
   if (value.project !== undefined && !isProjectScope(value.project)) fail();
   if (value.retryOf && value.files?.length) fail();
+  if (value.goalResume !== undefined && !isGoalResumeTarget(value.goalResume)) fail();
   if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode)) fail();
   if (value.retryTurn !== undefined && (!value.retryOf || !validAgentId(value.retryTurn))) fail();
   if (
@@ -254,6 +266,12 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  approvalMode?: ApprovalMode;
+  budget?: BudgetScope;
+  activeMs?: number;
+  attemptSummary?: ModelAttempt[];
+  automation?: AutomationSource;
+  automationOutput?: AutomationOutput;
   project?: ProjectScope;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -333,6 +351,8 @@ export function taskActivity(record: Pick<TaskRecord, 'trace' | 'executedCount'>
   };
 }
 export interface ConversationScope {
+  budget?: BudgetScope;
+  sourceId?: string;
   id: string;
   context: string;
 }
@@ -377,21 +397,50 @@ export class TaskJournal {
           !/^[a-zA-Z0-9_-]+$/.test(task.runId) ||
           !phases.has(task.phase) ||
           (task.project !== undefined && !isProjectScope(task.project)) ||
+          (task.approvalMode !== undefined && !isApprovalMode(task.approvalMode)) ||
           (task.conversationId !== undefined && !validAgentId(task.conversationId)) ||
           (task.chatRevision !== undefined &&
             (!Number.isSafeInteger(task.chatRevision) || task.chatRevision < 0))
         )
           continue;
         if (task.running || ['starting', 'running', 'paused', 'waiting'].includes(task.phase)) {
+          // A crash loses exact human-wait timing; charge elapsed wall time conservatively instead of resetting the root budget.
+          const elapsed = Date.now() - Date.parse(task.createdAt || '');
+          if (Number.isFinite(elapsed) && elapsed >= 0)
+            task.activeMs = Math.min(
+              300000,
+              (Number.isSafeInteger(task.activeMs) && task.activeMs >= 0 ? task.activeMs : 0) +
+                elapsed,
+            );
           task.phase = 'interrupted';
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
+        if (task.automation !== undefined && !isAutomationSource(task.automation)) continue;
+        if (task.automationOutput !== undefined && !isAutomationOutput(task.automationOutput))
+          delete task.automationOutput;
         if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
           delete task.goalSession;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
         if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
+        if (
+          task.activeMs !== undefined &&
+          (!Number.isSafeInteger(task.activeMs) || task.activeMs < 0)
+        )
+          delete task.activeMs;
+        if (task.attemptSummary !== undefined && !isModelAttempts(task.attemptSummary))
+          delete task.attemptSummary;
+        if (task.phase === 'interrupted' && task.attemptSummary)
+          task.attemptSummary = task.attemptSummary.map((attempt: ModelAttempt) =>
+            ['starting', 'running'].includes(attempt.phase)
+              ? {
+                  ...attempt,
+                  phase: 'interrupted',
+                  fence: attempt.fence === 'clean' ? 'clean' : 'unknown',
+                }
+              : attempt,
+          );
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
         if (
           task.elapsedMs !== undefined &&
@@ -418,6 +467,9 @@ export class TaskJournal {
           )
         )
           delete task.turns;
+        // An invalid authoritative identity cannot be downgraded to an unmetered legacy task.
+        if (task.budget !== undefined && !isBudgetScope(task.budget))
+          throw new Fault('INVALID_BUDGET_SCOPE', 400);
         if (task.checkpoint !== undefined && !isConversationCheckpoint(task.checkpoint))
           delete task.checkpoint;
         this.records.set(task.runId, task);
@@ -427,10 +479,25 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (value.budget !== undefined && !isBudgetScope(value.budget))
+      throw new Fault('INVALID_BUDGET_SCOPE', 400);
+    if (
+      value.activeMs !== undefined &&
+      (!Number.isSafeInteger(value.activeMs) || value.activeMs < 0)
+    )
+      throw new Fault('INVALID_TASK_RECORD', 400);
+    if (value.attemptSummary !== undefined && !isModelAttempts(value.attemptSummary))
+      throw new Fault('INVALID_TASK_RECORD', 400);
+    if (value.automation !== undefined && !isAutomationSource(value.automation))
+      throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
+    if (value.automationOutput !== undefined && !isAutomationOutput(value.automationOutput))
+      throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
       throw new Fault('INVALID_GOAL_STATE', 400);
+    if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode))
+      throw new Fault('INVALID_TASK_RECORD', 400);
     if (value.project !== undefined && !isProjectScope(value.project))
       throw new Fault('INVALID_TASK_RECORD', 400);
     if (value.planning !== undefined && typeof value.planning !== 'boolean')
@@ -448,6 +515,12 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'budget',
+      'activeMs',
+      'attemptSummary',
+      'automation',
+      'automationOutput',
+      'approvalMode',
       'bot',
       'chatRevision',
       'conversationId',
@@ -537,6 +610,8 @@ export class TaskJournal {
       .filter(
         (task) =>
           task.kind === 'chat' &&
+          // Changes runs have their own durable comparison; ordinary completion would leak a second notice.
+          task.automation?.policy.kind !== 'changes' &&
           !task.conversationId &&
           !task.running &&
           ['completed', 'failed', 'interrupted'].includes(task.phase),
@@ -555,5 +630,47 @@ export class TaskJournal {
     await this.writing;
     const record = this.records.get(runId);
     return record?.bot === bot ? structuredClone(record) : undefined;
+  }
+  async recovery(bot: string, runId: string) {
+    await this.writing;
+    const record = this.records.get(runId);
+    if (record?.bot !== bot) return undefined;
+    const intentId = record.intentId || record.runId;
+    let toolCount = 0;
+    let activeMs = 0;
+    let blocked = false;
+    let contribution = { toolCount: 0, activeMs: 0 };
+    for (const task of this.records.values()) {
+      if (task.bot !== bot || (task.intentId || task.runId) !== intentId) continue;
+      if (
+        task.conversationId !== record.conversationId ||
+        (!record.conversationId && (task.chatRevision ?? 0) !== (record.chatRevision ?? 0))
+      )
+        throw new Fault('INVALID_RETRY', 400);
+      const counters = [
+        task.toolCount ?? 0,
+        task.executedCount ?? 0,
+        task.activeMs ?? task.elapsedMs ?? 0,
+      ];
+      if (counters.some((value) => !Number.isSafeInteger(value) || value < 0))
+        throw new Fault('INVALID_RETRY', 400);
+      // Records contribute once per run, independently of clocks or the selected retry ancestor.
+      // Older cumulative snapshots may overcharge; never reinterpret them as a lower/empty budget.
+      const tools = Math.max(counters[0], counters[1], taskActivity(task).executedCount);
+      toolCount += tools;
+      activeMs += counters[2];
+      if (task.runId === record.runId) contribution = { toolCount: tools, activeMs: counters[2] };
+      if (!Number.isSafeInteger(toolCount) || !Number.isSafeInteger(activeMs))
+        throw new Fault('INVALID_RETRY', 400);
+      blocked ||= modelRecoveryBlocked(task);
+    }
+    return {
+      record: structuredClone(record),
+      intentId,
+      toolCount,
+      activeMs,
+      blocked,
+      contribution,
+    };
   }
 }

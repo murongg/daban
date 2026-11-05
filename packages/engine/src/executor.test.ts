@@ -83,7 +83,19 @@ test('an unavailable project mirror fences project execution without disabling l
   });
   await client.ready;
   expect(client.snapshot?.capabilities).not.toContain('project-scope-v1');
+  expect(client.snapshot?.capabilities).toContain('task-run-v1');
   expect(await client.call('workspace.list', {})).toStrictEqual([]);
+  const task = await client.call<{ path: string; canonical: string }>('workspace.create', {
+    parts: ['synthetic-large-budget', 'mock-bot'],
+  });
+  await client.call('tools.open', {
+    id: 'synthetic-large-budget',
+    bot: 'mock-bot',
+    workdir: task.path,
+    canonicalRoot: task.canonical,
+    limit: 1001,
+  });
+  await client.call('tools.drain', { runId: 'synthetic-large-budget' });
   await expect(
     client.call('projects.bind', {
       bot: 'mock-bot',

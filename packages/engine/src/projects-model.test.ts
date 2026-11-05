@@ -120,7 +120,9 @@ test('project tasks capture private staging, request identity and DSH session au
     arrived = () => resolve(undefined);
   });
   let firstBind = true;
+  const leases: Record<string, unknown>[] = [];
   vi.spyOn(execution, 'call').mockImplementation(async (method, params, signal) => {
+    if (method === 'tools.open') leases.push(params);
     if (method === 'projects.bind' && firstBind) {
       firstBind = false;
       arrived?.();
@@ -144,6 +146,9 @@ test('project tasks capture private staging, request identity and DSH session au
   await models.jobs.get('mock-bot')!.done;
   const first = models.jobs.get('mock-bot')!;
   expect(first.phase, first.error).toBe('completed');
+  expect(leases[0]).toMatchObject({ id: first.executionId, taskRunId: first.id });
+  expect(first.executionId).not.toBe(first.id);
+  expect(first.budget?.budgetId).not.toBe(first.executionId);
   expect(first.workdir).not.toContain('desktops/shared');
   expect(models.journal.findRequest('mock-bot', task.requestId)).toMatchObject({
     project: task.project,

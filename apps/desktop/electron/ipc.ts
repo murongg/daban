@@ -4,6 +4,7 @@ import {
   isAttachmentQuery,
   isAttachmentUpload,
   isAttachmentVersion,
+  isAutomationCommand,
   isBotBundle,
   isBotCopyRequest,
   isBotExportRequest,
@@ -15,9 +16,11 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
+  isBudgetCommand,
   isChatRequest,
   isComputerRequest,
   isDocumentUpload,
+  isGoalResumeTarget,
   isGroupActionRequest,
   isGroupCopyRequest,
   isGroupInput,
@@ -26,7 +29,11 @@ import {
   isLocalComputerCommand,
   isMcpCommand,
   isMemoryQuery,
+  isModelDiagnoseRequest,
+  isModelFallbackRequest,
   isModelInspectionRequest,
+  isModelRemoveRequest,
+  isModelSavedRequest,
   isModelUpdate,
   isNoteCommand,
   isProjectCommand,
@@ -81,6 +88,7 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (isAutomationCommand(value)) return value;
   if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
@@ -94,6 +102,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     value.type === 'skill.resource'
   )
     return isSkillPackageCommand(value) ? value : fail();
+  if (value.type.startsWith('budget.')) return isBudgetCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
     'work.list': ['type', 'query'],
@@ -144,6 +153,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'group.copy.receipt': ['type', 'request'],
     'group.receipt': ['type', 'group', 'id'],
     'model.configure': ['type', 'input'],
+    'model.saved': ['type', 'input'],
+    'model.fallback.configure': ['type', 'input'],
+    'model.remove': ['type', 'input'],
+    'model.diagnose': ['type', 'input'],
     'model.check': ['type', 'revision'],
     'model.inspect': ['type', 'input'],
     'clipboard.write': ['type', 'text'],
@@ -314,6 +327,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if (v.type === 'group.input' && (!validAgentId(v.sourceId) || !isTaskFileName(v.name)))
     return fail();
   if (v.type === 'model.configure' && !isModelUpdate(v.input)) return fail();
+  if (v.type === 'model.saved' && !isModelSavedRequest(v.input)) return fail();
+  if (v.type === 'model.fallback.configure' && !isModelFallbackRequest(v.input)) return fail();
+  if (v.type === 'model.remove' && !isModelRemoveRequest(v.input)) return fail();
+  if (v.type === 'model.diagnose' && !isModelDiagnoseRequest(v.input)) return fail();
   if (v.type === 'model.inspect' && !isModelInspectionRequest(v.input)) return fail();
   if (v.type === 'model.check' && (!Number.isSafeInteger(v.revision) || Number(v.revision) < 0))
     return fail();
@@ -460,6 +477,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     if (
       !object(t) ||
       !keys(t, [
+        'goalResume',
         'requestId',
         'prompt',
         'retryOf',
@@ -474,6 +492,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
+      (t.goalResume !== undefined && !isGoalResumeTarget(t.goalResume)) ||
       (t.project !== undefined && !isProjectScope(t.project)) ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
       (t.memory !== undefined && !string(t.memory, 12000)) ||

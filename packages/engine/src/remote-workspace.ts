@@ -95,10 +95,11 @@ export class RemoteWorkspace implements AgentWorkspace {
       this.params({ path: relative, ...(limit === undefined ? {} : { limit }) }),
     )) as WorkspaceFile & { content: string };
   }
-  async download(relative: string) {
+  async download(relative: string, limit?: number, signal?: AbortSignal) {
     return (await this.execution.call(
       'workspace.download',
-      this.params({ path: relative }),
+      this.params({ path: relative, ...(limit === undefined ? {} : { limit }) }),
+      signal,
     )) as RuntimeDownload;
   }
   async stageSkill(bundle: SkillPackage, signal?: AbortSignal) {

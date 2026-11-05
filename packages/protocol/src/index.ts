@@ -1,3 +1,20 @@
+import {
+  type AutomationCommand,
+  type AutomationNotice,
+  type AutomationSource,
+  type AutomationView,
+  type FileTrigger,
+  isAutomationNotice,
+  isAutomationSource,
+  isAutomationView,
+  isFileTrigger,
+  isMonitorDecision,
+  type MonitorDecision,
+} from './automation.js';
+import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+
+export * from './automation.js';
+
 import { isProjectFileRequest, isProjectScope } from './projects.js';
 
 export * from './projects.js';
@@ -5,9 +22,20 @@ export * from './projects.js';
 import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
 
 export * from './goals.js';
+export * from './model-access.js';
 
 import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
+import {
+  isModelAccess,
+  isModelAttempts,
+  type ModelAccess,
+  type ModelAttempt,
+  type ModelDiagnoseRequest,
+  type ModelFallbackRequest,
+  type ModelRemoveRequest,
+  type ModelSavedRequest,
+} from './model-access.js';
 import {
   isSkillPackage,
   isSkillPackageInfo,
@@ -1349,6 +1377,8 @@ export function isRunTurn(value: unknown): value is RunTurn {
   );
 }
 export interface RuntimeTask {
+  attemptSummary?: ModelAttempt[];
+  rootRunId?: string;
   project?: ProjectScope;
   goal?: GoalProgress;
   planning?: boolean;
@@ -1377,6 +1407,8 @@ export interface RuntimeTask {
   inserts?: RunInsert[];
 }
 export interface RuntimeTaskSummary {
+  attemptSummary?: ModelAttempt[];
+  rootRunId?: string;
   project?: ProjectScope;
   elapsedMs?: number;
   chatRevision?: number;
@@ -1392,6 +1424,7 @@ export interface RuntimeTaskSummary {
   turns?: RunTurn[];
 }
 export type RuntimeNotice =
+  | AutomationNotice
   | {
       kind: 'task';
       id: string;
@@ -1406,6 +1439,7 @@ export interface RuntimeNoticeStatus {
   error?: string;
 }
 export function isRuntimeNotice(value: unknown): value is RuntimeNotice {
+  if (isAutomationNotice(value)) return true;
   if (
     !profileObject(value) ||
     !validAgentId(value.id) ||
@@ -1546,13 +1580,21 @@ export interface RuntimeSnapshot {
   browsers?: Partial<Record<RuntimeBot, BrowserState>>;
   groups?: { available: boolean; revision: number; items: Group[]; error?: string };
   knowledge?: { available: boolean; revision?: number; error?: string; documentParsing?: boolean };
-  schedules?: { available: boolean; items: Schedule[]; error?: string };
+  schedules?: {
+    available: boolean;
+    items: Schedule[];
+    error?: string;
+    automation?: { changes: boolean; files: boolean; error?: string };
+  };
   interactions?: Interaction[];
   software?: SoftwareState;
   phase: 'connecting' | 'ready' | 'offline' | 'unsupported';
   error?: string;
   protocolVersion: number;
   model: {
+    modelAccess?: ModelAccess;
+    fallbackModel?: ModelId;
+    probeRevision?: number;
     configured: boolean;
     available: boolean;
     provider: string;
@@ -1583,6 +1625,7 @@ export function recoveryBlocked(snapshot: Pick<RuntimeSnapshot, 'reboot' | 'reco
   );
 }
 export function recoveryReader(command: RuntimeCommand) {
+  if (command.type === 'model.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'frame',
@@ -1611,6 +1654,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
+    'budget.settings',
+    'budget.read',
     'transcript.statistics',
     'transcript.list',
     'transcript.content',
@@ -1634,6 +1679,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'group.receipt',
     'schedule.get',
     'schedule.preview',
+    'schedule.receipt',
     'mcp.list',
     'mcp.saved',
     'mcp.catalog',
@@ -2070,11 +2116,15 @@ export function isChatPage(value: unknown): value is ChatPage {
             'response',
             'turns',
             'elapsedMs',
+            'attemptSummary',
+            'rootRunId',
           ].includes(key),
         ) &&
         item.chatRevision === value.revision &&
         validAgentId(item.runId) &&
         validAgentId(item.requestId) &&
+        (item.attemptSummary === undefined || isModelAttempts(item.attemptSummary)) &&
+        (item.rootRunId === undefined || validAgentId(item.rootRunId)) &&
         (item.project === undefined || isProjectScope(item.project)) &&
         typeof item.phase === 'string' &&
         ['completed', 'failed', 'stopped', 'interrupted'].includes(item.phase) &&
@@ -2459,6 +2509,9 @@ export const isModelConnections = (value: unknown): value is ModelConnection[] =
   value.every(isModelConnection) &&
   new Set(value.map((connection) => connection.id)).size === value.length;
 export interface ModelStatus {
+  modelAccess?: ModelAccess;
+  fallbackModel?: ModelId;
+  probeRevision?: number;
   provider: string;
   model: ModelId;
   configured: boolean;
@@ -2596,11 +2649,24 @@ export function isModelStatus(value: unknown): value is ModelStatus {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['provider', 'model', 'configured', 'revision', 'requestId', 'connections'].includes(key),
+      [
+        'provider',
+        'model',
+        'configured',
+        'revision',
+        'requestId',
+        'connections',
+        'modelAccess',
+        'fallbackModel',
+        'probeRevision',
+      ].includes(key),
     ) &&
     validAgentId(value.provider) &&
     isModelId(value.model) &&
     typeof value.configured === 'boolean' &&
+    (value.modelAccess === undefined || isModelAccess(value.modelAccess)) &&
+    (value.fallbackModel === undefined || isModelId(value.fallbackModel)) &&
+    (value.probeRevision === undefined || modelRevision(value.probeRevision)) &&
     (value.connections === undefined || isModelConnections(value.connections)) &&
     modelRevision(value.revision) &&
     (value.requestId === undefined || validAgentId(value.requestId))
@@ -3060,6 +3126,7 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
   return value === 'ask' || value === 'auto' || value === 'full';
 }
 export interface TaskRequest {
+  goalResume?: GoalResumeTarget;
   project?: ProjectScope;
   approvalMode?: ApprovalMode;
   chatRevision?: number;
@@ -3484,6 +3551,7 @@ export function isKnowledgeVersion(value: unknown): value is KnowledgeVersion {
   );
 }
 export type ScheduleRule =
+  | FileTrigger
   | { kind: 'every'; everySeconds: number }
   | { kind: 'daily'; time: string; timeZone: string }
   | { kind: 'weekly'; time: string; timeZone: string; weekdays: number[] }
@@ -3499,6 +3567,8 @@ export interface ScheduleInput {
   locked?: boolean;
 }
 export interface ScheduleFiring {
+  source?: AutomationSource;
+  monitor?: MonitorDecision;
   id: string;
   occurrenceAt: string;
   createdAt: string;
@@ -3516,6 +3586,7 @@ export interface ScheduleFiring {
   error?: string;
 }
 export interface Schedule extends ScheduleInput {
+  automation?: AutomationView;
   revision: number;
   enabled: boolean;
   nextRunAt?: string;
@@ -3528,6 +3599,7 @@ export type SchedulePatch = Partial<
 >;
 export function isScheduleRule(value: unknown): value is ScheduleRule {
   if (!profileObject(value)) return false;
+  if (value.kind === 'file') return isFileTrigger(value);
   if (value.kind === 'every')
     return (
       exactKeys(value, ['kind', 'everySeconds']) &&
@@ -3595,8 +3667,20 @@ export function isSchedulePatch(value: unknown): value is SchedulePatch {
 export function isScheduleFiring(item: unknown): item is ScheduleFiring {
   return (
     profileObject(item) &&
-    exactKeys(item, ['id', 'requestId', 'occurrenceAt', 'createdAt', 'state', 'runId', 'error']) &&
+    exactKeys(item, [
+      'id',
+      'requestId',
+      'occurrenceAt',
+      'createdAt',
+      'state',
+      'runId',
+      'error',
+      'source',
+      'monitor',
+    ]) &&
     validAgentId(item.id) &&
+    (item.source === undefined || isAutomationSource(item.source)) &&
+    (item.monitor === undefined || isMonitorDecision(item.monitor)) &&
     boundedText(item.requestId, 100) &&
     [
       'pending',
@@ -3618,9 +3702,10 @@ export function isScheduleFiring(item: unknown): item is ScheduleFiring {
 }
 export function isSchedule(value: unknown): value is Schedule {
   if (!profileObject(value)) return false;
-  const { revision, nextRunAt, createdAt, updatedAt, history, ...input } = value;
+  const { revision, nextRunAt, createdAt, updatedAt, history, automation, ...input } = value;
   return (
     isScheduleInput(input) &&
+    (automation === undefined || isAutomationView(automation)) &&
     typeof value.enabled === 'boolean' &&
     Number.isSafeInteger(revision) &&
     Number(revision) > 0 &&
@@ -3971,6 +4056,8 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | BudgetCommand
+  | AutomationCommand
   | ProjectCommand
   | VmCommand
   | NoteCommand
@@ -4029,6 +4116,10 @@ export type RuntimeCommand =
   | { type: 'group.action'; request: GroupActionRequest }
   | { type: 'group.receipt'; group: string; id: string }
   | { type: 'model.configure'; input: ModelUpdate }
+  | { type: 'model.saved'; input: ModelSavedRequest }
+  | { type: 'model.fallback.configure'; input: ModelFallbackRequest }
+  | { type: 'model.remove'; input: ModelRemoveRequest }
+  | { type: 'model.diagnose'; input: ModelDiagnoseRequest }
   | { type: 'model.check'; revision: number }
   | { type: 'model.inspect'; input: ModelInspectionRequest }
   | { type: 'clipboard.write'; text: string }
@@ -4419,3 +4510,5 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
     (value.cancelRequested === undefined || typeof value.cancelRequested === 'boolean')
   );
 }
+
+export * from './budgets.js';

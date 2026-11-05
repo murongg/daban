@@ -1,23 +1,14 @@
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { type GoalProgress, isGoalProgress } from '@daban/protocol';
+import { type GoalCommand, type GoalProgress, goalCommand, isGoalProgress } from '@daban/protocol';
 import { type BridgeConfig, callBridge } from './bridge.js';
 import { runtimeRequire } from './dsh.js';
 
 export const name = 'daban-goals';
 export const inject = ['agents', 'goals', 'sessions', 'tools'];
-type Command =
-  | { action: 'create'; objective: string }
-  | { action: 'resume' | 'pause' | 'status' | 'clear' };
-export function goalCommand(prompt: string): Command | undefined {
-  const text = prompt.trimStart().replace(/^\/ptc\s+/, '');
-  if (!/^\/goal(?:\s|$)/.test(text)) return;
-  const body = text.replace(/^\/goal\s*/, '').trim();
-  const control = /^(resume|pause|status|clear)(?:\s|$)/.exec(body)?.[1];
-  if (control) return { action: control as 'resume' | 'pause' | 'status' | 'clear' };
-  const objective = body.replace(/^create(?:\s|$)/, '').trim();
-  return objective ? { action: 'create', objective } : { action: 'status' };
-}
+export { goalCommand };
+
+type Command = GoalCommand;
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 export function goalView(
@@ -163,7 +154,15 @@ interface Context {
 }
 export async function apply(
   ctx: Context,
-  config: BridgeConfig & { sdkFile: string; command?: Command; retry?: boolean },
+  config: BridgeConfig & {
+    sdkFile: string;
+    command?: Command;
+    retry?: boolean;
+    resumeGrant?: {
+      id: string;
+      target: { sessionId: string; goalId: string; goalRevision: number };
+    };
+  },
 ) {
   const runtime = runtimeRequire(config.sdkFile);
   const { createUserMessage } = await import(
@@ -268,8 +267,44 @@ export async function apply(
       !cleared &&
       messages.some((message) => message.source.kind === 'user')
     ) {
-      cleared = true;
       const current = ctx.goals.get(agent);
+      if (config.command.action === 'resume') {
+        const grant = config.resumeGrant;
+        const target = grant?.target;
+        if (
+          !grant ||
+          !target ||
+          agent.session.id !== target.sessionId ||
+          !current ||
+          current.id !== target.goalId ||
+          current.revision !== target.goalRevision
+        )
+          throw new Error('GOAL_TARGET_CHANGED');
+        const permit = await callBridge(
+          config,
+          'goal.resume',
+          {
+            grantId: grant.id,
+            sessionId: agent.session.id,
+            goalId: current.id,
+            revision: current.revision,
+          },
+          signal,
+        );
+        signal.throwIfAborted();
+        const after = ctx.goals.get(agent);
+        if (
+          !object(permit) ||
+          permit.accepted !== true ||
+          !root(agent) ||
+          !after ||
+          after.id !== current.id ||
+          after.revision !== current.revision
+        )
+          throw new Error('GOAL_RESUME_UNCONFIRMED');
+      }
+      cleared = true;
+
       if (current) {
         if (config.command.action === 'clear') ctx.goals.clear(agent, current);
         else if (config.command.action === 'pause') ctx.goals.pause(agent, current);
@@ -290,7 +325,7 @@ export async function apply(
     await ctx.get('subagents')?.waitForChildren(agent);
     if (agent.inbox.nextStep.length || agent.inbox.nextTurn.length) return;
     const before = ctx.goals.get(agent);
-    if (!before || before.phase !== 'active' || before.activation !== 'armed') return;
+    if (before?.phase !== 'active' || before.activation !== 'armed') return;
     await ctx.sessions.flush(agent.session);
     signal.throwIfAborted();
     const goal = ctx.goals.get(agent);
@@ -331,4 +366,23 @@ export async function apply(
       }
     pending.clear();
   });
+}
+
+export function goalGrantPatch(
+  patch: readonly unknown[],
+  grant?: { id: string; target: { sessionId: string; goalId: string; goalRevision: number } },
+) {
+  if (!grant) return patch;
+  return patch.map((item) =>
+    !object(item) || !Array.isArray(item.insert)
+      ? item
+      : {
+          ...item,
+          insert: item.insert.map((entry: unknown) =>
+            object(entry) && entry.id === 'owned-goal-rounds' && object(entry.config)
+              ? { ...entry, config: { ...entry.config, resumeGrant: grant } }
+              : entry,
+          ),
+        },
+  );
 }

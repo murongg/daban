@@ -1,0 +1,1 @@
+ALTER TABLE `group_turns` ADD `automation` text;

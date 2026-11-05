@@ -36,6 +36,12 @@ jobs:
       - uses: ./.github/actions/setup
       - run: npm run build
       - run: npm run typecheck
+      - name: Verify native API fallback with the installed SDK
+        env:
+          DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
+        run: |
+          test -f "$DABAN_TEST_SDK"
+          node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/model-fallback.integration.js
       # Runtime unit tests need these tools during the single full Vitest pass.
       - name: Install Linux desktop runtime dependencies
         if: runner.os == 'Linux'
