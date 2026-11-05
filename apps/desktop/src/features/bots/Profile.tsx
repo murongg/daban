@@ -6,6 +6,7 @@ import type { Action, Bot } from '../../app/state';
 import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
 import { modelChoices, modelIcon, modelInputs, modelName } from '../models/model-options';
+import { TemplateManager } from './TemplateManager';
 
 export function Profile({
   bot,
@@ -36,8 +37,23 @@ export function Profile({
     [conflict, setConflict] = useState<BotProfile>(),
     [saving, setSaving] = useState(false);
   const [revision, setRevision] = useState(version);
+  const [managed, setManaged] = useState(false);
   const mounted = useRef(true);
-  const dirty = name !== bot.name || instructions !== bot.role || model !== (bot.model || '');
+  const dirty =
+    name !== bot.name || (!managed && instructions !== bot.role) || model !== (bot.model || '');
+  useEffect(() => {
+    if (!runtime.snapshot.botReleases) return;
+    let active = true;
+    runtime
+      .command<{ installation: unknown }>({ type: 'bot.installation.read', bot: bot.id })
+      .then((value) => {
+        if (active) setManaged(!!value.installation);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [bot.id, runtime.snapshot.botReleases, runtime.command]);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -70,7 +86,7 @@ export function Profile({
               revision: revision ?? current.revision,
               patch: {
                 name: name.trim(),
-                instructions,
+                ...(!managed ? { instructions } : {}),
                 ...(modelsAvailable ? { model: isModelId(model) ? model : null } : {}),
               },
             });
@@ -151,10 +167,11 @@ export function Profile({
             rows={5}
             maxLength={4000}
             value={instructions}
-            disabled={saving}
+            disabled={saving || managed}
             onChange={(event) => setInstructions(event.target.value)}
           />
           <span className="field-help">{t('profile.describeHowBotShouldHelpDoesNot')}</span>
+          {managed && <span className="field-help">{t('templates.managedRole')}</span>}
         </label>
         {error && (
           <p className="form-error" role="alert">
@@ -188,6 +205,9 @@ export function Profile({
           </div>
         )}
       </div>
+      {runtime.snapshot.botReleases && !dirty && version !== undefined && (
+        <TemplateManager bot={bot.id} />
+      )}
       <div className="dialog-actions">
         {onExport && runtime.enabled && runtime.snapshot.protocolVersion >= 27 && (
           <button

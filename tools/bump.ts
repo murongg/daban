@@ -48,6 +48,7 @@ export async function syncVersions(root: string) {
     'package-lock.json',
     'apps/agent/standalone-lock.json',
     'apps/runtime/standalone-lock.json',
+    ...(project.workspaces.includes('apps/gallery') ? ['apps/gallery/standalone-lock.json'] : []),
   ]) {
     const lock = await read<Manifest & { packages: Record<string, Manifest> }>(file);
     sync(lock);

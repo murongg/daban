@@ -89,6 +89,8 @@ import {
   taskPrompt,
   validateTask,
 } from './tasks.js';
+import { TemplateService } from './template-service.js';
+import { BotTemplates } from './templates.js';
 import {
   projectInteraction,
   projectThinking,
@@ -535,6 +537,7 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends ToolRun {
+  template?: ReturnType<BotTemplates['capture']>;
   goalCreated?: boolean;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -646,6 +649,8 @@ export class ModelRuns {
   readonly profiles: BotProfiles;
   readonly chats: Chats;
   readonly bundles: BotBundles;
+  readonly templates: BotTemplates;
+  readonly templateService: TemplateService;
   readonly skills: Skills;
   readonly integrations: Integrations;
   readonly interactions: Interactions;
@@ -775,6 +780,18 @@ export class ModelRuns {
       knowledge: this.knowledge,
       skills: this.skills,
     });
+    this.templates = new BotTemplates({
+      directory: path.join(dir, 'templates'),
+      profiles: this.profiles,
+      knowledge: this.knowledge,
+      skills: this.skills,
+      documents,
+    });
+    this.templateService = new TemplateService(this.templates, this.bundles);
+    this.templates.pinned = (bot, runId) => {
+      const job = this.jobs.get(bot);
+      return job?.id === runId ? job.template : undefined;
+    };
     this.tools.memory = new MemoryTools(this.profiles);
     this.interactions = new Interactions(
       path.join(dir, 'interactions'),
@@ -868,6 +885,7 @@ export class ModelRuns {
     await this.journal.load();
     await this.profiles.ready;
     await this.bundles.ready;
+    await this.templates.ready;
     await this.interactions.ready;
     await this.workspace.prepare();
     for (const bot of new Set([
@@ -1557,17 +1575,44 @@ export class ModelRuns {
     this.jobs.set(bot, job);
     let inputDirectory: TaskDirectory | undefined;
     try {
-      job.skills = task ? await this.skills.capture(bot) : { available: true, key: '', skills: [] };
+      // Capture the pointer before awaiting: one task must never combine two template generations.
+      job.template = this.templates.capture(bot);
+      job.skills = task
+        ? await this.skills.capture(bot, this.templates.skillOwners(job.template))
+        : { available: true, key: '', skills: [] };
       job.integrations = task
         ? await this.integrations.capture(bot)
         : { available: true, key: '', connections: [], warnings: [] };
       job.profile = await this.profiles.get(bot);
+      if (job.profile && job.template)
+        job.profile = {
+          ...job.profile,
+          instructions: [
+            job.template.definition.profile.instructions,
+            job.template.definition.defaultPreferences,
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        };
       job.persona = personaKey(job.profile);
+      if (job.template) job.persona += `:${job.template.installation.snapshotDigest}`;
       // Per-Bot choice is captured with the task; it never edits the shared credential or a running job.
       const config = await this.settings.resolve(job.profile?.model);
       job.route = config;
       job.model = config.model;
       job.vision = config.vision;
+      if (job.template) {
+        const release = await this.templates.store.read(job.template.installation.baseDigest);
+        if (release.manifest.requires.model.vision && !config.vision)
+          throw new Fault('MODEL_VISION_REQUIRED', 400);
+        const offered = new Set(
+          this.tools.list(bot, config.model, job.conversationId, job).map((tool) => tool.name),
+        );
+        if (
+          release.manifest.requires.tools.some((tool) => tool.required && !offered.has(tool.name))
+        )
+          throw new Fault('TEMPLATE_TOOL_REQUIRED', 400);
+      }
       // Native-only and Linux sessions expose different tools and workspace paths. Keep visible turns, never resume across modes.
       job.binding = this.tools.options.nativeOnly
         ? createHash('sha256').update(`${config.binding}:native-workspace`).digest('hex')
@@ -2420,6 +2465,7 @@ export class ModelRuns {
       this.integrations,
       this.transcripts,
       this.chats,
+      this.templates,
     ]) {
       try {
         await owner?.close();

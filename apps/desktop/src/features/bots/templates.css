@@ -1,0 +1,58 @@
+.remote-gallery {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 24px;
+}
+.template-source-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 12px 0;
+}
+.template-source-fields > label {
+  flex: 1;
+  min-width: 200px;
+}
+.template-manager {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 12px;
+}
+.template-manager .field-label {
+  margin: 12px 0;
+}
+.template-manager details {
+  margin: 16px 0;
+}
+.template-manager summary {
+  cursor: pointer;
+}
+.template-manager button {
+  margin: 8px 8px 8px 0;
+}
+.template-preview pre,
+.template-plan pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+  font: inherit;
+  line-height: 1.65;
+}
+.template-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.template-plan {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+@media (max-width: 600px) {
+  .template-comparison {
+    grid-template-columns: 1fr;
+  }
+}

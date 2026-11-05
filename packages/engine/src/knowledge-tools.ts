@@ -150,11 +150,11 @@ export class KnowledgeTools {
       const matcher = query
         ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu')
         : undefined;
-      const files = await this.store.list(run.bot, args.includeDeleted === true);
+      const files = await this.store.list(run.bot, args.includeDeleted === true, run.id);
       const matches: (KnowledgeFile & { preview?: { offset: number; content: string } })[] = [];
       for (const file of files) {
         run.abort.signal.throwIfAborted();
-        const document = await this.store.read(run.bot, file.id),
+        const document = await this.store.read(run.bot, file.id, undefined, run.id),
           text = clean(document.content),
           match = matcher?.exec(text);
         if (matcher && !match && !matcher.test(clean(file.path))) continue;
@@ -186,6 +186,7 @@ export class KnowledgeTools {
           run.bot,
           args.id,
           args.version === undefined ? undefined : number(args.version, 1, Number.MAX_SAFE_INTEGER),
+          run.id,
         );
         const chars = Array.from(clean(document.content)),
           offset = number(args.offset, 0, 1000000, 0),
@@ -205,6 +206,7 @@ export class KnowledgeTools {
             args.id,
             number(args.before, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
             number(args.limit, 10, 20),
+            run.id,
           ),
         };
       else {
@@ -229,7 +231,7 @@ export class KnowledgeTools {
           );
         else if (name === 'bot_knowledge_export') {
           if (!this.exportFile) throw new Fault('KNOWLEDGE_EXPORT_UNAVAILABLE', 503);
-          const document = await this.store.read(run.bot, args.id);
+          const document = await this.store.read(run.bot, args.id, undefined, run.id);
           if (document.deleted || document.revision !== revision)
             throw new Fault('KNOWLEDGE_CONFLICT');
           const target =

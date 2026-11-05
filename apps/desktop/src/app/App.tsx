@@ -45,6 +45,7 @@ import { Gallery } from '../features/bots/Gallery';
 import { ImportBot } from '../features/bots/ImportBot';
 import { Profile } from '../features/bots/Profile';
 import type { BotPreset } from '../features/bots/presets';
+import { RemoteGallery } from '../features/bots/RemoteGallery';
 import { ChatHistory } from '../features/chat/ChatHistory';
 import { Conversation } from '../features/chat/Conversation';
 import { NewChat } from '../features/chat/NewChat';
@@ -1035,7 +1036,15 @@ function Workbench() {
             />
           )
         ) : state.view === 'gallery' ? (
-          <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
+          <>
+            <RemoteGallery
+              onInstalled={(profile) => {
+                dispatch({ type: 'profiles', profiles: [profile] });
+                dispatch({ type: 'select', bot: profile.id });
+              }}
+            />
+            <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
+          </>
         ) : state.view === 'tasks' ? (
           <Tasks state={state} dispatch={dispatch} work={work} />
         ) : state.view === 'inbox' ? (

@@ -17,6 +17,7 @@ import {
   isBotExportRequest,
   isBotImportHeader,
   isBotLifecycleRequest,
+  isBotTemplateCommand,
   isBrowserAnswerRequest,
   isBrowserBinding,
   isBrowserCommandRequest,
@@ -922,6 +923,13 @@ export async function startPrototype({
               return json(res, await models.bundles.retry(data.id));
             throw new Fault('INVALID_BOT_BUNDLE', 400);
           }
+          if (url.pathname === '/api/templates') {
+            if (!models) throw new Fault('STARTING', 503);
+            if (req.method !== 'POST' || url.search) throw new Fault('INVALID_REQUEST', 400);
+            const command = await body(req, botBundleLimit + 64 * 1024);
+            if (!isBotTemplateCommand(command)) throw new Fault('INVALID_COMMAND', 400);
+            return json(res, await models.templateService.invoke(command));
+          }
           if (url.pathname === '/api/diagnostics') {
             if (req.method !== 'GET') throw new Fault('METHOD_NOT_ALLOWED', 405);
             if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
@@ -1474,6 +1482,7 @@ export async function startPrototype({
                       bots: {},
                     }),
               botCapabilities: true,
+              ...(models ? { botReleases: true } : {}),
               clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
               ...(host
                 ? {

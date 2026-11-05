@@ -1,0 +1,1 @@
+ALTER TABLE `skills` ADD `managed` integer DEFAULT 0 NOT NULL;

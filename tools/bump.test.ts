@@ -10,6 +10,7 @@ const workspaces = [
   'apps/desktop',
   'apps/agent',
   'apps/runtime',
+  'apps/gallery',
   'packages/engine',
   'packages/protocol',
 ];
@@ -18,6 +19,7 @@ const lockfiles = [
   'package-lock.json',
   'apps/agent/standalone-lock.json',
   'apps/runtime/standalone-lock.json',
+  'apps/gallery/standalone-lock.json',
 ];
 
 async function fixture(root: string, version: string) {

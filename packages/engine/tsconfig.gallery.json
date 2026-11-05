@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/gallery.ts", "src/gallery-http.ts", "src/gallery-cloudflare.ts"]
+}
