@@ -102,15 +102,22 @@ Linux CI 先安装桌面运行依赖并构建全部工作区，完整执行一�
 维护者可运行固定的合成通知场景与真实 owner 的内存 fake dispatch 回归，不需要模型 Key、网络或 VM，也不导入用户会话或重放实际工具：
 
 ```sh
-npm run eval:trajectory -- --suite smoke --output outputs/trajectory/smoke-01.json
-npm run eval:trajectory -- --case unknown-no-replay --output outputs/trajectory/unknown-01.json
+npm run eval:trajectory
 ```
+
+默认执行 smoke 套件，并为 JSON 报告生成唯一文件名。单独运行 unknown 场景：
+
+```sh
+npm run eval:trajectory -- --case unknown-no-replay
+```
+
+可用 `--suite smoke` 显式选择默认套件，或用 `--output outputs/trajectory/<new-name>.json` 指定未使用的报告文件名。可选参数放在 npm 的 `--` 分隔符之后；`--case` 与 `--suite` 不能同时指定。
 
 三个 smoke 场景检查模拟文件顺序、拒绝后停止和取消后停止；产物由 fixture 写入临时目录，不能作为真实工具派发证据。报告单独列出 `commands` 和 `integration-tools` owner 回归。后者覆盖 unknown 后换 wire id 的去重；前者覆盖同 wire 回执恢复。缺页、缺正文、未闭合、跳过或缺少 owner 报告均不能通过。
 
 退出码为：全部通过 `0`、明确违例 `1`、证据不足或 unknown `2`、参数/配置错误 `3`、取消 `130`。unknown 场景的正常结果是 `2`。取消只停止本次合成任务和 owner 子进程，并保留部分报告。
 
-JSON 报告仅写入当前仓库的 `outputs/trajectory/`，使用独占发布并拒绝覆盖已有文件。每次选择新文件名；报告不自动上传或更新预期。只有 case/config 指纹相同的报告才可直接比较。修改内置 case 时同时审阅 revision 与预期；子任务树、真实模型质量和浏览器正确性仍由各自测试负责。
+JSON 报告仅写入当前仓库的 `outputs/trajectory/`，使用独占发布并拒绝覆盖已有文件。报告不自动上传或更新预期。只有 case/config 指纹相同的报告才可直接比较。修改内置 case 时同时审阅 revision 与预期；子任务树、真实模型质量和浏览器正确性仍由各自测试负责。
 
 ## 打包 macOS 应用
 

@@ -109,7 +109,7 @@ test('code provenance includes untracked maintained bytes and excludes docs and 
 });
 
 test('runs exactly built-in cases and owners, persisting separately named synthetic evidence', async () => {
-  const { runTrajectoryCli } = await import('./trajectory.ts');
+  const { runTrajectoryCli, trajectoryFailureHint } = await import('./trajectory.ts');
   const root = await mkdtemp(path.join(tmpdir(), 'mock-trajectory-cli-'));
   const selected: string[] = [];
   try {
@@ -151,6 +151,9 @@ test('runs exactly built-in cases and owners, persisting separately named synthe
     ]);
     expect(result.report?.evidence).toBe('simulated-notifications-and-owner-regressions');
     expect(result.report?.owners).toHaveLength(2);
+    expect(result.exitCode).toBe(2);
+    expect(trajectoryFailureHint(result)).toContain('reason: coverage/pages-missing');
+    expect(trajectoryFailureHint(result)).toContain('JSON report');
     expect(result.output).toBeDefined();
     expect(JSON.parse(await readFile(result.output!, 'utf8'))).toEqual(result.report);
   } finally {
@@ -221,7 +224,80 @@ test('the actual strip-types CLI rejects invalid input with status 3 and no argu
   );
   expect(result.status).toBe(3);
   expect(result.stderr).toContain('TRAJECTORY_INPUT_INVALID');
+  expect(result.stderr).toContain('Next: run npm run eval:trajectory');
   expect(result.stderr).not.toContain('SYNTHETIC_PRIVATE_PATH');
+  expect(result.stdout).toBe('');
+});
+
+test('failure hints preserve severity and disclose only evaluator reason codes', async () => {
+  const { trajectoryFailureHint } = await import('./trajectory.ts');
+  const { runTrajectoryFixture } = await import('./trajectory-fixture.ts');
+  const { smokeCases } = await import('./trajectory-cases.ts');
+  const { evaluateTrajectory } = await import('@daban/engine/agent');
+  const report = evaluateTrajectory(smokeCases[0], await runTrajectoryFixture(smokeCases[0]), {
+    configHash: 'a'.repeat(64),
+    codeRevision: 'SYNTHETIC_PRIVATE_METADATA',
+  });
+  const suite = {
+    schema: 1 as const,
+    evidence: 'simulated-notifications-and-owner-regressions' as const,
+    cases: [report],
+    owners: [],
+    verdict: 'pass' as const,
+  };
+  expect(trajectoryFailureHint({ report: suite })).toBeUndefined();
+  report.checks[0] = {
+    check: 'coverage',
+    verdict: 'inconclusive',
+    code: 'pages-missing',
+    events: [1],
+    pointers: ['/SYNTHETIC_PRIVATE_METADATA'],
+  };
+  report.checks[1] = {
+    check: 'no-replay',
+    verdict: 'fail',
+    code: 'call-after-unknown',
+    events: [2],
+    pointers: ['/SYNTHETIC_PRIVATE_METADATA'],
+  };
+  report.verdict = 'fail';
+  const hint = trajectoryFailureHint({ report: { ...suite, verdict: 'fail' } });
+  expect(hint).toContain('reason: no-replay/call-after-unknown');
+  expect(hint).toContain('JSON report');
+  expect(hint).not.toContain('SYNTHETIC_PRIVATE_METADATA');
+});
+
+test('failure hints explain missing owner evidence and refuse to overwrite an existing report', async () => {
+  const { trajectoryFailureHint } = await import('./trajectory.ts');
+  expect(trajectoryFailureHint({ error: 'TRAJECTORY_OUTPUT_EXISTS' })).toContain('omit --output');
+  expect(trajectoryFailureHint({ error: 'TRAJECTORY_OUTPUT_EXISTS' })).toContain('not replaced');
+  expect(trajectoryFailureHint({ error: 'TRAJECTORY_OUTPUT_UNSAFE' })).toContain('permissions');
+  const suite = {
+    schema: 1 as const,
+    evidence: 'simulated-notifications-and-owner-regressions' as const,
+    cases: [],
+    owners: [],
+    verdict: 'inconclusive' as const,
+  };
+  expect(trajectoryFailureHint({ report: suite })).toContain('case-evidence-missing');
+  const owner = {
+    suite: 'commands' as const,
+    verdict: 'inconclusive' as const,
+    exitCode: null,
+    total: 1,
+    passed: 0,
+    failed: 0,
+    pending: 1,
+    todo: 0,
+  };
+  expect(trajectoryFailureHint({ report: { ...suite, owners: [owner] } })).toContain(
+    'owner.commands/incomplete',
+  );
+  expect(
+    trajectoryFailureHint({
+      report: { ...suite, verdict: 'fail', owners: [{ ...owner, verdict: 'fail', failed: 1 }] },
+    }),
+  ).toContain('owner.commands/failed');
 });
 
 test('config fingerprints ignore temporary roots and change with the declared SDK protocol', async () => {

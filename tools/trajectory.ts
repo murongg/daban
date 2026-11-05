@@ -260,6 +260,32 @@ export async function runTrajectoryCli(
   }
 }
 
+export function trajectoryFailureHint(
+  result: Pick<Awaited<ReturnType<typeof runTrajectoryCli>>, 'error' | 'report'>,
+) {
+  if (result.error === 'TRAJECTORY_INPUT_INVALID')
+    return 'Next: run npm run eval:trajectory for the default smoke suite; see docs/development.md for optional arguments.';
+  if (result.error === 'TRAJECTORY_OUTPUT_EXISTS')
+    return 'Next: omit --output for a new report, or choose an unused filename under outputs/trajectory/; the existing file was not replaced.';
+  if (result.error)
+    return 'Next: check repository configuration and output permissions; use an unused output filename.';
+  const report = result.report;
+  if (!report || report.verdict === 'pass') return;
+  const check = report.cases
+    .flatMap((item) => item.checks)
+    .find((item) => item.verdict === report.verdict);
+  const owner = report.owners.find((item) => item.verdict === report.verdict);
+  // Evaluator codes are safe to display; arguments, pointers and raw errors may contain private data.
+  const reason = check
+    ? `${check.check}/${check.code}`
+    : owner
+      ? `owner.${owner.suite}/${owner.verdict === 'fail' ? 'failed' : 'incomplete'}`
+      : report.cases.length
+        ? 'owner-evidence-missing'
+        : 'case-evidence-missing';
+  return `reason: ${reason}\nNext: inspect checks and owners in the JSON report; incomplete or unknown evidence is not a pass.`;
+}
+
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const controller = new AbortController();
   const interrupt = () => controller.abort();
@@ -276,6 +302,8 @@ if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === imp
         );
       process.stdout.write(`trajectory: ${result.report.verdict}\nreport: ${result.output}\n`);
     }
+    const hint = trajectoryFailureHint(result);
+    if (hint) process.stderr.write(`${hint}\n`);
     process.exitCode = result.exitCode;
   } finally {
     process.removeListener('SIGINT', interrupt);
