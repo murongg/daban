@@ -8,6 +8,24 @@ import { startPrototype } from './server.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 
+test('consumer formatting is immutable per invoke and cannot leak between concurrent peers', async () => {
+  const headers: (string | null)[] = [];
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (_url, options) => {
+      headers.push(new Headers(options?.headers).get('x-daban-automation'));
+      await Promise.resolve();
+      return Response.json([]);
+    },
+  });
+  await Promise.all([
+    client.invoke({ type: 'files.list' }, 1),
+    client.invoke({ type: 'files.list' }, 2),
+  ]);
+  expect(headers.sort()).toEqual([null, 'schedule-automation-v1'].sort());
+});
+
 test('real Host state normalization retains capability and reads legacy records without starting work', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-context-client-'));
   const app = await startPrototype({

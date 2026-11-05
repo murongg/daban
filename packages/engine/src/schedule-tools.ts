@@ -1,4 +1,9 @@
-import { isScheduleInput, isSchedulePatch, validAgentId } from '@daban/protocol';
+import {
+  type AutomationSource,
+  isScheduleInput,
+  isSchedulePatch,
+  validAgentId,
+} from '@daban/protocol';
 import type { ToolResult, ToolRun, ToolTrace } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
 import { type Schedules, scheduleKey } from './schedules.js';
@@ -14,7 +19,7 @@ const fields: Record<string, string[]> = {
 export class ScheduleTools {
   constructor(readonly store: Schedules) {}
   async invoke(
-    run: ToolRun & { id?: string; intentId?: string },
+    run: ToolRun & { id?: string; intentId?: string; automation?: AutomationSource },
     name: string,
     args: Record<string, unknown> = {},
   ): Promise<ToolResult> {
@@ -36,6 +41,8 @@ export class ScheduleTools {
         Object.keys(args).some((key) => !allowed.includes(key))
       )
         throw new Fault('INVALID_TOOL_ARGS', 400);
+      if (run.automation && name !== 'bot_schedule_list')
+        throw new Fault('AUTOMATION_CONFIG_DENIED');
       const actor = { bot: run.bot, signal: run.abort.signal };
       let result: unknown;
       if (name === 'bot_schedule_list') {

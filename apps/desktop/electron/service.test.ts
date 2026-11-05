@@ -177,6 +177,28 @@ it.each(['files.review.read', 'files.review.diff', 'files.review.current'] as co
 );
 
 const roots = new Set<string>();
+it('keeps each remote consumer format on its own local dispatch without changing local defaults', async () => {
+  const invoke = vi.fn(async () => []);
+  mocks.load.mockResolvedValue({
+    connect: async () => ({
+      status: async () => disconnected('ready'),
+      invoke,
+      releaseInputs: vi.fn(),
+    }),
+    close: vi.fn(),
+  });
+  const service = runtimeService('/mock/consumer-schema', 'file:///synthetic/index.html');
+  try {
+    await service.connect();
+    const command = { type: 'files.list' } as const;
+    await service.invokeLocal(command, undefined, 1);
+    await service.invokeLocal(command);
+    expect(invoke).toHaveBeenNthCalledWith(1, command, 1);
+    expect(invoke).toHaveBeenNthCalledWith(2, command, 2);
+  } finally {
+    await service.close();
+  }
+});
 it('routes an explicitly captured host without falling back to the local computer', async () => {
   const frame = { url: 'file:///synthetic/index.html' };
   const sender = { send: vi.fn(), mainFrame: frame };

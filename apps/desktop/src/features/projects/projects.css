@@ -1,0 +1,16 @@
+.project-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+.project-scope .inline-note {
+  margin: 0;
+  font-size: 11px;
+}
+.project-scope > [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+}

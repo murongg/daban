@@ -37,7 +37,7 @@ export interface AgentWorkspace {
   create(parts: string[]): Promise<TaskDirectory>;
   list(): Promise<WorkspaceFile[]>;
   read(relative: string, limit?: number): Promise<WorkspaceFile & { content: string }>;
-  download(relative: string): Promise<RuntimeDownload>;
+  download(relative: string, limit?: number, signal?: AbortSignal): Promise<RuntimeDownload>;
   scope(root: string, canonical?: string): AgentWorkspace;
   stageSkill?(bundle: SkillPackage, signal?: AbortSignal): Promise<string>;
   captureReview?(paths?: string[], signal?: AbortSignal): Promise<ReviewCapture>;
@@ -66,11 +66,23 @@ export class WorkspaceFiles implements AgentWorkspace {
     return captureWorkspaceReview(this.root, canonical, paths, signal);
   }
   async base() {
+    const named = await lstat(this.root, { bigint: true });
+    if (!named.isDirectory() || named.isSymbolicLink()) throw new Fault('WORKSPACE_MOVED');
     const handle = await open(
       this.root,
       constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
     );
     try {
+      const opened = await handle.stat({ bigint: true });
+      const current = await lstat(this.root, { bigint: true });
+      if (
+        current.isSymbolicLink() ||
+        named.ino !== opened.ino ||
+        named.dev !== opened.dev ||
+        current.ino !== opened.ino ||
+        current.dev !== opened.dev
+      )
+        throw new Fault('WORKSPACE_MOVED');
       const value = await realpath(directoryPath(handle, this.root));
       if (this.canonical && this.canonical !== value) throw new Fault('WORKSPACE_MOVED');
       this.canonical = value;
@@ -202,8 +214,10 @@ export class WorkspaceFiles implements AgentWorkspace {
       throw new Fault('FILE_NOT_TEXT', 400);
     }
   }
-  async download(relative: string): Promise<RuntimeDownload> {
-    const { data, ...file } = await this.bytes(relative, documentLimit);
+  async download(relative: string, limit = documentLimit): Promise<RuntimeDownload> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > documentLimit)
+      throw new Fault('INVALID_FILE', 400);
+    const { data, ...file } = await this.bytes(relative, limit);
     return {
       ...file,
       data: data.toString('base64'),
@@ -222,8 +236,8 @@ export class WorkspaceFiles implements AgentWorkspace {
       throw new Fault('INVALID_FILE', 400);
     const root = await this.base(),
       file = path.join(root, relative),
-      info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > limit)
+      info = await lstat(file, { bigint: true });
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1n || info.size > BigInt(limit))
       throw new Fault('FILE_NOT_READABLE', 400);
     const canonical = await realpath(file);
     if (!canonical.startsWith(root + path.sep)) throw new Fault('INVALID_FILE', 400);
@@ -235,8 +249,19 @@ export class WorkspaceFiles implements AgentWorkspace {
         !(await realpath(`/proc/self/fd/${handle.fd}`)).startsWith(root + path.sep)
       )
         throw new Fault('INVALID_FILE', 400);
-      const stat = await handle.stat();
-      if (!stat.isFile() || stat.nlink !== 1 || stat.size > limit)
+      const stat = await handle.stat({ bigint: true });
+      const named = await lstat(canonical, { bigint: true });
+      // O_NOFOLLOW is unavailable on Windows; bind the opened file to the identity checked before realpath.
+      if (
+        !stat.isFile() ||
+        stat.nlink !== 1n ||
+        stat.size > BigInt(limit) ||
+        named.isSymbolicLink() ||
+        stat.ino !== info.ino ||
+        stat.dev !== info.dev ||
+        named.ino !== stat.ino ||
+        named.dev !== stat.dev
+      )
         throw new Fault('FILE_NOT_READABLE', 400);
       const buffer = Buffer.alloc(limit + 1);
       let size = 0;

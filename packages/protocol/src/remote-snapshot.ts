@@ -1,14 +1,24 @@
 import {
+  type Group,
+  isAutomationNotice,
   isBotProfile,
   isBrowserState,
+  isChatPage,
   isChatStatus,
   isComputerStatus,
+  isGoalProgress,
   isGroup,
+  isGroupPage,
   isInteraction,
   isLocalComputerStatus,
   isMcpStatus,
+  isModelAccess,
+  isModelAttempts,
   isModelConnection,
+  isModelId,
+  isModelStatus,
   isNoteAvailability,
+  isProjectScope,
   isRebootStatus,
   isRecoveryStatus,
   isReplyStream,
@@ -21,9 +31,82 @@ import {
   isSoftwareState,
   isTaskPlan,
   isWorkStatus,
+  legacySchedule,
+  type RuntimeFile,
   type RuntimeSnapshot,
+  type RuntimeTask,
+  type RuntimeTaskSummary,
   validAgentId,
 } from './index.js';
+
+function legacyModel(value: Record<string, unknown>) {
+  const model = { ...value };
+  delete model.modelAccess;
+  delete model.fallbackModel;
+  delete model.probeRevision;
+  return model;
+}
+function legacyGroup(value: Group) {
+  const { project: _project, ...group } = value;
+  return group;
+}
+function legacyFiles(files: RuntimeFile[]) {
+  // Removing a scoped locator but keeping its path would make an old download address a different file.
+  return files.filter((file) => file.project === undefined && file.task === undefined);
+}
+function legacySummary(value: RuntimeTaskSummary) {
+  const { project: _project, rootRunId: _root, attemptSummary: _attempts, ...row } = value;
+  return { ...row, ...(row.files ? { files: legacyFiles(row.files) } : {}) };
+}
+function legacyTask(value: RuntimeTask) {
+  const { project: _project, rootRunId: _root, attemptSummary: _attempts, ...row } = value;
+  return { ...row, files: legacyFiles(row.files), history: row.history.map(legacySummary) };
+}
+
+export function remoteReplyFor(
+  method: string,
+  value: unknown,
+  accept: SnapshotAccept = {},
+  schema?: 2,
+): unknown {
+  if (method === 'status' || method === 'connect') {
+    // Validate the producer's current typed data before projecting for a less strict old consumer.
+    if (!isRemoteSnapshot(remoteSnapshotFor(value, accept, 2)))
+      throw Error('REMOTE_INVALID_SNAPSHOT');
+    return remoteSnapshotFor(value, accept, schema);
+  }
+  if (schema === 2) return value;
+  if (isModelStatus(value)) return legacyModel({ ...value });
+  if (isChatPage(value)) return { ...value, items: value.items.map(legacySummary) };
+  if (isGroup(value)) return legacyGroup(value);
+  if (isGroupPage(value))
+    return {
+      ...value,
+      group: legacyGroup(value.group),
+      messages: value.messages.map((row) => ({
+        ...row,
+        ...(row.files ? { files: legacyFiles(row.files) } : {}),
+      })),
+      ...(value.accepted
+        ? {
+            accepted: {
+              ...value.accepted,
+              ...(value.accepted.files ? { files: legacyFiles(value.accepted.files) } : {}),
+            },
+          }
+        : {}),
+    };
+  if (object(value) && isGroup(value.group)) return { ...value, group: legacyGroup(value.group) };
+  if (isSchedule(value)) {
+    if (value.rule.kind === 'file') throw Error('AUTOMATION_UPGRADE_REQUIRED');
+    return legacySchedule(value);
+  }
+  if (method.startsWith('files.')) {
+    if (Array.isArray(value) && value.every(isRuntimeFileMetadata)) return legacyFiles(value);
+    if (object(value) && value.project !== undefined) throw Error('REMOTE_SCHEMA_UPGRADE_REQUIRED');
+  }
+  return value;
+}
 
 export const snapshotCapabilityKeys = ['contextInspector', 'preflight', 'fileReview'] as const;
 export type SnapshotAccept = Partial<Record<(typeof snapshotCapabilityKeys)[number], 1>>;
@@ -32,13 +115,15 @@ export interface RemoteSnapshotCapabilities {
   host: string;
   workspace: string;
   accept: SnapshotAccept;
+  schema?: 2;
 }
-export const supportedSnapshotCapabilities: SnapshotAccept = { contextInspector: 1, fileReview: 1 };
+export const supportedSnapshotCapabilities: SnapshotAccept = { contextInspector: 1, preflight: 1, fileReview: 1 };
 export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSnapshotCapabilities {
   return (
     object(value) &&
-    exact(value, ['type', 'host', 'workspace', 'accept']) &&
+    exact(value, ['type', 'host', 'workspace', 'accept', 'schema']) &&
     value.type === 'snapshot-capabilities' &&
+    (value.schema === undefined || value.schema === 2) &&
     typeof value.host === 'string' &&
     /^[a-f0-9]{64}$/.test(value.host) &&
     validAgentId(value.workspace) &&
@@ -47,11 +132,56 @@ export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSna
     Object.values(value.accept).every((version) => version === 1)
   );
 }
-export function remoteSnapshotFor(value: unknown, accept: SnapshotAccept = {}): unknown {
+export function remoteSnapshotFor(
+  value: unknown,
+  accept: SnapshotAccept = {},
+  schema?: 2,
+): unknown {
   if (!object(value)) return value;
   const wire = { ...value };
   // Only negotiated additions are omitted. Unknown fields still reach the strict consumer validator and are rejected.
   for (const key of snapshotCapabilityKeys) if (accept[key] !== 1) delete wire[key];
+  if (schema !== 2 && object(value.model)) {
+    // Original Context peers still use a closed model schema; the feature hint alone is not a schema proof.
+    wire.model = legacyModel(value.model);
+  }
+  if (schema !== 2) {
+    if (object(value.agents))
+      wire.agents = Object.fromEntries(
+        Object.entries(value.agents).map(([key, item]) => [
+          key,
+          task(item) ? legacyTask(item) : item,
+        ]),
+      );
+    if (object(value.bots))
+      wire.bots = Object.fromEntries(
+        Object.entries(value.bots).map(([key, item]) => [
+          key,
+          object(item) && task(item.task) ? { ...item, task: legacyTask(item.task) } : item,
+        ]),
+      );
+    if (object(value.groups) && Array.isArray(value.groups.items))
+      wire.groups = {
+        ...value.groups,
+        items: value.groups.items.map((item: unknown) =>
+          isGroup(item) ? legacyGroup(item) : item,
+        ),
+      };
+    if (object(value.notices) && Array.isArray(value.notices.items))
+      wire.notices = {
+        ...value.notices,
+        items: value.notices.items.filter((item: unknown) => !isAutomationNotice(item)),
+      };
+    if (object(value.schedules) && Array.isArray(value.schedules.items)) {
+      const { automation: _automation, ...schedules } = value.schedules;
+      wire.schedules = {
+        ...schedules,
+        items: value.schedules.items
+          .filter((item: unknown) => !isSchedule(item) || item.rule.kind !== 'file')
+          .map((item: unknown) => (isSchedule(item) ? legacySchedule(item) : item)),
+      };
+    }
+  }
   return wire;
 }
 
@@ -77,15 +207,36 @@ const phases = [
   'stopped',
   'interrupted',
 ];
-function summary(value: unknown) {
+function summary(value: unknown): value is RuntimeTaskSummary {
   return (
     object(value) &&
+    exact(value, [
+      'attemptSummary',
+      'rootRunId',
+      'project',
+      'elapsedMs',
+      'chatRevision',
+      'conversationId',
+      'response',
+      'runId',
+      'requestId',
+      'prompt',
+      'phase',
+      'result',
+      'error',
+      'files',
+      'turns',
+    ]) &&
+    optional(value.attemptSummary, isModelAttempts) &&
+    optional(value.rootRunId, validAgentId) &&
+    optional(value.project, isProjectScope) &&
     validAgentId(value.runId) &&
     validAgentId(value.requestId) &&
     text(value.prompt) &&
     text(value.result, 4 * 1024 * 1024) &&
     text(value.error, 4 * 1024 * 1024) &&
-    phases.includes(String(value.phase)) &&
+    typeof value.phase === 'string' &&
+    phases.includes(value.phase) &&
     optional(value.files, (files) => array(files, isRuntimeFileMetadata)) &&
     optional(value.response, isReplyStream) &&
     optional(value.chatRevision, integer) &&
@@ -94,10 +245,44 @@ function summary(value: unknown) {
     optional(value.turns, (turns) => array(turns, isRunTurn))
   );
 }
-function task(value: unknown) {
+function task(value: unknown): value is RuntimeTask {
   return (
     object(value) &&
-    phases.includes(String(value.phase)) &&
+    exact(value, [
+      'attemptSummary',
+      'rootRunId',
+      'project',
+      'goal',
+      'planning',
+      'elapsedMs',
+      'chatRevision',
+      'conversationId',
+      'model',
+      'response',
+      'plan',
+      'running',
+      'phase',
+      'runId',
+      'requestId',
+      'sessionId',
+      'prompt',
+      'result',
+      'error',
+      'files',
+      'toolCount',
+      'executedCount',
+      'outputDirectory',
+      'trace',
+      'history',
+      'turns',
+      'inserts',
+    ]) &&
+    optional(value.attemptSummary, isModelAttempts) &&
+    optional(value.rootRunId, validAgentId) &&
+    optional(value.project, isProjectScope) &&
+    optional(value.goal, isGoalProgress) &&
+    typeof value.phase === 'string' &&
+    phases.includes(value.phase) &&
     typeof value.running === 'boolean' &&
     text(value.prompt) &&
     text(value.result, 4 * 1024 * 1024) &&
@@ -110,6 +295,7 @@ function task(value: unknown) {
       value.trace,
       (trace) =>
         object(trace) &&
+        exact(trace, ['name', 'surface', 'phase', 'at', 'code']) &&
         text(trace.name, 200) &&
         text(trace.surface, 100) &&
         text(trace.phase, 100) &&
@@ -124,7 +310,7 @@ function task(value: unknown) {
     optional(value.chatRevision, integer) &&
     optional(value.elapsedMs, integer) &&
     optional(value.conversationId, validAgentId) &&
-    optional(value.model, (id) => text(id, 256)) &&
+    optional(value.model, isModelId) &&
     optional(value.planning, (flag) => typeof flag === 'boolean') &&
     optional(value.outputDirectory, (directory) => text(directory, 4096)) &&
     optional(value.turns, (turns) => array(turns, isRunTurn)) &&
@@ -215,6 +401,9 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
       'revision',
       'connections',
       'inspection',
+      'modelAccess',
+      'fallbackModel',
+      'probeRevision',
     ]) ||
     typeof model.configured !== 'boolean' ||
     typeof model.available !== 'boolean' ||
@@ -222,6 +411,9 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
     !text(model.model, 256) ||
     !optional(model.revision, integer) ||
     !optional(model.inspection, (flag) => typeof flag === 'boolean') ||
+    !optional(model.modelAccess, isModelAccess) ||
+    !optional(model.fallbackModel, isModelId) ||
+    !optional(model.probeRevision, integer) ||
     !optional(model.connections, (items) => array(items, isModelConnection))
   )
     return false;
@@ -252,9 +444,19 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
       value.schedules,
       (schedules) =>
         object(schedules) &&
+        exact(schedules, ['available', 'items', 'error', 'automation']) &&
         typeof schedules.available === 'boolean' &&
         array(schedules.items, isSchedule) &&
-        optional(schedules.error, text),
+        optional(schedules.error, text) &&
+        optional(
+          schedules.automation,
+          (automation) =>
+            object(automation) &&
+            exact(automation, ['changes', 'files', 'error']) &&
+            typeof automation.changes === 'boolean' &&
+            typeof automation.files === 'boolean' &&
+            optional(automation.error, text),
+        ),
     ) &&
     optional(
       value.knowledge,

@@ -38,15 +38,43 @@ export function nativeInput(value: unknown): string[] | { text: string } {
   }
   if (input.type === 'key') {
     const names: Record<string, string> = {
-      Enter: 'Return',
-      Backspace: 'BackSpace',
-      ArrowUp: 'Up',
-      ArrowDown: 'Down',
-      ArrowLeft: 'Left',
-      ArrowRight: 'Right',
-      'ControlOrMeta+A': 'ctrl+a',
+      enter: 'Return',
+      return: 'Return',
+      tab: 'Tab',
+      backspace: 'BackSpace',
+      delete: 'Delete',
+      arrowup: 'Up',
+      up: 'Up',
+      arrowdown: 'Down',
+      down: 'Down',
+      arrowleft: 'Left',
+      left: 'Left',
+      arrowright: 'Right',
+      right: 'Right',
+      escape: 'Escape',
+      home: 'Home',
+      end: 'End',
+      pageup: 'Page_Up',
+      page_up: 'Page_Up',
+      pagedown: 'Page_Down',
+      page_down: 'Page_Down',
+      insert: 'Insert',
+      space: 'space',
     };
-    const key = typeof input.key === 'string' ? names[input.key] || input.key : undefined;
+    // Normalize only known key names; the allowlist below still rejects arbitrary xdotool arguments.
+    const parts = typeof input.key === 'string' ? input.key.split('+') : [];
+    const controlShortcut = parts
+      .slice(0, -1)
+      .some((part) => /^(ctrl|control|controlormeta)$/i.test(part));
+    const key = parts
+      .map((part, index) => {
+        const lower = part.toLowerCase();
+        if (index < parts.length - 1)
+          return lower === 'controlormeta' || lower === 'control' ? 'ctrl' : lower;
+        if (controlShortcut && /^[a-z]$/i.test(part)) return lower;
+        return names[lower] ?? (/^f(?:[1-9]|1[0-2])$/i.test(part) ? part.toUpperCase() : part);
+      })
+      .join('+');
     if (
       typeof key !== 'string' ||
       !/^(?:(?:ctrl|alt|shift|super)\+)*(?:[a-zA-Z0-9]|F(?:[1-9]|1[0-2])|Return|Tab|BackSpace|Delete|Up|Down|Left|Right|Escape|Home|End|Page_Up|Page_Down|Insert|space)$/.test(

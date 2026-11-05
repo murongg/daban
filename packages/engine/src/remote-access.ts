@@ -22,8 +22,8 @@ import {
   type RemoteViewer,
   type RuntimeCommand,
   remoteInvitation,
+  remoteReplyFor,
   remoteServer,
-  remoteSnapshotFor,
   type SnapshotAccept,
   supportedSnapshotCapabilities,
   validAgentId,
@@ -46,7 +46,8 @@ interface Session {
   peer?: RemotePeerPort;
   captureRequested?: boolean;
   snapshotAccept?: SnapshotAccept;
-  snapshotHintSent?: true;
+  snapshotSchema?: 2;
+  snapshotHint?: Promise<unknown>;
 }
 interface MediaPlan {
   parent: string;
@@ -113,7 +114,7 @@ export class RemoteAccess {
       name: string;
       platform: string;
       peer: RemotePeerPort;
-      dispatch(command: RuntimeCommand, device?: RemoteIdentity): Promise<unknown>;
+      dispatch(command: RuntimeCommand, device?: RemoteIdentity, schema?: 1 | 2): Promise<unknown>;
       authorize?(device: RemoteIdentity, command: RuntimeCommand): Promise<unknown>;
       revoke?(device: string): Promise<unknown>;
       snapshot?(value: unknown, host: string): unknown;
@@ -133,10 +134,11 @@ export class RemoteAccess {
     await this.store.ready;
     this.gateway = new RemoteGateway(
       this.store,
-      (command, device) =>
+      (command, device, schema) =>
         this.options.dispatch(
           command,
           device ? this.store.device(device, 'controller')?.identity : undefined,
+          schema,
         ),
       this.options.authorize
         ? async (id, command) => {
@@ -621,21 +623,26 @@ export class RemoteAccess {
       if (session.role === 'controller' && host) {
         host.state = 'connected';
         host.transport = event.transport ?? 'unknown';
-        if (!session.snapshotHintSent) {
-          session.snapshotHintSent = true;
-          // This is a parser hint on this connection only; no acknowledgement or permission is implied.
-          await this.port(session)
-            .send(
-              session.id,
-              JSON.stringify({
-                type: 'snapshot-capabilities',
-                host: session.device.id,
-                workspace: session.workspace,
-                accept: supportedSnapshotCapabilities,
-              }),
-            )
-            .catch(() => undefined);
-        }
+        // One per-session flight keeps repeated connected events from admitting RPC before both hints.
+        session.snapshotHint ??= Promise.resolve()
+          .then(async () => {
+            const hint = {
+              type: 'snapshot-capabilities',
+              host: session.device.id,
+              workspace: session.workspace,
+              accept: supportedSnapshotCapabilities,
+            };
+            // Old Hosts keep the first hint and ignore the extension. Neither frame requests an ACK or authority.
+            for (const value of [hint, { ...hint, schema: 2 }]) {
+              if (!session.connected || this.sessions.get(session.id) !== session) return;
+              await this.port(session).send(session.id, JSON.stringify(value));
+            }
+          })
+          .catch(async (error: unknown) => {
+            await this.drop(session.id, true, code(error));
+            throw error;
+          });
+        await session.snapshotHint;
       }
       const pending = this.connecting.get(session.id);
       if (pending) {
@@ -703,8 +710,10 @@ export class RemoteAccess {
         isRemoteSnapshotCapabilities(value) &&
         value.host === this.keys.identity.id &&
         value.workspace === session.workspace
-      )
+      ) {
         session.snapshotAccept = structuredClone(value.accept);
+        session.snapshotSchema = value.schema;
+      }
       return;
     }
     if (value.type === 'request' && session.role === 'host' && isRemoteRpcRequest(value)) {
@@ -730,7 +739,7 @@ export class RemoteAccess {
           await this.drop(value.params.id);
           result = { closed: true };
         } else {
-          result = await this.gateway.invoke(session.device.id, session.id, value);
+          result = await this.gateway.invoke(session.device.id, session.id, value, session.snapshotSchema ?? 1);
           validateReviewReply(parseRuntimeCommand({ type: value.method, ...value.params }), result);
         }
         reply = {
@@ -739,10 +748,13 @@ export class RemoteAccess {
           host: this.keys.identity.id,
           workspace: session.workspace,
           ok: true,
-          value:
-            value.method === 'status' || value.method === 'connect'
-              ? remoteSnapshotFor(result, session.snapshotAccept)
-              : result,
+          // Project after receipt lookup too: reconnecting with an older parser must not replay a newer DTO.
+          value: remoteReplyFor(
+            value.method,
+            result,
+            session.snapshotAccept,
+            session.snapshotSchema,
+          ),
         };
       } catch (error) {
         reply = {
@@ -866,7 +878,7 @@ export class RemoteAccess {
             type: 'snapshot',
             host: this.keys.identity.id,
             workspace: session.workspace,
-            value: remoteSnapshotFor(value, session.snapshotAccept),
+            value: remoteReplyFor('status', value, session.snapshotAccept, session.snapshotSchema),
           }),
           'events',
         );

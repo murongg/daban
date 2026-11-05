@@ -516,7 +516,11 @@ export function runtimeService(
     });
     return connecting;
   }
-  async function dispatch(command: RuntimeCommand): Promise<unknown> {
+  async function dispatch(
+    command: RuntimeCommand,
+    _device?: unknown,
+    schema: 1 | 2 = 2,
+  ): Promise<unknown> {
     if (updating) {
       if (command.type === 'status') return state;
       throw new Error('AGENT_UPDATING');
@@ -793,7 +797,7 @@ export function runtimeService(
       'files.review.diff',
       'files.review.current',
     ].includes(command.type);
-    const result = await client.invoke(command);
+    const result = await client.invoke(command, schema);
     // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.
     if (transcript && (closed || epoch !== connection)) throw new Error('RUNTIME_OFFLINE');
     if (!transcript && !['frame', 'files.list', 'files.read'].includes(command.type))

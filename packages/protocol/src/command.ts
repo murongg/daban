@@ -5,6 +5,7 @@ import {
   isAttachmentQuery,
   isAttachmentUpload,
   isAttachmentVersion,
+  isAutomationCommand,
   isBotBundle,
   isBotCopyRequest,
   isBotExportRequest,
@@ -16,11 +17,13 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
+  isBudgetCommand,
   isChatRequest,
   isComputerRequest,
   isContextQuery,
   isContextSourceQuery,
   isDocumentUpload,
+  isGoalResumeTarget,
   isGroupActionRequest,
   isGroupCopyRequest,
   isGroupInput,
@@ -29,9 +32,16 @@ import {
   isLocalComputerCommand,
   isMcpCommand,
   isMemoryQuery,
+  isModelDiagnoseRequest,
+  isModelFallbackRequest,
   isModelInspectionRequest,
+  isModelRemoveRequest,
+  isModelSavedRequest,
   isModelUpdate,
   isNoteCommand,
+  isProjectCommand,
+  isProjectFileRequest,
+  isProjectScope,
   isRecoveryRequest,
   isScheduleInput,
   isSchedulePatch,
@@ -75,6 +85,8 @@ export function safeRuntimePath(value: unknown): value is string {
 }
 export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (isAutomationCommand(value)) return value;
+  if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
@@ -87,6 +99,7 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     value.type === 'skill.resource'
   )
     return isSkillPackageCommand(value) ? value : fail();
+  if (value.type.startsWith('budget.')) return isBudgetCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
     'work.list': ['type', 'query'],
@@ -139,6 +152,10 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     'group.copy.receipt': ['type', 'request'],
     'group.receipt': ['type', 'group', 'id'],
     'model.configure': ['type', 'input'],
+    'model.saved': ['type', 'input'],
+    'model.fallback.configure': ['type', 'input'],
+    'model.remove': ['type', 'input'],
+    'model.diagnose': ['type', 'input'],
     'model.check': ['type', 'revision'],
     'model.inspect': ['type', 'input'],
     'clipboard.write': ['type', 'text'],
@@ -196,9 +213,9 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     'files.review.read': ['type', 'query'],
     'files.review.diff': ['type', 'query'],
     'files.review.current': ['type', 'query'],
-    'files.list': ['type'],
-    'files.read': ['type', 'path'],
-    'files.download': ['type', 'path'],
+    'files.list': ['type', 'project', 'task'],
+    'files.read': ['type', 'path', 'project', 'task'],
+    'files.download': ['type', 'path', 'project', 'task'],
     'task.start': ['type', 'bot', 'task'],
     'task.insert': ['type', 'bot', 'id', 'text', 'runId', 'chatRevision'],
     'task.stop': ['type', 'bot'],
@@ -320,6 +337,10 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (v.type === 'group.input' && (!validAgentId(v.sourceId) || !isTaskFileName(v.name)))
     return fail();
   if (v.type === 'model.configure' && !isModelUpdate(v.input)) return fail();
+  if (v.type === 'model.saved' && !isModelSavedRequest(v.input)) return fail();
+  if (v.type === 'model.fallback.configure' && !isModelFallbackRequest(v.input)) return fail();
+  if (v.type === 'model.remove' && !isModelRemoveRequest(v.input)) return fail();
+  if (v.type === 'model.diagnose' && !isModelDiagnoseRequest(v.input)) return fail();
   if (v.type === 'model.inspect' && !isModelInspectionRequest(v.input)) return fail();
   if (v.type === 'model.check' && (!Number.isSafeInteger(v.revision) || Number(v.revision) < 0))
     return fail();
@@ -454,6 +475,7 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     (!Number.isSafeInteger(v.epoch) || Number(v.epoch) < 0)
   )
     return fail();
+  if (String(v.type).startsWith('files.') && !isProjectFileRequest(v)) return fail();
   if ((v.type === 'files.read' || v.type === 'files.download') && !safeRuntimePath(v.path))
     return fail();
   if (v.type === 'control' && !['agent', 'human'].includes(v.owner as string)) return fail();
@@ -465,6 +487,7 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     if (
       !object(t) ||
       !keys(t, [
+        'goalResume',
         'requestId',
         'prompt',
         'retryOf',
@@ -474,12 +497,15 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
         'chatRevision',
         'approvalMode',
         'fileReview',
+        'project',
       ]) ||
       !string(t.requestId, 100) ||
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
       (t.fileReview !== undefined && !isReviewSelection(t.fileReview)) ||
+      (t.goalResume !== undefined && !isGoalResumeTarget(t.goalResume)) ||
+      (t.project !== undefined && !isProjectScope(t.project)) ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
       (t.memory !== undefined && !string(t.memory, 12000)) ||
       (t.chatRevision !== undefined &&

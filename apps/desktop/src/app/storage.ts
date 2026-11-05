@@ -12,6 +12,8 @@ import {
   isKnowledgeContent,
   isModelId,
   isReviewSelection,
+  isProjectScope,
+  isProjectWrite,
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
@@ -102,6 +104,14 @@ export function restore(raw: string | null): State {
           isReviewSelection({ sharedPaths: value.sharedPaths }),
       ),
     );
+    if (s.projectScopes !== undefined) {
+      s.projectScopes = Object.fromEntries(
+        Object.entries(record(s.projectScopes) ? s.projectScopes : {}).filter(
+          ([bot, scope]) => ids.includes(bot) && isProjectScope(scope),
+        ),
+      );
+    }
+    if (!isProjectWrite(s.projectRequest)) delete s.projectRequest;
     s.approvalModes = Object.fromEntries(
       Object.entries(record(s.approvalModes) ? s.approvalModes : {}).filter(
         ([bot, value]) =>
