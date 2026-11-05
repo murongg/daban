@@ -15,6 +15,7 @@ import {
   type RuntimeFile,
   type RuntimeTaskSummary,
   recoveryBlocked,
+  sameProjectScope,
   type TaskRequest,
 } from '@daban/protocol';
 import {
@@ -84,6 +85,7 @@ import {
   mergeAttachments,
   messageQueue,
   messageQueueLimit,
+  projectScope,
   type QueuedTask,
   reduce,
   type WorkspaceFile,
@@ -406,6 +408,9 @@ function Workbench() {
           ? { chatRevision: chatRevision(state, botId, runtime.snapshot.chats) }
           : {}),
         requestId: crypto.randomUUID(),
+        ...((queued ? queued.project : projectScope(state, botId))
+          ? { project: queued ? queued.project : projectScope(state, botId) }
+          : {}),
         ...(runtime.snapshot.protocolVersion >= 44
           ? {
               approvalMode: chatApprovalMode(
@@ -466,6 +471,12 @@ function Workbench() {
       if (
         error instanceof Error &&
         [
+          'PROJECT_BUSY',
+          'PROJECT_SCOPE_STALE',
+          'PROJECT_ACCESS_DENIED',
+          'PROJECT_ARCHIVED',
+          'PROJECT_NOT_FOUND',
+          'EXECUTION_UPGRADE_REQUIRED',
           'INVALID_TASK',
           'CHAT_CONFLICT',
           'CHAT_REVISION_REQUIRED',
@@ -515,6 +526,7 @@ function Workbench() {
       requestId: crypto.randomUUID(),
       prompt,
       retryOf: task.runId,
+      ...(task.project ? { project: task.project } : {}),
       ...(runtime.snapshot.protocolVersion >= 44
         ? {
             approvalMode: chatApprovalMode(
@@ -552,7 +564,12 @@ function Workbench() {
     dispatch({
       type: 'queue-add',
       bot: botId,
-      task: { id: crypto.randomUUID(), prompt, files: files.map((file) => file.id) },
+      task: {
+        id: crypto.randomUUID(),
+        prompt,
+        files: files.map((file) => file.id),
+        ...(projectScope(state, botId) ? { project: projectScope(state, botId) } : {}),
+      },
     });
   }
   function rejectInsert(botId: string, id: string, error: unknown) {
@@ -569,6 +586,10 @@ function Workbench() {
     const item = messageQueue(state, botId).find((entry) => entry.id === id);
     if (!item || item.files.length || item.verify) return;
     const task = agentTask(runtime.snapshot, botId);
+    if (!sameProjectScope(item.project, task?.project)) {
+      notify(t('projects.stale'));
+      return;
+    }
     if (!task?.running || !task.runId || task.conversationId) {
       notify(t('errors.taskEndedMessageKeptQueue'));
       return;
@@ -693,6 +714,12 @@ function Workbench() {
   }, [runtime, state, dispatch, notify]);
   const previewFile = useCallback(
     async (file: WorkspaceFile) => {
+      const source = updateState.current;
+      const scope = projectScope(source, source.selected);
+      const stillSelected = () =>
+        !file.runtimeScope?.project ||
+        (updateState.current.selected === source.selected &&
+          sameProjectScope(projectScope(updateState.current, source.selected), scope));
       if (imageMime(file.upload?.name || file.name)) {
         preview(file);
         return;
@@ -718,10 +745,11 @@ function Workbench() {
         const actual = await runtime.command<RuntimeFile>({
           type: 'files.read',
           path: file.runtimePath,
+          ...file.runtimeScope,
         });
-        preview({ ...file, content: actual.content || '' });
+        if (stillSelected()) preview({ ...file, content: actual.content || '' });
       } catch (error) {
-        notify(runtimeError(error));
+        if (stillSelected()) notify(runtimeError(error));
       }
     },
     [runtime.command, preview, notify],
@@ -1258,6 +1286,7 @@ function Workbench() {
                     const original = await runtime.command<RuntimeDownload>({
                       type: 'files.download',
                       path: file.runtimePath,
+                      ...file.runtimeScope,
                     });
                     const bytes = Uint8Array.from(atob(original.data), (character) =>
                       character.charCodeAt(0),

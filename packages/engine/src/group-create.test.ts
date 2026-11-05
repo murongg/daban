@@ -24,7 +24,7 @@ function value<T>(result: ToolResult): T {
 }
 type Created = { group: Group; sourceId: string; reused: boolean };
 
-async function fixture() {
+async function fixture(project?: { projectId: string; revision: number }) {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-group-create-'));
   const file = path.join(root, 'groups.sqlite');
   const members = ['mock-alpha', 'mock-beta', 'mock-gamma', 'mock-archived'].map((id) => ({
@@ -45,7 +45,9 @@ async function fixture() {
       return members;
     },
     source: (bot: string, runId: string) =>
-      bot === 'mock-alpha' && runId === activeRun ? { intentId } : undefined,
+      bot === 'mock-alpha' && runId === activeRun
+        ? { intentId, ...(project ? { project } : {}) }
+        : undefined,
     running: () => false,
     groupRunning: () => false,
     admit: (bot: string) => !blocked.has(bot),
@@ -297,6 +299,33 @@ test('the maximum shared summary remains a valid executable task without truncat
     expect(f.calls[0].task.prompt).toHaveLength(12000);
     expect(f.calls[0].task.prompt).toBe(message);
     expect(isGroupPage(await f.groups.read(created.group.id))).toBe(true);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a project collaboration checks every recipient before saving or delivering its summary', async () => {
+  const project = { projectId: 'mock-project', revision: 1 };
+  const f = await fixture(project);
+  Object.assign(f.runtime, {
+    projectScope: (bot: string) => {
+      if (bot === 'mock-gamma')
+        throw Object.assign(Error('PROJECT_ACCESS_DENIED'), { code: 'PROJECT_ACCESS_DENIED' });
+    },
+  });
+  try {
+    await expect(
+      f.groups.collaborate(
+        { bot: 'mock-alpha', runId: 'mock-run' },
+        { ...request, members: ['mock-gamma'] },
+      ),
+    ).rejects.toMatchObject({ code: 'PROJECT_ACCESS_DENIED' });
+    expect(f.calls).toStrictEqual([]);
+    expect((await f.groups.status()).items).toStrictEqual([]);
+    const allowed = await f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request);
+    expect(allowed.group.project).toStrictEqual(project);
+    await f.groups.tick();
+    expect(f.calls[0]?.task.project).toStrictEqual(project);
   } finally {
     await f.close();
   }

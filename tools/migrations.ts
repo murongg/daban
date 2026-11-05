@@ -17,6 +17,7 @@ export const stores = [
   'integrations',
   'knowledge',
   'notes',
+  'projects',
   'schedules',
   'skills',
   'tab-store',
