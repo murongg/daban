@@ -136,66 +136,7 @@ export const english = {
     'The outcome is unconfirmed. Reconnect and check the task record before repeating the operation.',
   'remote.operationFailed':
     'The operation could not finish. Check the connection service, host availability and invitation expiry.',
-  'automation.acceptedRevision': 'Accepted project grant revision: {0}',
-  'automation.scopeChanged':
-    'The project grant changed. Review and accept its current revision; saving other fields never upgrades the accepted scope.',
-  'automation.acceptScope': 'Accept current project grant',
-  'automation.savedActive': 'Saved. The schedule remains enabled.',
-  'automation.restoreAll': 'Restore standard notifications',
-  'automation.monitorUnavailable':
-    'Scoped result reads are unavailable; monitoring is paused. Update the executor and explicitly reenable, or restore standard notifications.',
-  'automation.deletedRule': 'Deleted rule',
-  'automation.deletedRuleAt': 'Deleted rule · {0}',
-  'automation.pending': 'Unconfirmed executions',
-  'automation.unknownHelp':
-    'These executions may already have produced effects. Checking or acknowledging never reruns them; deleting a rule preserves its original receipt.',
-  'automation.receiptStatus': 'Original execution receipt for {0}: {1}',
-  'automation.newFile': 'New file monitor',
-  'automation.settings': 'Monitoring settings',
-  'automation.title': 'Monitor name',
-  'automation.instructions': 'Saved task instructions',
-  'automation.project': 'Project and grant revision',
-  'automation.selectProject': 'Select an authorized project',
-  'automation.paths': 'Project-relative file paths, one per line',
-  'automation.pollSeconds': 'Polling interval (seconds)',
-  'automation.fileHelp':
-    'Monitor 1–20 explicit files, up to 1 MiB each and 4 MiB total. Two matching initial reads establish the baseline; later stable changes run the task. Polling may miss changes between samples and is not a file audit. Runs may incur model costs.',
-  'automation.filesUnavailable':
-    'File triggers require project authorization and scoped file reads in the execution environment. Ordinary time schedules remain available.',
-  'automation.saveFile': 'Save file monitor',
-  'automation.saved':
-    'Saved paused. Review the configuration and enable it explicitly. Running tasks retain their accepted snapshot.',
-  'automation.changesOnly': 'Notify only when results change',
-  'automation.signalPath': 'Result signal file',
-  'automation.signalHelp':
-    'Use one UTF-8 output file from this run, up to 64 KiB. The first successful result and equal results stay quiet. New failures, recovery and requests for attention still surface. OS delivery is not guaranteed; history and pending notices remain available.',
-  'automation.savePolicy': 'Save monitoring policy',
-  'automation.fileTiming': 'File changes · sample every {0} seconds',
-  'automation.observing':
-    'Baseline established; waiting for stable changes. Locking restricts Bot edits and does not pause observation or execution.',
-  'automation.baselinePending':
-    'Waiting for two matching samples after enabling; initial sampling does not run a task.',
-  'automation.cursors': 'Events {0}–{1}',
-  'automation.checkReceipt': 'Check original run receipt',
-  'automation.ack': 'Acknowledge notice',
-  'automation.noticeChanged': 'Monitoring result changed',
-  'automation.noticeFault': 'Monitor needs attention',
-  'automation.noticeRecovered': 'Monitoring recovered',
-  'automation.noticeBody': 'Open the original schedule, run history and pending notice.',
-  'automation.upgradeRequired': 'Update the execution service to use this monitoring capability.',
-  'automation.signalUnavailable':
-    'Result signal unavailable. Check this run’s output, file size and UTF-8 content. The previous successful baseline is retained.',
-  'automation.filesTooLarge':
-    'Monitored files exceed the 1 MiB per-file or 4 MiB total limit. Adjust the files before retrying.',
-  'automation.readFailed':
-    'File sampling failed. The committed baseline is unchanged; the next poll will retry.',
-  'automation.runFailed': 'The monitoring run failed. Check the original task history.',
-  'automation.result.all': 'Standard notifications',
-  'automation.result.baseline': 'Quiet: initial result baseline',
-  'automation.result.unchanged': 'Quiet: result unchanged',
-  'automation.result.changed': 'Result changed',
-  'automation.result.fault': 'Needs attention',
-  'automation.result.recovered': 'Recovered',
+
   'tasks.projectRetired':
     'Project management was removed. History is retained; project tasks and files cannot resume through shared paths.',
   'projects.browserScope': 'Linux browser: {0}',
