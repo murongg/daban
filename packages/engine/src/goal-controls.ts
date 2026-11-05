@@ -37,6 +37,7 @@ const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(va
 export class GoalControls {
   readonly ready: Promise<unknown>;
   private db!: Database;
+  private closed = false;
   constructor(private readonly file: string) {
     this.ready = this.load();
   }
@@ -69,7 +70,11 @@ export class GoalControls {
     }
   }
   close() {
-    this.db?.$client.close();
+    // Cleanup can revisit this owner after another instance has reopened the same file.
+    if (!this.closed && this.db) {
+      this.db.$client.close();
+      this.closed = true;
+    }
   }
   epoch(owner: GoalOwner) {
     if (!isGoalOwner(owner)) throw new Error('INVALID_GOAL_OWNER');
