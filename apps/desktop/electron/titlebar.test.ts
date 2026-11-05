@@ -20,10 +20,10 @@ beforeEach(() => {
   mock.windows = [];
 });
 
-it('integrates native Windows controls while retaining the macOS and Linux frame styles', () => {
+it('lets renderer backdrops show through native Windows controls while retaining other frame styles', () => {
   expect(titlebarOptions('win32')).toEqual({
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#ffffff', symbolColor: '#252523', height: 56 },
+    titleBarOverlay: { color: '#00000000', symbolColor: '#252523', height: 56 },
   });
   expect(titlebarOptions('darwin')).toEqual({
     titleBarStyle: 'hiddenInset',
@@ -32,7 +32,7 @@ it('integrates native Windows controls while retaining the macOS and Linux frame
   expect(titlebarOptions('linux')).toEqual({});
 });
 
-it('matches native controls to the app theme only for the owned Windows main frame', () => {
+it('keeps native controls transparent across theme changes only for the owned Windows main frame', () => {
   const frame = { url: 'file:///mock/dist/index.html' };
   const contents = { mainFrame: frame };
   const setTitleBarOverlay = vi.fn();
@@ -41,12 +41,12 @@ it('matches native controls to the app theme only for the owned Windows main fra
   const event = { sender: contents, senderFrame: frame };
   expect(mock.handler!(event, 'dark')).toBe(true);
   expect(setTitleBarOverlay).toHaveBeenLastCalledWith({
-    color: '#1c1c1a',
+    color: '#00000000',
     symbolColor: '#eaeae5',
   });
   expect(mock.handler!(event, 'light')).toBe(true);
   expect(setTitleBarOverlay).toHaveBeenLastCalledWith({
-    color: '#ffffff',
+    color: '#00000000',
     symbolColor: '#252523',
   });
   setTitleBarOverlay.mockClear();
