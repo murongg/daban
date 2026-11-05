@@ -2322,7 +2322,7 @@ export const chinese = {
   'models.testing': '正在测试…',
   'models.testingSendsFixedShortPromptMayIncur':
     '测试模型会发送固定短提示，可能产生少量 API 费用；不包含聊天内容，也不会保存配置。',
-  'models.testModel': '测试模型 {0}',
+  'models.testModel': '测试模型 {0}（可能计费）',
   'models.title': '模型与供应商',
   'models.updateLocalAgentLoadModelsTestCalls':
     '更新本机 Agent 后可加载模型、测试调用和匹配上下文。',
@@ -3197,6 +3197,10 @@ export const chinese = {
   'tasks.updatedAndCompletedAt': '更新于 {0} · 完成于 {1}',
   'tasks.currentRevisionSummary': '{0} · {1}',
   'tasks.currentDeletedRevisionSummary': '{0} · {1}（已在回收站）',
+  'models.connectionChecks': '连接检查',
+  'models.checkSavedModel': '检查已保存的模型：{0}',
+  'models.fallbackManagement': '备用与连接管理',
+  'models.fallbackDisabled': '未启用备用',
   'models.fallbackTitle': '备用模型',
   'models.fallbackOff': '关闭自动回退',
   'models.fallbackSave': '保存备用策略',
