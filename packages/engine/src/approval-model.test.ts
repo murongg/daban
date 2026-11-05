@@ -7,6 +7,7 @@ import {
   type ProjectScope,
   projectCapability,
   type TaskRequest,
+  taskRunCapability,
 } from '@daban/protocol';
 import { expect, onTestFinished, test, vi } from 'vitest';
 import { ApprovalRules } from './approval-rules.js';
@@ -61,6 +62,42 @@ vi.mock('./mcp.js', () => ({
 async function until(check: () => boolean | Promise<boolean>) {
   await vi.waitFor(async () => expect(await check()).toBe(true), { timeout: 3000, interval: 5 });
 }
+
+test.each(['approval.web', 'interaction.open'] as const)(
+  'an attempt change while %s reviews cannot publish authority',
+  async (method) => {
+    const f = await mcpFixture('auto', undefined, 'interactive', 'synthetic');
+    const attempt = f.job.attemptId;
+    const evaluate = f.models.approvalRules.evaluate.bind(f.models.approvalRules);
+    const spy = vi.spyOn(f.models.approvalRules, 'evaluate').mockImplementation(async (...args) => {
+      const decision = await evaluate(...args);
+      f.job.attemptId = 'mock-replaced-attempt';
+      return decision;
+    });
+    try {
+      const params =
+        method === 'approval.web'
+          ? { sessionId: f.job.sessionId, url: 'https://example.test/joint' }
+          : {
+              id: 'mock-raced-card',
+              sessionId: f.job.sessionId,
+              kind: 'approval',
+              tool: 'web_fetch',
+              url: 'https://example.test/joint',
+            };
+      const reply = await f.models
+        .rpc(f.job.bot, `Bearer ${f.job.token}`, { id: 901, method, params })
+        .catch((error) => error);
+      expect(reply).toBeInstanceOf(Error);
+      expect(await f.models.interactions.list()).toHaveLength(0);
+      expect(transport.effects).toBe(0);
+    } finally {
+      spy.mockRestore();
+      f.job.attemptId = attempt;
+      await f.close();
+    }
+  },
+);
 
 function automationSource(trigger: AutomationSource['trigger']): AutomationSource {
   return {
@@ -157,7 +194,7 @@ async function mcpFixture(
       ? await startExecutor({ directory: path.join(root, 'guest'), port: 0, boot: 'mock-boot' })
       : undefined;
   const syntheticExecution: WorkspaceExecutor = {
-    snapshot: { capabilities: [projectCapability] },
+    snapshot: { capabilities: [projectCapability, taskRunCapability] },
     call: async (method, params) => {
       if (method === 'workspace.base') return '/synthetic-root';
       if (method === 'workspace.create') {
@@ -173,7 +210,13 @@ async function mcpFixture(
         };
       }
       if (method === 'workspace.list') return [];
-      if (method === 'tools.open') return { tools: [] };
+      if (method === 'tools.open') {
+        const owner = models.jobs.get(String(params.bot));
+        expect(params.taskRunId).toBe(owner?.id);
+        expect(params.id).toBe(owner?.executionId);
+        expect(params.id).not.toBe(params.taskRunId);
+        return { tools: [] };
+      }
       if (
         [
           'projects.sync',

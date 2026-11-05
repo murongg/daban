@@ -8,10 +8,12 @@ import {
   browserTaskCapability,
   documentLimit,
   isTaskFileName,
+  legacyExecutionToolLimit,
   type ModelId,
   modelExecutionCapability,
   modelHasVision,
   type TaskRequest,
+  taskRunCapability,
 } from '@daban/protocol';
 import { BrowserTools } from './browser-tools.js';
 import type { CatalogTools } from './catalog.js';
@@ -44,6 +46,9 @@ import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  taskRunId?: string;
+  executionId?: string;
+  beforeTool?: () => Promise<unknown>;
   project?: ProjectScope;
   vision?: boolean;
   skills?: SkillSnapshot;
@@ -57,6 +62,11 @@ export interface AgentToolRun extends ToolRun {
   workdir: string;
   canonicalRoot: string;
 }
+// Guest leases derive from persisted run/attempt identities; they never replace the logical task root.
+export const executionAttemptId = (runId: string, attemptId: string) =>
+  createHash('sha256')
+    .update(JSON.stringify([runId, attemptId]))
+    .digest('hex');
 const workspaceToolList = [
   {
     name: 'read_image',
@@ -163,7 +173,7 @@ export class AgentTools {
     string,
     { name: string; description: string; inputSchema: Record<string, unknown> }[]
   >();
-  private readonly opened = new WeakSet<AgentToolRun>();
+  private readonly opened = new WeakMap<AgentToolRun, string>();
   private readonly active = new WeakMap<AgentToolRun, Set<Promise<ToolResult>>>();
   constructor(
     runtime: ComputerFacade | undefined,
@@ -275,7 +285,21 @@ export class AgentTools {
     this.checkProject(run);
     if (!this.localRuns.has(run))
       this.localRuns.set(run, (await this.localComputer?.prepare(run)) ?? false);
-    if (!this.options.execution || this.opened.has(run)) return;
+    if (!this.options.execution) return;
+    const id = run.executionId ?? run.id;
+    if (!id) throw new Fault('EXECUTION_INVALID_REQUEST');
+    const separateTask = run.project && id !== run.id;
+    if (
+      (separateTask && !run.id) ||
+      ((separateTask || run.limit > legacyExecutionToolLimit) &&
+        !this.options.execution.snapshot?.capabilities.includes(taskRunCapability))
+    )
+      throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
+    const opened = this.opened.get(run);
+    if (opened) {
+      if (opened !== id) throw new Fault('EXECUTION_RUN_CONFLICT');
+      return;
+    }
     const capabilities =
       this.options.execution.snapshot?.capabilities.includes(modelExecutionCapability);
     // Older guests validate exact fields and know only the two original model IDs.
@@ -290,7 +314,8 @@ export class AgentTools {
     const result = (await this.options.execution.call(
       'tools.open',
       {
-        id: run.id,
+        id,
+        ...(separateTask ? { taskRunId: run.id } : {}),
         bot: run.bot,
         ...(run.project ? { project: run.project } : {}),
         workdir: run.workdir,
@@ -318,8 +343,11 @@ export class AgentTools {
       )
     )
       throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
+    // An open acknowledgement belongs to the physical attempt that requested it, never its replacement.
+    run.abort.signal.throwIfAborted();
+    if ((run.executionId ?? run.id) !== id) throw new Fault('EXECUTION_RUN_CLOSED');
     this.remoteCatalogs.set(run.bot, result.tools);
-    this.opened.add(run);
+    this.opened.set(run, id);
   }
   invoke(
     run: AgentToolRun,
@@ -332,24 +360,55 @@ export class AgentTools {
       calls = new Set();
       this.active.set(run, calls);
     }
-    const call = this.perform(run, name, args, wireId);
+    const call = run.beforeTool
+      ? this.fenced(run, name, args, wireId)
+      : this.perform(run, name, args, wireId);
     calls.add(call);
     return call.finally(() => {
       calls.delete(call);
     });
   }
+  private async fenced(
+    run: AgentToolRun,
+    name: string,
+    args: Record<string, unknown>,
+    wireId?: string,
+  ) {
+    const identity = () =>
+      JSON.stringify([
+        run.bot,
+        run.id,
+        run.executionId,
+        run.intentId,
+        run.sessionId,
+        run.model,
+        run.vision,
+        run.workdir,
+        run.canonicalRoot,
+        run.integrations?.key,
+      ]);
+    const owner = identity();
+    const input = structuredClone(args);
+    await run.beforeTool?.();
+    // Fence persistence must not move the read/permission snapshot past a change of task ownership.
+    if (identity() !== owner) throw new Fault('TOOL_CONTEXT_CHANGED', 403);
+    return this.perform(run, name, input, wireId);
+  }
   async drain(run: AgentToolRun) {
     await Promise.allSettled([...(this.active.get(run) || [])]);
     if (this.localRuns.get(run)) await this.localComputer?.cancel(run);
-    if (this.options.execution && this.opened.has(run)) {
-      await this.options.execution.call('tools.drain', { runId: run.id });
-      this.opened.delete(run);
+    // An active call may still be opening its lease; capture it only after that call has settled.
+    const id = this.opened.get(run);
+    if (this.options.execution && id) {
+      await this.options.execution.call('tools.drain', { runId: id });
+      if (this.opened.get(run) === id) this.opened.delete(run);
     }
   }
   async cancel(run: AgentToolRun) {
     if (this.localRuns.get(run)) await this.localComputer?.cancel(run);
-    if (this.options.execution && this.opened.has(run))
-      await this.options.execution.call('tools.cancel', { runId: run.id });
+    const id = this.opened.get(run);
+    if (this.options.execution && id)
+      await this.options.execution.call('tools.cancel', { runId: id });
   }
   private async remote(
     run: AgentToolRun,
@@ -416,6 +475,8 @@ export class AgentTools {
     run.abort.signal.throwIfAborted();
     if (computer) await this.authorizeComputer?.(run);
     await this.open(run);
+    const runId = this.opened.get(run);
+    if (!runId) throw new Fault('EXECUTION_RUN_CLOSED');
     // Opening the guest may wait; revalidate consent after that wait and before sending an effect.
     assertPolicy?.();
     this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
@@ -423,7 +484,7 @@ export class AgentTools {
     let status = (await this.options.execution!.call(
       'tools.invoke',
       {
-        runId: run.id,
+        runId,
         operationId,
         name,
         args,
@@ -445,7 +506,7 @@ export class AgentTools {
       // Poll the accepted operation; repeating invoke after a lost acknowledgement can repeat its effects.
       status = (await this.options.execution!.call(
         'tools.poll',
-        { runId: run.id, operationId },
+        { runId, operationId },
         run.abort.signal,
       )) as typeof status;
     }
@@ -467,7 +528,7 @@ export class AgentTools {
     this.checkProject(run);
     if (run.project && this.options.projects) {
       const resources = this.options.projects;
-      const reference = resources.reference(run.project, run.bot, run.id!);
+      const reference = resources.reference(run.project, run.bot, run.taskRunId ?? run.id!);
       const shared = value === '/shared' || value.startsWith('/shared/');
       this.checkProject(run, shared && write ? 'write' : 'read');
       const root = shared ? resources.files(reference) : run.canonicalRoot;
@@ -601,9 +662,11 @@ export class AgentTools {
       throw new Fault('INVALID_TOOL_ARGS', 400);
     if (this.options.execution) {
       await this.open(run);
+      const runId = this.opened.get(run);
+      if (!runId) throw new Fault('EXECUTION_RUN_CLOSED');
       return this.options.execution.call(
         'tools.write',
-        { runId: run.id, path: value, content, createOnly },
+        { runId, path: value, content, createOnly },
         run.abort.signal,
       );
     }
@@ -619,7 +682,7 @@ export class AgentTools {
     const root =
       run.project && this.options.projects && !inside(run.canonicalRoot, file)
         ? this.options.projects.files(
-            this.options.projects.reference(run.project, run.bot, run.id!),
+            this.options.projects.reference(run.project, run.bot, run.taskRunId ?? run.id!),
           )
         : run.canonicalRoot;
     this.checkProject(run, root === run.canonicalRoot ? 'read' : 'write');

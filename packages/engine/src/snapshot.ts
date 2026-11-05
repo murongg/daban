@@ -1,6 +1,7 @@
 import type {
   BrowserState,
   GoalProgress,
+  ModelAttempt,
   ModelId,
   ReplyStream,
   RunInsert,
@@ -21,6 +22,8 @@ export interface WindowInfo {
   title: string;
 }
 export interface RawModelTask {
+  attemptSummary?: ModelAttempt[];
+  rootRunId?: string;
   project?: import('@daban/protocol').ProjectScope;
   goal?: GoalProgress;
   planning?: boolean;

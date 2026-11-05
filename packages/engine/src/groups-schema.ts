@@ -1,3 +1,4 @@
+import type { BudgetScope, GoalResumeTarget } from '@daban/protocol';
 import { sql } from 'drizzle-orm';
 import {
   check,
@@ -30,6 +31,7 @@ export const groupTurns = sqliteTable(
   {
     grp: text().notNull(),
     id: text().notNull(),
+    budget: text({ mode: 'json' }).$type<BudgetScope>(),
     prompt: text().notNull(),
     recipients: text().notNull(),
     signature: text().notNull(),
@@ -75,6 +77,9 @@ export const groupDeliveries = sqliteTable(
     position: integer().notNull(),
     state: text().notNull(),
     run: text(),
+    retryOf: text(),
+    retryStage: text(),
+    goalResume: text({ mode: 'json' }).$type<GoalResumeTarget>(),
     context: text(),
     name: text(),
     error: text(),
@@ -103,3 +108,8 @@ export const groupMeta = sqliteTable(
   },
   (table) => [check('group_meta_singleton', sql`${table.id} = 1`)],
 );
+
+export const groupBudgetResumes = sqliteTable('group_budget_resumes', {
+  id: text().primaryKey(),
+  signature: text().notNull(),
+});

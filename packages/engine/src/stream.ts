@@ -152,7 +152,12 @@ interface Context {
   on: (event: string, listener: (payload: unknown) => unknown) => unknown;
   effect: (factory: () => () => Promise<unknown>) => unknown;
 }
-export function apply(ctx: Context, config: BridgeConfig & { turnFile?: string }) {
+export function apply(
+  ctx: Context,
+  config: BridgeConfig & { turnFile?: string; attemptId?: string },
+) {
+  let produced = false;
+  let lastOutput: { sessionId: string; snapshot: StreamSnapshot } | undefined;
   const publisher = new StreamPublisher((snapshot) =>
     callBridge(config, 'response.update', snapshot, new AbortController().signal),
   );
@@ -185,8 +190,42 @@ export function apply(ctx: Context, config: BridgeConfig & { turnFile?: string }
       }
     }
     const snapshot = collector.push(value.frame);
-    if (snapshot && (!config.turnFile || turnId))
+    if (snapshot && (!config.turnFile || turnId)) {
+      if (snapshot.text || snapshot.thinking?.text) {
+        produced = true;
+        lastOutput = {
+          sessionId: value.agent.session.id,
+          snapshot: { ...snapshot, ...(turnId ? { turnId } : {}) },
+        };
+      }
       publisher.push(value.agent.session.id, { ...snapshot, ...(turnId ? { turnId } : {}) });
+    }
   });
-  ctx.effect(() => () => publisher.close());
+  ctx.effect(() => async () => {
+    // A coalesced discard must not erase evidence that text/reasoning was produced in this attempt.
+    if (config.attemptId && lastOutput) publisher.push(lastOutput.sessionId, lastOutput.snapshot);
+    await publisher.close();
+    if (config.attemptId) {
+      const roots = ctx.agents.roots();
+      const root = record(owner)
+        ? owner
+        : roots.length === 1 && record(roots[0])
+          ? roots[0]
+          : undefined;
+      if (!root || !record(root.session) || typeof root.session.id !== 'string')
+        throw new Error('MODEL_ATTEMPT_DRAIN_UNCONFIRMED');
+      const result = await callBridge(
+        config,
+        'attempt.closed',
+        {
+          sessionId: root.session.id,
+          attemptId: config.attemptId,
+          fence: produced ? 'output' : 'clean',
+        },
+        AbortSignal.timeout(2000),
+      );
+      if (!record(result) || result.accepted !== true)
+        throw new Error('MODEL_ATTEMPT_DRAIN_UNCONFIRMED');
+    }
+  });
 }

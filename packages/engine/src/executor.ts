@@ -27,6 +27,7 @@ import {
   projectCapability,
   projectReduction,
   skillPackageCapability,
+  taskRunCapability,
   validAgentId,
 } from '@daban/protocol';
 import type { AgentToolRun } from './agent-tools.js';
@@ -603,6 +604,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           modelExecutionCapability,
           skillPackageCapability,
           browserTaskCapability,
+          taskRunCapability,
           fileObservationCapability,
           ...(projects.available() ? [projectCapability] : []),
         ],
@@ -706,16 +708,18 @@ export async function startExecutor(options: ExecutorOptions = {}) {
       const promise = (async () => {
         if (await retired(id)) throw new Fault('EXECUTION_RUN_CLOSED');
         const fields = params as unknown as ExecutionRun;
+        const taskRunId = fields.taskRunId ?? fields.id;
         bindProject(fields.bot, fields.project);
         const base = fields.project
-          ? projects.workdir(projects.reference(fields.project, fields.bot, fields.id))
+          ? projects.workdir(projects.reference(fields.project, fields.bot, taskRunId))
           : await workspace.base();
         const canonical = await new WorkspaceFiles(fields.workdir, fields.canonicalRoot).base();
         if (fields.project ? canonical !== base : !canonical.startsWith(base + path.sep))
           throw new Fault('EXECUTION_WORKSPACE_SCOPE');
         const run: AgentToolRun = {
           ...fields,
-          ...(fields.prompt ? { task: { requestId: fields.id, prompt: fields.prompt } } : {}),
+          ...(fields.project ? { taskRunId } : {}),
+          ...(fields.prompt ? { task: { requestId: taskRunId, prompt: fields.prompt } } : {}),
           abort: new AbortController(),
           toolCount: 0,
           seen: {},

@@ -130,7 +130,7 @@ test('only the saved output of the accepted run is a signal; replacing its bytes
 
 test('observation adapters reject malformed roots and mismatched file replies and gate older executors before IO', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-automation-adapter-'));
-  const capabilities = [projectCapability, fileObservationCapability];
+  const capabilities = [projectCapability, fileObservationCapability, 'task-run-v1'];
   const bytes = Buffer.from('Synthetic bytes');
   let mode = 'invalid-root';
   let calls = 0;
@@ -192,6 +192,12 @@ test('observation adapters reject malformed roots and mismatched file replies an
     await expect(read()).rejects.toMatchObject({ code: 'INVALID_EXECUTOR_RESPONSE' });
     mode = 'valid';
     expect(await read()).toStrictEqual(bytes);
+    capabilities.splice(capabilities.indexOf('task-run-v1'), 1);
+    const priorCalls = calls;
+    expect(observer.available()).toBe(false);
+    await expect(read()).rejects.toMatchObject({ code: 'AUTOMATION_FILES_UNAVAILABLE' });
+    expect(calls).toBe(priorCalls);
+    capabilities.push('task-run-v1');
     capabilities.splice(capabilities.indexOf(fileObservationCapability), 1);
     const before = calls;
     expect(observer.available()).toBe(false);

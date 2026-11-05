@@ -353,3 +353,50 @@ test('revocation during actual guest preparation prevents tools.invoke from bein
     await f.close();
   }
 });
+
+test('a physical attempt changed during guest open cannot dispatch on the opened old run', async () => {
+  const f = await fixture();
+  let effects = 0;
+  const run = {
+    ...f.run,
+    executionId: 'mock-execution-before',
+    canonicalRoot: f.run.workdir,
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+  };
+  const execution = {
+    snapshot: { capabilities: [] },
+    call: async (method: string) => {
+      if (method === 'tools.open') {
+        run.executionId = 'mock-execution-after';
+        return {
+          tools: [
+            { name: 'shell', description: 'Synthetic shell', inputSchema: { type: 'object' } },
+          ],
+        };
+      }
+      if (method === 'tools.invoke') {
+        effects++;
+        return { phase: 'settled', result: { content: [{ type: 'text', text: 'SYNTHETIC' }] } };
+      }
+      return undefined;
+    },
+  };
+  const tools = new AgentTools(undefined, new WorkspaceFiles(f.root), { execution });
+  const commands = new Commands({
+    file: path.join(f.root, 'commands.sqlite'),
+    interactions: f.cards,
+    policy: f.policy,
+  });
+  tools.executeRemote = commands.invoke.bind(commands);
+  try {
+    const result = await tools.invoke(run, 'shell', { command: 'ls' }, 'mock-joint-call');
+    expect(result.isError).toBe(true);
+    expect(effects).toBe(0);
+  } finally {
+    await commands.close();
+    await f.close();
+  }
+});
