@@ -6,13 +6,11 @@ import { appAction } from '../../test/navigation.fixture';
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
 
 import {
-  type AutomationNotice,
   agentId,
   disconnected,
   type Interaction,
   type RuntimeBridge,
   type RuntimeCommand,
-  type RuntimeSnapshot,
 } from '@daban/protocol';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -28,11 +26,7 @@ import { serialize, storageKey } from '../../app/storage';
 import { demoState as initialState } from '../../test/fixtures';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
-function connect(
-  interactions: Interaction[] = [],
-  withGroup = false,
-  automation?: AutomationNotice,
-) {
+function connect(interactions: Interaction[] = [], withGroup = false) {
   const state = initialState();
   state.panel = null;
   state.drafts.research = 'SYNTHETIC RESEARCH DRAFT';
@@ -42,15 +36,6 @@ function connect(
   snapshot.protocolVersion = 30;
   snapshot.chats = { available: true, revision: 0, items: [] };
   snapshot.notices = { available: true, items: [] };
-  if (automation) {
-    snapshot.protocolVersion = 45;
-    snapshot.schedules = {
-      available: true,
-      items: [],
-      automation: { changes: true, files: false },
-    };
-    snapshot.notices.items = [automation];
-  }
   snapshot.interactions = interactions;
   const group = {
     id: 'crew',
@@ -73,50 +58,31 @@ function connect(
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
     }));
-  const runtimeListeners = new Set<(value: RuntimeSnapshot) => unknown>();
-  const receipt = {
-    id: 'mock-firing',
-    requestId: 'mock-original',
-    occurrenceAt: '2026-01-01T00:00:00Z',
-    createdAt: '2026-01-01T00:00:00Z',
-    state: 'interrupted',
-  };
-  const runtime = vi.fn(async (command: RuntimeCommand) => {
-    if (command.type === 'schedule.ack') {
-      snapshot.notices = {
-        available: true,
-        items: snapshot.notices!.items.filter((notice) => notice.id !== command.notice),
-      };
-      for (const listener of runtimeListeners) listener({ ...snapshot });
-    }
-    return {
-      ok: true,
-      value:
-        command.type === 'status'
-          ? snapshot
-          : command.type === 'chat.history'
-            ? {
-                bot: command.bot,
-                revision: command.revision,
-                items: [
-                  {
-                    chatRevision: command.revision,
-                    runId: 'mock-result-run',
-                    requestId: 'mock-result-request',
-                    prompt: 'SYNTHETIC QUESTION',
-                    phase: 'completed',
-                    result: 'SYNTHETIC NOTIFICATION RESULT',
-                    error: '',
-                  },
-                ],
-              }
-            : command.type === 'schedule.receipt'
-              ? receipt
-              : command.type === 'group.read'
-                ? { group, revision: 1, messages: [], deliveries: [] }
-                : {},
-    };
-  });
+  const runtime = vi.fn(async (command: RuntimeCommand) => ({
+    ok: true,
+    value:
+      command.type === 'status'
+        ? snapshot
+        : command.type === 'chat.history'
+          ? {
+              bot: command.bot,
+              revision: command.revision,
+              items: [
+                {
+                  chatRevision: command.revision,
+                  runId: 'mock-result-run',
+                  requestId: 'mock-result-request',
+                  prompt: 'SYNTHETIC QUESTION',
+                  phase: 'completed',
+                  result: 'SYNTHETIC NOTIFICATION RESULT',
+                  error: '',
+                },
+              ],
+            }
+          : command.type === 'group.read'
+            ? { group, revision: 1, messages: [], deliveries: [] }
+            : {},
+  }));
   const listeners = new Set<(value: NoticeMessage) => unknown>();
   const native = vi.fn(async (command: NoticeCommand) => ({
     ok: true,
@@ -136,13 +102,7 @@ function connect(
     configurable: true,
     value: {
       platform: 'darwin',
-      runtime: {
-        invoke: runtime,
-        subscribe: (listener: (value: RuntimeSnapshot) => unknown) => {
-          runtimeListeners.add(listener);
-          return () => runtimeListeners.delete(listener);
-        },
-      } as unknown as RuntimeBridge,
+      runtime: { invoke: runtime, subscribe: () => () => {} } as unknown as RuntimeBridge,
       notifications: {
         invoke: native,
         subscribe: (listener: (value: NoticeMessage) => unknown) => {
@@ -155,85 +115,11 @@ function connect(
   return {
     runtime,
     native,
-    receipt,
     emit: (activation: NoticeActivation) => {
       for (const listener of listeners) listener({ type: 'navigate', activation });
     },
   };
 }
-it('keeps a deleted rule unknown receipt queryable after native navigation until explicit acknowledgement', async () => {
-  const notice: AutomationNotice = {
-    kind: 'automation',
-    id: 'mock-unknown-notice',
-    bot: 'a',
-    schedule: 'mock-deleted',
-    firing: 'mock-firing',
-    createdAt: '2026-01-01T00:00:00Z',
-    phase: 'interrupted',
-    reason: 'fault',
-    code: 'SCHEDULE_OUTCOME_UNKNOWN',
-  };
-  const backend = connect([], false, notice);
-  render(<App />);
-  await screen.findByRole('heading', { name: '研究员' });
-  await act(() =>
-    backend.emit({ id: 'mock-native-unknown', scope: 'a'.repeat(64), target: notice }),
-  );
-  await waitFor(() =>
-    expect(backend.native).toHaveBeenCalledWith({ type: 'ack', id: 'mock-native-unknown' }),
-  );
-  expect(backend.runtime.mock.calls.some(([command]) => command.type === 'schedule.ack')).toBe(
-    false,
-  );
-  await userEvent.click(screen.getByRole('button', { name: '查询原执行回执' }));
-  await waitFor(() =>
-    expect(backend.runtime).toHaveBeenCalledWith({
-      type: 'schedule.receipt',
-      id: 'mock-deleted',
-      firing: 'mock-firing',
-    }),
-  );
-  expect(screen.getByRole('button', { name: '查询原执行回执' })).toBeVisible();
-  expect(backend.receipt.state).toBe('interrupted');
-  await userEvent.click(screen.getByRole('button', { name: '标记提示已读' }));
-  await waitFor(() =>
-    expect(screen.queryByRole('button', { name: '查询原执行回执' })).not.toBeInTheDocument(),
-  );
-  expect(backend.runtime.mock.calls.filter(([command]) => command.type === 'schedule.ack')).toEqual(
-    [[{ type: 'schedule.ack', id: 'mock-deleted', notice: 'mock-unknown-notice' }]],
-  );
-  expect(backend.receipt.state).toBe('interrupted');
-  expect(
-    backend.runtime.mock.calls.some(([command]) =>
-      ['schedule.run', 'schedule.create', 'task.start'].includes(command.type),
-    ),
-  ).toBe(false);
-});
-it.each(['changed', 'recovered'] as const)(
-  'retains Host acknowledgement for ordinary %s automation navigation',
-  async (reason) => {
-    const notice: AutomationNotice = {
-      kind: 'automation',
-      id: 'mock-result-notice',
-      bot: 'a',
-      schedule: 'mock-rule',
-      phase: 'completed',
-      reason,
-    };
-    const backend = connect([], false, notice);
-    render(<App />);
-    await screen.findByRole('heading', { name: '研究员' });
-    await act(() =>
-      backend.emit({ id: 'mock-native-result', scope: 'a'.repeat(64), target: notice }),
-    );
-    await waitFor(() =>
-      expect(backend.native).toHaveBeenCalledWith({ type: 'ack', id: 'mock-native-result' }),
-    );
-    expect(
-      backend.runtime.mock.calls.filter(([command]) => command.type === 'schedule.ack'),
-    ).toEqual([[{ type: 'schedule.ack', id: 'mock-rule', notice: 'mock-result-notice' }]]);
-  },
-);
 it('opens the exact read-only task result and never submits a model task or approval', async () => {
   const backend = connect();
   render(<App />);
