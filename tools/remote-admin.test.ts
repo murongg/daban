@@ -4,7 +4,7 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { adminRequest, HostAdmin } from '../apps/desktop/electron/host-admin.ts';
 
-it('requires explicit, expiring approval and exposes only a private owner socket', async () => {
+it('enforces the owner-admin platform boundary and explicit, expiring private approval', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'daban-admin-synthetic-'));
   const socket = path.join(root, 'admin.sock');
   const commands: unknown[] = [];
@@ -18,6 +18,13 @@ it('requires explicit, expiring approval and exposes only a private owner socket
     pause: async () => 'paused',
   });
   try {
+    // Host-only administration is unsupported on Windows; it must reject before opening a channel.
+    if (process.platform === 'win32') {
+      await expect(admin.listen()).rejects.toThrow('REMOTE_ADMIN_PLATFORM');
+      await expect(stat(socket)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(commands).toEqual([]);
+      return;
+    }
     await admin.listen();
     expect((await stat(socket)).mode & 0o777).toBe(0o600);
     const review = admin.review({

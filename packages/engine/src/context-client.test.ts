@@ -4,6 +4,7 @@ import path from 'node:path';
 import { disconnected, type RuntimeSnapshot } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { RuntimeClient } from './client.js';
+import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
@@ -51,6 +52,8 @@ test('AP format declaration stays independent of schema2 and local current defau
 
 test('real Host state normalization retains capability and reads legacy records without starting work', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-context-client-'));
+  // A private TEMP ACL alone does not register a trusted Windows authentication root.
+  await secureDirectory(root);
   const app = await startPrototype({
     port: 0,
     computers: true,
