@@ -1,5 +1,3 @@
-import type { MessageKey } from './en';
-
 export const chinese = {
   'context.title': '上下文检查器',
   'context.unsupported': '此服务尚不支持上下文检查。',
@@ -174,7 +172,6 @@ export const chinese = {
   'projects.refresh': '刷新项目列表',
   'projects.retry': '使用原请求重试',
   'projects.unknown': '未找到此请求的回执，可使用原请求显式重试。',
-
   'vm.managed': '这台 Linux 电脑由搭伴自动管理，无需填写或修改连接参数。',
   'setup.windowsResources': '运行时使用 {0} GB 内存 · {1} GB 虚拟磁盘，按实际使用增长',
   'setup.windowsSpace': '至少需要 {0} GB 可用空间 · 当前可用 {1} GB',
@@ -267,7 +264,6 @@ export const chinese = {
   'agentUpgrade.manual': '无法安全确认旧后台状态。请完全退出旧开发后台后重新连接。',
   'agentUpgrade.required': '旧后台需要升级，请在运行环境设置中完成升级后重试。',
   'agentUpgrade.open': '查看后台升级',
-
   'vm.native': '返回本机模式',
   'vm.connected': '已连接 Linux 虚拟机。',
   'vm.configured': 'Linux 电脑尚未连接，搭伴会自动尝试重新连接。',
@@ -299,7 +295,6 @@ export const chinese = {
   'setup.linuxDownload': '下载进度',
   'setup.agentReady': '基础组件已就绪',
   'setup.onDemand': '需要时下载并安装',
-
   'updates.title': '应用更新',
   'updates.version': '当前版本 {0}',
   'updates.ready': '从 GitHub 检查稳定版更新',
@@ -343,15 +338,12 @@ export const chinese = {
   'capabilities.archiveMcp': '后仅停用当前 Bot 的这份连接，其他 Bot 的独立连接不受影响。',
   'capabilities.editSharedMcp': '正在编辑已有共享连接，修改会影响原有使用者。',
   'capabilities.updateRuntime': '请更新本地 Agent，以使用 Bot 独立的技能安装和外部连接。',
-
   'capabilities.saved': '已保存当前 Bot 的技能；启用状态保留。',
   'capabilities.removed': '已移除当前 Bot 的技能安装。',
   'capabilities.restored': '已恢复到当前 Bot，需重新启用。',
-
   'capabilities.removeOnlyThisBot': '只会移除当前 Bot 的这份安装，其他 Bot 的副本不受影响。',
   'capabilities.newConnectionCredentials':
     '请为这位 Bot 重新填写服务地址和凭据，不会复制原连接的账号授权。',
-
   'capabilities.title': '能力',
   'capabilities.privateHint': '技能和外部工具默认只添加给「{0}」。',
   'capabilities.installForBot': '安装到：{0} · 配置与授权仅属于这位 Bot',
@@ -370,7 +362,6 @@ export const chinese = {
   'capabilities.installed': '已为当前 Bot 安装并启用。',
   'capabilities.installAndEnable': '安装并启用',
   'capabilities.copied': '已为所选 Bot 添加独立技能副本。',
-
   'onboarding.connectionSettings': '连接设置（可选）',
   'onboarding.modelSelectionHint':
     '填写 Key 后加载模型列表并选择模型，也可以手动填写模型 ID。测试与验证可能产生少量 API 费用，不会发送聊天内容。',
@@ -1879,7 +1870,7 @@ export const chinese = {
   'integrations.credentialsConfigured': '已配置凭据',
   'integrations.currentConfiguration': '当前配置：',
   'integrations.currentlySupportsPublicHttpsStreamableHttpLocal':
-    '当前支持公网 HTTPS 的 Streamable HTTP；本地程序、OAuth 登录和自定义请求头尚未接入。',
+    '支持公网 HTTPS 的 Streamable HTTP；应用授权仅限已审阅的目录项，本地程序和自定义请求头尚未接入。',
   'integrations.disablesAllBotsAccessConnectionCancelsCalls':
     '”会停用所有 Bot 对此连接的工具授权，并取消尚未执行的调用。已发出的外部操作可能已经生效。',
   'integrations.editConnection': '连接编辑',
@@ -3199,4 +3190,50 @@ export const chinese = {
   'models.fallbackContextRequired': '备用模型的上下文容量不足，未发送任务上下文。',
   'models.fallbackToolsRequired': '备用模型不支持这次任务需要的工具，未发送任务上下文。',
   'models.fallbackToolsUnknown': '备用模型的工具能力尚未确认，不自动切换带工具的任务。',
-} satisfies Record<MessageKey, string>;
+  'context.overview': '概览',
+  'apps.connect': '连接 {0}',
+  'apps.adminApproval':
+    'monday.com 自定义客户端需要管理员批准。请在官方页面完成批准，完成回调前账号不会显示为已授权。',
+  'apps.details': '连接详情',
+  'apps.restart': '重新发起授权',
+  'apps.upgradeRequired': '请更新 Host 后连接这些应用。旧版连接与自定义 Bearer 仍可使用。',
+  'apps.partialHistory': '仅显示最近的授权操作，未确认结果仍需核对原请求。',
+  'apps.checkNext': '下一步：检查连接，再明确选择允许使用的工具。',
+  'apps.chooseTools': '连接检查通过；请查看并明确选择工具权限。',
+  'apps.accountImpact': '断开会清除本地凭据并使工具授权失效；供应商端权限须在官方账号中另行撤销。',
+  'apps.transportDetails': '自定义连接要求',
+  'apps.addApp': '添加应用',
+  'apps.title': '应用连接',
+  'apps.notion': 'Notion',
+  'apps.custom': '自定义远程 MCP',
+  'apps.description': '先授权账号，再检查并选择工具。每次工具调用仍需单独批准。',
+  'apps.connectNotion': '连接 Notion',
+  'apps.unverified': 'Notion 尚未完成独立测试账号验收，暂不可连接。',
+  'apps.remoteUnavailable': '此连接无法确认本机浏览器回调，请使用自定义 Bearer。',
+  'apps.authorize': '在系统浏览器中授权',
+  'apps.cancel': '取消授权',
+  'apps.retry': '核对并重新打开本次授权',
+  'apps.reconnect': '重新授权 {0}',
+  'apps.disconnect': '断开 {0}',
+  'apps.disconnectedNotice': '本地凭据已清除，工具授权已失效。供应商端撤销尚未确认。',
+  'apps.preparing': '正在准备授权',
+  'apps.waiting': '请在系统浏览器中完成授权',
+  'apps.exchanging': '正在确认授权结果',
+  'apps.connected': '账号已授权；仍需检查并明确选择工具。',
+  'apps.cancelled': '授权已取消',
+  'apps.expired': '授权已过期，请重新发起。',
+  'apps.failed': '授权失败，请重新发起。',
+  'apps.interrupted': '授权结果未确认，请重新发起；不会重放旧请求。',
+  'apps.stateConnected': '账号已授权',
+  'apps.stateAuthorizing': '账号正在授权',
+  'apps.stateDisconnected': '账号已断开',
+  'apps.stateReconnect': '账号需要重新授权',
+  'apps.error': '操作未确认。请核对原操作；请勿新建重复请求。',
+  'apps.browserUnavailable': '系统浏览器未能打开。可使用原请求重新打开本次授权。',
+  'apps.conflict': '连接或归属已变化。请刷新列表并重新检查。',
+  'apps.metadataRejected': '授权服务信息未通过验证，未打开授权页面。',
+  'apps.scope': '授权范围：{0}',
+  'apps.scopeRequired': '服务拒绝了本次权限，请核对账号权限并明确重新授权。',
+  'apps.publisher': '发布方：{0}',
+  'apps.retryDisconnect': '核对并重试本次断开',
+} as const;

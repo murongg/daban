@@ -94,6 +94,7 @@ import { canFallback, fallbackIssue } from './model-fallback.js';
 import { NativeWorkspace } from './native-workspace.js';
 import { Notes } from './notes.js';
 import { NotesTools } from './notes-tools.js';
+import { OAuth } from './oauth.js';
 import { planningCommand, projectPlanning } from './planning.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
@@ -752,6 +753,7 @@ export class ModelRuns {
   readonly bundles: BotBundles;
   readonly skills: Skills;
   readonly integrations: Integrations;
+  readonly oauth: OAuth;
   readonly interactions: Interactions;
   readonly ready: Promise<unknown>;
   private readonly workspace: AgentWorkspace;
@@ -962,7 +964,14 @@ export class ModelRuns {
         },
       });
     this.integrations = new Integrations(path.join(dir, 'integrations.sqlite'));
+    this.oauth = new OAuth(this.integrations, {
+      assertOwner: (bot) => {
+        this.profiles.assertActive(bot);
+        if (!this.botAdmission(bot)) throw new Fault('OAUTH_OWNER_UNAVAILABLE');
+      },
+    });
     this.tools.integrations = new IntegrationTools(this.integrations, this.interactions, {
+      authorization: (connection) => this.oauth.token(connection),
       networkFile: path.join(dir, 'network.json'),
     });
     this.tools.authorizeComputer = async (run) => {
@@ -3436,6 +3445,7 @@ export class ModelRuns {
     // Each store must close even when another owner fails, including unavailable optional services.
     if (![...this.jobs.values()].some((job) => job.running)) this.releaseModelReferences();
     for (const owner of [
+      this.oauth,
       this.goals,
       this.tools.integrations,
       this.work,

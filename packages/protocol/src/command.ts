@@ -1,4 +1,5 @@
 import {
+  isAppCommand,
   isApprovalMode,
   isAttachmentId,
   isAttachmentQuery,
@@ -90,6 +91,7 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (['work.comments', 'work.comment', 'work.comment-receipt'].includes(value.type))
     return isWorkCommentCommand(value) ? value : fail();
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();
+  if (value.type.startsWith('app.')) return isAppCommand(value) ? value : fail();
   if (
     value.type.startsWith('skill.package.') ||
     value.type === 'skill.pick' ||

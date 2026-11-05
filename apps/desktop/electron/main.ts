@@ -14,6 +14,7 @@ import {
   powerMonitor,
   session,
 } from 'electron';
+import { remoteAppSnapshot } from '../shared/apps';
 import { type MessageKey, type Parameters, translate } from '../shared/locale';
 import { Components, readComponentReference } from './components';
 import { HostAdmin } from './host-admin';
@@ -344,7 +345,9 @@ if (primary) {
             result.session
           )
             remoteConsent?.granted(device.id, result.session);
-          return result;
+          return command.type === 'status' || command.type === 'connect'
+            ? remoteAppSnapshot(result)
+            : result;
         },
         authorize: (device, command) =>
           remoteConsent

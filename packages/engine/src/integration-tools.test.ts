@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
 import { Interactions } from './interactions.js';
@@ -390,6 +390,61 @@ test('stopping a dispatched external call records uncertainty and leaves another
     expect(closed).toBe(2);
   } finally {
     f.run.abort.abort();
+    await tools.close();
+    await f.close();
+  }
+});
+
+test('catalog probe logs only safe rejection facts without replacing the reviewed catalog or binding', async () => {
+  const f = await fixture();
+  await f.tools.close();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const tools = new IntegrationTools(f.store, f.interactions, {
+    remote: async () => ({
+      start: async () => {},
+      tools: async () => [
+        {
+          ...offered[0],
+          name: 'synthetic-private-tool',
+          description: 'synthetic-private-description'.padEnd(2001, 'x'),
+        },
+      ],
+      call: async () => {
+        throw Error('SYNTHETIC_MUST_NOT_DISPATCH');
+      },
+      close: async () => {},
+    }),
+  });
+  try {
+    await expect(tools.probe('mock-connection', 1)).rejects.toMatchObject({
+      code: 'INVALID_MCP_CATALOG',
+    });
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      '[mcp-catalog-rejected]',
+      JSON.stringify({
+        reason: 'description_length',
+        path: 'tools[0].description',
+        toolCount: 1,
+        actual: 2001,
+        limit: 2000,
+      }),
+    );
+    const logged = JSON.stringify(warn.mock.calls);
+    for (const value of [
+      'synthetic-private-tool',
+      'synthetic-private-description',
+      'synthetic-bearer-secret',
+      'synthetic-query-secret',
+    ])
+      expect(logged.includes(value)).toBe(false);
+    expect((await f.store.capture(f.run.bot)).connections).toEqual(f.run.integrations.connections);
+    expect((await f.store.list()).items[0]).toMatchObject({
+      health: 'unavailable',
+      error: 'INVALID_MCP_CATALOG',
+    });
+    expect(f.counts().effects).toBe(0);
+  } finally {
+    warn.mockRestore();
     await tools.close();
     await f.close();
   }

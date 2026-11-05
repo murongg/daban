@@ -1,4 +1,6 @@
 import {
+  appDirectoryProtocol,
+  appProviders,
   diagnosticIds,
   disconnected,
   type RebootStatus,
@@ -682,7 +684,8 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
     executable = join(root, 'node');
   await fs.writeFile(entry, 'SYNTHETIC AGENT ENTRY', { mode: 0o600 });
   await fs.writeFile(executable, 'SYNTHETIC HOST NODE', { mode: 0o700 });
-  const requests: { route: string; auth?: string; body: string }[] = [];
+  const requests: { route: string; auth?: string; appAuth?: string; body: string }[] = [];
+  const apps = { enabled: false, reply: undefined as unknown };
   const identity = { role: 'agent', scope: daemonScope(dataRoot, vmConfig), dataRoot, socketPath };
   const review: RecoveryReview = {
     boot: 'mock-power-boot',
@@ -719,10 +722,15 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
     requests.push({
       route: request.url || '',
       auth: String(request.headers['x-prototype-token'] || ''),
+      appAuth: String(request.headers['x-daban-app-control'] || ''),
       body,
     });
     response.setHeader('content-type', 'application/json');
-    if (request.url === '/api/host/environment') {
+    if (request.url === '/api/mcp/apps' && request.method === 'GET') {
+      response.end(JSON.stringify({ protocol: appDirectoryProtocol }));
+    } else if (request.url === '/api/mcp/app' || request.url === '/api/mcp/apps') {
+      response.end(JSON.stringify(apps.reply));
+    } else if (request.url === '/api/host/environment') {
       response.end(JSON.stringify({ required: true, target: 'linux', phase: 'available' }));
     } else if (request.url === '/api/host/recovery') {
       if (execution === 'local-workspace') {
@@ -787,6 +795,7 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
       response.end(
         JSON.stringify({
           clientProtocol: protocol,
+          ...(apps.enabled ? { appConnections: { catalog: true, oauthLoopback: true } } : {}),
           mode: 'agent',
           ...(protocol < 19
             ? { computerError: 'COMPUTER_START_FAILED' }
@@ -846,6 +855,7 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
     schedules,
     recovery,
     requests,
+    apps,
     server,
     identity,
     power,
@@ -918,6 +928,108 @@ it('routes model settings through the host Unix agent and leaves the daemon runn
     await fixture.close();
   }
 });
+
+it.each(appProviders)(
+  'opens $id only from trusted renderer IPC, strips its URL, and requires the actual local Host identity',
+  async (provider) => {
+    const f = await agentFixture(21);
+    f.apps.enabled = true;
+    await fs.writeFile(join(f.dataRoot, 'model/app-control-token'), 'c'.repeat(64), {
+      mode: 0o600,
+    });
+    const frame = { url: 'file:///mock/index.html' };
+    const sender = { mainFrame: frame, send: vi.fn() };
+    mocks.windows.push({ webContents: sender });
+    const remoteRequest = vi.fn(async () => {
+      throw Error('OAUTH_INTERACTIVE_REQUIRED');
+    });
+    const service = runtimeService(
+      f.root,
+      frame.url,
+      '/mock/resources',
+      undefined,
+      f.config,
+      undefined,
+      'darwin',
+      { request: remoteRequest },
+    );
+    const receipt = {
+      bot: 'mock-a',
+      connection: 'mock-notion',
+      revision: 0,
+      requestId: 'mock-start',
+      attempt: 'mock-attempt',
+      phase: 'waiting',
+    };
+    const url =
+      provider.authorize +
+      '?' +
+      new URLSearchParams({
+        response_type: 'code',
+        code_challenge_method: 'S256',
+        resource: provider.resource,
+        state: 'a'.repeat(43),
+        code_challenge: 'b'.repeat(43),
+        redirect_uri: `http://127.0.0.1:45123/oauth/${'c'.repeat(48)}`,
+        client_id: 'mock-client',
+        ...(provider.scope ? { scope: provider.scope } : {}),
+      });
+    const command = {
+      type: provider.id === 'notion' ? 'app.oauth.start' : 'app.oauth.connect',
+      input: {
+        app: provider.id,
+        bot: receipt.bot,
+        connection: receipt.connection,
+        revision: 0,
+        requestId: receipt.requestId,
+        name: 'Synthetic Notion',
+      },
+    };
+    f.apps.reply = { receipt, authorize: { url, expiresAt: Date.now() + 600000 } };
+    const previous = mocks.openExternal.mock.calls.length;
+    try {
+      expect((await service.connect()).phase).toBe('ready');
+      const invoke = mocks.handlers.get('daban:runtime')!;
+      const identityReads = f.requests.filter(
+        (request) => request.route === '/agent/identity',
+      ).length;
+      expect(await invoke({ sender, senderFrame: frame }, command, 'a'.repeat(64))).toEqual({
+        ok: false,
+        error: 'OAUTH_INTERACTIVE_REQUIRED',
+      });
+      expect(remoteRequest).toHaveBeenCalledOnce();
+      expect(f.requests.filter((request) => request.route === '/agent/identity')).toHaveLength(
+        identityReads,
+      );
+      expect(f.requests.some((request) => request.route === '/api/mcp/app')).toBe(false);
+      expect(mocks.openExternal.mock.calls.length).toBe(previous);
+      expect(
+        await invoke({ sender, senderFrame: { url: 'https://remote.example.test/' } }, command),
+      ).toMatchObject({ ok: false, error: 'UNTRUSTED_SENDER' });
+      expect(await invoke({ sender, senderFrame: frame }, command)).toEqual({
+        ok: true,
+        value: receipt,
+      });
+      expect(mocks.openExternal.mock.calls.length).toBe(previous + 1);
+      expect(mocks.openExternal).toHaveBeenLastCalledWith(url);
+      expect(
+        f.requests.find(
+          (r) =>
+            r.route === (provider.id === 'notion' ? '/api/mcp/app' : '/api/mcp/apps') && r.body,
+        )?.appAuth,
+      ).toBe('c'.repeat(64));
+      f.identity.scope = 'd'.repeat(64);
+      expect(await invoke({ sender, senderFrame: frame }, command)).toMatchObject({
+        ok: false,
+        error: 'OAUTH_CALLBACK_UNAVAILABLE',
+      });
+      expect(mocks.openExternal.mock.calls.length).toBe(previous + 1);
+    } finally {
+      await service.close();
+      await f.close();
+    }
+  },
+);
 
 it('never falls back to guest APIs when an agent is configured but unavailable or its host token is missing', async () => {
   const fixture = await agentFixture();

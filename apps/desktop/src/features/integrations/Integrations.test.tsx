@@ -205,6 +205,14 @@ const view = () => (
   </RuntimeProvider>
 );
 
+async function details() {
+  const row = (await screen.findByRole('heading', { name: '合成服务' })).closest<HTMLElement>(
+    '.integration-row',
+  )!;
+  const summary = within(row).getByText('连接详情', { selector: 'summary' });
+  if (!summary.parentElement?.hasAttribute('open')) await userEvent.click(summary);
+}
+
 it('reports its local archive dialog layer without repeating the signal on ordinary rerenders', async () => {
   connect();
   const change = vi.fn();
@@ -213,6 +221,7 @@ it('reports its local archive dialog layer without repeating the signal on ordin
       <Integrations bots={bots} onDialogChange={change} />
     </RuntimeProvider>,
   );
+  await details();
   const archive = await screen.findByRole('button', { name: '归档 合成服务' });
   expect(change).toHaveBeenLastCalledWith(false);
   await userEvent.click(archive);
@@ -266,6 +275,7 @@ it('creates a write-only connection without storing private input in the workspa
 it('keeps private drafts after a configuration conflict rather than replacing them with a late saved value', async () => {
   connect({ error: 'MCP_CONFLICT' });
   render(view());
+  await details();
   await userEvent.click(await screen.findByRole('button', { name: '编辑 合成服务' }));
   await userEvent.clear(screen.getByLabelText('连接名称'));
   await userEvent.type(screen.getByLabelText('连接名称'), '合成保留草稿');
@@ -279,6 +289,7 @@ it('keeps private drafts after a configuration conflict rather than replacing th
 it('inspects an uncertain save using its original nonce without sending the credential again', async () => {
   const invoke = connect({ error: 'RUNTIME_SESSION_CHANGED' });
   render(view());
+  await details();
   await userEvent.click(await screen.findByRole('button', { name: '编辑 合成服务' }));
   await userEvent.type(screen.getByLabelText('Bearer Token'), 'synthetic-uncertain-token');
   await userEvent.click(screen.getByRole('button', { name: '保存连接' }));
@@ -325,6 +336,7 @@ it('checks a connection without granting tools, then explicitly saves the review
 it('warns that archive revokes every Bot and restore never grants tools automatically', async () => {
   const invoke = connect();
   render(view());
+  await details();
   await userEvent.click(await screen.findByRole('button', { name: '归档 合成服务' }));
   expect(screen.getByRole('dialog', { name: '归档连接' })).toHaveTextContent('所有 Bot');
   await userEvent.click(screen.getByRole('button', { name: '确认归档' }));
@@ -349,6 +361,7 @@ it('keeps checking available while a tool selection is dirty and blocks navigati
   render(view());
   await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   await userEvent.click(await screen.findByRole('checkbox', { name: 'synthetic_echo' }));
+  await details();
   expect(screen.getByRole('button', { name: '编辑 合成服务' })).toBeDisabled();
   expect(selectControl('使用工具的 Bot')).toBeDisabled();
   expect(screen.getByRole('button', { name: '检查 合成服务' })).toBeEnabled();
@@ -487,4 +500,21 @@ it('verifies an uncertain copied connection with the original Bot and nonce with
     id: written.input.requestId,
     connection: written.input.id,
   });
+});
+
+it('prioritizes tool selection after a successful Bearer check and discloses low-frequency controls', async () => {
+  const invoke = connect();
+  render(view());
+  const tools = await screen.findByRole('button', { name: '工具与授权 合成服务' });
+  expect(tools).toHaveClass('primary');
+  const row = tools.closest<HTMLElement>('.integration-row')!;
+  const details = within(row).getByText('连接详情', { selector: 'summary' });
+  expect(details.parentElement).not.toHaveAttribute('open');
+  await userEvent.click(details);
+  expect(within(row).getByRole('button', { name: '编辑 合成服务' })).toBeVisible();
+  expect(
+    invoke.mock.calls.some(
+      ([command]) => command.type === 'mcp.check' || command.type === 'mcp.bind',
+    ),
+  ).toBe(false);
 });

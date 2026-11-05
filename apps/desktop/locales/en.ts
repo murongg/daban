@@ -187,7 +187,6 @@ export const english = {
   'projects.refresh': 'Refresh projects',
   'projects.retry': 'Retry the original request',
   'projects.unknown': 'No receipt was found. You can explicitly retry the original request.',
-
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',
@@ -302,7 +301,6 @@ export const english = {
     'The legacy host cannot be safely identified. Fully exit the old development host, then reconnect.',
   'agentUpgrade.required': 'Update the legacy Agent in runtime settings before retrying.',
   'agentUpgrade.open': 'Review Agent upgrade',
-
   'vm.native': 'Return to native mode',
   'vm.connected': 'Connected to the Linux VM.',
   'vm.configured':
@@ -341,7 +339,6 @@ export const english = {
   'setup.linuxDownload': 'Download progress',
   'setup.agentReady': 'Core components are ready',
   'setup.onDemand': 'Download and install when needed',
-
   'updates.title': 'App updates',
   'updates.version': 'Current version {0}',
   'updates.ready': 'Check stable releases on GitHub',
@@ -393,16 +390,13 @@ export const english = {
     'Editing an existing shared connection; changes affect its previous users.',
   'capabilities.updateRuntime':
     'Update the local agent to use Bot-owned skill installations and external connections.',
-
   'capabilities.saved': 'This Bot’s skill was saved; its enabled state is unchanged.',
   'capabilities.removed': 'This Bot’s skill installation was removed.',
   'capabilities.restored': 'Restored for this Bot. Enable it again to use it.',
-
   'capabilities.removeOnlyThisBot':
     'Only this Bot’s installation is removed. Other Bots’ copies are unchanged.',
   'capabilities.newConnectionCredentials':
     'Enter this Bot’s service URL and credentials. Account authorization from the original connection is not copied.',
-
   'capabilities.title': 'Capabilities',
   'capabilities.privateHint': 'Skills and external tools are added only to {0} by default.',
   'capabilities.installForBot':
@@ -424,7 +418,6 @@ export const english = {
   'capabilities.installed': 'Installed and enabled for this Bot.',
   'capabilities.installAndEnable': 'Install and enable',
   'capabilities.copied': 'An independent skill copy was added to the selected Bot.',
-
   'onboarding.connectionSettings': 'Connection settings (optional)',
   'onboarding.modelSelectionHint':
     'Enter your key, load the model list and choose a model, or enter its ID manually. Tests and verification may incur a small API charge; your chats are not included.',
@@ -2104,7 +2097,7 @@ export const english = {
   'integrations.credentialsConfigured': 'Credentials configured',
   'integrations.currentConfiguration': 'Current configuration:',
   'integrations.currentlySupportsPublicHttpsStreamableHttpLocal':
-    'Currently supports public HTTPS Streamable HTTP. Local programs, OAuth login and custom headers are not connected yet.',
+    'Supports public HTTPS Streamable HTTP. App authorization is offered only for reviewed directory entries. Local programs and custom headers are unavailable.',
   'integrations.disablesAllBotsAccessConnectionCancelsCalls':
     "” disables all Bots' access to this connection and cancels calls that have not started. External operations already sent may have taken effect.",
   'integrations.editConnection': 'Edit connection',
@@ -3540,6 +3533,63 @@ export const english = {
     'The fallback does not support the required tools. Task context was not sent.',
   'models.fallbackToolsUnknown':
     'Fallback tool support is unconfirmed. Tasks with tools do not switch automatically.',
-};
+  'context.overview': 'Overview',
+  'apps.connect': 'Connect {0}',
+  'apps.adminApproval':
+    'monday.com custom clients require administrator approval. Complete it on the official page; the account remains unauthorized until the callback succeeds.',
+  'apps.details': 'Connection details',
+  'apps.restart': 'Start a new authorization',
+  'apps.upgradeRequired':
+    'Update the Host to connect these apps. Existing connections and custom Bearer remain available.',
+  'apps.partialHistory':
+    'Only recent authorization attempts are shown. Reconcile uncertain outcomes using the original request.',
+  'apps.checkNext': 'Next: check the connection, then explicitly select allowed tools.',
+  'apps.chooseTools': 'Connection check passed. Review and explicitly select tool permissions.',
+  'apps.accountImpact':
+    'Disconnect clears local credentials and invalidates tool access. Revoke provider-side access separately in the official account.',
+  'apps.transportDetails': 'Custom connection requirements',
+  'apps.addApp': 'Add an app',
+  'apps.title': 'App connections',
+  'apps.notion': 'Notion',
+  'apps.custom': 'Custom remote MCP',
+  'apps.description':
+    'Authorize an account, then inspect and select tools. Each tool call still needs its own approval.',
+  'apps.connectNotion': 'Connect Notion',
+  'apps.unverified':
+    'Notion is unavailable until independent test-account verification is complete.',
+  'apps.remoteUnavailable':
+    'A local browser callback is unavailable for this connection. Use custom Bearer authentication.',
+  'apps.authorize': 'Authorize in system browser',
+  'apps.cancel': 'Cancel authorization',
+  'apps.retry': 'Check and reopen this authorization',
+  'apps.reconnect': 'Reconnect {0}',
+  'apps.disconnect': 'Disconnect {0}',
+  'apps.disconnectedNotice':
+    'Local credentials were cleared and tool access was disabled. Provider revocation is unconfirmed.',
+  'apps.preparing': 'Preparing authorization',
+  'apps.waiting': 'Complete authorization in your system browser',
+  'apps.exchanging': 'Confirming authorization',
+  'apps.connected': 'Account authorized. Inspect and explicitly select tools before use.',
+  'apps.cancelled': 'Authorization cancelled',
+  'apps.expired': 'Authorization expired. Start again.',
+  'apps.failed': 'Authorization failed. Start again.',
+  'apps.interrupted':
+    'Authorization was not confirmed. Start again; the previous request will not be replayed.',
+  'apps.stateConnected': 'Account authorized',
+  'apps.stateAuthorizing': 'Authorizing account',
+  'apps.stateDisconnected': 'Account disconnected',
+  'apps.stateReconnect': 'Account needs reconnection',
+  'apps.error':
+    'The operation was not confirmed. Check the original operation before starting another request.',
+  'apps.browserUnavailable':
+    'The system browser could not open. Reopen this authorization using its original request.',
+  'apps.conflict': 'The connection or its ownership changed. Refresh and review it again.',
+  'apps.metadataRejected': 'Authorization metadata was rejected. No authorization page was opened.',
+  'apps.scope': 'Authorized scope: {0}',
+  'apps.scopeRequired':
+    'The service rejected these permissions. Review account access and reconnect explicitly.',
+  'apps.publisher': 'Publisher: {0}',
+  'apps.retryDisconnect': 'Check and retry this disconnect',
+} as const;
 
 export type MessageKey = keyof typeof english;

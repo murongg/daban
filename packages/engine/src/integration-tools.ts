@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
+import type { McpView } from '@daban/protocol';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
 import { type Integrations, type McpSnapshot, mcpSecrets } from './integrations.js';
 import type { Interactions } from './interactions.js';
 import { McpRemote } from './mcp.js';
-import { mcpCatalog, mcpDigest } from './mcp-catalog.js';
+import { McpCatalogError, McpJsonError, mcpCatalog, mcpDigest } from './mcp-catalog.js';
 import type { McpFetchOptions } from './mcp-fetch.js';
 import { redact } from './redaction.js';
 
@@ -23,6 +24,7 @@ interface Remote {
   close(): Promise<unknown>;
 }
 interface Options {
+  authorization?: (connection: string) => Promise<string>;
   networkFile?: string;
   remote?: (
     config: { endpoint: string; bearer?: string },
@@ -33,9 +35,18 @@ const text = (value: string, isError = true): ToolResult => ({
   isError,
   content: [{ type: 'text', text: value }],
 });
+function unknownResult(error?: string) {
+  const hint =
+    error === 'MCP_RECONNECT_REQUIRED'
+      ? ' MCP_RECONNECT_REQUIRED: reconnect before another operation.'
+      : error === 'MCP_SCOPE_REQUIRED'
+        ? ' MCP_SCOPE_REQUIRED: review permissions and reconnect explicitly.'
+        : '';
+  return `MCP_OUTCOME_UNKNOWN: the operation may have executed; do not repeat it.${hint}`;
+}
 function failure(error: unknown, fallback = 'MCP_CONNECTION_FAILED') {
   const code = errorCode(error) ?? '';
-  return /^(MCP_[A-Z_]+|PROJECT_[A-Z_]+|APPROVAL_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(
+  return /^(MCP_[A-Z_]+|OAUTH_[A-Z_]+|PROJECT_[A-Z_]+|APPROVAL_[A-Z_]+|INVALID_MCP_[A-Z_]+|MODEL_CANCELLED)$/.test(
     code,
   )
     ? code
@@ -147,11 +158,25 @@ export class IntegrationTools {
       }
     return new McpRemote(config, { upstream, onDispatch, authorize });
   }
-  probe(connection: string, revision: number, caller?: AbortSignal) {
+  private async authenticated(connection: string, assertAuthority?: () => unknown) {
+    assertAuthority?.();
+    const config = await this.store.privateConfig(connection);
+    assertAuthority?.();
+    if (config.authKind !== 'oauth') return config;
+    if (!this.options.authorization) throw new Fault('OAUTH_RECONNECT_REQUIRED');
+    const bearer = await this.options.authorization(connection);
+    assertAuthority?.();
+    const current = await this.store.privateConfig(connection);
+    assertAuthority?.();
+    if (current.revision !== config.revision || current.deleted || !current.authenticated)
+      throw new Fault('MCP_AUTHORITY_CHANGED');
+    return { ...current, bearer };
+  }
+  probe(connection: string, revision: number, caller?: AbortSignal, view: McpView = 'apps') {
     if (this.closed) return Promise.reject(new Fault('MCP_CLOSED'));
     if (this.probes.has(connection)) return Promise.reject(new Fault('MCP_CHECK_PENDING'));
     const controller = new AbortController();
-    const promise = this.check(connection, revision, controller, caller).finally(() => {
+    const promise = this.check(connection, revision, controller, caller, view).finally(() => {
       this.probes.delete(connection);
     });
     this.probes.set(connection, { controller, promise });
@@ -162,19 +187,23 @@ export class IntegrationTools {
     revision: number,
     controller: AbortController,
     caller?: AbortSignal,
+    view: McpView = 'apps',
   ) {
     const signal = AbortSignal.any([controller.signal, ...(caller ? [caller] : [])]);
     let remote: Remote | undefined;
     try {
-      const config = await this.store.privateConfig(connection);
+      const config = await this.authenticated(connection);
       if (config.revision !== revision || config.deleted) throw new Fault('MCP_CONFLICT');
       signal.throwIfAborted();
       remote = await this.remote(config);
       await remote.start(signal);
       const tools = await remote.tools(signal);
       signal.throwIfAborted();
-      return await this.store.catalog(connection, revision, tools);
+      return await this.store.catalog(connection, revision, tools, view);
     } catch (error) {
+      // Provider metadata may contain secrets; only our locally constructed numeric/type diagnostic is safe to log.
+      if (error instanceof McpCatalogError || error instanceof McpJsonError)
+        console.warn('[mcp-catalog-rejected]', JSON.stringify(error.diagnostic));
       const code = signal.aborted ? 'MCP_CHECK_CANCELLED' : failure(error);
       await this.store.health(connection, revision, code).catch(() => {});
       throw new Fault(code);
@@ -222,7 +251,7 @@ export class IntegrationTools {
           return JSON.parse(claim.receipt.result) as ToolResult;
         return text(
           claim.receipt.phase === 'unknown' || claim.receipt.phase === 'dispatched'
-            ? 'MCP_OUTCOME_UNKNOWN: the operation may have executed; do not repeat it.'
+            ? unknownResult(claim.receipt.error)
             : `MCP_${claim.receipt.phase.toUpperCase()}`,
         );
       }
@@ -297,7 +326,13 @@ export class IntegrationTools {
         return text('MCP_APPROVAL_DENIED');
       }
       assertAuthority();
-      const config = await this.store.assertLive(run.bot, connection, operation);
+      await this.store.assertLive(run.bot, connection, operation);
+      assertAuthority();
+      // Token resolution can yield or refresh; project/policy authority and bindings must survive every wait.
+      const config = await this.authenticated(connection.connection, assertAuthority);
+      assertAuthority();
+      await this.store.assertLive(run.bot, connection, operation);
+      assertAuthority();
       const secrets = mcpSecrets(config);
       remote = await this.remote(
         config,
@@ -336,8 +371,13 @@ export class IntegrationTools {
       await this.store.finish(id, { phase: 'settled', result: JSON.stringify(result) });
       return result;
     } catch (error) {
+      const authentication = ['MCP_RECONNECT_REQUIRED', 'MCP_SCOPE_REQUIRED'].includes(
+        errorCode(error) ?? '',
+      )
+        ? errorCode(error)
+        : undefined;
       const code = dispatched
-        ? 'MCP_OUTCOME_UNKNOWN'
+        ? (authentication ?? 'MCP_OUTCOME_UNKNOWN')
         : signal.aborted
           ? 'MCP_AUTHORITY_CHANGED'
           : failure(error);
@@ -345,9 +385,7 @@ export class IntegrationTools {
       await this.store
         .finish(id, { phase: dispatched ? 'unknown' : 'cancelled', error: code })
         .catch(() => {});
-      return text(
-        `${code}${dispatched ? ': the operation may have executed; do not repeat it.' : ''}`,
-      );
+      return text(dispatched ? unknownResult(code) : code);
     } finally {
       await remote?.close().catch(() => {});
     }
