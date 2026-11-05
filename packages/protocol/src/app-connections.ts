@@ -1,4 +1,5 @@
 import { validAgentId } from './index.js';
+import { type AppId, appProvider, appProviders, isAppAuthorizeUrl } from './app-providers.js';
 
 export type AppOAuthPhase =
   | 'preparing'
@@ -18,6 +19,28 @@ export interface AppOAuthStart extends AppTarget {
   requestId: string;
   app: 'notion';
   name?: string;
+}
+export interface AppConnect extends Omit<AppOAuthStart, 'app'> {
+  app: AppId;
+}
+export const appDirectoryProtocol = 'app-directory-v2';
+export interface AppDirectoryEntry {
+  id: AppId | 'custom-mcp';
+  publisher: string;
+  origin?: string;
+  auth: 'oauth' | 'bearer';
+  available: boolean;
+  scope?: string;
+  adminApproval?: boolean;
+  reason?: 'OAUTH_CALLBACK_UNAVAILABLE' | 'OAUTH_NOT_VERIFIED';
+}
+export interface AppDirectory {
+  protocol: typeof appDirectoryProtocol;
+  bot: string;
+  apps: AppDirectoryEntry[];
+  connections: (AppConnectionAuth & { app: AppId; name: string; revision: number })[];
+  attempts: { input: AppConnect; receipt: AppOAuthReceipt }[];
+  attemptsMore: boolean;
 }
 export interface AppOAuthReceipt extends AppTarget {
   requestId: string;
@@ -50,6 +73,8 @@ export interface AppConnectionsCapability {
   oauthLoopback: boolean;
 }
 export type AppCommand =
+  | { type: 'app.directory'; bot: string }
+  | { type: 'app.oauth.connect'; input: AppConnect }
   | { type: 'app.catalog'; bot: string }
   | { type: 'app.oauth.start'; input: AppOAuthStart }
   | { type: 'app.oauth.status'; target: AppTarget; attempt: string }
@@ -72,6 +97,9 @@ export function isAppTarget(v: unknown): v is AppTarget {
   );
 }
 export function isAppOAuthStart(v: unknown): v is AppOAuthStart {
+  return isAppConnect(v) && v.app === 'notion';
+}
+export function isAppConnect(v: unknown): v is AppConnect {
   return (
     object(v) &&
     keys(v, ['bot', 'connection', 'revision', 'requestId', 'app', 'name']) &&
@@ -79,7 +107,7 @@ export function isAppOAuthStart(v: unknown): v is AppOAuthStart {
     validAgentId(v.connection) &&
     revision(v.revision) &&
     validAgentId(v.requestId) &&
-    v.app === 'notion' &&
+    appProvider(v.app) !== undefined &&
     (v.revision === 0
       ? typeof v.name === 'string' &&
         !!v.name.trim() &&
@@ -92,9 +120,12 @@ export function isAppCommand(v: unknown): v is AppCommand {
   if (!object(v)) return false;
   switch (v.type) {
     case 'app.catalog':
+    case 'app.directory':
       return keys(v, ['type', 'bot']) && validAgentId(v.bot);
     case 'app.oauth.start':
       return keys(v, ['type', 'input']) && isAppOAuthStart(v.input);
+    case 'app.oauth.connect':
+      return keys(v, ['type', 'input']) && isAppConnect(v.input);
     case 'app.oauth.status':
       return (
         keys(v, ['type', 'target', 'attempt']) && isAppTarget(v.target) && validAgentId(v.attempt)
@@ -147,6 +178,106 @@ export function isAppConnectionsCapability(v: unknown): v is AppConnectionsCapab
     typeof v.oauthLoopback === 'boolean'
   );
 }
+function connectionAuth(v: unknown, directory = false): v is AppConnectionAuth {
+  return (
+    object(v) &&
+    keys(v, [
+      'connection',
+      'state',
+      'scope',
+      'expiresAt',
+      ...(directory ? ['app', 'name', 'revision'] : []),
+    ]) &&
+    validAgentId(v.connection) &&
+    ['disconnected', 'authorizing', 'connected', 'reconnect-required'].includes(String(v.state)) &&
+    (v.scope === undefined || (typeof v.scope === 'string' && v.scope.length <= 4096)) &&
+    (v.expiresAt === undefined || (Number.isSafeInteger(v.expiresAt) && Number(v.expiresAt) > 0)) &&
+    (!directory ||
+      (appProvider(v.app) !== undefined &&
+        revision(v.revision) &&
+        Number(v.revision) > 0 &&
+        typeof v.name === 'string' &&
+        !!v.name.trim() &&
+        v.name.length <= 60 &&
+        !v.name.includes('\0')))
+  );
+}
+export function isAppDirectoryCapability(v: unknown) {
+  return object(v) && keys(v, ['protocol']) && v.protocol === appDirectoryProtocol;
+}
+export function isAppDirectory(v: unknown): v is AppDirectory {
+  if (
+    !object(v) ||
+    !keys(v, ['protocol', 'bot', 'apps', 'connections', 'attempts', 'attemptsMore']) ||
+    v.protocol !== appDirectoryProtocol ||
+    !validAgentId(v.bot) ||
+    typeof v.attemptsMore !== 'boolean' ||
+    !Array.isArray(v.apps) ||
+    v.apps.length !== appProviders.length + 1 ||
+    !Array.isArray(v.connections) ||
+    v.connections.length > 50 ||
+    !Array.isArray(v.attempts) ||
+    v.attempts.length > 50
+  )
+    return false;
+  return (
+    new Set(v.apps.map((entry) => (object(entry) ? entry.id : undefined))).size === v.apps.length &&
+    v.apps.every((entry) => {
+      if (
+        !object(entry) ||
+        !keys(entry, [
+          'id',
+          'publisher',
+          'origin',
+          'auth',
+          'available',
+          'reason',
+          'scope',
+          'adminApproval',
+        ]) ||
+        typeof entry.available !== 'boolean'
+      )
+        return false;
+      if (entry.id === 'custom-mcp')
+        return (
+          entry.publisher === 'Custom MCP' &&
+          entry.auth === 'bearer' &&
+          entry.origin === undefined &&
+          entry.scope === undefined &&
+          entry.adminApproval === undefined &&
+          entry.available === true &&
+          entry.reason === undefined
+        );
+      const provider = appProvider(entry.id);
+      return (
+        !!provider &&
+        entry.publisher === provider.publisher &&
+        entry.origin === new URL(provider.resource).origin &&
+        entry.auth === 'oauth' &&
+        entry.scope === provider.scope &&
+        entry.adminApproval === provider.adminApproval &&
+        (entry.reason === undefined ||
+          ['OAUTH_CALLBACK_UNAVAILABLE', 'OAUTH_NOT_VERIFIED'].includes(String(entry.reason))) &&
+        (entry.available || entry.reason !== undefined)
+      );
+    }) &&
+    v.connections.every((entry) => connectionAuth(entry, true)) &&
+    new Set(v.connections.map((entry) => entry.connection)).size === v.connections.length &&
+    v.attempts.every(
+      (entry) =>
+        object(entry) &&
+        keys(entry, ['input', 'receipt']) &&
+        isAppConnect(entry.input) &&
+        isAppOAuthReceipt(entry.receipt) &&
+        entry.input.bot === v.bot &&
+        appReceiptMatches(entry.receipt, entry.input) &&
+        entry.receipt.requestId === entry.input.requestId &&
+        ['preparing', 'waiting', 'exchanging', 'failed', 'interrupted', 'expired'].includes(
+          entry.receipt.phase,
+        ),
+    )
+  );
+}
 export function isAppCatalog(v: unknown): v is AppCatalog {
   if (
     !object(v) ||
@@ -189,18 +320,7 @@ export function isAppCatalog(v: unknown): v is AppCatalog {
     ) &&
     new Set(v.connections.map((c) => (object(c) ? c.connection : undefined))).size ===
       v.connections.length &&
-    v.connections.every(
-      (c) =>
-        object(c) &&
-        keys(c, ['connection', 'state', 'scope', 'expiresAt']) &&
-        validAgentId(c.connection) &&
-        ['disconnected', 'authorizing', 'connected', 'reconnect-required'].includes(
-          String(c.state),
-        ) &&
-        (c.scope === undefined || (typeof c.scope === 'string' && c.scope.length <= 4096)) &&
-        (c.expiresAt === undefined ||
-          (Number.isSafeInteger(c.expiresAt) && Number(c.expiresAt) > 0)),
-    )
+    v.connections.every((entry) => connectionAuth(entry))
   );
 }
 export function appReceiptMatches(receipt: AppOAuthReceipt, target: AppTarget) {
@@ -211,46 +331,5 @@ export function appReceiptMatches(receipt: AppOAuthReceipt, target: AppTarget) {
   );
 }
 export function isNotionAuthorizeUrl(value: unknown) {
-  if (typeof value !== 'string' || value.length > 16000) return false;
-  try {
-    const url = new URL(value);
-    const redirect = new URL(url.searchParams.get('redirect_uri') ?? '');
-    const allowed = [
-      'response_type',
-      'client_id',
-      'redirect_uri',
-      'state',
-      'code_challenge',
-      'code_challenge_method',
-      'resource',
-      'scope',
-    ];
-    return (
-      url.origin === 'https://mcp.notion.com' &&
-      url.pathname === '/authorize' &&
-      !url.username &&
-      !url.password &&
-      !url.hash &&
-      url.searchParams.get('response_type') === 'code' &&
-      url.searchParams.get('code_challenge_method') === 'S256' &&
-      url.searchParams.get('resource') === 'https://mcp.notion.com/mcp' &&
-      url.searchParams.get('scope') === 'default' &&
-      /^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get('state') ?? '') &&
-      /^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get('code_challenge') ?? '') &&
-      !!url.searchParams.get('client_id') &&
-      [...url.searchParams.keys()].every(
-        (k) => allowed.includes(k) && url.searchParams.getAll(k).length === 1,
-      ) &&
-      redirect.protocol === 'http:' &&
-      redirect.hostname === '127.0.0.1' &&
-      Number(redirect.port) > 0 &&
-      !redirect.username &&
-      !redirect.password &&
-      !redirect.hash &&
-      !redirect.search &&
-      /^\/oauth\/[a-f0-9]{48}$/.test(redirect.pathname)
-    );
-  } catch {
-    return false;
-  }
+  return isAppAuthorizeUrl(value, 'notion');
 }

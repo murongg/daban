@@ -36,7 +36,7 @@ it('opens a context inspector bound to the displayed scope and restores focus wi
   const user = userEvent.setup();
   const trigger = await screen.findByRole('button', { name: '上下文检查器' });
   await user.click(trigger);
-  expect(await screen.findByText('此旧任务没有上下文捕获。')).toBeVisible();
+  expect(await screen.findByText('此旧任务没有上下文记录。')).toBeVisible();
   expect(backend.invoke).toHaveBeenCalledWith({ type: 'context.inspect', query: { scope } });
   await user.keyboard('{Escape}');
   expect(screen.queryByRole('dialog', { name: '上下文检查器' })).not.toBeInTheDocument();
@@ -431,13 +431,9 @@ it('loads metadata only after opening and pages full tool content and later even
   expect(await screen.findByText('第 2 条')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      [
-        'status',
-        'transcript.statistics',
-        'transcript.list',
-        'transcript.content',
-        'budget.read',
-      ].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list', 'transcript.content'].includes(
+        command.type,
+      ),
     ),
   ).toBe(true);
 });

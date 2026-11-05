@@ -1,10 +1,9 @@
-import {
-  isProject,
-  type MonitorPolicy,
-  type Project,
-  type ProjectScope,
-  type Schedule,
-  type ScheduleInput,
+import type {
+  MonitorPolicy,
+  Project,
+  ProjectScope,
+  Schedule,
+  ScheduleInput,
 } from '@daban/protocol';
 import { useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
@@ -45,7 +44,7 @@ export function Automation({
   const projectId = scope?.projectId ?? '';
   const [paths, setPaths] = useState(fileRule?.paths.join('\n') ?? '');
   const [seconds, setSeconds] = useState(String(fileRule?.pollSeconds ?? 60));
-  const [projects, setProjects] = useState<Project[]>([]);
+  const projects: Project[] = [];
   const selectedProject = projects.find((project) => project.id === projectId);
   const scopeChanged = !!scope && !!selectedProject && selectedProject.revision !== scope.revision;
   const [busy, setBusy] = useState(false);
@@ -63,28 +62,9 @@ export function Automation({
     };
   }, [bot]);
   useEffect(() => {
-    if (!open || !capability?.files || (itemId && !editingFile)) return;
-    let live = true;
-    runtime
-      .command<unknown>({ type: 'projects.list' })
-      .then((value) => {
-        if (!live) return;
-        if (!Array.isArray(value) || !value.every(isProject))
-          throw new Error('INVALID_RUNTIME_STATE');
-        setProjects(
-          value.filter(
-            (project) =>
-              project.status === 'active' && project.grants.some((grant) => grant.bot === bot),
-          ),
-        );
-      })
-      .catch((failure) => {
-        if (live) setError(runtimeError(failure));
-      });
-    return () => {
-      live = false;
-    };
-  }, [open, capability?.files, bot, itemId, editingFile, runtime.command]);
+    // Auto removal owns the remaining form; retired project paths must never be looked up or retargeted.
+    if (open && capability?.files && (!itemId || editingFile)) setError(t('tasks.projectRetired'));
+  }, [open, capability?.files, itemId, editingFile]);
   if (!capability) return null;
   if (!capability.changes)
     return item?.automation?.policy.kind === 'changes' ? (

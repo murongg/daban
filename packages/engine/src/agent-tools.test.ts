@@ -781,7 +781,7 @@ test('durability waits pin the task identity and the exact tool arguments before
   }
 });
 
-test('project attempts retain a separate accepted task identity and refuse older guests before tools.open', async () => {
+test('a retained scoped run cannot open a broader legacy execution lease', async () => {
   const calls: Record<string, unknown>[] = [];
   const execution = {
     snapshot: { capabilities: ['model-capabilities-v1', 'project-scope-v1'] },
@@ -792,7 +792,6 @@ test('project attempts retain a separate accepted task identity and refuse older
   };
   const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), {
     execution,
-    projectAccess: () => {},
   });
   const run: AgentToolRun = {
     id: 'synthetic-logical-task',
@@ -807,20 +806,8 @@ test('project attempts retain a separate accepted task identity and refuse older
     seen: {},
     trace: [],
   };
-  await expect(tools.open(run)).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
+  await expect(tools.open(run)).rejects.toMatchObject({ code: 'PROJECT_RETIRED' });
   expect(calls).toHaveLength(0);
-  execution.snapshot.capabilities.push('task-run-v1');
-  await tools.open(run);
-  expect(calls).toEqual([
-    expect.objectContaining({
-      id: run.executionId,
-      taskRunId: run.id,
-      project: run.project,
-      workdir: run.workdir,
-    }),
-  ]);
-  expect(isExecutionParams('tools.open', calls[0])).toBe(true);
-  expect(isExecutionParams('tools.open', { ...calls[0], taskRunId: '../foreign-run' })).toBe(false);
 });
 
 test.each([1001, 10000])(

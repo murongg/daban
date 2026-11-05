@@ -19,15 +19,12 @@ export interface RemoteDevice {
 }
 
 const observations = new Set([
+  'search.status',
+  'search.saved',
   'context.inspect',
   'context.source',
-  'budget.settings',
   'model.saved',
-  'budget.read',
-  'budget.goal',
-  'projects.list',
-  'projects.status',
-  'projects.receipt',
+  'goal.target',
   'schedule.receipt',
   'local.status',
   'local.connect',

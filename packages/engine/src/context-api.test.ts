@@ -4,10 +4,13 @@ import path from 'node:path';
 import { isContextView, isTranscriptContent } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { captureContext, contextSources, emptyContextArchive } from './context-inspector.js';
+import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
 test('context reads require exact ownership and a retained capture before reading visible source pages', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-context-api-'));
+  // Match the real Host's ACL-validated root registration before publishing its control token.
+  await secureDirectory(root);
   const app = await startPrototype({
     port: 0,
     computers: true,

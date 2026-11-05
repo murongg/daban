@@ -69,10 +69,7 @@ test('real remote sessions project status/connect and pushes for each accepted s
   const snapshot = {
     ...disconnected('ready'),
     contextInspector: 1,
-    preflight: 1,
-    fileReview: 1,
-    appConnections: { catalog: true, oauthLoopback: true },
-    approvalRules: { capability: 'approval-rules-v3', available: true, revision: 0 },
+    searchSettings: true,
   };
   snapshot.model = {
     ...snapshot.model,
@@ -183,27 +180,6 @@ test('real remote sessions project status/connect and pushes for each accepted s
       type: 'snapshot-capabilities',
       host: keys.identity.id,
       workspace: keys.identity.id,
-      accept: { contextInspector: 1, appConnections: 1, approvalRules: 1 },
-      schema: 2,
-    });
-    expect(await read('mock-session-a', 'mock-app-approvals')).toEqual({
-      ...disconnected('ready'),
-      contextInspector: 1,
-      model: snapshot.model,
-      appConnections: { catalog: true, oauthLoopback: false },
-      approvalRules: snapshot.approvalRules,
-    });
-    message('mock-session-a', {
-      type: 'snapshot-capabilities',
-      host: keys.identity.id,
-      workspace: keys.identity.id,
-      accept: { contextInspector: 1 },
-      schema: 2,
-    });
-    message('mock-session-a', {
-      type: 'snapshot-capabilities',
-      host: keys.identity.id,
-      workspace: keys.identity.id,
       accept: {},
       schema: 3,
     });
@@ -231,16 +207,45 @@ test('real remote sessions project status/connect and pushes for each accepted s
       schema: 2,
     });
     expect(await read('mock-session-b', 'mock-foreign-schema')).toEqual(disconnected('ready'));
+    message('mock-session-b', {
+      type: 'snapshot-capabilities',
+      host: keys.identity.id,
+      workspace: keys.identity.id,
+      accept: { contextInspector: 1 },
+      schema: 2,
+    });
+    expect(await read('mock-session-b', 'mock-3012-preview')).toEqual({
+      ...disconnected('ready'),
+      contextInspector: 1,
+      model: snapshot.model,
+    });
+    message('mock-session-a', {
+      type: 'snapshot-capabilities',
+      host: keys.identity.id,
+      workspace: keys.identity.id,
+      accept: { contextInspector: 1 },
+      schema: 2,
+      formats: { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true },
+    });
+    const modern = {
+      ...disconnected('ready'),
+      contextInspector: 1,
+      model: snapshot.model,
+      searchSettings: true,
+    };
+    expect(await read('mock-session-a', 'mock-exact-formats')).toEqual(modern);
     // The Host's local state and a different peer must retain their own independent schema decisions.
-    expect(snapshot).toMatchObject({ contextInspector: 1, preflight: 1, fileReview: 1 });
+    expect(snapshot).toMatchObject({
+      contextInspector: 1,
+    });
     await new Promise((resolve) => setTimeout(resolve, 1100));
     await vi.waitFor(() => expect(sent.some((item) => item.channel === 'events')).toBe(true));
     for (const event of sent.filter((item) => item.channel === 'events'))
-      expect(event.message.value).toEqual({
-        ...disconnected('ready'),
-        ...(event.session === 'mock-session-a' ? { contextInspector: 1 } : {}),
-        ...(event.session === 'mock-session-a' ? { model: snapshot.model } : {}),
-      });
+      expect(event.message.value).toEqual(
+        event.session === 'mock-session-a'
+          ? modern
+          : { ...disconnected('ready'), contextInspector: 1, model: snapshot.model },
+      );
     receive({ type: 'state', session: 'mock-session-a', state: 'closed' });
     await open('mock-session-reconnected', a);
     expect(await read('mock-session-reconnected', 'mock-empty-after-reconnect')).toEqual(
@@ -285,7 +290,8 @@ test('context and current main observations stay fresh while writes deduplicate 
         method: 'context.source',
         params: { query: { scope, revision: 1, ref: { scope, seq: 1 } } },
       },
-      { method: 'budget.settings', params: {} },
+      { method: 'search.status', params: {} },
+      { method: 'search.saved', params: { query: { kind: 'check', requestId: 'mock-search' } } },
       {
         method: 'model.saved',
         params: {
@@ -298,17 +304,13 @@ test('context and current main observations stay fresh while writes deduplicate 
           },
         },
       },
-      { method: 'budget.read', params: { query: { scope } } },
-      { method: 'budget.goal', params: { owner: { bot: scope.bot, chatRevision: 0 } } },
-      { method: 'projects.list', params: {} },
-      { method: 'projects.status', params: {} },
-      { method: 'projects.receipt', params: { requestId: 'mock-project-request' } },
+      { method: 'goal.target', params: { owner: { bot: scope.bot, chatRevision: 0 } } },
       { method: 'schedule.receipt', params: { id: 'mock-schedule', firing: 'mock-firing' } },
     ];
     for (const { method, params } of queries) {
       const request = {
         type: 'request',
-        id: `mock-${method.replace('.', '-')}`,
+        id: `mock-${method.replaceAll('.', '-')}`,
         host: 'a'.repeat(64),
         workspace: 'mock-workspace',
         method,
@@ -318,16 +320,19 @@ test('context and current main observations stay fresh while writes deduplicate 
       const next = await gateway.invoke(keys.identity.id, 'mock-session', request);
       expect(next).not.toEqual(first);
     }
-    const selection = {
+    const start = {
       type: 'request',
-      id: 'mock-project-selection',
+      id: 'mock-ordinary-start',
       host: 'a'.repeat(64),
       workspace: 'mock-workspace',
-      method: 'projects.select',
-      params: { bot: scope.bot, scope: { projectId: 'mock-project', revision: 1 } },
+      method: 'task.start',
+      params: {
+        bot: scope.bot,
+        task: { requestId: 'mock-task-start', prompt: 'SYNTHETIC REQUEST' },
+      },
     };
-    const selected = await gateway.invoke(keys.identity.id, 'mock-session', selection);
-    expect(await gateway.invoke(keys.identity.id, 'mock-session', selection)).toEqual(selected);
+    const accepted = await gateway.invoke(keys.identity.id, 'mock-session', start);
+    expect(await gateway.invoke(keys.identity.id, 'mock-session', start)).toEqual(accepted);
     store.revoke(keys.identity.id);
     await expect(
       gateway.invoke(keys.identity.id, 'mock-session', {
@@ -435,9 +440,9 @@ test.each([false, true])(
         accept: { contextInspector: 1 },
       });
       expect(sent[1]).toEqual({ ...sent[0], schema: 2 });
-      expect(sent[2]).toEqual({
+      expect(sent[2]).toMatchObject({
         ...sent[1],
-        accept: { contextInspector: 1, appConnections: 1, approvalRules: 1 },
+        formats: { searchSettings: true },
       });
       expect(sent[3].type).toBe('request');
       expect(await controller.request({ type: 'status' }, host.identity.id)).toEqual({

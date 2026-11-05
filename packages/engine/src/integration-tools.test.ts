@@ -2,12 +2,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
-import { AgentTools } from './agent-tools.js';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
 import { Interactions } from './interactions.js';
-import { Projects } from './projects.js';
-import { WorkspaceFiles } from './workspace.js';
 
 const offered = [
   {
@@ -109,361 +106,6 @@ async function fixture(start?: () => Promise<unknown>, beforeSend?: () => Promis
     },
   };
 }
-
-test('catalog probe logs only safe rejection facts without replacing the reviewed catalog or binding', async () => {
-  const f = await fixture();
-  await f.tools.close();
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  const tools = new IntegrationTools(f.store, f.interactions, {
-    remote: async () => ({
-      start: async () => {},
-      tools: async () => [
-        {
-          ...offered[0],
-          name: 'synthetic-private-tool',
-          description: 'synthetic-private-description'.padEnd(2001, 'x'),
-        },
-      ],
-      call: async () => {
-        throw Error('SYNTHETIC_MUST_NOT_DISPATCH');
-      },
-      close: async () => {},
-    }),
-  });
-  try {
-    await expect(tools.probe('mock-connection', 1)).rejects.toMatchObject({
-      code: 'INVALID_MCP_CATALOG',
-    });
-    expect(warn).toHaveBeenCalledExactlyOnceWith(
-      '[mcp-catalog-rejected]',
-      JSON.stringify({
-        reason: 'description_length',
-        path: 'tools[0].description',
-        toolCount: 1,
-        actual: 2001,
-        limit: 2000,
-      }),
-    );
-    const logged = JSON.stringify(warn.mock.calls);
-    for (const value of [
-      'synthetic-private-tool',
-      'synthetic-private-description',
-      'synthetic-bearer-secret',
-      'synthetic-query-secret',
-    ])
-      expect(logged.includes(value)).toBe(false);
-    expect((await f.store.capture(f.run.bot)).connections).toEqual(f.run.integrations.connections);
-    expect((await f.store.list()).items[0]).toMatchObject({
-      health: 'unavailable',
-      error: 'INVALID_MCP_CATALOG',
-    });
-    expect(f.counts().effects).toBe(0);
-  } finally {
-    warn.mockRestore();
-    await tools.close();
-    await f.close();
-  }
-});
-
-test.each(['INVALID_MCP_CATALOG', 'INVALID_MCP_JSON'])(
-  'catalog probe never logs a remote error that impersonates a local %s diagnostic',
-  async (code) => {
-    const f = await fixture();
-    await f.tools.close();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const tools = new IntegrationTools(f.store, f.interactions, {
-      remote: async () => ({
-        start: async () => {},
-        tools: async () => {
-          throw Object.assign(Error('synthetic-private-error'), {
-            code,
-            diagnostic: { reason: 'synthetic-private-value' },
-          });
-        },
-        call: async () => {
-          throw Error('SYNTHETIC_MUST_NOT_DISPATCH');
-        },
-        close: async () => {},
-      }),
-    });
-    try {
-      await expect(tools.probe('mock-connection', 1)).rejects.toMatchObject({
-        code,
-      });
-      expect(warn).not.toHaveBeenCalled();
-    } finally {
-      warn.mockRestore();
-      await tools.close();
-      await f.close();
-    }
-  },
-);
-
-test.each([
-  { nesting: 15, stage: 'definition' },
-  { nesting: 14, stage: 'catalog' },
-])(
-  'catalog probe logs only bounded $stage JSON facts and keeps reviewed authority',
-  async ({ nesting, stage }) => {
-    const f = await fixture();
-    await f.tools.close();
-    let nested: unknown = 'synthetic-private-value';
-    for (let index = 0; index < nesting; index++) nested = { 'synthetic-private-key': nested };
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const tools = new IntegrationTools(f.store, f.interactions, {
-      remote: async () => ({
-        start: async () => {},
-        tools: async () => [
-          {
-            ...offered[0],
-            name: 'synthetic-private-tool',
-            inputSchema: { type: 'object', 'synthetic-private-schema-key': nested },
-          },
-        ],
-        call: async () => {
-          throw Error('SYNTHETIC_MUST_NOT_DISPATCH');
-        },
-        close: async () => {},
-      }),
-    });
-    try {
-      await expect(tools.probe('mock-connection', 1)).rejects.toMatchObject({
-        code: 'INVALID_MCP_JSON',
-      });
-      expect(warn).toHaveBeenCalledOnce();
-      expect(warn.mock.calls[0][0]).toBe('[mcp-catalog-rejected]');
-      const diagnostic: unknown = JSON.parse(String(warn.mock.calls[0][1]));
-      expect(diagnostic).toMatchObject({
-        reason: 'json_depth',
-        stage,
-        kind: 'string',
-        depth: 17,
-        limit: 16,
-      });
-      expect(JSON.stringify(warn.mock.calls)).not.toContain('synthetic-private');
-      expect(JSON.stringify(warn.mock.calls)).not.toContain('synthetic-bearer-secret');
-      expect(JSON.stringify(warn.mock.calls)).not.toContain('synthetic-query-secret');
-      expect((await f.store.capture(f.run.bot)).connections).toEqual(
-        f.run.integrations.connections,
-      );
-      expect((await f.store.list()).items[0]).toMatchObject({
-        health: 'unavailable',
-        error: 'INVALID_MCP_JSON',
-      });
-      expect(f.counts().effects).toBe(0);
-    } finally {
-      warn.mockRestore();
-      await tools.close();
-      await f.close();
-    }
-  },
-);
-
-test.each([false, true])(
-  'depth observation stays local to one rejected probe and preserves authority (limited=%s)',
-  async (limited) => {
-    const f = await fixture();
-    await f.tools.close();
-    let lists = 0,
-      effects = 0;
-    const definitions = [15, 20].map((depth, index) => {
-      let nested: unknown = 'synthetic-private-leaf';
-      for (let level = 0; level < depth; level++) nested = { 'synthetic-private-key': nested };
-      return {
-        ...offered[0],
-        name: `synthetic-private-tool-${index}`,
-        inputSchema: { type: 'object', 'synthetic-private-schema': nested },
-      };
-    });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const tools = new IntegrationTools(f.store, f.interactions, {
-      remote: async () => ({
-        start: async () => {},
-        tools: async () => {
-          lists++;
-          return limited
-            ? [
-                ...definitions,
-                {
-                  ...offered[0],
-                  name: 'synthetic-private-overflow',
-                  inputSchema: { type: 'object', padding: 'x'.repeat(32768) },
-                },
-              ]
-            : definitions;
-        },
-        call: async () => {
-          effects++;
-          throw Error('SYNTHETIC_MUST_NOT_DISPATCH');
-        },
-        close: async () => {},
-      }),
-    });
-    try {
-      await expect(tools.probe('mock-connection', 1)).rejects.toMatchObject({
-        code: 'INVALID_MCP_JSON',
-      });
-      expect(warn).toHaveBeenCalledOnce();
-      const diagnostic: unknown = JSON.parse(String(warn.mock.calls[0][1]));
-      if (limited)
-        expect(diagnostic).toMatchObject({
-          reason: 'json_depth',
-          depth: 17,
-          limit: 16,
-          measurement: {
-            status: 'incomplete',
-            stopCode: 'MCP_CATALOG_LIMIT',
-            stop: { kind: 'definition_bytes', toolOffset: 2, fragmentBasis: 'minimum' },
-          },
-        });
-      else
-        expect(diagnostic).toMatchObject({
-          reason: 'json_depth',
-          depth: 17,
-          limit: 16,
-          measurement: {
-            status: 'complete',
-            toolCount: 2,
-            schemaDepth: 21,
-            definitionDepth: 22,
-            catalogDepth: 23,
-          },
-        });
-      expect(JSON.stringify(warn.mock.calls)).not.toContain('synthetic-private');
-      expect(
-        (await f.store.catalogView('mock-connection')).tools.map((entry) => entry.name),
-      ).toEqual(['synthetic_echo']);
-      expect((await f.store.capture(f.run.bot)).connections).toEqual(
-        f.run.integrations.connections,
-      );
-      expect(lists).toBe(1);
-      expect(effects).toBe(0);
-    } finally {
-      warn.mockRestore();
-      await tools.close();
-      await f.close();
-    }
-  },
-);
-
-test.each([
-  ['approval', 'remove'],
-  ['approval', 'downgrade'],
-  ['startup', 'remove'],
-  ['startup', 'downgrade'],
-  ['send', 'remove'],
-  ['send', 'downgrade'],
-  ['receipt', 'remove'],
-  ['receipt', 'downgrade'],
-] as const)(
-  'project authority changing during MCP %s (%s) prevents a new external effect',
-  async (phase, change) => {
-    const f = await fixture();
-    await f.tools.close();
-    const project = { projectId: 'mock-project', revision: 1 };
-    const run = {
-      ...f.run,
-      project,
-      workdir: f.root,
-      canonicalRoot: f.root,
-      seen: {},
-      trace: [],
-      toolCount: 0,
-      limit: 10,
-    };
-    const projects = new Projects(path.join(f.root, 'projects.sqlite'), {
-      changed: async (current) => {
-        if (current.revision !== project.revision) await f.interactions.endRun(run.bot, run.id);
-      },
-    });
-    let release: (() => unknown) | undefined, arrived: (() => unknown) | undefined;
-    const gate = new Promise<unknown>((resolve) => {
-      release = () => resolve(undefined);
-    });
-    const waiting = new Promise<unknown>((resolve) => {
-      arrived = () => resolve(undefined);
-    });
-    const pause = async () => {
-      arrived?.();
-      await gate;
-    };
-    let effects = 0;
-    const integrations = new IntegrationTools(f.store, f.interactions, {
-      remote: async (_config, options) => ({
-        start: async () => {
-          if (phase === 'startup') await pause();
-        },
-        tools: async () => offered,
-        call: async () => {
-          if (phase === 'send') await pause();
-          await options.onDispatch?.();
-          if (phase === 'receipt') await pause();
-          options.authorize?.();
-          effects++;
-          return { content: [{ type: 'text', text: 'SYNTHETIC EFFECT' }] };
-        },
-        close: async () => {},
-      }),
-    });
-    const tools = new AgentTools(undefined, new WorkspaceFiles(f.root), {
-      projectAccess: (captured, access) =>
-        projects.assertScope(captured.bot, captured.project!, access),
-    });
-    tools.integrations = integrations;
-    try {
-      await projects.ready;
-      await projects.write({
-        action: 'create',
-        requestId: 'mock-project-create',
-        projectId: project.projectId,
-        expectedRevision: 0,
-        value: { name: 'SYNTHETIC', grants: [{ bot: run.bot, content: 'write', browser: true }] },
-      });
-      const pending = tools.invoke(run, f.alias, { value: 'SYNTHETIC' }, 'mock-project-wire');
-      await ready(async () =>
-        (await f.interactions.list()).some((item) => item.status === 'pending'),
-      );
-      const approval = (await f.interactions.list()).find((item) => item.status === 'pending')!;
-      if (phase !== 'approval') {
-        await f.interactions.reply(run.bot, run.id, approval.id, { kind: 'decision', allow: true });
-        await waiting;
-      }
-      await projects.write({
-        action: 'update',
-        requestId: 'mock-project-revoke',
-        projectId: project.projectId,
-        expectedRevision: 1,
-        value: { name: 'SYNTHETIC', grants: change === 'remove' ? [] : [{ bot: run.bot }] },
-      });
-      expect(() => projects.assertScope(run.bot, project, 'read')).toThrow(
-        expect.objectContaining({ code: 'PROJECT_SCOPE_STALE' }),
-      );
-      release?.();
-      const result = await pending;
-      expect(effects).toBe(0);
-      expect(result.isError).toBe(true);
-      if (phase === 'receipt') {
-        expect(JSON.stringify(result)).toContain('MCP_OUTCOME_UNKNOWN');
-        expect(
-          JSON.stringify(
-            await integrations.invoke(run, f.alias, { value: 'SYNTHETIC' }, 'mock-project-wire'),
-          ),
-        ).toContain('MCP_OUTCOME_UNKNOWN');
-      } else if (phase !== 'approval')
-        expect(JSON.stringify(result)).toContain('PROJECT_SCOPE_STALE');
-      expect(
-        (await tools.invoke(run, f.alias, { value: 'SYNTHETIC' }, 'mock-project-wire')).isError,
-      ).toBe(true);
-      expect(effects).toBe(0);
-    } finally {
-      release?.();
-      run.abort.abort();
-      await integrations.close();
-      await projects.close();
-      await f.close();
-    }
-  },
-);
 
 test('external tools stay lazy and per-Bot; only a committed one-time decision permits dispatch, and exact retries read the receipt', async () => {
   const f = await fixture();
@@ -748,6 +390,61 @@ test('stopping a dispatched external call records uncertainty and leaves another
     expect(closed).toBe(2);
   } finally {
     f.run.abort.abort();
+    await tools.close();
+    await f.close();
+  }
+});
+
+test('catalog probe logs only safe rejection facts without replacing the reviewed catalog or binding', async () => {
+  const f = await fixture();
+  await f.tools.close();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const tools = new IntegrationTools(f.store, f.interactions, {
+    remote: async () => ({
+      start: async () => {},
+      tools: async () => [
+        {
+          ...offered[0],
+          name: 'synthetic-private-tool',
+          description: 'synthetic-private-description'.padEnd(2001, 'x'),
+        },
+      ],
+      call: async () => {
+        throw Error('SYNTHETIC_MUST_NOT_DISPATCH');
+      },
+      close: async () => {},
+    }),
+  });
+  try {
+    await expect(tools.probe('mock-connection', 1)).rejects.toMatchObject({
+      code: 'INVALID_MCP_CATALOG',
+    });
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      '[mcp-catalog-rejected]',
+      JSON.stringify({
+        reason: 'description_length',
+        path: 'tools[0].description',
+        toolCount: 1,
+        actual: 2001,
+        limit: 2000,
+      }),
+    );
+    const logged = JSON.stringify(warn.mock.calls);
+    for (const value of [
+      'synthetic-private-tool',
+      'synthetic-private-description',
+      'synthetic-bearer-secret',
+      'synthetic-query-secret',
+    ])
+      expect(logged.includes(value)).toBe(false);
+    expect((await f.store.capture(f.run.bot)).connections).toEqual(f.run.integrations.connections);
+    expect((await f.store.list()).items[0]).toMatchObject({
+      health: 'unavailable',
+      error: 'INVALID_MCP_CATALOG',
+    });
+    expect(f.counts().effects).toBe(0);
+  } finally {
+    warn.mockRestore();
     await tools.close();
     await f.close();
   }

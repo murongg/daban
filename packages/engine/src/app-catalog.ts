@@ -1,14 +1,11 @@
-import type { AppCatalogEntry } from '@daban/protocol';
+import {
+  type AppCatalogEntry,
+  type AppDirectoryEntry,
+  appProvider,
+  appProviders,
+} from '@daban/protocol';
 
-export const notionOAuth = {
-  resource: 'https://mcp.notion.com/mcp',
-  issuer: 'https://mcp.notion.com',
-  resourceMetadata: 'https://mcp.notion.com/.well-known/oauth-protected-resource',
-  metadata: 'https://mcp.notion.com/.well-known/oauth-authorization-server',
-  authorize: 'https://mcp.notion.com/authorize',
-  token: 'https://mcp.notion.com/token',
-  register: 'https://mcp.notion.com/register',
-} as const;
+export const notionOAuth = appProvider('notion')!;
 // Enable only after the independent test-account A10 report verifies this exact provider flow.
 const notionVerified = false;
 export function appCatalog(loopback: boolean): AppCatalogEntry[] {
@@ -21,6 +18,30 @@ export function appCatalog(loopback: boolean): AppCatalogEntry[] {
       available: loopback && notionVerified,
       reason: !loopback ? 'OAUTH_CALLBACK_UNAVAILABLE' : 'OAUTH_NOT_VERIFIED',
     },
+    { id: 'custom-mcp', publisher: 'Custom MCP', auth: 'bearer', available: true },
+  ];
+}
+export function appDirectoryEntries(loopback: boolean): AppDirectoryEntry[] {
+  return [
+    ...appProviders.map((provider): AppDirectoryEntry => {
+      const available = loopback && (provider.id !== 'notion' || notionVerified);
+      return {
+        id: provider.id,
+        publisher: provider.publisher,
+        origin: new URL(provider.resource).origin,
+        auth: 'oauth',
+        available,
+        scope: provider.scope,
+        adminApproval: provider.adminApproval,
+        ...(!available
+          ? {
+              reason: !loopback
+                ? ('OAUTH_CALLBACK_UNAVAILABLE' as const)
+                : ('OAUTH_NOT_VERIFIED' as const),
+            }
+          : {}),
+      };
+    }),
     { id: 'custom-mcp', publisher: 'Custom MCP', auth: 'bearer', available: true },
   ];
 }

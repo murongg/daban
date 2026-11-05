@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
-import { ApprovalRules } from './approval-rules.js';
 import { migrate } from './database.js';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
@@ -46,22 +45,7 @@ test.each(['fresh', 'approval', 'oauth', 'combined'] as const)(
     const hasOAuth = mode === 'oauth' || mode === 'combined';
     const catalog = mcpCatalog(connection, tools, []);
     const digest = mcpDigest(catalog);
-    const rules = new ApprovalRules(path.join(root, 'rules.sqlite'));
-    const decision = await rules.evaluate({
-      scope: { kind: 'bot', bot },
-      trigger: 'interactive',
-      mode: 'ask',
-      baseline: 'ask',
-      allowEligible: false,
-      selector: {
-        kind: 'mcp',
-        connection,
-        configRevision: 1,
-        catalogDigest: digest,
-        tool: 'synthetic_echo',
-        inputHash: mcpDigest({ value: 'Synthetic' }),
-      },
-    });
+    const decision = { effect: 'ask', scope: { kind: 'bot', bot }, historical: true };
     let store: Integrations | undefined;
     try {
       if (mode !== 'fresh') {
@@ -177,7 +161,7 @@ test.each(['fresh', 'approval', 'oauth', 'combined'] as const)(
             phase: 'settled',
             preview: JSON.stringify({ value: 'Synthetic' }),
           });
-          expect(receipt.policyDecision).toEqual(hasApproval ? decision : undefined);
+          expect(receipt).not.toHaveProperty('policyDecision');
           if (hasOAuth)
             expect(await store.oauthGrant(connection)).toMatchObject({
               epoch: 1,
@@ -221,7 +205,6 @@ test.each(['fresh', 'approval', 'oauth', 'combined'] as const)(
       }
     } finally {
       await store?.close();
-      await rules.close();
       await rm(root, { recursive: true, force: true });
     }
   },

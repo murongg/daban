@@ -1,7 +1,15 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AppOAuthPhase, AppOAuthReceipt, AppOAuthStart, AppTarget } from '@daban/protocol';
-import { notionOAuth } from './app-catalog.js';
+import {
+  type AppConnect,
+  type AppOAuthPhase,
+  type AppOAuthReceipt,
+  type AppProvider,
+  type AppTarget,
+  appProvider,
+  isAppConnect,
+} from '@daban/protocol';
+import { startAuthorization } from '@modelcontextprotocol/client';
 import { Fault } from './control.js';
 import type { Integrations, OAuthGrant } from './integrations.js';
 import { OAuthFetch } from './oauth-fetch.js';
@@ -17,6 +25,8 @@ export interface OAuthOptions {
   assertOwner?: (bot: string) => unknown | Promise<unknown>;
 }
 interface Pending {
+  application: Readonly<AppProvider>;
+  requireIssuer: boolean;
   target: AppTarget;
   receipt: AppOAuthReceipt;
   server: Server;
@@ -46,26 +56,32 @@ function scope(v: unknown, fallback: string) {
   return [...new Set(v.trim().split(/ +/).filter(Boolean))].sort().join(' ');
 }
 export class OAuth {
-  private readonly application = notionOAuth;
-  private readonly request: NonNullable<OAuthOptions['request']>;
   private readonly active = new Map<string, Pending>();
   private readonly starting = new Map<string, Promise<OAuthPrivateReply>>();
   private readonly refreshing = new Map<string, Promise<string>>();
+  private readonly callbacks = new Set<Promise<unknown>>();
   private closed = false;
   constructor(
     readonly store: Integrations,
     readonly options: OAuthOptions = {},
+  ) {}
+  private request(
+    application: Readonly<AppProvider>,
+    url: string,
+    body?: URLSearchParams | Record<string, unknown>,
   ) {
-    const network = new OAuthFetch([
-      this.application.resourceMetadata,
-      this.application.metadata,
-      this.application.register,
-      this.application.token,
-    ]);
-    this.request = options.request ?? network.request.bind(network);
+    if (this.options.request) return this.options.request(url, body);
+    return new OAuthFetch([
+      application.resourceMetadata,
+      application.metadata,
+      application.register,
+      application.token,
+    ]).request(url, body);
   }
-  async start(input: AppOAuthStart): Promise<OAuthPrivateReply> {
+  async start(input: AppConnect): Promise<OAuthPrivateReply> {
     if (this.closed) throw new Fault('OAUTH_CLOSED');
+    if (!isAppConnect(input)) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+    const application = appProvider(input.app)!;
     await this.options.assertOwner?.(input.bot);
     const receipt = await this.store.beginOAuth(input, Date.now() + 600000);
     const underway = this.starting.get(receipt.attempt);
@@ -73,7 +89,9 @@ export class OAuth {
     const pending = this.active.get(receipt.attempt);
     if (pending) return this.reply(pending);
     if (receipt.phase !== 'preparing') return { receipt };
-    const result = this.prepare(receipt).finally(() => this.starting.delete(receipt.attempt));
+    const result = this.prepare(receipt, application).finally(() =>
+      this.starting.delete(receipt.attempt),
+    );
     this.starting.set(receipt.attempt, result);
     return result;
   }
@@ -86,22 +104,31 @@ export class OAuth {
         : {}),
     };
   }
-  private async prepare(receipt: AppOAuthReceipt): Promise<OAuthPrivateReply> {
+  private async prepare(
+    receipt: AppOAuthReceipt,
+    application: Readonly<AppProvider>,
+  ): Promise<OAuthPrivateReply> {
     const target = { bot: receipt.bot, connection: receipt.connection, revision: receipt.revision };
     const existing = await this.store.oauthGrant(receipt.connection);
-    const oldUri =
-      existing?.issuer === this.application.issuer && existing.state !== 'disconnected'
-        ? new URL(existing.redirectUri)
-        : undefined;
+    const previous =
+      existing?.app === application.id && existing.state !== 'disconnected'
+        ? existing
+        : await this.store.oauthRegistration(target, application.id);
+    const oldUri = previous ? new URL(previous.redirectUri) : undefined;
     const server = createServer((req, res) => {
-      this.callback(receipt.attempt, req, res).catch(() => {
-        if (!res.writableEnded) {
-          res.writeHead(400);
-          res.end('Authorization rejected.');
-        }
-      });
+      const callback = this.callback(receipt.attempt, req, res)
+        .catch(() => {
+          if (!res.writableEnded) {
+            res.writeHead(400);
+            res.end('Authorization rejected.');
+          }
+        })
+        .finally(() => this.callbacks.delete(callback));
+      this.callbacks.add(callback);
     });
     const pending: Pending = {
+      application,
+      requireIssuer: application.issuerRequired,
       target,
       receipt,
       server,
@@ -124,8 +151,10 @@ export class OAuth {
       const address = server.address();
       if (!address || typeof address === 'string') throw new Fault('OAUTH_CALLBACK_UNAVAILABLE');
       pending.redirectUri = `http://127.0.0.1:${address.port}${oldUri?.pathname ?? `/oauth/${randomBytes(24).toString('hex')}`}`;
-      const resource = await this.request(this.application.resourceMetadata);
-      const metadata = await this.request(this.application.metadata);
+      const resource = await this.request(application, application.resourceMetadata);
+      await this.options.assertOwner?.(target.bot);
+      const metadata = await this.request(application, application.metadata);
+      await this.options.assertOwner?.(target.bot);
       const r = resource.data,
         m = metadata.data;
       // Notion publishes its root resource; the reviewed metadata must still explicitly cover /mcp.
@@ -133,15 +162,15 @@ export class OAuth {
         resource.status !== 200 ||
         metadata.status !== 200 ||
         !object(r) ||
-        (r.resource !== this.application.resource && r.resource !== this.application.issuer) ||
+        (r.resource !== application.resource && r.resource !== application.issuer) ||
         !Array.isArray(r.authorization_servers) ||
         r.authorization_servers.length !== 1 ||
-        r.authorization_servers[0] !== this.application.issuer ||
+        r.authorization_servers[0] !== application.issuer ||
         !object(m) ||
-        m.issuer !== this.application.issuer ||
-        m.authorization_endpoint !== this.application.authorize ||
-        m.token_endpoint !== this.application.token ||
-        m.registration_endpoint !== this.application.register ||
+        m.issuer !== application.issuer ||
+        m.authorization_endpoint !== application.authorize ||
+        m.token_endpoint !== application.token ||
+        m.registration_endpoint !== application.register ||
         !Array.isArray(m.code_challenge_methods_supported) ||
         !m.code_challenge_methods_supported.includes('S256') ||
         !Array.isArray(m.response_types_supported) ||
@@ -150,26 +179,22 @@ export class OAuth {
         !['authorization_code', 'refresh_token'].every((x) =>
           (m.grant_types_supported as unknown[]).includes(x),
         ) ||
-        (r.resource !== this.application.resource &&
+        (r.resource !== application.resource &&
           (!Array.isArray(m.protected_resources) ||
-            !m.protected_resources.includes(this.application.resource)))
+            !m.protected_resources.includes(application.resource)))
       )
         throw new Fault('OAUTH_METADATA_REJECTED');
-      if (
-        existing &&
-        existing.state !== 'disconnected' &&
-        existing.issuer === this.application.issuer &&
-        existing.resource === this.application.resource
-      ) {
-        pending.clientId = existing.clientId;
-        pending.clientSecret = existing.clientSecret ?? undefined;
+      pending.requireIssuer ||= m.authorization_response_iss_parameter_supported === true;
+      if (previous) {
+        pending.clientId = previous.clientId;
+        pending.clientSecret = previous.clientSecret ?? undefined;
       } else {
-        const registration = await this.request(this.application.register, {
+        const registration = await this.request(application, application.register, {
           client_name: 'Daban',
           redirect_uris: [pending.redirectUri],
           grant_types: ['authorization_code', 'refresh_token'],
           response_types: ['code'],
-          token_endpoint_auth_method: 'client_secret_post',
+          token_endpoint_auth_method: application.clientAuthentication,
         });
         const client = registration.data;
         if (
@@ -179,6 +204,9 @@ export class OAuth {
           (client.client_secret !== undefined && !secret(client.client_secret)) ||
           (client.token_endpoint_auth_method !== undefined &&
             !['none', 'client_secret_post'].includes(String(client.token_endpoint_auth_method))) ||
+          (client.token_endpoint_auth_method !== undefined &&
+            application.id !== 'notion' &&
+            client.token_endpoint_auth_method !== application.clientAuthentication) ||
           (client.token_endpoint_auth_method === 'client_secret_post' &&
             !secret(client.client_secret))
         )
@@ -189,18 +217,28 @@ export class OAuth {
       }
       if (this.closed || this.active.get(receipt.attempt) !== pending)
         throw new Fault('OAUTH_ATTEMPT_INACTIVE');
-      const url = new URL(this.application.authorize);
-      url.search = new URLSearchParams({
-        response_type: 'code',
-        client_id: pending.clientId,
-        redirect_uri: pending.redirectUri,
+      await this.options.assertOwner?.(target.bot);
+      await this.store.rememberOAuthRegistration(target, receipt.attempt, {
+        clientId: pending.clientId!,
+        clientSecret: pending.clientSecret,
+        redirectUri: pending.redirectUri,
+      });
+      const { authorizationUrl, codeVerifier } = await startAuthorization(application.issuer, {
+        metadata: {
+          issuer: application.issuer,
+          authorization_endpoint: application.authorize,
+          token_endpoint: application.token,
+          response_types_supported: ['code'],
+          code_challenge_methods_supported: ['S256'],
+        },
+        clientInformation: { client_id: pending.clientId! },
+        redirectUrl: pending.redirectUri,
         state: pending.state,
-        code_challenge: createHash('sha256').update(pending.verifier).digest('base64url'),
-        code_challenge_method: 'S256',
-        resource: this.application.resource,
-        scope: 'default',
-      }).toString();
-      pending.url = url.href;
+        scope: application.scope || undefined,
+        resource: application.resource,
+      });
+      pending.verifier = codeVerifier;
+      pending.url = authorizationUrl.href;
       await this.options.assertOwner?.(target.bot);
       if (this.closed) throw new Fault('OAUTH_CLOSED');
       const phase = await this.store.oauthPhase(target, receipt.attempt, 'waiting');
@@ -240,6 +278,7 @@ export class OAuth {
       res.end('Authorization rejected.');
       return;
     }
+    const application = pending.application;
     const url = new URL(req.url, pending.redirectUri),
       params = url.searchParams;
     if (
@@ -250,7 +289,7 @@ export class OAuth {
           params.getAll(k).length !== 1,
       ) ||
       !same(params.get('state') ?? '', pending.state) ||
-      params.get('iss') !== this.application.issuer ||
+      (params.has('iss') ? params.get('iss') !== application.issuer : pending.requireIssuer) ||
       (!params.has('error') && !secret(params.get('code')))
     ) {
       res.writeHead(400);
@@ -267,8 +306,12 @@ export class OAuth {
     try {
       const phase = await this.store.oauthPhase(pending.target, attempt, 'exchanging');
       if (phase.phase !== 'exchanging' || this.closed) throw new Fault('OAUTH_ATTEMPT_INACTIVE');
+      await this.options.assertOwner?.(pending.target.bot);
+      if (this.closed || this.active.get(attempt) !== pending)
+        throw new Fault('OAUTH_ATTEMPT_INACTIVE');
       const response = await this.request(
-        this.application.token,
+        application,
+        application.token,
         new URLSearchParams({
           grant_type: 'authorization_code',
           code: params.get('code')!,
@@ -276,10 +319,13 @@ export class OAuth {
           client_id: pending.clientId!,
           ...(pending.clientSecret ? { client_secret: pending.clientSecret } : {}),
           redirect_uri: pending.redirectUri,
-          resource: this.application.resource,
+          resource: application.resource,
         }),
       );
-      const tokens = this.tokens(response, 'default');
+      const tokens = this.tokens(response, application.scope, application, [
+        pending.clientId,
+        pending.clientSecret,
+      ]);
       await this.options.assertOwner?.(pending.target.bot);
       if (this.closed) throw new Fault('OAUTH_CLOSED');
       const data = object(response.data) ? response.data : {};
@@ -288,9 +334,9 @@ export class OAuth {
         .join(':');
       await this.store.oauthCommit(pending.target, attempt, {
         ...tokens,
-        issuer: this.application.issuer,
-        resource: this.application.resource,
-        tokenEndpoint: this.application.token,
+        issuer: application.issuer,
+        resource: application.resource,
+        tokenEndpoint: application.token,
         clientId: pending.clientId!,
         clientSecret: pending.clientSecret,
         redirectUri: pending.redirectUri,
@@ -313,6 +359,8 @@ export class OAuth {
   private tokens(
     response: { status: number; data: unknown },
     previousScope: string,
+    application: Readonly<AppProvider>,
+    privateValues: (string | undefined | null)[] = [],
   ): Pick<OAuthGrant, 'accessToken' | 'refreshToken' | 'expiresAt' | 'scope'> {
     const data = response.data;
     if (
@@ -321,17 +369,31 @@ export class OAuth {
       !secret(data.access_token) ||
       data.access_token.length > 4096 ||
       data.token_type?.toString().toLowerCase() !== 'bearer' ||
-      !Number.isSafeInteger(data.expires_in) ||
-      Number(data.expires_in) <= 0 ||
-      !Number.isSafeInteger(Date.now() + Number(data.expires_in) * 1000) ||
+      (data.expires_in === undefined
+        ? application.expirationRequired
+        : !Number.isSafeInteger(data.expires_in) ||
+          Number(data.expires_in) <= 0 ||
+          !Number.isSafeInteger(Date.now() + Number(data.expires_in) * 1000)) ||
       (data.refresh_token !== undefined && !secret(data.refresh_token))
+    )
+      throw new Fault('OAUTH_TOKEN_REJECTED');
+    const granted = scope(data.scope, previousScope);
+    if (
+      [data.access_token, data.refresh_token, ...privateValues].some(
+        (value) =>
+          typeof value === 'string' &&
+          value.length > 0 &&
+          (granted.split(' ').includes(value) || (value.length >= 8 && granted.includes(value))),
+      )
     )
       throw new Fault('OAUTH_TOKEN_REJECTED');
     return {
       accessToken: data.access_token,
       refreshToken: data.refresh_token as string | undefined,
-      expiresAt: Date.now() + Number(data.expires_in) * 1000,
-      scope: scope(data.scope, previousScope),
+      ...(data.expires_in === undefined
+        ? {}
+        : { expiresAt: Date.now() + Number(data.expires_in) * 1000 }),
+      scope: granted,
     };
   }
   async cancel(target: AppTarget, attempt: string, requestId: string): Promise<AppOAuthReceipt> {
@@ -350,7 +412,7 @@ export class OAuth {
     const concurrent = this.refreshing.get(connection);
     if (concurrent) return concurrent;
     if (grant?.state !== 'connected') throw new Fault('OAUTH_RECONNECT_REQUIRED');
-    if (grant.expiresAt > Date.now() + 30000) return grant.accessToken;
+    if (grant.expiresAt === null || grant.expiresAt > Date.now() + 30000) return grant.accessToken;
     const promise = this.refresh(connection, grant).finally(() =>
       this.refreshing.delete(connection),
     );
@@ -361,17 +423,20 @@ export class OAuth {
     connection: string,
     grant: NonNullable<Awaited<ReturnType<Integrations['oauthGrant']>>>,
   ) {
+    const application = appProvider(grant.app);
     try {
       if (
+        !application ||
         !grant.refreshToken ||
-        grant.issuer !== this.application.issuer ||
-        grant.resource !== this.application.resource ||
-        grant.tokenEndpoint !== this.application.token
+        grant.issuer !== application.issuer ||
+        grant.resource !== application.resource ||
+        grant.tokenEndpoint !== application.token
       )
         throw new Fault('OAUTH_RECONNECT_REQUIRED');
       // Persist uncertainty before sending a rotating refresh token; a crash cannot make it replayable.
       await this.store.oauthRefreshBegin(connection, grant.epoch);
       const response = await this.request(
+        application,
         grant.tokenEndpoint,
         new URLSearchParams({
           grant_type: 'refresh_token',
@@ -381,7 +446,10 @@ export class OAuth {
           resource: grant.resource,
         }),
       );
-      const tokens = this.tokens(response, grant.scope);
+      const tokens = this.tokens(response, grant.scope, application, [
+        grant.clientId,
+        grant.clientSecret,
+      ]);
       if (this.closed) throw new Fault('OAUTH_CLOSED');
       await this.store.oauthRefreshCommit(connection, grant.epoch, {
         ...tokens,
@@ -416,6 +484,11 @@ export class OAuth {
     await Promise.allSettled(
       [...this.active.values()].map((p) => this.end(p, 'interrupted', 'OAUTH_INTERRUPTED')),
     );
-    await Promise.allSettled([...this.starting.values(), ...this.refreshing.values()]);
+    // Code exchanges may still be awaiting HTTPS after cancellation; their store must remain open until they settle.
+    await Promise.allSettled([
+      ...this.starting.values(),
+      ...this.refreshing.values(),
+      ...this.callbacks,
+    ]);
   }
 }

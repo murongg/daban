@@ -1,7 +1,6 @@
 import {
   isAppCommand,
   isApprovalMode,
-  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -18,12 +17,12 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
-  isBudgetCommand,
   isChatRequest,
   isComputerRequest,
   isContextQuery,
   isContextSourceQuery,
   isDocumentUpload,
+  isGoalControlCommand,
   isGoalResumeTarget,
   isGroupActionRequest,
   isGroupCopyRequest,
@@ -40,13 +39,13 @@ import {
   isModelSavedRequest,
   isModelUpdate,
   isNoteCommand,
-  isProjectCommand,
   isProjectFileRequest,
   isProjectScope,
   isRecoveryRequest,
   isScheduleInput,
   isSchedulePatch,
   isScheduleRule,
+  isSearchCommand,
   isSkillBinding,
   isSkillContent,
   isSkillPackageCommand,
@@ -86,8 +85,8 @@ export function safeRuntimePath(value: unknown): value is string {
 }
 export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('search.')) return isSearchCommand(value) ? value : fail();
   if (isAutomationCommand(value)) return value;
-  if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
@@ -95,15 +94,13 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
     return isWorkCommentCommand(value) ? value : fail();
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();
   if (value.type.startsWith('app.')) return isAppCommand(value) ? value : fail();
-  if (value.type.startsWith('approval.rules.'))
-    return isApprovalRulesCommand(value) ? value : fail();
   if (
     value.type.startsWith('skill.package.') ||
     value.type === 'skill.pick' ||
     value.type === 'skill.resource'
   )
     return isSkillPackageCommand(value) ? value : fail();
-  if (value.type.startsWith('budget.')) return isBudgetCommand(value) ? value : fail();
+  if (value.type === 'goal.target') return isGoalControlCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
     'work.list': ['type', 'query'],

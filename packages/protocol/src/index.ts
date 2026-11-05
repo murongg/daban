@@ -1,3 +1,5 @@
+export * from './search.js';
+
 import {
   type AutomationCommand,
   type AutomationNotice,
@@ -11,7 +13,8 @@ import {
   isMonitorDecision,
   type MonitorDecision,
 } from './automation.js';
-import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+import type { GoalControlCommand, GoalResumeTarget } from './goals.js';
+import type { SearchCommand } from './search.js';
 
 export * from './automation.js';
 
@@ -19,7 +22,7 @@ import { isProjectFileRequest, isProjectScope } from './projects.js';
 
 export * from './projects.js';
 
-import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
+import type { ProjectFileRequest, ProjectScope } from './projects.js';
 
 export * from './goals.js';
 export * from './model-access.js';
@@ -164,6 +167,7 @@ export function isDiagnosticReport(value: unknown): value is DiagnosticReport {
   );
 }
 export * from './app-connections.js';
+export * from './app-providers.js';
 
 import type { AppCommand, AppConnectionsCapability } from './app-connections.js';
 
@@ -1569,6 +1573,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
 }
 export interface RuntimeSnapshot {
   appConnections?: AppConnectionsCapability;
+  searchSettings?: true;
   contextInspector?: 1;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
@@ -1642,10 +1647,9 @@ export function recoveryReader(command: RuntimeCommand) {
   return [
     'app.catalog',
     'app.oauth.status',
+    'search.status',
+    'search.saved',
     'frame',
-    'projects.list',
-    'projects.status',
-    'projects.receipt',
     'files.list',
     'files.read',
     'files.download',
@@ -1668,8 +1672,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
-    'budget.settings',
-    'budget.read',
+    'goal.target',
     'transcript.statistics',
     'context.inspect',
     'context.source',
@@ -4072,9 +4075,9 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
-  | BudgetCommand
+  | SearchCommand
+  | GoalControlCommand
   | AutomationCommand
-  | ProjectCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4530,7 +4533,6 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
   );
 }
 
-export * from './budgets.js';
 export * from './command.js';
 export * from './context-inspector.js';
 export * from './peer.js';

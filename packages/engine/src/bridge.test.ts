@@ -263,20 +263,3 @@ test('Unix bridge fails closed on unavailable sockets, abort, oversized response
     await server.close();
   }
 });
-
-test('budget admission distinguishes an explicit Host refusal from an unreachable bridge', async () => {
-  const bridge = await import('./bridge.js');
-  const budgetCall = Reflect.get(bridge, 'callBudgetBridge') as unknown as typeof callBridge;
-  expect(budgetCall).toBeTypeOf('function');
-  const config = { url: 'http://127.0.0.1:12345/mcp/synthetic' };
-  await expect(
-    budgetCall(config, 'budget.reserve', {}, new AbortController().signal, async () =>
-      Response.json({ error: 'SYNTHETIC_DENIED' }, { status: 403 }),
-    ),
-  ).rejects.toMatchObject({ code: 'BRIDGE_REJECTED', status: 403 });
-  await expect(
-    budgetCall(config, 'budget.reserve', {}, new AbortController().signal, async () => {
-      throw new Error('SYNTHETIC_OFFLINE');
-    }),
-  ).rejects.toThrow('BRIDGE_UNAVAILABLE');
-});

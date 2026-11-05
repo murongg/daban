@@ -5,6 +5,90 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
 
+it.each(['goal.target', 'task.start'] as const)(
+  'a cached project Goal target cannot regain authority through %s on an older Host',
+  async (type) => {
+    const target = {
+      owner: {
+        bot: 'mock-bot',
+        chatRevision: 0,
+        project: { projectId: 'mock-retired-project', revision: 1 },
+      },
+      sessionId: 'mock-retired-session',
+      goalId: 'mock-retired-goal',
+      goalRevision: 1,
+      humanEpoch: 0,
+    };
+    const fetcher = vi.fn(async () => Response.json(target));
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher,
+    });
+    await expect(
+      client.invoke(
+        type === 'goal.target'
+          ? { type, owner: target.owner }
+          : {
+              type,
+              bot: 'mock-bot',
+              task: {
+                requestId: 'mock-retired-goal-request',
+                prompt: '/goal resume',
+                goalResume: target,
+              },
+            },
+      ),
+    ).rejects.toThrow('PROJECT_RETIRED');
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
+it('a cached retired task cannot be sent to an older host with broader project support', async () => {
+  const fetcher = vi.fn(async () => Response.json({}));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  await expect(
+    client.invoke({
+      type: 'task.start',
+      bot: 'mock-bot',
+      task: {
+        requestId: 'mock-retired-request',
+        prompt: 'SYNTHETIC RETIRED TASK',
+        project: { projectId: 'mock-retired-project', revision: 1 },
+      },
+    }),
+  ).rejects.toThrow('PROJECT_RETIRED');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it.each(['files.list', 'files.read', 'files.download'] as const)(
+  'refuses a retired locator before sending %s to the ordinary workspace',
+  async (type) => {
+    const fetcher = vi.fn(async () => Response.json({}));
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher,
+    });
+    const reference = {
+      project: { projectId: 'mock-retired-project', revision: 1 },
+      task: { bot: 'mock-bot', runId: 'mock-retired-run' },
+    };
+    await expect(
+      client.invoke(
+        type === 'files.list'
+          ? { type, ...reference }
+          : { type, path: 'same-name.txt', ...reference },
+      ),
+    ).rejects.toThrow('PROJECT_RETIRED');
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
 it('validates the approval mode and refuses it before sending to a runtime without policy support', async () => {
   const task = {
     requestId: 'mock-approval-task',
@@ -1572,23 +1656,24 @@ it('recognizes only an absent Goal target endpoint as legacy service support', a
       tokenProvider: async () => 'a'.repeat(64),
       fetcher: async () => Response.json({ error }, { status }),
     });
-    const call = client.invoke({ type: 'budget.goal', owner: { bot: 'a', chatRevision: 0 } });
+    const call = client.invoke({ type: 'goal.target', owner: { bot: 'a', chatRevision: 0 } });
     if (error === 'NOT_FOUND') await expect(call).resolves.toBeNull();
     else await expect(call).rejects.toThrow();
   }
 });
 
 it.each([true, false])(
-  'Goal target replies retain the captured project identity (same project=%s)',
+  'Goal target replies retain the captured ordinary identity (matching reply=%s)',
   async (same) => {
-    const owner = { bot: 'a', chatRevision: 0, project: { projectId: 'mock-alpha', revision: 1 } };
+    const owner = { bot: 'a', chatRevision: 0 };
     const target = {
-      owner: same ? owner : { ...owner, project: { projectId: 'mock-beta', revision: 1 } },
+      owner: same
+        ? owner
+        : { ...owner, project: { projectId: 'mock-retired-project', revision: 1 } },
       sessionId: 'mock-session',
       goalId: 'mock-goal',
       goalRevision: 1,
       humanEpoch: 0,
-      budget: { budgetId: 'mock-budget', revision: 1 },
     };
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json(target),
@@ -1598,8 +1683,8 @@ it.each([true, false])(
       tokenProvider: async () => 'a'.repeat(64),
       fetcher,
     });
-    expect(parseCommand({ type: 'budget.goal', owner })).toEqual({ type: 'budget.goal', owner });
-    const reply = client.invoke({ type: 'budget.goal', owner });
+    expect(parseCommand({ type: 'goal.target', owner })).toEqual({ type: 'goal.target', owner });
+    const reply = client.invoke({ type: 'goal.target', owner });
     if (same) await expect(reply).resolves.toEqual(target);
     else await expect(reply).rejects.toThrow('INVALID_GOAL_TARGET');
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ owner });

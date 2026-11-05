@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import {
+  assertNoRetiredProject,
   isRemoteCommand,
   isRemoteMediaRequest,
   isRemoteRpcRequest,
@@ -19,11 +20,15 @@ import {
   type RemoteState,
   type RemoteViewer,
   type RuntimeCommand,
+  type RuntimeConsumer,
   remoteInvitation,
   remoteReplyFor,
   remoteServer,
   type SnapshotAccept,
+  type SnapshotFormats,
+  snapshotConsumer,
   supportedSnapshotCapabilities,
+  supportedSnapshotFormats,
   validAgentId,
 } from '@daban/protocol';
 import { remoteProof, validRemoteIdentity, verifyRemoteProof } from './remote-crypto.js';
@@ -45,6 +50,7 @@ interface Session {
   captureRequested?: boolean;
   snapshotAccept?: SnapshotAccept;
   snapshotSchema?: 2;
+  snapshotFormats?: SnapshotFormats;
   snapshotHint?: Promise<unknown>;
 }
 interface MediaPlan {
@@ -103,7 +109,11 @@ export class RemoteAccess {
       name: string;
       platform: string;
       peer: RemotePeerPort;
-      dispatch(command: RuntimeCommand, device?: RemoteIdentity, schema?: 1 | 2): Promise<unknown>;
+      dispatch(
+        command: RuntimeCommand,
+        device?: RemoteIdentity,
+        consumer?: RuntimeConsumer,
+      ): Promise<unknown>;
       authorize?(device: RemoteIdentity, command: RuntimeCommand): Promise<unknown>;
       revoke?(device: string): Promise<unknown>;
       snapshot?(value: unknown, host: string): unknown;
@@ -123,11 +133,11 @@ export class RemoteAccess {
     await this.store.ready;
     this.gateway = new RemoteGateway(
       this.store,
-      (command, device, schema) =>
+      (command, device, consumer) =>
         this.options.dispatch(
           command,
           device ? this.store.device(device, 'controller')?.identity : undefined,
-          schema,
+          consumer,
         ),
       this.options.authorize
         ? async (id, command) => {
@@ -612,25 +622,20 @@ export class RemoteAccess {
       if (session.role === 'controller' && host) {
         host.state = 'connected';
         host.transport = event.transport ?? 'unknown';
-        // One per-session flight keeps repeated connected events from admitting RPC before all hints.
+        // One per-session flight keeps repeated connected events from admitting RPC before both hints.
         session.snapshotHint ??= Promise.resolve()
           .then(async () => {
-            const {
-              appConnections: _apps,
-              approvalRules: _rules,
-              ...legacyAccept
-            } = supportedSnapshotCapabilities;
             const hint = {
               type: 'snapshot-capabilities',
               host: session.device.id,
               workspace: session.workspace,
-              accept: legacyAccept,
+              accept: supportedSnapshotCapabilities,
             };
-            // Preserve both older closed hint shapes before adding App/AP metadata; hints grant no operation authority.
+            // Each old Host keeps its last understood prefix. None of these format hints requests an ACK or authority.
             for (const value of [
               hint,
               { ...hint, schema: 2 },
-              { ...hint, schema: 2, accept: supportedSnapshotCapabilities },
+              { ...hint, schema: 2, formats: supportedSnapshotFormats },
             ]) {
               if (!session.connected || this.sessions.get(session.id) !== session) return;
               await this.port(session).send(session.id, JSON.stringify(value));
@@ -709,8 +714,9 @@ export class RemoteAccess {
         value.host === this.keys.identity.id &&
         value.workspace === session.workspace
       ) {
-        session.snapshotAccept = structuredClone(value.accept);
+        session.snapshotAccept = value.accept.contextInspector === 1 ? { contextInspector: 1 } : {};
         session.snapshotSchema = value.schema;
+        session.snapshotFormats = snapshotConsumer(value).formats;
       }
       return;
     }
@@ -737,12 +743,10 @@ export class RemoteAccess {
           await this.drop(value.params.id);
           result = { closed: true };
         } else
-          result = await this.gateway.invoke(
-            session.device.id,
-            session.id,
-            value,
-            session.snapshotSchema ?? 1,
-          );
+          result = await this.gateway.invoke(session.device.id, session.id, value, {
+            schema: session.snapshotSchema,
+            formats: { ...session.snapshotFormats },
+          });
         reply = {
           type: 'reply',
           id: value.id,
@@ -755,6 +759,7 @@ export class RemoteAccess {
             result,
             session.snapshotAccept,
             session.snapshotSchema,
+            session.snapshotFormats,
           ),
         };
       } catch (error) {
@@ -799,6 +804,7 @@ export class RemoteAccess {
     }
   }
   async request(command: RuntimeCommand, host = this.selected): Promise<unknown> {
+    assertNoRetiredProject(command);
     await this.ready;
     const target = host;
     if (!target || this.stopped) throw Error('REMOTE_NO_HOST_SELECTED');
@@ -875,7 +881,13 @@ export class RemoteAccess {
             type: 'snapshot',
             host: this.keys.identity.id,
             workspace: session.workspace,
-            value: remoteReplyFor('status', value, session.snapshotAccept, session.snapshotSchema),
+            value: remoteReplyFor(
+              'status',
+              value,
+              session.snapshotAccept,
+              session.snapshotSchema,
+              session.snapshotFormats,
+            ),
           }),
           'events',
         );

@@ -12,7 +12,7 @@ import {
   isAppOAuthReceipt,
   isGroupPage,
   isLocalComputerCommand,
-  isNotionAuthorizeUrl,
+  isAppAuthorizeUrl,
   isRebootStatus,
   isRemoteSnapshot,
   type McpCommand,
@@ -20,6 +20,7 @@ import {
   modelHasVision,
   type RebootStatus,
   type RuntimeCommand,
+  type RuntimeConsumer,
   type RuntimeReply,
   type RuntimeSnapshot,
   recoveryBlocked,
@@ -524,9 +525,12 @@ export function runtimeService(
   async function dispatch(
     command: RuntimeCommand,
     _device?: unknown,
-    schema: 1 | 2 = 2,
+    consumer?: RuntimeConsumer,
   ): Promise<unknown> {
-    if (isAppCommand(command) && !['app.catalog', 'app.oauth.status'].includes(command.type))
+    if (
+      isAppCommand(command) &&
+      !['app.catalog', 'app.directory', 'app.oauth.status'].includes(command.type)
+    )
       throw new Error('OAUTH_INTERACTIVE_REQUIRED');
     if (updating) {
       if (command.type === 'status') return state;
@@ -801,7 +805,7 @@ export function runtimeService(
       'context.inspect',
       'context.source',
     ].includes(command.type);
-    const result = await client.invoke(command, schema);
+    const result = await client.invoke(command, consumer);
     // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.
     if (transcript && (closed || epoch !== connection)) throw new Error('RUNTIME_OFFLINE');
     if (!transcript && !['frame', 'files.list', 'files.read'].includes(command.type))
@@ -846,7 +850,7 @@ export function runtimeService(
       ? await owner.appInteractive(command, proof)
       : await owner.mcpInteractive(command, proof);
     if (closed || client !== owner || connection !== epoch) throw new Error('RUNTIME_OFFLINE');
-    if (command.type !== 'app.oauth.start') return result;
+    if (command.type !== 'app.oauth.start' && command.type !== 'app.oauth.connect') return result;
     if (
       !result ||
       typeof result !== 'object' ||
@@ -860,7 +864,7 @@ export function runtimeService(
         !authorize ||
         typeof authorize !== 'object' ||
         !('url' in authorize) ||
-        !isNotionAuthorizeUrl(authorize.url)
+        !isAppAuthorizeUrl(authorize.url, command.input.app)
       )
         throw new Error('INVALID_RUNTIME_STATE');
       try {
@@ -899,7 +903,8 @@ export function runtimeService(
       }
       // This closure is entered only after validating the owned renderer frame; invokeLocal/remote dispatch cannot mint it.
       const result =
-        (isAppCommand(command) && !['app.catalog', 'app.oauth.status'].includes(command.type)) ||
+        (isAppCommand(command) &&
+          !['app.catalog', 'app.directory', 'app.oauth.status'].includes(command.type)) ||
         (state.appConnections?.catalog &&
           (command.type === 'mcp.archive' || command.type === 'mcp.restore'))
           ? await interactiveApp(command)

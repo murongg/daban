@@ -1,3 +1,4 @@
+import { remoteAppSnapshot } from '../shared/apps';
 import { access } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -334,9 +335,9 @@ if (primary) {
         name: hostname(),
         platform: process.platform,
         peer: peerWorker,
-        dispatch: async (command, device, schema) => {
+        dispatch: async (command, device, consumer) => {
           if (!service) throw Error('RUNTIME_OFFLINE');
-          const result = await service.invokeLocal(command, device, schema);
+          const result = await service.invokeLocal(command, device, consumer);
           if (
             device &&
             (command.type === 'local.connect' || command.type === 'local.resume') &&
@@ -344,7 +345,9 @@ if (primary) {
             result.session
           )
             remoteConsent?.granted(device.id, result.session);
-          return result;
+          return command.type === 'status' || command.type === 'connect'
+            ? remoteAppSnapshot(result)
+            : result;
         },
         authorize: (device, command) =>
           remoteConsent

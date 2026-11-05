@@ -220,6 +220,41 @@ test('journal preserves bounded captures across restart and isolates a corrupt a
   }
 });
 
+test('retired project requests cannot be accepted as ordinary shared-workspace tasks', () => {
+  const request = {
+    requestId: 'mock-retired-project-request',
+    prompt: 'SYNTHETIC PRIVATE PROJECT TASK',
+    project: { projectId: 'mock-retired-project', revision: 1 },
+  };
+  expect(() => validateTask(request)).toThrowError(
+    expect.objectContaining({ code: 'PROJECT_RETIRED' }),
+  );
+  expect(validateTask({ requestId: 'mock-ordinary-request', prompt: 'SYNTHETIC TASK' })).toEqual({
+    requestId: 'mock-ordinary-request',
+    prompt: 'SYNTHETIC TASK',
+  });
+});
+
+test('an archived Goal target cannot reintroduce retired project authority into an ordinary request', () => {
+  expect(() =>
+    validateTask({
+      requestId: 'mock-retired-goal-request',
+      prompt: '/goal resume',
+      goalResume: {
+        owner: {
+          bot: 'mock-bot',
+          chatRevision: 0,
+          project: { projectId: 'mock-retired-project', revision: 1 },
+        },
+        sessionId: 'mock-retired-session',
+        goalId: 'mock-retired-goal',
+        goalRevision: 1,
+        humanEpoch: 0,
+      },
+    }),
+  ).toThrowError(expect.objectContaining({ code: 'PROJECT_RETIRED' }));
+});
+
 test('task approval mode accepts only the three explicit user policies', () => {
   const task = { requestId: 'mock-policy-request', prompt: 'Synthetic task' };
   for (const approvalMode of ['ask', 'auto', 'full'])
@@ -453,7 +488,7 @@ test('restart retains a durable clean fence for explicit recovery while interrup
   }
 });
 
-test('a corrupt authoritative budget identity cannot be loaded as a legacy unmetered task', async () => {
+test('obsolete financial metadata does not hide saved task history or rewrite its original bytes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-budget-journal-'));
   try {
     const task = {
@@ -469,10 +504,13 @@ test('a corrupt authoritative budget identity cannot be loaded as a legacy unmet
       trace: [],
       budget: { budgetId: 'synthetic-budget', revision: -1 },
     };
-    await writeFile(path.join(root, `${task.runId}.json`), JSON.stringify({ version: 1, task }));
+    const file = path.join(root, `${task.runId}.json`);
+    const original = JSON.stringify({ version: 1, task });
+    await writeFile(file, original);
     const journal = new TaskJournal(root);
     await journal.load();
-    expect(journal.findRequest(task.bot, task.requestId)).toBeUndefined();
+    expect(journal.findRequest(task.bot, task.requestId)).toMatchObject(task);
+    expect(await readFile(file, 'utf8')).toBe(original);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

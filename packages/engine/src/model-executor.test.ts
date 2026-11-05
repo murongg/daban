@@ -9,7 +9,7 @@ import { ModelRuns } from './model.js';
 import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
 
-test.each([false, true])(
+test.each([false])(
   'VM fallback keeps its logical task and fresh execution lease (project=%s)',
   async (scoped) => {
     const root = await mkdtemp(path.join(tmpdir(), 'synthetic-model-executor-'));
@@ -70,7 +70,7 @@ test.each([false, true])(
           insert?: { id?: string; config?: { limit?: number } }[];
         }[];
         limits.push(
-          patch.flatMap((entry) => entry.insert ?? []).find((entry) => entry.id === 'daban-budget')
+          patch.flatMap((entry) => entry.insert ?? []).find((entry) => entry.id === 'daban-policy')
             ?.config?.limit,
         );
       }
@@ -177,28 +177,7 @@ test.each([false, true])(
     await models.ready;
     const conversation = { id: 'mock-group', context: 'Synthetic private group context' };
     const project = scoped ? { projectId: 'mock-vm-project', revision: 1 } : undefined;
-    if (project) {
-      await models.profiles.register({
-        id: 'mock-bot',
-        name: 'Synthetic VM bot',
-        instructions: '',
-        memory: '',
-        color: 'mint',
-      });
-      await models.projects.write({
-        action: 'create',
-        requestId: 'mock-vm-project-create',
-        projectId: project.projectId,
-        expectedRevision: 0,
-        value: { name: 'Synthetic VM project', grants: [{ bot: 'mock-bot' }] },
-      });
-    }
-    const priorWorkspace = project
-      ? new RemoteWorkspace(client, '', undefined, undefined, {
-          ...models.projects.assertScope('mock-bot', project, 'read'),
-          runId: 'mock-vm-root',
-        })
-      : workspace;
+    const priorWorkspace = workspace;
     const prior = await priorWorkspace.create(['model-runs', 'mock-vm-root', 'mock-bot']);
     await prior.write('mock-input.txt', Buffer.from('Synthetic input bytes'));
     await prior.close();
@@ -246,8 +225,6 @@ test.each([false, true])(
     expect(opens[1].params.id).not.toBe(opens[0].params.id);
     if (project) {
       expect(opens.map((frame) => frame.params.taskRunId)).toEqual([job.id, job.id]);
-      expect(job.budget?.budgetId).not.toBe(job.executionId);
-      expect(job.budget?.budgetId).not.toBe(job.intentId);
       await expect(
         client.call('tools.open', {
           ...opens[1].params,

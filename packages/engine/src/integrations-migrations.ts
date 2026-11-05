@@ -44,4 +44,23 @@ export const migrations: Migration[] = [
     hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     name: '20261105104541_merge-approval-oauth',
   },
+  {
+    sql: [
+      "ALTER TABLE `oauth_attempts` ADD `app` text DEFAULT 'notion' NOT NULL;",
+      '\nALTER TABLE `oauth_attempts` ADD `client_id` text;',
+      '\nALTER TABLE `oauth_attempts` ADD `client_secret` text;',
+      '\nALTER TABLE `oauth_attempts` ADD `redirect_uri` text;',
+      "\nALTER TABLE `oauth_grants` ADD `app` text DEFAULT 'notion' NOT NULL;",
+      '\nPRAGMA foreign_keys=OFF;',
+      "\nCREATE TABLE `__new_oauth_grants` (\n\t`connection` text PRIMARY KEY,\n\t`app` text DEFAULT 'notion' NOT NULL,\n\t`epoch` integer NOT NULL,\n\t`state` text NOT NULL,\n\t`issuer` text NOT NULL,\n\t`resource` text NOT NULL,\n\t`client_id` text NOT NULL,\n\t`client_secret` text,\n\t`redirect_uri` text NOT NULL,\n\t`token_endpoint` text NOT NULL,\n\t`access_token` text NOT NULL,\n\t`refresh_token` text,\n\t`expires_at` integer,\n\t`scope` text NOT NULL,\n\t`identity` text\n);\n",
+      '\nINSERT INTO `__new_oauth_grants`(`connection`, `epoch`, `state`, `issuer`, `resource`, `client_id`, `client_secret`, `redirect_uri`, `token_endpoint`, `access_token`, `refresh_token`, `expires_at`, `scope`, `identity`) SELECT `connection`, `epoch`, `state`, `issuer`, `resource`, `client_id`, `client_secret`, `redirect_uri`, `token_endpoint`, `access_token`, `refresh_token`, `expires_at`, `scope`, `identity` FROM `oauth_grants`;',
+      '\nDROP TABLE `oauth_grants`;',
+      '\nALTER TABLE `__new_oauth_grants` RENAME TO `oauth_grants`;',
+      '\nPRAGMA foreign_keys=ON;\n',
+    ],
+    bps: true,
+    folderMillis: 1793898744000,
+    hash: '47e641135dceb4a7cff233c218ba56ee5d6eb422247aa754513420f2042557c0',
+    name: '20261105171224_providers',
+  },
 ];

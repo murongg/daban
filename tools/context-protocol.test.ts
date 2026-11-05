@@ -1,138 +1,74 @@
 import {
-  approvalRulesCapability,
   type ContextCapture,
   contextCategories,
   disconnected,
-  type Interaction,
   isContextBoundary,
   isContextCapture,
   isContextView,
   isRemoteRpcRequest,
   isRemoteSnapshot,
   isRemoteSnapshotCapabilities,
-  type McpReceipt,
+  isSearchStatus,
   parseRuntimeCommand,
+  recoveryReader,
   remoteReplyFor,
   remoteSnapshotFor,
+  snapshotConsumer,
+  supportedSnapshotCapabilities,
+  supportedSnapshotFormats,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
-
-test('negotiates App and approval metadata without forwarding local OAuth authority or poisoning older snapshots', () => {
-  const interaction: Interaction = {
-    id: 'mock-approval',
-    bot: scope.bot,
-    runId: scope.runId,
-    sessionId: 'mock-session',
-    kind: 'approval',
-    tool: 'mcp_call',
-    connection: 'mock-app',
-    configRevision: 1,
-    catalogDigest: 'a'.repeat(64),
-    name: 'Synthetic App',
-    origin: 'https://mcp.example.test',
-    operation: 'synthetic_echo',
-    arguments: '{}',
-    inputHash: 'b'.repeat(64),
-    status: 'resolved',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    reply: { kind: 'decision', allow: true, confirmPurpose: true },
-    purposeScope: { taskId: 'mock-task', turnId: 'mock-turn' },
-    policyDecision: {
-      effect: 'ask',
-      source: 'mode',
-      reasonCode: 'modeAsked',
-      matchedRules: [],
-      policyRevision: 0,
-      requestHash: 'c'.repeat(64),
-      scope: { kind: 'bot', bot: scope.bot },
-      trigger: 'interactive',
-      selector: {
-        kind: 'mcp',
-        connection: 'mock-app',
-        configRevision: 1,
-        catalogDigest: 'a'.repeat(64),
-        tool: 'synthetic_echo',
-        inputHash: 'b'.repeat(64),
-      },
-    },
+test('a closed old combined hint preserves Context and Search without storing retired declarations', () => {
+  const hint = {
+    type: 'snapshot-capabilities',
+    host: 'a'.repeat(64),
+    workspace: 'mock-workspace',
+    schema: 2,
+    accept: { contextInspector: 1, preflight: 1, fileReview: 1 },
+    formats: { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true },
   };
-  const current = {
-    ...disconnected('ready'),
-    appConnections: { catalog: true, oauthLoopback: true },
-    approvalRules: { capability: approvalRulesCapability, available: true, revision: 0 },
-    interactions: [interaction],
-  };
-  expect(isRemoteSnapshot(current)).toBe(true);
-  const { policyDecision: _policy, purposeScope: _purpose, ...legacy } = interaction;
-  const baseline = {
-    ...disconnected('ready'),
-    interactions: [{ ...legacy, reply: { kind: 'decision', allow: true } }],
-  };
-  for (const schema of [undefined, 2] as const)
-    expect(remoteReplyFor('status', current, {}, schema)).toEqual(baseline);
-  expect(remoteSnapshotFor(current, { appConnections: 1, approvalRules: 1 })).toEqual(baseline);
-  const accept = { appConnections: 1, approvalRules: 1 } as const;
+  expect.assert(isRemoteSnapshotCapabilities(hint));
+  expect(snapshotConsumer(hint).formats).toEqual({ searchSettings: true });
+  expect(supportedSnapshotFormats).toEqual({ searchSettings: true });
+  expect(supportedSnapshotCapabilities).toEqual({ contextInspector: 1 });
+  expect(
+    isRemoteSnapshotCapabilities({ ...hint, formats: { ...hint.formats, privateSdk: true } }),
+  ).toBe(false);
   expect(
     isRemoteSnapshotCapabilities({
-      type: 'snapshot-capabilities',
-      host: 'a'.repeat(64),
-      workspace: 'mock-workspace',
-      accept,
-      schema: 2,
+      ...hint,
+      formats: { ...hint.formats, approvalRules: 'unknown' },
+    }),
+  ).toBe(false);
+});
+test('the retained Goal target read uses the published goal-controls command and recovery path', () => {
+  const command = { type: 'goal.target', owner: { bot: scope.bot, chatRevision: 0 } };
+  expect(parseRuntimeCommand(command)).toEqual(command);
+  expect(recoveryReader(parseRuntimeCommand(command))).toBe(true);
+});
+
+test('the published keyless Search status is valid without claiming a configured credential', () => {
+  expect(
+    isSearchStatus({
+      revision: 0,
+      checkRevision: 0,
+      enabled: true,
+      provider: 'duckduckgo',
+      credentialConfigured: false,
+      credentialSource: 'none',
+      health: 'unchecked',
     }),
   ).toBe(true);
-  expect(remoteReplyFor('connect', current, accept, 2)).toEqual({
-    ...current,
-    appConnections: { catalog: true, oauthLoopback: false },
-  });
-  expect(remoteReplyFor('interaction.reply', interaction, {}, 2)).toEqual(baseline.interactions[0]);
-  expect(remoteReplyFor('interaction.reply', interaction, accept, 2)).toEqual(interaction);
-  const receipt: McpReceipt = {
-    id: 'mock-call',
-    bot: scope.bot,
-    run: scope.runId,
-    session: 'mock-session',
-    connection: 'mock-app',
-    configRevision: 1,
-    tool: 'synthetic_echo',
-    phase: 'settled',
-    preview: '{}',
-    createdAt: interaction.createdAt,
-    updatedAt: interaction.updatedAt,
-    policyDecision: interaction.policyDecision,
-  };
-  const { policyDecision: _receiptPolicy, ...legacyReceipt } = receipt;
-  expect(remoteReplyFor('mcp.receipt', receipt, {}, 2)).toEqual(legacyReceipt);
-  expect(remoteReplyFor('mcp.receipt', receipt, accept, 2)).toEqual(receipt);
-  expect(remoteReplyFor('mcp.calls', { bot: scope.bot, items: [receipt] }, {}, 2)).toEqual({
-    bot: scope.bot,
-    items: [legacyReceipt],
-  });
-  expect(current.appConnections.oauthLoopback).toBe(true);
-  expect(
-    isRemoteSnapshot({ ...current, appConnections: { catalog: true, token: 'synthetic' } }),
-  ).toBe(false);
-  expect(
-    isRemoteSnapshot({ ...current, approvalRules: { ...current.approvalRules, revision: -1 } }),
-  ).toBe(false);
-  expect(() =>
-    remoteReplyFor(
-      'status',
-      { ...current, appConnections: { catalog: true, token: 'synthetic' } },
-      accept,
-      2,
-    ),
-  ).toThrow('REMOTE_INVALID_SNAPSHOT');
-  expect(() =>
-    remoteReplyFor('status', { ...current, privateField: 'synthetic' }, accept, 2),
-  ).toThrow('REMOTE_INVALID_SNAPSHOT');
 });
+test.each([{ type: 'search.status' }])(
+  'published pure reader $type keeps the existing recovery-read behavior',
+  (command) => {
+    expect(recoveryReader(parseRuntimeCommand(command))).toBe(true);
+  },
+);
 test.each([
-  { type: 'budget.settings' },
-  { type: 'projects.list' },
   {
     type: 'model.saved',
     input: {
@@ -179,7 +115,7 @@ test('an original Context-capable controller still receives its supported model 
   expect(current.model).toHaveProperty('modelAccess');
 });
 
-test('schema 2 preserves existing read-only hints and rejects unknown accept keys', () => {
+test('schema 2 extends the same closed hint without changing the three read-only accept keys', () => {
   const hint = {
     type: 'snapshot-capabilities',
     host: 'a'.repeat(64),
@@ -194,6 +130,32 @@ test('schema 2 preserves existing read-only hints and rejects unknown accept key
     { ...hint, schema: '2' },
     { ...hint, token: 'synthetic-private' },
     { ...hint, accept: { modelAccess: 1 } },
+  ])
+    expect(isRemoteSnapshotCapabilities(invalid)).toBe(false);
+});
+
+test('schema2 is not proof of the retained independent Search wire format', () => {
+  const baseline = disconnected('ready');
+  const current = {
+    ...baseline,
+    searchSettings: true,
+  };
+  expect(remoteSnapshotFor(current, {}, 2)).toEqual(baseline);
+  const formats = { searchSettings: true };
+  const hint = {
+    type: 'snapshot-capabilities',
+    host: 'a'.repeat(64),
+    workspace: 'mock-workspace',
+    accept: { contextInspector: 1 },
+    schema: 2,
+    formats,
+  };
+  expect(isRemoteSnapshotCapabilities(hint)).toBe(true);
+  for (const invalid of [
+    { ...hint, formats: { approvalRules: true } },
+    { ...hint, formats: { delivery: 'all' } },
+    { ...hint, formats: { searchSettings: false } },
+    { ...hint, formats: { authorization: true } },
   ])
     expect(isRemoteSnapshotCapabilities(invalid)).toBe(false);
 });
@@ -530,7 +492,7 @@ test('never provides role or preference body refs and rejects oversized wire cap
   expect(isContextCapture(large)).toBe(false);
 });
 
-test('snapshot acceptance is an exact hint and copies only the three negotiated optional fields', () => {
+test('snapshot acceptance preserves Context and rejects unknown producer metadata', () => {
   const hint = {
     type: 'snapshot-capabilities',
     host: 'a'.repeat(64),
@@ -550,8 +512,6 @@ test('snapshot acceptance is an exact hint and copies only the three negotiated 
   const original = {
     ...disconnected('ready'),
     contextInspector: 1,
-    preflight: 1,
-    fileReview: 1,
     unexpected: 'must-still-be-rejected',
   };
   expect(remoteSnapshotFor(original)).toEqual({
@@ -563,7 +523,7 @@ test('snapshot acceptance is an exact hint and copies only the three negotiated 
     contextInspector: 1,
     unexpected: original.unexpected,
   });
-  expect(original).toMatchObject({ contextInspector: 1, preflight: 1, fileReview: 1 });
+  expect(original).toMatchObject({ contextInspector: 1 });
   expect(isRemoteSnapshot(remoteSnapshotFor(original, { contextInspector: 1 }))).toBe(false);
 });
 

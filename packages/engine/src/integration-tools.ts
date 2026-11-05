@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import type { McpPurposeScope, McpView } from '@daban/protocol';
+import type { McpView } from '@daban/protocol';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
 import { type Integrations, type McpSnapshot, mcpSecrets } from './integrations.js';

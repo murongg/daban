@@ -1,5 +1,10 @@
-import type { AppCommand, McpCommand, McpView } from '@daban/protocol';
-import { appCatalog } from './app-catalog.js';
+import {
+  type AppCommand,
+  type McpCommand,
+  type McpView,
+  appDirectoryProtocol,
+} from '@daban/protocol';
+import { appCatalog, appDirectoryEntries } from './app-catalog.js';
 import { errorCode, Fault } from './control.js';
 import type { ModelRuns } from './model.js';
 
@@ -10,12 +15,29 @@ export async function appCommand(
   loopback: boolean,
 ) {
   const bot =
-    command.type === 'app.catalog'
+    command.type === 'app.catalog' || command.type === 'app.directory'
       ? command.bot
-      : command.type === 'app.oauth.start'
+      : command.type === 'app.oauth.start' || command.type === 'app.oauth.connect'
         ? command.input.bot
         : command.target.bot;
   if (!(await models.profiles.get(bot))) throw new Fault('MCP_BOT_NOT_FOUND', 404);
+  if (command.type === 'app.directory') {
+    const records = await models.integrations.pendingOAuth(bot, true);
+    const seen = new Set<string>();
+    const attempts = records.filter((entry) => {
+      if (seen.has(entry.input.connection)) return false;
+      seen.add(entry.input.connection);
+      return true;
+    });
+    return {
+      protocol: appDirectoryProtocol,
+      bot,
+      apps: appDirectoryEntries(loopback),
+      connections: await models.integrations.oauthStates(bot, true),
+      attempts: attempts.slice(0, 50),
+      attemptsMore: records.length > 50,
+    };
+  }
   if (command.type === 'app.catalog')
     return {
       bot,
@@ -27,7 +49,8 @@ export async function appCommand(
     return models.integrations.oauthAttempt(command.target, command.attempt);
   if (!loopback) throw new Fault('OAUTH_CALLBACK_UNAVAILABLE', 403);
   if (origin !== 'interactive') throw new Fault('OAUTH_INTERACTIVE_REQUIRED', 403);
-  if (command.type === 'app.oauth.start') return models.oauth.start(command.input);
+  if (command.type === 'app.oauth.start' || command.type === 'app.oauth.connect')
+    return models.oauth.start(command.input);
   if (command.type === 'app.oauth.cancel')
     return models.oauth.cancel(command.target, command.attempt, command.requestId);
   return models.integrations.disconnectOAuth(command.target, command.requestId);

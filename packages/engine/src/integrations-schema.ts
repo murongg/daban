@@ -37,6 +37,7 @@ export const integrations = sqliteTable(
 
 export const oauthGrants = sqliteTable('oauth_grants', {
   connection: text().primaryKey(),
+  app: text().notNull().default('notion'),
   epoch: integer().notNull(),
   state: text().notNull(),
   issuer: text().notNull(),
@@ -47,7 +48,7 @@ export const oauthGrants = sqliteTable('oauth_grants', {
   tokenEndpoint: text('token_endpoint').notNull(),
   accessToken: text('access_token').notNull(),
   refreshToken: text('refresh_token'),
-  expiresAt: integer('expires_at').notNull(),
+  expiresAt: integer('expires_at'),
   scope: text().notNull(),
   identity: text(),
 });
@@ -57,6 +58,10 @@ export const oauthAttempts = sqliteTable('oauth_attempts', {
   hash: text().notNull(),
   bot: text().notNull(),
   connection: text().notNull(),
+  app: text().notNull().default('notion'),
+  clientId: text('client_id'),
+  clientSecret: text('client_secret'),
+  redirectUri: text('redirect_uri'),
   revision: integer().notNull(),
   name: text().notNull(),
   nameKey: text('name_key').notNull(),

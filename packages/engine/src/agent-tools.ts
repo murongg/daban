@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { type FileHandle, link, lstat, open, realpath, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import type { ProjectAccess, ProjectScope } from '@daban/protocol';
+import type { ProjectScope } from '@daban/protocol';
 import {
   browserTaskCapability,
   documentLimit,
@@ -35,7 +35,6 @@ import type { KnowledgeTools } from './knowledge-tools.js';
 import type { LocalComputerPort } from './local-computer.js';
 import type { MemoryTools } from './memory.js';
 import type { NotesTools } from './notes-tools.js';
-import type { ProjectResources } from './project-resources.js';
 import type { WorkspaceExecutor } from './remote-workspace.js';
 import { scheduleToolList } from './schedule-catalog.js';
 import type { ScheduleTools } from './schedule-tools.js';
@@ -181,8 +180,6 @@ export class AgentTools {
     readonly options: {
       execution?: WorkspaceExecutor;
       nativeOnly?: boolean;
-      projects?: ProjectResources;
-      projectAccess?: (run: AgentToolRun, access: ProjectAccess) => unknown;
     } = {},
   ) {
     if (runtime) {
@@ -274,12 +271,9 @@ export class AgentTools {
         : []),
     ];
   }
-  checkProject(run: AgentToolRun, access: ProjectAccess = 'read') {
-    if (!run.project) return;
-    this.options.projectAccess?.(run, access);
-    this.options.projects?.get(run.project, run.bot, access);
-    if (!this.options.projectAccess && !this.options.projects)
-      throw new Fault('PROJECT_ACCESS_DENIED', 403);
+  checkProject(run: Pick<AgentToolRun, 'project'>) {
+    // Retained history is not permission to run against the broader legacy workspace.
+    if (run.project) throw new Fault('PROJECT_RETIRED', 409);
   }
   async open(run: AgentToolRun) {
     this.checkProject(run);
@@ -288,11 +282,9 @@ export class AgentTools {
     if (!this.options.execution) return;
     const id = run.executionId ?? run.id;
     if (!id) throw new Fault('EXECUTION_INVALID_REQUEST');
-    const separateTask = run.project && id !== run.id;
     if (
-      (separateTask && !run.id) ||
-      ((separateTask || run.limit > legacyExecutionToolLimit) &&
-        !this.options.execution.snapshot?.capabilities.includes(taskRunCapability))
+      run.limit > legacyExecutionToolLimit &&
+      !this.options.execution.snapshot?.capabilities.includes(taskRunCapability)
     )
       throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
     const opened = this.opened.get(run);
@@ -315,9 +307,7 @@ export class AgentTools {
       'tools.open',
       {
         id,
-        ...(separateTask ? { taskRunId: run.id } : {}),
         bot: run.bot,
-        ...(run.project ? { project: run.project } : {}),
         workdir: run.workdir,
         canonicalRoot: run.canonicalRoot,
         ...(run.model ? { model: run.model } : {}),
@@ -418,7 +408,7 @@ export class AgentTools {
   ): Promise<ToolResult> {
     let trace: ToolTrace | undefined;
     try {
-      this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
+      this.checkProject(run);
       args = structuredClone(args);
       run.abort.signal.throwIfAborted();
       if (++run.toolCount > run.limit) {
@@ -479,7 +469,7 @@ export class AgentTools {
     if (!runId) throw new Fault('EXECUTION_RUN_CLOSED');
     // Opening the guest may wait; revalidate consent after that wait and before sending an effect.
     assertPolicy?.();
-    this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
+    this.checkProject(run);
     const operationId = randomUUID();
     let status = (await this.options.execution!.call(
       'tools.invoke',
@@ -513,7 +503,7 @@ export class AgentTools {
     if (!status.result || !Array.isArray(status.result.content))
       throw new Fault('INVALID_EXECUTOR_RESPONSE', 503);
     if (computer) await this.authorizeComputer?.(run);
-    this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
+    this.checkProject(run);
     return status.result;
   }
   private async target(run: AgentToolRun, value: unknown = '', write = false) {
@@ -526,26 +516,6 @@ export class AgentTools {
     )
       throw new Fault('INVALID_FILE', 400);
     this.checkProject(run);
-    if (run.project && this.options.projects) {
-      const resources = this.options.projects;
-      const reference = resources.reference(run.project, run.bot, run.taskRunId ?? run.id!);
-      const shared = value === '/shared' || value.startsWith('/shared/');
-      this.checkProject(run, shared && write ? 'write' : 'read');
-      const root = shared ? resources.files(reference) : run.canonicalRoot;
-      if (
-        (await realpath(run.workdir)) !== resources.workdir(reference) ||
-        run.canonicalRoot !== resources.workdir(reference)
-      )
-        throw new Fault('TASK_DIRECTORY_MOVED');
-      const relative = shared
-        ? value.slice('/shared'.length).replace(/^\/+/, '')
-        : value === '/workspace' || value.startsWith('/workspace/')
-          ? value.slice('/workspace'.length).replace(/^\/+/, '')
-          : value;
-      const file = path.resolve(root, relative);
-      if (!inside(root, file)) throw new Fault('INVALID_FILE', 400);
-      return { root, file };
-    }
     const root = await this.workspace.base();
     if ((await realpath(run.workdir)) !== run.canonicalRoot || !inside(root, run.canonicalRoot))
       throw new Fault('TASK_DIRECTORY_MOVED');
@@ -679,13 +649,8 @@ export class AgentTools {
     content: string | Buffer,
     createOnly = false,
   ) {
-    const root =
-      run.project && this.options.projects && !inside(run.canonicalRoot, file)
-        ? this.options.projects.files(
-            this.options.projects.reference(run.project, run.bot, run.taskRunId ?? run.id!),
-          )
-        : run.canonicalRoot;
-    this.checkProject(run, root === run.canonicalRoot ? 'read' : 'write');
+    const root = run.canonicalRoot;
+    this.checkProject(run);
     const parent = await realpath(path.dirname(file));
     if (!inside(root, parent)) throw new Fault('INVALID_FILE', 400);
     const directory = await open(
@@ -712,7 +677,7 @@ export class AgentTools {
         if (!info.isFile() || info.nlink !== 1 || !inside(root, opened))
           throw new Fault('INVALID_FILE', 400);
         run.abort.signal.throwIfAborted();
-        this.checkProject(run, root === run.canonicalRoot ? 'read' : 'write');
+        this.checkProject(run);
         await handle.truncate(0);
         await handle.writeFile(content, 'utf8');
         return { path: file, bytes: Buffer.byteLength(content) };
@@ -847,7 +812,7 @@ export class AgentTools {
     wireId?: string,
   ): Promise<ToolResult> {
     try {
-      this.checkProject(run, name.startsWith('browser_') ? 'browser' : 'read');
+      this.checkProject(run);
     } catch (error) {
       return {
         isError: true,

@@ -54,7 +54,10 @@ function remoteMethod(method: string, params: Record<string, unknown>) {
   if (method === 'media.open') return isRemoteMediaRequest(params);
   if (method === 'media.close') return exact(params, ['id']) && validAgentId(params.id);
   // App mutations require the local owned-renderer/native proof path, never peer or SDK claims.
-  if (method.startsWith('app.') && !['app.catalog', 'app.oauth.status'].includes(method))
+  if (
+    method.startsWith('app.') &&
+    !['app.catalog', 'app.directory', 'app.oauth.status'].includes(method)
+  )
     return false;
   if (remoteLocalEffects.has(method) || /^(setup|agent|vm|recovery)\./.test(method)) return false;
   try {
