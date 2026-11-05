@@ -8,6 +8,7 @@ import {
   isRemoteRpcRequest,
   isRemoteSnapshot,
   isRemoteSnapshotCapabilities,
+  isSearchStatus,
   parseRuntimeCommand,
   recoveryReader,
   remoteReplyFor,
@@ -16,6 +17,25 @@ import {
 import { expect, test } from 'vitest';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+test('the retained Goal target read uses the published goal-controls command and recovery path', () => {
+  const command = { type: 'goal.target', owner: { bot: scope.bot, chatRevision: 0 } };
+  expect(parseRuntimeCommand(command)).toEqual(command);
+  expect(recoveryReader(parseRuntimeCommand(command))).toBe(true);
+});
+
+test('the published keyless Search status is valid without claiming a configured credential', () => {
+  expect(
+    isSearchStatus({
+      revision: 0,
+      checkRevision: 0,
+      enabled: true,
+      provider: 'duckduckgo',
+      credentialConfigured: false,
+      credentialSource: 'none',
+      health: 'unchecked',
+    }),
+  ).toBe(true);
+});
 test.each([
   { type: 'approval.rules.list', scope: { kind: 'bot', bot: 'mock-bot' } },
   { type: 'projectMemory.status' },

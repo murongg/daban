@@ -1,13 +1,62 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { disconnected, type RuntimeSnapshot } from '@daban/protocol';
+import { disconnected, parseRuntimeCommand, type RuntimeSnapshot } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { RuntimeClient } from './client.js';
 import { secureDirectory } from './private-files.js';
 import { startPrototype } from './server.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+
+test('a retained Goal target read freezes its owner and validates the published response', async () => {
+  let release = () => {};
+  const token = new Promise<string>((resolve) => {
+    release = () => resolve('a'.repeat(64));
+  });
+  const owner = { bot: scope.bot, chatRevision: 0 };
+  const target = {
+    owner: { ...owner },
+    sessionId: 'mock-session',
+    goalId: 'mock-goal',
+    goalRevision: 2,
+    humanEpoch: 3,
+  };
+  const fetcher = vi.fn(async () => Response.json(target));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: () => token,
+    fetcher,
+  });
+  const command = parseRuntimeCommand({ type: 'goal.target', owner });
+  const pending = client.invoke(command);
+  owner.bot = 'mock-retargeted';
+  release();
+  expect(await pending).toEqual(target);
+  expect(fetcher).toHaveBeenCalledWith(
+    'http://127.0.0.1:12345/api/goals/target',
+    expect.objectContaining({ body: JSON.stringify({ owner: target.owner }) }),
+  );
+});
+
+test('keyless Search stays usable through the canonical client with the current public status DTO', async () => {
+  const status = {
+    revision: 1,
+    checkRevision: 0,
+    enabled: true,
+    provider: 'duckduckgo',
+    credentialConfigured: false,
+    credentialSource: 'none',
+    health: 'unchecked',
+  };
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async () => Response.json(status),
+  });
+  vi.spyOn(client, 'status').mockResolvedValue({ ...disconnected('ready'), searchSettings: true });
+  expect(await client.invoke({ type: 'search.status' })).toEqual(status);
+});
 
 test('consumer formatting is immutable per invoke and cannot leak between concurrent peers', async () => {
   const headers: (string | null)[] = [];
