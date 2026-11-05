@@ -1,4 +1,3 @@
-import { remoteAppSnapshot } from '../shared/apps';
 import { access } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -15,6 +14,7 @@ import {
   powerMonitor,
   session,
 } from 'electron';
+import { remoteAppSnapshot } from '../shared/apps';
 import { type MessageKey, type Parameters, translate } from '../shared/locale';
 import { Components, readComponentReference } from './components';
 import { HostAdmin } from './host-admin';

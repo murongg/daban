@@ -164,6 +164,7 @@ test.each(['fresh', 'approval', 'oauth', 'combined'] as const)(
           expect(receipt).not.toHaveProperty('policyDecision');
           if (hasOAuth)
             expect(await store.oauthGrant(connection)).toMatchObject({
+              app: 'notion',
               epoch: 1,
               state: 'connected',
               accessToken: 'synthetic-access',
@@ -187,6 +188,12 @@ test.each(['fresh', 'approval', 'oauth', 'combined'] as const)(
           );
           if (open) expect(names).toEqual(previousJournal);
           previousJournal = names;
+          if (hasApproval)
+            expect(
+              audit
+                .prepare('SELECT policyDecision FROM call_receipts WHERE id=?')
+                .get('mock-old-call')?.policyDecision,
+            ).toBe(JSON.stringify(decision));
           expect(
             audit
               .prepare('PRAGMA table_info(call_receipts)')

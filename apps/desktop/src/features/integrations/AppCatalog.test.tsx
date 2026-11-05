@@ -45,6 +45,7 @@ function fixture(verified = true) {
   const invoke = async (value: RuntimeCommand) => {
     commands.push(value);
     if (value.type === 'status' || value.type === 'connect') return { ok: true, value: snapshot };
+    if (value.type === 'app.directory') return { ok: false, error: 'OAUTH_UPGRADE_REQUIRED' };
     if (value.type === 'app.catalog')
       return {
         ok: true,
@@ -134,6 +135,7 @@ it('shows reviewed destinations, keeps Notion gated without account verification
   );
   expect(await screen.findByText('Notion')).toBeVisible();
   expect(screen.getByRole('button', { name: '连接 Notion' })).toBeDisabled();
+  await userEvent.click(screen.getByText('连接详情', { selector: 'summary' }));
   expect(await screen.findByText('https://mcp.notion.com')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '自定义远程 MCP' }));
   expect(custom).toHaveBeenCalledOnce();

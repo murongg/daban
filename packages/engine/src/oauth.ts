@@ -157,12 +157,13 @@ export class OAuth {
       await this.options.assertOwner?.(target.bot);
       const r = resource.data,
         m = metadata.data;
-      // Notion publishes its root resource; the reviewed metadata must still explicitly cover /mcp.
+      // Only the existing Notion contract permits its published root resource. New providers bind exactly to the reviewed resource.
       if (
         resource.status !== 200 ||
         metadata.status !== 200 ||
         !object(r) ||
-        (r.resource !== application.resource && r.resource !== application.issuer) ||
+        (r.resource !== application.resource &&
+          !(application.id === 'notion' && r.resource === application.issuer)) ||
         !Array.isArray(r.authorization_servers) ||
         r.authorization_servers.length !== 1 ||
         r.authorization_servers[0] !== application.issuer ||

@@ -5,11 +5,11 @@ import { request as https } from 'node:https';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { type AppCommand, appProviders, isAppCatalog } from '@daban/protocol';
 import { expect, test } from 'vitest';
-import { appProviders, isAppCatalog, type AppCommand } from '@daban/protocol';
 import { RuntimeClient } from './client.js';
-import type { OAuthPrivateReply } from './oauth.js';
 import { startNativeAgent } from './host-server.js';
+import type { OAuthPrivateReply } from './oauth.js';
 import { privateClientOptions } from './private-channel.js';
 import { secureDirectory } from './private-files.js';
 
@@ -259,6 +259,7 @@ test('Host app reads are public metadata while OAuth mutations require independe
     );
     const legacy = await client.invoke({ type: 'app.catalog', bot: 'mock-a' });
     expect(isAppCatalog(legacy)).toBe(true);
+    expect((legacy as { connections: unknown[] }).connections).toEqual([]);
     expect((legacy as { apps: unknown[] }).apps).toHaveLength(2);
     await client.appInteractive(
       {

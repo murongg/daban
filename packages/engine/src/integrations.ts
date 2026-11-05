@@ -7,12 +7,12 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   type AppConnect,
   type AppId,
-  appProvider,
   type AppOAuthPhase,
   type AppOAuthReceipt,
   type AppTarget,
-  isAppOAuthReceipt,
+  appProvider,
   isAppConnect,
+  isAppOAuthReceipt,
   isAppTarget,
   isMcpReceipt,
   legacyMcpCatalogToolLimit,
@@ -669,6 +669,8 @@ export class Integrations {
         const grant = db.select().from(oauthGrants).where(eq(oauthGrants.connection, row.id)).get();
         const provider = appProvider(grant?.app);
         if (!provider) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+        // Legacy clients identify every advertised OAuth account as Notion. Only v2 can name another provider.
+        if (!directory && provider.id !== 'notion') return undefined;
         const state = pending.some((a) => a.connection === row.id)
           ? ('authorizing' as const)
           : grant?.state === 'connected' || grant?.state === 'refreshing'
@@ -683,7 +685,8 @@ export class Integrations {
           ...(grant?.scope ? { scope: grant.scope } : {}),
           ...(grant?.expiresAt ? { expiresAt: grant.expiresAt } : {}),
         };
-      });
+      })
+      .filter((entry) => entry !== undefined);
   }
   async pendingOAuth(bot: string, directory = false) {
     await this.ready;

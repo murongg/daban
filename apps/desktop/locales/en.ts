@@ -3534,6 +3534,21 @@ export const english = {
   'models.fallbackToolsUnknown':
     'Fallback tool support is unconfirmed. Tasks with tools do not switch automatically.',
   'context.overview': 'Overview',
+  'apps.connect': 'Connect {0}',
+  'apps.adminApproval':
+    'monday.com custom clients require administrator approval. Complete it on the official page; the account remains unauthorized until the callback succeeds.',
+  'apps.details': 'Connection details',
+  'apps.restart': 'Start a new authorization',
+  'apps.upgradeRequired':
+    'Update the Host to connect these apps. Existing connections and custom Bearer remain available.',
+  'apps.partialHistory':
+    'Only recent authorization attempts are shown. Reconcile uncertain outcomes using the original request.',
+  'apps.checkNext': 'Next: check the connection, then explicitly select allowed tools.',
+  'apps.chooseTools': 'Connection check passed. Review and explicitly select tool permissions.',
+  'apps.accountImpact':
+    'Disconnect clears local credentials and invalidates tool access. Revoke provider-side access separately in the official account.',
+  'apps.transportDetails': 'Custom connection requirements',
+  'apps.addApp': 'Add an app',
   'apps.title': 'App connections',
   'apps.notion': 'Notion',
   'apps.custom': 'Custom remote MCP',
@@ -3576,3 +3591,5 @@ export const english = {
   'apps.publisher': 'Publisher: {0}',
   'apps.retryDisconnect': 'Check and retry this disconnect',
 } as const;
+
+export type MessageKey = keyof typeof english;

@@ -5,12 +5,12 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  appDirectoryProtocol,
   botBundleLimit,
   type ExecutionSnapshot,
   type Group,
   type GroupPage,
   isAppCommand,
-  appDirectoryProtocol,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,

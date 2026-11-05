@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { appProviders, isAppAuthorizeUrl } from '@daban/protocol';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { Integrations } from './integrations.js';
 import { OAuth, type OAuthOptions } from './oauth.js';
 import { secureDirectory } from './private-files.js';
@@ -18,6 +18,9 @@ async function fixture(provider: (typeof appProviders)[number]) {
   let refreshes = 0;
   let verifier = '';
   let noExpiry = false;
+  let shortExpiry = false;
+  let lostRefresh = false;
+  let wrongResource = false;
   let lostExchange = false;
   let leakScope = false;
   let owner = true;
@@ -34,13 +37,17 @@ async function fixture(provider: (typeof appProviders)[number]) {
     if (url === provider.resourceMetadata)
       return {
         status: 200,
-        data: { resource: provider.resource, authorization_servers: [provider.issuer] },
+        data: {
+          resource: wrongResource ? provider.issuer : provider.resource,
+          authorization_servers: [provider.issuer],
+        },
       };
     if (url === provider.metadata)
       return {
         status: 200,
         data: {
           issuer: provider.issuer,
+          protected_resources: [provider.resource],
           authorization_endpoint: provider.authorize,
           token_endpoint: provider.token,
           registration_endpoint: provider.register,
@@ -77,7 +84,10 @@ async function fixture(provider: (typeof appProviders)[number]) {
         verifier,
       );
       if (lostExchange) throw Error('SYNTHETIC_REPLY_LOST');
-    } else refreshes++;
+    } else {
+      refreshes++;
+      if (lostRefresh) throw Error('SYNTHETIC_REFRESH_REPLY_LOST');
+    }
     return {
       status: 200,
       data: {
@@ -85,7 +95,11 @@ async function fixture(provider: (typeof appProviders)[number]) {
         refresh_token: 'synthetic-refresh',
         token_type: 'Bearer',
         scope: leakScope ? 'synthetic-access' : provider.scope,
-        ...(noExpiry ? {} : { expires_in: 3600 }),
+        ...(noExpiry
+          ? {}
+          : {
+              expires_in: shortExpiry && body.get('grant_type') === 'authorization_code' ? 1 : 3600,
+            }),
       },
     };
   };
@@ -132,6 +146,15 @@ async function fixture(provider: (typeof appProviders)[number]) {
     callback,
     get counts() {
       return { registrations, exchanges, refreshes };
+    },
+    changeMetadataResource() {
+      wrongResource = true;
+    },
+    expireSoon() {
+      shortExpiry = true;
+    },
+    loseRefresh() {
+      lostRefresh = true;
     },
     noExpiry() {
       noExpiry = true;
@@ -182,7 +205,7 @@ test.each(providers)(
       expect((await f.store.read(f.input.connection, f.input.bot)).origin).toBe(
         new URL(provider.resource).origin,
       );
-      const publicData = JSON.stringify(await f.store.oauthStates(f.input.bot));
+      const publicData = JSON.stringify(await f.store.oauthStates(f.input.bot, true));
       expect(publicData).not.toMatch(
         /synthetic-access|synthetic-refresh|synthetic-client-secret|mock-client/,
       );
@@ -253,7 +276,7 @@ test.each(providers)(
       const { url } = await f.open();
       expect((await f.callback(url)).status).toBe(200);
       expect((await f.store.oauthGrant(f.input.connection))?.expiresAt).toBeNull();
-      expect((await f.store.oauthStates(f.input.bot))[0]).not.toHaveProperty('expiresAt');
+      expect((await f.store.oauthStates(f.input.bot, true))[0]).not.toHaveProperty('expiresAt');
       expect(await f.oauth.token(f.input.connection)).toBe('synthetic-access');
       expect(f.counts.refreshes).toBe(0);
     } finally {
@@ -284,7 +307,7 @@ test.each(providers)('$id never publishes a token echoed as a granted scope', as
     f.leakScope();
     expect((await f.callback(url)).status).toBe(400);
     expect(await f.store.oauthGrant(f.input.connection)).toBeUndefined();
-    expect(JSON.stringify(await f.store.oauthStates(f.input.bot))).not.toContain(
+    expect(JSON.stringify(await f.store.oauthStates(f.input.bot, true))).not.toContain(
       'synthetic-access',
     );
   } finally {
@@ -329,3 +352,130 @@ test('close drains an in-flight exchange before its SQLite owner can close', asy
     await f.close();
   }
 });
+
+test.each(providers)(
+  '$id cancels the original attempt and never exchanges a later callback',
+  async (provider) => {
+    const f = await fixture(provider);
+    try {
+      const { url, reply } = await f.open();
+      expect((await f.oauth.cancel(f.target, reply.receipt.attempt, f.input.requestId)).phase).toBe(
+        'cancelled',
+      );
+      await expect(f.callback(url)).rejects.toThrow();
+      expect(f.counts.exchanges).toBe(0);
+      expect(await f.store.oauthGrant(f.input.connection)).toBeUndefined();
+    } finally {
+      await f.close();
+    }
+  },
+);
+test.each(providers)(
+  '$id singleflights an expired grant refresh and preserves provider identity after restart',
+  async (provider) => {
+    const f = await fixture(provider);
+    try {
+      f.expireSoon();
+      const { url } = await f.open();
+      expect((await f.callback(url)).status).toBe(200);
+      expect(
+        await Promise.all([f.oauth.token(f.input.connection), f.oauth.token(f.input.connection)]),
+      ).toEqual(['synthetic-access', 'synthetic-access']);
+      expect(f.counts.refreshes).toBe(1);
+      await f.reopen();
+      expect(await f.oauth.token(f.input.connection)).toBe('synthetic-access');
+      expect((await f.store.oauthGrant(f.input.connection))?.app).toBe(provider.id);
+      expect(f.counts.refreshes).toBe(1);
+    } finally {
+      await f.close();
+    }
+  },
+);
+test.each(providers)(
+  '$id retains unknown refresh outcome without replay after restart or disconnect',
+  async (provider) => {
+    const f = await fixture(provider);
+    try {
+      f.expireSoon();
+      const { url } = await f.open();
+      expect((await f.callback(url)).status).toBe(200);
+      f.loseRefresh();
+      await expect(f.oauth.token(f.input.connection)).rejects.toMatchObject({
+        code: 'OAUTH_RECONNECT_REQUIRED',
+      });
+      await f.reopen();
+      await expect(f.oauth.token(f.input.connection)).rejects.toMatchObject({
+        code: 'OAUTH_RECONNECT_REQUIRED',
+      });
+      expect(f.counts.refreshes).toBe(1);
+      await f.store.disconnectOAuth({ ...f.target, revision: 1 }, 'mock-disconnect');
+      expect(
+        await f.store.oauthRegistration({ ...f.target, revision: 1 }, provider.id),
+      ).toBeUndefined();
+      await expect(f.oauth.token(f.input.connection)).rejects.toMatchObject({
+        code: 'OAUTH_RECONNECT_REQUIRED',
+      });
+      expect(f.counts.refreshes).toBe(1);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test.each(providers)(
+  '$id denial cancels only the original authorization without exchanging a code',
+  async (provider) => {
+    const f = await fixture(provider);
+    try {
+      const { url, reply } = await f.open();
+      const callback = new URL(url.searchParams.get('redirect_uri')!);
+      callback.searchParams.set('state', url.searchParams.get('state')!);
+      callback.searchParams.set('iss', provider.issuer);
+      callback.searchParams.set('error', 'access_denied');
+      expect((await fetch(callback)).status).toBe(200);
+      expect(await f.store.oauthAttempt(f.target, reply.receipt.attempt)).toMatchObject({
+        phase: 'cancelled',
+        error: 'OAUTH_DENIED',
+      });
+      expect(f.counts.exchanges).toBe(0);
+      expect(await f.store.oauthGrant(f.input.connection)).toBeUndefined();
+    } finally {
+      await f.close();
+    }
+  },
+);
+test.each(providers)(
+  '$id rejects an expired callback and preserves the expired receipt',
+  async (provider) => {
+    const f = await fixture(provider);
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      const { url, reply } = await f.open();
+      const expired = Date.now() + 601000;
+      clock = vi.spyOn(Date, 'now').mockReturnValue(expired);
+      expect((await f.callback(url)).status).toBe(400);
+      expect((await f.store.oauthAttempt(f.target, reply.receipt.attempt)).phase).toBe('expired');
+      expect(f.counts.exchanges).toBe(0);
+    } finally {
+      clock?.mockRestore();
+      await f.close();
+    }
+  },
+);
+
+test.each(providers.filter((provider) => provider.resource !== provider.issuer))(
+  '$id requires its exact reviewed protected resource, even if metadata lists that resource',
+  async (provider) => {
+    const f = await fixture(provider);
+    try {
+      f.changeMetadataResource();
+      expect((await f.oauth.start(f.input)).receipt).toMatchObject({
+        phase: 'failed',
+        error: 'OAUTH_METADATA_REJECTED',
+      });
+      expect(f.counts).toEqual({ registrations: 0, exchanges: 0, refreshes: 0 });
+    } finally {
+      await f.close();
+    }
+  },
+);

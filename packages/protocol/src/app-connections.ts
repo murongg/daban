@@ -1,5 +1,5 @@
-import { validAgentId } from './index.js';
 import { type AppId, appProvider, appProviders, isAppAuthorizeUrl } from './app-providers.js';
+import { validAgentId } from './index.js';
 
 export type AppOAuthPhase =
   | 'preparing'

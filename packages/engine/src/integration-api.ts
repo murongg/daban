@@ -1,8 +1,8 @@
 import {
   type AppCommand,
+  appDirectoryProtocol,
   type McpCommand,
   type McpView,
-  appDirectoryProtocol,
 } from '@daban/protocol';
 import { appCatalog, appDirectoryEntries } from './app-catalog.js';
 import { errorCode, Fault } from './control.js';
