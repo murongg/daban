@@ -164,7 +164,11 @@ export class SearchSettings {
   constructor(
     readonly file: string,
     readonly models: ModelSettings,
-    private readonly client: Pick<SearchClient, 'query'> = new SearchClient(),
+    private readonly client: Pick<SearchClient, 'query'> = new SearchClient(
+      undefined,
+      undefined,
+      path.join(path.dirname(models.file), 'network.json'),
+    ),
   ) {
     models.withConnectionChange = (connection, commit, removing) =>
       this.protect(connection, commit, removing);

@@ -14,7 +14,16 @@ const waitingRead = vi.hoisted(() => ({
   enter: () => {},
   wait: undefined as Promise<undefined> | undefined,
 }));
-const transport = vi.hoisted(() => ({ resolve: vi.fn(), dial: vi.fn(), request: vi.fn() }));
+const transport = vi.hoisted(() => ({
+  resolve: vi.fn(),
+  dial: vi.fn(),
+  request: vi.fn(),
+  tls: vi.fn(),
+}));
+vi.mock('node:tls', async (original) => ({
+  ...(await original<typeof import('node:tls')>()),
+  connect: transport.tls,
+}));
 vi.mock('node:fs/promises', async (original) => {
   const actual = await original<typeof import('node:fs/promises')>();
   return {
@@ -57,8 +66,78 @@ afterEach(async () => {
   transport.resolve.mockReset();
   transport.dial.mockReset();
   transport.request.mockReset();
+  transport.tls.mockReset();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
+
+test.each(['retired', 'cancelled', 'timeout', 'certificate'] as const)(
+  'a proxy TLS handshake sends no query after %s',
+  async (mode) => {
+    const socket = new PassThrough();
+    const tls = new PassThrough();
+    const handshake = barrier();
+    const abort = new AbortController();
+    transport.resolve.mockResolvedValue([{ address: '8.8.8.8', family: 4 }]);
+    transport.dial.mockResolvedValue(socket);
+    transport.tls.mockImplementation(() => {
+      handshake.enter();
+      return tls;
+    });
+    let current = true;
+    let sends = 0;
+    transport.request.mockImplementation(
+      (
+        options: { agent: { createConnection: () => unknown } },
+        callback: (response: EventEmitter) => unknown,
+      ) => {
+        options.agent.createConnection();
+        const response = Object.assign(new EventEmitter(), {
+          statusCode: 200,
+          headers: { 'content-type': 'text/html' },
+        });
+        return Object.assign(new EventEmitter(), {
+          end: () => {
+            sends++;
+            callback(response);
+            response.emit('data', Buffer.from('<p class="no-results">Synthetic empty result</p>'));
+            response.emit('end');
+          },
+        });
+      },
+    );
+    const pending = new SearchClient(undefined, mode === 'timeout' ? 20 : 30000).query(
+      'duckduckgo',
+      '',
+      'synthetic query',
+      abort.signal,
+      5,
+      () => {
+        if (!current) throw new Fault('UNAUTHORIZED', 403);
+      },
+    );
+    const outcome = pending.then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    await handshake.entered;
+    if (mode === 'retired') {
+      current = false;
+      tls.emit('secureConnect');
+    } else if (mode === 'cancelled') abort.abort();
+    else if (mode === 'certificate') tls.emit('error', new Error('Synthetic certificate refused'));
+    const codes = {
+      retired: 'UNAUTHORIZED',
+      cancelled: 'SEARCH_CANCELLED',
+      timeout: 'SEARCH_TIMEOUT',
+      certificate: 'SEARCH_UNAVAILABLE',
+    };
+    expect(await outcome).toMatchObject({ error: { code: codes[mode] } });
+    expect(sends).toBe(0);
+    expect(transport.request).not.toHaveBeenCalled();
+    expect(socket.destroyed).toBe(true);
+    expect(tls.destroyed).toBe(true);
+  },
+);
 async function fixture(client: ConstructorParameters<typeof SearchSettings>[2], legacy = false) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-search-fence-'));
   roots.push(root);

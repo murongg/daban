@@ -13,6 +13,7 @@ import { Fault } from './control.js';
 import { duckDuckGoResults } from './duckduckgo.js';
 import { dialAddress, publicAddress, resolvePublic } from './network.js';
 import { redact } from './redaction.js';
+import { searchProxy } from './search-proxy.js';
 
 const responseLimit = 1024 * 1024;
 const endpoints = {
@@ -56,7 +57,12 @@ type SearchRequest = (
   beforeSend?: () => unknown,
 ) => Promise<Response>;
 
-const pinnedRequest: SearchRequest = async (input, init = {}, beforeSend) => {
+async function pinnedRequest(
+  input: Parameters<SearchRequest>[0],
+  init: RequestInit = {},
+  beforeSend?: () => unknown,
+  networkFile?: string,
+) {
   const url = new URL(input instanceof Request ? input.url : String(input));
   if (
     !Object.values(endpoints).some((endpoint) => url.origin + url.pathname === endpoint) ||
@@ -72,14 +78,31 @@ const pinnedRequest: SearchRequest = async (input, init = {}, beforeSend) => {
   headers.set('accept-encoding', 'identity');
   headers.set('connection', 'close');
   headers.set('host', url.host);
-  const addresses = await resolvePublic(url.hostname, signal);
+  const upstream = await searchProxy(url, networkFile);
+  signal.throwIfAborted();
   beforeSend?.();
-  const socket = await dialAddress(addresses[0].address, 443, signal);
+  const addresses = await resolvePublic(url.hostname, signal, undefined, upstream);
+  beforeSend?.();
+  // CONNECT still targets the validated IP; the proxy must not resolve a different credential destination.
+  const socket = await dialAddress(addresses[0].address, 443, signal, upstream);
   const agent = new Agent({ keepAlive: false });
-  agent.createConnection = () =>
-    secureConnect({ socket, servername: url.hostname, rejectUnauthorized: true });
+  let tls: ReturnType<typeof secureConnect> | undefined;
   try {
+    signal.throwIfAborted();
     beforeSend?.();
+    tls = secureConnect({ socket, servername: url.hostname, rejectUnauthorized: true });
+    const connected = tls;
+    await bounded(
+      new Promise<undefined>((resolve, reject) => {
+        connected.once('secureConnect', () => resolve(undefined));
+        connected.once('error', reject);
+      }),
+      signal,
+    );
+    // Do not queue HTTP bytes before TLS: authority can be withdrawn while a proxy tunnel handshakes.
+    signal.throwIfAborted();
+    beforeSend?.();
+    agent.createConnection = () => connected;
     return await new Promise<Response>((resolve, reject) => {
       const request = httpsRequest(
         {
@@ -143,10 +166,11 @@ const pinnedRequest: SearchRequest = async (input, init = {}, beforeSend) => {
       }
     });
   } finally {
+    tls?.destroy();
     socket.destroy();
     agent.destroy();
   }
-};
+}
 
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -295,10 +319,15 @@ function statusFailure(response: Response) {
 }
 
 export class SearchClient {
+  private readonly request: SearchRequest;
   constructor(
-    private readonly request: SearchRequest = pinnedRequest,
+    request?: SearchRequest,
     private readonly timeoutMs = 30000,
-  ) {}
+    networkFile?: string,
+  ) {
+    this.request =
+      request ?? ((input, init, gate) => pinnedRequest(input, init, gate, networkFile));
+  }
 
   async query(
     provider: SearchProvider,

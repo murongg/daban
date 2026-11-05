@@ -7,7 +7,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-export async function tlsFixture(reply: (req: IncomingMessage, res: ServerResponse) => unknown) {
+export async function tlsFixture(
+  reply: (req: IncomingMessage, res: ServerResponse) => unknown,
+  hostname = 'mcp.example.test',
+) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-mcp-tls-'));
   const key = path.join(root, 'key.pem'),
     cert = path.join(root, 'cert.pem'),
@@ -32,9 +35,9 @@ export async function tlsFixture(reply: (req: IncomingMessage, res: ServerRespon
       '-days',
       '1',
       '-subj',
-      '/CN=mcp.example.test',
+      `/CN=${hostname}`,
       '-addext',
-      'subjectAltName=DNS:mcp.example.test',
+      `subjectAltName=DNS:${hostname}`,
       '-addext',
       'basicConstraints=critical,CA:TRUE',
     ]);
@@ -48,7 +51,7 @@ export async function tlsFixture(reply: (req: IncomingMessage, res: ServerRespon
     const port = address.port;
     return {
       server,
-      endpoint: `https://mcp.example.test:${port}/mcp?key=synthetic-url-secret`,
+      endpoint: `https://${hostname}:${port}/mcp?key=synthetic-url-secret`,
       ca,
       resolve: async () => [{ address: '8.8.8.8', family: 4 }],
       dial: async (_address: string, _port: number, signal: AbortSignal) => {

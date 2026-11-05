@@ -20,6 +20,8 @@ With a client and Host that include independent search, open Settings → Search
 
 Saving and refreshing status never dispatch a search. Test search asks for confirmation and sends one fixed query to the selected provider; DeepSeek/Brave may charge for it. Start a new task after configuring search; running tasks retain their captured configuration. Failures do not automatically retry or switch providers.
 
+Search uses the Host's saved `network.json` proxy when present (`null` explicitly disables it). Otherwise it uses `DSH_NETWORK_PROXY`, `https_proxy`/`HTTPS_PROXY`, or `all_proxy`/`ALL_PROXY`, respecting `no_proxy`/`NO_PROXY`. HTTP(S) proxies are supported; invalid settings fail without a direct retry. Set these on the Host process, which may run separately from the desktop client. This does not change the operating system's proxy settings or automatically read PAC settings. With proxy-mapped DNS addresses, public DNS resolution also follows the configured proxy; destination IP checks and TLS certificate verification remain required.
+
 ## How articles are read
 
 The reader downloads bounded HTML, removes scripts, hidden content, and navigation, then extracts readable content. Ordinary articles usually fit one response. Long sources are continued from the same temporary snapshot rather than downloading a new version for each segment.

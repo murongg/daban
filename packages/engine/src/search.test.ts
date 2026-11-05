@@ -4,7 +4,16 @@ import type { SearchProvider } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { SearchClient } from './search.js';
 
-const transport = vi.hoisted(() => ({ resolve: vi.fn(), dial: vi.fn(), request: vi.fn() }));
+const transport = vi.hoisted(() => ({
+  resolve: vi.fn(),
+  dial: vi.fn(),
+  request: vi.fn(),
+  tls: vi.fn(),
+}));
+vi.mock('node:tls', async (original) => ({
+  ...(await original<typeof import('node:tls')>()),
+  connect: transport.tls,
+}));
 vi.mock('./network.js', async (original) => ({
   ...(await original<typeof import('./network.js')>()),
   resolvePublic: transport.resolve,
@@ -394,7 +403,13 @@ test('invalid JSON, malformed source structures, excessive nesting and oversized
 });
 
 test('the default transport pins the validated public dial and refuses response redirects', async () => {
+  vi.stubEnv('no_proxy', '*');
   const socket = new PassThrough();
+  transport.tls.mockImplementation(() => {
+    const tls = new PassThrough();
+    queueMicrotask(() => tls.emit('secureConnect'));
+    return tls;
+  });
   transport.resolve.mockResolvedValue([{ address: '8.8.8.8', family: 4 }]);
   transport.dial.mockResolvedValue(socket);
   let options: Record<string, unknown> | undefined;
@@ -419,12 +434,18 @@ test('the default transport pins the validated public dial and refuses response 
   await expect(new SearchClient().query('deepseek', secret, 'synthetic')).rejects.toMatchObject({
     code: 'SEARCH_UNAVAILABLE',
   });
-  expect(transport.resolve).toHaveBeenCalledWith('api.deepseek.com', expect.any(AbortSignal));
-  expect(transport.dial).toHaveBeenCalledWith('8.8.8.8', 443, expect.any(AbortSignal));
+  expect(transport.resolve).toHaveBeenCalledWith(
+    'api.deepseek.com',
+    expect.any(AbortSignal),
+    undefined,
+    undefined,
+  );
+  expect(transport.dial).toHaveBeenCalledWith('8.8.8.8', 443, expect.any(AbortSignal), undefined);
   expect(transport.request).toHaveBeenCalledTimes(1);
   expect(options?.hostname).toBe('api.deepseek.com');
   expect(options?.path).toBe('/v1/tools/search');
   expect(socket.destroyed).toBe(true);
+  vi.unstubAllEnvs();
 });
 
 test('unknown runtime providers never receive a credential', async () => {
