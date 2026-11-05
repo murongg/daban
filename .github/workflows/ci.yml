@@ -47,7 +47,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends apparmor bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
+          sudo apt-get install -y --no-install-recommends apparmor apparmor-profiles bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
+          # Loading the distro bwrap profile retains Ubuntu's system-wide userns restriction.
+          bwrap_userns_policy="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)"
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = "$bwrap_userns_policy"
+          echo "AppArmor userns restriction remains $bwrap_userns_policy"
       - name: Install Chromium for profile isolation regressions
         if: runner.os == 'Linux'
         run: npx --no-install playwright install --with-deps chromium

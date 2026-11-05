@@ -1,15 +1,41 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
+import {
+  type FileHandle,
+  lstat,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ModelRuns, type TrajectoryCase } from '@daban/engine/agent';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, expect, type MockInstance, test, vi } from 'vitest';
 import { smokeCases, unknownCase } from './trajectory-cases.ts';
 import {
   collectTrajectoryArtifacts,
   readTrajectoryArtifact,
   runTrajectoryFixture,
 } from './trajectory-fixture.ts';
+
+const frozenStats = vi.hoisted(() => new Map<string, BigIntStats>());
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...original,
+    lstat: async (
+      file: Parameters<typeof original.lstat>[0],
+      options?: Parameters<typeof original.lstat>[1],
+    ) => {
+      const frozen = typeof file === 'string' ? frozenStats.get(file) : undefined;
+      return frozen ?? original.lstat(file, options);
+    },
+  };
+});
 
 const temporary: string[] = [];
 async function directory() {
@@ -20,6 +46,7 @@ async function directory() {
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  frozenStats.clear();
   await Promise.all(temporary.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -73,6 +100,129 @@ test('a same-sized rewrite during a stable read is unknown', async () => {
     return bytes;
   });
   expect(result).toStrictEqual({ path: 'changed.txt', state: 'unknown', reason: 'changed' });
+});
+
+test.each(['SYNTHETIC-A', 'SYNTHETIC-B'])(
+  'stable metadata still requires byte agreement after reading A and writing %s',
+  async (next) => {
+    const root = await directory();
+    const file = path.join(root, 'same-metadata.txt');
+    const original = Buffer.from('SYNTHETIC-A');
+    await writeFile(file, original);
+    const phases: string[] = [];
+    let firstLength = -1;
+    let eofLength = -1;
+    let readerClosed = false;
+    let observed = Buffer.alloc(0);
+    const reader = vi.fn(async (handle: FileHandle) => {
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, 'close').mockImplementation(async () => {
+        await close();
+        readerClosed = true;
+      });
+      const snapshot = await handle.stat({ bigint: true });
+      frozenStats.set(file, snapshot);
+      vi.spyOn(handle, 'stat').mockResolvedValue(snapshot);
+      const bytes = Buffer.alloc(original.length);
+      firstLength = (await handle.read(bytes, 0, bytes.length, null)).bytesRead;
+      eofLength = (await handle.read(Buffer.alloc(1), 0, 1, null)).bytesRead;
+      phases.push('read-A-at-EOF');
+      const writer = await open(file, 'r+');
+      try {
+        await writer.write(Buffer.from(next), 0, original.length, 0);
+        await writer.sync();
+      } finally {
+        await writer.close();
+      }
+      phases.push('writer-closed');
+      const confirmation = await open(file, 'r');
+      try {
+        const bytes = Buffer.alloc(original.length + 1);
+        const { bytesRead } = await confirmation.read(bytes, 0, bytes.length, 0);
+        observed = bytes.subarray(0, bytesRead);
+      } finally {
+        await confirmation.close();
+      }
+      phases.push('path-bytes-confirmed', 'return-A');
+      return bytes;
+    });
+    const result = await readTrajectoryArtifact(root, 'same-metadata.txt', reader);
+    expect(firstLength).toBe(original.length);
+    expect(eofLength).toBe(0);
+    expect(readerClosed).toBe(true);
+    expect(observed.toString()).toBe(next);
+    expect(phases).toStrictEqual([
+      'read-A-at-EOF',
+      'writer-closed',
+      'path-bytes-confirmed',
+      'return-A',
+    ]);
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(result).toStrictEqual(
+      next === 'SYNTHETIC-A'
+        ? {
+            path: 'same-metadata.txt',
+            state: 'verified',
+            size: original.length,
+            sha256: createHash('sha256').update(original).digest('hex'),
+          }
+        : { path: 'same-metadata.txt', state: 'unknown', reason: 'changed' },
+    );
+  },
+);
+
+test('verification rereads keep the artifact byte cap after growth with unchanged metadata', async () => {
+  const root = await directory();
+  const file = path.join(root, 'growing.txt');
+  const bytes = Buffer.from('SYNTHETIC-A');
+  const limit = 1024 * 1024;
+  await writeFile(file, bytes);
+  let reads: MockInstance<FileHandle['read']> | undefined;
+  const result = await readTrajectoryArtifact(root, 'growing.txt', async (handle) => {
+    const snapshot = await handle.stat({ bigint: true });
+    frozenStats.set(file, snapshot);
+    vi.spyOn(handle, 'stat').mockResolvedValue(snapshot);
+    const first = Buffer.alloc(bytes.length);
+    await handle.read(first, 0, first.length, null);
+    await writeFile(file, Buffer.alloc(limit + 129, 'B'));
+    reads = vi.spyOn(handle, 'read');
+    return first;
+  });
+  expect(result).toStrictEqual({ path: 'growing.txt', state: 'unknown', reason: 'changed' });
+  expect(reads).toBeDefined();
+  const calls = reads!.mock.calls as readonly (readonly unknown[])[];
+  expect(calls.length).toBeGreaterThan(0);
+  expect(calls[0][3]).toBe(0);
+  let total = 0;
+  for (const observation of reads!.mock.results) {
+    expect(observation.type).toBe('return');
+    if (observation.type === 'return') total += (await observation.value).bytesRead;
+  }
+  expect(total).toBe(limit + 1);
+});
+
+test('a path replacement after verification bytes are read still invalidates the capture', async () => {
+  const root = await directory();
+  const file = path.join(root, 'late-replaced.txt');
+  const bytes = Buffer.from('SYNTHETIC-A');
+  await writeFile(file, bytes);
+  let checks = 0;
+  const result = await readTrajectoryArtifact(root, 'late-replaced.txt', async (handle) => {
+    const snapshot = await handle.stat({ bigint: true });
+    frozenStats.set(root, await lstat(root, { bigint: true }));
+    vi.spyOn(handle, 'stat').mockImplementation(async () => {
+      if (++checks === 2) {
+        await rename(file, path.join(root, 'retired.txt'));
+        await writeFile(file, bytes);
+      }
+      return snapshot;
+    });
+    const first = Buffer.alloc(bytes.length);
+    await handle.read(first, 0, first.length, null);
+    return first;
+  });
+  expect(checks).toBe(2);
+  expect(result).toStrictEqual({ path: 'late-replaced.txt', state: 'unknown', reason: 'changed' });
 });
 
 test('a pathname replaced during a stable read cannot certify the original opened bytes', async () => {

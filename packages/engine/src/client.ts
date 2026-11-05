@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import {
+  projectMemoryFingerprint,
+  matchesProjectMemoryReceipt,
+  isProjectPublicationPreview,
+  isProjectMemoryReceipt,
+  isProjectMemoryCommand,
+  isProjectMemoryAvailability,
+  isProjectDocumentVersion,
+  isProjectDocumentInfo,
+  isProjectDocument,
+  isMemoryCandidate,
   matchesApprovalReceipt,
   sameApprovalScope,
   recoveryReader,
@@ -2157,6 +2167,109 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
+    }
+    if (isProjectMemoryCommand(command)) {
+      const captured = structuredClone(command);
+      const signature =
+        captured.type === 'projectMemory.write' || captured.type === 'projectMemory.decide'
+          ? await projectMemoryFingerprint(captured.request)
+          : undefined;
+      const { type, ...payload } = captured;
+      const value = await this.api(
+        `/api/project-memory/${type.slice('projectMemory.'.length)}`,
+        payload,
+      );
+      const invalid = () => {
+        throw new Error('INVALID_PROJECT_MEMORY_RESPONSE');
+      };
+      if (captured.type === 'projectMemory.status') {
+        if (!isProjectMemoryAvailability(value)) invalid();
+      } else {
+        const scope = 'scope' in captured ? captured.scope : captured.request.scope;
+        if (captured.type === 'projectMemory.preview') {
+          if (!isProjectPublicationPreview(value) || !sameProjectScope(value.scope, scope))
+            invalid();
+        } else if (captured.type === 'projectMemory.list') {
+          if (
+            !Array.isArray(value) ||
+            value.length > 100 ||
+            !value.every(
+              (item) => isProjectDocumentInfo(item) && item.projectId === scope.projectId,
+            )
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.read') {
+          if (
+            !isProjectDocument(value) ||
+            value.projectId !== scope.projectId ||
+            value.id !== captured.document.id ||
+            value.revision !== captured.document.revision
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.versions') {
+          if (
+            !Array.isArray(value) ||
+            value.length > 20 ||
+            !value.every(
+              (item) =>
+                isProjectDocumentVersion(item) &&
+                item.projectId === scope.projectId &&
+                item.id === captured.id &&
+                (captured.before === undefined || item.revision < captured.before),
+            )
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.candidate') {
+          if (
+            !isMemoryCandidate(value) ||
+            value.projectId !== scope.projectId ||
+            value.id !== captured.id
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.candidates') {
+          if (
+            !Array.isArray(value) ||
+            value.length > 200 ||
+            !value.every(
+              (item) =>
+                isMemoryCandidate(item) &&
+                item.projectId === scope.projectId &&
+                item.state === (captured.state ?? 'pending'),
+            )
+          )
+            invalid();
+        } else {
+          const requestId =
+            captured.type === 'projectMemory.receipt'
+              ? captured.requestId
+              : captured.request.requestId;
+          if (
+            !isProjectMemoryReceipt(value) ||
+            value.requestId !== requestId ||
+            value.scope.projectId !== scope.projectId
+          )
+            invalid();
+          if (
+            captured.type === 'projectMemory.receipt' &&
+            captured.signature !== undefined &&
+            isProjectMemoryReceipt(value) &&
+            value.state === 'complete' &&
+            value.signature !== captured.signature
+          )
+            invalid();
+          if (
+            captured.type !== 'projectMemory.receipt' &&
+            !matchesProjectMemoryReceipt(
+              value,
+              captured.type === 'projectMemory.write' ? 'write' : 'decide',
+              captured.request,
+              signature!,
+            )
+          )
+            invalid();
+        }
+      }
+      return value;
     }
     if (command.type === 'projects.status') return api('/api/projects/status', {});
     if (command.type === 'projects.select')

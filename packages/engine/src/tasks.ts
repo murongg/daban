@@ -29,6 +29,7 @@ import {
   isGoalProgress,
   isGoalResumeTarget,
   isModelAttempts,
+  isProjectDocumentRef,
   isProjectScope,
   isReplyStream,
   isReviewSelection,
@@ -276,11 +277,17 @@ const phases = new Set([
   'stopped',
   'interrupted',
 ]);
+const projectReads = (value: unknown) =>
+  Array.isArray(value) &&
+  value.length <= 100 &&
+  value.every(isProjectDocumentRef) &&
+  new Set(value.map((item) => item.id)).size === value.length;
 export interface TaskRecord {
   fileReview?: import('./file-review.js').ReviewPointer;
   contextCaptures?: ContextArchive;
   contextCaptureFailed?: true;
   delivery?: DeliveryReference;
+  projectDocuments?: import('@daban/protocol').ProjectDocumentRef[];
   approvalMode?: ApprovalMode;
   budget?: BudgetScope;
   activeMs?: number;
@@ -464,6 +471,11 @@ export class TaskJournal {
           delete task.automationOutput;
         if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
           delete task.goalSession;
+        if (
+          task.projectDocuments !== undefined &&
+          (!task.project || !projectReads(task.projectDocuments))
+        )
+          delete task.projectDocuments;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
         if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
@@ -551,6 +563,11 @@ export class TaskJournal {
       throw new Fault('INVALID_FILE_REVIEW', 400);
     if (value.delivery !== undefined && !isDeliveryReference(value.delivery))
       throw new Fault('INVALID_DELIVERY_REFERENCE', 400);
+    if (
+      value.projectDocuments !== undefined &&
+      (!value.project || !projectReads(value.projectDocuments))
+    )
+      throw new Fault('INVALID_PROJECT_MEMORY', 400);
     if (value.budget !== undefined && !isBudgetScope(value.budget))
       throw new Fault('INVALID_BUDGET_SCOPE', 400);
     if (
@@ -588,6 +605,7 @@ export class TaskJournal {
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
       'delivery',
+      'projectDocuments',
       'budget',
       'activeMs',
       'attemptSummary',

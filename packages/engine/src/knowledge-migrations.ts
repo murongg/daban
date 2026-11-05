@@ -15,4 +15,18 @@ export const migrations: Migration[] = [
     hash: '71213c3b62e12d379ede0a0830f1cfb76ae602729c87f592bdf695b1b420717b',
     name: '20261103131204_baseline',
   },
+  {
+    sql: [
+      'CREATE TABLE `project_candidates` (\n\t`id` text PRIMARY KEY,\n\t`project` text NOT NULL,\n\t`scopeRevision` integer NOT NULL,\n\t`proposer` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`state` text NOT NULL,\n\t`content` text NOT NULL,\n\t`reason` text NOT NULL,\n\t`refs` text NOT NULL,\n\t`digest` text NOT NULL,\n\t`created` text NOT NULL,\n\t`updated` text NOT NULL,\n\t`reviewed` text,\n\tCONSTRAINT `project_candidate_dedup` UNIQUE(`project`,`scopeRevision`,`proposer`,`digest`)\n);\n',
+      '\nCREATE TABLE `project_documents` (\n\t`id` text PRIMARY KEY,\n\t`project` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`title` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`content` text NOT NULL,\n\t`bytes` integer NOT NULL,\n\t`deleted` integer NOT NULL,\n\t`origin` text,\n\t`created` text NOT NULL,\n\t`updated` text NOT NULL\n);\n',
+      '\nCREATE TABLE `project_memory_operations` (\n\t`project` text NOT NULL,\n\t`actor` text NOT NULL,\n\t`request` text NOT NULL,\n\t`signature` text NOT NULL,\n\t`result` text NOT NULL,\n\tCONSTRAINT `project_memory_operations_pk` PRIMARY KEY(`project`, `actor`, `request`)\n);\n',
+      '\nCREATE TABLE `project_revisions` (\n\t`project` text NOT NULL,\n\t`document` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`title` text NOT NULL,\n\t`content` text NOT NULL,\n\t`bytes` integer NOT NULL,\n\t`deleted` integer NOT NULL,\n\t`origin` text,\n\t`at` text NOT NULL,\n\tCONSTRAINT `project_revisions_pk` PRIMARY KEY(`project`, `document`, `revision`)\n);\n',
+      '\nCREATE INDEX `project_candidate_owner` ON `project_candidates` (`project`,`proposer`,`state`);',
+      '\nCREATE INDEX `project_document_owner` ON `project_documents` (`project`,`deleted`,`updated`);',
+    ],
+    bps: true,
+    folderMillis: 1793816742000,
+    hash: '400df9992d2b2580a503ea138acbd6f35cd332c02c44483e188c1768ea2570b4',
+    name: '20261104182542_project-memory',
+  },
 ];

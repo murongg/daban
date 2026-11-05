@@ -44,6 +44,7 @@ import {
   isProjectCommand,
   isProjectFileRequest,
   isProjectScope,
+  isProjectMemoryCommand,
   isRecoveryRequest,
   isScheduleInput,
   isSchedulePatch,
@@ -89,6 +90,8 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (isApprovalRulesCommand(value)) return value;
   if (!object(value) || typeof value.type !== 'string') return fail();
   if (value.type.startsWith('delivery.')) return isDeliveryCommand(value) ? value : fail();
+  if (value.type.startsWith('projectMemory.'))
+    return isProjectMemoryCommand(value) ? value : fail();
   if (isAutomationCommand(value)) return value;
   if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
