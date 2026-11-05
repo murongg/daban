@@ -1,4 +1,13 @@
 export const english = {
+  'search.duckduckgoOption': 'DuckDuckGo (no API key)',
+  'search.keylessCredential': 'Keyless search; no credentials needed',
+  'search.keylessHint':
+    'No API key needed. Searches DuckDuckGo public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
+  'search.confirmKeyless':
+    'Send one fixed search without personal content to DuckDuckGo. No search API key is needed. This will not retry automatically or switch providers.',
+  'search.healthKeylessForbidden':
+    'DuckDuckGo restricted this request or requires verification. Try again later explicitly.',
+
   'search.independentKeyRequired':
     'Enter an independent API key for this search provider. The previous credential cannot be reused for this save.',
   'search.keyReplacementHint': 'This save needs a new independent key; it cannot be left blank.',

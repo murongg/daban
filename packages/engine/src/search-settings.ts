@@ -20,6 +20,7 @@ import {
   type SearchResult,
   type SearchStatus,
   type SearchUpdate,
+  searchRequiresKey,
   validAgentId,
   validSearchKey,
 } from '@daban/protocol';
@@ -94,6 +95,7 @@ function configValue(value: unknown): value is Config {
   )
     return false;
   if (value.credential !== undefined) {
+    if (value.provider === 'duckduckgo') return false;
     const credential = value.credential;
     if (!object(credential)) return false;
     if (credential.kind === 'key') {
@@ -215,17 +217,30 @@ export class SearchSettings {
         }
       } catch (error) {
         if (errorCode(error) !== 'ENOENT') throw error;
-        const legacy = await this.models.searchConnection();
+        // A new search configuration must not infer a paid search choice from inference credentials.
         config = {
           version: 1,
           revision: 0,
           checkRevision: 0,
           enabled: true,
-          provider: 'deepseek',
-          ...(legacy
-            ? { credential: { kind: 'legacy-linked', connection: legacy.id } as Linked }
-            : {}),
+          provider: 'duckduckgo',
         };
+        await this.persist(config);
+      }
+      if (
+        !this.initialized &&
+        config.provider === 'deepseek' &&
+        config.enabled &&
+        config.revision === 0 &&
+        config.checkRevision === 0 &&
+        !config.credential &&
+        !config.receipt &&
+        !config.check &&
+        !config.health
+      ) {
+        // Earlier versions created this empty default on reads; it records no saved provider choice.
+        config = { ...config, provider: 'duckduckgo', revision: 1 };
+        this.generation++;
         await this.persist(config);
       }
       if (!this.initialized && config.check?.result.phase === 'claimed') {
@@ -301,14 +316,20 @@ export class SearchSettings {
           : config.credential
             ? 'legacy-linked'
             : 'none',
-      health: !config.enabled ? 'disabled' : !config.credential ? 'unconfigured' : 'unchecked',
+      health: !config.enabled
+        ? 'disabled'
+        : searchRequiresKey(config.provider) && !config.credential
+          ? 'unconfigured'
+          : 'unchecked',
     };
     if (config.enabled && config.credential?.kind === 'legacy-linked') {
       // A stored reference is not proof that its destination is still authorized for the old key.
       const available = await this.key(config).catch(() => undefined);
       if (!available) return { ...base, health: 'unavailable', error: 'SEARCH_LEGACY_UNAVAILABLE' };
     }
-    return config.enabled && config.credential && config.health
+    return config.enabled &&
+      (!searchRequiresKey(config.provider) || config.credential) &&
+      config.health
       ? { ...config.health, ...base, health: config.health.health }
       : base;
   }
@@ -325,10 +346,17 @@ export class SearchSettings {
         return structuredClone(config.receipt.result);
       }
       if (config.revision !== input.revision) throw new Fault('SEARCH_SETTINGS_CONFLICT');
-      if (input.provider !== config.provider && !input.key)
+      const needsKey = searchRequiresKey(input.provider);
+      if (needsKey && input.provider !== config.provider && !input.key)
         throw new Fault('SEARCH_CREDENTIAL_REQUIRED', 400);
-      const credential = input.key ? { kind: 'key' as const, key: input.key } : config.credential;
-      if (input.enabled && !credential) throw new Fault('SEARCH_CREDENTIAL_REQUIRED', 400);
+      // Retire the old secret when selecting keyless search; it must never be forwarded to that provider.
+      const credential = !needsKey
+        ? undefined
+        : input.key
+          ? { kind: 'key' as const, key: input.key }
+          : config.credential;
+      if (input.enabled && needsKey && !credential)
+        throw new Fault('SEARCH_CREDENTIAL_REQUIRED', 400);
       if (
         input.enabled &&
         credential?.kind === 'legacy-linked' &&
@@ -399,7 +427,7 @@ export class SearchSettings {
       return {
         revision: config.revision,
         provider: config.provider,
-        available: config.enabled && !!key,
+        available: config.enabled && (!searchRequiresKey(config.provider) || !!key),
         binding: digest([
           config.revision,
           config.provider,
@@ -421,8 +449,8 @@ export class SearchSettings {
       )
         throw new Fault('SEARCH_CONFIG_CHANGED');
       if (!config.enabled) throw new Fault('SEARCH_DISABLED');
-      if (!key) throw new Fault('SEARCH_NOT_CONFIGURED');
-      return key;
+      if (searchRequiresKey(config.provider) && !key) throw new Fault('SEARCH_NOT_CONFIGURED');
+      return key || '';
     });
   }
   async query(
@@ -482,12 +510,17 @@ export class SearchSettings {
       if (config.checkRevision !== input.checkRevision) throw new Fault('SEARCH_CHECK_CONFLICT');
       if (!config.enabled) throw new Fault('SEARCH_DISABLED');
       const key = await this.key(config);
-      if (!key) throw new Fault('SEARCH_NOT_CONFIGURED');
+      if (searchRequiresKey(config.provider) && !key) throw new Fault('SEARCH_NOT_CONFIGURED');
       const snapshot: SearchCapture = {
         revision: config.revision,
         provider: config.provider,
         available: true,
-        binding: digest([config.revision, config.provider, config.enabled, digest(key)]),
+        binding: digest([
+          config.revision,
+          config.provider,
+          config.enabled,
+          key ? digest(key) : null,
+        ]),
       };
       config.checkRevision++;
       const result: SearchReceipt = {
@@ -499,7 +532,7 @@ export class SearchSettings {
         status: await this.statusOf(config),
       };
       config.check = { fingerprint, result };
-      // Commit the claim durably before the first billable request can leave this owner.
+      // Commit the claim durably before the first provider request can leave this owner.
       await this.persist(config);
       return { snapshot, claimed: result };
     });

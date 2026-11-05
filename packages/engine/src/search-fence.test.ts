@@ -68,6 +68,19 @@ async function fixture(client: ConstructorParameters<typeof SearchSettings>[2], 
       mode: 0o600,
     });
   const search = new SearchSettings(path.join(root, 'search.json'), models, client);
+  if (legacy)
+    await writeFile(
+      search.file,
+      JSON.stringify({
+        version: 1,
+        revision: 0,
+        checkRevision: 0,
+        enabled: true,
+        provider: 'deepseek',
+        credential: { kind: 'legacy-linked', connection: 'deepseek-official' },
+      }),
+      { mode: 0o600 },
+    );
   if (!legacy)
     await search.configure({
       requestId: 'mock-search-key',
@@ -104,9 +117,14 @@ test('the Host gate is checked after asynchronous search configuration reads bef
   expect(supplier).not.toHaveBeenCalled();
 });
 
-test.each(['resolve', 'dial'] as const)(
-  'the final gate after %s prevents HTTP bytes and closes an acquired socket',
-  async (stage) => {
+test.each([
+  ['resolve', 'brave'],
+  ['dial', 'brave'],
+  ['resolve', 'duckduckgo'],
+  ['dial', 'duckduckgo'],
+] as const)(
+  'the final gate after %s prevents %s HTTP bytes and closes an acquired socket',
+  async (stage, provider) => {
     const gate = barrier();
     const socket = new PassThrough();
     let current = true;
@@ -144,8 +162,8 @@ test.each(['resolve', 'dial'] as const)(
     );
     const client = new SearchClient();
     const pending = Reflect.apply(client.query, client, [
-      'brave',
-      'synthetic-search-key',
+      provider,
+      provider === 'duckduckgo' ? '' : 'synthetic-search-key',
       'synthetic query',
       undefined,
       5,

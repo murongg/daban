@@ -1,6 +1,7 @@
 import { validAgentId } from './id.js';
 
-export type SearchProvider = 'deepseek' | 'brave';
+export type SearchProvider = 'deepseek' | 'brave' | 'duckduckgo';
+export const searchRequiresKey = (provider: SearchProvider) => provider !== 'duckduckgo';
 export interface SearchSource {
   url: string;
   title?: string;
@@ -106,7 +107,7 @@ const fields = (value: Record<string, unknown>, allowed: string[]) =>
 const revision = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) >= 0;
 export const isSearchProvider = (value: unknown): value is SearchProvider =>
-  value === 'deepseek' || value === 'brave';
+  value === 'deepseek' || value === 'brave' || value === 'duckduckgo';
 export function isSearchErrorCode(value: unknown): value is SearchErrorCode {
   return searchErrorCodes.some((code) => code === value);
 }
@@ -140,9 +141,14 @@ export function isSearchStatus(value: unknown): value is SearchStatus {
     typeof value.credentialConfigured === 'boolean' &&
     ['none', 'independent', 'legacy-linked'].includes(String(value.credentialSource)) &&
     value.credentialConfigured === (value.credentialSource !== 'none') &&
+    (searchRequiresKey(value.provider) ||
+      (value.credentialSource === 'none' && value.health !== 'unconfigured')) &&
     (value.credentialSource !== 'legacy-linked' || value.provider === 'deepseek') &&
     (value.enabled ? value.health !== 'disabled' : value.health === 'disabled') &&
-    (value.credentialConfigured || !value.enabled || value.health === 'unconfigured') &&
+    (value.credentialConfigured ||
+      !searchRequiresKey(value.provider) ||
+      !value.enabled ||
+      value.health === 'unconfigured') &&
     health.includes(value.health as SearchHealth) &&
     (value.checkedAt === undefined ||
       (typeof value.checkedAt === 'string' &&
@@ -161,6 +167,7 @@ export function isSearchUpdate(value: unknown): value is SearchUpdate {
     revision(value.revision) &&
     typeof value.enabled === 'boolean' &&
     isSearchProvider(value.provider) &&
+    (searchRequiresKey(value.provider) || value.key === undefined || value.key === '') &&
     (value.key === undefined || value.key === '' || validSearchKey(value.key))
   );
 }

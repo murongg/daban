@@ -65,6 +65,21 @@ const update = (overrides: Partial<SearchUpdate> = {}): SearchUpdate => ({
   ...overrides,
 });
 
+async function savedLegacy(search: SearchSettings, connection = 'deepseek-official') {
+  await writeFile(
+    search.file,
+    JSON.stringify({
+      version: 1,
+      revision: 0,
+      checkRevision: 0,
+      enabled: true,
+      provider: 'deepseek',
+      credential: { kind: 'legacy-linked', connection },
+    }),
+    { mode: 0o600 },
+  );
+}
+
 test('a missing configuration initializes locally without claiming credentials', async () => {
   const { search } = await fixture();
   expect(await search.status()).toMatchObject({
@@ -72,12 +87,14 @@ test('a missing configuration initializes locally without claiming credentials',
     checkRevision: 0,
     credentialConfigured: false,
     credentialSource: 'none',
-    health: 'unconfigured',
+    health: 'unchecked',
+    provider: 'duckduckgo',
   });
 });
-test('legacy key-only credentials migrate as a fixed reference and are never copied', async () => {
+test('saved legacy key-only credentials stay as a fixed reference and are never copied', async () => {
   const { root, models, search } = await fixture();
   await writeFile(models.file, JSON.stringify({ apiKey: 'synthetic-legacy-key' }), { mode: 0o600 });
+  await savedLegacy(search);
   expect(await search.status()).toMatchObject({
     enabled: true,
     provider: 'deepseek',
@@ -319,7 +336,7 @@ async function catalog(
   );
 }
 
-test('migration pins the selected official connection across model selection and restart', async () => {
+test('a saved legacy link pins the selected official connection across model selection and restart', async () => {
   const { models, search } = await fixture();
   const connections = [
     connection('mock-first'),
@@ -327,6 +344,7 @@ test('migration pins the selected official connection across model selection and
     connection('mock-selected', 'https://api.deepseek.com/v1/'),
   ];
   await catalog(models.file, connections, 'mock-selected');
+  await savedLegacy(search, 'mock-selected');
   await search.status();
   expect(
     (JSON.parse(await readFile(search.file, 'utf8')) as { credential: { connection: string } })
@@ -341,7 +359,7 @@ test('migration pins the selected official connection across model selection and
   });
   await restarted.query(await restarted.capture(), 'synthetic lookup');
 });
-test('migration preserves official-ID fallback priority and refuses same-name foreign endpoints or protocols', async () => {
+test('legacy resolution preserves official-ID priority while missing search files default keyless', async () => {
   const { models, search } = await fixture();
   await catalog(
     models.file,
@@ -352,11 +370,11 @@ test('migration preserves official-ID fallback priority and refuses same-name fo
     ],
     'mock-chat',
   );
-  await search.status();
-  expect(
-    (JSON.parse(await readFile(search.file, 'utf8')) as { credential: { connection: string } })
-      .credential.connection,
-  ).toBe('deepseek-official');
+  expect((await models.searchConnection())?.id).toBe('deepseek-official');
+  expect(await search.status()).toMatchObject({
+    provider: 'duckduckgo',
+    credentialConfigured: false,
+  });
   for (const foreign of [
     { ...connection('mock-lookalike', 'https://foreign.example.test/v1'), name: 'DeepSeek' },
     { ...connection('mock-lookalike'), name: 'DeepSeek', api: 'anthropic-messages' },
@@ -365,7 +383,8 @@ test('migration preserves official-ID fallback priority and refuses same-name fo
     await catalog(models.file, [foreign], foreign.id);
     expect(await new SearchSettings(search.file, models).status()).toMatchObject({
       credentialConfigured: false,
-      health: 'unconfigured',
+      health: 'unchecked',
+      provider: 'duckduckgo',
     });
   }
 });
@@ -385,6 +404,7 @@ test('legacy endpoint edits are blocked before any model request receives the re
   await catalog(models.file, [original], original.id);
   const search = new SearchSettings(path.join(root, 'protected-search.json'), models);
   const { apiKey: _key, ...metadata } = original;
+  await savedLegacy(search, original.id);
   await search.status();
   await expect(
     models.configure({
@@ -401,6 +421,7 @@ test('an externally invalidated legacy destination reports unavailable locally a
   const { models, search } = await fixture();
   const original = connection('mock-legacy');
   await catalog(models.file, [original], original.id);
+  await savedLegacy(search, original.id);
   await search.status();
   await catalog(
     models.file,
@@ -426,6 +447,7 @@ test('an externally invalidated legacy destination reports unavailable locally a
 test('a legacy key rotation rejects captured and late results without changing the provider', async () => {
   const { models, search } = await fixture();
   await writeFile(models.file, JSON.stringify({ apiKey: 'synthetic-before-key' }), { mode: 0o600 });
+  await savedLegacy(search);
   await search.status();
   let release: ((result: SearchResult) => unknown) | undefined;
   const response = new Promise<SearchResult>((resolve) => {
@@ -593,6 +615,7 @@ async function disabledLegacy() {
     query: vi.fn(async (): Promise<SearchResult> => ({ sources: [], truncated: false })),
   };
   const search = new SearchSettings(path.join(root, 'linked-search.json'), models, client);
+  await savedLegacy(search, original.id);
   await search.status();
   await search.configure(
     update({
@@ -763,6 +786,7 @@ test('the last model disconnect records the active legacy search reference and o
       mode: 0o600,
     },
   );
+  await savedLegacy(search);
   await search.status();
   const request = {
     scope: (await models.status(true)).modelAccess!.scope,

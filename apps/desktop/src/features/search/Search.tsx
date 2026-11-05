@@ -1,4 +1,5 @@
 import {
+  isSearchProvider,
   isSearchReceipt,
   isSearchReceiptQuery,
   isSearchStatus,
@@ -8,6 +9,7 @@ import {
   type SearchReceiptQuery,
   type SearchStatus,
   type SearchUpdate,
+  searchRequiresKey,
   validSearchKey,
 } from '@daban/protocol';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -19,6 +21,11 @@ import { getLocale, type MessageKey, t, useLocale } from '../../i18n/locale';
 import './search.css';
 
 const pendingKey = 'daban.search.pending.v1';
+const providerNames: Record<SearchProvider, string> = {
+  duckduckgo: 'DuckDuckGo',
+  deepseek: 'DeepSeek',
+  brave: 'Brave',
+};
 const healthMessages: Record<SearchHealth, MessageKey> = {
   disabled: 'search.healthDisabled',
   unconfigured: 'search.healthUnconfigured',
@@ -200,7 +207,7 @@ export function Search() {
       revision: draft.revision,
       enabled: draft.enabled,
       provider: draft.provider,
-      ...(draft.key ? { key: draft.key } : {}),
+      ...(searchRequiresKey(draft.provider) && draft.key ? { key: draft.key } : {}),
     };
     const query: SearchReceiptQuery = { kind: 'configure', requestId: input.requestId };
     if (!claim(query)) return;
@@ -267,6 +274,7 @@ export function Search() {
   const requiredKey =
     !!draft &&
     !!status &&
+    searchRequiresKey(draft.provider) &&
     (draft.provider !== status.provider ||
       (draft.enabled && (!status.credentialConfigured || replacementRequired)));
   const validKey = !!draft && (!draft.key || validSearchKey(draft.key));
@@ -277,20 +285,27 @@ export function Search() {
       <div className="setting-row">
         <div>
           <div className="setting-label">
-            {status ? (status.provider === 'deepseek' ? 'DeepSeek' : 'Brave') : t('search.title')}
+            {status ? providerNames[status.provider] : t('search.title')}
           </div>
           {status ? (
             <>
               <p className="setting-description" role="status">
-                {t(healthMessages[status.health])}
+                {t(
+                  status.provider === 'duckduckgo' &&
+                    (status.health === 'forbidden' || status.health === 'unauthorized')
+                    ? 'search.healthKeylessForbidden'
+                    : healthMessages[status.health],
+                )}
               </p>
               <p className="field-help">
                 {t(
-                  status.credentialSource === 'legacy-linked'
-                    ? 'search.legacyCredential'
-                    : status.credentialSource === 'independent'
-                      ? 'search.independentCredential'
-                      : 'search.noCredential',
+                  !searchRequiresKey(status.provider)
+                    ? 'search.keylessCredential'
+                    : status.credentialSource === 'legacy-linked'
+                      ? 'search.legacyCredential'
+                      : status.credentialSource === 'independent'
+                        ? 'search.independentCredential'
+                        : 'search.noCredential',
                 )}
               </p>
               {status.checkedAt && (
@@ -339,39 +354,44 @@ export function Search() {
                 value={draft.provider}
                 disabled={busy || !!pending}
                 onValueChange={(value) => {
-                  if (value === 'deepseek' || value === 'brave') {
+                  if (isSearchProvider(value)) {
                     edited.current = true;
                     setDraft({ ...draft, provider: value, key: '' });
                     setConfirmation(undefined);
                   }
                 }}
                 options={[
+                  { value: 'duckduckgo', label: t('search.duckduckgoOption') },
                   { value: 'deepseek', label: 'DeepSeek' },
                   { value: 'brave', label: 'Brave' },
                 ]}
               />
             </div>
-            <div className="search-key">
-              <label className="field-label">
-                {t('search.key')}
-                <input
-                  className="field"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  maxLength={4096}
-                  value={draft.key}
-                  required={requiredKey}
-                  onChange={(event) => {
-                    edited.current = true;
-                    setDraft({ ...draft, key: event.target.value });
-                  }}
-                />
-              </label>
-              <p className="field-help">
-                {t(replacementRequired ? 'search.keyReplacementHint' : 'search.keyHint')}
-              </p>
-            </div>
+            {searchRequiresKey(draft.provider) ? (
+              <div className="search-key">
+                <label className="field-label">
+                  {t('search.key')}
+                  <input
+                    className="field"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={4096}
+                    value={draft.key}
+                    required={requiredKey}
+                    onChange={(event) => {
+                      edited.current = true;
+                      setDraft({ ...draft, key: event.target.value });
+                    }}
+                  />
+                </label>
+                <p className="field-help">
+                  {t(requiredKey ? 'search.keyReplacementHint' : 'search.keyHint')}
+                </p>
+              </div>
+            ) : (
+              <p className="field-help">{t('search.keylessHint')}</p>
+            )}
           </fieldset>
           {conflict && (
             <div className="inline-note">
@@ -403,7 +423,11 @@ export function Search() {
               type="button"
               className="secondary"
               disabled={
-                busy || !!pending || dirty || !status.enabled || !status.credentialConfigured
+                busy ||
+                !!pending ||
+                dirty ||
+                !status.enabled ||
+                (searchRequiresKey(status.provider) && !status.credentialConfigured)
               }
               onClick={() => setConfirmation(status)}
             >
@@ -446,7 +470,13 @@ export function Search() {
       )}
       {confirmation && (
         <Dialog title={t('search.confirmTitle')} onClose={() => setConfirmation(undefined)}>
-          <p>{t('search.confirmCost')}</p>
+          <p>
+            {t(
+              searchRequiresKey(confirmation.provider)
+                ? 'search.confirmCost'
+                : 'search.confirmKeyless',
+            )}
+          </p>
           <div className="inline-form-actions">
             <button
               type="button"

@@ -1,6 +1,14 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'search.duckduckgoOption': 'DuckDuckGo（免 Key）',
+  'search.keylessCredential': '免 Key 搜索，无需配置凭据',
+  'search.keylessHint':
+    '无需 API Key。使用 DuckDuckGo 的公开搜索页，仍需联网；网站限流或验证可能导致暂时不可用。',
+  'search.confirmKeyless':
+    '将向 DuckDuckGo 发送一次不含个人内容的固定搜索，不需要搜索 API Key。不会自动重试或切换供应商。',
+  'search.healthKeylessForbidden': 'DuckDuckGo 限制了请求或要求验证，请稍后主动重试。',
+
   'search.independentKeyRequired': '请输入当前搜索供应商的独立 API Key，原凭据不能用于本次保存。',
   'search.keyReplacementHint': '本次保存需要新的独立密钥，不能留空。',
 

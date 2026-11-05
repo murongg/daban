@@ -52,7 +52,7 @@ interface Rpc {
   params: Record<string, unknown>;
 }
 
-async function fixture(supplier: typeof fetch = async () => suppliedResult()) {
+async function fixture(supplier: typeof fetch = async () => suppliedResult(), legacy = true) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-search-integration-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'), async () =>
     Response.json({ data: [{ id: 'mock-text' }] }),
@@ -69,6 +69,19 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult()) {
       return supplier(input, init);
     }),
   );
+  if (legacy)
+    await writeFile(
+      search.file,
+      JSON.stringify({
+        version: 1,
+        revision: 0,
+        checkRevision: 0,
+        enabled: true,
+        provider: 'deepseek',
+        credential: { kind: 'legacy-linked', connection: 'deepseek-official' },
+      }),
+      { mode: 0o600 },
+    );
   let entered = () => {};
   let release = () => {};
   let gate = Promise.resolve<unknown>(undefined);
@@ -297,7 +310,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   };
 }
 
-test('legacy upgrade, independent Brave and exact-source reading work with a non-DeepSeek model and no computer', {
+test('saved legacy settings, independent Brave and exact-source reading work with a non-DeepSeek model and no computer', {
   timeout: 15000,
 }, async () => {
   const f = await fixture();
@@ -596,6 +609,55 @@ test('the installed DSH pipeline keeps parallel tool batches separate and enforc
     );
     assert.equal(f.models.budgets.tools(job.budget!.budgetId), 2);
     await f.finish();
+  } finally {
+    await p?.close();
+    await f.close();
+  }
+});
+
+test('default keyless DuckDuckGo uses the stock SDK search pipeline and one shared execution claim', {
+  timeout: 15000,
+}, async () => {
+  const f = await fixture(
+    async () =>
+      new Response(
+        `<html><body><table><tr><td><a class="result-link" href="${sourceUrl}">Synthetic DuckDuckGo source</a></td></tr><tr><td class="result-snippet">Synthetic keyless result</td></tr></table></body></html>`,
+        { headers: { 'content-type': 'text/html' } },
+      ),
+    false,
+  );
+  let p: Awaited<ReturnType<typeof pipeline>> | undefined;
+  try {
+    assert.equal((await f.search.status()).provider, 'duckduckgo');
+    assert.equal(f.supplierCalls.length, 0);
+    const job = await f.start('mock-keyless-task');
+    p = await pipeline(f, job);
+    const result = await p.execute(
+      'web_search',
+      { queries: ['synthetic first', 'synthetic second'] },
+      'mock-keyless-execution',
+    );
+    assert.equal(result.isError, false, JSON.stringify(result.error));
+    assert.equal(f.supplierCalls.length, 2);
+    for (const call of f.supplierCalls) {
+      assert.equal(new URL(call.url).origin, 'https://lite.duckduckgo.com');
+      assert.equal(call.headers.has('authorization'), false);
+      assert.equal(call.headers.has('x-subscription-token'), false);
+    }
+    assert.equal(job.toolCount, 1);
+    assert.equal(f.models.budgets.tools(job.budget!.budgetId), 1);
+    assert.equal(new Set(p.rpcs.map((rpc) => rpc.params.claimId)).size, 1);
+    const fetched = await p.execute('web_fetch', { url: sourceUrl }, 'mock-keyless-source-read');
+    assert.equal(fetched.isError, false, JSON.stringify(fetched.error));
+    assert.ok(fetched.content);
+    const rejected = await p.execute(
+      'web_fetch',
+      { url: snippetUrl },
+      'mock-keyless-untrusted-read',
+    );
+    assert.equal(rejected.isError, true);
+    await f.finish();
+    assert.equal((await f.models.journal.read(job.bot, job.id))?.search?.provider, 'duckduckgo');
   } finally {
     await p?.close();
     await f.close();

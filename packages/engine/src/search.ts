@@ -1,8 +1,16 @@
 import { Agent, request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { connect as secureConnect } from 'node:tls';
-import type { SearchProvider, SearchResult, SearchSource } from '@daban/protocol';
+import {
+  isSearchErrorCode,
+  isSearchProvider,
+  type SearchProvider,
+  type SearchResult,
+  type SearchSource,
+  searchRequiresKey,
+} from '@daban/protocol';
 import { Fault } from './control.js';
+import { duckDuckGoResults } from './duckduckgo.js';
 import { dialAddress, publicAddress, resolvePublic } from './network.js';
 import { redact } from './redaction.js';
 
@@ -10,6 +18,7 @@ const responseLimit = 1024 * 1024;
 const endpoints = {
   deepseek: 'https://api.deepseek.com/v1/tools/search',
   brave: 'https://api.search.brave.com/res/v1/web/search',
+  duckduckgo: 'https://lite.duckduckgo.com/lite/',
 } as const;
 
 class SearchFault extends Fault {
@@ -101,6 +110,8 @@ const pinnedRequest: SearchRequest = async (input, init = {}, beforeSend) => {
               const encoding = response.headers['content-encoding'];
               if (encoding && encoding !== 'identity') invalidResponse();
               const output = new Headers();
+              if (typeof response.headers['content-type'] === 'string')
+                output.set('content-type', response.headers['content-type']);
               if (typeof response.headers['retry-after'] === 'string')
                 output.set('retry-after', response.headers['retry-after']);
               resolve(
@@ -154,7 +165,7 @@ function inspectShape(value: unknown) {
   }
 }
 
-async function responseJSON(response: Response, signal: AbortSignal): Promise<unknown> {
+async function responseText(response: Response, signal: AbortSignal): Promise<string> {
   const length = response.headers.get('content-length');
   if (length && (!/^\d+$/u.test(length) || Number(length) > responseLimit)) invalidResponse();
   if (!response.body) invalidResponse();
@@ -173,9 +184,19 @@ async function responseJSON(response: Response, signal: AbortSignal): Promise<un
     // Cleanup belongs to the same deadline; a stalled stream cancellation cannot keep a task alive.
     await bounded(reader.cancel(), signal);
   }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+  } catch {
+    return invalidResponse();
+  }
+}
+
+async function responseJSON(response: Response, signal: AbortSignal): Promise<unknown> {
+  // A lost response is a transport uncertainty, not a settled JSON-format refusal.
+  const text = await responseText(response, signal);
   let value: unknown;
   try {
-    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+    value = JSON.parse(text);
   } catch {
     return invalidResponse();
   }
@@ -184,6 +205,7 @@ async function responseJSON(response: Response, signal: AbortSignal): Promise<un
 }
 
 function sourceUrl(value: unknown, key: string) {
+  // Keyless search has no secret to match; an empty string must not reject every destination.
   if (typeof value !== 'string' || value.length > 2048 || /[\s\p{Cc}]/u.test(value))
     return invalidResponse();
   try {
@@ -197,8 +219,7 @@ function sourceUrl(value: unknown, key: string) {
       !['https:', 'http:'].includes(url.protocol) ||
       url.username ||
       url.password ||
-      value.includes(key) ||
-      decoded.includes(key) ||
+      (!!key && (value.includes(key) || decoded.includes(key))) ||
       (isIP(host)
         ? !publicAddress(host)
         : !host.includes('.') ||
@@ -217,7 +238,7 @@ function sourceText(value: unknown, key: string, limit: number) {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string') return invalidResponse();
   return (
-    redact(value, [key])
+    redact(value, key ? [key] : [])
       .replace(/[\p{Cc}]/gu, ' ')
       .slice(0, limit) || undefined
   );
@@ -233,24 +254,20 @@ function project(
   if (provider === 'brave' && value.type === 'search' && value.web == null)
     return { sources: [], truncated: false };
   const results =
-    provider === 'deepseek' ? value.results : object(value.web) ? value.web.results : undefined;
+    provider !== 'brave' ? value.results : object(value.web) ? value.web.results : undefined;
   if (!Array.isArray(results) || results.length > 100) return invalidResponse();
   const sources: SearchSource[] = results.map((item: unknown) => {
     if (!object(item) || typeof item.title !== 'string') return invalidResponse();
-    if (provider === 'deepseek' && typeof item.snippet !== 'string') return invalidResponse();
+    if (provider !== 'brave' && typeof item.snippet !== 'string') return invalidResponse();
     const title = sourceText(item.title, key, 500);
-    const snippet = sourceText(
-      provider === 'deepseek' ? item.snippet : item.description,
-      key,
-      2000,
-    );
+    const snippet = sourceText(provider !== 'brave' ? item.snippet : item.description, key, 2000);
     const date = provider === 'deepseek' ? item.date : item.page_age;
     if (
       date !== undefined &&
       date !== null &&
       (typeof date !== 'string' ||
         date.length > 100 ||
-        date.includes(key) ||
+        (!!key && date.includes(key)) ||
         !Number.isFinite(Date.parse(date)))
     )
       return invalidResponse();
@@ -291,9 +308,12 @@ export class SearchClient {
     maxResults = 5,
     beforeSend?: () => unknown,
   ): Promise<SearchResult> {
-    if (provider !== 'deepseek' && provider !== 'brave')
-      throw new SearchFault('SEARCH_INVALID_PROVIDER', 400);
-    if (!key || key.length > 4096 || /[\s\p{Cc}]/u.test(key))
+    if (!isSearchProvider(provider)) throw new SearchFault('SEARCH_INVALID_PROVIDER', 400);
+    if (
+      searchRequiresKey(provider)
+        ? !key || key.length > 4096 || /[\s\p{Cc}]/u.test(key)
+        : key !== ''
+    )
       throw new SearchFault('SEARCH_INVALID_CREDENTIAL', 400);
     if (
       !query.trim() ||
@@ -321,7 +341,9 @@ export class SearchClient {
     try {
       signal.throwIfAborted();
       const endpoint = new URL(endpoints[provider]);
-      const headers = new Headers({ accept: 'application/json' });
+      const headers = new Headers({
+        accept: provider === 'duckduckgo' ? 'text/html' : 'application/json',
+      });
       const init: RequestInit = {
         method: provider === 'deepseek' ? 'POST' : 'GET',
         headers,
@@ -333,20 +355,32 @@ export class SearchClient {
         headers.set('authorization', `Bearer ${key}`);
         headers.set('content-type', 'application/json');
         init.body = JSON.stringify({ query, count: maxResults, need_content: false });
-      } else {
+      } else if (provider === 'brave') {
         headers.set('x-subscription-token', key);
         endpoint.search = new URLSearchParams({
           q: query,
           count: String(maxResults),
           result_filter: 'web',
         }).toString();
+      } else {
+        headers.set('user-agent', 'Mozilla/5.0 (compatible; Daban)');
+        endpoint.search = new URLSearchParams({ q: query }).toString();
       }
       guard();
       const response = await bounded(this.request(endpoint.href, init, guard), signal);
       try {
         signal.throwIfAborted();
         statusFailure(response);
-        const result = project(provider, await responseJSON(response, signal), key, maxResults);
+        let value: unknown;
+        if (provider === 'duckduckgo') {
+          if (
+            response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'text/html'
+          )
+            invalidResponse();
+          value = { results: duckDuckGoResults(await responseText(response, signal)) };
+        } else value = await responseJSON(response, signal);
+        guard();
+        const result = project(provider, value, key, maxResults);
         signal.throwIfAborted();
         return result;
       } finally {
@@ -356,7 +390,8 @@ export class SearchClient {
       if (denied && denied.error === error) throw error;
       if (caller.aborted) throw new SearchFault('SEARCH_CANCELLED', 409);
       if (signal.aborted) throw new SearchFault('SEARCH_TIMEOUT', 504);
-      if (error instanceof SearchFault) throw error;
+      if (error instanceof SearchFault || (error instanceof Fault && isSearchErrorCode(error.code)))
+        throw error;
       throw new SearchFault('SEARCH_UNAVAILABLE', 503);
     }
   }

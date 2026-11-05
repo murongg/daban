@@ -414,3 +414,127 @@ test('a rejected legacy reenable checks its receipt and asks for an independent 
   await user.type(screen.getByLabelText('搜索 API Key'), 'synthetic-independent-search-key');
   expect(screen.getByRole('button', { name: '保存搜索设置' })).toBeEnabled();
 });
+
+test('keyless DuckDuckGo has no credential field and can run one explicitly confirmed test', async () => {
+  const user = userEvent.setup();
+  const status = initial({
+    provider: 'duckduckgo' as SearchStatus['provider'],
+    credentialConfigured: false,
+    credentialSource: 'none',
+  });
+  state.runtime.command.mockImplementation(async (command) => {
+    if (command.type === 'search.status') return status;
+    if (command.type === 'search.check')
+      return {
+        kind: 'check',
+        requestId: command.input.requestId,
+        phase: 'settled',
+        revision: status.revision,
+        checkRevision: status.checkRevision + 1,
+        status: { ...status, checkRevision: status.checkRevision + 1, health: 'ready' },
+      };
+    throw new Error('Unexpected synthetic command');
+  });
+  render(<Search />);
+  expect(await screen.findByText('DuckDuckGo')).toBeVisible();
+  expect(screen.queryByLabelText('搜索 API Key')).not.toBeInTheDocument();
+  expect(
+    screen.getByText(
+      '无需 API Key。使用 DuckDuckGo 的公开搜索页，仍需联网；网站限流或验证可能导致暂时不可用。',
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole('button', { name: '测试搜索' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: '测试搜索' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('不需要搜索 API Key');
+  await user.click(screen.getByRole('button', { name: '确认并测试一次' }));
+  expect(await screen.findByText('测试成功，可用于搜索')).toBeVisible();
+  expect(
+    state.runtime.command.mock.calls.filter(([command]) => command.type === 'search.check'),
+  ).toHaveLength(1);
+});
+
+test('switching to DuckDuckGo clears a drafted paid key and saves without credentials', async () => {
+  const user = userEvent.setup();
+  state.runtime.command.mockImplementation(async (command) => {
+    if (command.type === 'search.status') return initial();
+    if (command.type === 'search.configure')
+      return {
+        ...saved(command.input),
+        status: initial({
+          revision: command.input.revision + 1,
+          provider: 'duckduckgo' as SearchStatus['provider'],
+          credentialConfigured: false,
+          credentialSource: 'none',
+        }),
+      };
+    throw new Error('Unexpected synthetic command');
+  });
+  render(<Search />);
+  const key = await screen.findByLabelText('搜索 API Key');
+  await user.type(key, 'synthetic-draft-paid-secret');
+  await selectOption(user, selectControl('搜索供应商'), 'duckduckgo');
+  expect(screen.queryByLabelText('搜索 API Key')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '保存搜索设置' }));
+  await waitFor(() =>
+    expect(state.runtime.command).toHaveBeenCalledWith({
+      type: 'search.configure',
+      input: { requestId: expect.any(String), revision: 2, enabled: true, provider: 'duckduckgo' },
+    }),
+  );
+  expect(
+    state.runtime.command.mock.calls.filter(([command]) => command.type === 'search.check'),
+  ).toHaveLength(0);
+});
+
+test.each(['forbidden', 'unauthorized'] as const)(
+  'keyless %s errors describe website restrictions instead of asking for an API key',
+  async (health) => {
+    state.runtime.command.mockResolvedValue(
+      initial({
+        provider: 'duckduckgo',
+        credentialConfigured: false,
+        credentialSource: 'none',
+        health,
+      }),
+    );
+    render(<Search />);
+    expect(
+      await screen.findByText('DuckDuckGo 限制了请求或要求验证，请稍后主动重试。'),
+    ).toBeVisible();
+    expect(screen.queryByText('认证失败，请更换搜索密钥。')).not.toBeInTheDocument();
+  },
+);
+
+test('changing from keyless search to Brave requires its corresponding key before saving', async () => {
+  const user = userEvent.setup();
+  state.runtime.command.mockImplementation(async (command) => {
+    if (command.type === 'search.status')
+      return initial({
+        provider: 'duckduckgo',
+        credentialConfigured: false,
+        credentialSource: 'none',
+      });
+    if (command.type === 'search.configure') return saved(command.input);
+    throw new Error('Unexpected synthetic command');
+  });
+  render(<Search />);
+  await screen.findByText('DuckDuckGo');
+  await selectOption(user, selectControl('搜索供应商'), 'brave');
+  expect(screen.getByLabelText('搜索 API Key')).toBeRequired();
+  expect(screen.getByRole('button', { name: '保存搜索设置' })).toBeDisabled();
+  expect(screen.getByText('本次保存需要新的独立密钥，不能留空。')).toBeVisible();
+  await user.type(screen.getByLabelText('搜索 API Key'), 'synthetic-brave-key');
+  await user.click(screen.getByRole('button', { name: '保存搜索设置' }));
+  await waitFor(() =>
+    expect(state.runtime.command).toHaveBeenCalledWith({
+      type: 'search.configure',
+      input: {
+        requestId: expect.any(String),
+        revision: 2,
+        enabled: true,
+        provider: 'brave',
+        key: 'synthetic-brave-key',
+      },
+    }),
+  );
+});

@@ -33,6 +33,7 @@ import {
   isReplyStream,
   isRunInsert,
   isRunTurn,
+  isSearchProvider,
   isSessionStats,
   isTaskFile,
   modelRecoveryBlocked,
@@ -283,7 +284,7 @@ function searchMetadata(
     !Array.isArray(value) &&
     Object.keys(value).every((key) => ['provider', 'revision'].includes(key)) &&
     'provider' in value &&
-    (value.provider === 'deepseek' || value.provider === 'brave') &&
+    isSearchProvider(value.provider) &&
     'revision' in value &&
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) >= 0
