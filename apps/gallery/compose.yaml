@@ -1,0 +1,15 @@
+services:
+  gallery:
+    build:
+      context: ../..
+      dockerfile: apps/gallery/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      GALLERY_PUBLIC_ORIGIN: ${GALLERY_PUBLIC_ORIGIN:?Set your HTTPS gallery origin}
+      GALLERY_READ_MODE: ${GALLERY_READ_MODE:-private}
+    volumes:
+      - gallery-data:/data
+    restart: unless-stopped
+volumes:
+  gallery-data:

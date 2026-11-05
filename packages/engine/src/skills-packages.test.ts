@@ -88,7 +88,7 @@ test('pre-ORM catalog versions 2 and 3 keep packages, bindings and revisions aft
       const old = new DatabaseSync(file);
       old.exec(
         version === 3
-          ? 'DROP TABLE __drizzle_migrations; PRAGMA user_version=3;'
+          ? 'ALTER TABLE skills DROP COLUMN managed; DROP TABLE __drizzle_migrations; PRAGMA user_version=3;'
           : `DROP TABLE __drizzle_migrations; DROP INDEX skill_owner_name; ALTER TABLE skills RENAME TO skills_v3;
             CREATE TABLE skills(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,content TEXT NOT NULL,deleted INTEGER NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL,resources TEXT);
             INSERT INTO skills SELECT id,name,revision,content,deleted,created,updated,resources FROM skills_v3;

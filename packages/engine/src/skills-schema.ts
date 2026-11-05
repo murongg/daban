@@ -26,6 +26,7 @@ export const skills = sqliteTable(
     updated: text().notNull(),
     resources: text(),
     owner: text(),
+    managed: integer().notNull().default(0),
   },
   (table) => [uniqueIndex('skill_owner_name').on(sql`COALESCE(${table.owner}, '')`, table.name)],
 );

@@ -17,4 +17,11 @@ export const migrations: Migration[] = [
     hash: '27d3f7afad8c4d06e8ca74c7c33f44b2719515eaf943c6dc87da79e949579297',
     name: '20261103131245_baseline',
   },
+  {
+    sql: ['ALTER TABLE `skills` ADD `managed` integer DEFAULT 0 NOT NULL;'],
+    bps: true,
+    folderMillis: 1793782130000,
+    hash: 'e3c20c5c6b0b279e8a33a5fa64e249fdc413a8c26c9f995361e9c72f8e96b816',
+    name: '20261104084850_templates',
+  },
 ];

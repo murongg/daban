@@ -43,6 +43,8 @@ jobs:
         run: |
           test -f "$DABAN_TEST_SDK"
           node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/model-fallback.integration.js
+      - name: Verify independent Cloudflare gallery bundle
+        run: npm run check:cf --workspace @daban/gallery
       - name: Install browser integration runtime
         run: npx playwright install --with-deps --only-shell chromium
       # Playwright already refreshed the apt indexes on Linux.

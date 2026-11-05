@@ -28,6 +28,7 @@ import {
   type SkillPackageInfo,
   type SkillResource,
 } from './skills.js';
+import type { BotTemplateCommand } from './templates.js';
 
 export * from './execution.js';
 export * from './host-browser.js';
@@ -1554,6 +1555,7 @@ export interface RuntimeSnapshot {
   searchSettings?: true;
   jinaReader?: boolean;
   botCapabilities?: true;
+  botReleases?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
     location: 'host';
@@ -2256,6 +2258,7 @@ export interface BotCopyRequest {
   revision: number;
   name: string;
   memory: boolean;
+  sourceInstructions?: string;
 }
 export function botCopyKey(request: BotCopyRequest) {
   // Persisted copy origins hash this tuple; changing its order would invalidate existing receipts.
@@ -2266,6 +2269,7 @@ export function botCopyKey(request: BotCopyRequest) {
     request.revision,
     request.name,
     request.memory,
+    ...(request.sourceInstructions === undefined ? [] : [request.sourceInstructions]),
   ]);
 }
 export interface BotCopyAck {
@@ -2765,7 +2769,9 @@ export function isBotProfile(value: unknown): value is BotProfile {
 export function isBotCopyRequest(value: unknown): value is BotCopyRequest {
   return (
     profileObject(value) &&
-    Object.keys(value).every((key) => ['id', 'bot', 'revision', 'name', 'memory'].includes(key)) &&
+    Object.keys(value).every((key) =>
+      ['id', 'bot', 'revision', 'name', 'memory', 'sourceInstructions'].includes(key),
+    ) &&
     validAgentId(value.id) &&
     // Legacy display aliases would collapse a new profile into an existing client identity.
     agentId(value.id) === value.id &&
@@ -2774,7 +2780,8 @@ export function isBotCopyRequest(value: unknown): value is BotCopyRequest {
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) >= 1 &&
     boundedText(value.name, 30) &&
-    typeof value.memory === 'boolean'
+    typeof value.memory === 'boolean' &&
+    (value.sourceInstructions === undefined || boundedText(value.sourceInstructions, 4000, true))
   );
 }
 export function isBotCopyReceipt(value: unknown): value is BotCopyReceipt {
@@ -4132,6 +4139,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | BotTemplateCommand
   | VmCommand
   | FolderCommand
   | NoteCommand
@@ -4588,3 +4596,6 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
     (value.cancelRequested === undefined || typeof value.cancelRequested === 'boolean')
   );
 }
+export * from './gallery.js';
+export * from './releases.js';
+export * from './templates.js';

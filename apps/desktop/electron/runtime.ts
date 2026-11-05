@@ -21,6 +21,7 @@ import {
   isBotImportReceipt,
   isBotLifecycleAck,
   isBotProfile,
+  isBotTemplateCommand,
   isBrowserAck,
   isBrowserReceipt,
   isBrowserState,
@@ -132,7 +133,11 @@ import { isTaskReceipt } from '../shared/receipt';
 async function localRequest(url: string, init: RequestInit = {}): Promise<Response> {
   const body = init.body;
   const responseLimit =
-    new URL(url).pathname === '/api/bundles/export' ? botBundleLimit + 64 * 1024 : 16 * 1024 * 1024;
+    new URL(url).pathname === '/api/bundles/export'
+      ? botBundleLimit + 64 * 1024
+      : new URL(url).pathname === '/api/templates'
+        ? 3 * botBundleLimit + 64 * 1024
+        : 16 * 1024 * 1024;
   if (body !== undefined && typeof body !== 'string') throw new Error('INVALID_INTERNAL_BODY');
   return new Promise<Response>((resolve, reject) => {
     const req = request(
@@ -344,7 +349,7 @@ export class RuntimeClient {
           ? 600000
           : route === '/api/search/check'
             ? 35000
-            : route.startsWith('/api/bundles/')
+            : route.startsWith('/api/bundles/') || route === '/api/templates'
               ? 120000
               : 20000,
       ),
@@ -1205,6 +1210,12 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_GROUP_ACTION_ACK');
       return value;
+    }
+    if (isBotTemplateCommand(command)) {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!state.botReleases) throw new Error('RUNTIME_TOO_OLD');
+      return this.api('/api/templates', command);
     }
     if (command.type === 'bot.export' || command.type.startsWith('bot.import.')) {
       const state = await this.status();

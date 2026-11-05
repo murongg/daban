@@ -19,7 +19,7 @@ import {
   type SkillResourceData,
   validAgentId,
 } from '@daban/protocol';
-import { and, count, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, count, eq, getTableColumns, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { Fault } from './control.js';
 import { configure, type Database, migrate, tables } from './database.js';
@@ -58,6 +58,55 @@ const ownedBy = (owner: string | undefined) =>
   owner === undefined ? isNull(skills.owner) : eq(skills.owner, owner);
 type SkillSource = { id: string; revision: number; content: string; resources: string | null };
 export class Skills {
+  templateOwners?: (bot: string) => string[];
+  assertTemplateNames(bot: string, names: string[]) {
+    const owners = this.templateOwners?.(bot) ?? [];
+    if (
+      this.visible(bot).some(
+        (row) =>
+          this.owner(row) === bot &&
+          !owners.includes(this.owner(row) ?? '') &&
+          names.includes(row.name),
+      )
+    )
+      throw new Fault('SKILL_NAME_CONFLICT');
+  }
+  collectTemplateIndexes(keep: Set<string>) {
+    const stale = this.available()
+      .select({ id: skills.id, owner: skills.owner })
+      .from(skills)
+      .where(eq(skills.managed, 1))
+      .all()
+      .filter((row) => row.owner && !keep.has(row.owner))
+      .map((row) => row.id);
+    if (!stale.length) return;
+    // Jobs pin immutable file packages; release snapshots can reconstruct these disposable indexes.
+    this.transaction(() => {
+      this.available().delete(skillBindings).where(inArray(skillBindings.skill, stale)).run();
+      this.available().delete(skills).where(inArray(skills.id, stale)).run();
+    });
+  }
+  disableTemplateBindings(bot: string, owners: string[]) {
+    if (!owners.length) return;
+    this.transaction(() =>
+      this.available()
+        .update(skillBindings)
+        .set({ enabled: 0, revision: sql`${skillBindings.revision} + 1` })
+        .where(
+          and(
+            eq(skillBindings.bot, bot),
+            inArray(
+              skillBindings.skill,
+              this.available()
+                .select({ id: skills.id })
+                .from(skills)
+                .where(inArray(skills.owner, owners)),
+            ),
+          ),
+        )
+        .run(),
+    );
+  }
   // shortcut: one runtime writes a data root; add a process lease before allowing multiple services.
   readonly ready: Promise<unknown>;
   private db?: Database;
@@ -143,22 +192,27 @@ export class Skills {
         DROP TABLE skills_v2;
         CREATE UNIQUE INDEX skill_owner_name ON skills(COALESCE(owner,''),name);`);
     // A corrupt pre-ORM store rolls back with the upgrade; migration must never "repair" it.
-    this.verify();
+    this.verify(true);
   }
-  private verify() {
+  private verify(legacy = false) {
     const db = this.available();
     this.revision();
     if (db.select({ count: count() }).from(skills).get()!.count > 100)
       throw new Fault('SKILLS_UNAVAILABLE', 503);
+    // Legacy validation runs inside migrate's transaction before the later managed-column migration.
+    const { managed: _managed, ...legacyColumns } = getTableColumns(skills);
+    const rows = legacy
+      ? db
+          .select(legacyColumns)
+          .from(skills)
+          .all()
+          .map((row) => ({ ...row, managed: 0 }))
+      : db.select().from(skills).all();
     const documents = new Map(
-      db
-        .select()
-        .from(skills)
-        .all()
-        .map((row) => {
-          const document = this.document(row);
-          return [document.id, document] as const;
-        }),
+      rows.map((row) => {
+        const document = this.document(row);
+        return [document.id, document] as const;
+      }),
     );
     for (const row of db.select().from(skillBindings).all()) {
       const document = documents.get(String(row.skill));
@@ -287,13 +341,20 @@ export class Skills {
   private assertBot(bot?: string) {
     if (bot !== undefined && !validAgentId(bot)) throw new Fault('INVALID_SKILL', 400);
   }
-  private visible(bot: string, deleted = false) {
+  private visible(bot: string, deleted = false, owners = this.templateOwners?.(bot) ?? []) {
     const db = this.available();
     const rows = db
       .select()
       .from(skills)
       .where(
-        and(eq(skills.deleted, Number(deleted)), or(isNull(skills.owner), eq(skills.owner, bot))),
+        and(
+          eq(skills.deleted, Number(deleted)),
+          or(
+            isNull(skills.owner),
+            eq(skills.owner, bot),
+            owners.length ? inArray(skills.owner, owners) : undefined,
+          ),
+        ),
       )
       .orderBy(skills.name)
       .all();
@@ -301,16 +362,33 @@ export class Skills {
       db
         .select({ name: skills.name })
         .from(skills)
-        .where(eq(skills.owner, bot))
+        .where(
+          or(
+            and(eq(skills.owner, bot), eq(skills.managed, 0)),
+            owners.length ? inArray(skills.owner, owners) : undefined,
+          ),
+        )
         .all()
         .map((row) => String(row.name)),
     );
-    return rows.filter((row) => this.owner(row) === bot || !owned.has(this.document(row).name));
+    return rows.filter(
+      (row) =>
+        (!row.managed || owners.includes(this.owner(row) ?? '')) &&
+        (this.owner(row) === bot ||
+          owners.includes(this.owner(row) ?? '') ||
+          !owned.has(this.document(row).name)),
+    );
   }
   private scoped(id: string, bot?: string) {
     this.assertBot(bot);
     const row = this.row(id);
-    if (this.owner(row) !== undefined && this.owner(row) !== bot)
+    if (row.managed && !(bot && this.templateOwners?.(bot).includes(this.owner(row) ?? '')))
+      throw new Fault('SKILL_NOT_FOUND', 404);
+    if (
+      this.owner(row) !== undefined &&
+      this.owner(row) !== bot &&
+      !(bot && this.templateOwners?.(bot).includes(this.owner(row)!))
+    )
       throw new Fault('SKILL_NOT_FOUND', 404);
     return row;
   }
@@ -340,6 +418,8 @@ export class Skills {
     if (
       row.name !== result.name ||
       ![0, 1].includes(Number(row.deleted)) ||
+      ![0, 1].includes(row.managed) ||
+      (row.managed === 1 && !row.owner) ||
       !isSkillDocument(result)
     )
       throw new Fault('SKILLS_UNAVAILABLE', 503);
@@ -393,6 +473,16 @@ export class Skills {
       }),
       db = this.available();
     if (new Set(parsed.map((item) => item.parsed.name)).size !== parsed.length) return invalid();
+    const owners = bot ? (this.templateOwners?.(bot) ?? []) : [];
+    if (owners.length) {
+      const managed = db
+        .select({ name: skills.name })
+        .from(skills)
+        .where(inArray(skills.owner, owners))
+        .all();
+      if (parsed.some((item) => managed.some((row) => row.name === item.parsed.name)))
+        throw new Fault('SKILL_NAME_CONFLICT');
+    }
     const entries = parsed.map(({ parsed: item, set }) => ({
       item,
       set,
@@ -435,8 +525,20 @@ export class Skills {
     this.importPlan(contents, bot);
   }
   async importBatch(contents: (string | SkillPackage)[], bot?: string) {
+    return this.importOwned(contents, bot, false);
+  }
+  async prepareTemplatePackage(bundle: SkillPackage, owner: string) {
+    return this.importOwned([bundle], owner, true);
+  }
+  private async importOwned(
+    contents: (string | SkillPackage)[],
+    bot: string | undefined,
+    managed: boolean,
+  ) {
     await this.ready;
     const plan = this.importPlan(contents, bot);
+    if (plan.some((entry) => entry.prior && entry.prior.managed !== Number(managed)))
+      throw new Fault('SKILL_NAME_CONFLICT');
     if (plan.every((entry) => entry.prior)) return plan.map((entry) => this.document(entry.prior!));
     return this.transaction(() =>
       plan.map((entry) => {
@@ -456,6 +558,7 @@ export class Skills {
             updated: now,
             resources: entry.set?.key ?? null,
             owner: bot ?? null,
+            managed: Number(managed),
           })
           .run();
         if (bot) {
@@ -531,17 +634,34 @@ export class Skills {
     return this.available()
       .select({ id: skills.id })
       .from(skills)
-      .where(and(eq(skills.name, name), ownedBy(owner), ne(skills.id, id)))
+      .where(
+        and(
+          eq(skills.name, name),
+          or(
+            ownedBy(owner),
+            owner && this.templateOwners?.(owner).length
+              ? inArray(skills.owner, this.templateOwners(owner))
+              : undefined,
+          ),
+          ne(skills.id, id),
+        ),
+      )
       .get();
   }
   private mutable(id: string, bot?: string) {
+    if (this.row(id).managed) {
+      this.scoped(id, bot);
+      throw new Fault('INSTALLATION_UPDATE_REQUIRED');
+    }
+    if (bot && this.templateOwners?.(bot).includes(this.owner(this.row(id)) ?? ''))
+      throw new Fault('INSTALLATION_UPDATE_REQUIRED');
     if (this.defaults.some((skill) => skill.id === id))
       throw new Fault('SKILL_SYSTEM_READ_ONLY', 409);
     if (bot !== undefined && this.owner(this.row(id)) === undefined)
       throw new Fault('SKILL_SHARED_READ_ONLY', 409);
   }
-  private activeRows(bot: string) {
-    return this.visible(bot).filter((row) => this.entry(bot, row).enabled);
+  private activeRows(bot: string, owners?: string[]) {
+    return this.visible(bot, false, owners).filter((row) => this.entry(bot, row).enabled);
   }
   async update(id: string, revision: number, content: string, bot?: string) {
     await this.ready;
@@ -802,11 +922,11 @@ export class Skills {
       sources,
     );
   }
-  async capture(bot: string): Promise<SkillSnapshot> {
+  async capture(bot: string, owners?: string[]): Promise<SkillSnapshot> {
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('INVALID_SKILL', 400);
     try {
-      const rows = this.activeRows(bot);
+      const rows = this.activeRows(bot, owners);
       if (rows.length > 20) throw new Fault('SKILLS_UNAVAILABLE', 503);
       const documents = rows.map((row) => this.document(row));
       const snapshot: SkillSnapshot = {

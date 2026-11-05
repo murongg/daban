@@ -53,6 +53,7 @@ import { Gallery } from '../features/bots/Gallery';
 import { ImportBot } from '../features/bots/ImportBot';
 import { Profile } from '../features/bots/Profile';
 import type { BotPreset } from '../features/bots/presets';
+import { RemoteGallery } from '../features/bots/RemoteGallery';
 import { ChatHistory } from '../features/chat/ChatHistory';
 import { Conversation } from '../features/chat/Conversation';
 import { TrashProblem } from '../features/chat/ConversationTrash';
@@ -1358,10 +1359,20 @@ function Workbench() {
         <main className="main" inert={sidebarOverlay && sidebarOpen}>
           <RecoveryNotice open={() => setModal({ type: 'recovery' })} />
           {state.view === 'gallery' && (view === 'gallery' || view === 'create') && (
-            <Gallery
-              hidden={view === 'create'}
-              onUsePreset={(preset, opener) => openCreation(false, preset, opener)}
-            />
+            <>
+              {view === 'gallery' && (
+                <RemoteGallery
+                  onInstalled={(profile) => {
+                    dispatch({ type: 'profiles', profiles: [profile] });
+                    dispatch({ type: 'select', bot: profile.id });
+                  }}
+                />
+              )}
+              <Gallery
+                hidden={view === 'create'}
+                onUsePreset={(preset, opener) => openCreation(false, preset, opener)}
+              />
+            </>
           )}
           {view === 'chat' ? (
             bot ? (
