@@ -26,7 +26,7 @@ test('GitHub is the main login and registration action while token access stays 
     </Messages>,
   );
   const button = await screen.findByRole('button', { name: 'Continue with GitHub' });
-  expect(button).toHaveFocus();
+  await waitFor(() => expect(button).toHaveFocus());
   expect(screen.queryByRole('textbox', { name: 'Access token' })).toBeNull();
   fireEvent.click(button);
   await waitFor(() =>
