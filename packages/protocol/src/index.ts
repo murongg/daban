@@ -21,7 +21,7 @@ import { isProjectFileRequest, isProjectScope } from './projects.js';
 
 export * from './projects.js';
 
-import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
+import type { ProjectFileRequest, ProjectScope } from './projects.js';
 
 export * from './goals.js';
 export * from './model-access.js';
@@ -1646,9 +1646,6 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'frame',
-    'projects.list',
-    'projects.status',
-    'projects.receipt',
     'files.list',
     'files.read',
     'files.download',
@@ -4108,7 +4105,6 @@ export type RuntimeCommand =
   | ApprovalRulesCommand
   | BudgetCommand
   | AutomationCommand
-  | ProjectCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand

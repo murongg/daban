@@ -6,10 +6,8 @@ import {
   agentId,
   approvalRulesCapability,
   type Interaction,
-  isProject,
-  type Project,
 } from '@daban/protocol';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
 import { Select } from '../../components/controls/Select';
@@ -20,56 +18,13 @@ import './rules.css';
 
 export function Rules({ bots }: { bots: Bot[] }) {
   useLocale();
-  const runtime = useRuntime();
-  const command = runtime.command;
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectError, setProjectError] = useState(false);
-  const projectLoad = useRef(0);
-  const available =
-    runtime.snapshot.phase === 'ready' &&
-    runtime.snapshot.approvalRules?.capability === approvalRulesCapability;
-  const loadProjects = useCallback(async () => {
-    const sequence = ++projectLoad.current;
-    try {
-      const value = await command<unknown>({ type: 'projects.list' });
-      if (!Array.isArray(value) || !value.every(isProject))
-        throw new Error('INVALID_PROJECT_RESPONSE');
-      if (sequence === projectLoad.current) {
-        setProjects(value);
-        setProjectError(false);
-      }
-    } catch {
-      if (sequence === projectLoad.current) setProjectError(true);
-    }
-  }, [command]);
-  useEffect(() => {
-    if (available) loadProjects().catch(() => {});
-    return () => {
-      projectLoad.current++;
-    };
-  }, [available, loadProjects]);
-  const choices = useMemo(
-    () => [
-      ...bots
-        .filter((bot) => !bot.members && !bot.archived)
-        .map((bot) => ({
-          id: bot.id,
-          label: bot.name,
-          scope: { kind: 'bot' as const, bot: agentId(bot.id) },
-        })),
-      ...projects
-        .filter((project) => project.status === 'active')
-        .map((project) => ({
-          id: `project:${project.id}`,
-          label: project.name,
-          scope: {
-            kind: 'project' as const,
-            scope: { projectId: project.id, revision: project.revision },
-          },
-        })),
-    ],
-    [bots, projects],
-  );
+  const choices = bots
+    .filter((bot) => !bot.members && !bot.archived)
+    .map((bot) => ({
+      id: bot.id,
+      label: bot.name,
+      scope: { kind: 'bot' as const, bot: agentId(bot.id) },
+    }));
   const [selected, setSelected] = useState(choices[0]?.id ?? '');
   const subject = choices.find((item) => item.id === selected) ?? choices[0];
   return (
@@ -78,25 +33,8 @@ export function Rules({ bots }: { bots: Bot[] }) {
         label={t('rules.chooseScope')}
         value={subject?.id ?? ''}
         onValueChange={setSelected}
-        options={choices.map((item) => ({
-          value: item.id,
-          label:
-            item.scope.kind === 'project'
-              ? t('rules.projectChoice', { 0: item.label, 1: item.scope.scope.revision })
-              : item.label,
-        }))}
+        options={choices.map((item) => ({ value: item.id, label: item.label }))}
       />
-      <button
-        type="button"
-        className="secondary"
-        disabled={!available}
-        onClick={() => {
-          loadProjects().catch(() => {});
-        }}
-      >
-        {t('projects.refresh')}
-      </button>
-      {projectError && <p className="inline-note">{t('rules.projectsUnavailable')}</p>}
       <p className="inline-note">{t('rules.scopeHint')}</p>
       {subject && <ScopedRules key={JSON.stringify(subject.scope)} scope={subject.scope} />}
     </div>
@@ -279,32 +217,10 @@ function ScopedRules({ scope }: { scope: ApprovalScope }) {
   );
 }
 export function CreateRule({ request }: { request: Extract<Interaction, { kind: 'approval' }> }) {
-  const [project, setProject] = useState(false);
-  const captured = request.policyDecision?.project;
-  const scope: ApprovalScope =
-    project && captured ? { kind: 'project', scope: captured } : { kind: 'bot', bot: request.bot };
-  return (
-    <>
-      {captured && (
-        <>
-          <Select
-            label={t('rules.chooseScope')}
-            value={project ? 'project' : 'bot'}
-            onValueChange={(value) => setProject(value === 'project')}
-            options={[
-              { value: 'bot', label: t('rules.thisBot') },
-              {
-                value: 'project',
-                label: t('rules.currentProject', { 0: captured.projectId, 1: captured.revision }),
-              },
-            ]}
-          />
-          <p className="inline-note">{t('rules.projectMembersHint')}</p>
-        </>
-      )}
-      <ScopedCreateRule key={JSON.stringify(scope)} request={request} scope={scope} />
-    </>
-  );
+  if (request.policyDecision?.project)
+    return <p className="inline-note">{t('tasks.projectRetired')}</p>;
+  const scope: ApprovalScope = { kind: 'bot', bot: request.bot };
+  return <ScopedCreateRule key={JSON.stringify(scope)} request={request} scope={scope} />;
 }
 function ScopedCreateRule({
   request,

@@ -5,6 +5,51 @@ import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
 
+it('a cached retired task cannot be sent to an older host with broader project support', async () => {
+  const fetcher = vi.fn(async () => Response.json({}));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  await expect(
+    client.invoke({
+      type: 'task.start',
+      bot: 'mock-bot',
+      task: {
+        requestId: 'mock-retired-request',
+        prompt: 'SYNTHETIC RETIRED TASK',
+        project: { projectId: 'mock-retired-project', revision: 1 },
+      },
+    }),
+  ).rejects.toThrow('PROJECT_RETIRED');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it.each(['files.list', 'files.read', 'files.download'] as const)(
+  'refuses a retired locator before sending %s to the ordinary workspace',
+  async (type) => {
+    const fetcher = vi.fn(async () => Response.json({}));
+    const client = new RuntimeClient({
+      origin: 'http://127.0.0.1:18766',
+      tokenProvider: async () => 'a'.repeat(64),
+      fetcher,
+    });
+    const reference = {
+      project: { projectId: 'mock-retired-project', revision: 1 },
+      task: { bot: 'mock-bot', runId: 'mock-retired-run' },
+    };
+    await expect(
+      client.invoke(
+        type === 'files.list'
+          ? { type, ...reference }
+          : { type, path: 'same-name.txt', ...reference },
+      ),
+    ).rejects.toThrow('PROJECT_RETIRED');
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
 it('requires the rule capability and validates Bot and request identity on rule replies', async () => {
   let reply: unknown = { scope: { kind: 'bot', bot: 'mock-bot' }, revision: 0, rules: [] };
   const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(reply));

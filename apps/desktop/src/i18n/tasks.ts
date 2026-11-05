@@ -2,6 +2,7 @@ import type { TaskPhase } from '@daban/protocol';
 import { type MessageKey, t } from './locale';
 
 const errors: Record<string, MessageKey> = {
+  PROJECT_RETIRED: 'tasks.projectRetired',
   BROWSER_PROFILE_UNAVAILABLE: 'projects.profileUnavailable',
   BROWSER_PROFILE_LOCKED: 'projects.profileUnavailable',
   INVALID_RUNTIME_FILE: 'projects.fileMismatch',

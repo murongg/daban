@@ -2,13 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
-import { AgentTools } from './agent-tools.js';
 import { ApprovalRules, type RulePolicy } from './approval-rules.js';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
 import { Interactions } from './interactions.js';
-import { Projects } from './projects.js';
-import { WorkspaceFiles } from './workspace.js';
 
 const offered = [
   {
@@ -115,125 +112,6 @@ async function fixture(
     },
   };
 }
-
-test.each([
-  ['approval', 'remove'],
-  ['approval', 'downgrade'],
-  ['startup', 'remove'],
-  ['startup', 'downgrade'],
-  ['send', 'remove'],
-  ['send', 'downgrade'],
-  ['receipt', 'remove'],
-  ['receipt', 'downgrade'],
-] as const)(
-  'project authority changing during MCP %s (%s) prevents a new external effect',
-  async (phase, change) => {
-    const f = await fixture();
-    await f.tools.close();
-    const project = { projectId: 'mock-project', revision: 1 };
-    const run = {
-      ...f.run,
-      project,
-      workdir: f.root,
-      canonicalRoot: f.root,
-      seen: {},
-      trace: [],
-      toolCount: 0,
-      limit: 10,
-    };
-    const projects = new Projects(path.join(f.root, 'projects.sqlite'), {
-      changed: async (current) => {
-        if (current.revision !== project.revision) await f.interactions.endRun(run.bot, run.id);
-      },
-    });
-    let release: (() => unknown) | undefined, arrived: (() => unknown) | undefined;
-    const gate = new Promise<unknown>((resolve) => {
-      release = () => resolve(undefined);
-    });
-    const waiting = new Promise<unknown>((resolve) => {
-      arrived = () => resolve(undefined);
-    });
-    const pause = async () => {
-      arrived?.();
-      await gate;
-    };
-    let effects = 0;
-    const integrations = new IntegrationTools(f.store, f.interactions, {
-      remote: async (_config, options) => ({
-        start: async () => {
-          if (phase === 'startup') await pause();
-        },
-        tools: async () => offered,
-        call: async () => {
-          if (phase === 'send') await pause();
-          await options.onDispatch?.();
-          if (phase === 'receipt') await pause();
-          options.authorize?.();
-          effects++;
-          return { content: [{ type: 'text', text: 'SYNTHETIC EFFECT' }] };
-        },
-        close: async () => {},
-      }),
-    });
-    const tools = new AgentTools(undefined, new WorkspaceFiles(f.root), {
-      projectAccess: (captured, access) =>
-        projects.assertScope(captured.bot, captured.project!, access),
-    });
-    tools.integrations = integrations;
-    try {
-      await projects.ready;
-      await projects.write({
-        action: 'create',
-        requestId: 'mock-project-create',
-        projectId: project.projectId,
-        expectedRevision: 0,
-        value: { name: 'SYNTHETIC', grants: [{ bot: run.bot, content: 'write', browser: true }] },
-      });
-      const pending = tools.invoke(run, f.alias, { value: 'SYNTHETIC' }, 'mock-project-wire');
-      await ready(async () =>
-        (await f.interactions.list()).some((item) => item.status === 'pending'),
-      );
-      const approval = (await f.interactions.list()).find((item) => item.status === 'pending')!;
-      if (phase !== 'approval') {
-        await f.interactions.reply(run.bot, run.id, approval.id, { kind: 'decision', allow: true });
-        await waiting;
-      }
-      await projects.write({
-        action: 'update',
-        requestId: 'mock-project-revoke',
-        projectId: project.projectId,
-        expectedRevision: 1,
-        value: { name: 'SYNTHETIC', grants: change === 'remove' ? [] : [{ bot: run.bot }] },
-      });
-      expect(() => projects.assertScope(run.bot, project, 'read')).toThrow(
-        expect.objectContaining({ code: 'PROJECT_SCOPE_STALE' }),
-      );
-      release?.();
-      const result = await pending;
-      expect(effects).toBe(0);
-      expect(result.isError).toBe(true);
-      if (phase === 'receipt') {
-        expect(JSON.stringify(result)).toContain('MCP_OUTCOME_UNKNOWN');
-        expect(
-          JSON.stringify(
-            await integrations.invoke(run, f.alias, { value: 'SYNTHETIC' }, 'mock-project-wire'),
-          ),
-        ).toContain('MCP_OUTCOME_UNKNOWN');
-      } else if (phase !== 'approval')
-        expect(JSON.stringify(result)).toContain('PROJECT_SCOPE_STALE');
-      expect(
-        (await tools.invoke(run, f.alias, { value: 'SYNTHETIC' }, 'mock-project-wire')).isError,
-      ).toBe(true);
-      expect(effects).toBe(0);
-    } finally {
-      release?.();
-      run.abort.abort();
-      await integrations.close();
-      await projects.close();
-      await f.close();
-    }
-  },
-);
 
 test('external tools stay lazy and per-Bot; only a committed one-time decision permits dispatch, and exact retries read the receipt', async () => {
   const f = await fixture();

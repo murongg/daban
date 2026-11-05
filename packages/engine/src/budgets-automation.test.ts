@@ -78,9 +78,6 @@ function goalExecution() {
         case 'tools.open':
           opened++;
           return { tools: [] };
-        case 'projects.bind':
-          return { bot: params.bot, ...(params.scope ? { scope: params.scope } : {}) };
-        case 'projects.sync':
         case 'tools.cancel':
         case 'tools.drain':
           return { ok: true };
@@ -443,7 +440,7 @@ test('a real firing and reopened group deliveries retain one budget, immutable p
   }
 });
 
-test.each([false, true])(
+test.each([false])(
   'Human Goal continuation preserves scoped provenance and does not claim unsupported run contracts (project=%s)',
   { timeout: 60000 },
   async (scoped) => {
@@ -470,23 +467,6 @@ test.each([false, true])(
       const models = fixture.models;
       await models.ready;
       const project = scoped ? { projectId: 'mock-alpha', revision: 1 } : undefined;
-      if (project) {
-        await models.profiles.register({
-          id: 'mock-bot',
-          name: 'Synthetic Goal bot',
-          instructions: '',
-          memory: '',
-          color: 'mint',
-        });
-        for (const projectId of ['mock-alpha', 'mock-beta'])
-          await models.projects.write({
-            action: 'create',
-            requestId: `synthetic-create-${projectId}`,
-            projectId,
-            expectedRevision: 0,
-            value: { name: projectId, grants: [{ bot: 'mock-bot' }] },
-          });
-      }
       const origin = { ...source, ...(project ? { scope: project } : {}) };
       const owner = { bot: 'mock-bot', chatRevision: 0, ...(project ? { project } : {}) };
       models.budgets.configure(

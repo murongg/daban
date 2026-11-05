@@ -20,6 +20,21 @@ test('full guest instructions describe VM sudo and host approval without exposin
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
 
+test('retired project requests cannot be accepted as ordinary shared-workspace tasks', () => {
+  const request = {
+    requestId: 'mock-retired-project-request',
+    prompt: 'SYNTHETIC PRIVATE PROJECT TASK',
+    project: { projectId: 'mock-retired-project', revision: 1 },
+  };
+  expect(() => validateTask(request)).toThrowError(
+    expect.objectContaining({ code: 'PROJECT_RETIRED' }),
+  );
+  expect(validateTask({ requestId: 'mock-ordinary-request', prompt: 'SYNTHETIC TASK' })).toEqual({
+    requestId: 'mock-ordinary-request',
+    prompt: 'SYNTHETIC TASK',
+  });
+});
+
 test('task approval mode accepts only the three explicit user policies', () => {
   const task = { requestId: 'mock-policy-request', prompt: 'Synthetic task' };
   for (const approvalMode of ['ask', 'auto', 'full'])

@@ -337,7 +337,7 @@ export class ApprovalRules {
         { ...preview, scope: request.scope, revision: (previous?.revision ?? 0) + 1 },
       ];
     }
-    // Definitions follow the project ID; Projects separately revalidates each task's live membership and revision.
+    // Archived project selectors remain readable; retired project runs cannot obtain dispatch authority.
     return rows
       .filter(
         (rule) =>

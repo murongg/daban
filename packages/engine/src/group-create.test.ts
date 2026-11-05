@@ -336,28 +336,14 @@ test('collaboration persists trusted origin budget through restart and all seque
   }
 });
 
-test('a project collaboration checks every recipient before saving or delivering its summary', async () => {
-  const project = { projectId: 'mock-project', revision: 1 };
-  const f = await fixture(project);
-  Object.assign(f.runtime, {
-    projectScope: (bot: string) => {
-      if (bot === 'mock-gamma')
-        throw Object.assign(Error('PROJECT_ACCESS_DENIED'), { code: 'PROJECT_ACCESS_DENIED' });
-    },
-  });
+test('a retained scoped collaboration cannot publish into an ordinary group', async () => {
+  const f = await fixture({ projectId: 'mock-retired-project', revision: 1 });
   try {
     await expect(
-      f.groups.collaborate(
-        { bot: 'mock-alpha', runId: 'mock-run' },
-        { ...request, members: ['mock-gamma'] },
-      ),
-    ).rejects.toMatchObject({ code: 'PROJECT_ACCESS_DENIED' });
+      f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request),
+    ).rejects.toMatchObject({ code: 'PROJECT_RETIRED' });
     expect(f.calls).toStrictEqual([]);
     expect((await f.groups.status()).items).toStrictEqual([]);
-    const allowed = await f.groups.collaborate({ bot: 'mock-alpha', runId: 'mock-run' }, request);
-    expect(allowed.group.project).toStrictEqual(project);
-    await f.groups.tick();
-    expect(f.calls[0]?.task.project).toStrictEqual(project);
   } finally {
     await f.close();
   }

@@ -222,8 +222,6 @@ async function mcpFixture(
       }
       if (
         [
-          'projects.sync',
-          'projects.bind',
           'workspace.verify',
           'workspace.write',
           'workspace.close',
@@ -280,25 +278,6 @@ async function mcpFixture(
     memory: '',
     color: 'mint',
   });
-  if (project)
-    await models.profiles.register({
-      id: 'mock-peer',
-      name: 'Synthetic peer',
-      instructions: '',
-      memory: '',
-      color: 'mint',
-    });
-  if (taskProject)
-    await models.projects.write({
-      action: 'create',
-      requestId: 'mock-create-project',
-      projectId: taskProject.projectId,
-      expectedRevision: 0,
-      value: {
-        name: 'Synthetic project',
-        grants: [{ bot: 'mock-bot' }, ...(project ? [{ bot: 'mock-peer' }] : [])],
-      },
-    });
   await models.integrations.save({
     requestId: 'mock-create',
     id: 'mock-connection',
@@ -736,7 +715,7 @@ test('purpose consent loses authority if the persisted Human turn changes while 
   }
 });
 
-test.each(['time', 'manual', 'file'] as const)(
+test.each(['time', 'manual'] as const)(
   'a captured %s source requires its own Human purpose confirmation before an exact automation allow',
   async (trigger) => {
     const source = automationSource(trigger);
@@ -849,191 +828,6 @@ test('interactive purpose consent cannot authorize an identical subsequent autom
       allow: false,
     });
     await automated;
-  } finally {
-    await f.close();
-  }
-});
-
-test('shared project rules apply to current members and each member needs its own Human purpose', async () => {
-  const project = { projectId: 'mock-project', revision: 1 };
-  const f = await mcpFixture('auto', undefined, 'interactive', 'synthetic', project);
-  try {
-    await f.models.integrations.bind('mock-peer', {
-      connection: 'mock-connection',
-      configRevision: 1,
-      bindingRevision: 0,
-      catalogDigest: f.rule.selector.catalogDigest,
-      tools: ['synthetic_write'],
-      enabled: true,
-    });
-    await f.models.approvalRules.write({
-      requestId: 'mock-shared-rule',
-      expectedRevision: 1,
-      scope: { kind: 'project', scope: project },
-      action: 'save',
-      rule: { ...f.rule, id: 'mock-project-rule' },
-    });
-    const first = f.call(1);
-    const firstCard = await f.card(1);
-    expect(firstCard.policyDecision).toMatchObject({
-      project,
-      matchedRules: expect.arrayContaining([
-        { id: 'mock-project-rule', revision: 1, name: f.rule.name, effect: 'allow' },
-      ]),
-    });
-    await f.models.interactions.reply(f.job.bot, f.job.id, firstCard.id, {
-      kind: 'decision',
-      allow: true,
-      confirmPurpose: true,
-    });
-    await first;
-    expect(transport.effects).toBe(1);
-    await f.models.start('mock-peer', {
-      requestId: 'mock-peer-project-task',
-      prompt: 'Synthetic peer task',
-      project,
-    });
-    const peer = f.models.jobs.get('mock-peer')!;
-    await f.waitRun(peer);
-    const second = f.call(1, 'synthetic-value', peer.bot);
-    const secondCard = await f.card(2);
-    expect(secondCard).toMatchObject({
-      status: 'pending',
-      policyDecision: { project, matchedRules: [{ id: 'mock-project-rule' }] },
-    });
-    expect(transport.effects).toBe(1);
-    await f.models.interactions.reply(peer.bot, peer.id, secondCard.id, {
-      kind: 'decision',
-      allow: true,
-      confirmPurpose: true,
-    });
-    await second;
-    await f.call(2, 'synthetic-value', peer.bot);
-    expect((await f.card(3)).policyDecision).toMatchObject({ effect: 'allow', project });
-    expect(transport.effects).toBe(3);
-    await f.models.stop(peer.bot);
-    await peer.done;
-    await f.models.projects.write({
-      requestId: 'mock-other-project-create',
-      projectId: 'mock-other-project',
-      expectedRevision: 0,
-      action: 'create',
-      value: { name: 'Synthetic other project', grants: [{ bot: peer.bot }] },
-    });
-    const otherProject = { projectId: 'mock-other-project', revision: 1 };
-    await f.models.start(peer.bot, {
-      requestId: 'mock-other-project-task',
-      prompt: 'Synthetic other project task',
-      project: otherProject,
-    });
-    const switched = f.models.jobs.get(peer.bot)!;
-    await f.waitRun(switched);
-    const different = f.call(3, 'synthetic-value', peer.bot);
-    const differentCard = await f.card(4);
-    expect(differentCard).toMatchObject({
-      status: 'pending',
-      policyDecision: { project: otherProject, matchedRules: [] },
-    });
-    expect(transport.effects).toBe(3);
-    await f.models.interactions.reply(switched.bot, switched.id, differentCard.id, {
-      kind: 'decision',
-      allow: false,
-    });
-    await different;
-    await f.models.profiles.register({
-      id: 'mock-outsider',
-      name: 'Synthetic outsider',
-      instructions: '',
-      memory: '',
-      color: 'mint',
-    });
-    await expect(
-      f.models.start('mock-outsider', {
-        requestId: 'mock-nonmember',
-        prompt: 'Synthetic nonmember task',
-        project,
-      }),
-    ).rejects.toMatchObject({ code: 'PROJECT_ACCESS_DENIED' });
-    expect(transport.effects).toBe(3);
-  } finally {
-    await f.close();
-  }
-});
-
-test('project membership revision withdrawal after Human confirmation blocks the final MCP send', async () => {
-  const project = { projectId: 'mock-project', revision: 1 };
-  const f = await mcpFixture('auto', undefined, 'interactive', 'synthetic', project);
-  try {
-    await f.models.approvalRules.write({
-      requestId: 'mock-shared-rule',
-      expectedRevision: 1,
-      scope: { kind: 'project', scope: project },
-      action: 'save',
-      rule: { ...f.rule, id: 'mock-project-rule' },
-    });
-    const pending = f.call(1);
-    const card = await f.card(1);
-    transport.beforeSend = async () => {
-      await f.models.projects.write({
-        requestId: 'mock-member-revoke',
-        projectId: project.projectId,
-        expectedRevision: 1,
-        action: 'update',
-        value: { name: 'Synthetic project', grants: [{ bot: 'mock-peer' }] },
-      });
-    };
-    await f.models.interactions.reply(f.job.bot, f.job.id, card.id, {
-      kind: 'decision',
-      allow: true,
-      confirmPurpose: true,
-    });
-    expect(await pending).toMatchObject({ result: { isError: true } });
-    expect(transport.effects).toBe(0);
-    expect(f.job.running).toBe(true);
-    expect(
-      (await f.models.approvalRules.snapshot({ kind: 'project', scope: project })).rules,
-    ).toHaveLength(1);
-  } finally {
-    await f.close();
-  }
-});
-
-test('the portable Host executor fixture keeps real project and purpose admission for file provenance', async () => {
-  const f = await mcpFixture('auto', automationSource('file'), 'automation', 'synthetic');
-  try {
-    const pending = f.call(1);
-    const card = await f.card(1);
-    expect(card).toMatchObject({ status: 'pending', policyDecision: { trigger: 'automation' } });
-    expect(transport.effects).toBe(0);
-    await f.models.interactions.reply(f.job.bot, f.job.id, card.id, {
-      kind: 'decision',
-      allow: true,
-      confirmPurpose: true,
-    });
-    await pending;
-    expect(transport.effects).toBe(1);
-    await f.call(2);
-    expect(await f.card(2)).toMatchObject({
-      decisionSource: 'policy',
-      policyDecision: { trigger: 'automation', reasonCode: 'ruleAllowed' },
-    });
-    expect(transport.effects).toBe(2);
-    await f.nextTask();
-    expect(f.job.project).toBeUndefined();
-    expect(f.job.automation).toBeUndefined();
-    const human = f.call(3);
-    const humanCard = await f.card(3);
-    expect(humanCard).toMatchObject({
-      status: 'pending',
-      policyDecision: { trigger: 'interactive', matchedRules: [] },
-    });
-    expect(transport.effects).toBe(2);
-    await f.models.interactions.reply(f.job.bot, f.job.id, humanCard.id, {
-      kind: 'decision',
-      allow: false,
-    });
-    await human;
-    expect(transport.effects).toBe(2);
   } finally {
     await f.close();
   }
@@ -1241,8 +1035,8 @@ test('an all-mode unknown schedule reconciles the original Human-approved MCP ta
     file: path.join(f.root, 'schedules.sqlite'),
     domain: Promise.resolve(domain),
     observation: {
-      authorize: (bot: string, scope: ProjectScope) =>
-        f.models.projects.assertScope(bot, scope, 'read'),
+      authorize: (_bot: string, scope: ProjectScope) =>
+        f.models.tools.checkProject({ project: scope }),
       read: async () => Buffer.from('Synthetic file bytes'),
     },
     runner: {

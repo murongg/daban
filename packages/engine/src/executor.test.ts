@@ -1,12 +1,10 @@
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { documentLimit, type ProjectResources } from '@daban/protocol';
-import { expect, type TestContext, test, vi } from 'vitest';
-import { Fault } from './control.js';
+import { documentLimit } from '@daban/protocol';
+import { expect, type TestContext, test } from 'vitest';
 import { RemoteExecutor } from './execution.js';
 import { startExecutor } from './executor.js';
-import { browserEngine } from './playwright-input.js';
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-executor-'));
@@ -21,291 +19,63 @@ async function fixture(t: TestContext) {
   return { root, service, token, client };
 }
 
-test.for(['parent', 'child'] as const)(
-  'a %s legacy workspace cannot overlap managed project resources',
-  async (relation, t) => {
-    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-overlap-'));
-    const shared = relation === 'parent' ? root : path.join(root, 'projects', 'legacy');
-    await mkdir(shared, { recursive: true, mode: 0o700 });
-    await writeFile(path.join(shared, 'legacy.txt'), 'SYNTHETIC LEGACY');
-    const service = await startExecutor({
-      directory: root,
-      workspace: shared,
-      port: 0,
-      boot: 'mock-boot',
-    });
-    t.onTestFinished(async () => {
-      await service.close();
-      await rm(root, { recursive: true, force: true });
-    });
-    const client = new RemoteExecutor({
-      url: `${service.origin}/exec`,
-      token: (await readFile(path.join(root, 'token'), 'utf8')).trim(),
-    });
-    await client.ready;
-    expect(client.snapshot?.capabilities).not.toContain('project-scope-v1');
-    expect(await client.call('workspace.read', { path: 'legacy.txt' })).toMatchObject({
-      content: 'SYNTHETIC LEGACY',
-    });
-    const resources: ProjectResources = {
+test('retired resource indexes cannot redirect an ordinary workspace read or change saved files', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-retired-resources-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const shared = path.join(root, 'desktops/shared');
+  const retired = path.join(root, 'projects');
+  const privateFiles = path.join(retired, 'mock-retired-files/files');
+  const profile = path.join(retired, 'mock-retired-browser/profile');
+  for (const directory of [shared, privateFiles, profile])
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+  const resources = JSON.stringify([
+    {
       project: {
-        id: 'mock-project',
+        id: 'mock-retired-project',
         name: 'SYNTHETIC',
         revision: 1,
         status: 'active',
         grants: [],
         environment: { files: 'project', browser: 'private' },
       },
-      files: 'mock-files',
-      sharedProfile: 'mock-shared-profile',
+      files: 'mock-retired-files',
+      sharedProfile: 'mock-retired-browser',
       profiles: {},
-    };
+    },
+  ]);
+  await writeFile(path.join(retired, 'resources.json'), resources, { mode: 0o600 });
+  await writeFile(path.join(shared, 'same-name.txt'), 'SYNTHETIC SHARED FILE');
+  await writeFile(path.join(privateFiles, 'same-name.txt'), 'SYNTHETIC PRIVATE FILE');
+  await writeFile(path.join(profile, 'login.marker'), 'SYNTHETIC PRESERVED LOGIN MARKER');
+  const service = await startExecutor({ directory: root, port: 0, boot: 'mock-retired-boot' });
+  try {
+    const client = new RemoteExecutor({
+      url: `${service.origin}/exec`,
+      token: (await readFile(path.join(root, 'token'), 'utf8')).trim(),
+    });
+    await client.ready;
     await expect(
-      client.call('projects.sync', resources as unknown as Record<string, unknown>),
-    ).rejects.toMatchObject({ code: 'PROJECT_WORKSPACE_OVERLAP' });
-  },
-);
-
-test('an unavailable project mirror fences project execution without disabling legacy files and receipts', async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-mirror-'));
-  await mkdir(path.join(root, 'projects'), { recursive: true, mode: 0o700 });
-  await writeFile(path.join(root, 'projects/resources.json'), 'SYNTHETIC INVALID MIRROR', {
-    mode: 0o600,
-  });
-  const service = await startExecutor({ directory: root, port: 0, boot: 'mock-boot' });
-  t.onTestFinished(async () => {
-    await service.close();
-    await rm(root, { recursive: true, force: true });
-  });
-  const client = new RemoteExecutor({
-    url: `${service.origin}/exec`,
-    token: (await readFile(path.join(root, 'token'), 'utf8')).trim(),
-  });
-  await client.ready;
-  expect(client.snapshot?.capabilities).not.toContain('project-scope-v1');
-  expect(client.snapshot?.capabilities).toContain('task-run-v1');
-  expect(await client.call('workspace.list', {})).toStrictEqual([]);
-  const task = await client.call<{ path: string; canonical: string }>('workspace.create', {
-    parts: ['synthetic-large-budget', 'mock-bot'],
-  });
-  await client.call('tools.open', {
-    id: 'synthetic-large-budget',
-    bot: 'mock-bot',
-    workdir: task.path,
-    canonicalRoot: task.canonical,
-    limit: 1001,
-  });
-  await client.call('tools.drain', { runId: 'synthetic-large-budget' });
-  await expect(
-    client.call('projects.bind', {
-      bot: 'mock-bot',
-      scope: { projectId: 'mock-project', revision: 1 },
-    }),
-  ).rejects.toMatchObject({ code: 'PROJECT_STORE_UNAVAILABLE' });
-});
-
-test('a locked replacement browser profile keeps the prior project resource binding', async (t) => {
-  const { client } = await fixture(t);
-  const resources: ProjectResources = {
-    project: {
-      id: 'mock-project',
-      name: 'SYNTHETIC',
-      revision: 1,
-      status: 'active',
-      grants: [{ bot: 'mock-bot', content: 'read', browser: false }],
-      environment: { files: 'project', browser: 'private' },
-    },
-    files: 'mock-files',
-    sharedProfile: 'mock-shared-profile',
-    profiles: { 'mock-bot': 'mock-private-profile' },
-  };
-  await client.call('projects.sync', resources as unknown as Record<string, unknown>);
-  const { chromium } = await browserEngine();
-  const launch = vi
-    .spyOn(chromium, 'launchPersistentContext')
-    .mockRejectedValue(new Fault('BROWSER_PROFILE_LOCKED'));
-  await expect(
-    client.call('projects.sync', {
-      ...resources,
-      project: {
-        ...resources.project,
-        revision: 2,
-        environment: { files: 'project', browser: 'project' },
-        grants: [{ bot: 'mock-bot', content: 'read', browser: true }],
-      },
-    }),
-  ).rejects.toMatchObject({ code: 'BROWSER_PROFILE_LOCKED' });
-  expect(launch).toHaveBeenCalledTimes(1);
-  expect(
-    await client.call('workspace.list', {
-      project: { scope: { projectId: 'mock-project', revision: 1 }, resourceId: resources.files },
-    }),
-  ).toStrictEqual([]);
-});
-
-test('project execution binds resource IDs, separates shared roots and rejects stale handles without exposing private staging', async (t) => {
-  const { root, client } = await fixture(t);
-  const resources = (id: string): ProjectResources => ({
-    project: {
-      id,
-      name: 'SYNTHETIC',
-      revision: 1,
-      status: 'active',
-      grants: [{ bot: 'mock-reader', content: 'read', browser: false }],
-      environment: { files: 'project', browser: 'private' },
-    },
-    files: `${id}-files`,
-    sharedProfile: `${id}-browser`,
-    profiles: { 'mock-reader': `${id}-private` },
-  });
-  const alpha = resources('mock-alpha'),
-    beta = resources('mock-beta');
-  await client.call('projects.sync', alpha as unknown as Record<string, unknown>);
-  await client.call('projects.sync', beta as unknown as Record<string, unknown>);
-  for (const [resources, content] of [
-    [alpha, 'SYNTHETIC ALPHA'],
-    [beta, 'SYNTHETIC BETA'],
-  ] as const) {
-    await writeFile(path.join(root, 'projects', resources.files, 'files', 'same.txt'), content);
-    expect(
-      await client.call('workspace.read', {
+      client.call('workspace.read', {
+        path: 'same-name.txt',
         project: {
-          scope: { projectId: resources.project.id, revision: 1 },
-          resourceId: resources.files,
+          scope: { projectId: 'mock-retired-project', revision: 1 },
+          resourceId: 'mock-retired-files',
         },
-        path: 'same.txt',
       }),
-    ).toMatchObject({ content });
-    const downloaded = await client.call<{ data: string }>('workspace.download', {
-      project: {
-        scope: { projectId: resources.project.id, revision: 1 },
-        resourceId: resources.files,
-      },
-      path: 'same.txt',
+    ).rejects.toMatchObject({ code: 'PROJECT_RETIRED' });
+    expect(await client.call('workspace.read', { path: 'same-name.txt' })).toMatchObject({
+      content: 'SYNTHETIC SHARED FILE',
     });
-    expect(Buffer.from(downloaded.data, 'base64').toString()).toBe(content);
+  } finally {
+    await service.close();
   }
-
-  expect(
-    await client.call('projects.bind', {
-      bot: 'mock-reader',
-      scope: { projectId: alpha.project.id, revision: 1 },
-    }),
-  ).toMatchObject({ bot: 'mock-reader' });
-  const project = {
-    scope: { projectId: alpha.project.id, revision: 1 },
-    resourceId: alpha.files,
-    bot: 'mock-reader',
-    runId: 'mock-run',
-  };
-  const directory = await client.call<{ path: string; canonical: string; handleId: string }>(
-    'workspace.create',
-    { project, parts: ['model-runs', 'mock-run', 'mock-reader'] },
+  expect(await readFile(path.join(retired, 'resources.json'), 'utf8')).toBe(resources);
+  expect(await readFile(path.join(privateFiles, 'same-name.txt'), 'utf8')).toBe(
+    'SYNTHETIC PRIVATE FILE',
   );
-  await client.call('workspace.write', {
-    handleId: directory.handleId,
-    name: 'mock.txt',
-    data: Buffer.from('SYNTHETIC PRIVATE').toString('base64'),
-  });
-  const read = await client.call<{ content: string }>('workspace.read', {
-    project,
-    path: 'mock.txt',
-  });
-  expect(read.content).toBe('SYNTHETIC PRIVATE');
-  expect(await client.call('workspace.list', {})).toStrictEqual([]);
-  expect(
-    await client.call('workspace.list', {
-      project: { scope: project.scope, resourceId: alpha.files },
-    }),
-  ).toMatchObject([{ path: 'same.txt' }]);
-  await expect(
-    client.call('workspace.read', {
-      project: { ...project, resourceId: beta.files },
-      path: 'mock.txt',
-    }),
-  ).rejects.toMatchObject({ code: 'PROJECT_ACCESS_DENIED' });
-  await expect(
-    client.call('workspace.read', { project, root, path: 'mock.txt' }),
-  ).rejects.toMatchObject({ code: 'EXECUTION_WORKSPACE_SCOPE' });
-  await client.call('projects.sync', {
-    ...alpha,
-    project: { ...alpha.project, revision: 2, grants: [] },
-  });
-  await expect(
-    client.call('projects.bind', { bot: 'mock-reader', scope: project.scope }),
-  ).rejects.toMatchObject({ code: 'PROJECT_SCOPE_STALE' });
-  await expect(
-    client.call('workspace.write', {
-      handleId: directory.handleId,
-      name: 'late.txt',
-      data: Buffer.from('NEVER').toString('base64'),
-    }),
-  ).rejects.toMatchObject({ code: 'PROJECT_SCOPE_STALE' });
-  await client.call('workspace.close', { handleId: directory.handleId });
-});
-
-test('read members can stage private task outputs while only write members publish shared content', async (t) => {
-  const { client } = await fixture(t);
-  const resources: ProjectResources = {
-    project: {
-      id: 'mock-project',
-      name: 'SYNTHETIC',
-      revision: 1,
-      status: 'active',
-      grants: [
-        { bot: 'mock-reader', content: 'read', browser: false },
-        { bot: 'mock-writer', content: 'write', browser: false },
-      ],
-      environment: { files: 'project', browser: 'private' },
-    },
-    files: 'mock-files',
-    sharedProfile: 'mock-shared-profile',
-    profiles: { 'mock-reader': 'mock-reader-profile', 'mock-writer': 'mock-writer-profile' },
-  };
-  await client.call('projects.sync', resources as unknown as Record<string, unknown>);
-  for (const bot of ['mock-reader', 'mock-writer']) {
-    const project = {
-      scope: { projectId: 'mock-project', revision: 1 },
-      resourceId: resources.files,
-      bot,
-      runId: `mock-run-${bot}`,
-    };
-    const directory = await client.call<{ path: string; canonical: string }>('workspace.create', {
-      project,
-      parts: ['model-runs', project.runId, bot],
-    });
-    await client.call('tools.open', {
-      id: project.runId,
-      bot,
-      project: project.scope,
-      workdir: directory.path,
-      canonicalRoot: directory.canonical,
-      limit: 20,
-    });
-    await client.call('tools.write', {
-      runId: project.runId,
-      path: 'private.txt',
-      content: 'SYNTHETIC PRIVATE',
-      createOnly: true,
-    });
-    const publish = client.call('tools.write', {
-      runId: project.runId,
-      path: '/shared/result.txt',
-      content: 'SYNTHETIC PUBLISHED',
-      createOnly: true,
-    });
-    if (bot === 'mock-reader')
-      await expect(publish).rejects.toMatchObject({ code: 'PROJECT_ACCESS_DENIED' });
-    else await publish;
-  }
-  const project = {
-    scope: { projectId: 'mock-project', revision: 1 },
-    resourceId: resources.files,
-  };
-  expect(await client.call('workspace.read', { project, path: 'result.txt' })).toMatchObject({
-    content: 'SYNTHETIC PUBLISHED',
-  });
-  expect((await client.call<unknown[]>('workspace.list', { project })).length).toBe(1);
+  expect(await readFile(path.join(profile, 'login.marker'), 'utf8')).toBe(
+    'SYNTHETIC PRESERVED LOGIN MARKER',
+  );
 });
 
 test('executor authenticates one narrow RPC surface without model or approval endpoints', async (t) => {

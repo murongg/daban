@@ -1,4 +1,5 @@
 import type { ApprovalRulesCommand } from '@daban/protocol';
+import { Fault } from './control.js';
 import type { ModelRuns } from './model.js';
 
 export async function approvalCommand(models: ModelRuns, command: ApprovalRulesCommand) {
@@ -7,7 +8,7 @@ export async function approvalCommand(models: ModelRuns, command: ApprovalRulesC
     if (scope.kind === 'bot') {
       models.profiles.assertRegistered(scope.bot);
       if (command.type === 'approval.rules.write') models.profiles.assertActive(scope.bot);
-    } else models.projects.assertHumanScope(scope.scope);
+    } else throw new Fault('PROJECT_RETIRED', 409);
   };
   // Original edit receipts remain readable after scope revision changes or archive; this never renews execution authority.
   if (command.type === 'approval.rules.receipt')
@@ -16,7 +17,7 @@ export async function approvalCommand(models: ModelRuns, command: ApprovalRulesC
     return models.approvalRules.write(command.request, current);
   if (command.type === 'approval.rules.list') {
     if (scope.kind === 'bot') models.profiles.assertRegistered(scope.bot);
-    else models.projects.get(scope.scope.projectId);
+    else throw new Fault('PROJECT_RETIRED', 409);
     return models.approvalRules.snapshot(scope);
   }
   current();

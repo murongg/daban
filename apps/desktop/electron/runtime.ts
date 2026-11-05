@@ -800,6 +800,9 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    // Older Hosts may still execute cached scoped requests; refuse them before transport.
+    if (command.type === 'task.start' && command.task.project !== undefined)
+      throw Error('PROJECT_RETIRED');
     if (isApprovalRulesCommand(command)) {
       const captured = structuredClone(command);
       const scope =
@@ -2020,30 +2023,18 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
     }
-    if (command.type === 'projects.status') return this.api('/api/projects/status', {});
-    if (command.type === 'projects.select')
-      return this.api('/api/projects/select', {
-        bot: command.bot,
-        ...(command.scope ? { scope: command.scope } : {}),
-      });
-    if (command.type === 'projects.list') return this.api('/api/projects/list', {});
-    if (command.type === 'projects.write')
-      return this.api('/api/projects/write', { request: command.request });
-    if (command.type === 'projects.resume')
-      return this.api('/api/projects/resume', { requestId: command.requestId });
-    if (command.type === 'projects.receipt')
-      return this.api('/api/projects/receipt', { requestId: command.requestId });
+    if (
+      (command.type === 'files.list' ||
+        command.type === 'files.read' ||
+        command.type === 'files.download') &&
+      (command.project !== undefined || command.task !== undefined)
+    )
+      throw Error('PROJECT_RETIRED');
     if (command.type === 'files.list') {
-      const result = await (command.project
-        ? this.api('/api/files/list', {
-            project: command.project,
-            ...(command.task ? { task: command.task } : {}),
-          })
-        : this.api('/api/files'));
+      const result = await this.api('/api/files');
       if (
-        (command.project && !Array.isArray(result)) ||
-        (Array.isArray(result) &&
-          !result.every((file: unknown) => projectFileMatches(file, command)))
+        !Array.isArray(result) ||
+        !result.every((file: unknown) => projectFileMatches(file, command))
       )
         throw Error('INVALID_RUNTIME_FILE');
       return result;
@@ -2051,8 +2042,6 @@ export class RuntimeClient {
     if (command.type === 'files.read') {
       const result = await this.api('/api/files/read', {
         path: command.path,
-        ...(command.project ? { project: command.project } : {}),
-        ...(command.task ? { task: command.task } : {}),
       });
       if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
       return result;
@@ -2063,8 +2052,6 @@ export class RuntimeClient {
       if (state.protocolVersion < 11) throw new Error('RUNTIME_TOO_OLD');
       const result = await this.api('/api/files/download', {
         path: command.path,
-        ...(command.project ? { project: command.project } : {}),
-        ...(command.task ? { task: command.task } : {}),
       });
       if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
       if (

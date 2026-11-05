@@ -58,7 +58,6 @@ import {
   modelReference,
   type ProjectFileRequest,
   type ProjectScope,
-  projectCapability,
   replyLimit,
   sameProjectScope,
   taskRunCapability,
@@ -107,7 +106,6 @@ import { NotesTools } from './notes-tools.js';
 import { planningCommand, projectPlanning } from './planning.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
-import { Projects } from './projects.js';
 import { promptCacheId } from './prompt-cache.js';
 import { programmatic } from './ptc.js';
 import { redact, redactStream } from './redaction.js';
@@ -152,7 +150,7 @@ const sdkProvider = (route: Pick<ResolvedModel, 'provider' | 'api'>) =>
   route.api === 'google-generative-ai' ? 'google' : route.provider;
 // Risk-based approval replaces the all-command approval context; keep chat history, retire its SDK session.
 const sessionProfile = 'general-v12-approval-rules';
-// A directory switch does not clear an SDK conversation; project revisions must partition its identity.
+// Archived project sessions must never supply native SDK authority to an ordinary conversation.
 const sessionKey = (
   bot: string,
   conversationId?: string,
@@ -729,7 +727,6 @@ export class ModelRuns {
   readonly knowledge: Knowledge;
   readonly work: Work;
   readonly notes: Notes;
-  readonly projects: Projects;
   readonly attachments: Attachments;
   readonly profiles: BotProfiles;
   readonly chats: Chats;
@@ -740,7 +737,6 @@ export class ModelRuns {
   readonly approvalRules: ApprovalRules;
   readonly rulePolicy: RulePolicy;
   readonly ready: Promise<unknown>;
-  private readonly projectSelections = new Set<string>();
   private readonly workspace: AgentWorkspace;
   private readonly sdkFile: string;
   private readonly execution?: WorkspaceExecutor;
@@ -817,8 +813,6 @@ export class ModelRuns {
     this.tools = new AgentTools(computer, this.workspace, {
       execution,
       nativeOnly,
-      projectAccess: (run, access) =>
-        run.project && this.projects.assertScope(run.bot, run.project, access),
     });
     this.tools.localComputer = localComputer;
     if (localComputer)
@@ -852,40 +846,6 @@ export class ModelRuns {
       )
         references.push('running');
       return references;
-    });
-    this.projects = new Projects(path.join(dir, 'projects.sqlite'), {
-      registered: (bot) => {
-        this.profiles.assertRegistered(bot);
-        this.profiles.assertActive(bot);
-      },
-      busy: (bots) =>
-        bots.some(
-          (bot) =>
-            this.projectSelections.has(bot) ||
-            execution?.snapshot?.computer?.bots[bot]?.owner === 'human' ||
-            this.running(bot) ||
-            (() => {
-              try {
-                return this.tools.computer?.runtime.control.state(bot).owner === 'human';
-              } catch {
-                return false;
-              }
-            })(),
-        ),
-      prepare: async (resources) => {
-        if (execution?.snapshot?.capabilities.includes(projectCapability))
-          await execution.call('projects.sync', resources as unknown as Record<string, unknown>);
-      },
-      changed: async (project) => {
-        // Withdraw pending grants without cancelling or replaying guest effects that were already dispatched.
-        for (const job of this.jobs.values()) {
-          if (
-            job.task?.project?.projectId === project.id &&
-            job.task.project.revision !== project.revision
-          )
-            await this.interactions.endRun(job.bot, job.id);
-        }
-      },
     });
     this.work = new Work(path.join(dir, 'work.sqlite'), (actor) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -1030,10 +990,7 @@ export class ModelRuns {
       async (run, bundle) => {
         if (!run.id) throw new Fault('MODEL_RUN_UNKNOWN');
         const native = this.tools.options.nativeOnly || this.tools.localSelected(run.bot, run);
-        let files = this.workspaceFor(run.project, run.bot, run.id).scope(
-          run.workdir,
-          run.canonicalRoot,
-        );
+        let files = this.unscopedWorkspace(run.project).scope(run.workdir, run.canonicalRoot);
         if (native && !this.tools.options.nativeOnly) {
           const hostFiles = new NativeWorkspace(path.join(dir, 'skill-workspaces'));
           await hostFiles.prepare();
@@ -1067,7 +1024,7 @@ export class ModelRuns {
       networkFile: path.join(dir, 'network.json'),
     });
     this.tools.authorizeComputer = async (run) => {
-      if (run.project) this.projects.assertScope(run.bot, run.project, 'read');
+      this.tools.checkProject(run);
       const approvals = (await this.interactions.list()).filter(
         (item) =>
           item.bot === run.bot &&
@@ -1076,7 +1033,7 @@ export class ModelRuns {
           item.kind === 'approval' &&
           item.tool !== 'software_install',
       );
-      if (run.project) this.projects.assertScope(run.bot, run.project, 'read');
+      this.tools.checkProject(run);
       // A pending/refused public-read permission must not be bypassed through a more privileged browser or desktop surface.
       if (approvals.some((item) => item.status === 'pending'))
         throw new Fault('WEB_APPROVAL_PENDING');
@@ -1098,75 +1055,15 @@ export class ModelRuns {
     if (this.tools.computer) this.tools.computer.authorize = this.tools.authorizeComputer;
     this.ready = this.restore();
   }
-  projectStatus() {
-    return {
-      available: this.projects.available(),
-      execution:
-        this.projects.available() &&
-        !!this.execution?.snapshot?.capabilities.includes(projectCapability),
-      ...(!this.projects.available() ? { error: 'PROJECT_STORE_UNAVAILABLE' } : {}),
-    };
-  }
-  async selectProject(bot: string, scope?: ProjectScope) {
-    await this.ready;
-    this.profiles.assertRegistered(bot);
-    this.profiles.assertActive(bot);
-    if (!this.admission() || !this.botAdmission(bot)) throw new Fault('RUNTIME_RECOVERY_PENDING');
-    if (this.running(bot) || this.projectSelections.has(bot)) throw new Fault('PROJECT_BUSY');
-    if (!this.execution?.snapshot?.capabilities.includes(projectCapability))
-      throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    this.projectSelections.add(bot);
-    try {
-      return await this.bindProject(bot, scope);
-    } finally {
-      this.projectSelections.delete(bot);
-    }
-  }
-  private async bindProject(bot: string, scope?: ProjectScope, job?: ModelJob) {
-    if (!this.execution?.snapshot?.capabilities.includes(projectCapability))
-      throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    const live = () => {
-      if (!this.admission() || !this.botAdmission(bot)) throw new Fault('RUNTIME_RECOVERY_PENDING');
-      this.profiles.assertActive(bot);
-      if (job && (this.jobs.get(bot) !== job || !job.running || job.abort.signal.aborted))
-        throw new Fault('MODEL_CANCELLED');
-      if (scope) this.projects.assertScope(bot, scope, 'read');
-    };
-    live();
-    if (scope)
-      await this.execution.call(
-        'projects.sync',
-        this.projects.resources(scope.projectId) as unknown as Record<string, unknown>,
-      );
-    live();
-    const result = await this.execution.call('projects.bind', { bot, ...(scope ? { scope } : {}) });
-    live();
-    return result;
-  }
   filesFor(reference: ProjectFileRequest) {
-    if (!reference.project) return this.workspace;
-    const binding = this.projects.assertHumanScope(reference.project);
-    if (!this.execution?.snapshot?.capabilities.includes(projectCapability))
-      throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    return new RemoteWorkspace(
-      this.execution,
-      '',
-      undefined,
-      undefined,
-      {
-        ...binding,
-        ...(reference.task ? { bot: reference.task.bot, runId: reference.task.runId } : {}),
-      },
-      () => this.projects.assertHumanScope(reference.project!),
-    );
+    // A retired locator must never be reinterpreted in the broader shared workspace.
+    if (reference.project !== undefined || reference.task !== undefined)
+      throw new Fault('PROJECT_RETIRED', 409);
+    return this.workspace;
   }
-  private workspaceFor(project?: ProjectScope, bot?: string, runId?: string) {
-    if (!project) return this.workspace;
-    if (!this.execution || !bot || !runId) throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    const binding = { ...this.projects.assertScope(bot, project, 'read'), runId };
-    return new RemoteWorkspace(this.execution, '', undefined, undefined, binding, () =>
-      this.projects.assertScope(bot, project, 'read'),
-    );
+  private unscopedWorkspace(project?: ProjectScope) {
+    if (project) throw new Fault('PROJECT_RETIRED', 409);
+    return this.workspace;
   }
   monitoringAvailable() {
     return (
@@ -1174,86 +1071,11 @@ export class ModelRuns {
     );
   }
   automationObserver() {
-    const authorize = (bot: string, scope: ProjectScope) => {
-      this.profiles.assertActive(bot);
-      if (
-        !this.monitoringAvailable() ||
-        !this.execution?.snapshot?.capabilities.includes(projectCapability) ||
-        !this.execution.snapshot.capabilities.includes(taskRunCapability)
-      )
-        throw new Fault('AUTOMATION_FILES_UNAVAILABLE');
-      return this.projects.assertScope(bot, scope, 'read');
+    // Project-backed monitor paths cannot be rebound to the ordinary workspace during removal.
+    const retired = () => {
+      throw new Fault('PROJECT_RETIRED', 409);
     };
-    return {
-      available: () =>
-        this.monitoringAvailable() &&
-        this.projectStatus().execution &&
-        !!this.execution?.snapshot?.capabilities.includes(taskRunCapability),
-      authorize,
-      read: async (
-        bot: string,
-        scope: ProjectScope,
-        file: string,
-        limit: number,
-        signal: AbortSignal,
-      ) => {
-        signal.throwIfAborted();
-        const binding = authorize(bot, scope);
-        const files = new RemoteWorkspace(
-          this.execution!,
-          '',
-          undefined,
-          undefined,
-          { ...binding, bot },
-          () => authorize(bot, scope),
-        );
-        const verifyRoot = async () => {
-          authorize(bot, scope);
-          try {
-            // Only a missing file under a verified project root is absent; a lost root is a read failure.
-            const root = await this.execution!.call(
-              'workspace.base',
-              { project: { ...binding, bot } },
-              signal,
-            );
-            if (typeof root !== 'string' || !root || root.length > 4096 || root.includes('\0'))
-              throw new Fault('INVALID_EXECUTOR_RESPONSE');
-          } catch (error) {
-            if (errorCode(error) === 'ENOENT') throw new Fault('AUTOMATION_READ_FAILED');
-            throw error;
-          }
-          signal.throwIfAborted();
-          authorize(bot, scope);
-        };
-        await verifyRoot();
-        try {
-          const value = await files.download(file, limit, signal);
-          signal.throwIfAborted();
-          authorize(bot, scope);
-          if (
-            !isRuntimeDownload(value) ||
-            value.path !== file ||
-            (value.project !== undefined && !sameProjectScope(value.project, scope)) ||
-            value.task !== undefined
-          )
-            throw new Fault('INVALID_EXECUTOR_RESPONSE');
-          const bytes = Buffer.from(value.data, 'base64');
-          if (
-            bytes.length !== value.size ||
-            bytes.length > limit ||
-            createHash('sha256').update(bytes).digest('hex') !== value.sha256
-          )
-            throw new Fault('INVALID_EXECUTOR_RESPONSE');
-          return bytes;
-        } catch (error) {
-          if (errorCode(error) === 'ENOENT') {
-            await verifyRoot();
-            return null;
-          }
-          throw error;
-        }
-      },
-    };
+    return { available: () => false, authorize: retired, read: async () => retired() };
   }
   async automationSignal(bot: string, runId: string, signalPath: string) {
     if (!isAutomationPath(signalPath)) throw new Fault('AUTOMATION_SIGNAL_UNAVAILABLE');
@@ -1284,7 +1106,7 @@ export class ModelRuns {
     signalPath: string,
   ) {
     if (!record.outputDirectory) throw new Fault('AUTOMATION_SIGNAL_UNAVAILABLE');
-    const workspace = this.workspaceFor(record.project, bot, runId);
+    const workspace = this.unscopedWorkspace(record.project);
     const root = await workspace.base();
     const files = workspace.scope(record.outputDirectory);
     const actual = await files.base();
@@ -1325,8 +1147,6 @@ export class ModelRuns {
   }
   private async restore() {
     await this.budgets.ready;
-    // A failed optional project store must not take legacy task receipts and their owners offline.
-    await this.projects.ready.catch(() => undefined);
     await this.chats.ready;
     await this.transcripts.ready;
     await this.journal.load();
@@ -1864,7 +1684,7 @@ export class ModelRuns {
     await this.ready;
     if (!isGoalBudgetOwner(owner)) throw new Fault('INVALID_GOAL_TARGET', 400);
     if (!owner.conversationId) this.chats.assertCurrent(owner.bot, owner.chatRevision);
-    if (owner.project) this.projects.assertScope(owner.bot, owner.project, 'read');
+    if (owner.project) throw new Fault('PROJECT_RETIRED', 409);
     const target = this.budgets.goals.prepare(owner);
     if (target) return target;
     const job = this.jobs.get(owner.bot);
@@ -2263,14 +2083,7 @@ export class ModelRuns {
         throw new Fault('BUDGET_REVISION_CONFLICT', 409);
       acceptedBudget = target.budget ? structuredClone(target.budget) : acceptedBudget;
     }
-    if (task?.project) {
-      this.projects.assertScope(bot, task.project, 'read');
-      if (
-        !this.execution?.snapshot?.capabilities.includes(projectCapability) ||
-        !this.execution.snapshot.capabilities.includes(taskRunCapability)
-      )
-        throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
-    }
+    if (task?.project) throw new Fault('PROJECT_RETIRED', 409);
     let cachedInputs: TaskRequest['files'];
     let intentId: string | undefined;
     let priorBudget: BudgetScope | undefined;
@@ -2281,7 +2094,7 @@ export class ModelRuns {
       const recovery = await this.continuation(bot, task.retryOf);
       const prior = recovery.record;
       if (!sameProjectScope(prior.project, task.project)) throw new Fault('INVALID_RETRY', 400);
-      const retryWorkspace = this.workspaceFor(task.project, bot, prior.runId);
+      const retryWorkspace = this.unscopedWorkspace(task.project);
       if (
         prior.conversationId !== scope?.id ||
         (!scope && (prior.chatRevision ?? 0) !== (task.chatRevision ?? 0))
@@ -2430,7 +2243,6 @@ export class ModelRuns {
     };
     // Every human turn keeps its own request and eventual reply; inserted turns append below.
     if (task) job.turns = [{ id: task.requestId, prompt: task.prompt, result: '' }];
-    if (this.projectSelections.has(bot)) throw new Fault('PROJECT_BUSY');
     // Admission and publication must stay in one synchronous turn, so attachment cannot change a task's authority mid-start.
     if (this.tools.computer?.runtime.admit?.(bot) === false) throw new Fault('COMPUTER_CHANGING');
     if (!this.admission() || !this.botAdmission(bot)) throw new Fault('COMPUTER_CHANGING');
@@ -2502,7 +2314,7 @@ export class ModelRuns {
         task.requestId,
       );
     }
-    if (job.project) this.projects.assertScope(bot, job.project, 'read');
+    this.tools.checkProject(job);
     this.budgets.bind(job.budget, job.id);
     const budgetView = this.budgets.view(job.budget.budgetId);
     if (budgetView.state !== 'active') throw new Fault('BUDGET_LIMIT_REACHED', 409);
@@ -2510,9 +2322,6 @@ export class ModelRuns {
     this.jobs.set(bot, job);
     let inputDirectory: TaskDirectory | undefined;
     try {
-      // Publish the captured request before awaiting resource preparation so concurrent retries only read its receipt.
-      if (this.execution?.snapshot?.capabilities.includes(projectCapability))
-        await this.bindProject(bot, job.project, job);
       job.skills = task ? await this.skills.capture(bot) : { available: true, key: '', skills: [] };
       job.integrations = task
         ? await this.integrations.capture(bot)
@@ -2562,7 +2371,7 @@ export class ModelRuns {
       job.redactResponse = (value) => redactStream(value, secrets);
       if (!task) await this.runtime?.stopWorker(bot);
       job.privateDir = path.join(this.dir, 'runs', job.id, bot);
-      inputDirectory = await this.workspaceFor(job.project, bot, job.id).create([
+      inputDirectory = await this.unscopedWorkspace(job.project).create([
         'model-runs',
         job.id,
         bot,
@@ -3559,7 +3368,7 @@ export class ModelRuns {
   private async collectFiles(job: ModelJob) {
     const inputs = new Set(job.inputs),
       paths = this.workspacePaths,
-      workspace = this.workspaceFor(job.project, job.bot, job.id),
+      workspace = this.unscopedWorkspace(job.project),
       prefix = job.project
         ? ''
         : paths.relative(this.workspace.root, job.workdir).split(paths.sep).join('/');
@@ -3624,7 +3433,7 @@ export class ModelRuns {
     )
       throw new Fault('APPROVAL_AUTHORITY_CHANGED');
     this.profiles.assertActive(run.bot);
-    if (job.project) this.projects.assertScope(job.bot, job.project, 'read');
+    this.tools.checkProject(job);
     return job;
   }
   private mcpPurposeScope(run: PolicyRun): McpPurposeScope | undefined {
@@ -4048,7 +3857,6 @@ export class ModelRuns {
       this.tools.integrations,
       this.work,
       this.notes,
-      this.projects,
       this.attachments,
       this.knowledge,
       this.skills,
