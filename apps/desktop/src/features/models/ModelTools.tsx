@@ -343,7 +343,7 @@ export function ModelInspector({
           {tool.busy === 'test' && <LoaderCircle size={14} className="model-tool-spinner" />}
           {tool.busy === 'test'
             ? t('models.testing')
-            : t(tool.unconfirmed ? 'models.queryDiagnostic' : 'models.test')}
+            : t(tool.unconfirmed ? 'models.queryDiagnostic' : 'models.probeInference')}
         </button>
         <button
           className="text-button"

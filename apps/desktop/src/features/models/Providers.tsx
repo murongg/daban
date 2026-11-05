@@ -456,7 +456,12 @@ export function Providers({
             <div className="provider-identity">
               <ProviderIcon platform={providerIdentity(connection)} size="large" />
               <div>
-                <div className="setting-label">{connection.name}</div>
+                <div className="setting-label">
+                  {connection.name}
+                  {model.modelAccess && (
+                    <span className="field-help"> · {t('models.credentialsSaved')}</span>
+                  )}
+                </div>
                 <p className="setting-description provider-address">{connection.baseURL}</p>
                 <ul className="provider-model-summary">
                   {connection.models.map((entry) => (

@@ -230,56 +230,19 @@ export function ModelAccess() {
       }),
   ];
   return (
-    <section aria-label={t('models.fallbackTitle')}>
-      <div className="setting-row">
-        <div>
-          <div className="setting-label">{t('models.fallbackTitle')}</div>
-          <p className="setting-description">{t('models.fallbackHint')}</p>
-        </div>
-      </div>
-      <Select
-        label={t('models.fallbackTitle')}
-        value={selected}
-        options={options}
-        disabled={!available || busy || !!pending || !!probe || !model.configured}
-        onValueChange={(value) => setChoice({ model: value, revision: model.revision! })}
-      />
-      <div className="inline-form-actions">
-        <button
-          type="button"
-          className="secondary"
-          disabled={
-            !available ||
-            busy ||
-            !!pending ||
-            !!probe ||
-            !model.configured ||
-            selected === (model.fallbackModel || '')
-          }
-          onClick={configureFallback}
-        >
-          {t('models.fallbackSave')}
-        </button>
-      </div>
-      {connections.map((connection) => (
-        <div key={connection.id} className="setting-row">
-          <p className="field-help">
-            {connection.name} · {t('models.credentialsSaved')}
-          </p>
-          <button
-            type="button"
-            className="text-button"
-            disabled={!available || busy || !!pending || !!probe}
-            onClick={() => removeConnection(connection.id)}
-          >
-            {connections.length === 1
-              ? t('models.disconnectAll')
-              : t('models.removeConnection', { 0: connection.name })}
-          </button>
-        </div>
-      ))}
+    <section aria-label={t('models.connectionChecks')}>
       {primary && (
         <>
+          <div className="setting-row">
+            <div>
+              <div className="setting-label">
+                {t('models.checkSavedModel', { 0: modelName(model.model, connections) })}
+              </div>
+              <p className="setting-description provider-address">
+                {primary.connection.name} · {primary.connection.baseURL}
+              </p>
+            </div>
+          </div>
           <div className="inline-form-actions">
             <button
               className="secondary"
@@ -313,6 +276,7 @@ export function ModelAccess() {
           })}
         </p>
       )}
+      {/* Recovery must stay visible when management is collapsed, without starting a new request. */}
       {pending && (
         <button
           type="button"
@@ -333,7 +297,6 @@ export function ModelAccess() {
           {t('models.queryDiagnostic')}
         </button>
       )}
-      <p className="field-help">{t('models.cliDisabled')}</p>
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -344,6 +307,60 @@ export function ModelAccess() {
           {notice}
         </p>
       )}
+      <details className="provider-advanced">
+        <summary>
+          <span>{t('models.fallbackManagement')}</span> ·{' '}
+          {model.fallbackModel
+            ? modelName(model.fallbackModel, connections)
+            : t('models.fallbackDisabled')}
+        </summary>
+        <div className="setting-row">
+          <div>
+            <div className="setting-label">{t('models.fallbackTitle')}</div>
+            <p className="setting-description">{t('models.fallbackHint')}</p>
+          </div>
+        </div>
+        <Select
+          label={t('models.fallbackTitle')}
+          value={selected}
+          options={options}
+          disabled={!available || busy || !!pending || !!probe || !model.configured}
+          onValueChange={(value) => setChoice({ model: value, revision: model.revision! })}
+        />
+        <div className="inline-form-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={
+              !available ||
+              busy ||
+              !!pending ||
+              !!probe ||
+              !model.configured ||
+              selected === (model.fallbackModel || '')
+            }
+            onClick={configureFallback}
+          >
+            {t('models.fallbackSave')}
+          </button>
+        </div>
+        {connections.map((connection) => (
+          <div key={connection.id} className="setting-row">
+            <p className="field-help">{connection.name}</p>
+            <button
+              type="button"
+              className="text-button"
+              disabled={!available || busy || !!pending || !!probe}
+              onClick={() => removeConnection(connection.id)}
+            >
+              {connections.length === 1
+                ? t('models.disconnectAll')
+                : t('models.removeConnection', { 0: connection.name })}
+            </button>
+          </div>
+        ))}
+        <p className="field-help">{t('models.cliDisabled')}</p>
+      </details>
       {confirm && (
         <Dialog
           title={t(

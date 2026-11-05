@@ -2438,7 +2438,7 @@ export const english = {
   'models.testing': 'Testing…',
   'models.testingSendsFixedShortPromptMayIncur':
     'Testing sends a fixed short prompt and may incur a small API charge. It includes no chat content and does not save settings.',
-  'models.testModel': 'Test model {0}',
+  'models.testModel': 'Test model {0} (may incur charges)',
   'models.title': 'Models & providers',
   'models.updateLocalAgentLoadModelsTestCalls':
     'Update the local Agent to load models, test calls, and match context limits.',
@@ -3388,6 +3388,10 @@ export const english = {
   'tasks.updatedAndCompletedAt': 'Updated at {0} · Completed at {1}',
   'tasks.currentRevisionSummary': '{0} · {1}',
   'tasks.currentDeletedRevisionSummary': '{0} · {1} (in Trash)',
+  'models.connectionChecks': 'Connection checks',
+  'models.checkSavedModel': 'Check saved model: {0}',
+  'models.fallbackManagement': 'Fallback and connection management',
+  'models.fallbackDisabled': 'Fallback off',
   'models.fallbackTitle': 'Fallback model',
   'models.fallbackOff': 'Automatic fallback off',
   'models.fallbackSave': 'Save fallback policy',

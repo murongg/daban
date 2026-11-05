@@ -213,7 +213,7 @@ it('tests an individual draft model and reports latency without saving or exposi
     </RuntimeProvider>,
   );
   await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
-  await userEvent.click(screen.getByRole('button', { name: '测试模型 2' }));
+  await userEvent.click(screen.getByRole('button', { name: /^测试模型 2/ }));
   expect(await screen.findByText('调用成功 · 123 ms')).toBeVisible();
   expect(backend.writes).toHaveLength(0);
 });
@@ -230,7 +230,7 @@ it('discards an in-flight test error after the user changes the model ID', async
   );
   mount();
   await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
-  await userEvent.click(screen.getByRole('button', { name: '测试模型 2' }));
+  await userEvent.click(screen.getByRole('button', { name: /^测试模型 2/ }));
   await userEvent.clear(screen.getByLabelText('模型 2 ID'));
   await userEvent.type(screen.getByLabelText('模型 2 ID'), 'mock-new');
   await act(async () => {
@@ -707,7 +707,7 @@ it('starts onboarding with one model selection and keeps advanced model controls
   await vi.waitFor(() => expect(selectControl('供应商类型')).toBeEnabled());
   expect(screen.getByRole('button', { name: '加载模型列表' })).toBeVisible();
   expect(screen.getByLabelText('模型 1 ID')).not.toBeVisible();
-  expect(screen.getByLabelText('测试模型 1')).not.toBeVisible();
+  expect(screen.getByLabelText(/^测试模型 1/)).not.toBeVisible();
   expect(screen.getByRole('button', { name: '添加模型', hidden: true })).not.toBeVisible();
   expect(screen.getByRole('button', { name: '验证并保存供应商' })).toBeVisible();
   await userEvent.click(screen.getByText('手动输入模型 ID'));
@@ -829,9 +829,16 @@ it('starts with fallback disabled and enables a configured model only after expl
       <Models />
     </RuntimeProvider>,
   );
+  const management = await screen.findByText('备用与连接管理');
+  expect(management.closest('details')).not.toHaveAttribute('open');
+  await userEvent.click(management);
   const picker = await findSelectControl('备用模型');
   expect(picker).toHaveAttribute('data-value', '');
   await selectOption(userEvent, picker, 'provider:synthetic-provider:model-beta');
+  await userEvent.click(management);
+  expect(picker).not.toBeVisible();
+  await userEvent.click(management);
+  expect(picker).toHaveAttribute('data-value', 'provider:synthetic-provider:model-beta');
   const save = screen.getByRole('button', { name: '保存备用策略' });
   await userEvent.click(save);
   expect(screen.getByRole('dialog', { name: '启用备用模型？' })).toBeInTheDocument();
@@ -840,6 +847,7 @@ it('starts with fallback disabled and enables a configured model only after expl
   ).toBe(false);
   await userEvent.keyboard('{Escape}');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(save).toHaveFocus();
   await userEvent.click(save);
   await userEvent.click(screen.getByRole('button', { name: '启用备用模型' }));
   expect(
@@ -847,6 +855,135 @@ it('starts with fallback disabled and enables a configured model only after expl
   ).toHaveLength(1);
   expect(await screen.findByText('备用策略已保存，下次任务生效。')).toBeInTheDocument();
   expect(screen.getByText('CLI 登录尚未通过受限工具验证，请使用 API 连接。')).toBeInTheDocument();
+});
+
+it('checks the saved model and recovers its uncertain diagnostic outside collapsed management', async () => {
+  const backend = connect();
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-model-host',
+    fallback: true,
+    diagnostics: true,
+    cli: false,
+  };
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) => {
+    if (command.type === 'model.diagnose') return { ok: false, error: 'RUNTIME_UNAVAILABLE' };
+    if (command.type === 'model.saved')
+      return {
+        ok: true,
+        value: {
+          ...command.input,
+          kind: 'diagnose',
+          phase: 'settled',
+          diagnostic: {
+            kind: 'inference',
+            model: command.input.model,
+            latencyMs: 7,
+            checkedAt: '2026-01-01T00:00:00.000Z',
+          },
+          current: {
+            configured: true,
+            provider: backend.snapshot.model.provider,
+            model: backend.snapshot.model.model,
+            revision: 3,
+          },
+        },
+      };
+    return invoke(command);
+  });
+  mount();
+  await selectOption(
+    userEvent,
+    await findSelectControl('工作区默认模型'),
+    'provider:synthetic-provider:model-beta',
+  );
+  expect(screen.getByText('检查已保存的模型：示例 Alpha')).toBeVisible();
+  const management = await screen.findByText('备用与连接管理');
+  expect(management.closest('details')).not.toHaveAttribute('open');
+  await userEvent.click(screen.getByRole('button', { name: '测试推理（可能计费）' }));
+  const diagnostic = backend.invoke.mock.calls.find(
+    ([command]) => command.type === 'model.diagnose',
+  )![0];
+  expect(diagnostic).toMatchObject({
+    type: 'model.diagnose',
+    input: {
+      scope: 'mock-model-host',
+      revision: 3,
+      connection: { id: connection.id, baseURL: connection.baseURL },
+      model: 'model-alpha',
+      kind: 'inference',
+    },
+  });
+  const query = await screen.findByRole('button', { name: '查询诊断回执' });
+  expect(query).toBeVisible();
+  await userEvent.click(management);
+  await userEvent.click(management);
+  expect(query).toBeVisible();
+  await userEvent.click(query);
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.diagnose'),
+  ).toHaveLength(1);
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.saved'),
+  ).toHaveLength(1);
+  expect(
+    diagnostic.type === 'model.diagnose' &&
+      backend.invoke.mock.calls.some(
+        ([command]) =>
+          command.type === 'model.saved' &&
+          command.input.requestId === diagnostic.input.requestId &&
+          command.input.model === 'provider:synthetic-provider:model-alpha',
+      ),
+  ).toBe(true);
+  expect(await screen.findByText(/推理已通过/)).toBeVisible();
+});
+
+it('keeps a referenced-connection refusal visible when management is collapsed', async () => {
+  const backend = connect();
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-model-host',
+    fallback: true,
+    diagnostics: true,
+    cli: false,
+  };
+  const invoke = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'model.remove'
+      ? {
+          ok: true,
+          value: {
+            scope: command.input.scope,
+            requestId: command.input.requestId,
+            revision: command.input.revision,
+            connection: command.input.connection,
+            model: backend.snapshot.model.model,
+            kind: 'remove',
+            phase: 'failed',
+            error: 'MODEL_CONNECTION_REFERENCED',
+            references: ['bot'],
+            current: {
+              configured: true,
+              provider: backend.snapshot.model.provider,
+              model: backend.snapshot.model.model,
+              revision: 3,
+            },
+          },
+        }
+      : invoke(command),
+  );
+  mount();
+  const management = await screen.findByText('备用与连接管理');
+  await userEvent.click(management);
+  await userEvent.click(screen.getByRole('button', { name: '断开全部模型' }));
+  await userEvent.click(screen.getByRole('button', { name: '确认移除' }));
+  const refusal = await screen.findByRole('alert');
+  expect(refusal).toHaveTextContent('连接仍被引用：Bot 模型');
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(management);
+  expect(refusal).toBeVisible();
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.remove'),
+  ).toHaveLength(1);
 });
 
 it('queries an uncertain configure receipt instead of issuing another paid validation', async () => {
@@ -1000,7 +1137,7 @@ it('recovers a lost paid inference test through its exact diagnostic receipt', a
     </RuntimeProvider>,
   );
   await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
-  await userEvent.click(screen.getByRole('button', { name: '测试模型 1' }));
+  await userEvent.click(screen.getByRole('button', { name: /^测试模型 1/ }));
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'model.diagnose'),
   ).toHaveLength(1);
