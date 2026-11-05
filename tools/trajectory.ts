@@ -10,6 +10,7 @@ import {
   trajectoryLimits,
   validateTrajectoryCase,
 } from '@daban/engine/agent';
+import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import { smokeCases, trajectoryCases } from './trajectory-cases.ts';
 import { runTrajectoryFixture } from './trajectory-fixture.ts';
 import { runTrajectoryOwners } from './trajectory-owners.ts';
@@ -79,18 +80,23 @@ function missing(error: unknown) {
 }
 async function prepareOutput(root: string, output: string) {
   const target = reportPath(root, output);
-  for (const dir of [path.resolve(root, 'outputs'), path.dirname(target)]) {
-    try {
-      await mkdir(dir, { mode: 0o700 });
-    } catch (error) {
-      if (
-        !(error !== null && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')
-      )
-        throw error;
-    }
-    const stat = await lstat(dir);
-    if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new TrajectoryCliError('TRAJECTORY_OUTPUT_UNSAFE');
+  const shared = path.resolve(root, 'outputs');
+  try {
+    await mkdir(shared, { mode: 0o700 });
+  } catch (error) {
+    if (
+      !(error !== null && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')
+    )
+      throw error;
+  }
+  const stat = await lstat(shared);
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new TrajectoryCliError('TRAJECTORY_OUTPUT_UNSAFE');
+  try {
+    // Validate only the dedicated report directory; shared outputs ACLs belong to the user.
+    await secureDirectory(path.dirname(target));
+  } catch {
+    throw new TrajectoryCliError('TRAJECTORY_OUTPUT_UNSAFE');
   }
   try {
     await lstat(target);
@@ -105,6 +111,9 @@ export async function publishTrajectoryReport(root: string, output: string, repo
   const temp = path.join(path.dirname(target), `.${randomUUID()}.tmp`);
   const handle = await open(temp, 'wx', 0o600);
   try {
+    // Windows children can override inherited permissions. Verify the empty file before serializing bytes.
+    if (!(await privateMetadata(temp, await handle.stat(), 0o600)))
+      throw new TrajectoryCliError('TRAJECTORY_OUTPUT_UNSAFE');
     await handle.writeFile(`${JSON.stringify(report, null, 2)}\n`);
     await handle.sync();
     await handle.close();

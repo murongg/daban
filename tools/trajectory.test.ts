@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { parseTrajectoryArgs, publishTrajectoryReport, trajectoryExitCode } from './trajectory.ts';
 
 test('selects the three smoke cases by default and accepts only the explicit unknown case', () => {
@@ -54,6 +54,54 @@ test('publishes private evidence exclusively and refuses links or overwrites', a
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(other, { recursive: true, force: true });
+  }
+});
+
+test('report permission failures stop fixtures without changing shared output directory permissions', async () => {
+  const security = await import('@daban/engine/local-computer');
+  const { runTrajectoryCli } = await import('./trajectory.ts');
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-trajectory-private-'));
+  const shared = path.join(root, 'outputs');
+  await mkdir(shared, { mode: 0o755 });
+  const before = await stat(shared);
+  const verify = vi
+    .spyOn(security, 'secureDirectory')
+    .mockRejectedValue(new Error('SYNTHETIC_PRIVATE_ACL_DIAGNOSTIC'));
+  const runCase = vi.fn(async () => {
+    throw Error('SYNTHETIC_FIXTURE_MUST_NOT_START');
+  });
+  try {
+    const result = await runTrajectoryCli([], { root, runCase });
+    expect(result).toEqual({ exitCode: 3, error: 'TRAJECTORY_OUTPUT_UNSAFE' });
+    expect(runCase).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledWith(path.join(shared, 'trajectory'));
+    expect(verify).not.toHaveBeenCalledWith(shared);
+    expect((await stat(shared)).mode).toBe(before.mode);
+    expect(await readdir(shared)).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain('SYNTHETIC_PRIVATE_ACL_DIAGNOSTIC');
+  } finally {
+    verify.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an unverified report file receives no bytes and is removed before returning', async () => {
+  const security = await import('@daban/engine/local-computer');
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-trajectory-file-mode-'));
+  const verify = vi.spyOn(security, 'privateMetadata').mockImplementation(async (file) => {
+    expect((await stat(file)).size).toBe(0);
+    return false;
+  });
+  const toJSON = vi.fn(() => ({ synthetic: true }));
+  try {
+    await expect(
+      publishTrajectoryReport(root, 'outputs/trajectory/mock.json', { toJSON }),
+    ).rejects.toMatchObject({ code: 'TRAJECTORY_OUTPUT_UNSAFE' });
+    expect(toJSON).not.toHaveBeenCalled();
+    expect(await readdir(path.join(root, 'outputs', 'trajectory'))).toEqual([]);
+  } finally {
+    verify.mockRestore();
+    await rm(root, { recursive: true, force: true });
   }
 });
 
