@@ -194,6 +194,10 @@ export class RemoteAccess {
   controllers() {
     return this.store.devices('controller').map((device) => device.identity);
   }
+  get hosting() {
+    // Window-close hooks run after shutdown has closed storage; liveness must remain readable without IO.
+    return this.enabled && !this.stopped;
+  }
   subscribe(listener: (state: RemoteState) => unknown) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

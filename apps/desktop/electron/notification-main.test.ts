@@ -24,6 +24,7 @@ const mock = vi.hoisted(() => ({
   serviceArgs: [] as unknown[][],
   packaged: false,
   hosting: false,
+  remoteClosed: false,
   quit: vi.fn(),
   permissions: undefined as
     | ((a: unknown, b: unknown, callback: (value: boolean) => unknown) => unknown)
@@ -91,8 +92,16 @@ vi.mock('@daban/engine/remote', () => ({
   RemoteAccess: class {
     ready = Promise.resolve();
     subscribe = vi.fn();
-    close = vi.fn(async () => {});
-    state = () => ({ hosting: mock.hosting });
+    close = vi.fn(async () => {
+      mock.remoteClosed = true;
+    });
+    get hosting() {
+      return mock.hosting && !mock.remoteClosed;
+    }
+    state = () => {
+      if (mock.remoteClosed) throw Error('REMOTE_STORE_UNAVAILABLE');
+      return { hosting: mock.hosting };
+    };
   },
 }));
 vi.mock('./native', () => ({
@@ -134,6 +143,34 @@ vi.mock('./notifications', () => ({
 }));
 vi.mock('./notification-ipc', () => ({ noticeIpc: () => () => {} }));
 vi.mock('./locale-ipc', () => ({ localeIpc: () => () => {} }));
+
+it('closes windows after remote storage is shut down without reading the closed database', async () => {
+  vi.resetModules();
+  const resources = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
+  Object.defineProperty(process, 'resourcesPath', {
+    configurable: true,
+    value: '/synthetic/resources',
+  });
+  vi.stubGlobal('__dirname', '/synthetic');
+  mock.windows.length = 0;
+  mock.events.clear();
+  mock.connect.mockClear();
+  mock.remoteClosed = false;
+  try {
+    await import('./main');
+    mock.ready?.();
+    await vi.waitFor(() => expect(mock.connect).toHaveBeenCalled());
+    await mock.events.get('before-quit')?.({ preventDefault: vi.fn() });
+    expect(mock.remoteClosed).toBe(true);
+    expect(() => mock.windows[0].emit('closed')).not.toThrow();
+    expect(() => mock.events.get('window-all-closed')?.()).not.toThrow();
+  } finally {
+    mock.remoteClosed = false;
+    if (resources) Object.defineProperty(process, 'resourcesPath', resources);
+    else Reflect.deleteProperty(process, 'resourcesPath');
+    vi.unstubAllGlobals();
+  }
+});
 
 it.each([false, true])(
   'closes a Windows controller despite an idle peer window, while keeping hosting=%s alive',

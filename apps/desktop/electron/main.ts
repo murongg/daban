@@ -96,11 +96,11 @@ function createWindow() {
       mainWindow = undefined;
       windowReady = false;
     }
-    if (!remoteAccess?.state().hosting)
+    if (!remoteAccess?.hosting)
       localComputer?.revoke().catch(() => console.error('Local computer cleanup failed'));
     service?.releaseInputs().catch(() => console.error('Desktop input cleanup failed'));
     // An idle peer window must not keep a controller alive after its visible window closes.
-    if (!mainWindow && process.platform !== 'darwin' && !remoteAccess?.state().hosting) app.quit();
+    if (!mainWindow && process.platform !== 'darwin' && !remoteAccess?.hosting) app.quit();
   });
   window.once('ready-to-show', () => {
     if (mainWindow === window) windowReady = true;
@@ -458,7 +458,7 @@ if (primary) {
       );
     });
   app.on('window-all-closed', () => {
-    if (remoteAccess?.state().hosting) return;
+    if (remoteAccess?.hosting) return;
     if (process.platform !== 'darwin') app.quit();
   });
 
