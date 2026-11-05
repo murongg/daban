@@ -99,6 +99,12 @@ test('project-scoped Goal targets keep distinct native sessions and preserve leg
       sessionId: 'synthetic-session-2',
     });
     const target = store.prepare(alpha)!;
+    expect(() =>
+      store.accept({ ...target, owner: legacy }, 'synthetic-legacy-owner', 'synthetic-foreign-run'),
+    ).toThrow('GOAL_TARGET_CHANGED');
+    expect(() =>
+      store.accept({ ...target, owner: beta }, 'synthetic-beta-owner', 'synthetic-foreign-run'),
+    ).toThrow('GOAL_TARGET_CHANGED');
     const grant = store.accept(target, 'synthetic-alpha-human', 'synthetic-alpha-run');
     store.noteHuman(beta, 'synthetic-beta-human');
     expect(

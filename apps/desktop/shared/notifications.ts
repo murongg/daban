@@ -67,7 +67,6 @@ function isNoticeBot(value: unknown): value is NoticeBot {
 }
 export function noticeBot(target: NoticeTarget) {
   return target.kind === 'task' ||
-    target.kind === 'automation' ||
     ((target.kind === 'question' || target.kind === 'approval') && !target.group)
     ? target.bot
     : undefined;
@@ -165,8 +164,6 @@ export function parseNoticeCommand(value: unknown): NoticeCommand {
 }
 export function noticeKey(target: NoticeTarget) {
   if (target.kind === 'settings') return 'settings';
-  if (target.kind === 'automation')
-    return JSON.stringify(['automation', target.bot, target.schedule, target.id]);
   return JSON.stringify(
     target.kind === 'task'
       ? ['task', target.bot, target.id, target.chatRevision, target.phase]
@@ -200,17 +197,6 @@ export function noticeCopy(target: NoticeTarget, locale: Locale = 'zh-CN') {
     return {
       title: t('notifications.dabanTestNotification'),
       body: t('notifications.notificationSubmittedClickReturnSettings'),
-    };
-  if (target.kind === 'automation')
-    return {
-      title: t(
-        target.reason === 'changed'
-          ? 'automation.noticeChanged'
-          : target.reason === 'recovered'
-            ? 'automation.noticeRecovered'
-            : 'automation.noticeFault',
-      ),
-      body: t('automation.noticeBody'),
     };
   if (target.kind === 'question')
     return {
