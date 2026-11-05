@@ -399,9 +399,7 @@ export class Notifications {
       keys = new Set(targets.map(noticeKey));
     const retired = this.data.records.filter(
       (row) =>
-        (row.target.kind === 'question' ||
-          row.target.kind === 'approval' ||
-          row.target.kind === 'automation') &&
+        (row.target.kind === 'question' || row.target.kind === 'approval') &&
         !keys.has(noticeKey(row.target)),
     );
     if (retired.length) {

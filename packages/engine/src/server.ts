@@ -6,7 +6,6 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   approvalRulesCapability,
-  automationCapability,
   type BudgetIncreaseRequest,
   botBundleLimit,
   type ExecutionSnapshot,
@@ -19,7 +18,6 @@ import {
   isAttachmentQuery,
   isAttachmentUpload,
   isAttachmentVersion,
-  isAutomationCommand,
   isBotCopyRequest,
   isBotExportRequest,
   isBotImportHeader,
@@ -50,8 +48,6 @@ import {
   isProjectFileRequest,
   isRebootStatus,
   isRecoveryRequest,
-  isScheduleInput,
-  isSchedulePatch,
   isSetupStatus,
   isSkillBinding,
   isSkillContent,
@@ -76,7 +72,6 @@ import {
   type RebootStatus,
   type RuntimeCommand,
   type RuntimeNoticeStatus,
-  type Schedule,
   type SetupStatus,
   sameProjectScope,
   validAgentId,
@@ -126,62 +121,19 @@ async function groupStatus(groups: Groups | undefined, modern: boolean) {
     ? status
     : { ...status, items: status.items.filter((group) => !group.archived).map(legacyGroup) };
 }
-function scheduleReply(item: Schedule, modern: boolean) {
-  if (modern) return item;
-  if (item.rule.kind === 'file') throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
-  const { automation: _automation, ...legacy } = item;
-  return {
-    ...legacy,
-    history: legacy.history.map(({ source: _source, monitor: _monitor, ...entry }) => entry),
-  };
-}
-async function scheduleStatus(
-  schedules: Schedules | undefined,
-  modern: boolean,
-  monitoring: boolean,
-) {
-  const state = schedules ? await schedules.status() : { available: false, items: [] };
-  return {
-    ...state,
-    items: state.items
-      .filter((item) => modern || item.rule.kind !== 'file')
-      .map((item) => scheduleReply(item, modern)),
-    ...(modern && schedules
-      ? {
-          automation: {
-            changes: monitoring,
-            files: schedules.options.observation?.available?.() ?? !!schedules.options.observation,
-          },
-        }
-      : {}),
-  };
-}
 async function noticeStatus(
   models: ModelRuns | undefined,
   groups: Groups | undefined,
-  schedules: Schedules | undefined,
-  modern: boolean,
 ): Promise<RuntimeNoticeStatus> {
   const items = models?.journal.notices() || [];
-  let groupItems: RuntimeNoticeStatus['items'] = [];
-  let automationItems: RuntimeNoticeStatus['items'] = [];
-  let error: string | undefined;
   try {
-    if (groups) groupItems = await groups.notices();
+    return {
+      available: !!models && !!groups,
+      items: [...items, ...(groups ? await groups.notices() : [])],
+    };
   } catch {
-    error = 'GROUP_NOTICES_UNAVAILABLE';
+    return { available: false, items, error: 'GROUP_NOTICES_UNAVAILABLE' };
   }
-  try {
-    if (modern && schedules) automationItems = await schedules.notices();
-  } catch {
-    error = 'SCHEDULE_NOTICES_UNAVAILABLE';
-  }
-  // An optional owner's failure cannot hide another owner's durable, actionable receipts.
-  return {
-    available: !!models && !!groups && !error,
-    items: [...automationItems, ...items, ...groupItems].slice(0, 2000),
-    ...(error ? { error } : {}),
-  };
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
@@ -232,7 +184,6 @@ const recoveryReads = new Set([
   '/api/bundles/cancel',
   '/api/schedules/get',
   '/api/schedules/preview',
-  '/api/schedules/receipt',
   '/api/mcp/list',
   '/api/mcp/saved',
   '/api/mcp/catalog',
@@ -1724,53 +1675,18 @@ export async function startPrototype({
             if (!schedules) throw new Fault('SCHEDULE_UNAVAILABLE', 503);
             const data = await body(req);
             const action = url.pathname.slice('/api/schedules/'.length);
-            const modern = req.headers['x-daban-automation'] === automationCapability;
-            if (['monitor', 'receipt', 'ack'].includes(action)) {
-              if (!modern) throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
-              if ('type' in data) throw new Fault('INVALID_SCHEDULE', 400);
-              const command: unknown = { type: `schedule.${action}`, ...data };
-              if (!isAutomationCommand(command)) throw new Fault('INVALID_SCHEDULE', 400);
-              if (
-                command.type === 'schedule.monitor' &&
-                command.policy.kind === 'changes' &&
-                !models?.monitoringAvailable()
-              )
-                throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
-              if (command.type === 'schedule.monitor')
-                return json(
-                  res,
-                  await schedules.monitor(command.id, command.revision, command.policy),
-                );
-              if (command.type === 'schedule.receipt')
-                return json(res, await schedules.receipt(command.id, command.firing));
-              return json(res, await schedules.ack(command.id, command.notice));
-            }
-            if (action === 'create') {
-              if (!modern && isScheduleInput(data) && data.rule.kind === 'file')
-                throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
-              return json(res, scheduleReply(await schedules.create(data), modern));
-            }
+            if (action === 'create') return json(res, await schedules.create(data));
             if (action === 'preview' && Object.keys(data).every((key) => key === 'rule'))
               return json(res, await schedules.preview(data.rule));
             if (!validAgentId(data.id)) throw new Fault('INVALID_SCHEDULE', 400);
             if (action === 'get' && Object.keys(data).every((key) => key === 'id'))
-              return json(res, scheduleReply(await schedules.get(data.id), modern));
+              return json(res, await schedules.get(data.id));
             if (
               action === 'update' &&
               typeof data.revision === 'number' &&
               Object.keys(data).every((key) => ['id', 'revision', 'patch'].includes(key))
-            ) {
-              if (
-                !modern &&
-                ((await schedules.get(data.id)).rule.kind === 'file' ||
-                  (isSchedulePatch(data.patch) && data.patch.rule?.kind === 'file'))
-              )
-                throw new Fault('AUTOMATION_UPGRADE_REQUIRED');
-              return json(
-                res,
-                scheduleReply(await schedules.update(data.id, data.revision, data.patch), modern),
-              );
-            }
+            )
+              return json(res, await schedules.update(data.id, data.revision, data.patch));
             if (
               action === 'remove' &&
               typeof data.revision === 'number' &&
@@ -1912,12 +1828,7 @@ export async function startPrototype({
                 : {}),
               ...(host?.localComputer ? { localComputer: await host.localComputer.status() } : {}),
               ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
-              notices: await noticeStatus(
-                models,
-                groups,
-                schedules,
-                req.headers['x-daban-automation'] === automationCapability,
-              ),
+              notices: await noticeStatus(models, groups),
               chats: models
                 ? await models.chats.status()
                 : { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' },
@@ -1968,11 +1879,7 @@ export async function startPrototype({
               ...(modernApprovals && models
                 ? { approvalRules: await models.approvalRules.status() }
                 : {}),
-              schedules: await scheduleStatus(
-                schedules,
-                req.headers['x-daban-automation'] === automationCapability,
-                models?.monitoringAvailable() ?? false,
-              ),
+              schedules: schedules ? await schedules.status() : { available: false, items: [] },
               // Capability metadata stays outside saved-model status so older clients can still validate that status.
               model: { ...models?.status(), ...(await settings.status(true)), inspection: true },
             });
@@ -2457,21 +2364,14 @@ export async function startPrototype({
       schedules = new Schedules({
         file: path.join(modelDir, 'schedules.sqlite'),
         domain: nativeSchedules(host?.sdkFile),
-        observation: models.automationObserver(),
         runner: {
           running: (bot) => models!.running(bot),
           admit: (bot) => models!.admit(bot),
           findRequest: (bot, id) => models!.findRequest(bot, id),
-          signal: (bot, runId, file) => models!.automationSignal(bot, runId, file),
-          monitoringAvailable: () => models!.monitoringAvailable(),
           start: (bot, task, _conversation, source) =>
             models!.start(
               bot,
-              {
-                ...task,
-                ...(source?.scope ? { project: source.scope } : {}),
-                chatRevision: models!.chats.current(bot).revision,
-              },
+              { ...task, chatRevision: models!.chats.current(bot).revision },
               undefined,
               source,
             ),
