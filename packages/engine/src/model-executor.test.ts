@@ -70,7 +70,7 @@ test.each([false, true])(
           insert?: { id?: string; config?: { limit?: number } }[];
         }[];
         limits.push(
-          patch.flatMap((entry) => entry.insert ?? []).find((entry) => entry.id === 'daban-budget')
+          patch.flatMap((entry) => entry.insert ?? []).find((entry) => entry.id === 'daban-policy')
             ?.config?.limit,
         );
       }
@@ -246,8 +246,6 @@ test.each([false, true])(
     expect(opens[1].params.id).not.toBe(opens[0].params.id);
     if (project) {
       expect(opens.map((frame) => frame.params.taskRunId)).toEqual([job.id, job.id]);
-      expect(job.budget?.budgetId).not.toBe(job.executionId);
-      expect(job.budget?.budgetId).not.toBe(job.intentId);
       await expect(
         client.call('tools.open', {
           ...opens[1].params,

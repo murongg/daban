@@ -19,7 +19,6 @@ import { Dialog } from '../../components/controls/Dialog';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
 import { Rules } from '../approvals/Rules';
 import { ArchiveList } from '../bots/Archive';
-import { Budgets } from '../budgets/Budgets';
 import { Diagnostics } from '../computer/Diagnostics';
 import { RecoveryEntry } from '../computer/Recovery';
 import { download } from '../files/files';
@@ -119,12 +118,7 @@ export function Settings({
       label: t('models.title'),
       icon: Waypoints,
       description: t('settings.connectModelServicesChooseWorkspacePerBot'),
-      content: (
-        <>
-          <Models />
-          <Budgets />
-        </>
-      ),
+      content: <Models />,
     },
     {
       id: 'projects',

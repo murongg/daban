@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -21,23 +20,8 @@ test.each([false, true])(
     const childEntered = new Promise((resolve) => {
       entered = () => resolve(undefined);
     });
-    let held!: () => unknown, release!: () => unknown;
-    const rootHeld = new Promise((resolve) => {
-      held = () => resolve(undefined);
-    });
-    const acknowledgement = new Promise((resolve) => {
-      release = () => resolve(undefined);
-    });
-    const permits = new Map<
-      string,
-      { hash: string; purpose: string; session: string; root: string }
-    >();
-    const dispatched = new Set<string>();
-    const arrived: string[] = [];
-    let rootDispatches = 0;
     let rootCalls = 0,
       childCalls = 0,
-      wireCalls = 0,
       refused = false,
       approvalRequests = 0;
     const webSessions: unknown[] = [];
@@ -55,29 +39,6 @@ test.each([false, true])(
           const reply = (await models!.rpc('mock-bot', req.headers.authorization, input)) as {
             result?: { accepted?: boolean; send?: boolean };
           };
-          if (input.method === 'budget.reserve' && reply.result?.accepted) {
-            const params = input.params as {
-              attemptId: string;
-              requestHash: string;
-              purpose: string;
-              sessionId: string;
-              rootSessionId: string;
-            };
-            permits.set(params.attemptId, {
-              hash: params.requestHash,
-              purpose: params.purpose,
-              session: params.sessionId,
-              root: params.rootSessionId,
-            });
-          }
-          if (input.method === 'budget.dispatched' && reply.result?.send) {
-            const id = String(input.params.attemptId);
-            dispatched.add(id);
-            if (cancel && permits.get(id)?.purpose === 'main' && ++rootDispatches === 2) {
-              held();
-              await acknowledgement;
-            }
-          }
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify(reply));
           return;
@@ -87,8 +48,6 @@ test.each([false, true])(
           res.end(JSON.stringify({ data: [{ id: 'mock-reader' }] }));
           return;
         }
-        wireCalls++;
-        arrived.push(createHash('sha256').update(bytes).digest('hex'));
         const isRoot = JSON.stringify(input.messages).includes('SYNTHETIC ROOT TASK');
         if (!isRoot && cancel) {
           entered();
@@ -219,52 +178,11 @@ test.each([false, true])(
       });
       const job = models.jobs.get('mock-bot')!;
       if (cancel) {
-        await Promise.all([childEntered, rootHeld]);
+        await childEntered;
         await models.stop('mock-bot');
-        release();
         await job.done;
         expect(job.phase).toBe('stopped');
         expect(job.running).toBe(false);
-        const budget = models.budgets.view(job.budget!.budgetId);
-        // Stop can follow a durable dispatch claim before the SDK enters fetch; that claim stays unknown, not free.
-        expect(wireCalls).toBe(2);
-        expect(dispatched.size).toBe(3);
-        expect(budget.requests).toBe(3);
-        expect(budget.unknownCount).toBe(3);
-        const reached = new Set<string>();
-        for (const hash of arrived) {
-          const matches = [...dispatched].filter(
-            (id) => !reached.has(id) && permits.get(id)?.hash === hash,
-          );
-          expect(
-            matches,
-            JSON.stringify({ hash, permits: [...permits], dispatched: [...dispatched] }),
-          ).toHaveLength(1);
-          reached.add(matches[0]);
-        }
-        for (const receipt of budget.receipts) {
-          expect(receipt).toMatchObject({
-            runId: job.id,
-            modelAttemptId: job.attemptId,
-            scope: job.budget,
-            rootSessionId: job.sessionId,
-            phase: 'unknown',
-          });
-          expect(permits.get(receipt.attemptId)).toMatchObject({
-            session: receipt.sessionId,
-            root: job.sessionId,
-            purpose: receipt.purpose,
-          });
-        }
-        const heldReceipts = budget.receipts.filter((receipt) => !reached.has(receipt.attemptId));
-        expect(heldReceipts).toHaveLength(1);
-        expect(heldReceipts[0]).toMatchObject({
-          purpose: 'main',
-          sessionId: job.sessionId,
-          phase: 'unknown',
-        });
-        await new Promise(setImmediate);
-        expect(arrived).toHaveLength(2);
         return;
       }
       await job.done;
@@ -290,20 +208,12 @@ test.each([false, true])(
         false,
       );
       expect(refused, 'The real child write guard must remain active').toBe(true);
-      const budget = models.budgets.view(job.budget!.budgetId);
-      expect(budget.requests).toBe(wireCalls);
-      expect(budget.unknownCount).toBe(wireCalls);
-      expect(
-        new Set(budget.receipts.filter((r) => r.purpose === 'subtask').map((r) => r.sessionId))
-          .size,
-      ).toBe(2);
       expect(job.result).toContain('SYNTHETIC ROOT COMPLETE');
       expect(job.trace.some((item) => item.name === 'subagent')).toBe(true);
       await expect(readFile(path.join(job.workdir, 'forbidden.txt'))).rejects.toMatchObject({
         code: 'ENOENT',
       });
     } finally {
-      release();
       await models?.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

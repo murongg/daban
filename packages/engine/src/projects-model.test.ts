@@ -148,7 +148,6 @@ test('project tasks capture private staging, request identity and DSH session au
   expect(first.phase, first.error).toBe('completed');
   expect(leases[0]).toMatchObject({ id: first.executionId, taskRunId: first.id });
   expect(first.executionId).not.toBe(first.id);
-  expect(first.budget?.budgetId).not.toBe(first.executionId);
   expect(first.workdir).not.toContain('desktops/shared');
   expect(models.journal.findRequest('mock-bot', task.requestId)).toMatchObject({
     project: task.project,

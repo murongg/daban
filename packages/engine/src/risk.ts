@@ -2,7 +2,6 @@ import { lookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ModelApi } from '@daban/protocol';
-import { modelApi } from '@daban/protocol';
 import type { CommandDecision, CommandReview, CommandRisk } from './commands.js';
 import { inferenceRequest, inferenceText } from './inference.js';
 import { McpFetch } from './mcp-fetch.js';
@@ -326,11 +325,6 @@ export class Risk {
       };
       resolve?: (request: CommandReview) => Promise<ReviewModel | null>;
       fetcher?: (url: string, init: RequestInit) => Promise<Response>;
-      meter?: (
-        request: CommandReview,
-        api: ModelApi,
-        fetcher: (url: string, init: RequestInit) => Promise<Response>,
-      ) => (url: string, init: RequestInit) => Promise<Response>;
     },
   ) {}
   review = async (request: CommandReview, signal?: AbortSignal): Promise<CommandDecision> =>
@@ -420,9 +414,7 @@ export class Risk {
             }).fetch
           : fetch;
       }
-      const send = this.options.meter
-        ? this.options.meter(request, modelApi(config), fetcher)
-        : fetcher;
+      const send = fetcher;
       const response = await send(endpoint, {
         ...native.init,
         signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)]),

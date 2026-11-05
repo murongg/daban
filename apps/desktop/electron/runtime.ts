@@ -30,9 +30,6 @@ import {
   isBrowserReceipt,
   isBrowserState,
   isBrowserView,
-  isBudgetScope,
-  isBudgetSettings,
-  isBudgetView,
   isChatAck,
   isChatPage,
   isChatStatus,
@@ -103,7 +100,6 @@ import {
   isTaskPlan,
   isTranscriptContent,
   isTranscriptPage,
-  isTranscriptScope,
   isWorkCommentCommand,
   isWorkCommentList,
   isWorkCommentReceipt,
@@ -828,80 +824,25 @@ export class RuntimeClient {
       if (!valid) throw new Error('INVALID_RUNTIME_STATE');
       return value;
     }
-    if (command.type.startsWith('budget.')) {
+    if (command.type === 'goal.target') {
       const captured = structuredClone(command);
-      let value: unknown;
-      if (captured.type === 'budget.goal') {
-        const target: unknown = await this.api('/api/budgets/goal', {
-          owner: captured.owner,
-        }).catch((error) => {
-          // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
-          if (error instanceof Error && error.message === 'NOT_FOUND') return null;
-          throw error;
-        });
-        if (target === null) return null;
-        if (
-          !isGoalResumeTarget(target) ||
-          target.owner.bot !== captured.owner.bot ||
-          target.owner.chatRevision !== captured.owner.chatRevision ||
-          target.owner.conversationId !== captured.owner.conversationId ||
-          !sameProjectScope(target.owner.project, captured.owner.project)
-        )
-          throw new Error('INVALID_GOAL_TARGET');
-        return target;
-      }
-      if (captured.type === 'budget.settings') value = await this.api('/api/budgets/settings', {});
-      else if (captured.type === 'budget.configure')
-        value = await this.api('/api/budgets/configure', captured.request);
-      else if (captured.type === 'budget.read')
-        value = await this.api('/api/budgets/read', captured.query);
-      else if (captured.type === 'budget.increase')
-        value = await this.api('/api/budgets/increase', captured.request);
-      else if (captured.type === 'budget.continue') {
-        const reply: unknown = await this.api('/api/budgets/continue', {
-          scope: captured.scope,
-          budget: captured.budget,
-          id: captured.id,
-          ...(captured.goalResume ? { goalResume: captured.goalResume } : {}),
-        });
-        if (
-          !reply ||
-          typeof reply !== 'object' ||
-          !('budget' in reply) ||
-          !isBudgetScope(reply.budget) ||
-          reply.budget.budgetId !== captured.budget.budgetId ||
-          reply.budget.revision !== captured.budget.revision ||
-          !('owner' in reply) ||
-          !isTranscriptScope(reply.owner) ||
-          !sameTranscriptScope(reply.owner, captured.scope) ||
-          !('id' in reply) ||
-          reply.id !== captured.id ||
-          !('queued' in reply) ||
-          typeof reply.queued !== 'boolean'
-        )
-          throw new Error('INVALID_BUDGET_CONTINUATION');
-        return reply;
-      } else throw new Error('INVALID_COMMAND');
-      if (captured.type === 'budget.settings' || captured.type === 'budget.configure') {
-        if (!isBudgetSettings(value)) throw new Error('INVALID_BUDGET_SETTINGS');
-      } else if (value !== null) {
-        if (!isBudgetView(value)) throw new Error('INVALID_BUDGET_VIEW');
-        const owner =
-          captured.type === 'budget.read'
-            ? captured.query.scope
-            : captured.type === 'budget.increase'
-              ? captured.request.scope
-              : undefined;
-        if (!owner || !value.owner || !sameTranscriptScope(value.owner, owner))
-          throw new Error('INVALID_BUDGET_OWNER');
-        if (
-          captured.type === 'budget.increase' &&
-          (value.scope.budgetId !== captured.request.budgetId ||
-            value.scope.revision !== captured.request.revision + 1)
-        )
-          throw new Error('INVALID_BUDGET_ACK');
-      }
-      return value;
+      const target: unknown = await this.api('/api/goals/target', {
+        owner: captured.owner,
+      }).catch((error) => {
+        // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
+        if (error instanceof Error && error.message === 'NOT_FOUND') return null;
+        throw error;
+      });
+      if (target === null) return null;
+      if (
+        !isGoalResumeTarget(target) ||
+        target.owner.bot !== captured.owner.bot ||
+        target.owner.chatRevision !== captured.owner.chatRevision ||
+        target.owner.conversationId !== captured.owner.conversationId ||
+        !sameProjectScope(target.owner.project, captured.owner.project)
+      )
+        throw new Error('INVALID_GOAL_TARGET');
+      return target;
     }
 
     if (this.agent && command.type.startsWith('recovery.')) {

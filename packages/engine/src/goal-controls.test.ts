@@ -1,21 +1,47 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { defaultBudgetPolicy } from '@daban/protocol';
 import { expect, test } from 'vitest';
-import { Budgets } from './budgets.js';
+import { GoalControls } from './goal-controls.js';
 
-test('Human Goal grants bind target, accepted budget and Human turn; observations never grant resume', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-goal-budget-'));
-  const store = new Budgets(path.join(root, 'budgets.sqlite'));
+test('Human epochs and consumed native Goal grants survive restart without becoming a new permission', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-goal-restart-'));
+  const file = path.join(root, 'goals.sqlite');
+  let store = new GoalControls(file);
+  try {
+    await store.ready;
+    const owner = { bot: 'synthetic-bot', chatRevision: 0 };
+    store.observe(owner, 'synthetic-session', { id: 'synthetic-goal', revision: 1 }, true);
+    const grant = store.accept(store.prepare(owner)!, 'synthetic-human', 'synthetic-run');
+    store.close();
+    store = new GoalControls(file);
+    await store.ready;
+    expect(store.epoch(owner)).toBe(1);
+    expect(store.claim(grant.id, 'synthetic-run', 'synthetic-session', 'synthetic-goal', 1)).toBe(
+      true,
+    );
+    store.close();
+    store = new GoalControls(file);
+    await store.ready;
+    expect(store.noteHuman(owner, 'synthetic-human')).toBe(1);
+    expect(store.claim(grant.id, 'synthetic-run', 'synthetic-session', 'synthetic-goal', 1)).toBe(
+      false,
+    );
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Human Goal grants bind target and Human turn; observations never grant resume', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-goal-controls-'));
+  const store = new GoalControls(path.join(root, 'goals.sqlite'));
   try {
     await store.ready;
     const owner = { bot: 'mock-bot', chatRevision: 0 };
-    const scope = store.ensure('synthetic-goal-root');
-    const goals = store.goals;
-    goals.observe(owner, 'synthetic-session', { id: 'synthetic-goal', revision: 1 }, scope, true);
+    const goals = store;
+    goals.observe(owner, 'synthetic-session', { id: 'synthetic-goal', revision: 1 }, true);
     const target = goals.prepare(owner)!;
-    expect(target.budget).toEqual(scope);
     const grant = goals.accept(target, 'synthetic-human', 'synthetic-run');
     expect(goals.claim(grant.id, 'foreign-run', 'synthetic-session', 'synthetic-goal', 1)).toBe(
       false,
@@ -35,10 +61,7 @@ test('Human Goal grants bind target, accepted budget and Human turn; observation
     expect(
       goals.claim(next.id, 'synthetic-next-run', 'synthetic-session', 'synthetic-goal', 1),
     ).toBe(false);
-    expect(store.view(scope.budgetId).requests).toBe(0);
-    const raised = store.increase(scope.budgetId, 1, defaultBudgetPolicy, 'synthetic-quota');
-    expect(raised.state).toBe('stopped');
-    expect(() => goals.accept(fresh, 'synthetic-old-budget', 'synthetic-old-run')).toThrow();
+    expect(() => goals.accept(fresh, 'synthetic-old-target', 'synthetic-old-run')).toThrow();
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });
@@ -46,45 +69,36 @@ test('Human Goal grants bind target, accepted budget and Human turn; observation
 });
 
 test('project-scoped Goal targets keep distinct native sessions and preserve legacy owner keys', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-goal-budget-'));
-  const store = new Budgets(path.join(root, 'budgets.sqlite'));
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-project-goal-controls-'));
+  const store = new GoalControls(path.join(root, 'goals.sqlite'));
   try {
     await store.ready;
     const legacy = { bot: 'mock-bot', chatRevision: 0 };
     const alpha = { ...legacy, project: { projectId: 'mock-alpha', revision: 1 } };
     const beta = { ...legacy, project: { projectId: 'mock-beta', revision: 1 } };
-    const books = [
-      store.ensure('synthetic-legacy-goal'),
-      store.ensure('synthetic-alpha-goal'),
-      store.ensure('synthetic-beta-goal'),
-    ];
     for (const [index, owner] of [legacy, alpha, beta].entries())
-      store.goals.observe(
+      store.observe(
         owner,
         `synthetic-session-${index}`,
         { id: `synthetic-goal-${index}`, revision: 1 },
-        books[index],
         true,
       );
-    expect(store.goals.prepare(legacy)).toMatchObject({
+    expect(store.prepare(legacy)).toMatchObject({
       sessionId: 'synthetic-session-0',
-      budget: books[0],
     });
-    expect(store.goals.prepare(alpha)).toMatchObject({
+    expect(store.prepare(alpha)).toMatchObject({
       owner: alpha,
       sessionId: 'synthetic-session-1',
-      budget: books[1],
     });
-    expect(store.goals.prepare(beta)).toMatchObject({
+    expect(store.prepare(beta)).toMatchObject({
       owner: beta,
       sessionId: 'synthetic-session-2',
-      budget: books[2],
     });
-    const target = store.goals.prepare(alpha)!;
-    const grant = store.goals.accept(target, 'synthetic-alpha-human', 'synthetic-alpha-run');
-    store.goals.noteHuman(beta, 'synthetic-beta-human');
+    const target = store.prepare(alpha)!;
+    const grant = store.accept(target, 'synthetic-alpha-human', 'synthetic-alpha-run');
+    store.noteHuman(beta, 'synthetic-beta-human');
     expect(
-      store.goals.claim(
+      store.claim(
         grant.id,
         'synthetic-alpha-run',
         target.sessionId,
@@ -93,7 +107,7 @@ test('project-scoped Goal targets keep distinct native sessions and preserve leg
       ),
     ).toBe(true);
     expect(
-      store.goals.claim(
+      store.claim(
         grant.id,
         'synthetic-alpha-run',
         target.sessionId,

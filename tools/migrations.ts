@@ -11,10 +11,10 @@ const engine = path.join(root, 'packages/engine');
 export const stores = [
   'approval-rules',
   'attachments',
-  'budgets',
   'chats',
   'commands',
   'connections',
+  'goal-controls',
   'groups',
   'integrations',
   'knowledge',

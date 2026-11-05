@@ -2,6 +2,65 @@ import { expect, test } from 'vitest';
 import { approvalHash } from './approval-rules.js';
 import { apply, inject, requestedUrls } from './policy.js';
 
+test('registry execution counts survive a lost fence acknowledgement without trusting provider IDs', async () => {
+  const fences: unknown[] = [];
+  let lost = true;
+  let bodies = 0;
+  type Execution = {
+    token: symbol;
+    callId: string;
+    signal: AbortSignal;
+    name: string;
+    arguments: unknown;
+  };
+  let pre: (exec: Execution, next: () => Promise<unknown>) => Promise<unknown> = async () =>
+    undefined;
+  apply(
+    {
+      agents: rootAgents('synthetic-root'),
+      on: (...hook) => {
+        if (hook[0] === 'tools/pre-execute') pre = hook[1];
+      },
+    },
+    {
+      limit: 2,
+      urls: [],
+      attemptId: 'synthetic-attempt',
+      url: 'http://127.0.0.1:12345/mcp/synthetic-bot',
+    },
+    async (_url, init) => {
+      const rpc = JSON.parse(String(init.body)) as { params: { toolCount?: number } };
+      fences.push(rpc.params.toolCount);
+      if (lost) {
+        lost = false;
+        throw new Error('SYNTHETIC_ACK_LOST');
+      }
+      return Response.json({ result: { accepted: true } });
+    },
+  );
+  const execution = {
+    token: Symbol('synthetic-first'),
+    callId: 'synthetic-reused-provider-id',
+    signal: new AbortController().signal,
+    name: 'todo_write',
+    arguments: { todos: [{ content: 'SYNTHETIC STEP', status: 'completed' }] },
+  };
+  const next = async () => {
+    bodies++;
+    return { kind: 'allow' };
+  };
+  expect(await pre(execution, next)).toMatchObject({ kind: 'deny' });
+  expect(await pre(execution, next)).toMatchObject({ kind: 'allow' });
+  expect(await pre({ ...execution, token: Symbol('synthetic-second') }, next)).toMatchObject({
+    kind: 'allow',
+  });
+  expect(await pre({ ...execution, token: Symbol('synthetic-third') }, next)).toMatchObject({
+    kind: 'deny',
+  });
+  expect(bodies).toBe(2);
+  expect(fences).toEqual([1, 1, 1, 2, 2]);
+});
+
 function rootAgents(sessionId: string) {
   const root = { id: sessionId, session: { id: sessionId } };
   return {
@@ -12,7 +71,7 @@ function rootAgents(sessionId: string) {
 }
 
 test.each(['human', 'revoked', 'owner'] as const)(
-  'a child %s refusal after the approval wait consumes no shared tool claim',
+  'a child %s refusal after the approval wait cannot enter the native tool body',
   async (reason) => {
     let pre: (
       exec: {
@@ -30,7 +89,6 @@ test.each(['human', 'revoked', 'owner'] as const)(
     const selector = { kind: 'url' as const, url: 'https://example.test/child' };
     let present = true;
     let current = true;
-    let claims = 0;
     let effects = 0;
     apply(
       {
@@ -55,7 +113,6 @@ test.each(['human', 'revoked', 'owner'] as const)(
         limit: 10,
         urls: [],
         attemptId: 'mock-attempt',
-        budget: { budgetId: 'mock-budget', revision: 1 },
         url: 'http://127.0.0.1/mcp/mock-bot',
         capability: 'synthetic-capability',
       },
@@ -64,10 +121,7 @@ test.each(['human', 'revoked', 'owner'] as const)(
           method: string;
           params: { sessionId?: string };
         };
-        if (body.method === 'budget.tool') {
-          claims++;
-          expect(body.params.sessionId).toBe(root.session.id);
-        }
+        if (body.method === 'attempt.fence') expect(body.params.sessionId).toBe(root.session.id);
         return Response.json({
           result:
             body.method === 'approval.web'
@@ -103,11 +157,10 @@ test.each(['human', 'revoked', 'owner'] as const)(
     );
     expect(result).toMatchObject({ kind: 'deny' });
     expect(effects).toBe(0);
-    expect(claims).toBe(0);
   },
 );
 
-test.each(['review', 'budget'] as const)(
+test.each(['review', 'fence'] as const)(
   'a physical attempt changed during %s cannot reach the native body',
   async (stage) => {
     let listener: (
@@ -119,14 +172,13 @@ test.each(['review', 'budget'] as const)(
     const selector = { kind: 'url' as const, url: 'https://example.test/race' };
     let current = true;
     let effects = 0;
-    let claims = 0;
+    let fences = 0;
     const config = {
       limit: 10,
       urls: [selector.url],
       attemptId: 'mock-attempt',
       url: 'http://127.0.0.1/mcp/mock-bot',
       capability: 'synthetic-capability',
-      ...(stage === 'budget' ? { budget: { budgetId: 'mock-budget', revision: 1 } } : {}),
     };
     apply(
       {
@@ -142,12 +194,9 @@ test.each(['review', 'budget'] as const)(
       config,
       async (_url, init) => {
         const body = JSON.parse(String(init.body)) as { method: string };
-        if (body.method === 'attempt.fence')
+        if (body.method === 'attempt.fence') {
+          if (stage === 'fence' && ++fences === 2) current = false;
           return Response.json({ result: { accepted: current } });
-        if (body.method === 'budget.tool') {
-          claims++;
-          current = false;
-          return Response.json({ result: { accepted: true } });
         }
         if (body.method === 'approval.web') {
           if (stage === 'review') current = false;
@@ -182,7 +231,6 @@ test.each(['review', 'budget'] as const)(
       }),
     ).toMatchObject({ kind: 'deny' });
     expect(effects).toBe(0);
-    expect(claims).toBe(stage === 'budget' ? 1 : 0);
   },
 );
 
@@ -193,7 +241,6 @@ test('abort during the final durable attempt acknowledgement cannot enter a nati
   ) => Promise<unknown> = async () => undefined;
   const abort = new AbortController();
   let fences = 0;
-  let claims = 0;
   let effects = 0;
   apply(
     {
@@ -206,14 +253,12 @@ test('abort during the final durable attempt acknowledgement cannot enter a nati
       limit: 10,
       urls: [],
       attemptId: 'mock-attempt',
-      budget: { budgetId: 'mock-budget', revision: 1 },
       url: 'http://127.0.0.1/mcp/mock-bot',
       capability: 'synthetic-capability',
     },
     async (_url, init) => {
       const body = JSON.parse(String(init.body)) as { method: string };
       if (body.method === 'attempt.fence' && ++fences === 2) abort.abort();
-      if (body.method === 'budget.tool') claims++;
       return Response.json({ result: { accepted: true } });
     },
   );
@@ -231,10 +276,9 @@ test('abort during the final durable attempt acknowledgement cannot enter a nati
   );
   expect(result).toMatchObject({ kind: expect.stringMatching(/^(deny|cancel)$/) });
   expect(effects).toBe(0);
-  expect(claims).toBe(1);
 });
 
-test('the flat physical attempt and shared budget scope are captured before caller mutation', async () => {
+test('the flat physical attempt and private bridge are captured before caller mutation', async () => {
   let pre: (
     exec: { signal: AbortSignal; name: string; arguments: unknown; token?: symbol },
     next: () => Promise<unknown>,
@@ -243,7 +287,6 @@ test('the flat physical attempt and shared budget scope are captured before call
     limit: 10,
     urls: [],
     attemptId: 'mock-original-attempt',
-    budget: { budgetId: 'mock-original-budget', revision: 1 },
     url: 'http://127.0.0.1/mcp/mock-bot',
     capability: 'synthetic-original-capability',
   };
@@ -270,7 +313,6 @@ test('the flat physical attempt and shared budget scope are captured before call
     },
   );
   config.attemptId = 'mock-replacement-attempt';
-  config.budget.budgetId = 'mock-replacement-budget';
   config.capability = 'synthetic-replacement-capability';
   await pre(
     {
@@ -290,18 +332,10 @@ test('the flat physical attempt and shared budget scope are captured before call
       .filter((body) => body.method === 'attempt.fence')
       .every((body) => body.params.attemptId === 'mock-original-attempt'),
   ).toBe(true);
-  expect(bodies.filter((body) => body.method === 'budget.tool')).toEqual([
-    expect.objectContaining({
-      params: expect.objectContaining({
-        scope: { budgetId: 'mock-original-budget', revision: 1 },
-        modelAttemptId: 'mock-original-attempt',
-      }),
-    }),
-  ]);
 });
 
 test.each([true, false])(
-  'published flat attempt/budget config retains Host approval before dispatch: deny=%s',
+  'published flat attempt config retains Host approval before dispatch: deny=%s',
   async (deny) => {
     let listener: (
       exec: { signal: AbortSignal; name: string; arguments: unknown; agent?: unknown },
@@ -318,7 +352,6 @@ test.each([true, false])(
       url: 'http://127.0.0.1/mcp/mock-bot',
       capability: 'synthetic-capability',
       attemptId: 'mock-attempt',
-      budget: { budgetId: 'mock-budget', revision: 1 },
     };
     apply(
       {
@@ -369,7 +402,6 @@ test.each([true, false])(
     expect(methods).toContain('approval.web');
     expect(methods).toContain('attempt.fence');
     expect(effects).toBe(deny ? 0 : 1);
-    expect(methods.filter((method) => method === 'budget.tool')).toHaveLength(deny ? 0 : 1);
     if (!deny) expect(methods).toContain('approval.web.check');
   },
 );
@@ -1001,182 +1033,6 @@ test('attempt policy waits for durable Host fence acknowledgement before native 
   } finally {
     release();
     await pending?.catch(() => undefined);
-    vi.unstubAllGlobals();
-  }
-});
-
-test('logical tool admission is shared and a refusal prevents the tool body', async () => {
-  const { vi } = await import('vitest');
-  const methods: string[] = [];
-  let bodies = 0;
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
-    const value = JSON.parse(String(init?.body)) as { method: string };
-    methods.push(value.method);
-    return Response.json(
-      value.method === 'budget.tool' ? { error: { code: -1 } } : { result: { accepted: true } },
-    );
-  });
-  let pre: (
-    exec: {
-      signal: AbortSignal;
-      name: string;
-      arguments: unknown;
-      callId?: string;
-      token?: symbol;
-    },
-    next: () => Promise<unknown>,
-  ) => Promise<unknown> = async () => undefined;
-  const config = {
-    limit: 60,
-    urls: [],
-    attemptId: 'synthetic-attempt',
-    url: 'http://127.0.0.1:12345/mcp/mock-bot',
-    capability: 'synthetic-token',
-    budget: { budgetId: 'synthetic-budget', revision: 1 },
-  };
-  apply(
-    {
-      agents: rootAgents('synthetic-root'),
-      on: (...hook) => {
-        if (hook[0] === 'tools/pre-execute') pre = hook[1];
-      },
-    },
-    config,
-  );
-  try {
-    const result = await pre(
-      {
-        signal: new AbortController().signal,
-        name: 'todo_write',
-        callId: 'synthetic-tool',
-        token: Symbol('synthetic-tool-execution'),
-        arguments: { todos: [{ content: 'Synthetic step', status: 'pending' }] },
-      },
-      async () => {
-        bodies++;
-        return { kind: 'allow' };
-      },
-    );
-    expect(methods).toContain('budget.tool');
-    expect(result).toMatchObject({ kind: 'deny' });
-    expect(bodies).toBe(0);
-  } finally {
-    vi.unstubAllGlobals();
-  }
-});
-
-test('a lost tool permit acknowledgement retries the same registry execution without charging twice', async () => {
-  const { vi } = await import('vitest');
-  const charged = new Set<string>();
-  const ids: string[] = [];
-  let first = true,
-    bodies = 0;
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
-    const value = JSON.parse(String(init?.body)) as { method: string; params: { callId: string } };
-    if (value.method === 'budget.tool') {
-      ids.push(value.params.callId);
-      charged.add(value.params.callId);
-      if (first) {
-        first = false;
-        throw new Error('SYNTHETIC_ACK_LOST');
-      }
-    }
-    return Response.json({ result: { accepted: true } });
-  });
-  type Execution = {
-    token: symbol;
-    callId: string;
-    signal: AbortSignal;
-    name: string;
-    arguments: unknown;
-  };
-  let pre: (exec: Execution, next: () => Promise<unknown>) => Promise<unknown> = async () =>
-    undefined;
-  apply(
-    {
-      agents: rootAgents('synthetic-root'),
-      on: (...hook) => {
-        if (hook[0] === 'tools/pre-execute') pre = hook[1];
-      },
-    },
-    {
-      limit: 1,
-      urls: [],
-      attemptId: 'synthetic-attempt',
-      url: 'http://127.0.0.1:12345/mcp/mock-bot',
-      capability: 'synthetic-token',
-      budget: { budgetId: 'synthetic-budget', revision: 1 },
-    },
-  );
-  const exec = Object.freeze({
-    token: Symbol('synthetic-execution'),
-    callId: 'synthetic-provider-id',
-    signal: new AbortController().signal,
-    name: 'todo_write',
-    arguments: { todos: [{ content: 'SYNTHETIC STEP', status: 'completed' }] },
-  });
-  const next = async () => {
-    bodies++;
-    return { kind: 'allow' };
-  };
-  try {
-    expect(await pre(exec, next)).toMatchObject({ kind: 'deny' });
-    expect(await pre({ ...exec }, next)).toMatchObject({ kind: 'allow' });
-    expect(bodies).toBe(1);
-    expect(ids).toHaveLength(2);
-    expect(new Set(ids).size).toBe(1);
-    expect(charged.size).toBe(1);
-    expect(ids[0]).not.toBe(exec.callId);
-  } finally {
-    vi.unstubAllGlobals();
-  }
-});
-
-test('a provider call ID without the registry execution token cannot obtain a shared tool claim', async () => {
-  const { vi } = await import('vitest');
-  const methods: string[] = [];
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
-    methods.push((JSON.parse(String(init?.body)) as { method: string }).method);
-    return Response.json({ result: { accepted: true } });
-  });
-  let pre: (
-    exec: { signal: AbortSignal; name: string; arguments: unknown; callId: string },
-    next: () => Promise<unknown>,
-  ) => Promise<unknown> = async () => undefined;
-  apply(
-    {
-      agents: rootAgents('synthetic-root'),
-      on: (...hook) => {
-        if (hook[0] === 'tools/pre-execute') pre = hook[1];
-      },
-    },
-    {
-      limit: 2,
-      urls: [],
-      attemptId: 'synthetic-attempt',
-      url: 'http://127.0.0.1:12345/mcp/mock-bot',
-      capability: 'synthetic-token',
-      budget: { budgetId: 'synthetic-budget', revision: 1 },
-    },
-  );
-  let bodies = 0;
-  try {
-    expect(
-      await pre(
-        {
-          signal: new AbortController().signal,
-          name: 'computer__read_file',
-          arguments: { path: 'synthetic.txt' },
-          callId: 'synthetic-provider-id',
-        },
-        async () => {
-          bodies++;
-        },
-      ),
-    ).toMatchObject({ kind: 'deny' });
-    expect(methods).not.toContain('budget.tool');
-    expect(bodies).toBe(0);
-  } finally {
     vi.unstubAllGlobals();
   }
 });

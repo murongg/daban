@@ -408,13 +408,9 @@ it('loads metadata only after opening and pages full tool content and later even
   expect(await screen.findByText('第 2 条')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      [
-        'status',
-        'transcript.statistics',
-        'transcript.list',
-        'transcript.content',
-        'budget.read',
-      ].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list', 'transcript.content'].includes(
+        command.type,
+      ),
     ),
   ).toBe(true);
 });

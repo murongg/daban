@@ -13,7 +13,7 @@ import {
   isMonitorDecision,
   type MonitorDecision,
 } from './automation.js';
-import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+import type { GoalControlCommand, GoalResumeTarget } from './goals.js';
 
 export * from './automation.js';
 
@@ -1671,8 +1671,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
-    'budget.settings',
-    'budget.read',
+    'goal.target',
     'transcript.statistics',
     'transcript.list',
     'transcript.content',
@@ -4106,7 +4105,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
 }
 export type RuntimeCommand =
   | ApprovalRulesCommand
-  | BudgetCommand
+  | GoalControlCommand
   | AutomationCommand
   | ProjectCommand
   | VmCommand
@@ -4560,5 +4559,3 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
     (value.cancelRequested === undefined || typeof value.cancelRequested === 'boolean')
   );
 }
-
-export * from './budgets.js';

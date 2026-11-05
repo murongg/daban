@@ -1,7 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import {
   type ApprovalMode,
-  type BudgetScope,
   isPolicyDecision,
   isTaskPlan,
   type PolicyDecision,
@@ -9,7 +7,7 @@ import {
 import { type BridgeConfig, type BridgeFetch, callBridge } from './bridge.js';
 import { readOwner } from './delegation.js';
 
-export const name = 'daban-budget';
+export const name = 'daban-policy';
 export const inject = ['tools', 'approval', 'agents'];
 interface Execution {
   readonly token?: symbol;
@@ -66,13 +64,12 @@ export function apply(
     urls: string[];
     approvalMode?: ApprovalMode;
     attemptId?: string;
-    budget?: BudgetScope;
   } & Partial<BridgeConfig>,
   request: BridgeFetch = fetch,
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
-  // Waiting on a guard cannot retarget the captured physical attempt or its shared budget.
+  // Waiting on a guard cannot retarget the captured physical attempt.
   config = structuredClone(config);
   const bridge = config.url
     ? {
@@ -83,7 +80,7 @@ export function apply(
       }
     : undefined;
   let calls = 0;
-  const executions = new Map<symbol, string>();
+  const executions = new Map<symbol, number>();
   // Search authority belongs to this accepted run and must not survive SDK session resumes.
   const urls = new Set(config.urls);
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
@@ -101,7 +98,12 @@ export function apply(
         const result = await callBridge(
           { ...config, url: config.url },
           'attempt.fence',
-          { sessionId: rootSession, attemptId: config.attemptId, kind: 'tool' },
+          {
+            sessionId: rootSession,
+            attemptId: config.attemptId,
+            kind: 'tool',
+            toolCount: executionId,
+          },
           exec.signal,
           request,
         );
@@ -121,48 +123,13 @@ export function apply(
       }
     };
     const dispatch = async (effect = next) => {
-      if (config.budget) {
-        try {
-          const roots = ctx.agents?.roots();
-          const rootSession = roots?.length === 1 ? roots[0].session?.id : undefined;
-          if (!config.url || !rootSession || !executionId)
-            throw new Error('BUDGET_OWNER_UNAVAILABLE');
-          const result = await callBridge(
-            { ...config, url: config.url },
-            'budget.tool',
-            {
-              scope: config.budget,
-              modelAttemptId: config.attemptId,
-              sessionId: rootSession,
-              callId: executionId,
-            },
-            exec.signal,
-            request,
-          );
-          if (
-            !result ||
-            typeof result !== 'object' ||
-            !('accepted' in result) ||
-            result.accepted !== true
-          )
-            throw new Error('BUDGET_TOOL_LIMIT');
-        } catch {
-          return {
-            kind: 'deny',
-            reason: 'BUDGET_TOOL_LIMIT',
-            info: { name: 'BudgetError', code: 'BUDGET_TOOL_LIMIT' },
-          };
-        }
-      }
-      // The budget/approval waits happen after the first fence; only this attempt may enter the body.
+      // Approval waits happen after the first fence; only this attempt may enter the body.
       const changedAttempt = await fence();
       if (changedAttempt) return changedAttempt;
       if (exec.signal.aborted) return { kind: 'cancel' };
       return effect();
     };
 
-    const blockedAttempt = await fence();
-    if (blockedAttempt) return blockedAttempt;
     if (!executionId) {
       if (calls >= config.limit)
         return {
@@ -171,12 +138,12 @@ export function apply(
           info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
         };
       calls++;
-      // A lost Host acknowledgement can retry this token, but cannot consume another local or shared claim.
-      if (typeof exec.token === 'symbol') {
-        executionId = randomUUID();
-        executions.set(exec.token, executionId);
-      }
+      // A repeated pre-execute retains its ordinal even when the durable fence acknowledgement was lost.
+      executionId = calls;
+      if (typeof exec.token === 'symbol') executions.set(exec.token, executionId);
     }
+    const blockedAttempt = await fence();
+    if (blockedAttempt) return blockedAttempt;
     if (
       ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete'].includes(exec.name)
     )

@@ -459,7 +459,7 @@ function Workbench() {
         !task.goalResume
       ) {
         const targetGoal = await runtime.command({
-          type: 'budget.goal',
+          type: 'goal.target',
           owner: {
             bot: target,
             chatRevision: task.chatRevision ?? 0,

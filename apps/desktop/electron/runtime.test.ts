@@ -1716,7 +1716,7 @@ it('recognizes only an absent Goal target endpoint as legacy service support', a
       tokenProvider: async () => 'a'.repeat(64),
       fetcher: async () => Response.json({ error }, { status }),
     });
-    const call = client.invoke({ type: 'budget.goal', owner: { bot: 'a', chatRevision: 0 } });
+    const call = client.invoke({ type: 'goal.target', owner: { bot: 'a', chatRevision: 0 } });
     if (error === 'NOT_FOUND') await expect(call).resolves.toBeNull();
     else await expect(call).rejects.toThrow();
   }
@@ -1732,7 +1732,6 @@ it.each([true, false])(
       goalId: 'mock-goal',
       goalRevision: 1,
       humanEpoch: 0,
-      budget: { budgetId: 'mock-budget', revision: 1 },
     };
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json(target),
@@ -1742,8 +1741,8 @@ it.each([true, false])(
       tokenProvider: async () => 'a'.repeat(64),
       fetcher,
     });
-    expect(parseCommand({ type: 'budget.goal', owner })).toEqual({ type: 'budget.goal', owner });
-    const reply = client.invoke({ type: 'budget.goal', owner });
+    expect(parseCommand({ type: 'goal.target', owner })).toEqual({ type: 'goal.target', owner });
+    const reply = client.invoke({ type: 'goal.target', owner });
     if (same) await expect(reply).resolves.toEqual(target);
     else await expect(reply).rejects.toThrow('INVALID_GOAL_TARGET');
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ owner });

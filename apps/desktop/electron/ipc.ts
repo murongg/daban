@@ -17,10 +17,10 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
-  isBudgetCommand,
   isChatRequest,
   isComputerRequest,
   isDocumentUpload,
+  isGoalControlCommand,
   isGoalResumeTarget,
   isGroupActionRequest,
   isGroupCopyRequest,
@@ -104,7 +104,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     value.type === 'skill.resource'
   )
     return isSkillPackageCommand(value) ? value : fail();
-  if (value.type.startsWith('budget.')) return isBudgetCommand(value) ? value : fail();
+  if (value.type === 'goal.target') return isGoalControlCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
     'work.list': ['type', 'query'],
