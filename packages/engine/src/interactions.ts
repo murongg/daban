@@ -6,16 +6,45 @@ import {
   type Interaction,
   isInteraction,
   isInteractionInput,
-  isMcpPurposeScope,
-  isPolicyDecision,
   isUserReply,
-  type McpPurposeScope,
   matchesReply,
-  type PolicyDecision,
   validAgentId,
 } from '@daban/protocol';
 import { Fault } from './control.js';
 import { syncDirectory } from './durability.js';
+
+function storedInteraction(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const {
+    policyDecision: _decision,
+    purposeScope,
+    reply,
+    ...input
+  } = value as Record<string, unknown>;
+  let savedReply = reply;
+  if (reply && typeof reply === 'object' && 'confirmPurpose' in reply) {
+    const { confirmPurpose, ...decision } = reply as Record<string, unknown>;
+    if (
+      confirmPurpose !== true ||
+      decision.kind !== 'decision' ||
+      decision.allow !== true ||
+      input.decisionSource !== undefined ||
+      input.kind !== 'approval' ||
+      input.tool !== 'mcp_call' ||
+      !purposeScope ||
+      typeof purposeScope !== 'object' ||
+      !('taskId' in purposeScope) ||
+      !validAgentId(purposeScope.taskId) ||
+      !('turnId' in purposeScope) ||
+      !validAgentId(purposeScope.turnId)
+    )
+      return undefined;
+    savedReply = decision;
+  }
+  // Retired rule metadata is readable history only; new requests never use this projection.
+  const projected = { ...input, ...(savedReply === undefined ? {} : { reply: savedReply }) };
+  return isInteraction(projected) ? projected : undefined;
+}
 
 export class Interactions {
   readonly ready: Promise<unknown>;
@@ -34,7 +63,6 @@ export class Interactions {
       sessionId: string,
       conversationId?: string,
     ) => boolean,
-    private readonly assertPurpose?: (item: Interaction) => unknown,
   ) {
     this.ready = this.load();
   }
@@ -54,9 +82,8 @@ export class Interactions {
         if (!info.isFile() || info.isSymbolicLink() || info.size > 128 * 1024)
           throw new Error('invalid record');
         const value = JSON.parse(await readFile(file, 'utf8'));
-        if (value.version !== 1 || !isInteraction(value.request) || value.request.id !== id)
-          throw new Error('invalid record');
-        const item: Interaction = value.request;
+        const item = storedInteraction(value.request);
+        if (value.version !== 1 || !item || item.id !== id) throw new Error('invalid record');
         this.closed.add(`${item.bot}/${item.runId}`);
         if (item.status === 'pending') {
           item.status = 'interrupted';
@@ -89,24 +116,8 @@ export class Interactions {
     } finally {
       await directory.close();
     }
-    let authorityError: unknown;
-    if (
-      value.status === 'resolved' &&
-      value.reply?.kind === 'decision' &&
-      value.reply.confirmPurpose
-    ) {
-      try {
-        if (!this.assertPurpose) throw new Fault('APPROVAL_AUTHORITY_CHANGED');
-        this.assertPurpose(value);
-      } catch (error) {
-        authorityError = error;
-      }
-    }
-    if (
-      value.status === 'resolved' &&
-      (this.closed.has(`${value.bot}/${value.runId}`) || authorityError)
-    ) {
-      // Stop or a new Human turn may arrive during fsync. Withdraw the grant before releasing any waiter.
+    if (value.status === 'resolved' && this.closed.has(`${value.bot}/${value.runId}`)) {
+      // Stop may arrive while the decision is being written. Withdraw it before any waiter can receive a grant.
       await this.commit({
         ...value,
         reply: undefined,
@@ -114,7 +125,7 @@ export class Interactions {
         status: 'cancelled',
         updatedAt: new Date().toISOString(),
       });
-      throw authorityError ?? new Fault('INTERACTION_CLOSED');
+      throw new Fault('INTERACTION_CLOSED');
     }
     // Publish and release the model only after the decision has committed to disk.
     this.records.set(value.id, structuredClone(value));
@@ -137,28 +148,11 @@ export class Interactions {
       throw new Fault('INTERACTION_NOT_FOUND', 404);
     return item;
   }
-  open(
-    bot: string,
-    runId: string,
-    input: unknown,
-    conversationId?: string,
-    policyDecision?: PolicyDecision,
-    purposeScope?: McpPurposeScope,
-  ) {
+  open(bot: string, runId: string, input: unknown, conversationId?: string) {
     if (
       !validAgentId(bot) ||
       !validAgentId(runId) ||
       !isInteractionInput(input) ||
-      (purposeScope !== undefined &&
-        (!isMcpPurposeScope(purposeScope) ||
-          input.kind !== 'approval' ||
-          input.tool !== 'mcp_call' ||
-          !policyDecision)) ||
-      (policyDecision !== undefined &&
-        (!isPolicyDecision(policyDecision) ||
-          policyDecision.scope.kind !== 'bot' ||
-          policyDecision.scope.bot !== bot ||
-          input.kind !== 'approval')) ||
       (conversationId !== undefined && !validAgentId(conversationId))
     )
       return Promise.reject(new Fault('INVALID_INTERACTION', 400));
@@ -174,8 +168,6 @@ export class Interactions {
           status: _status,
           reply: _reply,
           decisionSource: _source,
-          policyDecision: _policy,
-          purposeScope: _purpose,
           ...original
         } = existing;
         if (
@@ -189,19 +181,13 @@ export class Interactions {
       // Only the host's captured live-task policy can grant this; old records and questions never gain new authority.
       const automatic =
         value.kind === 'approval' &&
-        (policyDecision
-          ? policyDecision.effect === 'allow'
-          : this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true);
-      const denied = policyDecision?.effect === 'deny';
+        this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true;
       return this.commit({
         ...value,
         bot,
         runId,
         ...(conversationId ? { conversationId } : {}),
-        status: automatic || denied ? 'resolved' : 'pending',
-        ...(policyDecision ? { policyDecision: structuredClone(policyDecision) } : {}),
-        ...(purposeScope ? { purposeScope: structuredClone(purposeScope) } : {}),
-        ...(denied ? { reply: { kind: 'decision' as const, allow: false } } : {}),
+        status: automatic ? 'resolved' : 'pending',
         ...(automatic
           ? { reply: { kind: 'decision' as const, allow: true }, decisionSource: 'policy' as const }
           : {}),
@@ -223,10 +209,6 @@ export class Interactions {
       }
       if (item.status !== 'pending' || this.closed.has(`${bot}/${runId}`))
         throw new Fault('INTERACTION_CLOSED');
-      if (submitted.kind === 'decision' && submitted.confirmPurpose) {
-        if (!this.assertPurpose) throw new Fault('APPROVAL_AUTHORITY_CHANGED');
-        this.assertPurpose(item);
-      }
       return this.commit({
         ...item,
         reply: submitted,
@@ -241,34 +223,6 @@ export class Interactions {
     return [...this.records.values()]
       .map((value) => structuredClone(value))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  }
-  hasPurpose(
-    current: Pick<Interaction, 'bot' | 'runId' | 'sessionId' | 'conversationId'>,
-    scope: McpPurposeScope,
-    decision: PolicyDecision,
-  ) {
-    if (this.closed.has(`${current.bot}/${current.runId}`)) return false;
-    // Only an explicit committed Human reply can be reused; policy approvals and one-time replies grant no purpose.
-    return [...this.records.values()].some(
-      (item) =>
-        item.bot === current.bot &&
-        item.runId === current.runId &&
-        item.sessionId === current.sessionId &&
-        item.conversationId === current.conversationId &&
-        item.status === 'resolved' &&
-        item.kind === 'approval' &&
-        item.tool === 'mcp_call' &&
-        item.decisionSource !== 'policy' &&
-        item.reply?.kind === 'decision' &&
-        item.reply.allow &&
-        item.reply.confirmPurpose === true &&
-        item.purposeScope?.taskId === scope.taskId &&
-        item.purposeScope.turnId === scope.turnId &&
-        item.policyDecision?.policyRevision === decision.policyRevision &&
-        item.policyDecision.requestHash === decision.requestHash &&
-        item.policyDecision.trigger === decision.trigger &&
-        JSON.stringify(item.policyDecision.matchedRules) === JSON.stringify(decision.matchedRules),
-    );
   }
   pending(bot: string, runId: string) {
     return [...this.records.values()].some(

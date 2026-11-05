@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
 import { request } from 'node:http';
+import { isDeepStrictEqual } from 'node:util';
 import {
   isSoftwarePackages,
   isSoftwareReceipt,
@@ -9,7 +10,6 @@ import {
   type SoftwareReceipt,
   type SoftwareState,
 } from '@daban/protocol';
-import { approvalHash } from './approval-rules.js';
 import type { ToolResult } from './computer-tools.js';
 import { errorCode, Fault } from './control.js';
 import type { Interactions } from './interactions.js';
@@ -173,7 +173,6 @@ export class SoftwareTools {
     private readonly options: {
       pollMilliseconds?: number;
       assertLive?: (run: SoftwareRun) => unknown;
-      policy?: import('./approval-rules.js').RulePolicy;
     } = {},
   ) {}
   status() {
@@ -252,12 +251,6 @@ export class SoftwareTools {
         JSON.stringify(prepared.plan.requested) !== JSON.stringify(packages)
       )
         throw new Fault('SOFTWARE_INVALID_RESPONSE');
-      const selector = {
-        kind: 'software' as const,
-        planId: prepared.plan.id,
-        planHash: approvalHash(prepared.plan),
-      };
-      const policyDecision = await this.options.policy?.review(run, selector, 'ask');
       await this.cards.open(
         run.bot,
         run.id!,
@@ -270,7 +263,6 @@ export class SoftwareTools {
           purpose,
         },
         run.conversationId,
-        policyDecision,
       );
       let approval = await this.cards.wait(run.bot, run.id!, id, run.abort.signal);
       while (approval.status === 'pending') {
@@ -284,28 +276,23 @@ export class SoftwareTools {
         !approval.reply.allow
       )
         throw new Fault('SOFTWARE_APPROVAL_REJECTED');
-      if (policyDecision) {
-        if (
-          approval.kind !== 'approval' ||
-          approval.tool !== 'software_install' ||
-          approvalHash(approval.plan) !== selector.planHash ||
-          approvalHash(prepared.plan) !== selector.planHash ||
-          Date.parse(prepared.plan.expiresAt) <= Date.now()
-        )
-          throw new Fault('SOFTWARE_PLAN_CHANGED');
-        // Persisted consent never authorizes a changed policy or package/dependency plan.
-        this.options.policy!.assertCurrent(run, policyDecision);
-        const current = await this.backend.receipt(prepared.plan.id);
-        this.live(run);
-        this.options.policy!.assertCurrent(run, policyDecision);
-        if (
-          approvalHash(current.plan) !== selector.planHash ||
-          Date.parse(prepared.plan.expiresAt) <= Date.now()
-        )
-          throw new Fault('SOFTWARE_PLAN_CHANGED');
-        if (current.phase !== 'planned')
-          return result({ receipt: current, shared: true }, current.phase !== 'installed');
-      }
+      if (
+        approval.kind !== 'approval' ||
+        approval.tool !== 'software_install' ||
+        !isDeepStrictEqual(approval.plan, prepared.plan) ||
+        Date.parse(prepared.plan.expiresAt) <= Date.now()
+      )
+        throw new Fault('SOFTWARE_PLAN_CHANGED');
+      // Persisted consent never authorizes a changed package/dependency plan.
+      const current = await this.backend.receipt(prepared.plan.id);
+      this.live(run);
+      if (
+        !isDeepStrictEqual(current.plan, prepared.plan) ||
+        Date.parse(prepared.plan.expiresAt) <= Date.now()
+      )
+        throw new Fault('SOFTWARE_PLAN_CHANGED');
+      if (current.phase !== 'planned')
+        return result({ receipt: current, shared: true }, current.phase !== 'installed');
       // The privileged broker owns installation after dispatch; task stop must not kill dpkg halfway through.
       dispatched = true;
       let receipt = await this.backend.install(prepared.plan);

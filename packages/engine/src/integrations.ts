@@ -13,14 +13,12 @@ import {
   isAppOAuthStart,
   isAppTarget,
   isMcpReceipt,
-  isPolicyDecision,
   legacyMcpCatalogToolLimit,
   type McpBindingInput,
   type McpConnection,
   type McpReceipt,
   type McpSave,
   type McpView,
-  type PolicyDecision,
   validAgentId,
 } from '@daban/protocol';
 import { and, count, desc, eq, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
@@ -1507,9 +1505,6 @@ export class Integrations {
       tool: String(row.tool),
       phase: String(row.phase),
       preview: String(row.preview),
-      ...(row.policyDecision
-        ? { policyDecision: JSON.parse(String(row.policyDecision)) as unknown }
-        : {}),
       ...(row.result !== null ? { result: String(row.result) } : {}),
       ...(row.error !== null ? { error: String(row.error) } : {}),
       createdAt: String(row.created),
@@ -1592,22 +1587,6 @@ export class Integrations {
         .run(),
     );
     return { fresh: true, receipt: this.receiptRow(this.call(input.id)) };
-  }
-  async recordDecision(id: string, decision: PolicyDecision) {
-    await this.ready;
-    const row = this.call(id);
-    if (
-      row.phase !== 'claimed' ||
-      !isPolicyDecision(decision) ||
-      decision.scope.kind !== 'bot' ||
-      decision.scope.bot !== row.bot
-    )
-      throw new Fault('MCP_AUTHORITY_CHANGED');
-    this.available()
-      .update(callReceipts)
-      .set({ policyDecision: JSON.stringify(decision) })
-      .where(eq(callReceipts.id, id))
-      .run();
   }
   async dispatched(id: string) {
     await this.ready;
