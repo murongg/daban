@@ -3,6 +3,11 @@ import { chmod, lstat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  type DeliveryChecklistWrite,
+  type DeliveryQuery,
+  type DeliveryWrite,
+  isDeliveryQuery,
+  isDeliveryWrite,
   isLegacyWorkWrite,
   isWorkAuthor,
   isWorkComment,
@@ -55,6 +60,7 @@ import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { errorCode, Fault } from './control.js';
 import { configure, type Database, migrate, tables, unwrap } from './database.js';
 import { privateMetadata, secureDirectory } from './private-files.js';
+import { WorkDelivery } from './work-delivery.js';
 import { migrations } from './work-migrations.js';
 import { workComments, workItems, workMeta, workOperations } from './work-schema.js';
 
@@ -162,7 +168,7 @@ export class Work {
         busyTimeout: 5000,
       });
       this.db = migrate(client, migrations, (legacy) => this.upgrade(legacy));
-      this.validate(this.db, 3);
+      this.validate(this.db, 3, true);
     } catch {
       client?.close();
       this.db = undefined;
@@ -208,9 +214,17 @@ export class Work {
     // Validate every legacy receipt and comment before the baseline is recorded.
     this.validate(drizzle({ client }), version);
   }
-  private validate(db: Database, version: number) {
-    if (JSON.stringify(tables(db)) !== JSON.stringify(currentTables))
-      throw new Fault('WORK_CORRUPT');
+  private validate(db: Database, version: number, delivery = false) {
+    const expected = delivery
+      ? [
+          ...currentTables,
+          'work_checklists',
+          'work_deliveries',
+          'work_delivery_operations',
+          'work_decisions',
+        ].sort()
+      : currentTables;
+    if (JSON.stringify(tables(db)) !== JSON.stringify(expected)) throw new Fault('WORK_CORRUPT');
     this.validateWork(db, version);
     this.commentAuthority(db);
     for (const row of db.select().from(workComments).all()) this.commentRow(row, db);
@@ -695,6 +709,49 @@ export class Work {
         { behavior: 'immediate' },
       );
     }, signal);
+  }
+  private deliveryStore() {
+    return new WorkDelivery(
+      this.database(),
+      (id) => this.find(id),
+      () => {
+        this.revision();
+        if (this.operationCount() >= operations) throw new Fault('WORK_OPERATION_LIMIT');
+      },
+    );
+  }
+  deliveryPage(input: DeliveryQuery) {
+    if (!isDeliveryQuery(input)) return Promise.reject(new Fault('INVALID_DELIVERY_REQUEST', 400));
+    const query = structuredClone(input);
+    return this.exclusive(() => this.deliveryStore().page(query));
+  }
+  deliveryChecklist(workId: string) {
+    return this.exclusive(() => this.deliveryStore().checklist(workId));
+  }
+  deliveryReceipt(action: string, input: DeliveryWrite) {
+    if (!isDeliveryWrite(action, input))
+      return Promise.reject(new Fault('INVALID_DELIVERY_REQUEST', 400));
+    const request = structuredClone(input);
+    return this.exclusive(() => this.deliveryStore().receipt(action, request));
+  }
+  deliveryChecklistWrite(input: DeliveryChecklistWrite, actor: WorkAuthor) {
+    if (actor.kind !== 'human') return Promise.reject(new Fault('DELIVERY_HUMAN_REQUIRED', 403));
+    const request = structuredClone(input);
+    return this.exclusive(() => {
+      this.admit(actor);
+      this.revision();
+      return this.deliveryStore().writeChecklist(request);
+    });
+  }
+  deliveryObserve<T>(effect: (store: Pick<WorkDelivery, 'attempt' | 'project'>) => T) {
+    return this.exclusive(() => effect(this.deliveryStore()));
+  }
+  deliveryEffect<T>(effect: (store: WorkDelivery) => T) {
+    return this.exclusive(() => {
+      this.admit({ kind: 'human' });
+      this.revision();
+      return effect(this.deliveryStore());
+    });
   }
   private commentRow(row: CommentRow, db = this.database()): WorkComment {
     let author: unknown;

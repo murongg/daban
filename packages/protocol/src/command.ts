@@ -1,6 +1,7 @@
 import { isReviewFileQuery, isReviewQuery, isReviewSelection } from './file-review.js';
 import {
   isApprovalMode,
+  isApprovalRulesCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -23,6 +24,7 @@ import {
   isContextQuery,
   isContextSourceQuery,
   isDocumentUpload,
+  isDeliveryCommand,
   isGoalResumeTarget,
   isGroupActionRequest,
   isGroupCopyRequest,
@@ -84,7 +86,9 @@ export function safeRuntimePath(value: unknown): value is string {
   );
 }
 export function parseRuntimeCommand(value: unknown): RuntimeCommand {
+  if (isApprovalRulesCommand(value)) return value;
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type.startsWith('delivery.')) return isDeliveryCommand(value) ? value : fail();
   if (isAutomationCommand(value)) return value;
   if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();

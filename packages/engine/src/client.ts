@@ -1,6 +1,21 @@
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import {
+  matchesApprovalReceipt,
+  sameApprovalScope,
+  recoveryReader,
+  isPolicyDecision,
+  isDeliveryReceipt,
+  isDeliveryPage,
+  isDeliveryCommand,
+  isDeliveryChecklist,
+  isApprovalRulesStatus,
+  isApprovalRulesSnapshot,
+  isApprovalRulesCommand,
+  isApprovalRuleReceipt,
+  deliveryKey,
+  deliveryAction,
+  approvalRulesCapability,
   automationCapability,
   botBundleLimit,
   botBundleText,
@@ -392,6 +407,8 @@ export class RuntimeClient {
         contextInspector?: unknown;
         fileReview?: unknown;
         clientProtocol?: number;
+        approvalRules?: unknown;
+        delivery?: unknown;
         botCapabilities?: unknown;
         localComputer?: unknown;
         chats?: unknown;
@@ -520,6 +537,10 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       if (raw.contextInspector === 1) snapshot.contextInspector = 1;
       snapshot.protocolVersion = raw.clientProtocol || 0;
+      if (raw.delivery !== undefined && raw.delivery !== true)
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (raw.delivery === true) snapshot.delivery = true;
+
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
       if (this.agent && raw.localComputer !== undefined)
@@ -576,6 +597,15 @@ export class RuntimeClient {
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
+      if (raw.approvalRules !== undefined)
+        snapshot.approvalRules = isApprovalRulesStatus(raw.approvalRules)
+          ? raw.approvalRules
+          : {
+              capability: approvalRulesCapability,
+              available: false,
+              revision: 0,
+              error: 'INVALID_RUNTIME_STATE',
+            };
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
           ? raw.software
@@ -807,6 +837,91 @@ export class RuntimeClient {
     // One client serves concurrent peer generations; format belongs to this invocation, never shared state.
     const api = (route: string, data?: unknown, retry?: boolean, protocol?: number) =>
       this.api(route, data, retry, protocol, schema === 2);
+    if (isDeliveryCommand(command)) {
+      const captured = structuredClone(command);
+      const state = await this.status(schema);
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.delivery !== true) throw new Error('RUNTIME_TOO_OLD');
+      if (recoveryBlocked(state) && !recoveryReader(captured))
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      const action = captured.type.slice(9);
+      const route =
+        (
+          {
+            'checklist.get': 'checklist/get',
+            'checklist.write': 'checklist/write',
+            'checklist.receipt': 'checklist/receipt',
+            'file.bind': 'file/bind',
+            'file.bind-receipt': 'file/bind-receipt',
+          } as Record<string, string>
+        )[action] ?? action;
+      const value = await this.workApi(
+        `/api/delivery/${route}`,
+        'query' in captured ? captured.query : captured.request,
+        state.protocolVersion,
+      );
+      if (captured.type === 'delivery.get') {
+        if (
+          !isDeliveryPage(value) ||
+          value.workId !== captured.query.workId ||
+          value.attempts.length > (captured.query.limit ?? 20) ||
+          (captured.query.before !== undefined &&
+            value.attempts.some((attempt) => attempt.sequence >= captured.query.before!))
+        )
+          throw new Error('INVALID_DELIVERY_PAGE');
+      } else if (captured.type === 'delivery.checklist.get') {
+        if (!isDeliveryChecklist(value) || value.workId !== captured.query.workId)
+          throw new Error('INVALID_DELIVERY_CHECKLIST');
+      } else {
+        const owner = deliveryAction(action);
+        if (
+          !isDeliveryReceipt(value) ||
+          deliveryKey(owner, value.request) !== deliveryKey(owner, captured.request) ||
+          (!action.endsWith('receipt') && value.state !== 'complete')
+        )
+          throw new Error('INVALID_DELIVERY_RECEIPT');
+        if (value.state === 'complete' && 'attempt' in value) {
+          if (
+            ('attemptId' in captured.request &&
+              value.attempt.attemptId !== captured.request.attemptId) ||
+            (owner === 'start' &&
+              (value.attempt.requestId !== captured.request.requestId ||
+                !('bot' in captured.request) ||
+                value.attempt.bot !== captured.request.bot))
+          )
+            throw new Error('INVALID_DELIVERY_RECEIPT');
+        }
+      }
+      return value;
+    }
+    if (isApprovalRulesCommand(command)) {
+      const captured = structuredClone(command);
+      const scope =
+        captured.type === 'approval.rules.write' ? captured.request.scope : captured.scope;
+      const state = await this.status(schema);
+      if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
+        throw new Error('APPROVAL_UPGRADE_REQUIRED');
+      if (!state.approvalRules.available) throw new Error('APPROVAL_RULES_UNAVAILABLE');
+      const value = await this.api(
+        `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
+        captured,
+      );
+      const valid =
+        captured.type === 'approval.rules.list'
+          ? isApprovalRulesSnapshot(value) && sameApprovalScope(value.scope, scope)
+          : captured.type === 'approval.rules.preview'
+            ? isPolicyDecision(value) &&
+              sameApprovalScope(value.scope, scope) &&
+              value.trigger === captured.trigger &&
+              JSON.stringify(value.selector) === JSON.stringify(captured.selector)
+            : captured.type === 'approval.rules.write'
+              ? matchesApprovalReceipt(value, captured.request)
+              : isApprovalRuleReceipt(value) &&
+                sameApprovalScope(value.scope, scope) &&
+                value.requestId === captured.requestId;
+      if (!valid) throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
     if (command.type.startsWith('budget.')) {
       const captured = structuredClone(command);
       let value: unknown;

@@ -512,6 +512,7 @@ export function runtimeMessage(code: string, fallback = code) {
     IMAGE_LIMIT: t('errors.imageDimensionsTooLargeResizeMostPixels'),
     RUNTIME_TOO_OLD: t('errors.runtimeUpdateRequiredSendingOldAcceptanceProgram'),
     RUNTIME_SESSION_CHANGED: t('errors.executionEnvironmentReconnectedCheckTaskStateRetrying'),
+    DELIVERY_START_REQUIRED: t('delivery.useCardToRestart'),
     INVALID_TASK: t('errors.invalidTaskAttachmentParametersEditResend'),
     INVALID_COMMAND: t('errors.invalidOperationParametersRetry'),
     RUNTIME_OFFLINE: t('errors.localRuntimeNotConnectedRetrySettings'),

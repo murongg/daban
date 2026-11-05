@@ -89,7 +89,7 @@ test('scoped binary observations dispatch only stable changes through ModelRuns 
           bot,
           { ...task, ...(source?.scope ? { project: source.scope } : {}) },
           undefined,
-          source,
+          { automation: source },
         );
       },
     },

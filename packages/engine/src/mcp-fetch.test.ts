@@ -251,3 +251,41 @@ test('one approved MCP invocation can physically dispatch tools/call only once, 
     await fixture.close();
   }
 });
+
+test('revocation while dialing prevents the actual MCP tool HTTP request', async () => {
+  let calls = 0;
+  let revoked = false;
+  const fixture = await tlsFixture((_req, res) => {
+    calls++;
+    res.end('{}');
+  });
+  const options = {
+    ...fixture,
+    onDispatch: async () => undefined,
+    authorize: () => {
+      if (revoked) throw new Error('APPROVAL_POLICY_CHANGED');
+    },
+    dial: async (address: string, port: number, signal: AbortSignal) => {
+      const socket = await fixture.dial(address, port, signal);
+      revoked = true;
+      return socket;
+    },
+  };
+  const request = new McpFetch(fixture.endpoint, options);
+  try {
+    await expect(
+      request.fetch(fixture.endpoint, {
+        method: 'POST',
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'synthetic_write', arguments: {} },
+        }),
+      }),
+    ).rejects.toThrow('APPROVAL_POLICY_CHANGED');
+    expect(calls).toBe(0);
+  } finally {
+    await fixture.close();
+  }
+});

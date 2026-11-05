@@ -22,6 +22,13 @@ export const migrations: Migration[] = [
     name: '20261103131026_baseline',
   },
   {
+    sql: ['ALTER TABLE `group_collaborations` ADD `delivery` text;'],
+    bps: true,
+    folderMillis: 1793790495000,
+    hash: 'c2725ed1a22a373fa6331400c96f8caf3dc2bed8417eda602708f07b4ccaa345',
+    name: '20261104110815_delivery-reference',
+  },
+  {
     sql: ['ALTER TABLE `group_turns` ADD `automation` text;'],
     bps: true,
     folderMillis: 1793804381000,
@@ -46,5 +53,12 @@ export const migrations: Migration[] = [
     folderMillis: 1793810871000,
     hash: '3dbc311e82a8b80a9075c60975db32c22f888e584a27e7116d0ef2e380292e5a',
     name: '20261104164751_goal-target',
+  },
+  {
+    sql: [''],
+    bps: true,
+    folderMillis: 1793865142000,
+    hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    name: '20261105075222_delivery-origins',
   },
 ];

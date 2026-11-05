@@ -92,7 +92,7 @@ function goalExecution() {
   return { execution, opened: () => opened };
 }
 function start(models: ModelRuns, task: TaskRequest, origin = source) {
-  return models.start('mock-bot', task, undefined, origin);
+  return models.start('mock-bot', task, undefined, { automation: origin });
 }
 
 test('the trusted AutomationSource port coexists with a captured task budget', {
@@ -252,7 +252,7 @@ test('automation metadata and a quota increase cannot arm a Goal; the named Huma
       { ...request, requestId: 'synthetic-auto-explicit-human-goal' },
       undefined,
       raised.scope,
-      source,
+      { automation: source },
     );
     const resumed = fixture.models.jobs.get('mock-bot')!;
     await resumed.done;
@@ -308,7 +308,7 @@ test('a real firing and reopened group deliveries retain one budget, immutable p
         request: task.requestId,
         source: context.sourceId,
         budget: context.budget && structuredClone(context.budget),
-        origin: origin && structuredClone(origin),
+        origin: origin?.automation && structuredClone(origin.automation),
       });
       return models.start(bot, task, context, origin);
     },
@@ -324,7 +324,7 @@ test('a real firing and reopened group deliveries retain one budget, immutable p
       admit: (bot) => models.admit(bot),
       findRequest: (bot, id) => models.findRequest(bot, id),
       start: (bot, task, _conversation, origin) =>
-        models.start(bot, { ...task, chatRevision: 0 }, undefined, origin),
+        models.start(bot, { ...task, chatRevision: 0 }, undefined, { automation: origin }),
     },
   });
   try {

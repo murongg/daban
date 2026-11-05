@@ -24,8 +24,10 @@ import { IconButton } from '../../components/controls/Button';
 import { Select } from '../../components/controls/Select';
 import { Tooltip } from '../../components/controls/Tooltip';
 import { getLocale, t, useLocale } from '../../i18n/locale';
+import { Requests } from '../requests/Requests';
 import { Comments } from './Comments';
 import { commentCard } from './comments-state';
+import { Delivery } from './Delivery';
 import type { WorkController } from './work';
 import { workDirty, workInitial } from './work-state';
 
@@ -54,10 +56,12 @@ export function Tasks({
   state,
   dispatch,
   work,
+  notify = () => {},
 }: {
   state: State;
   dispatch: Dispatch<Action>;
   work: WorkController;
+  notify?: (message: string) => unknown;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -661,6 +665,17 @@ export function Tasks({
                       </button>
                     )}
                   </div>
+                )}
+                {draft.base && !work.reading && (
+                  <Delivery
+                    key={`delivery:${draft.base.id}`}
+                    item={draft.base}
+                    observe={work.observe}
+                    unsaved={workDirty(draft)}
+                    renderRequests={(runs) => (
+                      <Requests state={state} dispatch={dispatch} notify={notify} runs={runs} />
+                    )}
+                  />
                 )}
                 {draft.base && !work.reading && (
                   <Comments

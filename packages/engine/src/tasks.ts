@@ -21,9 +21,11 @@ import type {
 import {
   compareReviewPaths,
   type AutomationSource,
+  type DeliveryReference,
   isApprovalMode,
   isAutomationSource,
   isBudgetScope,
+  isDeliveryReference,
   isGoalProgress,
   isGoalResumeTarget,
   isModelAttempts,
@@ -278,6 +280,7 @@ export interface TaskRecord {
   fileReview?: import('./file-review.js').ReviewPointer;
   contextCaptures?: ContextArchive;
   contextCaptureFailed?: true;
+  delivery?: DeliveryReference;
   approvalMode?: ApprovalMode;
   budget?: BudgetScope;
   activeMs?: number;
@@ -362,13 +365,32 @@ export function taskActivity(record: Pick<TaskRecord, 'trace' | 'executedCount'>
     trace: trace.slice(-8),
   };
 }
+// Host provenance stays separate from Human admission and physical model-attempt identity.
+export interface RunProvenance {
+  automation?: AutomationSource;
+  delivery?: DeliveryReference;
+}
+export function isRunProvenance(value: unknown): value is RunProvenance {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).every((key) => key === 'automation' || key === 'delivery') &&
+    (!('automation' in value) ||
+      value.automation === undefined ||
+      isAutomationSource(value.automation)) &&
+    (!('delivery' in value) || value.delivery === undefined || isDeliveryReference(value.delivery))
+  );
+}
 export interface ConversationScope {
   budget?: BudgetScope;
   sourceId?: string;
   id: string;
   context: string;
 }
-export interface RunReceipt {
+export interface RunReceipt extends RunProvenance {
+  budget?: BudgetScope;
+  project?: ProjectScope;
   runId: string;
   phase: string;
   conversationId?: string;
@@ -387,12 +409,14 @@ export class TaskJournal {
   dir: string;
   records: Map<string, TaskRecord>;
   writing: Promise<unknown>;
+  private readonly unconfirmedRequests = new Set<string>();
   constructor(dir: string) {
     this.dir = dir;
     this.records = new Map();
     this.writing = Promise.resolve();
   }
   async load() {
+    this.unconfirmedRequests.clear();
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
     for (const name of await readdir(this.dir)) {
       if (!/^[a-zA-Z0-9_-]+\.json$/.test(name)) continue;
@@ -430,6 +454,11 @@ export class TaskJournal {
         }
         if (task.fileReview !== undefined && !validReviewPointer(task.fileReview))
           delete task.fileReview;
+        // Dropping ownership would turn corrupted delivery history into an unrestricted ordinary retry.
+        if (task.delivery !== undefined && !isDeliveryReference(task.delivery)) {
+          this.unconfirmedRequests.add(JSON.stringify([task.bot, task.requestId ?? task.runId]));
+          continue;
+        }
         if (task.automation !== undefined && !isAutomationSource(task.automation)) continue;
         if (task.automationOutput !== undefined && !isAutomationOutput(task.automationOutput))
           delete task.automationOutput;
@@ -520,6 +549,8 @@ export class TaskJournal {
       throw new Fault('INVALID_CONTEXT_CAPTURE', 400);
     if (value.fileReview !== undefined && !validReviewPointer(value.fileReview))
       throw new Fault('INVALID_FILE_REVIEW', 400);
+    if (value.delivery !== undefined && !isDeliveryReference(value.delivery))
+      throw new Fault('INVALID_DELIVERY_REFERENCE', 400);
     if (value.budget !== undefined && !isBudgetScope(value.budget))
       throw new Fault('INVALID_BUDGET_SCOPE', 400);
     if (
@@ -556,6 +587,7 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'delivery',
       'budget',
       'activeMs',
       'attemptSummary',
@@ -635,6 +667,11 @@ export class TaskJournal {
       .sort((a, b) => String(a.runId).localeCompare(String(b.runId)))
       .slice(-100)
       .map((t) => structuredClone(t));
+  }
+  assertRequest(bot: string, id: string) {
+    // Quarantine keeps the original request occupied; missing readable history is never replay permission.
+    if (this.unconfirmedRequests.has(JSON.stringify([bot, id])))
+      throw new Fault('TASK_OUTCOME_UNKNOWN');
   }
   findRequest(bot: string, id: string) {
     const record = [...this.records.values()].find(
