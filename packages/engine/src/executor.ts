@@ -11,7 +11,6 @@ import {
   executionCapabilities,
   executionKeys,
   executionRecord,
-  fileObservationCapability,
   isBrowserAnswerRequest,
   isBrowserBinding,
   isBrowserCommandRequest,
@@ -511,7 +510,6 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           skillPackageCapability,
           browserTaskCapability,
           taskRunCapability,
-          fileObservationCapability,
         ],
         computer: {
           mode: raw.mode,
@@ -571,11 +569,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           String(params.path),
           params.limit === undefined ? undefined : Number(params.limit),
         );
-      if (method === 'workspace.download')
-        return files.download(
-          String(params.path),
-          params.limit === undefined ? undefined : Number(params.limit),
-        );
+      if (method === 'workspace.download') return files.download(String(params.path));
       if (method === 'workspace.skill') {
         if (!isSkillPackage(params.package)) throw new Fault('INVALID_SKILL_PACKAGE', 400);
         return files.stageSkill(params.package, signal);

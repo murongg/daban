@@ -800,7 +800,14 @@ export class RemoteAccess {
       value.host === session.device.id &&
       value.workspace === session.workspace
     ) {
-      this.options.snapshot?.(value.value, session.device.id);
+      const view = remoteReplyFor(
+        'status',
+        value.value,
+        supportedSnapshotCapabilities,
+        2,
+        supportedSnapshotFormats,
+      );
+      this.options.snapshot?.(view, session.device.id);
     }
   }
   async request(command: RuntimeCommand, host = this.selected): Promise<unknown> {
@@ -810,7 +817,9 @@ export class RemoteAccess {
     if (!target || this.stopped) throw Error('REMOTE_NO_HOST_SELECTED');
     const session = await this.connect(target);
     const { type, ...params } = command;
-    return this.rpc(session, type, params);
+    const value = await this.rpc(session, type, params);
+    // Released Hosts may still return retired optional metadata. Normalize only the closed read view.
+    return remoteReplyFor(type, value, supportedSnapshotCapabilities, 2, supportedSnapshotFormats);
   }
   private async rpc(session: Session, type: string, params: Record<string, unknown>) {
     const request: RemoteRpcRequest = {

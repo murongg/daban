@@ -305,7 +305,7 @@ test('context and current main observations stay fresh while writes deduplicate 
         },
       },
       { method: 'goal.target', params: { owner: { bot: scope.bot, chatRevision: 0 } } },
-      { method: 'schedule.receipt', params: { id: 'mock-schedule', firing: 'mock-firing' } },
+      { method: 'schedule.get', params: { id: 'mock-schedule' } },
     ];
     for (const { method, params } of queries) {
       const request = {

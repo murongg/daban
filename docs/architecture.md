@@ -48,6 +48,8 @@ The root `vitest.config.ts` owns all unit tests: the `desktop` project uses jsdo
 
 See [development](development.md) for commands and [project guidelines](../AGENTS.md) for language, package-boundary and verification rules. Project code is licensed under [AGPL-3.0-only](../LICENSE); third-party notices retain their original licenses.
 
+Ordinary time schedules retain durable firing/request identity and historical provenance. File-change triggers and quiet result monitoring are retired; old file rules are disabled without deleting saved definitions or execution receipts. Persistent approval rules are also retired, while ordinary per-request approval remains in the existing owner paths.
+
 ## Execution and Goal controls
 
 Execution limits remain with ModelRuns and its existing SDK policy: 60 tool calls, 300000ms of active execution excluding actual Human waits, and at most three native Goal rounds. Registry execution ordinals accompany the existing attempt fence and supplement TaskJournal contributions when providers reuse call IDs; they do not create a separate quota or billing ledger. Per-request usage collection, prices, configurable request/fee budgets and quota increases have been removed. Existing financial sidecar files and shipped migrations are left untouched and are not opened by the runtime.

@@ -21,7 +21,6 @@ export async function nativeSchedules(sdkFile = defaultSdkFile): Promise<Schedul
   return {
     create(input, now) {
       const { id, title, prompt, rule } = input;
-      if (rule.kind === 'file') throw new Fault('INVALID_SCHEDULE', 400);
       try {
         if (rule.kind === 'every')
           return native.createEveryScheduleRecord(id, prompt, rule.everySeconds, now, title);

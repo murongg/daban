@@ -483,11 +483,6 @@ export class Groups {
         .limit(1000)
         .all()
         .reverse()
-        .filter(
-          (row) =>
-            row.state !== 'completed' ||
-            this.automationSource(row.automation)?.policy.kind !== 'changes',
-        )
         .map((row) => ({
           kind: 'group',
           id: String(row.id),

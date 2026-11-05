@@ -4,6 +4,8 @@
 
 Select a Bot and open **Schedules**. At the configured time, the backend submits work to that Bot and returns results to its conversation.
 
+Only time-based schedules remain. File-change triggers and quiet monitoring have been removed. After upgrading, old file monitors stop triggering; already started tasks and their execution history are retained.
+
 ## Create a schedule
 
 1. Enter a name and complete task instructions.

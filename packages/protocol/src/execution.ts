@@ -1,4 +1,3 @@
-import { fileObservationCapability } from './automation.js';
 import { validAgentId } from './id.js';
 import type { BrowserState, ComputerStatus, ModelId } from './index.js';
 import {
@@ -203,7 +202,13 @@ export function isExecutionParams(
     );
   if (method === 'workspace.read' || method === 'workspace.download')
     return (
-      executionKeys(value, ['root', 'canonical', 'project', 'path', 'limit']) &&
+      executionKeys(value, [
+        'root',
+        'canonical',
+        'project',
+        'path',
+        ...(method === 'workspace.read' ? ['limit'] : []),
+      ]) &&
       scope(value) &&
       text(value.path, 512) &&
       (value.limit === undefined ||
@@ -335,7 +340,8 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         skillPackageCapability,
         browserTaskCapability,
         projectCapability,
-        fileObservationCapability,
+        // Existing executors may still advertise this retired capability during a Host-only upgrade.
+        'file-observation-read-v1',
         taskRunCapability,
       ].includes(capability),
     ) ||
