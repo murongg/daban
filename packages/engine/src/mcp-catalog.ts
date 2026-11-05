@@ -3,6 +3,39 @@ import type { McpTool } from '@daban/protocol';
 import { Fault } from './control.js';
 
 export type { McpTool } from '@daban/protocol';
+
+export interface McpCatalogDiagnostic {
+  reason:
+    | 'catalog_type'
+    | 'tool_count'
+    | 'tool_type'
+    | 'tool_name'
+    | 'input_schema'
+    | 'schema_type'
+    | 'description_length';
+  path: string;
+  toolCount?: number;
+  kind?: ReturnType<typeof valueKind>;
+  actual?: number;
+  limit?: number;
+  controlCharacters?: boolean;
+  schemaType?: 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null' | 'unknown';
+}
+
+export class McpCatalogError extends Fault {
+  constructor(readonly diagnostic: McpCatalogDiagnostic) {
+    super('INVALID_MCP_CATALOG', 400);
+  }
+}
+
+function valueKind(value: unknown) {
+  return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+}
+
+function rejectCatalog(diagnostic: McpCatalogDiagnostic): never {
+  throw new McpCatalogError(diagnostic);
+}
+
 export function canonicalJson(value: unknown, depth = 0): string {
   if (depth > 16) throw new Fault('INVALID_MCP_JSON', 400);
   if (
@@ -35,26 +68,80 @@ export function mcpCatalog(
   input: unknown,
   secrets: readonly string[],
 ): McpTool[] {
-  if (!Array.isArray(input) || input.length > 64) throw new Fault('INVALID_MCP_CATALOG', 400);
+  if (!Array.isArray(input))
+    rejectCatalog({ reason: 'catalog_type', path: 'tools', kind: valueKind(input) });
+  if (input.length > 64)
+    rejectCatalog({ reason: 'tool_count', path: 'tools', actual: input.length, limit: 64 });
   const tools = input
-    .map((raw: unknown) => {
+    .map((raw: unknown, index) => {
+      const path = `tools[${index}]`;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw))
-        throw new Fault('INVALID_MCP_CATALOG', 400);
+        rejectCatalog({ reason: 'tool_type', path, toolCount: input.length, kind: valueKind(raw) });
       const value = raw as Record<string, unknown>;
+      // Keep malformed oversized names on the constant-time rejection path.
+      const controlCharacters =
+        typeof value.name === 'string' &&
+        value.name.length <= 200 &&
+        [...value.name].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
       if (
         typeof value.name !== 'string' ||
         !value.name ||
         value.name.length > 200 ||
-        [...value.name].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+        controlCharacters
+      )
+        rejectCatalog({
+          reason: 'tool_name',
+          path: `${path}.name`,
+          toolCount: input.length,
+          kind: valueKind(value.name),
+          ...(typeof value.name === 'string'
+            ? {
+                actual: value.name.length,
+                limit: 200,
+                ...(value.name.length <= 200 ? { controlCharacters } : {}),
+              }
+            : {}),
+        });
+      if (
         !value.inputSchema ||
         typeof value.inputSchema !== 'object' ||
-        Array.isArray(value.inputSchema) ||
-        (value.inputSchema as Record<string, unknown>).type !== 'object'
+        Array.isArray(value.inputSchema)
       )
-        throw new Fault('INVALID_MCP_CATALOG', 400);
+        rejectCatalog({
+          reason: 'input_schema',
+          path: `${path}.inputSchema`,
+          toolCount: input.length,
+          kind: valueKind(value.inputSchema),
+        });
+      const schema = value.inputSchema as Record<string, unknown>;
+      if (schema.type !== 'object') {
+        const type = schema.type;
+        rejectCatalog({
+          reason: 'schema_type',
+          path: `${path}.inputSchema.type`,
+          toolCount: input.length,
+          kind: valueKind(type),
+          schemaType:
+            type === 'array' ||
+            type === 'string' ||
+            type === 'number' ||
+            type === 'integer' ||
+            type === 'boolean' ||
+            type === 'null'
+              ? type
+              : 'unknown',
+        });
+      }
       const description =
         typeof value.description === 'string' ? value.description : `External tool ${value.name}`;
-      if (description.length > 2000) throw new Fault('INVALID_MCP_CATALOG', 400);
+      if (description.length > 2000)
+        rejectCatalog({
+          reason: 'description_length',
+          path: `${path}.description`,
+          toolCount: input.length,
+          actual: description.length,
+          limit: 2000,
+        });
       const definition = {
         name: value.name,
         description,

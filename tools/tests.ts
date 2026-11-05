@@ -135,6 +135,7 @@ export const suites = {
     'oauth.integration',
     'office.integration',
     'network.test',
+    'mcp-catalog.test',
     'mcp-fetch.test',
     'mcp.test',
     'integrations.test',
