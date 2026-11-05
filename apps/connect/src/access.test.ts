@@ -2,7 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { RemoteAccess } from '@daban/engine/remote';
-import type { PeerDescription, PeerEvent, RemoteIceServer, RemotePeerPort } from '@daban/protocol';
+import {
+  disconnected,
+  type PeerDescription,
+  type PeerEvent,
+  type RemoteIceServer,
+  type RemotePeerPort,
+} from '@daban/protocol';
 import { afterEach, expect, it } from 'vitest';
 import { startConnect } from './server.js';
 
@@ -71,6 +77,7 @@ it('pairs through host approval, executes on the bound host and survives control
       return hostPeer;
     },
     dispatch: async (command) => {
+      if (command.type === 'status' || command.type === 'connect') return disconnected('ready');
       if (command.type === 'task.start') executed++;
       return { phase: 'synthetic-ready', executed };
     },

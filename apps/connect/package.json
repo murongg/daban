@@ -1,6 +1,6 @@
 {
   "name": "@daban/connect",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,8 +9,8 @@
     "start": "node ../../dist-connect/main.js"
   },
   "dependencies": {
-    "@daban/engine": "0.1.7",
-    "@daban/protocol": "0.1.7",
+    "@daban/engine": "0.1.8",
+    "@daban/protocol": "0.1.8",
     "ws": "8.22.1"
   },
   "devDependencies": {

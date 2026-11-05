@@ -4,6 +4,7 @@ import {
   isPreflightPackage,
   isPreflightPackageData,
   isPreflightReport,
+  isRemoteSnapshotCapabilities,
   type PreflightReport,
   parseRuntimeCommand,
   preflightJson,
@@ -220,4 +221,74 @@ it('rejects a green summary whose individual reason contradicts readiness', () =
       checks: [{ ...value.checks[0], state: 'ready', reason: 'MODEL_NOT_CONFIGURED' }],
     }),
   ).toBe(false);
+});
+
+const consumerHint = {
+  type: 'snapshot-capabilities',
+  host: 'a'.repeat(64),
+  workspace: 'mock-workspace',
+  accept: { contextInspector: 1, preflight: 1, fileReview: 1 },
+  schema: 2,
+  formats: {
+    approvalRules: 'approval-rules-v3',
+    delivery: true,
+    searchSettings: true,
+  },
+};
+
+it('accepts preflight schema one with the single schema two peer hint and published formats', () => {
+  expect(isRemoteSnapshotCapabilities(consumerHint)).toBe(true);
+  expect(
+    isRemoteSnapshotCapabilities({
+      type: consumerHint.type,
+      host: consumerHint.host,
+      workspace: consumerHint.workspace,
+      accept: { preflight: 1 },
+    }),
+  ).toBe(true);
+});
+
+it('rejects unknown peer schema, preflight acceptance and published format values', () => {
+  const invalid = [
+    ...[1, 3, '2', true].map((schema) => ({ ...consumerHint, schema })),
+    ...[2, true, '1'].map((preflight) => ({
+      ...consumerHint,
+      accept: { ...consumerHint.accept, preflight },
+    })),
+    { ...consumerHint, accept: { ...consumerHint.accept, permission: 1 } },
+    { ...consumerHint, formats: { ...consumerHint.formats, approvalRules: 'approval-rules-v2' } },
+    { ...consumerHint, formats: { ...consumerHint.formats, approvalRules: true } },
+    { ...consumerHint, formats: { ...consumerHint.formats, delivery: 1 } },
+    { ...consumerHint, formats: { ...consumerHint.formats, delivery: false } },
+    { ...consumerHint, formats: { ...consumerHint.formats, searchSettings: 1 } },
+    { ...consumerHint, formats: { ...consumerHint.formats, searchSettings: false } },
+    { ...consumerHint, formats: { ...consumerHint.formats, authorization: true } },
+    { ...consumerHint, permission: 'mock-authority' },
+  ];
+  for (const value of invalid) expect(isRemoteSnapshotCapabilities(value)).toBe(false);
+});
+
+it('keeps preflight report and diagnostic package DTOs at schema one independently of peer schema', () => {
+  const value = report();
+  expect(isPreflightReport(value)).toBe(true);
+  expect(isPreflightReport({ ...value, schema: 2 })).toBe(false);
+  const data = {
+    schemaVersion: 1,
+    productVersion: '0.1.7',
+    protocolVersion: 44,
+    platform: 'unknown',
+    ageSeconds: 0,
+    checks: [
+      {
+        index: 0,
+        kind: 'model',
+        state: 'unknown',
+        reason: 'MODEL_CAPABILITY_UNKNOWN',
+        evidence: 'local-config',
+        botAlias: 'bot-1',
+      },
+    ],
+  };
+  expect(isPreflightPackageData(data)).toBe(true);
+  expect(isPreflightPackageData({ ...data, schemaVersion: 2 })).toBe(false);
 });

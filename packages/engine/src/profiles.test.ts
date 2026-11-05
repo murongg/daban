@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isBotLifecycleRequest, isBotProfile, isBotProfileInput } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
+import { privateMetadata, secureDirectory } from './private-files.js';
 import { BotProfiles, personaKey } from './profiles.js';
 
 test('read-only health reports retained corrupt records without exposing their identity or contents', async () => {
@@ -97,7 +98,9 @@ test('Bot profiles persist identity and memory, import missing records without o
     const recovered = new BotProfiles(root);
     expect(await recovered.get(input.id)).toStrictEqual(changed);
     expect((await recovered.list()).length).toBe(1);
-    expect((await stat(path.join(root, `${input.id}.json`))).mode & 0o777).toBe(0o600);
+    await secureDirectory(root);
+    const file = path.join(root, `${input.id}.json`);
+    expect(await privateMetadata(file, await stat(file), 0o600)).toBe(true);
     expect.assert(
       (await readFile(path.join(root, `${input.id}.json`), 'utf8')).includes('新合成助手'),
     );

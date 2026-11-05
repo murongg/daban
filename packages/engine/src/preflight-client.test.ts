@@ -3,12 +3,15 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  approvalRulesCapability,
+  automationCapability,
   disconnected,
   type PreflightPackage,
   type PreflightReport,
   preflightJson,
   preflightReportData,
   preflightSources,
+  type RuntimeConsumer,
 } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { RuntimeClient } from './client.js';
@@ -211,4 +214,66 @@ test('real authenticated HTTP client preserves capability, report and preview by
     await app.close();
     await rm(temporary, { recursive: true, force: true });
   }
+});
+
+test('concurrent preflight invocations preserve their own consumer format and captured query', async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const consumers: unknown[] = [];
+  let release: () => unknown = () => undefined;
+  const waiting = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const owner = new RuntimeClient({
+    origin: 'http://127.0.0.1:18766',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (url, init) => {
+      calls.push({ url, init });
+      return Response.json({
+        bot: new URL(url).searchParams.get('bot'),
+        workspace: 'mock-host-scope',
+        state: 'empty',
+        version: 'a'.repeat(64),
+        truncated: false,
+        items: [],
+      });
+    },
+  });
+  vi.spyOn(owner, 'status').mockImplementation(async (...args: unknown[]) => {
+    consumers.push(structuredClone(args[0]));
+    await waiting;
+    return { ...disconnected('ready'), preflight: 1 };
+  });
+  const legacyCommand = { type: 'preflight.options' as const, query: { bot: 'mock-legacy' } };
+  const modernCommand = { type: 'preflight.options' as const, query: { bot: 'mock-modern' } };
+  const modern: RuntimeConsumer = {
+    schema: 2,
+    formats: { approvalRules: approvalRulesCapability },
+  };
+  const legacy = owner.invoke(legacyCommand, 1);
+  const current = owner.invoke(modernCommand, modern);
+  legacyCommand.query.bot = 'mock-mutated-legacy';
+  modernCommand.query.bot = 'mock-mutated-modern';
+  Reflect.set(modern.formats!, 'approvalRules', 'mock-mutated-format');
+  release();
+  const results = await Promise.all([legacy, current]);
+  expect(results).toMatchObject([{ bot: 'mock-legacy' }, { bot: 'mock-modern' }]);
+  expect(consumers).toEqual([
+    { formats: {} },
+    { schema: 2, formats: { approvalRules: approvalRulesCapability } },
+  ]);
+  expect(calls).toHaveLength(2);
+  const legacyCall = calls.find(
+    (call) => new URL(call.url).searchParams.get('bot') === 'mock-legacy',
+  );
+  const modernCall = calls.find(
+    (call) => new URL(call.url).searchParams.get('bot') === 'mock-modern',
+  );
+  expect(legacyCall).toBeDefined();
+  expect(modernCall).toBeDefined();
+  const legacyHeaders = new Headers(legacyCall?.init?.headers);
+  const modernHeaders = new Headers(modernCall?.init?.headers);
+  expect(legacyHeaders.get('x-daban-automation')).toBeNull();
+  expect(legacyHeaders.get('x-daban-approval-rules')).toBeNull();
+  expect(modernHeaders.get('x-daban-automation')).toBe(automationCapability);
+  expect(modernHeaders.get('x-daban-approval-rules')).toBe(approvalRulesCapability);
 });

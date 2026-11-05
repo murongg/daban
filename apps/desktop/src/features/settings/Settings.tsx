@@ -17,7 +17,9 @@ import type { Action, State } from '../../app/state';
 import { serialize } from '../../app/storage';
 import { Dialog } from '../../components/controls/Dialog';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
+import { Rules } from '../approvals/Rules';
 import { ArchiveList } from '../bots/Archive';
+import { Budgets } from '../budgets/Budgets';
 import { Diagnostics } from '../computer/Diagnostics';
 import { RecoveryEntry } from '../computer/Recovery';
 import { download } from '../files/files';
@@ -25,6 +27,7 @@ import { Integrations } from '../integrations/Integrations';
 import { Models } from '../models/Models';
 import { Notifications } from '../notifications/Notifications';
 import { LinuxSetup } from '../onboarding/LinuxSetup';
+import { Projects } from '../projects/Projects';
 import { AgentUpgradePanel } from './AgentUpgrade';
 import { Language } from './Language';
 import { UpdatesPanel } from './Updates';
@@ -116,7 +119,19 @@ export function Settings({
       label: t('models.title'),
       icon: Waypoints,
       description: t('settings.connectModelServicesChooseWorkspacePerBot'),
-      content: <Models />,
+      content: (
+        <>
+          <Models />
+          <Budgets />
+        </>
+      ),
+    },
+    {
+      id: 'projects',
+      label: t('projects.title'),
+      icon: Database,
+      description: t('projects.boundary'),
+      content: <Projects state={state} dispatch={dispatch} />,
     },
     {
       id: 'computer',
@@ -223,6 +238,13 @@ export function Settings({
       icon: Plug,
       description: t('settings.connectMcpServicesManageExternalToolsBots'),
       content: <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />,
+    },
+    {
+      id: 'approval-rules',
+      label: t('rules.title'),
+      icon: Settings2,
+      description: t('rules.settingsHint'),
+      content: <Rules bots={state.bots} />,
     },
     {
       id: 'archive',

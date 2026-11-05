@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { validAgentId } from '@daban/protocol';
-import { Fault } from './control.js';
+import { errorCode, Fault } from './control.js';
 import { privateMetadata } from './private-files.js';
 
 export class Authority {
@@ -21,17 +21,35 @@ export class Authority {
     const parent = await lstat(directory);
     if (!parent.isDirectory() || !(await privateMetadata(directory, parent, 0o700)))
       throw new Fault('CONTROL_AUTH_UNSAFE', 503);
+    const previous = await lstat(this.file, { bigint: true }).catch((error) => {
+      if (errorCode(error) === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (previous && (!previous.isFile() || previous.isSymbolicLink() || previous.nlink !== 1n))
+      throw new Fault('CONTROL_AUTH_UNSAFE', 503);
     const file = await open(
       this.file,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_NOFOLLOW |
+        constants.O_NONBLOCK |
+        (previous ? 0 : constants.O_EXCL),
       0o600,
     );
     try {
       const metadata = await file.stat();
+      const identity = await file.stat({ bigint: true });
+      const named = await lstat(this.file, { bigint: true });
+      // Windows lacks O_NOFOLLOW: verify the named and opened identities before any destructive write.
       if (
         !metadata.isFile() ||
         metadata.nlink !== 1 ||
-        !(await privateMetadata(this.file, metadata, 0o600))
+        !(await privateMetadata(this.file, metadata, 0o600)) ||
+        named.isSymbolicLink() ||
+        identity.nlink !== 1n ||
+        named.dev !== identity.dev ||
+        named.ino !== identity.ino ||
+        (previous && (previous.dev !== identity.dev || previous.ino !== identity.ino))
       )
         throw new Fault('CONTROL_AUTH_UNSAFE', 503);
       // Validate the opened inode before truncation; a hard link must never destroy another file.

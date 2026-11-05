@@ -448,8 +448,11 @@ test('workspace tools work without a screen, enforce paths and preserve unrelate
         .isError,
     ).toBe(true);
     expect(
-      payload(await tools.invoke(run, 'read_file', { path: path.join(shared, 'previous.md') }))
-        .content,
+      payload(
+        await tools.invoke(run, 'read_file', {
+          path: path.join(shared, 'previous.md').split(path.sep).join('/'),
+        }),
+      ).content,
     ).toBe('synthetic previous report');
     for (const args of [
       { path: '../private.txt' },
@@ -554,6 +557,49 @@ test('draining a run waits for its in-flight tool before lifecycle cleanup', asy
   await pending;
   await drained;
   expect(settled).toBe(true);
+});
+
+test('draining also retires a remote lease whose open completes during an active call', async () => {
+  let entered: () => unknown = () => undefined;
+  let release: () => unknown = () => undefined;
+  const ready = new Promise<undefined>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  const gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const calls: string[] = [];
+  const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), {
+    execution: {
+      call: async (method: string) => {
+        calls.push(method);
+        if (method === 'tools.open') {
+          entered();
+          await gate;
+          return { tools: [] };
+        }
+        return { phase: 'settled', result: { content: [] } };
+      },
+    },
+  });
+  const run: AgentToolRun = {
+    id: 'mock-late-lease',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    workdir: '/mock/task',
+    canonicalRoot: '/mock/task',
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+  };
+  const pending = tools.invoke(run, 'write_file', { path: 'result.txt', content: 'SYNTHETIC' });
+  await ready;
+  const drained = tools.drain(run);
+  release();
+  await pending;
+  await drained;
+  expect(calls).toEqual(['tools.open', 'tools.invoke', 'tools.drain']);
 });
 
 test('a parent replaced after validation cannot make a tool create even an empty file in a private directory', async (t) => {
@@ -688,3 +734,124 @@ test('unavailable native-only tools still consume the run budget and report its 
   const second = await tools.invoke(run, 'read_file', { path: 'synthetic.txt' });
   expect(JSON.stringify(second)).toMatch(/TOOL_LIMIT/);
 });
+
+test('durability waits pin the task identity and the exact tool arguments before dispatch', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-tool-fence-owner-'));
+  const canonicalRoot = await realpath(root);
+  const tools = new AgentTools(undefined, new WorkspaceFiles(root));
+  let release: () => unknown = () => undefined;
+  let gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const run: AgentToolRun = {
+    id: 'mock-run',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    workdir: root,
+    canonicalRoot,
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    beforeTool: async () => gate,
+  };
+  try {
+    const args = { path: 'mock.txt', content: 'Synthetic accepted content' };
+    const first = tools.invoke(run, 'write_file', args);
+    args.content = 'Synthetic later mutation';
+    release();
+    const firstResult = await first;
+    expect(firstResult.isError, JSON.stringify(firstResult)).not.toBe(true);
+    expect(await readFile(path.join(root, 'mock.txt'), 'utf8')).toBe('Synthetic accepted content');
+    gate = new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const second = tools.invoke(run, 'write_file', {
+      path: 'other.txt',
+      content: 'Synthetic forbidden write',
+    });
+    run.bot = 'mock-other-bot';
+    release();
+    await expect(second).rejects.toMatchObject({ code: 'TOOL_CONTEXT_CHANGED' });
+    await expect(readFile(path.join(root, 'other.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    release();
+    await tools.drain(run);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('project attempts retain a separate accepted task identity and refuse older guests before tools.open', async () => {
+  const calls: Record<string, unknown>[] = [];
+  const execution = {
+    snapshot: { capabilities: ['model-capabilities-v1', 'project-scope-v1'] },
+    call: async (_method: string, params: Record<string, unknown>) => {
+      calls.push(params);
+      return { tools: [] };
+    },
+  };
+  const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), {
+    execution,
+    projectAccess: () => {},
+  });
+  const run: AgentToolRun = {
+    id: 'synthetic-logical-task',
+    executionId: 'synthetic-physical-attempt',
+    bot: 'mock-bot',
+    project: { projectId: 'mock-project', revision: 1 },
+    abort: new AbortController(),
+    workdir: '/mock/private-task',
+    canonicalRoot: '/mock/private-task',
+    toolCount: 0,
+    limit: 4,
+    seen: {},
+    trace: [],
+  };
+  await expect(tools.open(run)).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
+  expect(calls).toHaveLength(0);
+  execution.snapshot.capabilities.push('task-run-v1');
+  await tools.open(run);
+  expect(calls).toEqual([
+    expect.objectContaining({
+      id: run.executionId,
+      taskRunId: run.id,
+      project: run.project,
+      workdir: run.workdir,
+    }),
+  ]);
+  expect(isExecutionParams('tools.open', calls[0])).toBe(true);
+  expect(isExecutionParams('tools.open', { ...calls[0], taskRunId: '../foreign-run' })).toBe(false);
+});
+
+test.each([1001, 10000])(
+  'large accepted budgets use the task-run contract without weakening old guests (limit=%s)',
+  async (limit) => {
+    const calls: Record<string, unknown>[] = [];
+    const execution = {
+      snapshot: { capabilities: ['model-capabilities-v1'] },
+      call: async (_method: string, params: Record<string, unknown>) => {
+        calls.push(params);
+        return { tools: [] };
+      },
+    };
+    const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), { execution });
+    const run: AgentToolRun = {
+      id: 'synthetic-large-run',
+      bot: 'mock-bot',
+      abort: new AbortController(),
+      workdir: '/mock/task',
+      canonicalRoot: '/mock/task',
+      toolCount: 0,
+      limit,
+      seen: {},
+      trace: [],
+    };
+    await expect(tools.open(run)).rejects.toMatchObject({ code: 'EXECUTION_UPGRADE_REQUIRED' });
+    expect(calls).toHaveLength(0);
+    execution.snapshot.capabilities.push('task-run-v1');
+    await tools.open(run);
+    expect(calls[0].limit).toBe(limit);
+    expect(isExecutionParams('tools.open', calls[0])).toBe(true);
+    expect(isExecutionParams('tools.open', { ...calls[0], limit: 10001 })).toBe(false);
+  },
+);

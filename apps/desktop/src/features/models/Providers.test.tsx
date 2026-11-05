@@ -12,7 +12,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { RuntimeProvider } from '../../app/Runtime';
 import { restore, serialize } from '../../app/storage';
 import { demoState } from '../../test/fixtures';
-import { selectControl, selectOption } from '../../test/select.fixture.ts';
+import { findSelectControl, selectControl, selectOption } from '../../test/select.fixture.ts';
 import { Models } from './Models';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
@@ -796,4 +796,220 @@ it('preserves additional model drafts when the compact onboarding choice changes
   await userEvent.click(screen.getByText('高级设置'));
   expect(screen.getByLabelText('模型 2 ID')).toHaveValue('synthetic-extra');
   expect(backend.writes).toHaveLength(0);
+});
+
+it('starts with fallback disabled and enables a configured model only after explicit context-sharing confirmation', async () => {
+  const backend = connect();
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-model-host',
+    fallback: true,
+    diagnostics: true,
+    cli: false,
+  };
+  backend.snapshot.model.connections = structuredClone(backend.snapshot.model.connections);
+  backend.snapshot.model.connections![0].models[1].capabilities = { toolCall: true };
+  const original = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'model.fallback.configure'
+      ? {
+          ok: true,
+          value: {
+            provider: backend.snapshot.model.provider,
+            model: backend.snapshot.model.model,
+            configured: true,
+            fallbackModel: command.input.model || undefined,
+            requestId: command.input.requestId,
+            revision: command.input.revision + 1,
+          },
+        }
+      : original(command),
+  );
+  render(
+    <RuntimeProvider>
+      <Models />
+    </RuntimeProvider>,
+  );
+  const picker = await findSelectControl('备用模型');
+  expect(picker).toHaveAttribute('data-value', '');
+  await selectOption(userEvent, picker, 'provider:synthetic-provider:model-beta');
+  const save = screen.getByRole('button', { name: '保存备用策略' });
+  await userEvent.click(save);
+  expect(screen.getByRole('dialog', { name: '启用备用模型？' })).toBeInTheDocument();
+  expect(
+    backend.invoke.mock.calls.some(([command]) => command.type === 'model.fallback.configure'),
+  ).toBe(false);
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await userEvent.click(save);
+  await userEvent.click(screen.getByRole('button', { name: '启用备用模型' }));
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.fallback.configure'),
+  ).toHaveLength(1);
+  expect(await screen.findByText('备用策略已保存，下次任务生效。')).toBeInTheDocument();
+  expect(screen.getByText('CLI 登录尚未通过受限工具验证，请使用 API 连接。')).toBeInTheDocument();
+});
+
+it('queries an uncertain configure receipt instead of issuing another paid validation', async () => {
+  const backend = connect('RUNTIME_UNAVAILABLE');
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-model-host',
+    fallback: true,
+    diagnostics: true,
+    cli: false,
+  };
+  const original = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'model.saved'
+      ? {
+          ok: true,
+          value: {
+            ...command.input,
+            kind: 'configure',
+            phase: 'unknown',
+            current: {
+              provider: backend.snapshot.model.provider,
+              model: backend.snapshot.model.model,
+              configured: true,
+              revision: 3,
+            },
+          },
+        }
+      : original(command),
+  );
+  render(
+    <RuntimeProvider>
+      <Models />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await userEvent.click(await screen.findByRole('button', { name: '查询保存回执' }));
+  expect(backend.writes).toHaveLength(1);
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.saved'),
+  ).toHaveLength(1);
+  expect(
+    await screen.findByText('操作结果尚未确认；保留原配置，只查询回执，不重新发送验证请求。'),
+  ).toBeInTheDocument();
+});
+
+it('queries the Host-selected provider receipt when a non-default connection save loses its reply', async () => {
+  const selected = {
+    ...connection,
+    id: 'mock-default',
+    name: 'Synthetic default',
+    baseURL: 'https://default.example.test/v1',
+  };
+  const backend = connect('RUNTIME_UNAVAILABLE', selected);
+  backend.snapshot.model.connections = [connection, selected];
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-model-host',
+    fallback: true,
+    diagnostics: true,
+    cli: false,
+  };
+  const original = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) => {
+    if (command.type !== 'model.saved') return original(command);
+    const write = backend.writes.find((entry) => entry.type === 'model.configure');
+    if (
+      write?.type !== 'model.configure' ||
+      command.input.connection !== selected.id ||
+      command.input.model !== `provider:${selected.id}:model-alpha` ||
+      command.input.requestId !== write.input.requestId ||
+      command.input.revision !== 3
+    )
+      return { ok: false, error: 'MODEL_OPERATION_MISMATCH' };
+    return {
+      ok: true,
+      value: {
+        scope: 'mock-model-host',
+        requestId: write.input.requestId,
+        revision: 3,
+        connection: selected.id,
+        model: `provider:${selected.id}:model-alpha`,
+        kind: 'configure',
+        phase: 'committed',
+        committedRevision: 4,
+        current: {
+          configured: true,
+          provider: selected.id,
+          model: `provider:${selected.id}:model-alpha`,
+          revision: 4,
+          connections: [connection, selected],
+          modelAccess: backend.snapshot.model.modelAccess,
+        },
+      },
+    };
+  });
+  mount();
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '验证并保存供应商' }));
+  await userEvent.click(await screen.findByRole('button', { name: '查询保存回执' }));
+  const query = backend.invoke.mock.calls.find(([command]) => command.type === 'model.saved')?.[0];
+  expect(query).toMatchObject({
+    type: 'model.saved',
+    input: { connection: selected.id, model: `provider:${selected.id}:model-alpha`, revision: 3 },
+  });
+  expect(backend.writes).toHaveLength(1);
+  expect(backend.writes[0]).toMatchObject({
+    type: 'model.configure',
+    input: { connection: { id: connection.id }, model: `provider:${selected.id}:model-alpha` },
+  });
+  expect(screen.queryByRole('button', { name: '查询保存回执' })).not.toBeInTheDocument();
+});
+
+it('recovers a lost paid inference test through its exact diagnostic receipt', async () => {
+  const backend = connect();
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-model-host',
+    fallback: true,
+    diagnostics: true,
+    cli: false,
+  };
+  backend.snapshot.model.inspection = true;
+  const original = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) => {
+    if (command.type === 'model.diagnose') return { ok: false, error: 'RUNTIME_UNAVAILABLE' };
+    if (command.type === 'model.saved')
+      return {
+        ok: true,
+        value: {
+          ...command.input,
+          kind: 'diagnose',
+          phase: 'settled',
+          diagnostic: {
+            kind: 'inference',
+            model: command.input.model,
+            latencyMs: 7,
+            checkedAt: '2026-01-01T00:00:00.000Z',
+          },
+          current: {
+            provider: backend.snapshot.model.provider,
+            model: backend.snapshot.model.model,
+            configured: true,
+            revision: 3,
+          },
+        },
+      };
+    return original(command);
+  });
+  render(
+    <RuntimeProvider>
+      <Models />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '编辑 示例供应商' }));
+  await userEvent.click(screen.getByRole('button', { name: '测试模型 1' }));
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.diagnose'),
+  ).toHaveLength(1);
+  await userEvent.click(await screen.findByRole('button', { name: '查询诊断回执' }));
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.diagnose'),
+  ).toHaveLength(1);
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'model.saved'),
+  ).toHaveLength(1);
+  expect(await screen.findByText(/7 ms/)).toBeInTheDocument();
 });

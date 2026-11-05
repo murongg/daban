@@ -431,9 +431,13 @@ it('loads metadata only after opening and pages full tool content and later even
   expect(await screen.findByText('第 2 条')).toBeInTheDocument();
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.statistics', 'transcript.list', 'transcript.content'].includes(
-        command.type,
-      ),
+      [
+        'status',
+        'transcript.statistics',
+        'transcript.list',
+        'transcript.content',
+        'budget.read',
+      ].includes(command.type),
     ),
   ).toBe(true);
 });
@@ -462,7 +466,7 @@ it('refreshes from an accessible icon without closing the history or rerunning a
   expect(reads).toBe(2);
   expect(
     backend.invoke.mock.calls.every(([command]) =>
-      ['status', 'transcript.statistics', 'transcript.list'].includes(command.type),
+      ['status', 'transcript.statistics', 'transcript.list', 'budget.read'].includes(command.type),
     ),
   ).toBe(true);
 });
@@ -1039,4 +1043,77 @@ it('places a running group member transcript before the streaming reply', async 
   );
   await screen.findByText('合成群流式回复');
   expectExecutionBefore('合成群流式回复');
+});
+
+it('shows actual attempts and unknown billing without reading private SDK content', async () => {
+  bridge(() => ({ ...scope, state: 'complete', items: [] }));
+  const props = {
+    scope,
+    phase: 'completed' as const,
+    attemptSummary: [
+      {
+        attemptId: 'mock-primary',
+        model: 'deepseek-flash' as const,
+        phase: 'failed' as const,
+        fence: 'clean' as const,
+        failure: 'auth' as const,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        usage: 'unknown' as const,
+      },
+      {
+        attemptId: 'mock-fallback',
+        model: 'deepseek-v4-pro' as const,
+        phase: 'completed' as const,
+        fence: 'output' as const,
+        createdAt: '2026-01-01T00:00:01.000Z',
+        usage: 'unknown' as const,
+      },
+    ],
+  };
+  render(
+    <RuntimeProvider>
+      <Execution {...props} />
+    </RuntimeProvider>,
+  );
+  expect(await screen.findByText('费用用量未确认；失败请求也可能产生费用。')).toBeInTheDocument();
+  expect(screen.getByText(/实际模型/)).toBeInTheDocument();
+});
+
+it('requires receipt inspection instead of direct continuation after an unknown tool outcome', async () => {
+  const state = initialState();
+  const bot = state.bots[0];
+  const backend = bridge(() => ({ ...scope, state: 'complete', items: [] }));
+  backend.snapshot.agents[agentId(bot.id)] = {
+    ...orderTask,
+    runId: 'mock-unknown-run',
+    phase: 'failed',
+    prompt: 'Synthetic accepted request',
+    trace: [
+      {
+        name: 'mock_external_action',
+        surface: 'integration',
+        phase: 'rejected',
+        at: '2026-01-01T00:00:00.000Z',
+        code: 'MCP_OUTCOME_UNKNOWN',
+      },
+    ],
+  };
+  const onContinue = vi.fn();
+  render(
+    <RuntimeProvider>
+      <Conversation
+        state={state}
+        bot={bot}
+        dispatch={vi.fn()}
+        preview={vi.fn()}
+        notify={vi.fn()}
+        onModel={vi.fn()}
+        onContinue={onContinue}
+      />
+    </RuntimeProvider>,
+  );
+  expect(
+    await screen.findByText('先查看执行进度和操作回执。结果未知的工具操作不能直接重跑。'),
+  ).toBeInTheDocument();
+  expect(onContinue).not.toHaveBeenCalled();
 });

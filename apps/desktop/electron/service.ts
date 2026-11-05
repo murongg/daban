@@ -17,6 +17,7 @@ import {
   modelHasVision,
   type RebootStatus,
   type RuntimeCommand,
+  type RuntimeConsumer,
   type RuntimeReply,
   type RuntimeSnapshot,
   recoveryBlocked,
@@ -519,7 +520,11 @@ export function runtimeService(
     });
     return connecting;
   }
-  async function dispatch(command: RuntimeCommand): Promise<unknown> {
+  async function dispatch(
+    command: RuntimeCommand,
+    _device?: unknown,
+    consumer?: RuntimeConsumer,
+  ): Promise<unknown> {
     if (updating) {
       if (command.type === 'status') return state;
       throw new Error('AGENT_UPDATING');
@@ -797,7 +802,7 @@ export function runtimeService(
       'preflight.preview',
       'preflight.export',
     ].includes(command.type);
-    const result = await client.invoke(command);
+    const result = await client.invoke(command, consumer);
     // Reconnecting may reuse the same client object; an old read still belongs to the earlier connection.
     if (transcript && (closed || epoch !== connection)) throw new Error('RUNTIME_OFFLINE');
     if (!transcript && !['frame', 'files.list', 'files.read'].includes(command.type))

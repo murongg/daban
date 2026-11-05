@@ -32,6 +32,7 @@ export async function waitForReply(
       updatedAt: _updated,
       conversationId: _conversation,
       decisionSource: _source,
+      policyDecision: _policy,
       ...original
     } = value.result;
     if (JSON.stringify(original) !== JSON.stringify(input)) throw new Error('INVALID_INTERACTION');

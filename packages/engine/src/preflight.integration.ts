@@ -68,6 +68,11 @@ test('synthetic preflight is read-only, exports only reviewed bytes, and never a
       mock.method(owners.settings, 'check', forbidden),
       mock.method(owners.settings, 'inspect', forbidden),
       mock.method(owners.settings, 'configure', forbidden),
+      mock.method(owners.settings, 'diagnose', forbidden),
+      mock.method(owners.settings, 'fallback', forbidden),
+      mock.method(owners.settings, 'remove', forbidden),
+      mock.method(owners.settings, 'capture', forbidden),
+      mock.method(owners.settings, 'resolve', forbidden),
       mock.method(owners, 'start', forbidden),
       mock.method(owners, 'stop', forbidden),
       mock.method(owners.tools.integrations!, 'probe', forbidden),
@@ -116,7 +121,6 @@ test('synthetic preflight is read-only, exports only reviewed bytes, and never a
     assert.deepEqual(await Promise.all(files.map((file) => readFile(file, 'utf8'))), before);
     assert.equal(app.runtime.status().items.length, 0);
     assert.equal([...owners.jobs.values()].length, 0);
-    for (const spy of spies) assert.equal(spy.mock.callCount(), 0);
     const assignment = (await owners.integrations.assignments('mock-bot')).items[0];
     await owners.integrations.bind('mock-bot', {
       connection: option.connection,
@@ -130,6 +134,17 @@ test('synthetic preflight is read-only, exports only reviewed bytes, and never a
       owners.integrations.assertLive('mock-bot', captured.connections[0], 'mock_tool'),
       { code: 'MCP_AUTHORITY_CHANGED' },
     );
+    const refreshed = await inspect({ ...query, id: 'mock-query-after-revocation' });
+    assert.equal(refreshed.status, 200);
+    const current = await refreshed.json();
+    assert.ok(isPreflightReport(current));
+    assert.equal(current.summary, 'attention');
+    assert.equal(current.checks[2].reason, 'MCP_NOT_SELECTED');
+    assert.equal(current.externalProbe, 'not-run');
+    assert.deepEqual(await Promise.all(files.map((file) => readFile(file, 'utf8'))), before);
+    assert.equal(app.runtime.status().items.length, 0);
+    assert.equal([...owners.jobs.values()].length, 0);
+    for (const spy of spies) assert.equal(spy.mock.callCount(), 0);
   } finally {
     mock.restoreAll();
     await app.close();

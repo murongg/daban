@@ -133,12 +133,14 @@ export class Screens {
     viewers,
     displayBase,
     fullGuest = false,
+    workspace,
   }: {
     dir: string;
     origin: string;
     viewers?: ViewerGrants;
     displayBase: number;
     fullGuest?: boolean;
+    workspace?: string;
   }) {
     this.dir = dir;
     this.origin = origin;
@@ -148,9 +150,11 @@ export class Screens {
     this.bots = new Map();
     this.children = [];
     this.fullGuest = fullGuest;
+    this.workspaceRoot = workspace;
     this.closed = false;
   }
   private readonly fullGuest: boolean;
+  private readonly workspaceRoot?: string;
   screen(id: string) {
     // A successor can reuse the display and Xauthority path; retired drivers must never resolve either again.
     if (this.closed) throw new Fault('COMPUTER_NOT_CONNECTED', 503);
@@ -217,7 +221,7 @@ export class Screens {
     this.logFd = this.log.fd;
     for (const [offset, id] of ids.entries()) {
       const directory = path.join(this.dir, id);
-      const workspace = path.join(this.dir, 'shared');
+      const workspace = this.workspaceRoot ?? path.join(this.dir, 'shared');
       const env: ScreenInfo['env'] = {
         HOME: workspace,
         PATH: `${workspace}/.local/bin:/usr/bin:/bin`,

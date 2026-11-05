@@ -21,6 +21,17 @@ it('accepts bounded explicit preflight commands without widening old diagnostics
   expect(() => parseCommand({ type: 'runtime.inspect', query: read })).toThrow('INVALID_COMMAND');
 });
 
+it('accepts an explicit Bot approval-rule listing without accepting authority from the renderer', () => {
+  const input: unknown = {
+    type: 'approval.rules.list',
+    scope: { kind: 'bot', bot: 'mock-bot' },
+  };
+  expect(parseCommand(input)).toEqual(input);
+  expect(() => parseCommand({ ...(input as object), decisionSource: 'rule' })).toThrow(
+    'INVALID_COMMAND',
+  );
+});
+
 it('requires explicit confirmation for an Agent upgrade and rejects restart paths or process IDs', () => {
   expect(parseCommand({ type: 'agent.upgrade', confirmed: true })).toEqual({
     type: 'agent.upgrade',

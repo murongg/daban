@@ -376,6 +376,7 @@ interface InsertState {
   gateReached?: Promise<unknown>;
   gateOn?: (prompt: string) => boolean;
   failOn?: (prompt: string) => boolean;
+  observe?: (observer: { onNotification: (note: unknown) => unknown }, turn: number) => unknown;
 }
 function insertHarness(state: InsertState) {
   return class Harness {
@@ -384,7 +385,7 @@ function insertHarness(state: InsertState) {
     session(id = `mock-${state.bot}-session`) {
       return {
         id,
-        run: async (input: unknown) => {
+        run: async (input: unknown, observer: { onNotification: (note: unknown) => unknown }) => {
           const blocks =
             typeof input === 'string'
               ? []
@@ -394,6 +395,7 @@ function insertHarness(state: InsertState) {
           const prompt =
             typeof input === 'string' ? input : blocks.map((block) => block.text).join('\n');
           state.prompts.push(prompt);
+          state.observe?.(observer, state.prompts.length);
           if (state.prompts.length === 1) {
             state.entered();
             await state.held;
@@ -472,6 +474,56 @@ async function insertFixture(root: string, state: InsertState) {
   await models.ready;
   return models;
 }
+
+test.each([true, false])(
+  'unfinished plans receive bounded continuation (finishes=%s)',
+  async (finishes) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-completion-'));
+    const bot = 'mock-completion';
+    const prompts: string[] = [];
+    const models = await insertFixture(root, {
+      bot,
+      prompts,
+      entered: () => undefined,
+      held: Promise.resolve(),
+      observe: (observer, turn) =>
+        observer.onNotification({
+          method: 'session.event',
+          params: {
+            sessionId: `mock-${bot}-session`,
+            event: {
+              type: 'todo/write',
+              data: {
+                todos: [
+                  {
+                    content: 'Save eight synthetic rounds',
+                    status: finishes && turn > 1 ? 'completed' : 'in_progress',
+                  },
+                ],
+              },
+            },
+          },
+        }),
+    });
+    try {
+      await models.start(bot, {
+        requestId: 'mock-completion-task',
+        prompt: 'Save eight synthetic rounds.',
+      });
+      const job = models.jobs.get(bot)!;
+      await job.done;
+      expect(prompts).toHaveLength(finishes ? 2 : 3);
+      expect(prompts[1]).toContain('unfinished');
+      expect(job.phase).toBe(finishes ? 'completed' : 'failed');
+      expect(job.error).toBe(finishes ? '' : 'TASK_INCOMPLETE');
+      expect(job.turns).toHaveLength(1);
+      expect(job.turns?.[0].result).toBe(job.result);
+    } finally {
+      await models.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test('a continuation durably owns all unstarted inserts independently of client acknowledgements', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-continue-handoff-'));
@@ -1452,6 +1504,8 @@ test('general DSH tasks enable the stock anonymous fetch provider and a shared t
   expect(budget.config).toStrictEqual({
     limit: 60,
     urls: ['https://example.test/'],
+    url: 'http://127.0.0.1:12345/mcp/chief',
+    capability: 'synthetic-capability',
   });
   const diagnostic = sdkPatch('http://127.0.0.1:12345', 'a', 'synthetic-capability');
   expect.assert(

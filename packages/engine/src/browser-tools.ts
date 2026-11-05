@@ -60,9 +60,17 @@ export const browserToolList = [
         items: schema(
           {
             kind: { type: 'string', enum: ['click', 'fill', 'press', 'select', 'scroll'] },
-            ref: id,
+            ref: {
+              ...id,
+              description:
+                'Required for click, fill, press and select. Use an exact ref from the latest observation, including when pressing a navigation shortcut.',
+            },
             text: { type: 'string', maxLength: 12000 },
-            key: { type: 'string' },
+            key: {
+              type: 'string',
+              description:
+                'Required for press, along with ref. Use case-sensitive Playwright names: Alt+ArrowLeft, ControlOrMeta+A, Home, End, Enter. ALT+LEFT is invalid.',
+            },
             values: { type: 'array', maxItems: 8, items: { type: 'string', maxLength: 1000 } },
             deltaY: { type: 'number', minimum: -2000, maximum: 2000 },
           },
@@ -192,6 +200,7 @@ export class BrowserTools {
           throw new Fault('INVALID_BROWSER_ACTION', 400);
         const file = await this.files.read(run, args.path);
         run.abort.signal.throwIfAborted();
+        await this.computer.authorize?.(run);
         result = await this.tabs.upload(
           run.bot,
           'agent',

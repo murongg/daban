@@ -8,6 +8,47 @@ import { startPrototype } from './server.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 
+test('consumer formatting is immutable per invoke and cannot leak between concurrent peers', async () => {
+  const headers: (string | null)[] = [];
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (_url, options) => {
+      headers.push(new Headers(options?.headers).get('x-daban-automation'));
+      await Promise.resolve();
+      return Response.json([]);
+    },
+  });
+  await Promise.all([
+    client.invoke({ type: 'files.list' }, 1),
+    client.invoke({ type: 'files.list' }, 2),
+  ]);
+  expect(headers.sort()).toEqual([null, 'schedule-automation-v1'].sort());
+});
+
+test('AP format declaration stays independent of schema2 and local current defaults', async () => {
+  const headers: (string | null)[] = [];
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async (_url, options) => {
+      headers.push(new Headers(options?.headers).get('x-daban-approval-rules'));
+      await Promise.resolve();
+      return Response.json([]);
+    },
+  });
+  await Promise.all([
+    client.invoke({ type: 'files.list' }, 2),
+    client.invoke(
+      { type: 'files.list' },
+      { schema: 2, formats: { approvalRules: 'approval-rules-v3' } },
+    ),
+    client.invoke({ type: 'files.list' }),
+  ]);
+  expect(headers.filter((value) => value === null)).toHaveLength(1);
+  expect(headers.filter((value) => value === 'approval-rules-v3')).toHaveLength(2);
+});
+
 test('real Host state normalization retains capability and reads legacy records without starting work', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-context-client-'));
   const app = await startPrototype({
@@ -29,6 +70,12 @@ test('real Host state normalization retains capability and reads legacy records 
     });
     const client = new RuntimeClient({ origin: app.url, tokenProvider: async () => app.token });
     expect(await client.status()).toMatchObject({ phase: 'ready', contextInspector: 1 });
+    expect((await client.status()).approvalRules?.capability).toBe('approval-rules-v3');
+    expect((await client.status(2)).approvalRules).toBeUndefined();
+    expect(
+      (await client.status({ schema: 2, formats: { approvalRules: 'approval-rules-v3' } }))
+        .approvalRules?.capability,
+    ).toBe('approval-rules-v3');
     expect(await client.invoke({ type: 'context.inspect', query: { scope } })).toEqual({
       scope,
       state: 'unavailable',

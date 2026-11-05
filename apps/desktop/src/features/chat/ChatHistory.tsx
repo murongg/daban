@@ -254,6 +254,7 @@ export function ChatHistory({
                               chatRevision: page.revision,
                             }}
                             phase={item.phase}
+                            attemptSummary={item.attemptSummary}
                             elapsedMs={item.elapsedMs}
                             thinking={item.response?.thinking}
                           />

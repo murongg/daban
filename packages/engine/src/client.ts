@@ -1,17 +1,27 @@
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import {
+  approvalRulesCapability,
+  automationCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  deliveryAction,
+  deliveryKey,
+  diagnosticModel,
   disconnected,
   groupCopyKey,
   imageProtocol,
+  isApprovalRuleReceipt,
+  isApprovalRulesCommand,
+  isApprovalRulesSnapshot,
+  isApprovalRulesStatus,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
   isAttachmentPurge,
   isAttachmentReceipt,
+  isAutomationCommand,
   isBotBundle,
   isBotCopyReceipt,
   isBotImportReceipt,
@@ -21,15 +31,23 @@ import {
   isBrowserReceipt,
   isBrowserState,
   isBrowserView,
+  isBudgetScope,
+  isBudgetSettings,
+  isBudgetView,
   isChatAck,
   isChatPage,
   isChatStatus,
   isComputerAck,
   isComputerStatus,
   isContextView,
+  isDeliveryChecklist,
+  isDeliveryCommand,
+  isDeliveryPage,
+  isDeliveryReceipt,
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
+  isGoalResumeTarget,
   isGroup,
   isGroupActionAck,
   isGroupCopyReceipt,
@@ -51,11 +69,15 @@ import {
   isMcpReceipt,
   isMcpSaved,
   isMcpStatus,
+  isMemoryCandidate,
   isMemoryPage,
+  isModelAccess,
+  isModelAttempts,
   isModelCheck,
   isModelConnection,
   isModelId,
   isModelInspection,
+  isModelSaved,
   isModelStatus,
   isNoteAvailability,
   isNoteCommand,
@@ -63,10 +85,19 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isPolicyDecision,
   isPreflightCommand,
   isPreflightOptions,
   isPreflightPackage,
   isPreflightReport,
+  isProjectDocument,
+  isProjectDocumentInfo,
+  isProjectDocumentVersion,
+  isProjectMemoryAvailability,
+  isProjectMemoryCommand,
+  isProjectMemoryReceipt,
+  isProjectPublicationPreview,
+  isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
@@ -79,6 +110,9 @@ import {
   isRuntimeNoticeStatus,
   isSchedule,
   isScheduleFiring,
+  isSearchCommand,
+  isSearchReceipt,
+  isSearchStatus,
   isSkillArchiveResult,
   isSkillBindingResult,
   isSkillCatalogResult,
@@ -91,6 +125,7 @@ import {
   isTaskReceipt,
   isTranscriptContent,
   isTranscriptPage,
+  isTranscriptScope,
   isWorkCommentCommand,
   isWorkCommentList,
   isWorkCommentReceipt,
@@ -98,6 +133,8 @@ import {
   isWorkList,
   isWorkReceipt,
   isWorkStatus,
+  matchesApprovalReceipt,
+  matchesProjectMemoryReceipt,
   noteKey,
   noteQueryKey,
   type PreflightCommand,
@@ -109,14 +146,20 @@ import {
   preflightJson,
   preflightQueryKey,
   preflightReportData,
+  projectFileMatches,
+  projectMemoryFingerprint,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
-  type RuntimeFile,
+  type RuntimeConsumer,
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  recoveryReader,
+  sameApprovalScope,
+  sameProjectScope,
   sameTranscriptScope,
+  snapshotConsumer,
   unavailableLocalComputer,
   validAgentId,
   workCommentKey,
@@ -176,6 +219,11 @@ async function localRequest(url: string, init: RequestInit = {}): Promise<Respon
 
 function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   if (
+    (task.attemptSummary !== undefined && !isModelAttempts(task.attemptSummary)) ||
+    (task.rootRunId !== undefined && !validAgentId(task.rootRunId))
+  )
+    throw new Error('INVALID_RUNTIME_STATE');
+  if (
     task.chatRevision !== undefined &&
     (!Number.isSafeInteger(task.chatRevision) || task.chatRevision < 0)
   )
@@ -192,9 +240,12 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   )
     throw new Error('INVALID_RUNTIME_STATE');
   return {
+    ...(isModelAttempts(task.attemptSummary) ? { attemptSummary: task.attemptSummary } : {}),
+    ...(task.rootRunId ? { rootRunId: task.rootRunId } : {}),
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
+    ...(isProjectScope(task.project) ? { project: task.project } : {}),
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
@@ -219,7 +270,10 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       ? { inserts: task.inserts }
       : {}),
     history: (task.history || []).map((item) => ({
+      ...(isModelAttempts(item.attemptSummary) ? { attemptSummary: item.attemptSummary } : {}),
+      ...(validAgentId(item.rootRunId) ? { rootRunId: item.rootRunId } : {}),
       chatRevision: item.chatRevision,
+      ...(isProjectScope(item.project) ? { project: item.project } : {}),
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       runId: item.runId,
       requestId: item.requestId,
@@ -408,7 +462,14 @@ export class RuntimeClient {
       });
     return this.authenticating;
   }
-  private async api(route: string, data?: unknown, retry = true, protocol = 28): Promise<unknown> {
+  private async api(
+    route: string,
+    data?: unknown,
+    retry = true,
+    protocol = 28,
+    consumer?: RuntimeConsumer,
+  ): Promise<unknown> {
+    const format = snapshotConsumer(consumer);
     await this.authenticate();
     const token = this.token;
     const response = await this.fetcher(this.origin + route, {
@@ -416,6 +477,10 @@ export class RuntimeClient {
       headers: {
         host: this.serverHost,
         'x-prototype-token': token,
+        ...(format.schema === 2 ? { 'x-daban-automation': automationCapability } : {}),
+        ...(format.formats?.approvalRules === approvalRulesCapability
+          ? { 'x-daban-approval-rules': approvalRulesCapability }
+          : {}),
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
@@ -424,9 +489,11 @@ export class RuntimeClient {
       signal: AbortSignal.timeout(
         route === '/api/host/recovery'
           ? 600000
-          : route.startsWith('/api/bundles/')
-            ? 120000
-            : 20000,
+          : route === '/api/search/check'
+            ? 35000
+            : route.startsWith('/api/bundles/')
+              ? 120000
+              : 20000,
       ),
     });
     const decode = async () =>
@@ -441,7 +508,7 @@ export class RuntimeClient {
       if (result.error === 'UNAUTHORIZED') {
         if (this.token === token) this.token = '';
         if (data !== undefined) throw new Error('RUNTIME_SESSION_CHANGED');
-        return this.api(route, data, false, protocol);
+        return this.api(route, data, false, protocol, format);
       }
       throw new Error('RUNTIME_REQUEST_DENIED');
     }
@@ -457,18 +524,28 @@ export class RuntimeClient {
       return `data:image/jpeg;base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`;
     return decode();
   }
-  private workApi(route: string, data: unknown, protocolVersion: number) {
-    return this.api(route, data, true, protocolVersion >= 39 ? 39 : 28);
+  private workApi(
+    route: string,
+    data: unknown,
+    protocolVersion: number,
+    consumer?: RuntimeConsumer,
+  ) {
+    return this.api(route, data, true, protocolVersion >= 39 ? 39 : 28, consumer);
   }
-  async status(): Promise<RuntimeSnapshot> {
+  async status(consumer?: RuntimeConsumer): Promise<RuntimeSnapshot> {
+    const format = snapshotConsumer(consumer);
     try {
       const [data, settings] = (await Promise.all([
-        this.api('/api/state'),
+        this.api('/api/state', undefined, true, undefined, format),
         this.api('/api/model/settings'),
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
-        contextInspector?: unknown;
+        approvalRules?: unknown;
+        delivery?: unknown;
+        searchSettings?: unknown;
         preflight?: unknown;
+        fileReview?: unknown;
+        contextInspector?: unknown;
         clientProtocol?: number;
         botCapabilities?: unknown;
         localComputer?: unknown;
@@ -485,7 +562,12 @@ export class RuntimeClient {
         groups?: { available?: unknown; revision?: unknown; items?: unknown[]; error?: unknown };
         profiles?: unknown[];
         interactions?: unknown[];
-        schedules?: { available?: unknown; items?: unknown[]; error?: unknown };
+        schedules?: {
+          available?: unknown;
+          items?: unknown[];
+          error?: unknown;
+          automation?: { changes?: unknown; files?: unknown };
+        };
         knowledge?: {
           available?: unknown;
           revision?: unknown;
@@ -498,6 +580,9 @@ export class RuntimeClient {
         computerError?: unknown;
         sharedLogin?: boolean;
         model?: {
+          modelAccess?: unknown;
+          fallbackModel?: unknown;
+          probeRevision?: unknown;
           connections?: unknown;
           inspection?: unknown;
           revision?: number;
@@ -561,6 +646,13 @@ export class RuntimeClient {
       if ((raw.clientProtocol || 0) >= 13 && !isModelStatus(settings))
         throw new Error('INVALID_RUNTIME_STATE');
       if (
+        (raw.model?.modelAccess !== undefined && !isModelAccess(raw.model.modelAccess)) ||
+        (raw.model?.fallbackModel !== undefined && !isModelId(raw.model.fallbackModel)) ||
+        (raw.model?.probeRevision !== undefined &&
+          (!Number.isSafeInteger(raw.model.probeRevision) || Number(raw.model.probeRevision) < 0))
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
         raw.model?.connections !== undefined &&
         (!Array.isArray(raw.model.connections) ||
           raw.model.connections.length > 20 ||
@@ -568,12 +660,28 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
+      if (raw.delivery !== undefined && raw.delivery !== true) throw Error('INVALID_RUNTIME_STATE');
+      if (raw.delivery === true) snapshot.delivery = true;
+      if (raw.searchSettings !== undefined && raw.searchSettings !== true)
+        throw Error('INVALID_RUNTIME_STATE');
+      if (raw.searchSettings === true) snapshot.searchSettings = true;
+      if (raw.preflight !== undefined && raw.preflight !== 1) throw Error('INVALID_RUNTIME_STATE');
+      if (raw.preflight === 1) snapshot.preflight = 1;
+      if (raw.fileReview !== undefined) {
+        const availability = raw.fileReview;
+        if (
+          !availability ||
+          typeof availability !== 'object' ||
+          Object.keys(availability).some((key) => key !== 'available') ||
+          !('available' in availability) ||
+          typeof availability.available !== 'boolean'
+        )
+          throw Error('INVALID_RUNTIME_STATE');
+        snapshot.fileReview = { available: availability.available };
+      }
       if (raw.contextInspector !== undefined && raw.contextInspector !== 1)
         throw new Error('INVALID_RUNTIME_STATE');
       if (raw.contextInspector === 1) snapshot.contextInspector = 1;
-      if (raw.preflight !== undefined && raw.preflight !== 1)
-        throw new Error('INVALID_RUNTIME_STATE');
-      if (raw.preflight === 1) snapshot.preflight = 1;
       snapshot.protocolVersion = raw.clientProtocol || 0;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
@@ -631,6 +739,15 @@ export class RuntimeClient {
         }
       }
       // Software is an additive capability; older VM releases can expose it without enabling unrelated protocol features.
+      if (raw.approvalRules !== undefined)
+        snapshot.approvalRules = isApprovalRulesStatus(raw.approvalRules)
+          ? raw.approvalRules
+          : {
+              capability: approvalRulesCapability,
+              available: false,
+              revision: 0,
+              error: 'INVALID_RUNTIME_STATE',
+            };
       if (raw.software !== undefined)
         snapshot.software = isSoftwareState(raw.software)
           ? raw.software
@@ -725,6 +842,15 @@ export class RuntimeClient {
             ? {
                 available: value.available,
                 items: value.items,
+                ...(typeof value.automation?.changes === 'boolean' &&
+                typeof value.automation.files === 'boolean'
+                  ? {
+                      automation: {
+                        changes: value.automation.changes,
+                        files: value.automation.files,
+                      },
+                    }
+                  : {}),
                 ...(typeof value.error === 'string' && /^[A-Z_]+$/.test(value.error)
                   ? { error: value.error }
                   : {}),
@@ -746,6 +872,17 @@ export class RuntimeClient {
               model: settings.model,
               provider: settings.provider,
               revision: settings.revision,
+              ...(raw.model?.revision === settings.revision && isModelAccess(raw.model.modelAccess)
+                ? {
+                    modelAccess: raw.model.modelAccess,
+                    ...(isModelId(raw.model.fallbackModel)
+                      ? { fallbackModel: raw.model.fallbackModel }
+                      : {}),
+                    ...(typeof raw.model.probeRevision === 'number'
+                      ? { probeRevision: raw.model.probeRevision }
+                      : {}),
+                  }
+                : {}),
               ...(raw.model?.inspection === true ? { inspection: true } : {}),
               ...(Array.isArray(raw.model?.connections) && raw.model.revision === settings.revision
                 ? { connections: raw.model.connections }
@@ -838,10 +975,226 @@ export class RuntimeClient {
     if (!isRecoveryReceipt(value) || value.id !== id) throw new Error('INVALID_RUNTIME_STATE');
     return value;
   }
-  async invoke(command: RuntimeCommand): Promise<unknown> {
+  async invoke(command: RuntimeCommand, consumer?: RuntimeConsumer): Promise<unknown> {
+    const format = snapshotConsumer(consumer);
+    // One client serves concurrent peer generations; format belongs to this invocation, never shared state.
+    const api = (route: string, data?: unknown, retry?: boolean, protocol?: number) =>
+      this.api(route, data, retry, protocol, format);
+    const workApi = (route: string, data: unknown, protocol: number) =>
+      this.workApi(route, data, protocol, format);
+    if (command.type.startsWith('search.')) {
+      if (format.formats?.searchSettings !== true) throw Error('RUNTIME_TOO_OLD');
+      if (!isSearchCommand(command)) throw new Error('INVALID_COMMAND');
+      // Keep the original request ID and revisions across status/authentication waits and lost replies.
+      const captured = structuredClone(command);
+      const state = await this.status(format);
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.searchSettings !== true) throw new Error('RUNTIME_TOO_OLD');
+      if (
+        (captured.type === 'search.configure' || captured.type === 'search.check') &&
+        recoveryBlocked(state)
+      )
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      if (captured.type === 'search.status') {
+        const value = await api('/api/search/status');
+        if (!isSearchStatus(value)) throw new Error('INVALID_RUNTIME_STATE');
+        return value;
+      }
+      const value = await api(
+        `/api/search/${captured.type.slice('search.'.length)}`,
+        captured.type === 'search.saved' ? captured.query : captured.input,
+      );
+      if (!isSearchReceipt(value)) throw new Error('INVALID_RUNTIME_STATE');
+      if (captured.type === 'search.saved') {
+        if (value.kind !== captured.query.kind || value.requestId !== captured.query.requestId)
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (captured.type === 'search.configure') {
+        if (
+          value.kind !== 'configure' ||
+          value.phase !== 'saved' ||
+          value.requestId !== captured.input.requestId ||
+          value.revision !== captured.input.revision + 1 ||
+          value.status?.provider !== captured.input.provider ||
+          value.status.enabled !== captured.input.enabled
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (
+        value.kind !== 'check' ||
+        value.phase === 'superseded' ||
+        value.requestId !== captured.input.requestId ||
+        value.revision !== captured.input.revision ||
+        value.checkRevision !== captured.input.checkRevision + 1
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    if (isDeliveryCommand(command)) {
+      if (format.formats?.delivery !== true) throw Error('RUNTIME_TOO_OLD');
+      const captured = structuredClone(command);
+      const state = await this.status(format);
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.delivery !== true) throw new Error('RUNTIME_TOO_OLD');
+      if (recoveryBlocked(state) && !recoveryReader(captured))
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      const action = captured.type.slice(9);
+      const route =
+        (
+          {
+            'checklist.get': 'checklist/get',
+            'checklist.write': 'checklist/write',
+            'checklist.receipt': 'checklist/receipt',
+            'file.bind': 'file/bind',
+            'file.bind-receipt': 'file/bind-receipt',
+          } as Record<string, string>
+        )[action] ?? action;
+      const value = await workApi(
+        `/api/delivery/${route}`,
+        'query' in captured ? captured.query : captured.request,
+        state.protocolVersion,
+      );
+      if (captured.type === 'delivery.get') {
+        if (
+          !isDeliveryPage(value) ||
+          value.workId !== captured.query.workId ||
+          value.attempts.length > (captured.query.limit ?? 20) ||
+          (captured.query.before !== undefined &&
+            value.attempts.some((attempt) => attempt.sequence >= captured.query.before!))
+        )
+          throw new Error('INVALID_DELIVERY_PAGE');
+      } else if (captured.type === 'delivery.checklist.get') {
+        if (!isDeliveryChecklist(value) || value.workId !== captured.query.workId)
+          throw new Error('INVALID_DELIVERY_CHECKLIST');
+      } else {
+        const owner = deliveryAction(action);
+        if (
+          !isDeliveryReceipt(value) ||
+          deliveryKey(owner, value.request) !== deliveryKey(owner, captured.request) ||
+          (!action.endsWith('receipt') && value.state !== 'complete')
+        )
+          throw new Error('INVALID_DELIVERY_RECEIPT');
+        if (value.state === 'complete' && 'attempt' in value) {
+          if (
+            ('attemptId' in captured.request &&
+              value.attempt.attemptId !== captured.request.attemptId) ||
+            (owner === 'start' &&
+              (value.attempt.requestId !== captured.request.requestId ||
+                !('bot' in captured.request) ||
+                value.attempt.bot !== captured.request.bot))
+          )
+            throw new Error('INVALID_DELIVERY_RECEIPT');
+        }
+      }
+      return value;
+    }
+    if (isApprovalRulesCommand(command)) {
+      if (format.formats?.approvalRules !== approvalRulesCapability)
+        throw Error('APPROVAL_UPGRADE_REQUIRED');
+      const captured = structuredClone(command);
+      const scope =
+        captured.type === 'approval.rules.write' ? captured.request.scope : captured.scope;
+      const state = await this.status(format);
+      if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
+        throw Error('APPROVAL_UPGRADE_REQUIRED');
+      if (!state.approvalRules.available) throw Error('APPROVAL_RULES_UNAVAILABLE');
+      const value = await api(
+        `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
+        captured,
+      );
+      const valid =
+        captured.type === 'approval.rules.list'
+          ? isApprovalRulesSnapshot(value) && sameApprovalScope(value.scope, scope)
+          : captured.type === 'approval.rules.preview'
+            ? isPolicyDecision(value) &&
+              sameApprovalScope(value.scope, scope) &&
+              value.trigger === captured.trigger &&
+              JSON.stringify(value.selector) === JSON.stringify(captured.selector)
+            : captured.type === 'approval.rules.write'
+              ? matchesApprovalReceipt(value, captured.request)
+              : isApprovalRuleReceipt(value) &&
+                sameApprovalScope(value.scope, scope) &&
+                value.requestId === captured.requestId;
+      if (!valid) throw Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    if (command.type.startsWith('budget.')) {
+      const captured = structuredClone(command);
+      let value: unknown;
+      if (captured.type === 'budget.goal') {
+        const target: unknown = await api('/api/budgets/goal', {
+          owner: captured.owner,
+        }).catch((error) => {
+          // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
+          if (error instanceof Error && error.message === 'NOT_FOUND') return null;
+          throw error;
+        });
+        if (target === null) return null;
+        if (
+          !isGoalResumeTarget(target) ||
+          target.owner.bot !== captured.owner.bot ||
+          target.owner.chatRevision !== captured.owner.chatRevision ||
+          target.owner.conversationId !== captured.owner.conversationId ||
+          !sameProjectScope(target.owner.project, captured.owner.project)
+        )
+          throw new Error('INVALID_GOAL_TARGET');
+        return target;
+      }
+      if (captured.type === 'budget.settings') value = await api('/api/budgets/settings', {});
+      else if (captured.type === 'budget.configure')
+        value = await api('/api/budgets/configure', captured.request);
+      else if (captured.type === 'budget.read')
+        value = await api('/api/budgets/read', captured.query);
+      else if (captured.type === 'budget.increase')
+        value = await api('/api/budgets/increase', captured.request);
+      else if (captured.type === 'budget.continue') {
+        const reply: unknown = await api('/api/budgets/continue', {
+          scope: captured.scope,
+          budget: captured.budget,
+          id: captured.id,
+          ...(captured.goalResume ? { goalResume: captured.goalResume } : {}),
+        });
+        if (
+          !reply ||
+          typeof reply !== 'object' ||
+          !('budget' in reply) ||
+          !isBudgetScope(reply.budget) ||
+          reply.budget.budgetId !== captured.budget.budgetId ||
+          reply.budget.revision !== captured.budget.revision ||
+          !('owner' in reply) ||
+          !isTranscriptScope(reply.owner) ||
+          !sameTranscriptScope(reply.owner, captured.scope) ||
+          !('id' in reply) ||
+          reply.id !== captured.id ||
+          !('queued' in reply) ||
+          typeof reply.queued !== 'boolean'
+        )
+          throw new Error('INVALID_BUDGET_CONTINUATION');
+        return reply;
+      } else throw new Error('INVALID_COMMAND');
+      if (captured.type === 'budget.settings' || captured.type === 'budget.configure') {
+        if (!isBudgetSettings(value)) throw new Error('INVALID_BUDGET_SETTINGS');
+      } else if (value !== null) {
+        if (!isBudgetView(value)) throw new Error('INVALID_BUDGET_VIEW');
+        const owner =
+          captured.type === 'budget.read'
+            ? captured.query.scope
+            : captured.type === 'budget.increase'
+              ? captured.request.scope
+              : undefined;
+        if (!owner || !value.owner || !sameTranscriptScope(value.owner, owner))
+          throw new Error('INVALID_BUDGET_OWNER');
+        if (
+          captured.type === 'budget.increase' &&
+          (value.scope.budgetId !== captured.request.budgetId ||
+            value.scope.revision !== captured.request.revision + 1)
+        )
+          throw new Error('INVALID_BUDGET_ACK');
+      }
+      return value;
+    }
+
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
-      const value = await this.api('/api/host/recovery', captured);
+      const value = await api('/api/host/recovery', captured);
       if (captured.type === 'recovery.review') {
         if (!isRecoveryReview(value)) throw new Error('INVALID_RUNTIME_STATE');
         return value;
@@ -866,18 +1219,14 @@ export class RuntimeClient {
     if (isWorkCommentCommand(command)) {
       // Snapshot the intent before status yields so a caller cannot change the acknowledged request.
       const captured = structuredClone(command);
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 38) throw new Error('RUNTIME_TOO_OLD');
       if (!state.work?.available) throw new Error(state.work?.error ?? 'WORK_UNAVAILABLE');
       if (captured.type === 'work.comment' && recoveryBlocked(state))
         throw new Error('RUNTIME_RECOVERY_PENDING');
       if (captured.type === 'work.comments') {
-        const value = await this.workApi(
-          '/api/work/comments',
-          captured.query,
-          state.protocolVersion,
-        );
+        const value = await workApi('/api/work/comments', captured.query, state.protocolVersion);
         if (
           !isWorkCommentList(value) ||
           workCommentQueryKey(value.query) !== workCommentQueryKey(captured.query)
@@ -885,7 +1234,7 @@ export class RuntimeClient {
           throw new Error('INVALID_WORK_COMMENT_PAGE');
         return value;
       }
-      const value = await this.workApi(
+      const value = await workApi(
         captured.type === 'work.comment' ? '/api/work/comment' : '/api/work/comment-receipt',
         captured.request,
         state.protocolVersion,
@@ -903,18 +1252,18 @@ export class RuntimeClient {
     if (isNoteCommand(command)) {
       // Keep the original Bot and intent even if navigation or authentication changes while status yields.
       const captured = structuredClone(command);
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 37) throw new Error('RUNTIME_TOO_OLD');
       if (!state.notes?.available) throw new Error(state.notes?.error ?? 'NOTES_UNAVAILABLE');
       if (captured.type === 'notes.status') {
-        const value = await this.api('/api/notes/status', { bot: captured.bot });
+        const value = await api('/api/notes/status', { bot: captured.bot });
         if (!isNoteStatusResult(value) || value.bot !== captured.bot)
           throw new Error('INVALID_NOTE_METADATA');
         return value;
       }
       if (captured.type === 'notes.list') {
-        const value = await this.api('/api/notes/list', {
+        const value = await api('/api/notes/list', {
           bot: captured.bot,
           query: captured.query,
         });
@@ -927,12 +1276,12 @@ export class RuntimeClient {
         return value;
       }
       if (captured.type === 'notes.read') {
-        const value = await this.api('/api/notes/read', { bot: captured.bot, id: captured.id });
+        const value = await api('/api/notes/read', { bot: captured.bot, id: captured.id });
         if (!isNoteItem(value) || value.bot !== captured.bot || value.id !== captured.id)
           throw new Error('INVALID_NOTE_ITEM');
         return value;
       }
-      const value = await this.api(
+      const value = await api(
         captured.type === 'notes.write' ? '/api/notes/write' : '/api/notes/receipt',
         { bot: captured.bot, request: captured.request },
       );
@@ -954,7 +1303,7 @@ export class RuntimeClient {
       command.type === 'work.receipt'
     ) {
       const captured = structuredClone(command);
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 36) throw new Error('RUNTIME_TOO_OLD');
       if (!state.work?.available) throw new Error(state.work?.error ?? 'WORK_UNAVAILABLE');
@@ -966,21 +1315,17 @@ export class RuntimeClient {
       )
         throw new Error('RUNTIME_TOO_OLD');
       if (captured.type === 'work.list') {
-        const value = await this.workApi('/api/work/list', captured.query, state.protocolVersion);
+        const value = await workApi('/api/work/list', captured.query, state.protocolVersion);
         if (!isWorkList(value) || workQueryKey(value.query) !== workQueryKey(captured.query))
           throw new Error('INVALID_WORK_PAGE');
         return value;
       }
       if (captured.type === 'work.read') {
-        const value = await this.workApi(
-          '/api/work/read',
-          { id: captured.id },
-          state.protocolVersion,
-        );
+        const value = await workApi('/api/work/read', { id: captured.id }, state.protocolVersion);
         if (!isWorkItem(value) || value.id !== captured.id) throw new Error('INVALID_WORK_ITEM');
         return value;
       }
-      const value = await this.workApi(
+      const value = await workApi(
         captured.type === 'work.write' ? '/api/work/write' : '/api/work/receipt',
         captured.request,
         state.protocolVersion,
@@ -998,10 +1343,10 @@ export class RuntimeClient {
       // Capture the source and intent before status can yield to another editor or connection update.
       const request = structuredClone(command.request);
       const copying = command.type === 'group.copy';
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 35) throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api(
+      const value = await api(
         `/api/groups/${request.group}/${copying ? 'copy' : 'copy-receipt'}`,
         request,
       );
@@ -1017,10 +1362,10 @@ export class RuntimeClient {
       // Bind the result to the captured operation, even if the caller changes its form while status awaits.
       const request = structuredClone(command.request);
       const copying = command.type === 'bot.copy';
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 34) throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api(
+      const value = await api(
         `/api/bots/${request.bot}/${copying ? 'copy' : 'copy-receipt'}`,
         request,
       );
@@ -1035,19 +1380,19 @@ export class RuntimeClient {
     if (command.type.startsWith('preflight.')) {
       if (!isPreflightCommand(command)) throw new Error('INVALID_COMMAND');
       const captured = structuredClone(command);
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.preflight !== 1) throw new Error('PREFLIGHT_UNSUPPORTED');
       let value: unknown;
       if (captured.type === 'preflight.options') {
         const search = new URLSearchParams({ bot: captured.query.bot });
         if (captured.query.cursor !== undefined) search.set('cursor', captured.query.cursor);
-        value = await this.api(`/api/preflight/options?${search}`);
+        value = await api(`/api/preflight/options?${search}`);
       } else if (captured.type === 'preflight.inspect') {
-        value = await this.api('/api/preflight/inspect', captured.query);
+        value = await api('/api/preflight/inspect', captured.query);
       } else {
         const action = captured.type === 'preflight.preview' ? 'preview' : 'export';
-        value = await this.api(
+        value = await api(
           `/api/preflight/${encodeURIComponent(captured.query.id)}/${action}?digest=${captured.query.digest}`,
         );
       }
@@ -1055,11 +1400,11 @@ export class RuntimeClient {
     }
     if (command.type === 'context.inspect' || command.type === 'context.source') {
       const captured = structuredClone(command);
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.contextInspector !== 1) throw new Error('CONTEXT_UNSUPPORTED');
       const query = captured.query;
-      const value: unknown = await this.api(
+      const value: unknown = await api(
         `/api/context/${captured.type === 'context.inspect' ? 'inspect' : 'source'}`,
         query,
       );
@@ -1086,11 +1431,11 @@ export class RuntimeClient {
       command.type === 'transcript.list' ||
       command.type === 'transcript.content'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 33) throw new Error('RUNTIME_TOO_OLD');
       const scope = command.query.scope;
-      const value: unknown = await this.api(
+      const value: unknown = await api(
         `/api/transcripts/${command.type === 'transcript.statistics' ? 'statistics' : command.type === 'transcript.list' ? 'list' : 'content'}`,
         command.query,
       );
@@ -1118,12 +1463,13 @@ export class RuntimeClient {
       command.type === 'chat.receipt' ||
       command.type === 'chat.history'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 29) throw new Error('RUNTIME_TOO_OLD');
       if (command.type === 'chat.history') {
         if (command.runId && state.protocolVersion < 30) throw new Error('RUNTIME_TOO_OLD');
-        const value = await this.api('/api/chats/history', {
+        const value = await api('/api/chats/history', {
+          ...(format.schema === 2 && state.model.modelAccess ? { modelAccess: true } : {}),
           bot: command.bot,
           revision: command.revision,
           before: command.before,
@@ -1141,7 +1487,7 @@ export class RuntimeClient {
       const request = command.type === 'chat.new' ? command.request : undefined;
       const bot = request?.bot ?? (command.type === 'chat.receipt' ? command.bot : '');
       const id = request?.id ?? (command.type === 'chat.receipt' ? command.id : '');
-      const value = await this.api(
+      const value = await api(
         request ? '/api/chats/new' : '/api/chats/receipt',
         request ?? { bot, id },
       );
@@ -1155,13 +1501,13 @@ export class RuntimeClient {
       return value;
     }
     if (command.type === 'group.action' || command.type === 'group.receipt') {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 28) throw new Error('RUNTIME_TOO_OLD');
       const request = command.type === 'group.action' ? command.request : undefined;
       const group = request?.group ?? (command.type === 'group.receipt' ? command.group : '');
       const id = request?.id ?? (command.type === 'group.receipt' ? command.id : '');
-      const value = await this.api(
+      const value = await api(
         request ? '/api/groups/action' : '/api/groups/action-receipt',
         request ?? { group, id },
       );
@@ -1178,11 +1524,11 @@ export class RuntimeClient {
       return value;
     }
     if (command.type === 'bot.export' || command.type.startsWith('bot.import.')) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 27) throw new Error('RUNTIME_TOO_OLD');
       if (command.type === 'bot.export') {
-        const value = await this.api('/api/bundles/export', command.input);
+        const value = await api('/api/bundles/export', command.input);
         if (!isBotBundle(value)) throw new Error('INVALID_BOT_BUNDLE');
         return value;
       }
@@ -1190,20 +1536,20 @@ export class RuntimeClient {
       if (command.type === 'bot.import.begin' || command.type === 'bot.import.cancel') {
         id = command.header.id;
         expected = command.header.sha256;
-        value = await this.api(
+        value = await api(
           command.type === 'bot.import.begin' ? '/api/bundles/begin' : '/api/bundles/cancel',
           command.header,
         );
       } else if (command.type === 'bot.import.submit') {
         id = command.id;
         expected = createHash('sha256').update(botBundleText(command.bundle)).digest('hex');
-        value = await this.api(`/api/bundles/submit/${encodeURIComponent(id)}`, command.bundle);
+        value = await api(`/api/bundles/submit/${encodeURIComponent(id)}`, command.bundle);
       } else if (command.type === 'bot.import.status' || command.type === 'bot.import.retry') {
         id = command.id;
         value =
           command.type === 'bot.import.status'
-            ? await this.api(`/api/bundles/status/${encodeURIComponent(id)}`)
-            : await this.api('/api/bundles/retry', { id });
+            ? await api(`/api/bundles/status/${encodeURIComponent(id)}`)
+            : await api('/api/bundles/retry', { id });
       } else throw new Error('INVALID_COMMAND');
       if (
         !isBotImportReceipt(value) ||
@@ -1214,16 +1560,16 @@ export class RuntimeClient {
       return value;
     }
 
-    if (command.type === 'status' || command.type === 'connect') return this.status();
+    if (command.type === 'status' || command.type === 'connect') return this.status(format);
     if (command.type === 'runtime.inspect') {
-      const value = await this.api('/api/diagnostics');
+      const value = await api('/api/diagnostics');
       if (!isDiagnosticReport(value) || value.scope !== 'runtime')
         throw new Error('INVALID_RUNTIME_STATE');
       return value;
     }
     if (command.type.startsWith('mcp.')) {
       if (!isMcpCommand(command)) throw new Error('INVALID_COMMAND');
-      const current = await this.status();
+      const current = await this.status(format);
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 21) throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -1240,7 +1586,7 @@ export class RuntimeClient {
         current.botCapabilities !== true
       )
         throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api(`/api/mcp/${command.type.slice(4)}`, command);
+      const value = await api(`/api/mcp/${command.type.slice(4)}`, command);
       let valid = false;
       switch (command.type) {
         case 'mcp.list':
@@ -1327,7 +1673,7 @@ export class RuntimeClient {
       command.type === 'skill.package.export' ||
       command.type === 'skill.resource'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 40) throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -1344,7 +1690,7 @@ export class RuntimeClient {
               ? 'export-package'
               : 'resource';
       const { type: _type, ...body } = command,
-        value = await this.api(`/api/skills/${action}`, body, true, 40);
+        value = await api(`/api/skills/${action}`, body, true, 40);
       if (command.type === 'skill.resource') {
         if (
           !isSkillResourceData(value) ||
@@ -1393,7 +1739,7 @@ export class RuntimeClient {
       command.type === 'skill.bind' ||
       command.type === 'skill.copy'
     ) {
-      const current = await this.status();
+      const current = await this.status(format);
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 20) throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -1402,7 +1748,7 @@ export class RuntimeClient {
       )
         throw new Error('RUNTIME_TOO_OLD');
       const { type, ...request } = command;
-      const value = await this.api(`/api/skills/${type.slice('skill.'.length)}`, request);
+      const value = await api(`/api/skills/${type.slice('skill.'.length)}`, request);
       if (command.type === 'skill.copy') {
         if (!isSkillDocument(value) || (!value.system && value.ownerBot !== command.targetBot))
           throw new Error('INVALID_RUNTIME_STATE');
@@ -1450,13 +1796,13 @@ export class RuntimeClient {
       return value;
     }
     if (command.type === 'bot.action' || command.type === 'bot.receipt') {
-      const current = await this.status();
+      const current = await this.status(format);
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 22) throw new Error('RUNTIME_TOO_OLD');
       const mutation = command.type === 'bot.action';
       const bot = mutation ? command.request.bot : command.bot;
       const id = mutation ? command.request.id : command.id;
-      const value = await this.api(
+      const value = await api(
         `/api/bots/${bot}/${mutation ? 'lifecycle' : 'lifecycle-receipt'}`,
         mutation ? command.request : { id },
       );
@@ -1473,11 +1819,11 @@ export class RuntimeClient {
       return value;
     }
     if (command.type === 'computer.action' || command.type === 'computer.receipt') {
-      const current = await this.status();
+      const current = await this.status(format);
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 19) throw new Error('RUNTIME_TOO_OLD');
       const expected = command.type === 'computer.action' ? command.request : command;
-      const result = await this.api(
+      const result = await api(
         command.type === 'computer.action' ? '/api/computers/action' : '/api/computers/receipt',
         command.type === 'computer.action' ? command.request : { id: command.id, bot: command.bot },
       );
@@ -1491,7 +1837,7 @@ export class RuntimeClient {
       return result;
     }
     if (command.type.startsWith('browser.')) {
-      const current = await this.status();
+      const current = await this.status(format);
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 16) throw new Error('RUNTIME_TOO_OLD');
       const owned = (value: unknown) => {
@@ -1500,16 +1846,16 @@ export class RuntimeClient {
         return value;
       };
       if (command.type === 'browser.state')
-        return owned(await this.api(`/api/bots/${command.bot}/browser-state`));
+        return owned(await api(`/api/bots/${command.bot}/browser-state`));
       if (command.type === 'browser.view') {
-        const result = await this.api(`/api/bots/${command.bot}/browser-view`);
+        const result = await api(`/api/bots/${command.bot}/browser-view`);
         if (!isBrowserView(result) || result.bot !== command.bot)
           throw new Error('INVALID_RUNTIME_STATE');
         return result;
       }
       if (command.type === 'browser.command' || command.type === 'browser.answer') {
         const { type: _type, bot, ...request } = command;
-        const result = await this.api(
+        const result = await api(
           `/api/bots/${bot}/${command.type === 'browser.command' ? 'browser-command' : 'browser-answer'}`,
           request,
         );
@@ -1519,7 +1865,7 @@ export class RuntimeClient {
         return result;
       }
       if (command.type === 'browser.receipt') {
-        const result = await this.api(`/api/bots/${command.bot}/browser-receipt`, {
+        const result = await api(`/api/bots/${command.bot}/browser-receipt`, {
           id: command.id,
         });
         if (!isBrowserReceipt(result) || result.id !== command.id || result.bot !== command.bot)
@@ -1527,7 +1873,7 @@ export class RuntimeClient {
         return result;
       }
       if (command.type === 'browser.input')
-        return this.api(`/api/bots/${command.bot}/browser-bound-input`, {
+        return api(`/api/bots/${command.bot}/browser-bound-input`, {
           epoch: command.epoch,
           binding: command.binding,
           input: command.input,
@@ -1541,7 +1887,7 @@ export class RuntimeClient {
       command.type === 'group.send' ||
       command.type === 'group.cancel'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 15) throw new Error('RUNTIME_TOO_OLD');
       const action = command.type.split('.')[1];
@@ -1557,7 +1903,7 @@ export class RuntimeClient {
                 : command.type === 'group.input'
                   ? { group: command.group, sourceId: command.sourceId, name: command.name }
                   : { group: command.group, sourceId: command.sourceId };
-      const result = await this.api(`/api/groups/${action}`, payload);
+      const result = await api(`/api/groups/${action}`, payload);
       const id =
         command.type === 'group.register'
           ? command.group.id
@@ -1596,11 +1942,63 @@ export class RuntimeClient {
       }
       return result;
     }
+    if (
+      command.type === 'model.saved' ||
+      command.type === 'model.fallback.configure' ||
+      command.type === 'model.remove' ||
+      command.type === 'model.diagnose'
+    ) {
+      const state = await this.status(format);
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!state.model.modelAccess) throw new Error('RUNTIME_TOO_OLD');
+      if (state.model.modelAccess.scope !== command.input.scope)
+        throw new Error('RUNTIME_SESSION_CHANGED');
+      const route =
+        command.type === 'model.fallback.configure'
+          ? 'fallback'
+          : command.type.slice('model.'.length);
+      const value = await api(`/api/model/${route}`, command.input);
+      if (command.type === 'model.fallback.configure') {
+        if (
+          !isModelStatus(value) ||
+          value.requestId !== command.input.requestId ||
+          value.revision !== command.input.revision + 1 ||
+          value.fallbackModel !== (command.input.model || undefined)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else {
+        if (
+          !isModelSaved(value) ||
+          value.scope !== command.input.scope ||
+          value.requestId !== command.input.requestId ||
+          value.revision !== command.input.revision
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.saved' &&
+          (value.connection !== command.input.connection || value.model !== command.input.model)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.remove' &&
+          (value.kind !== 'remove' || value.connection !== command.input.connection)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.diagnose' &&
+          (value.kind !== 'diagnose' ||
+            value.connection !== command.input.connection.id ||
+            value.model !== diagnosticModel(command.input))
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      }
+      return value;
+    }
     if (command.type === 'model.inspect') {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.model.inspection !== true) throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api('/api/model/inspect', command.input);
+      const value = await api('/api/model/inspect', command.input);
       if (
         !isModelInspection(value) ||
         value.kind !== command.input.kind ||
@@ -1613,10 +2011,10 @@ export class RuntimeClient {
       return value;
     }
     if (command.type === 'model.configure' || command.type === 'model.check') {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 13) throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api(
+      const value = await api(
         `/api/model/${command.type.split('.')[1]}`,
         command.type === 'model.configure' ? command.input : { revision: command.revision },
       );
@@ -1643,11 +2041,11 @@ export class RuntimeClient {
       command.type === 'attachment.restore' ||
       command.type === 'attachment.purge'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 12) throw new Error('RUNTIME_TOO_OLD');
       const { type, ...payload } = command;
-      const result = await this.api(`/api/attachments/${type.split('.')[1]}`, payload);
+      const result = await api(`/api/attachments/${type.split('.')[1]}`, payload);
       if (command.type === 'attachment.list') {
         if (
           !isAttachmentPage(result) ||
@@ -1684,7 +2082,7 @@ export class RuntimeClient {
       command.type === 'attachment.source' ||
       command.type === 'attachment.read'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 11) throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -1693,7 +2091,7 @@ export class RuntimeClient {
       )
         throw new Error('ATTACHMENT_RUNTIME_TOO_OLD');
       const { type, ...payload } = command;
-      const result = await this.api(`/api/attachments/${type.split('.')[1]}`, payload);
+      const result = await api(`/api/attachments/${type.split('.')[1]}`, payload);
       if (command.type === 'attachment.upload') {
         const data = Buffer.from(command.file.data, 'base64'),
           sha256 = createHash('sha256').update(data).digest('hex');
@@ -1736,7 +2134,7 @@ export class RuntimeClient {
       command.type === 'knowledge.versions' ||
       command.type === 'knowledge.restore'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 9) throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -1745,7 +2143,7 @@ export class RuntimeClient {
       )
         throw new Error('RUNTIME_TOO_OLD');
       const { type, ...payload } = command;
-      const result = await this.api(`/api/knowledge/${type.slice('knowledge.'.length)}`, payload);
+      const result = await api(`/api/knowledge/${type.slice('knowledge.'.length)}`, payload);
       if (type === 'knowledge.source') {
         if (
           !isDocumentOriginal(result) ||
@@ -1798,6 +2196,32 @@ export class RuntimeClient {
       }
       return result;
     }
+    if (isAutomationCommand(command)) {
+      const state = await this.status(format);
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (
+        !state.schedules?.automation ||
+        (command.type === 'schedule.monitor' &&
+          command.policy.kind === 'changes' &&
+          !state.schedules.automation.changes)
+      )
+        throw new Error('AUTOMATION_UPGRADE_REQUIRED');
+      const { type, ...payload } = command;
+      const value = await api(`/api/schedules/${type.slice('schedule.'.length)}`, payload);
+      if (type === 'schedule.monitor' && (!isSchedule(value) || value.id !== command.id))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (type === 'schedule.receipt' && (!isScheduleFiring(value) || value.id !== command.firing))
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        type === 'schedule.ack' &&
+        (!value ||
+          typeof value !== 'object' ||
+          !('acknowledged' in value) ||
+          value.acknowledged !== true)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
     if (
       command.type === 'schedule.get' ||
       command.type === 'schedule.create' ||
@@ -1806,7 +2230,7 @@ export class RuntimeClient {
       command.type === 'schedule.remove' ||
       command.type === 'schedule.run'
     ) {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 5) throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -1816,7 +2240,7 @@ export class RuntimeClient {
       )
         throw new Error('RUNTIME_TOO_OLD');
       const { type, ...payload } = command;
-      const result = await this.api(
+      const result = await api(
         `/api/schedules/${type.slice('schedule.'.length)}`,
         type === 'schedule.create' ? command.input : payload,
       );
@@ -1860,10 +2284,10 @@ export class RuntimeClient {
       return result;
     }
     if (command.type === 'interaction.reply') {
-      const current = await this.status();
+      const current = await this.status(format);
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 4) throw new Error('RUNTIME_TOO_OLD');
-      const reply = await this.api(`/api/bots/${command.bot}/reply`, {
+      const reply = await api(`/api/bots/${command.bot}/reply`, {
         id: command.id,
         runId: command.runId,
         reply: command.reply,
@@ -1878,10 +2302,10 @@ export class RuntimeClient {
       return reply;
     }
     if (command.type === 'memory.history') {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 32) throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api('/api/memory/history', {
+      const value = await api('/api/memory/history', {
         bot: command.bot,
         query: command.query,
       });
@@ -1896,7 +2320,7 @@ export class RuntimeClient {
       return value;
     }
     if (command.type === 'bot.register' || command.type === 'bot.update') {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 3) throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -1907,8 +2331,8 @@ export class RuntimeClient {
       )
         throw new Error('RUNTIME_TOO_OLD');
       const profile = await (command.type === 'bot.register'
-        ? this.api('/api/bots', command.profile)
-        : this.api(`/api/bots/${command.bot}/profile`, {
+        ? api('/api/bots', command.profile)
+        : api(`/api/bots/${command.bot}/profile`, {
             revision: command.revision,
             patch: command.patch,
           }));
@@ -1925,13 +2349,156 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
     }
-    if (command.type === 'files.list') return this.api('/api/files') as Promise<RuntimeFile[]>;
-    if (command.type === 'files.read') return this.api('/api/files/read', { path: command.path });
+    if (isProjectMemoryCommand(command)) {
+      const captured = structuredClone(command);
+      const signature =
+        captured.type === 'projectMemory.write' || captured.type === 'projectMemory.decide'
+          ? await projectMemoryFingerprint(captured.request)
+          : undefined;
+      const { type, ...payload } = captured;
+      const value = await api(
+        `/api/project-memory/${type.slice('projectMemory.'.length)}`,
+        payload,
+      );
+      const invalid = () => {
+        throw new Error('INVALID_PROJECT_MEMORY_RESPONSE');
+      };
+      if (captured.type === 'projectMemory.status') {
+        if (!isProjectMemoryAvailability(value)) invalid();
+      } else {
+        const scope = 'scope' in captured ? captured.scope : captured.request.scope;
+        if (captured.type === 'projectMemory.preview') {
+          if (!isProjectPublicationPreview(value) || !sameProjectScope(value.scope, scope))
+            invalid();
+        } else if (captured.type === 'projectMemory.list') {
+          if (
+            !Array.isArray(value) ||
+            value.length > 100 ||
+            !value.every(
+              (item) => isProjectDocumentInfo(item) && item.projectId === scope.projectId,
+            )
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.read') {
+          if (
+            !isProjectDocument(value) ||
+            value.projectId !== scope.projectId ||
+            value.id !== captured.document.id ||
+            value.revision !== captured.document.revision
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.versions') {
+          if (
+            !Array.isArray(value) ||
+            value.length > 20 ||
+            !value.every(
+              (item) =>
+                isProjectDocumentVersion(item) &&
+                item.projectId === scope.projectId &&
+                item.id === captured.id &&
+                (captured.before === undefined || item.revision < captured.before),
+            )
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.candidate') {
+          if (
+            !isMemoryCandidate(value) ||
+            value.projectId !== scope.projectId ||
+            value.id !== captured.id
+          )
+            invalid();
+        } else if (captured.type === 'projectMemory.candidates') {
+          if (
+            !Array.isArray(value) ||
+            value.length > 200 ||
+            !value.every(
+              (item) =>
+                isMemoryCandidate(item) &&
+                item.projectId === scope.projectId &&
+                item.state === (captured.state ?? 'pending'),
+            )
+          )
+            invalid();
+        } else {
+          const requestId =
+            captured.type === 'projectMemory.receipt'
+              ? captured.requestId
+              : captured.request.requestId;
+          if (
+            !isProjectMemoryReceipt(value) ||
+            value.requestId !== requestId ||
+            value.scope.projectId !== scope.projectId
+          )
+            invalid();
+          if (
+            captured.type === 'projectMemory.receipt' &&
+            captured.signature !== undefined &&
+            isProjectMemoryReceipt(value) &&
+            value.state === 'complete' &&
+            value.signature !== captured.signature
+          )
+            invalid();
+          if (
+            captured.type !== 'projectMemory.receipt' &&
+            !matchesProjectMemoryReceipt(
+              value,
+              captured.type === 'projectMemory.write' ? 'write' : 'decide',
+              captured.request,
+              signature!,
+            )
+          )
+            invalid();
+        }
+      }
+      return value;
+    }
+    if (command.type === 'projects.status') return api('/api/projects/status', {});
+    if (command.type === 'projects.select')
+      return api('/api/projects/select', {
+        bot: command.bot,
+        ...(command.scope ? { scope: command.scope } : {}),
+      });
+    if (command.type === 'projects.list') return api('/api/projects/list', {});
+    if (command.type === 'projects.write')
+      return api('/api/projects/write', { request: command.request });
+    if (command.type === 'projects.resume')
+      return api('/api/projects/resume', { requestId: command.requestId });
+    if (command.type === 'projects.receipt')
+      return api('/api/projects/receipt', { requestId: command.requestId });
+    if (command.type === 'files.list') {
+      const result = await (command.project
+        ? api('/api/files/list', {
+            project: command.project,
+            ...(command.task ? { task: command.task } : {}),
+          })
+        : api('/api/files'));
+      if (
+        (command.project && !Array.isArray(result)) ||
+        (Array.isArray(result) &&
+          !result.every((file: unknown) => projectFileMatches(file, command)))
+      )
+        throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
+    if (command.type === 'files.read') {
+      const result = await api('/api/files/read', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
+      return result;
+    }
     if (command.type === 'files.download') {
-      const state = await this.status();
+      const state = await this.status(format);
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 11) throw new Error('RUNTIME_TOO_OLD');
-      const result = await this.api('/api/files/download', { path: command.path });
+      const result = await api('/api/files/download', {
+        path: command.path,
+        ...(command.project ? { project: command.project } : {}),
+        ...(command.task ? { task: command.task } : {}),
+      });
+      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
       if (
         !isRuntimeDownload(result) ||
         result.path !== command.path ||
@@ -1945,7 +2512,7 @@ export class RuntimeClient {
     const route = `/api/bots/${'bot' in command ? command.bot : ''}`;
     switch (command.type) {
       case 'task.start': {
-        const current = await this.status();
+        const current = await this.status(format);
         if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
         if (command.task.retryTurn !== undefined && current.protocolVersion < 43)
           throw new Error('RUNTIME_TOO_OLD');
@@ -1961,7 +2528,7 @@ export class RuntimeClient {
           (current.protocolVersion < 2 && !['a', 'b'].includes(command.bot))
         )
           throw new Error('RUNTIME_TOO_OLD');
-        const value: unknown = await this.api(`${route}/model`, {
+        const value: unknown = await api(`${route}/model`, {
           running: true,
           task: command.task,
         });
@@ -1992,12 +2559,12 @@ export class RuntimeClient {
         return receipt;
       }
       case 'task.stop':
-        return this.api(`${route}/model`, { running: false });
+        return api(`${route}/model`, { running: false });
       case 'task.insert': {
-        const current = await this.status();
+        const current = await this.status(format);
         if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
         if (current.protocolVersion < 42) throw new Error('RUNTIME_TOO_OLD');
-        const value: unknown = await this.api(`${route}/insert`, {
+        const value: unknown = await api(`${route}/insert`, {
           id: command.id,
           text: command.text,
           runId: command.runId,
@@ -2014,25 +2581,25 @@ export class RuntimeClient {
         return value;
       }
       case 'control':
-        return this.api(`${route}/control`, {
+        return api(`${route}/control`, {
           epoch: command.epoch,
           owner: command.owner,
           instance: command.instance,
         });
       case 'input':
-        return this.api(`${route}/input`, {
+        return api(`${route}/input`, {
           epoch: command.epoch,
           input: command.input,
           instance: command.instance,
         });
       case 'app':
-        return this.api(`${route}/app`, {
+        return api(`${route}/app`, {
           epoch: command.epoch,
           app: command.app,
           instance: command.instance,
         });
       case 'frame':
-        return this.api(
+        return api(
           route +
             (command.surface === 'desktop' ? '/frame' : '/browser-frame') +
             (command.instance === undefined

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
@@ -131,6 +131,59 @@ test('native Host binds reports to its data scope and reads trusted local status
     );
     expect(f.invoke).not.toHaveBeenCalled();
   } finally {
+    await f.close();
+  }
+});
+
+test('fresh Host facts never probe models or turn a ready report into task permission', async () => {
+  const f = await fixture();
+  const models = f.app.models!;
+  const forbidden = () => {
+    throw Error('SYNTHETIC-FORBIDDEN-MODEL-OPERATION');
+  };
+  const operations = [
+    vi.spyOn(models.settings, 'check').mockImplementation(forbidden),
+    vi.spyOn(models.settings, 'inspect').mockImplementation(forbidden),
+    vi.spyOn(models.settings, 'configure').mockImplementation(forbidden),
+    vi.spyOn(models.settings, 'diagnose').mockImplementation(forbidden),
+    vi.spyOn(models.settings, 'fallback').mockImplementation(forbidden),
+    vi.spyOn(models.settings, 'remove').mockImplementation(forbidden),
+    vi.spyOn(models.settings, 'capture').mockImplementation(forbidden),
+    vi.spyOn(models.settings, 'resolve').mockImplementation(forbidden),
+    vi.spyOn(models, 'start').mockImplementation(forbidden),
+  ];
+  try {
+    const bytes = await readFile(models.settings.file, 'utf8');
+    const text = await f.call([{ kind: 'model', vision: false, tools: false }], 'mock-ready');
+    expect(text.status).toBe(200);
+    expect(text.value.checks[0].state).toBe('ready');
+    const local = [{ kind: 'computer', mode: 'local', access: 'control' }];
+    expect((await f.call(local, 'mock-current-agent')).value.checks[0].state).toBe('ready');
+    const samples = f.localStatus.mock.calls.length;
+    f.status.session!.owner = 'human';
+    expect((await f.call(local, 'mock-current-human')).value.checks[0].reason).toBe(
+      'CONTROL_HELD_BY_HUMAN',
+    );
+    expect(f.localStatus.mock.calls.length).toBeGreaterThan(samples);
+    expect(await readFile(models.settings.file, 'utf8')).toBe(bytes);
+    await expect(
+      models.startHuman('mock-bot', {
+        requestId: 'mock-report-ticket',
+        prompt: 'Synthetic request',
+        preflight: text.value,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK' });
+    await models.settings.save({ apiKey: 'synthetic-updated-key' });
+    const updated = await readFile(models.settings.file, 'utf8');
+    expect((await f.call(local, 'mock-current-model')).value.checks[0].reason).toBe(
+      'LOCAL_SESSION_MISMATCH',
+    );
+    expect(await readFile(models.settings.file, 'utf8')).toBe(updated);
+    for (const operation of operations) expect(operation).not.toHaveBeenCalled();
+    expect(f.invoke).not.toHaveBeenCalled();
+    expect(models.jobs.size).toBe(0);
+  } finally {
+    for (const operation of operations) operation.mockRestore();
     await f.close();
   }
 });

@@ -9,11 +9,280 @@ import {
   isRemoteSnapshot,
   isRemoteSnapshotCapabilities,
   parseRuntimeCommand,
+  recoveryReader,
+  remoteReplyFor,
   remoteSnapshotFor,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+test.each([
+  { type: 'approval.rules.list', scope: { kind: 'bot', bot: 'mock-bot' } },
+  { type: 'projectMemory.status' },
+  { type: 'search.status' },
+  { type: 'delivery.get', query: { workId: 'mock-work' } },
+])('published pure reader $type keeps the existing recovery-read behavior', (command) => {
+  expect(recoveryReader(parseRuntimeCommand(command))).toBe(true);
+});
+test.each([
+  { type: 'budget.settings' },
+  { type: 'projects.list' },
+  {
+    type: 'model.saved',
+    input: {
+      scope: 'a'.repeat(64),
+      requestId: 'mock-saved-model',
+      revision: 2,
+      connection: 'mock-provider',
+      model: 'provider:mock-provider:mock-model',
+    },
+  },
+])('preserves the main $type command through the extracted public parser', (command) => {
+  expect(parseRuntimeCommand(command)).toEqual(command);
+});
+
+test('accepts current safe model metadata without accepting unknown model fields', () => {
+  const snapshot = disconnected('ready');
+  const model = {
+    ...snapshot.model,
+    modelAccess: { scope: 'a'.repeat(64), fallback: true, diagnostics: true, cli: false },
+    fallbackModel: 'provider:mock-provider:mock-model',
+    probeRevision: 0,
+  };
+  expect(isRemoteSnapshot({ ...snapshot, model })).toBe(true);
+  expect(isRemoteSnapshot({ ...snapshot, model: { ...model, rawSdk: 'SYNTHETIC PRIVATE' } })).toBe(
+    false,
+  );
+  expect(isRemoteSnapshot({ ...snapshot, model: { ...model, probeRevision: -1 } })).toBe(false);
+});
+
+test('an original Context-capable controller still receives its supported model schema', () => {
+  const baseline = { ...disconnected('ready'), contextInspector: 1 };
+  const current = {
+    ...baseline,
+    model: {
+      ...baseline.model,
+      modelAccess: { scope: 'a'.repeat(64), fallback: true, diagnostics: true, cli: false },
+      fallbackModel: 'provider:mock-provider:mock-model',
+      probeRevision: 0,
+    },
+  };
+  // The verified 522 receiver already advertises Context, but its model object has a closed older schema.
+  expect(remoteSnapshotFor(current, { contextInspector: 1 })).toEqual(baseline);
+  expect(remoteSnapshotFor(current, { contextInspector: 1 }, 2)).toEqual(current);
+  expect(current.model).toHaveProperty('modelAccess');
+});
+
+test('schema 2 extends the same closed hint without changing the three read-only accept keys', () => {
+  const hint = {
+    type: 'snapshot-capabilities',
+    host: 'a'.repeat(64),
+    workspace: 'mock-workspace',
+    accept: { contextInspector: 1 },
+    schema: 2,
+  };
+  expect(isRemoteSnapshotCapabilities(hint)).toBe(true);
+  for (const invalid of [
+    { ...hint, schema: 1 },
+    { ...hint, schema: 3 },
+    { ...hint, schema: '2' },
+    { ...hint, token: 'synthetic-private' },
+    { ...hint, accept: { modelAccess: 1 } },
+  ])
+    expect(isRemoteSnapshotCapabilities(invalid)).toBe(false);
+});
+
+test('schema2 is not proof of the later published AP, Delivery or Search wire formats', () => {
+  const baseline = disconnected('ready');
+  const current = {
+    ...baseline,
+    delivery: true,
+    searchSettings: true,
+    approvalRules: { capability: 'approval-rules-v3', available: true, revision: 0 },
+  };
+  expect(remoteSnapshotFor(current, {}, 2)).toEqual(baseline);
+  const formats = { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true };
+  const hint = {
+    type: 'snapshot-capabilities',
+    host: 'a'.repeat(64),
+    workspace: 'mock-workspace',
+    accept: { contextInspector: 1 },
+    schema: 2,
+    formats,
+  };
+  expect(isRemoteSnapshotCapabilities(hint)).toBe(true);
+  for (const invalid of [
+    { ...hint, formats: { approvalRules: true } },
+    { ...hint, formats: { delivery: 'all' } },
+    { ...hint, formats: { searchSettings: false } },
+    { ...hint, formats: { authorization: true } },
+  ])
+    expect(isRemoteSnapshotCapabilities(invalid)).toBe(false);
+});
+
+test('legacy snapshots omit unsupported scoped locators and preserve archived group identity', () => {
+  const project = { projectId: 'mock-project', revision: 1 };
+  const file = {
+    path: 'synthetic.txt',
+    name: 'synthetic.txt',
+    size: 3,
+    modified: '2026-01-01T00:00:00.000Z',
+  };
+  const scoped = { ...file, project, task: { bot: scope.bot, runId: scope.runId } };
+  const summary = {
+    runId: scope.runId,
+    chatRevision: 0,
+    requestId: 'mock-request',
+    phase: 'completed',
+    prompt: '',
+    result: '',
+    error: '',
+    files: [file, scoped],
+    project,
+    rootRunId: scope.runId,
+  };
+  const task = {
+    ...summary,
+    running: false,
+    toolCount: 0,
+    executedCount: 0,
+    trace: [],
+    history: [summary],
+  };
+  const group = {
+    id: 'mock-group',
+    name: 'Synthetic group',
+    members: ['mock-bot', 'mock-peer'],
+    revision: 1,
+    createdAt: file.modified,
+    updatedAt: file.modified,
+    archived: true,
+    project,
+  };
+  const time = {
+    id: 'mock-time',
+    bot: scope.bot,
+    title: 'Synthetic schedule',
+    prompt: 'Synthetic work',
+    rule: { kind: 'every', everySeconds: 60 },
+    enabled: true,
+    revision: 1,
+    createdAt: file.modified,
+    updatedAt: file.modified,
+    history: [],
+    automation: {
+      configRevision: 1,
+      policy: { kind: 'all' },
+      initialized: false,
+      cursor: 0,
+      count: 0,
+    },
+  };
+  const fileSchedule = {
+    ...time,
+    id: 'mock-file',
+    rule: { kind: 'file', scope: project, paths: ['synthetic.txt'], pollSeconds: 60 },
+  };
+  const snapshot = {
+    ...disconnected('ready'),
+    agents: { [scope.bot]: task },
+    groups: { available: true, revision: 1, items: [group] },
+    schedules: {
+      available: true,
+      items: [time, fileSchedule],
+      automation: { changes: true, files: true },
+    },
+    notices: {
+      available: true,
+      items: [
+        {
+          kind: 'automation',
+          id: 'mock-notice',
+          bot: scope.bot,
+          schedule: time.id,
+          phase: 'completed',
+          reason: 'changed',
+        },
+      ],
+    },
+  };
+  expect(isRemoteSnapshot(snapshot)).toBe(true);
+  const legacy = remoteSnapshotFor(snapshot) as typeof snapshot;
+  expect(legacy.agents[scope.bot].files).toEqual([file]);
+  expect(legacy.agents[scope.bot].history[0].files).toEqual([file]);
+  expect(legacy.agents[scope.bot]).not.toHaveProperty('project');
+  expect(legacy.groups.items).toEqual([{ ...group, project: undefined }]);
+  expect(legacy.groups.items[0].archived).toBe(true);
+  expect(legacy.notices.items).toEqual([]);
+  expect(legacy.schedules.items).toEqual([{ ...time, automation: undefined }]);
+  expect(remoteSnapshotFor(snapshot, {}, 2)).toEqual(snapshot);
+  expect(() => remoteReplyFor('schedule.get', fileSchedule)).toThrow('AUTOMATION_UPGRADE_REQUIRED');
+  expect(remoteReplyFor('schedule.get', fileSchedule, {}, 2)).toEqual(fileSchedule);
+  expect(() => remoteReplyFor('files.read', { ...scoped, content: 'SYNTHETIC CONTENT' })).toThrow(
+    'REMOTE_SCHEMA_UPGRADE_REQUIRED',
+  );
+  expect(() =>
+    remoteReplyFor('status', {
+      ...snapshot,
+      model: { ...snapshot.model, apiKey: 'synthetic-private' },
+    }),
+  ).toThrow('REMOTE_INVALID_SNAPSHOT');
+  const page = { bot: scope.bot, revision: 0, items: [summary] };
+  expect(remoteReplyFor('chat.history', page)).toMatchObject({ items: [{ files: [file] }] });
+  expect(remoteReplyFor('chat.history', page)).not.toHaveProperty('items.0.project');
+  expect(remoteReplyFor('group.read', group)).toEqual({ ...group, project: undefined });
+});
+
+test('validates the current task and automation metadata as closed public values', () => {
+  const snapshot = disconnected('ready');
+  const task = {
+    phase: 'completed',
+    running: false,
+    prompt: '',
+    result: '',
+    error: '',
+    toolCount: 0,
+    executedCount: 0,
+    files: [],
+    history: [],
+    trace: [],
+    rootRunId: 'mock-run',
+    project: { projectId: 'mock-project', revision: 1 },
+    attemptSummary: [
+      {
+        attemptId: 'mock-attempt',
+        model: 'provider:mock-provider:mock-model',
+        phase: 'completed',
+        fence: 'clean',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        usage: 'unknown',
+      },
+    ],
+  };
+  const state = { ...snapshot, agents: { 'mock-bot': task } };
+  expect(isRemoteSnapshot(state)).toBe(true);
+  for (const invalid of [
+    { ...task, rootRunId: '../foreign' },
+    { ...task, project: { ...task.project, path: '/synthetic/private' } },
+    { ...task, attemptSummary: [{ ...task.attemptSummary[0], apiKey: 'synthetic-private' }] },
+    { ...task, rawSdk: 'SYNTHETIC PRIVATE' },
+    { ...task, phase: ['completed'] },
+  ])
+    expect(isRemoteSnapshot({ ...snapshot, agents: { 'mock-bot': invalid } })).toBe(false);
+  expect(
+    isRemoteSnapshot({
+      ...snapshot,
+      schedules: { available: true, items: [], automation: { changes: true, files: true } },
+    }),
+  ).toBe(true);
+  expect(
+    isRemoteSnapshot({
+      ...snapshot,
+      schedules: { available: true, items: [], automation: { changes: 'true', files: true } },
+    }),
+  ).toBe(false);
+});
+
 const capture = (): ContextCapture => ({
   revision: 1,
   at: '2026-01-01T08:00:00+08:00',
