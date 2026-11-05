@@ -114,6 +114,32 @@ test('client freezes queries, requires actual capability and rejects cross-scope
   );
 });
 
+test('review observations retain the captured consumer formats for status and HTTP reads', async () => {
+  const page = {
+    scope,
+    revision: 1,
+    state: 'unavailable',
+    writers: 'unknown',
+    effects: 'unknown',
+    reasons: ['baseline-missing'],
+    items: [],
+    counts: { created: 0, modified: 0, deleted: 0, unchanged: 0, unknown: 0 },
+  };
+  const fetcher = vi.fn(async (_url: string, _options?: RequestInit) => Response.json(page));
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:12345',
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher,
+  });
+  const status = vi
+    .spyOn(client, 'status')
+    .mockResolvedValue({ ...disconnected('ready'), fileReview: { available: true } });
+  const consumer = { schema: 2 as const, formats: {} };
+  await client.invoke({ type: 'files.review.read', query: { scope } }, consumer);
+  expect(status).toHaveBeenCalledWith(consumer);
+  expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get('x-daban-approval-rules')).toBeNull();
+});
+
 test('accepted shared selection cannot mutate while task-start waits for status', async () => {
   let body = '';
   const client = new RuntimeClient({

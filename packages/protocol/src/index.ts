@@ -1,9 +1,8 @@
 export * from './approval.js';
-export * from './delivery.js';
-
-import type { DeliveryCommand } from './delivery.js';
-
 export * from './approval-rules.js';
+export * from './delivery.js';
+export * from './project-memory.js';
+export * from './search.js';
 
 import {
   type AutomationCommand,
@@ -19,15 +18,15 @@ import {
   type MonitorDecision,
 } from './automation.js';
 import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+import type { DeliveryCommand } from './delivery.js';
+import type { ProjectMemoryCommand } from './project-memory.js';
+import type { SearchCommand } from './search.js';
 
 export * from './automation.js';
 
 import { isProjectFileRequest, isProjectScope } from './projects.js';
 
-export * from './project-memory.js';
 export * from './projects.js';
-
-import type { ProjectMemoryCommand } from './project-memory.js';
 
 import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
 
@@ -1582,9 +1581,11 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
-  contextInspector?: 1;
+  preflight?: 1;
   fileReview?: { available: boolean };
   delivery?: true;
+  searchSettings?: true;
+  contextInspector?: 1;
   approvalRules?: ApprovalRulesStatus;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
@@ -1656,6 +1657,26 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'model.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
+    'approval.rules.list',
+    'approval.rules.preview',
+    'approval.rules.receipt',
+    'delivery.get',
+    'delivery.receipt',
+    'delivery.checklist.get',
+    'delivery.checklist.receipt',
+    'delivery.file.bind-receipt',
+    'delivery.decision-receipt',
+    'delivery.stop-receipt',
+    'projectMemory.status',
+    'projectMemory.preview',
+    'projectMemory.list',
+    'projectMemory.read',
+    'projectMemory.versions',
+    'projectMemory.candidates',
+    'projectMemory.candidate',
+    'projectMemory.receipt',
+    'search.status',
+    'search.saved',
     'frame',
     'files.review.read',
     'files.review.diff',
@@ -4135,8 +4156,9 @@ export type RuntimeCommand =
       query: import('./file-review.js').ReviewFileQuery;
     }
   | DeliveryCommand
-  | ApprovalRulesCommand
   | ProjectMemoryCommand
+  | SearchCommand
+  | ApprovalRulesCommand
   | BudgetCommand
   | AutomationCommand
   | ProjectCommand

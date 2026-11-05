@@ -4,6 +4,7 @@ import {
   isRemoteRpcRequest,
   parseRuntimeCommand,
   type RuntimeCommand,
+  type RuntimeConsumer,
   validAgentId,
 } from '@daban/protocol';
 import type { RemoteStore } from './remote-store.js';
@@ -24,7 +25,7 @@ export class RemoteGateway {
     private readonly dispatch: (
       command: RuntimeCommand,
       device?: string,
-      schema?: 1 | 2,
+      consumer?: RuntimeConsumer,
     ) => Promise<unknown>,
     private readonly authorize?: (
       device: string,
@@ -32,7 +33,7 @@ export class RemoteGateway {
       session: string,
     ) => Promise<unknown>,
   ) {}
-  async invoke(device: string, session: string, value: unknown, schema: 1 | 2 = 2) {
+  async invoke(device: string, session: string, value: unknown, consumer?: RuntimeConsumer) {
     if (!validAgentId(session) || !isRemoteRpcRequest(value) || 'type' in value.params)
       throw Error('REMOTE_INVALID_REQUEST');
     const sessionKey = JSON.stringify([device, session]);
@@ -81,7 +82,7 @@ export class RemoteGateway {
         await this.authorize(device, command, session);
         if (this.retired.has(sessionKey)) throw Error('REMOTE_SESSION_CLOSED');
       }
-      return this.dispatch(command, device, schema);
+      return this.dispatch(command, device, consumer);
     });
     if (command.type === 'control') {
       if (command.owner === 'agent') this.owners.delete(command.bot);

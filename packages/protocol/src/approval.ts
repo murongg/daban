@@ -4,6 +4,34 @@ import {
   isApprovalRuleReceipt,
   sameApprovalScope,
 } from './approval-rules.js';
+import { type Interaction, isMcpHistory, isMcpReceipt } from './index.js';
+
+export function approvalInteractionFor(item: Interaction, modern: boolean) {
+  if (modern) return item;
+  const { policyDecision: _policy, purposeScope: _purpose, reply, ...legacy } = item;
+  return {
+    ...legacy,
+    ...(reply
+      ? { reply: reply.kind === 'decision' ? { kind: reply.kind, allow: reply.allow } : reply }
+      : {}),
+  };
+}
+export function approvalMcpFor(value: unknown, modern: boolean): unknown {
+  if (modern) return value;
+  if (isMcpReceipt(value)) {
+    const { policyDecision: _policy, ...legacy } = value;
+    return legacy;
+  }
+  if (isMcpHistory(value))
+    return {
+      ...value,
+      items: value.items.map((item) => {
+        const { policyDecision: _policy, ...legacy } = item;
+        return legacy;
+      }),
+    };
+  return value;
+}
 
 function sameFields(left: object, right: object) {
   const a = left as Record<string, unknown>;

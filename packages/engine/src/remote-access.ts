@@ -21,11 +21,14 @@ import {
   type RemoteState,
   type RemoteViewer,
   type RuntimeCommand,
+  type RuntimeConsumer,
   remoteInvitation,
   remoteReplyFor,
   remoteServer,
   type SnapshotAccept,
+  type SnapshotFormats,
   supportedSnapshotCapabilities,
+  supportedSnapshotFormats,
   validAgentId,
 } from '@daban/protocol';
 import { remoteProof, validRemoteIdentity, verifyRemoteProof } from './remote-crypto.js';
@@ -47,6 +50,7 @@ interface Session {
   captureRequested?: boolean;
   snapshotAccept?: SnapshotAccept;
   snapshotSchema?: 2;
+  snapshotFormats?: SnapshotFormats;
   snapshotHint?: Promise<unknown>;
 }
 interface MediaPlan {
@@ -114,7 +118,11 @@ export class RemoteAccess {
       name: string;
       platform: string;
       peer: RemotePeerPort;
-      dispatch(command: RuntimeCommand, device?: RemoteIdentity, schema?: 1 | 2): Promise<unknown>;
+      dispatch(
+        command: RuntimeCommand,
+        device?: RemoteIdentity,
+        consumer?: RuntimeConsumer,
+      ): Promise<unknown>;
       authorize?(device: RemoteIdentity, command: RuntimeCommand): Promise<unknown>;
       revoke?(device: string): Promise<unknown>;
       snapshot?(value: unknown, host: string): unknown;
@@ -134,11 +142,11 @@ export class RemoteAccess {
     await this.store.ready;
     this.gateway = new RemoteGateway(
       this.store,
-      (command, device, schema) =>
+      (command, device, consumer) =>
         this.options.dispatch(
           command,
           device ? this.store.device(device, 'controller')?.identity : undefined,
-          schema,
+          consumer,
         ),
       this.options.authorize
         ? async (id, command) => {
@@ -632,8 +640,12 @@ export class RemoteAccess {
               workspace: session.workspace,
               accept: supportedSnapshotCapabilities,
             };
-            // Old Hosts keep the first hint and ignore the extension. Neither frame requests an ACK or authority.
-            for (const value of [hint, { ...hint, schema: 2 }]) {
+            // Each old Host keeps its last understood prefix. None of these format hints requests an ACK or authority.
+            for (const value of [
+              hint,
+              { ...hint, schema: 2 },
+              { ...hint, schema: 2, formats: supportedSnapshotFormats },
+            ]) {
               if (!session.connected || this.sessions.get(session.id) !== session) return;
               await this.port(session).send(session.id, JSON.stringify(value));
             }
@@ -713,6 +725,7 @@ export class RemoteAccess {
       ) {
         session.snapshotAccept = structuredClone(value.accept);
         session.snapshotSchema = value.schema;
+        session.snapshotFormats = structuredClone(value.formats ?? {});
       }
       return;
     }
@@ -739,12 +752,10 @@ export class RemoteAccess {
           await this.drop(value.params.id);
           result = { closed: true };
         } else {
-          result = await this.gateway.invoke(
-            session.device.id,
-            session.id,
-            value,
-            session.snapshotSchema ?? 1,
-          );
+          result = await this.gateway.invoke(session.device.id, session.id, value, {
+            schema: session.snapshotSchema,
+            formats: { ...session.snapshotFormats },
+          });
           validateReviewReply(parseRuntimeCommand({ type: value.method, ...value.params }), result);
         }
         reply = {
@@ -759,6 +770,7 @@ export class RemoteAccess {
             result,
             session.snapshotAccept,
             session.snapshotSchema,
+            session.snapshotFormats,
           ),
         };
       } catch (error) {
@@ -883,7 +895,13 @@ export class RemoteAccess {
             type: 'snapshot',
             host: this.keys.identity.id,
             workspace: session.workspace,
-            value: remoteReplyFor('status', value, session.snapshotAccept, session.snapshotSchema),
+            value: remoteReplyFor(
+              'status',
+              value,
+              session.snapshotAccept,
+              session.snapshotSchema,
+              session.snapshotFormats,
+            ),
           }),
           'events',
         );

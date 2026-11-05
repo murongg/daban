@@ -5,6 +5,8 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  approvalInteractionFor,
+  approvalMcpFor,
   approvalRulesCapability,
   automationCapability,
   type BudgetIncreaseRequest,
@@ -691,19 +693,8 @@ export async function startPrototype({
         }
         const groupProtocol = req.headers['x-daban-client-protocol'];
         const modernApprovals = req.headers['x-daban-approval-rules'] === approvalRulesCapability;
-        const interactionView = (item: Interaction) => {
-          if (modernApprovals) return item;
-          const { policyDecision: _policy, purposeScope: _purpose, reply, ...legacy } = item;
-          return {
-            ...legacy,
-            ...(reply
-              ? {
-                  reply:
-                    reply.kind === 'decision' ? { kind: reply.kind, allow: reply.allow } : reply,
-                }
-              : {}),
-          };
-        };
+        const interactionView = (item: Interaction) =>
+          approvalInteractionFor(item, modernApprovals);
         const groupVersion =
           typeof groupProtocol === 'string' && /^[1-9]\d*$/.test(groupProtocol)
             ? Number(groupProtocol)
@@ -1165,32 +1156,8 @@ export async function startPrototype({
             res.once('close', cancel);
             try {
               const result = await integrationCommand(models, data, controller.signal);
-              if (
-                !modernApprovals &&
-                data.type === 'mcp.receipt' &&
-                result &&
-                typeof result === 'object' &&
-                'policyDecision' in result
-              ) {
-                const { policyDecision: _decision, ...legacy } = result;
-                return json(res, legacy);
-              }
-              if (
-                !modernApprovals &&
-                data.type === 'mcp.calls' &&
-                result &&
-                typeof result === 'object' &&
-                'items' in result &&
-                Array.isArray(result.items)
-              )
-                return json(res, {
-                  ...result,
-                  items: result.items.map((item) => {
-                    if (!('policyDecision' in item)) return item;
-                    const { policyDecision: _decision, ...legacy } = item;
-                    return legacy;
-                  }),
-                });
+              if (data.type === 'mcp.calls' || data.type === 'mcp.receipt')
+                return json(res, approvalMcpFor(result, modernApprovals));
               return json(res, result);
             } finally {
               res.off('close', cancel);

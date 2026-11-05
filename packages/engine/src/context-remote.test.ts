@@ -71,6 +71,9 @@ test('real remote sessions project status/connect and pushes for each accepted s
     contextInspector: 1,
     preflight: 1,
     fileReview: { available: true },
+    delivery: true,
+    searchSettings: true,
+    approvalRules: { capability: 'approval-rules-v3' as const, available: true, revision: 0 },
   };
   snapshot.model = {
     ...snapshot.model,
@@ -208,20 +211,51 @@ test('real remote sessions project status/connect and pushes for each accepted s
       schema: 2,
     });
     expect(await read('mock-session-b', 'mock-foreign-schema')).toEqual(disconnected('ready'));
+    message('mock-session-b', {
+      type: 'snapshot-capabilities',
+      host: keys.identity.id,
+      workspace: keys.identity.id,
+      accept: { contextInspector: 1 },
+      schema: 2,
+    });
+    expect(await read('mock-session-b', 'mock-3012-preview')).toEqual({
+      ...disconnected('ready'),
+      contextInspector: 1,
+      model: snapshot.model,
+    });
+    message('mock-session-a', {
+      type: 'snapshot-capabilities',
+      host: keys.identity.id,
+      workspace: keys.identity.id,
+      accept: { contextInspector: 1 },
+      schema: 2,
+      formats: { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true },
+    });
+    const modern = {
+      ...disconnected('ready'),
+      contextInspector: 1,
+      model: snapshot.model,
+      delivery: true,
+      searchSettings: true,
+      approvalRules: snapshot.approvalRules,
+    };
+    expect(await read('mock-session-a', 'mock-exact-formats')).toEqual(modern);
     // The Host's local state and a different peer must retain their own independent schema decisions.
     expect(snapshot).toMatchObject({
       contextInspector: 1,
       preflight: 1,
       fileReview: { available: true },
+      delivery: true,
+      approvalRules: snapshot.approvalRules,
     });
     await new Promise((resolve) => setTimeout(resolve, 1100));
     await vi.waitFor(() => expect(sent.some((item) => item.channel === 'events')).toBe(true));
     for (const event of sent.filter((item) => item.channel === 'events'))
-      expect(event.message.value).toEqual({
-        ...disconnected('ready'),
-        ...(event.session === 'mock-session-a' ? { contextInspector: 1 } : {}),
-        ...(event.session === 'mock-session-a' ? { model: snapshot.model } : {}),
-      });
+      expect(event.message.value).toEqual(
+        event.session === 'mock-session-a'
+          ? modern
+          : { ...disconnected('ready'), contextInspector: 1, model: snapshot.model },
+      );
     receive({ type: 'state', session: 'mock-session-a', state: 'closed' });
     await open('mock-session-reconnected', a);
     expect(await read('mock-session-reconnected', 'mock-empty-after-reconnect')).toEqual(
@@ -267,6 +301,33 @@ test('context and current main observations stay fresh while writes deduplicate 
         params: { query: { scope, revision: 1, ref: { scope, seq: 1 } } },
       },
       { method: 'budget.settings', params: {} },
+      { method: 'approval.rules.list', params: { scope: { kind: 'bot', bot: scope.bot } } },
+      {
+        method: 'approval.rules.receipt',
+        params: { scope: { kind: 'bot', bot: scope.bot }, requestId: 'mock-edit' },
+      },
+      {
+        method: 'approval.rules.preview',
+        params: {
+          scope: { kind: 'bot', bot: scope.bot },
+          trigger: 'interactive',
+          mode: 'auto',
+          selector: { kind: 'url', url: 'https://example.test/synthetic' },
+        },
+      },
+      { method: 'delivery.get', params: { query: { workId: 'mock-work' } } },
+      { method: 'delivery.checklist.get', params: { query: { workId: 'mock-work' } } },
+      { method: 'projectMemory.status', params: {} },
+      {
+        method: 'projectMemory.list',
+        params: { scope: { projectId: 'mock-project', revision: 1 } },
+      },
+      {
+        method: 'projectMemory.receipt',
+        params: { scope: { projectId: 'mock-project', revision: 1 }, requestId: 'mock-memory' },
+      },
+      { method: 'search.status', params: {} },
+      { method: 'search.saved', params: { query: { kind: 'check', requestId: 'mock-search' } } },
       {
         method: 'model.saved',
         params: {
@@ -289,7 +350,7 @@ test('context and current main observations stay fresh while writes deduplicate 
     for (const { method, params } of queries) {
       const request = {
         type: 'request',
-        id: `mock-${method.replace('.', '-')}`,
+        id: `mock-${method.replaceAll('.', '-')}`,
         host: 'a'.repeat(64),
         workspace: 'mock-workspace',
         method,
@@ -416,12 +477,16 @@ test.each([false, true])(
         accept: { contextInspector: 1, preflight: 1, fileReview: 1 },
       });
       expect(sent[1]).toEqual({ ...sent[0], schema: 2 });
-      expect(sent[2].type).toBe('request');
+      expect(sent[2]).toMatchObject({
+        ...sent[1],
+        formats: { approvalRules: 'approval-rules-v3', delivery: true, searchSettings: true },
+      });
+      expect(sent[3].type).toBe('request');
       expect(await controller.request({ type: 'status' }, host.identity.id)).toEqual({
         ...disconnected('ready'),
         contextInspector: 1,
       });
-      expect(sent.filter((message) => message.type === 'snapshot-capabilities')).toHaveLength(2);
+      expect(sent.filter((message) => message.type === 'snapshot-capabilities')).toHaveLength(3);
     } finally {
       await controller.close();
       await rm(root, { recursive: true, force: true });

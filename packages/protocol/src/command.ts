@@ -49,6 +49,7 @@ import {
   isScheduleInput,
   isSchedulePatch,
   isScheduleRule,
+  isSearchCommand,
   isSkillBinding,
   isSkillContent,
   isSkillPackageCommand,
@@ -92,6 +93,7 @@ export function parseRuntimeCommand(value: unknown): RuntimeCommand {
   if (value.type.startsWith('delivery.')) return isDeliveryCommand(value) ? value : fail();
   if (value.type.startsWith('projectMemory.'))
     return isProjectMemoryCommand(value) ? value : fail();
+  if (value.type.startsWith('search.')) return isSearchCommand(value) ? value : fail();
   if (isAutomationCommand(value)) return value;
   if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
