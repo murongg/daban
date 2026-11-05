@@ -1,5 +1,9 @@
-import { isReviewSelection, workspaceReviewCapability } from './file-review.js';
 import { fileObservationCapability } from './automation.js';
+import {
+  isReviewSelection,
+  projectWorkspaceReviewCapability,
+  workspaceReviewCapability,
+} from './file-review.js';
 import { validAgentId } from './id.js';
 import type { BrowserState, ComputerStatus, ModelId } from './index.js';
 import {
@@ -200,7 +204,7 @@ export function isExecutionParams(
     return executionKeys(value, ['root', 'canonical', 'project']) && scope(value);
   if (method === 'workspace.review.capture')
     return (
-      executionKeys(value, ['root', 'canonical', 'paths']) &&
+      executionKeys(value, ['root', 'canonical', 'paths', 'project']) &&
       scope(value) &&
       (value.paths === undefined ||
         (isReviewSelection({ sharedPaths: value.paths }) &&
@@ -347,7 +351,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 7 ||
+    value.capabilities.length > executionCapabilities.length + 8 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
       [
@@ -356,6 +360,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         skillPackageCapability,
         browserTaskCapability,
         workspaceReviewCapability,
+        projectWorkspaceReviewCapability,
         projectCapability,
         fileObservationCapability,
         taskRunCapability,

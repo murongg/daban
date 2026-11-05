@@ -739,7 +739,12 @@ export class RemoteAccess {
           await this.drop(value.params.id);
           result = { closed: true };
         } else {
-          result = await this.gateway.invoke(session.device.id, session.id, value, session.snapshotSchema ?? 1);
+          result = await this.gateway.invoke(
+            session.device.id,
+            session.id,
+            value,
+            session.snapshotSchema ?? 1,
+          );
           validateReviewReply(parseRuntimeCommand({ type: value.method, ...value.params }), result);
         }
         reply = {

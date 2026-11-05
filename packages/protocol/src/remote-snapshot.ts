@@ -1,5 +1,6 @@
 import {
   type Group,
+  isApprovalRulesStatus,
   isAutomationNotice,
   isBotProfile,
   isBrowserState,
@@ -117,7 +118,11 @@ export interface RemoteSnapshotCapabilities {
   accept: SnapshotAccept;
   schema?: 2;
 }
-export const supportedSnapshotCapabilities: SnapshotAccept = { contextInspector: 1, preflight: 1, fileReview: 1 };
+export const supportedSnapshotCapabilities: SnapshotAccept = {
+  contextInspector: 1,
+  preflight: 1,
+  fileReview: 1,
+};
 export function isRemoteSnapshotCapabilities(value: unknown): value is RemoteSnapshotCapabilities {
   return (
     object(value) &&
@@ -146,6 +151,8 @@ export function remoteSnapshotFor(
     wire.model = legacyModel(value.model);
   }
   if (schema !== 2) {
+    delete wire.delivery;
+    delete wire.approvalRules;
     if (object(value.agents))
       wire.agents = Object.fromEntries(
         Object.entries(value.agents).map(([key, item]) => [
@@ -330,6 +337,8 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
     !exact(value, [
       'phase',
       'contextInspector',
+      'delivery',
+      'approvalRules',
       'fileReview',
       'error',
       'protocolVersion',
@@ -369,6 +378,8 @@ export function isRemoteSnapshot(value: unknown): value is RuntimeSnapshot {
         !exact(value.fileReview, ['available']) ||
         typeof value.fileReview.available !== 'boolean')) ||
     (value.contextInspector !== undefined && value.contextInspector !== 1) ||
+    (value.delivery !== undefined && value.delivery !== true) ||
+    (value.approvalRules !== undefined && !isApprovalRulesStatus(value.approvalRules)) ||
     !integer(value.protocolVersion) ||
     !optional(value.error, (error) => text(error, 512)) ||
     typeof value.sharedLogin !== 'boolean' ||

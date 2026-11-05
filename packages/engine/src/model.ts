@@ -65,15 +65,15 @@ import {
   isTokenUsage,
   legacyExecutionToolLimit,
   modelHasVision,
+  modelReference,
+  type ProjectFileRequest,
+  type ProjectScope,
+  projectCapability,
   type ReviewArea,
   type ReviewCapture,
   type ReviewFileQuery,
   type ReviewQuery,
   type ReviewReason,
-  modelReference,
-  type ProjectFileRequest,
-  type ProjectScope,
-  projectCapability,
   replyLimit,
   sameDeliveryReference,
   sameProjectScope,
@@ -3994,15 +3994,16 @@ export class ModelRuns {
     try {
       job.review.pointer = await this.reviews.begin(scope, sharedPaths);
       if (sharedPaths.length) {
-        if (!this.workspace.captureReview || this.workspace.reviewAvailable === false) {
+        const workspace = this.sharedReviewWorkspace(job.project, job.bot);
+        if (!workspace.captureReview || workspace.reviewAvailable === false) {
           job.review.before.push(unavailableReviewCapture('shared', 'unsupported'));
           return;
         }
         signal = AbortSignal.any([job.abort.signal, AbortSignal.timeout(5000)]);
-        const canonical = await this.boundedReviewRead(() => this.workspace.base(signal), signal);
-        job.review.roots.shared = { root: this.workspace.root, canonical };
+        const canonical = await this.boundedReviewRead(() => workspace.base(signal), signal);
+        job.review.roots.shared = { root: workspace.root, canonical };
         job.review.before.push(
-          await this.captureFileReview('shared', this.workspace, sharedPaths, signal),
+          await this.captureFileReview('shared', workspace, sharedPaths, signal),
         );
       }
     } catch {
@@ -4027,7 +4028,7 @@ export class ModelRuns {
     review.before.push(
       await this.captureFileReview(
         'task',
-        this.workspace.scope(job.workdir, job.canonicalRoot),
+        this.workspaceFor(job.project, job.bot, job.id).scope(job.workdir, job.canonicalRoot),
         undefined,
         signal,
       ),
@@ -4058,7 +4059,7 @@ export class ModelRuns {
         after.push(
           await this.captureFileReview(
             'task',
-            this.workspace.scope(job.workdir, job.canonicalRoot),
+            this.workspaceFor(job.project, job.bot, job.id).scope(job.workdir, job.canonicalRoot),
             undefined,
             signal,
           ),
@@ -4073,7 +4074,7 @@ export class ModelRuns {
         after.push(
           await this.captureFileReview(
             'shared',
-            this.workspace.scope(root.root, root.canonical),
+            this.sharedReviewWorkspace(job.project, job.bot).scope(root.root, root.canonical),
             paths,
             signal,
           ),
@@ -4091,39 +4092,61 @@ export class ModelRuns {
   }
   private async reviewOwner(scope: TranscriptScope) {
     try {
-      await this.transcriptOwner(scope);
+      const record = await this.transcriptOwner(scope);
+      if (record.project) this.projects.assertScope(scope.bot, record.project, 'read');
+      return record;
     } catch {
       throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
     }
   }
   async fileReview(query: ReviewQuery) {
     await this.reviewOwner(query.scope);
-    return this.reviews.read(query);
+    const page = await this.reviews.read(query);
+    await this.reviewOwner(query.scope);
+    return page;
   }
   async fileReviewDiff(query: ReviewFileQuery) {
     await this.reviewOwner(query.scope);
-    return this.reviews.diff(query);
+    const diff = await this.reviews.diff(query);
+    await this.reviewOwner(query.scope);
+    return diff;
+  }
+  private sharedReviewWorkspace(project: ProjectScope | undefined, bot: string) {
+    if (!project) return this.workspace;
+    if (!this.execution) throw new Fault('EXECUTION_UPGRADE_REQUIRED');
+    // Omitting runId selects the project's shared files; task captures use the accepted logical run separately.
+    const binding = this.projects.assertScope(bot, project, 'read');
+    return new RemoteWorkspace(this.execution, '', undefined, undefined, binding, () =>
+      this.projects.assertScope(bot, project, 'read'),
+    );
   }
   async fileReviewCurrent(query: ReviewFileQuery) {
-    await this.reviewOwner(query.scope);
-    const record = await this.journal.read(query.scope.bot, query.scope.runId);
-    return this.reviews.current(query, async (root, paths) => {
+    const record = await this.reviewOwner(query.scope);
+    const current = await this.reviews.current(query, async (root, paths) => {
       const signal = AbortSignal.timeout(5000);
+      const workspace =
+        query.area === 'shared'
+          ? this.sharedReviewWorkspace(record.project, query.scope.bot)
+          : this.workspaceFor(record.project, query.scope.bot, query.scope.runId);
+      if (workspace.reviewAvailable === false)
+        return unavailableReviewCapture('shared', 'unsupported');
       if (
         (query.area === 'task' && root.root !== record?.outputDirectory) ||
         (query.area === 'shared' &&
-          (root.root !== this.workspace.root ||
-            root.canonical !==
-              (await this.boundedReviewRead(() => this.workspace.base(signal), signal))))
+          (root.canonical !==
+            (await this.boundedReviewRead(() => workspace.base(signal), signal)) ||
+            root.root !== workspace.root))
       )
         throw new Fault('FILE_REVIEW_NOT_FOUND', 404);
       return this.captureFileReview(
         'shared',
-        this.workspace.scope(root.root, root.canonical),
+        workspace.scope(root.root, root.canonical),
         paths,
         signal,
       );
     });
+    await this.reviewOwner(query.scope);
+    return current;
   }
   private async collectFiles(job: ModelJob) {
     const inputs = new Set(job.inputs),

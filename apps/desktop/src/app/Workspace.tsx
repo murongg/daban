@@ -34,6 +34,7 @@ import { Notes } from '../features/notes/Notes';
 import { Schedules } from '../features/schedules/Schedules';
 import { type MessageKey, t, useLocale } from '../i18n/locale';
 import { profileInput } from './profiles';
+import { useRemote } from './Remote';
 import { runtimeError, useRuntime } from './Runtime';
 import {
   type Action,
@@ -42,6 +43,7 @@ import {
   lifecycleRequest,
   type Panel,
   projectScope,
+  reviewTarget,
   type State,
   sharedReviewPaths,
   type WorkspaceFile,
@@ -80,6 +82,7 @@ export function Workspace({
   useLocale();
   const runtime = useRuntime();
   const reviewRevision = chatRevision(state, bot.id, runtime.snapshot.chats);
+  const target = reviewTarget(useRemote().state);
   const task = agentTask(runtime.snapshot, bot.id);
   const scope = bot.members
     ? runtime.snapshot.groups?.items.find((group) => group.id === bot.id)?.project
@@ -312,7 +315,10 @@ export function Workspace({
           ))}
         {panel === 'files' && runtime.enabled && (
           <RuntimeFiles
-            reviewPaths={sharedReviewPaths(state, bot.id, reviewRevision)}
+            reviewPaths={sharedReviewPaths(state, bot.id, reviewRevision, {
+              project: scope,
+              target,
+            })}
             onReviewPaths={
               !bot.members && !readOnly
                 ? (sharedPaths) =>
@@ -321,6 +327,7 @@ export function Workspace({
                       bot: bot.id,
                       revision: reviewRevision,
                       sharedPaths,
+                      context: { project: scope, target },
                     })
                 : undefined
             }

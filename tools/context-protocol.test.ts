@@ -1,4 +1,5 @@
 import {
+  approvalRulesCapability,
   type ContextCapture,
   contextCategories,
   disconnected,
@@ -12,6 +13,27 @@ import {
   remoteReplyFor,
   remoteSnapshotFor,
 } from '@daban/protocol';
+
+test('the single snapshot schema accepts published delivery and rules fields only for modern peers', () => {
+  const snapshot = {
+    ...disconnected('ready'),
+    delivery: true,
+    approvalRules: { capability: approvalRulesCapability, available: true, revision: 0 },
+  };
+  expect(isRemoteSnapshot(snapshot)).toBe(true);
+  const legacy = remoteSnapshotFor(snapshot, { contextInspector: 1, preflight: 1, fileReview: 1 });
+  expect(legacy).not.toHaveProperty('delivery');
+  expect(legacy).not.toHaveProperty('approvalRules');
+  expect(remoteSnapshotFor(snapshot, {}, 2)).toMatchObject({
+    delivery: true,
+    approvalRules: snapshot.approvalRules,
+  });
+  expect(isRemoteSnapshot({ ...snapshot, delivery: false })).toBe(false);
+  expect(
+    isRemoteSnapshot({ ...snapshot, approvalRules: { ...snapshot.approvalRules, extra: true } }),
+  ).toBe(false);
+});
+
 import { expect, test } from 'vitest';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };

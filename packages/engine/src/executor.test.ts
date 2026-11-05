@@ -1,7 +1,12 @@
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { documentLimit, isReviewCapture, type ProjectResources, workspaceReviewCapability } from '@daban/protocol';
+import {
+  documentLimit,
+  isReviewCapture,
+  type ProjectResources,
+  workspaceReviewCapability,
+} from '@daban/protocol';
 import { expect, type TestContext, test, vi } from 'vitest';
 import { Fault } from './control.js';
 import { RemoteExecutor } from './execution.js';

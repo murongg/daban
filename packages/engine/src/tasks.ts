@@ -19,8 +19,8 @@ import type {
   TaskTrace,
 } from '@daban/protocol';
 import {
-  compareReviewPaths,
   type AutomationSource,
+  compareReviewPaths,
   type DeliveryReference,
   isApprovalMode,
   isAutomationSource,

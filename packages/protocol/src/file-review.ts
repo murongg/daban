@@ -2,6 +2,8 @@ import { safeRuntimePath } from './command.js';
 import { isTranscriptScope, sameTranscriptScope, type TranscriptScope } from './index.js';
 
 export const workspaceReviewCapability = 'workspace-review-v1';
+// Separate proof is required: older capture peers may reject project scopes despite supporting both features.
+export const projectWorkspaceReviewCapability = 'project-workspace-review-v1';
 export const reviewLimits = {
   entries: 2000,
   depth: 16,

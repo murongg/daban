@@ -1,39 +1,21 @@
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import {
-  projectMemoryFingerprint,
-  matchesProjectMemoryReceipt,
-  isProjectPublicationPreview,
-  isProjectMemoryReceipt,
-  isProjectMemoryCommand,
-  isProjectMemoryAvailability,
-  isProjectDocumentVersion,
-  isProjectDocumentInfo,
-  isProjectDocument,
-  isMemoryCandidate,
-  matchesApprovalReceipt,
-  sameApprovalScope,
-  recoveryReader,
-  isPolicyDecision,
-  isDeliveryReceipt,
-  isDeliveryPage,
-  isDeliveryCommand,
-  isDeliveryChecklist,
-  isApprovalRulesStatus,
-  isApprovalRulesSnapshot,
-  isApprovalRulesCommand,
-  isApprovalRuleReceipt,
-  deliveryKey,
-  deliveryAction,
   approvalRulesCapability,
   automationCapability,
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  deliveryAction,
+  deliveryKey,
   diagnosticModel,
   disconnected,
   groupCopyKey,
   imageProtocol,
+  isApprovalRuleReceipt,
+  isApprovalRulesCommand,
+  isApprovalRulesSnapshot,
+  isApprovalRulesStatus,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
@@ -58,6 +40,10 @@ import {
   isComputerAck,
   isComputerStatus,
   isContextView,
+  isDeliveryChecklist,
+  isDeliveryCommand,
+  isDeliveryPage,
+  isDeliveryReceipt,
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
@@ -83,6 +69,7 @@ import {
   isMcpReceipt,
   isMcpSaved,
   isMcpStatus,
+  isMemoryCandidate,
   isMemoryPage,
   isModelAccess,
   isModelAttempts,
@@ -98,6 +85,14 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
+  isPolicyDecision,
+  isProjectDocument,
+  isProjectDocumentInfo,
+  isProjectDocumentVersion,
+  isProjectMemoryAvailability,
+  isProjectMemoryCommand,
+  isProjectMemoryReceipt,
+  isProjectPublicationPreview,
   isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
@@ -132,16 +127,21 @@ import {
   isWorkList,
   isWorkReceipt,
   isWorkStatus,
+  matchesApprovalReceipt,
+  matchesProjectMemoryReceipt,
   noteKey,
   noteQueryKey,
   parseBotJSON,
   projectFileMatches,
+  projectMemoryFingerprint,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  recoveryReader,
+  sameApprovalScope,
   sameProjectScope,
   sameTranscriptScope,
   unavailableLocalComputer,
@@ -366,7 +366,12 @@ export class RuntimeClient {
       headers: {
         host: this.serverHost,
         'x-prototype-token': token,
-        ...(modern ? { 'x-daban-automation': automationCapability } : {}),
+        ...(modern
+          ? {
+              'x-daban-automation': automationCapability,
+              'x-daban-approval-rules': approvalRulesCapability,
+            }
+          : {}),
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
@@ -912,7 +917,7 @@ export class RuntimeClient {
       if (!state.approvalRules || state.approvalRules.capability !== approvalRulesCapability)
         throw new Error('APPROVAL_UPGRADE_REQUIRED');
       if (!state.approvalRules.available) throw new Error('APPROVAL_RULES_UNAVAILABLE');
-      const value = await this.api(
+      const value = await api(
         `/api/approval-rules/${captured.type.slice('approval.rules.'.length)}`,
         captured,
       );
@@ -2175,7 +2180,7 @@ export class RuntimeClient {
           ? await projectMemoryFingerprint(captured.request)
           : undefined;
       const { type, ...payload } = captured;
-      const value = await this.api(
+      const value = await api(
         `/api/project-memory/${type.slice('projectMemory.'.length)}`,
         payload,
       );

@@ -27,8 +27,8 @@ import {
   isGroupActionRequest,
   isGroupCopyRequest,
   isKnowledgeDocument,
-  isReviewSelection,
   isProjectScope,
+  isReviewSelection,
   isSkillDocument,
   type KnowledgeDocument,
   type ModelId,
@@ -36,9 +36,11 @@ import {
   type ProjectScope,
   type ProjectWrite,
   projectFileKey,
+  type RemoteState,
   type RuntimeTaskSummary,
   type ScheduleInput,
   type SkillDocument,
+  sameProjectScope,
   type TaskRequest,
   validAgentId,
 } from '@daban/protocol';
@@ -55,6 +57,19 @@ import { t } from '../i18n/locale';
 import { type Organization, type OrganizationAction, organization, organize } from './organization';
 
 export type Color = 'mint' | 'violet' | 'orange' | 'blue' | 'teal' | 'pink';
+export function reviewTarget(remote?: RemoteState) {
+  return remote?.selected
+    ? JSON.stringify([
+        remote.selected,
+        remote.hosts.find((host) => host.identity.id === remote.selected)?.workspace ??
+          'unavailable',
+      ])
+    : 'local';
+}
+export interface ReviewSelectionContext {
+  project?: ProjectScope;
+  target?: string;
+}
 export function projectScope(state: Pick<State, 'projectScopes'>, bot: string) {
   const scopes = state.projectScopes;
   return scopes && Object.hasOwn(scopes, bot) && isProjectScope(scopes[bot])
@@ -215,7 +230,7 @@ export interface QueuedInsertTarget {
   chatRevision: number;
 }
 export interface QueuedTask {
-  fileReview?: { revision: number; sharedPaths: string[] };
+  fileReview?: { revision: number; sharedPaths: string[]; target?: string };
   project?: ProjectScope;
   id: string;
   prompt: string;
@@ -225,7 +240,11 @@ export interface QueuedTask {
   verify?: QueuedInsertTarget;
 }
 export interface State {
-  fileReviewSelections: Record<string, { revision: number; sharedPaths: string[] }>;
+  fileReviewSelections: Record<
+    string,
+    { revision: number; sharedPaths: string[] } & ReviewSelectionContext
+  >;
+  runtimeReviewTargets?: Record<string, string | undefined>;
   projectScopes?: Record<string, ProjectScope | undefined>;
   projectRequest?: ProjectWrite;
   sampleRevision?: 1 | 2;
@@ -275,14 +294,19 @@ export function messageQueue(state: Pick<State, 'queued'>, bot: string): QueuedT
   return Object.hasOwn(state.queued, bot) ? state.queued[bot] : [];
 }
 export function sharedReviewPaths(
-  state: Pick<State, 'fileReviewSelections'>,
+  state: Pick<State, 'fileReviewSelections' | 'projectScopes'>,
   bot: string,
   revision: number,
+  context: ReviewSelectionContext = { project: projectScope(state, bot) },
 ): string[] {
   const selection = Object.hasOwn(state.fileReviewSelections, bot)
     ? state.fileReviewSelections[bot]
     : undefined;
-  return selection?.revision === revision ? [...selection.sharedPaths] : [];
+  return selection?.revision === revision &&
+    sameProjectScope(selection.project, context.project) &&
+    (selection.target ?? 'local') === (context.target ?? 'local')
+    ? [...selection.sharedPaths]
+    : [];
 }
 function uniqueFileName(name: string, names: Set<string | undefined>) {
   const extension = name.lastIndexOf('.');
@@ -377,9 +401,21 @@ export type Action =
   | { type: 'reply-draft'; id: string; question: string; selected?: string[]; custom?: string }
   | { type: 'profiles'; profiles: BotProfile[] }
   | { type: 'profile-local'; bot: string; name: string; instructions: string }
-  | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
+  | {
+      type: 'runtime-pending';
+      bot: string;
+      task: TaskRequest;
+      refs?: string[];
+      reviewTarget?: string;
+    }
   | { type: 'approval-mode'; bot: string; revision: number; mode: ApprovalMode }
-  | { type: 'file-review-select'; bot: string; revision: number; sharedPaths: string[] }
+  | {
+      type: 'file-review-select';
+      bot: string;
+      revision: number;
+      sharedPaths: string[];
+      context?: ReviewSelectionContext;
+    }
   | { type: 'chats'; items: ChatState[] }
   | { type: 'chat-pending'; bot: string; request: ChatRequest }
   | { type: 'chat-clear'; bot: string; id: string }
@@ -393,7 +429,7 @@ export type Action =
   | { type: 'control'; bot: string; owner: Owner }
   | { type: 'draft'; bot: string; text: string }
   | { type: 'queue-add'; bot: string; task: QueuedTask }
-  | { type: 'queue-edit'; bot: string; id: string }
+  | { type: 'queue-edit'; bot: string; id: string; target?: string }
   | { type: 'queue-remove'; bot: string; id: string }
   | { type: 'queue-promote'; bot: string; id: string }
   | { type: 'queue-insert'; bot: string; id: string; revision: number }
@@ -891,8 +927,12 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: { revision: action.revision, mode: action.mode },
         },
       };
-    case 'file-review-select':
+    case 'file-review-select': {
+      const context = action.context ?? { project: projectScope(state, action.bot) };
       if (
+        (context.project !== undefined && !isProjectScope(context.project)) ||
+        (context.target !== undefined &&
+          (typeof context.target !== 'string' || context.target.length > 512)) ||
         !Number.isSafeInteger(action.revision) ||
         action.revision < chatRevision(state, action.bot) ||
         !isReviewSelection({ sharedPaths: action.sharedPaths }) ||
@@ -906,13 +946,17 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: {
             revision: action.revision,
             sharedPaths: [...action.sharedPaths].sort(compareReviewPaths),
+            ...(context.project ? { project: structuredClone(context.project) } : {}),
+            ...(context.target ? { target: context.target } : {}),
           },
         },
       };
+    }
     case 'runtime-pending':
       return {
         ...state,
         runtimeRequests: { ...state.runtimeRequests, [action.bot]: action.task },
+        runtimeReviewTargets: { ...state.runtimeReviewTargets, [action.bot]: action.reviewTarget },
         runtimeRefs: { ...state.runtimeRefs, [action.bot]: action.refs },
       };
     case 'runtime-clear':
@@ -1074,9 +1118,16 @@ export function reduce(state: State, action: Action): State {
       const clearReview =
         acknowledged &&
         sameContext &&
+        sameProjectScope(pending.project, projectScope(state, action.bot)) &&
+        (state.runtimeReviewTargets?.[action.bot] ?? 'local') ===
+          (state.fileReviewSelections[action.bot]?.target ?? 'local') &&
         !pending.retryOf &&
-        JSON.stringify(sharedReviewPaths(state, action.bot, task.chatRevision ?? 0)) ===
-          JSON.stringify(pending.fileReview?.sharedPaths ?? []);
+        JSON.stringify(
+          sharedReviewPaths(state, action.bot, task.chatRevision ?? 0, {
+            project: pending.project,
+            target: state.runtimeReviewTargets?.[action.bot],
+          }),
+        ) === JSON.stringify(pending.fileReview?.sharedPaths ?? []);
       if (!changed && !acknowledged) return state;
       return {
         ...state,
@@ -1166,6 +1217,8 @@ export function reduce(state: State, action: Action): State {
         task.fileReview &&
         (!Number.isSafeInteger(task.fileReview.revision) ||
           task.fileReview.revision < chatRevision(state, action.bot) ||
+          (task.fileReview.target !== undefined &&
+            (typeof task.fileReview.target !== 'string' || task.fileReview.target.length > 512)) ||
           !isReviewSelection({ sharedPaths: task.fileReview.sharedPaths }))
       )
         return state;
@@ -1218,12 +1271,17 @@ export function reduce(state: State, action: Action): State {
       if (!merged) return state;
       if (
         item.fileReview?.sharedPaths.length &&
-        item.fileReview.revision !== chatRevision(state, action.bot)
+        (item.fileReview.revision !== chatRevision(state, action.bot) ||
+          !sameProjectScope(item.project, projectScope(state, action.bot)) ||
+          (item.fileReview.target ?? 'local') !== (action.target ?? 'local'))
       )
         return state;
       const reviewPaths = [
         ...new Set([
-          ...sharedReviewPaths(state, action.bot, chatRevision(state, action.bot)),
+          ...sharedReviewPaths(state, action.bot, chatRevision(state, action.bot), {
+            project: item.project,
+            target: action.target,
+          }),
           ...(item.fileReview?.sharedPaths ?? []),
         ]),
       ];
@@ -1242,6 +1300,8 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: {
             revision: chatRevision(state, action.bot),
             sharedPaths: reviewPaths.sort(compareReviewPaths),
+            ...(item.project ? { project: item.project } : {}),
+            ...(action.target ? { target: action.target } : {}),
           },
         },
       };

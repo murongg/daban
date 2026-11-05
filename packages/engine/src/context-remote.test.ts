@@ -66,7 +66,12 @@ test('real remote sessions project status/connect and pushes for each accepted s
       return () => {};
     },
   };
-  const snapshot = { ...disconnected('ready'), contextInspector: 1, preflight: 1, fileReview: { available: true } };
+  const snapshot = {
+    ...disconnected('ready'),
+    contextInspector: 1,
+    preflight: 1,
+    fileReview: { available: true },
+  };
   snapshot.model = {
     ...snapshot.model,
     modelAccess: { scope: 'a'.repeat(64), fallback: true, diagnostics: true, cli: false },
@@ -204,7 +209,11 @@ test('real remote sessions project status/connect and pushes for each accepted s
     });
     expect(await read('mock-session-b', 'mock-foreign-schema')).toEqual(disconnected('ready'));
     // The Host's local state and a different peer must retain their own independent schema decisions.
-    expect(snapshot).toMatchObject({ contextInspector: 1, preflight: 1, fileReview: { available: true } });
+    expect(snapshot).toMatchObject({
+      contextInspector: 1,
+      preflight: 1,
+      fileReview: { available: true },
+    });
     await new Promise((resolve) => setTimeout(resolve, 1100));
     await vi.waitFor(() => expect(sent.some((item) => item.channel === 'events')).toBe(true));
     for (const event of sent.filter((item) => item.channel === 'events'))
@@ -404,7 +413,7 @@ test.each([false, true])(
         type: 'snapshot-capabilities',
         host: host.identity.id,
         workspace: host.identity.id,
-        accept: { contextInspector: 1 },
+        accept: { contextInspector: 1, preflight: 1, fileReview: 1 },
       });
       expect(sent[1]).toEqual({ ...sent[0], schema: 2 });
       expect(sent[2].type).toBe('request');

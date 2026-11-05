@@ -77,7 +77,7 @@ import { useAttention } from './attention';
 import { useCache } from './CacheProvider';
 import { clientCache } from './cache';
 import { profileInput, useProfiles } from './profiles';
-import { RemoteProvider, RemoteWorkspace } from './Remote';
+import { RemoteProvider, RemoteWorkspace, useRemote } from './Remote';
 import { runtimeError, useRuntime } from './Runtime';
 import { Sidebar } from './Sidebar';
 import {
@@ -92,6 +92,7 @@ import {
   projectScope,
   type QueuedTask,
   reduce,
+  reviewTarget,
   sharedReviewPaths,
   type WorkspaceFile,
 } from './state';
@@ -181,6 +182,7 @@ function Workbench() {
   useLocale();
   const cache = useCache();
   const runtime = useRuntime();
+  const fileReviewTarget = reviewTarget(useRemote().state);
   const submitting = useRef(new Set<string>());
   const draining = useRef(new Set<string>());
   const awaitingRun = useRef(new Map<string, { runId: string; at: number }>());
@@ -421,9 +423,21 @@ function Workbench() {
         : state.attachments[botId].map((id) => state.files.find((f) => f.id === id))
     ).filter((f): f is WorkspaceFile => !!f);
     const reviewRevision = chatRevision(state, botId, runtime.snapshot.chats);
+    const reviewContext = { project: projectScope(state, botId), target: fileReviewTarget };
     const reviewPaths = queued
       ? [...(queued.fileReview?.sharedPaths ?? [])]
-      : sharedReviewPaths(state, botId, reviewRevision);
+      : sharedReviewPaths(state, botId, reviewRevision, reviewContext);
+    const pendingReview = state.runtimeRequests[botId];
+    if (
+      (pendingReview?.fileReview?.sharedPaths.length &&
+        state.runtimeReviewTargets?.[botId] !== fileReviewTarget) ||
+      (!pendingReview &&
+        queued?.fileReview?.sharedPaths.length &&
+        (queued.fileReview.target ?? 'local') !== fileReviewTarget)
+    ) {
+      notify(t('fileReview.selectionStale'));
+      return skipped;
+    }
     if (
       !state.runtimeRequests[botId] &&
       !continued &&
@@ -501,7 +515,7 @@ function Workbench() {
           task.goalResume = targetGoal;
         }
       }
-      dispatch({ type: 'runtime-pending', bot: botId, task, refs });
+      dispatch({ type: 'runtime-pending', bot: botId, task, refs, reviewTarget: fileReviewTarget });
       if (runtime.snapshot.protocolVersion >= 3) {
         const entry = state.bots.find((bot) => bot.id === botId);
         if (entry)
@@ -631,10 +645,12 @@ function Workbench() {
         files: files.map((file) => file.id),
         fileReview: {
           revision: chatRevision(state, botId, runtime.snapshot.chats),
+          target: fileReviewTarget,
           sharedPaths: sharedReviewPaths(
             state,
             botId,
             chatRevision(state, botId, runtime.snapshot.chats),
+            { project: projectScope(state, botId), target: fileReviewTarget },
           ),
         },
         ...(projectScope(state, botId) ? { project: projectScope(state, botId) } : {}),
@@ -1060,8 +1076,10 @@ function Workbench() {
                           if (!item || item.verify || item.sending) return;
                           if (
                             item.fileReview?.sharedPaths.length &&
-                            item.fileReview.revision !==
-                              chatRevision(state, bot.id, runtime.snapshot.chats)
+                            (item.fileReview.revision !==
+                              chatRevision(state, bot.id, runtime.snapshot.chats) ||
+                              !sameProjectScope(item.project, projectScope(state, bot.id)) ||
+                              (item.fileReview.target ?? 'local') !== fileReviewTarget)
                           ) {
                             notify(t('fileReview.selectionStale'));
                             return;
@@ -1071,6 +1089,7 @@ function Workbench() {
                               state,
                               bot.id,
                               chatRevision(state, bot.id, runtime.snapshot.chats),
+                              { project: projectScope(state, bot.id), target: fileReviewTarget },
                             ),
                             ...(item.fileReview?.sharedPaths ?? []),
                           ]);
@@ -1096,7 +1115,12 @@ function Workbench() {
                             notify(t('chat.queuedMessageEditAttachmentsFull'));
                             return;
                           }
-                          dispatch({ type: 'queue-edit', bot: bot.id, id });
+                          dispatch({
+                            type: 'queue-edit',
+                            bot: bot.id,
+                            id,
+                            target: fileReviewTarget,
+                          });
                         }
                       : undefined
                   }

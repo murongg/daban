@@ -11,9 +11,9 @@ import {
   isGroupSend,
   isKnowledgeContent,
   isModelId,
-  isReviewSelection,
   isProjectScope,
   isProjectWrite,
+  isReviewSelection,
   isScheduleInput,
   validAgentId,
 } from '@daban/protocol';
@@ -58,8 +58,8 @@ export function restore(raw: string | null): State {
     const saved: unknown = JSON.parse(raw || 'null');
     if (!record(saved) || saved.version !== 1 || !record(saved.state)) return initialState();
     const s = saved.state;
-    s.comments = restoreComments(s.comments);
-    s.work = restoreWork(s.work);
+    if (s.comments !== undefined) s.comments = restoreComments(s.comments);
+    if (s.work !== undefined) s.work = restoreWork(s.work);
     if (!isBotImportReference(s.botImport)) delete s.botImport;
     if (!isBotCopyRequest(s.botCopy)) delete s.botCopy;
     if (!isGroupCopyRequest(s.groupCopy)) delete s.groupCopy;
@@ -98,12 +98,24 @@ export function restore(raw: string | null): State {
         ([bot, value]) =>
           ids.includes(bot) &&
           record(value) &&
-          Object.keys(value).every((key) => ['revision', 'sharedPaths'].includes(key)) &&
+          Object.keys(value).every((key) =>
+            ['revision', 'sharedPaths', 'project', 'target'].includes(key),
+          ) &&
+          (value.project === undefined || isProjectScope(value.project)) &&
+          (value.target === undefined ||
+            (typeof value.target === 'string' && value.target.length <= 512)) &&
           Number.isSafeInteger(value.revision) &&
           Number(value.revision) >= 0 &&
           isReviewSelection({ sharedPaths: value.sharedPaths }),
       ),
     );
+    if (s.runtimeReviewTargets !== undefined)
+      s.runtimeReviewTargets = Object.fromEntries(
+        Object.entries(record(s.runtimeReviewTargets) ? s.runtimeReviewTargets : {}).filter(
+          ([bot, target]) =>
+            ids.includes(bot) && typeof target === 'string' && target.length <= 512,
+        ),
+      );
     if (s.projectScopes !== undefined) {
       s.projectScopes = Object.fromEntries(
         Object.entries(record(s.projectScopes) ? s.projectScopes : {}).filter(

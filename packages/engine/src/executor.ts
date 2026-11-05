@@ -26,6 +26,7 @@ import {
   type ProjectScope,
   projectCapability,
   projectReduction,
+  projectWorkspaceReviewCapability,
   skillPackageCapability,
   taskRunCapability,
   validAgentId,
@@ -606,6 +607,9 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           skillPackageCapability,
           browserTaskCapability,
           ...(workspace.reviewAvailable ? [workspaceReviewCapability] : []),
+          ...(workspace.reviewAvailable && projects.available()
+            ? [projectWorkspaceReviewCapability]
+            : []),
           taskRunCapability,
           fileObservationCapability,
           ...(projects.available() ? [projectCapability] : []),
@@ -664,8 +668,12 @@ export async function startExecutor(options: ExecutorOptions = {}) {
       const files = await scoped(params);
       if (method === 'workspace.base') return files.base();
       if (method === 'workspace.list') return files.list();
-      if (method === 'workspace.review.capture')
-        return files.captureReview(params.paths as string[] | undefined, signal);
+      if (method === 'workspace.review.capture') {
+        const capture = await files.captureReview(params.paths as string[] | undefined, signal);
+        if (isProjectFileScope(params.project))
+          projects.get(params.project.scope, params.project.bot);
+        return capture;
+      }
       if (method === 'workspace.read')
         return files.read(
           String(params.path),

@@ -137,7 +137,7 @@ test('remote reply validation binds scope/revision and sends the existing schema
     await controller.request({ type: 'status' }, host.identity.id);
     expect(sent[0]).toMatchObject({
       type: 'snapshot-capabilities',
-      accept: { contextInspector: 1, fileReview: 1 },
+      accept: { contextInspector: 1, preflight: 1, fileReview: 1 },
     });
     const query = { scope, revision: 1, area: 'task' as const, path: 'input.txt' };
     response = { ...query, scope: { ...scope, bot: 'mock-other' }, state: 'matching' };

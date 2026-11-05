@@ -1,5 +1,6 @@
 import {
   disconnected,
+  type RemoteState,
   type ReviewPage,
   type RuntimeCommand,
   type RuntimeReply,
@@ -10,6 +11,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RuntimeProvider } from '../../app/Runtime';
 import { FileReview } from './FileReview';
+
+const remote = vi.hoisted(() => ({ state: undefined as RemoteState | undefined }));
+vi.mock('../../app/Remote', () => ({ useRemote: () => remote }));
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
 const present = {
@@ -72,6 +76,60 @@ function bridge(read: (command: RuntimeCommand) => unknown | Promise<unknown>, a
   return invoke;
 }
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
+afterEach(() => {
+  remote.state = undefined;
+});
+
+it('a workspace change closes the old evidence view and fences its late reply even for equal task IDs', async () => {
+  const identity = { id: 'a'.repeat(64), publicKey: 'SYNTHETIC KEY', name: 'SYNTHETIC HOST' };
+  remote.state = {
+    selected: identity.id,
+    identity,
+    hosting: false,
+    server: 'https://relay.example.test',
+    pending: [],
+    hosts: [
+      {
+        identity,
+        workspace: 'mock-first',
+        server: 'https://relay.example.test',
+        platform: 'synthetic',
+        state: 'connected',
+        transport: 'direct',
+      },
+    ],
+  };
+  let finish: (value: ReviewPage) => unknown = () => {};
+  const earlier = new Promise<ReviewPage>((resolve) => {
+    finish = resolve;
+  });
+  let calls = 0;
+  bridge(() => (++calls === 1 ? earlier : page(2)));
+  const view = render(
+    <RuntimeProvider>
+      <FileReview scope={scope} />
+    </RuntimeProvider>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: '文件审阅' }));
+  remote.state = {
+    ...remote.state,
+    hosts: [{ ...remote.state.hosts[0], workspace: 'mock-second' }],
+  };
+  view.rerender(
+    <RuntimeProvider>
+      <FileReview scope={scope} />
+    </RuntimeProvider>,
+  );
+  expect(screen.queryByRole('dialog', { name: '文件审阅' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '文件审阅' }));
+  expect(await screen.findByText('证据版本 #2')).toBeVisible();
+  await act(async () => {
+    finish(page());
+    await earlier;
+  });
+  expect(screen.queryByText('证据版本 #1')).not.toBeInTheDocument();
+});
 
 it('does not describe a partial baseline as successfully recorded', async () => {
   bridge(() => ({

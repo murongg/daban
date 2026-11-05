@@ -19,7 +19,9 @@ import {
 } from '@daban/protocol';
 import { Files } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRemote } from '../../app/Remote';
 import { useRuntime } from '../../app/Runtime';
+import { reviewTarget } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
 import { Dialog } from '../../components/controls/Dialog';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
@@ -481,5 +483,6 @@ function Review({ scope }: { scope: TranscriptScope }) {
 
 export function FileReview({ scope }: { scope: TranscriptScope }) {
   useLocale();
-  return <Review key={JSON.stringify(scope)} scope={scope} />;
+  const target = reviewTarget(useRemote().state);
+  return <Review key={JSON.stringify([target, scope])} scope={scope} />;
 }

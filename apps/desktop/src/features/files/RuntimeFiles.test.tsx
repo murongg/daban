@@ -418,3 +418,37 @@ it('image previews retain the selected project instead of reading a same-named l
     backend.invoke.mock.calls.find(([command]) => command.type === 'files.download')?.[0],
   ).toMatchObject({ project });
 });
+
+it('a same-named legacy file does not inherit a project review choice and an uncertain request keeps its scope locked', async () => {
+  const state = seedDemoState();
+  const project = { projectId: 'mock-alpha', revision: 1 };
+  state.projectScopes = { [state.selected]: project };
+  localStorage.setItem(seedStorageKey, seedSerialize(state));
+  const backend = connect();
+  backend.review();
+  const fallback = backend.invoke.getMockImplementation()!;
+  backend.invoke.mockImplementation(async (command) =>
+    command.type === 'task.start' ? { ok: false, error: 'RUNTIME_UNAVAILABLE' } : fallback(command),
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await screen.findByRole('tab', { name: '文件' }));
+  await user.click(await screen.findByRole('checkbox', { name: '同时审阅 report.csv' }));
+  const selector = screen.getByRole('button', { name: /任务项目范围/ });
+  await waitFor(() => expect(selector).toBeEnabled());
+  await user.click(selector);
+  await user.click(screen.getByRole('option', { name: '原共享环境' }));
+  expect(await screen.findByRole('checkbox', { name: '同时审阅 report.csv' })).not.toBeChecked();
+  await user.click(screen.getByRole('checkbox', { name: '同时审阅 report.csv' }));
+  await user.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC LEGACY REVIEW');
+  await user.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(screen.getByRole('button', { name: /任务项目范围/ })).toBeDisabled();
+  await user.click(await screen.findByRole('button', { name: '重试发送' }));
+  const starts = backend.invoke.mock.calls
+    .map(([command]) => command)
+    .filter((command) => command.type === 'task.start');
+  expect(starts).toHaveLength(2);
+  expect(starts[0]).toEqual(starts[1]);
+  expect(starts[0]).toMatchObject({ task: { fileReview: { sharedPaths: [file.path] } } });
+  expect(starts[0].task.project).toBeUndefined();
+});

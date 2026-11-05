@@ -35,6 +35,7 @@ export const suites = {
     'file-diff.test',
     'file-review.test',
     'file-review-model.test',
+    'file-review-project.test',
     'file-review-api.test',
     'file-review-remote.test',
     'file-review.integration',

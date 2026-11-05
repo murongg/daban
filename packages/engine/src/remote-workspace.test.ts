@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isExecutionRequest, workspaceReviewCapability } from '@daban/protocol';
+import { isExecutionRequest, projectCapability, workspaceReviewCapability } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { RemoteWorkspace } from './remote-workspace.js';
 
@@ -52,6 +52,59 @@ test('capture protocol accepts only root-bound recursive or exact path requests'
   expect(isExecutionRequest({ ...request, params: { paths: ['../private'] } })).toBe(false);
   expect(isExecutionRequest({ ...request, params: { paths: ['input', 'input'] } })).toBe(false);
   expect(isExecutionRequest({ ...request, params: { restore: true } })).toBe(false);
+  const project = {
+    scope: { projectId: 'mock-project', revision: 1 },
+    resourceId: 'mock-files',
+    bot: 'mock-bot',
+  };
+  expect(isExecutionRequest({ ...request, params: { ...request.params, project } })).toBe(true);
+  expect(isExecutionRequest({ ...request, params: { project: { ...project, extra: true } } })).toBe(
+    false,
+  );
+});
+
+test('project review requires the composed capability and retains its authorization after scope and await', async () => {
+  const project = {
+    scope: { projectId: 'mock-project', revision: 1 },
+    resourceId: 'mock-files',
+    bot: 'mock-bot',
+  };
+  let authorized = true;
+  let count = 0;
+  const authorize = () => {
+    if (!authorized) throw Error('SYNTHETIC REVOKED');
+  };
+  const execution = {
+    snapshot: { capabilities: [workspaceReviewCapability, projectCapability] },
+    async call() {
+      count++;
+      authorized = false;
+      const at = '2026-01-01T00:00:00.000Z';
+      return {
+        snapshot: {
+          area: 'shared',
+          capture: 'complete',
+          reasons: [],
+          omitted: 0,
+          startedAt: at,
+          endedAt: at,
+        },
+        files: [],
+        texts: [],
+      };
+    },
+  };
+  const files = new RemoteWorkspace(execution, '', undefined, undefined, project, authorize).scope(
+    '/synthetic/project',
+    '/synthetic/project',
+  );
+  expect((await files.captureReview(['same.txt'])).snapshot).toMatchObject({
+    reasons: ['unsupported'],
+  });
+  expect(count).toBe(0);
+  execution.snapshot.capabilities.push('project-workspace-review-v1');
+  await expect(files.captureReview(['same.txt'])).rejects.toThrow('SYNTHETIC REVOKED');
+  expect(count).toBe(1);
 });
 
 test('remote capture is capability-gated, root-bound, signal-bounded and checks returned text bytes', async () => {

@@ -1,4 +1,4 @@
-import { type Group, type GroupSend, isTaskFile } from '@daban/protocol';
+import { type Group, type GroupSend, isTaskFile, type RemoteState } from '@daban/protocol';
 import { describe, expect, it } from 'vitest';
 import { attachment, stagedAttachment, taskFile } from '../features/files/files';
 import { demoState as initialState } from '../test/fixtures';
@@ -9,10 +9,197 @@ import {
   lifecycleRequest,
   messageQueue,
   reduce,
+  reviewTarget,
   sharedReviewPaths,
   skillDraft,
 } from './state';
 import { restore, serialize } from './storage';
+
+it('review target identity changes with either the Host or its workspace', () => {
+  const identity = { id: 'a'.repeat(64), publicKey: 'SYNTHETIC KEY', name: 'SYNTHETIC HOST' };
+  const remote: RemoteState = {
+    selected: identity.id,
+    identity,
+    hosting: false,
+    server: 'https://relay.example.test',
+    pending: [],
+    hosts: [
+      {
+        identity,
+        workspace: 'mock-workspace-a',
+        server: 'https://relay.example.test',
+        platform: 'synthetic',
+        state: 'connected',
+        transport: 'direct',
+      },
+    ],
+  };
+  const original = reviewTarget(remote);
+  expect(
+    reviewTarget({ ...remote, hosts: [{ ...remote.hosts[0], workspace: 'mock-workspace-b' }] }),
+  ).not.toBe(original);
+  expect(reviewTarget({ ...remote, selected: 'b'.repeat(64) })).not.toBe(original);
+  expect(reviewTarget()).toBe('local');
+});
+
+it('shared review selections never cross project IDs or revisions and pending ownership stays frozen', () => {
+  let state = initialState();
+  const alpha = { projectId: 'mock-alpha', revision: 1 };
+  state = reduce(state, { type: 'project-scope', bot: 'research', scope: alpha });
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['same.txt'],
+  });
+  expect(sharedReviewPaths(state, 'research', 0)).toEqual(['same.txt']);
+  const task = {
+    requestId: 'mock-project-uncertain',
+    prompt: 'SYNTHETIC',
+    project: alpha,
+    fileReview: { sharedPaths: ['same.txt'] },
+  };
+  state = reduce(state, { type: 'runtime-pending', bot: 'research', task });
+  state = reduce(state, {
+    type: 'queue-add',
+    bot: 'research',
+    task: {
+      id: 'mock-project-queued',
+      prompt: 'SYNTHETIC',
+      files: [],
+      project: alpha,
+      fileReview: { revision: 0, sharedPaths: ['same.txt'] },
+    },
+  });
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['same.txt'],
+  });
+  for (const scope of [
+    { projectId: 'mock-beta', revision: 1 },
+    { ...alpha, revision: 2 },
+    undefined,
+  ]) {
+    const changed = reduce(state, { type: 'project-scope', bot: 'research', scope });
+    expect(sharedReviewPaths(changed, 'research', 0)).toEqual([]);
+    expect(changed.runtimeRequests.research).toEqual(task);
+    expect(messageQueue(changed, 'research')[0].project).toEqual(alpha);
+    expect(
+      reduce(changed, { type: 'queue-edit', bot: 'research', id: 'mock-project-queued' }),
+    ).toBe(changed);
+    expect(sharedReviewPaths(restore(serialize(changed)), 'research', 0)).toEqual([]);
+  }
+});
+
+it('shared review choices and queue editing are bound to the original Host workspace', () => {
+  let state = initialState();
+  const first = { target: 'mock-host:mock-workspace-a' };
+  const other = { target: 'mock-host:mock-workspace-b' };
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['same.txt'],
+    context: first,
+  });
+  expect(sharedReviewPaths(state, 'research', 0, first)).toEqual(['same.txt']);
+  expect(sharedReviewPaths(state, 'research', 0, other)).toEqual([]);
+  state = reduce(state, {
+    type: 'queue-add',
+    bot: 'research',
+    task: {
+      id: 'mock-other-workspace',
+      prompt: 'SYNTHETIC',
+      files: [],
+      fileReview: { revision: 0, sharedPaths: ['same.txt'], target: first.target },
+    },
+  });
+  expect(
+    reduce(state, {
+      type: 'queue-edit',
+      bot: 'research',
+      id: 'mock-other-workspace',
+      target: other.target,
+    }),
+  ).toBe(state);
+  expect(sharedReviewPaths(restore(serialize(state)), 'research', 0, other)).toEqual([]);
+});
+
+it('an old project receipt cannot clear a new project choice with the same filename', () => {
+  const alpha = { projectId: 'mock-alpha', revision: 1 };
+  const beta = { projectId: 'mock-beta', revision: 1 };
+  let state = initialState();
+  state = reduce(state, {
+    type: 'runtime-pending',
+    bot: 'research',
+    task: {
+      requestId: 'mock-alpha-request',
+      prompt: 'SYNTHETIC',
+      project: alpha,
+      fileReview: { sharedPaths: ['same.txt'] },
+    },
+  });
+  state = reduce(state, { type: 'project-scope', bot: 'research', scope: beta });
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['same.txt'],
+  });
+  state = reduce(state, {
+    type: 'runtime-task',
+    bot: 'research',
+    task: {
+      runId: 'mock-alpha-run',
+      requestId: 'mock-alpha-request',
+      prompt: 'SYNTHETIC',
+      project: alpha,
+      phase: 'completed',
+      result: '',
+      error: '',
+      files: [],
+    },
+  });
+  expect(sharedReviewPaths(state, 'research', 0)).toEqual(['same.txt']);
+});
+
+it('an accepted remote review clears only the matching workspace selection', () => {
+  const target = 'mock-host:mock-workspace';
+  let state = initialState();
+  state = reduce(state, {
+    type: 'file-review-select',
+    bot: 'research',
+    revision: 0,
+    sharedPaths: ['same.txt'],
+    context: { target },
+  });
+  state = reduce(state, {
+    type: 'runtime-pending',
+    bot: 'research',
+    reviewTarget: target,
+    task: {
+      requestId: 'mock-remote-request',
+      prompt: 'SYNTHETIC',
+      fileReview: { sharedPaths: ['same.txt'] },
+    },
+  });
+  state = reduce(state, {
+    type: 'runtime-task',
+    bot: 'research',
+    task: {
+      runId: 'mock-remote-run',
+      requestId: 'mock-remote-request',
+      prompt: 'SYNTHETIC',
+      phase: 'completed',
+      result: '',
+      error: '',
+      files: [],
+    },
+  });
+  expect(sharedReviewPaths(state, 'research', 0, { target })).toEqual([]);
+});
 
 it('keeps shared file choices within one Bot revision and freezes queued and uncertain requests', () => {
   let state = initialState();

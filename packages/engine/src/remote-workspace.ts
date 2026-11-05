@@ -1,6 +1,9 @@
 import path from 'node:path';
+import type { ProjectFileScope } from '@daban/protocol';
 import {
   isReviewSelection,
+  projectCapability,
+  projectWorkspaceReviewCapability,
   type ReviewCapture,
   type RuntimeDownload,
   reviewLimits,
@@ -8,7 +11,6 @@ import {
   skillPackageCapability,
   workspaceReviewCapability,
 } from '@daban/protocol';
-import type { ProjectFileScope } from '@daban/protocol';
 import { Fault } from './control.js';
 import type { AgentWorkspace, TaskDirectory, WorkspaceFile } from './workspace.js';
 import { checkedReviewCapture, unavailableReviewCapture } from './workspace-review.js';
@@ -37,7 +39,13 @@ export class RemoteWorkspace implements AgentWorkspace {
     private readonly authorize?: () => unknown,
   ) {}
   get reviewAvailable() {
-    return this.execution.snapshot?.capabilities.includes(workspaceReviewCapability) ?? false;
+    const capabilities = this.execution.snapshot?.capabilities;
+    return (
+      !!capabilities?.includes(workspaceReviewCapability) &&
+      (!this.project ||
+        (capabilities.includes(projectCapability) &&
+          capabilities.includes(projectWorkspaceReviewCapability)))
+    );
   }
   private params(extra: Record<string, unknown> = {}) {
     this.authorize?.();
@@ -70,6 +78,8 @@ export class RemoteWorkspace implements AgentWorkspace {
         bounded,
       ),
     );
+    // A scope can be revoked while guest IO is pending; returned bytes must retain the original authorization.
+    this.authorize?.();
     if (
       result.snapshot.area !== (selected ? 'shared' : 'task') ||
       (selected && result.files.some((file) => !selected.includes(file.path)))
