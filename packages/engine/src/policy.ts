@@ -245,34 +245,42 @@ export function apply(
       }
       const needsApproval =
         hostDecision?.effect === 'ask' || config.approvalMode === 'ask' || !url || !urls.has(url);
-      const approvedDispatch = async () =>
-        dispatch(async () => {
-          if (!ownsRead()) return blocked();
-          if (hostDecision && bridge) {
-            try {
-              const checked = await callBridge(
-                bridge,
-                'approval.web.check',
-                { url, sessionId, decision: hostDecision },
-                exec.signal,
-                request,
-              );
-              if (
-                !checked ||
-                typeof checked !== 'object' ||
-                !('current' in checked) ||
-                checked.current !== true
-              )
-                return blocked();
-            } catch {
+      const checkRead = async () => {
+        if (!ownsRead()) return blocked();
+        if (hostDecision && bridge) {
+          try {
+            const checked = await callBridge(
+              bridge,
+              'approval.web.check',
+              { url, sessionId, decision: hostDecision },
+              exec.signal,
+              request,
+            );
+            if (
+              !checked ||
+              typeof checked !== 'object' ||
+              !('current' in checked) ||
+              checked.current !== true
+            )
               return blocked();
-            }
+          } catch {
+            return blocked();
           }
-          if (exec.signal.aborted) return { kind: 'cancel' };
-          // Approval and Host checks can wait while the child is removed or the root task changes.
-          if (!ownsRead()) return blocked();
+        }
+        if (exec.signal.aborted) return { kind: 'cancel' };
+        // Approval and Host checks can wait while the child is removed or the root task changes.
+        if (!ownsRead()) return blocked();
+      };
+      const approvedDispatch = async () => {
+        // A refusal already visible after the Human wait must not consume shared tool quota.
+        const refused = await checkRead();
+        if (refused) return refused;
+        return dispatch(async () => {
+          const changed = await checkRead();
+          if (changed) return changed;
           return next();
         });
+      };
       // Page text cannot authorize another destination or append private data to an approved URL.
       if (url && needsApproval && exec.agent && ctx.approval) {
         const decision = await ctx.approval.request({

@@ -11,6 +11,102 @@ function rootAgents(sessionId: string) {
   };
 }
 
+test.each(['human', 'revoked', 'owner'] as const)(
+  'a child %s refusal after the approval wait consumes no shared tool claim',
+  async (reason) => {
+    let pre: (
+      exec: {
+        signal: AbortSignal;
+        name: string;
+        arguments: unknown;
+        agent?: unknown;
+        token?: symbol;
+      },
+      next: () => Promise<unknown>,
+    ) => Promise<unknown> = async () => undefined;
+    const root = { id: 'mock-root', session: { id: 'mock-root-session' } };
+    const child = { id: 'mock-child', session: { id: 'mock-child-session' } };
+    const scope = { kind: 'bot' as const, bot: 'mock-bot' };
+    const selector = { kind: 'url' as const, url: 'https://example.test/child' };
+    let present = true;
+    let current = true;
+    let claims = 0;
+    let effects = 0;
+    apply(
+      {
+        agents: {
+          roots: () => [root],
+          get: (id) => (id === root.id ? root : present && id === child.id ? child : undefined),
+          isOwnedBy: (id, owner) => id === child.id && owner === root,
+        },
+        approval: {
+          request: async (request) => {
+            expect(request.agent).toBe(child);
+            current = reason !== 'revoked';
+            present = reason !== 'owner';
+            return reason === 'human' ? 'rejected' : 'allowed-once';
+          },
+        },
+        on: (...hook: unknown[]) => {
+          if (hook[0] === 'tools/pre-execute') pre = hook[1] as typeof pre;
+        },
+      },
+      {
+        limit: 10,
+        urls: [],
+        attemptId: 'mock-attempt',
+        budget: { budgetId: 'mock-budget', revision: 1 },
+        url: 'http://127.0.0.1/mcp/mock-bot',
+        capability: 'synthetic-capability',
+      },
+      async (_url, init) => {
+        const body = JSON.parse(String(init.body)) as {
+          method: string;
+          params: { sessionId?: string };
+        };
+        if (body.method === 'budget.tool') {
+          claims++;
+          expect(body.params.sessionId).toBe(root.session.id);
+        }
+        return Response.json({
+          result:
+            body.method === 'approval.web'
+              ? {
+                  effect: 'ask',
+                  source: 'rule',
+                  reasonCode: 'ruleAsked',
+                  matchedRules: [],
+                  policyRevision: 1,
+                  requestHash: approvalHash([scope, 'interactive', selector]),
+                  scope,
+                  trigger: 'interactive',
+                  selector,
+                }
+              : body.method === 'approval.web.check'
+                ? { current }
+                : { accepted: true },
+        });
+      },
+    );
+    const result = await pre(
+      {
+        signal: new AbortController().signal,
+        name: 'web_fetch',
+        arguments: { url: selector.url },
+        agent: child,
+        token: Symbol('synthetic-child'),
+      },
+      async () => {
+        effects++;
+        return { kind: 'allow' };
+      },
+    );
+    expect(result).toMatchObject({ kind: 'deny' });
+    expect(effects).toBe(0);
+    expect(claims).toBe(0);
+  },
+);
+
 test.each(['review', 'budget'] as const)(
   'a physical attempt changed during %s cannot reach the native body',
   async (stage) => {
@@ -461,7 +557,7 @@ test('owned read-only children use the accepted root session for exact web rules
     },
   );
   expect(effects).toBe(1);
-  expect(sessions).toEqual([root.session.id, root.session.id]);
+  expect(sessions).toEqual([root.session.id, root.session.id, root.session.id]);
 });
 
 test.each([
