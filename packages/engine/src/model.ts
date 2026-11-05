@@ -1845,7 +1845,7 @@ export class ModelRuns {
     if (task?.retryOf || task?.goalResume) {
       const prior = task.retryOf ? await this.journal.read(bot, task.retryOf) : undefined;
       const recorded = task.retryOf ? prior?.automation : this.goalAutomation(task.goalResume!);
-      // Raising a quota never widens the accepted approval policy; legacy records without it remain unspecified.
+      // Retries retain the accepted approval policy; legacy records without it remain unspecified.
       if (task.retryOf && task.approvalMode === undefined && prior?.approvalMode)
         task.approvalMode = prior.approvalMode;
       if (trustedSource && !isDeepStrictEqual(trustedSource, recorded))
