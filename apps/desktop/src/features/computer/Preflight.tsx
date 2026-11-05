@@ -15,7 +15,7 @@ import {
   preflightJson,
   preflightReportData,
 } from '@daban/protocol';
-import { ClipboardCheck } from 'lucide-react';
+import { ChevronDown, ClipboardCheck } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import { Dialog } from '../../components/controls/Dialog';
@@ -159,6 +159,8 @@ function Panel({
   const [items, setItems] = useState<PreflightOptions['items']>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [optionsBusy, setOptionsBusy] = useState(false);
   const [report, setReport] = useState<PreflightReport>();
   const [pack, setPack] = useState<PreflightPackage>();
@@ -170,6 +172,8 @@ function Panel({
   const optionsEpoch = useRef(0);
   const workspace = useRef<string | undefined>(undefined);
   const previewTrigger = useRef<HTMLButtonElement>(null);
+  const inspectTrigger = useRef<HTMLButtonElement>(null);
+  const editor = useRef<HTMLDetailsElement>(null);
   const returningFromPreview = useRef(false);
   useEffect(
     () => () => {
@@ -187,11 +191,15 @@ function Panel({
     if (!previewOpen && returningFromPreview.current) {
       // Restore after the parent Dialog reactivates and focuses its first control.
       returningFromPreview.current = false;
-      previewTrigger.current?.focus();
+      const target = previewTrigger.current;
+      if (target && !target.disabled) target.focus();
+      else inspectTrigger.current?.focus();
     }
   }, [previewOpen]);
   const expired = !!report && now >= Date.parse(report.expiresAt);
   const stale = !!report && now >= Date.parse(report.freshUntil);
+  const reportUnavailable =
+    expired || error === 'preflight.expired' || error === 'preflight.scopeChanged';
   const requirements: PreflightRequirement[] = [
     ...(model
       ? [
@@ -216,6 +224,21 @@ function Panel({
       })),
   ];
   const valid = isPreflightQuery({ id: 'selection', bot, requirements });
+  const selectedSummary =
+    [
+      ...requirements
+        .filter((requirement) => requirement.kind !== 'mcp')
+        .map((requirement) =>
+          requirement.kind === 'computer'
+            ? t(
+                requirement.mode === 'linux'
+                  ? 'preflight.linuxComputer'
+                  : 'preflight.localComputer',
+              )
+            : t(kinds[requirement.kind]),
+        ),
+      ...(selected.length ? [t('preflight.mcpCount', { 0: selected.length })] : []),
+    ].join(' · ') || t('preflight.noneSelected');
   function requirementLabel(requirement: PreflightRequirement) {
     if (requirement.kind === 'mcp') {
       const item = items.find(
@@ -242,6 +265,7 @@ function Panel({
     setReport(undefined);
     setPack(undefined);
     setPreviewOpen(false);
+    setDiagnosticsOpen(false);
     setBusy(undefined);
     setError(undefined);
   }
@@ -309,6 +333,7 @@ function Panel({
       requirements: structuredClone(requirements),
     };
     invalidate();
+    if (editor.current) editor.current.open = false;
     const ticket = ++epoch.current;
     setBusy('inspect');
     try {
@@ -334,14 +359,13 @@ function Panel({
     }
   }
   async function preview() {
-    if (!report || busy) return;
+    if (!report || busy || reportUnavailable) return;
     if (Date.now() >= Date.parse(report.expiresAt)) {
       setError('preflight.expired');
       return;
     }
     const ticket = ++epoch.current;
     setBusy('preview');
-    setError(undefined);
     try {
       const value = await validPackage(
         await runtime.command({
@@ -353,6 +377,7 @@ function Panel({
       if (ticket !== epoch.current) return;
       if (pack && (pack.json !== value.json || pack.packageDigest !== value.packageDigest))
         throw Error('PREFLIGHT_EXPORT_MISMATCH');
+      setError(undefined);
       setPack(value);
       setPreviewOpen(true);
     } catch (error) {
@@ -362,14 +387,13 @@ function Panel({
     }
   }
   async function exportPackage() {
-    if (!report || !pack || busy || !previewOpen) return;
+    if (!report || !pack || busy || !previewOpen || reportUnavailable) return;
     if (Date.now() >= Date.parse(report.expiresAt)) {
       setError('preflight.expired');
       return;
     }
     const ticket = ++epoch.current;
     setBusy('export');
-    setError(undefined);
     try {
       const value = await validPackage(
         await runtime.command({
@@ -382,6 +406,7 @@ function Panel({
       // Download only the exact bytes that this user reviewed; a fresh package needs a new preview.
       if (value.json !== pack.json || value.packageDigest !== pack.packageDigest)
         throw Error('PREFLIGHT_EXPORT_MISMATCH');
+      setError(undefined);
       downloadBlob(
         'daban-diagnostic.json',
         new Blob([pack.json], { type: 'application/json;charset=utf-8' }),
@@ -409,147 +434,174 @@ function Panel({
         wide
         className="preflight"
       >
-        <p className="field-help">{t('preflight.explanation')}</p>
+        <p className="preflight-description">{t('preflight.explanation')}</p>
+        <p className="preflight-probe-note">{t('preflight.externalNotRun')}</p>
         {!supported ? (
           <p role="status">{t('preflight.unsupported')}</p>
         ) : (
           <>
-            <fieldset className="preflight-fields">
-              <legend>{t('preflight.requirements')}</legend>
-              <Toggle checked={model} onChange={() => change(() => setModel(!model))}>
-                {t('preflight.model')}
-              </Toggle>
-              {model && (
-                <div className="preflight-model-fields">
-                  <Toggle checked={vision} onChange={() => change(() => setVision(!vision))}>
-                    {t('preflight.vision')}
-                  </Toggle>
-                  <Toggle checked={tools} onChange={() => change(() => setTools(!tools))}>
-                    {t('preflight.tools')}
-                  </Toggle>
-                  <label className="preflight-budget">
-                    {t('preflight.budget')}
-                    <input
-                      className="field"
-                      type="number"
-                      min={1}
-                      max={1000000}
-                      step={1}
-                      value={budget}
-                      onChange={(event) => change(() => setBudget(event.target.value))}
-                    />
-                  </label>
-                  <p className="field-help">{t('preflight.budgetExplanation')}</p>
-                </div>
-              )}
-              <Toggle checked={search} onChange={() => change(() => setSearch(!search))}>
-                {t('preflight.search')}
-              </Toggle>
-              <Toggle checked={office} onChange={() => change(() => setOffice(!office))}>
-                {t('preflight.office')}
-              </Toggle>
-              <div className="preflight-computer-fields">
-                <Select
-                  label={t('preflight.computer')}
-                  value={computer}
-                  onValueChange={(value) => {
-                    if (value === 'none' || value === 'linux' || value === 'local')
-                      change(() => setComputer(value));
-                  }}
-                  options={[
-                    { value: 'none', label: t('preflight.noComputer') },
-                    { value: 'linux', label: t('preflight.linuxComputer') },
-                    { value: 'local', label: t('preflight.localComputer') },
-                  ]}
-                />
-                {computer !== 'none' && (
-                  <Select
-                    label={t('preflight.access')}
-                    value={access}
-                    onValueChange={(value) => {
-                      if (value === 'observe' || value === 'control')
-                        change(() => setAccess(value));
-                    }}
-                    options={[
-                      { value: 'observe', label: t('preflight.observe') },
-                      { value: 'control', label: t('preflight.control') },
-                    ]}
-                  />
-                )}
-              </div>
-            </fieldset>
-            <section className="preflight-mcp" aria-label={t('preflight.mcp')}>
-              <button
-                type="button"
-                className="secondary"
-                disabled={optionsBusy || !!busy}
-                onClick={() => loadOptions().catch(() => setError('preflight.readFailed'))}
-              >
-                {t(optionsOpen ? 'preflight.reloadOptions' : 'preflight.chooseMcp')}
-              </button>
-              {optionsBusy && <p role="status">{t('preflight.loadingOptions')}</p>}
-              {options?.state === 'empty' && <p role="status">{t('preflight.emptyOptions')}</p>}
-              {options?.state === 'unavailable' && (
-                <p role="status">{t('preflight.unavailableOptions')}</p>
-              )}
-              {options?.truncated && <p className="field-help">{t('preflight.truncated')}</p>}
-              {items.length > 0 && (
-                <div className="preflight-tools">
-                  {items.map((item) => {
-                    const id = `${item.connection}:${item.tool}`;
-                    return (
-                      <Toggle
-                        key={id}
-                        checked={selected.includes(id)}
-                        disabled={!selected.includes(id) && selected.length >= 10}
-                        onChange={() =>
-                          change(() =>
-                            setSelected((previous) =>
-                              previous.includes(id)
-                                ? previous.filter((entry) => entry !== id)
-                                : [...previous, id],
-                            ),
-                          )
+            <details
+              ref={editor}
+              className="preflight-editor"
+              onToggle={(event) => setEditing(event.currentTarget.open)}
+            >
+              <summary>
+                <output
+                  className="preflight-summary"
+                  aria-label={t('preflight.selectionSummary')}
+                  title={selectedSummary}
+                >
+                  {selectedSummary}
+                </output>
+                <span className="preflight-disclosure-label">
+                  {t('preflight.adjustChecks')}
+                  <ChevronDown size={14} aria-hidden="true" />
+                </span>
+              </summary>
+              {editing && (
+                <>
+                  <fieldset className="preflight-fields">
+                    <legend>{t('preflight.requirements')}</legend>
+                    <Toggle checked={model} onChange={() => change(() => setModel(!model))}>
+                      {t('preflight.model')}
+                    </Toggle>
+                    {model && (
+                      <div className="preflight-model-fields">
+                        <Toggle checked={vision} onChange={() => change(() => setVision(!vision))}>
+                          {t('preflight.vision')}
+                        </Toggle>
+                        <Toggle checked={tools} onChange={() => change(() => setTools(!tools))}>
+                          {t('preflight.tools')}
+                        </Toggle>
+                        <label className="preflight-budget">
+                          {t('preflight.budget')}
+                          <input
+                            className="field"
+                            type="number"
+                            min={1}
+                            max={1000000}
+                            step={1}
+                            value={budget}
+                            onChange={(event) => change(() => setBudget(event.target.value))}
+                          />
+                        </label>
+                        <p className="field-help">{t('preflight.budgetExplanation')}</p>
+                      </div>
+                    )}
+                    <Toggle checked={search} onChange={() => change(() => setSearch(!search))}>
+                      {t('preflight.search')}
+                    </Toggle>
+                    <Toggle checked={office} onChange={() => change(() => setOffice(!office))}>
+                      {t('preflight.office')}
+                    </Toggle>
+                    <div className="preflight-computer-fields">
+                      <Select
+                        label={t('preflight.computer')}
+                        value={computer}
+                        onValueChange={(value) => {
+                          if (value === 'none' || value === 'linux' || value === 'local')
+                            change(() => setComputer(value));
+                        }}
+                        options={[
+                          { value: 'none', label: t('preflight.noComputer') },
+                          { value: 'linux', label: t('preflight.linuxComputer') },
+                          { value: 'local', label: t('preflight.localComputer') },
+                        ]}
+                      />
+                      {computer !== 'none' && (
+                        <Select
+                          label={t('preflight.access')}
+                          value={access}
+                          onValueChange={(value) => {
+                            if (value === 'observe' || value === 'control')
+                              change(() => setAccess(value));
+                          }}
+                          options={[
+                            { value: 'observe', label: t('preflight.observe') },
+                            { value: 'control', label: t('preflight.control') },
+                          ]}
+                        />
+                      )}
+                    </div>
+                  </fieldset>
+                  <section className="preflight-mcp" aria-label={t('preflight.mcp')}>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={optionsBusy || !!busy}
+                      onClick={() => loadOptions().catch(() => setError('preflight.readFailed'))}
+                    >
+                      {t(optionsOpen ? 'preflight.reloadOptions' : 'preflight.chooseMcp')}
+                    </button>
+                    {optionsBusy && <p role="status">{t('preflight.loadingOptions')}</p>}
+                    {options?.state === 'empty' && (
+                      <p role="status">{t('preflight.emptyOptions')}</p>
+                    )}
+                    {options?.state === 'unavailable' && (
+                      <p role="status">{t('preflight.unavailableOptions')}</p>
+                    )}
+                    {options?.truncated && <p className="field-help">{t('preflight.truncated')}</p>}
+                    {items.length > 0 && (
+                      <div className="preflight-tools">
+                        {items.map((item) => {
+                          const id = `${item.connection}:${item.tool}`;
+                          return (
+                            <Toggle
+                              key={id}
+                              checked={selected.includes(id)}
+                              disabled={!selected.includes(id) && selected.length >= 10}
+                              onChange={() =>
+                                change(() =>
+                                  setSelected((previous) =>
+                                    previous.includes(id)
+                                      ? previous.filter((entry) => entry !== id)
+                                      : [...previous, id],
+                                  ),
+                                )
+                              }
+                            >
+                              {item.connectionLabel} · {item.toolLabel}
+                            </Toggle>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {options?.next && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={optionsBusy || !!busy}
+                        onClick={() =>
+                          loadOptions(options.next).catch(() => setError('preflight.readFailed'))
                         }
                       >
-                        {item.connectionLabel} · {item.toolLabel}
-                      </Toggle>
-                    );
-                  })}
-                </div>
+                        {t('preflight.nextPage')}
+                      </button>
+                    )}
+                  </section>
+                  <section className="preflight-selection" aria-label={t('preflight.selection')}>
+                    <h3>{t('preflight.selection')}</h3>
+                    <ul>
+                      {requirements.map((requirement) => (
+                        <li
+                          key={
+                            requirement.kind === 'mcp'
+                              ? `${requirement.connection}:${requirement.tool}`
+                              : requirement.kind
+                          }
+                        >
+                          {requirementLabel(requirement)}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                </>
               )}
-              {options?.next && (
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={optionsBusy || !!busy}
-                  onClick={() =>
-                    loadOptions(options.next).catch(() => setError('preflight.readFailed'))
-                  }
-                >
-                  {t('preflight.nextPage')}
-                </button>
-              )}
-            </section>
-            <section className="preflight-selection" aria-label={t('preflight.selection')}>
-              <h3>{t('preflight.selection')}</h3>
-              <ul>
-                {requirements.map((requirement) => (
-                  <li
-                    key={
-                      requirement.kind === 'mcp'
-                        ? `${requirement.connection}:${requirement.tool}`
-                        : requirement.kind
-                    }
-                  >
-                    {requirementLabel(requirement)}
-                  </li>
-                ))}
-              </ul>
-              {!valid && <p className="field-help">{t('preflight.invalidSelection')}</p>}
-            </section>
+            </details>
+            {!valid && <p className="field-help">{t('preflight.invalidSelection')}</p>}
             <div className="preflight-toolbar">
               <button
+                ref={inspectTrigger}
                 type="button"
                 className="primary"
                 disabled={!valid || !!busy || optionsBusy}
@@ -571,56 +623,101 @@ function Panel({
             )}
             {report && (
               <section aria-label={t('preflight.results')} className="preflight-results">
-                <p role="status">
+                <p role="status" className="preflight-result-summary">
                   {t(
-                    expired
-                      ? 'preflight.expired'
-                      : stale
-                        ? 'preflight.stale'
-                        : report.summary === 'ready'
-                          ? 'preflight.ready'
-                          : 'preflight.attention',
+                    error
+                      ? 'preflight.needsRecheck'
+                      : expired
+                        ? 'preflight.expired'
+                        : stale
+                          ? 'preflight.stale'
+                          : report.summary === 'ready'
+                            ? 'preflight.ready'
+                            : 'preflight.attention',
                   )}
                 </p>
-                <p className="field-help">{t('preflight.externalNotRun')}</p>
-                <ol>
-                  {report.checks.map((check) => (
-                    <li key={check.index}>
-                      <div className="preflight-check-heading">
-                        <strong>{requirementLabel(report.requirements[check.index])}</strong>
-                        <span>{t(states[check.state])}</span>
-                      </div>
-                      <p>{t(reasons[check.reason])}</p>
-                      <p className="field-help">
-                        {t(evidence[check.evidence])} ·{' '}
-                        <time dateTime={check.observedAt}>
-                          {new Date(check.observedAt).toLocaleTimeString(getLocale(), {
-                            hour12: false,
-                          })}
-                        </time>
-                      </p>
-                      {check.action !== 'none' && (
-                        <button
-                          type="button"
-                          className="text-button"
-                          disabled={!!busy}
-                          onClick={() => action(check.action)}
-                        >
-                          {t(actions[check.action])}
-                        </button>
-                      )}
-                    </li>
-                  ))}
+                {error && (expired || stale) && (
+                  <p role="status" className="field-help">
+                    {t(expired ? 'preflight.expired' : 'preflight.stale')}
+                  </p>
+                )}
+                <ol className="preflight-issues">
+                  {report.checks
+                    .filter((check) => check.state !== 'ready')
+                    .map((check) => (
+                      <li key={check.index}>
+                        <div className="preflight-check-heading">
+                          <strong>{requirementLabel(report.requirements[check.index])}</strong>
+                          <span>{t(states[check.state])}</span>
+                        </div>
+                        <p>{t(reasons[check.reason])}</p>
+                        {check.action !== 'none' && (
+                          <button
+                            type="button"
+                            className="text-button"
+                            disabled={!!busy}
+                            onClick={() => action(check.action)}
+                          >
+                            {t(actions[check.action])}
+                          </button>
+                        )}
+                      </li>
+                    ))}
                 </ol>
-                <button
-                  ref={previewTrigger}
-                  type="button"
-                  className="secondary"
-                  disabled={expired || !!busy}
-                  onClick={() => preview().catch(() => setError('preflight.readFailed'))}
+                <details
+                  className="preflight-diagnostics"
+                  onToggle={(event) => setDiagnosticsOpen(event.currentTarget.open)}
                 >
-                  {t('preflight.preview')}
-                </button>
+                  <summary>
+                    <span>{t('preflight.diagnosticDetails')}</span>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </summary>
+                  {diagnosticsOpen && (
+                    <>
+                      <dl className="preflight-identities">
+                        <div>
+                          <dt>{t('preflight.reportId')}</dt>
+                          <dd>{report.id}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('preflight.targetBot')}</dt>
+                          <dd>{report.bot}</dd>
+                        </div>
+                        <div>
+                          <dt>{t('preflight.workspace')}</dt>
+                          <dd>{report.workspace}</dd>
+                        </div>
+                      </dl>
+                      <ol className="preflight-evidence">
+                        {report.checks.map((check) => (
+                          <li key={check.index}>
+                            <div className="preflight-check-heading">
+                              <strong>{requirementLabel(report.requirements[check.index])}</strong>
+                              <span>{t(states[check.state])}</span>
+                            </div>
+                            <p className="field-help">
+                              {t(evidence[check.evidence])} ·{' '}
+                              <time dateTime={check.observedAt}>
+                                {new Date(check.observedAt).toLocaleTimeString(getLocale(), {
+                                  hour12: false,
+                                })}
+                              </time>
+                            </p>
+                          </li>
+                        ))}
+                      </ol>
+                      <button
+                        ref={previewTrigger}
+                        type="button"
+                        className="secondary"
+                        disabled={reportUnavailable || !!busy}
+                        onClick={() => preview().catch(() => setError('preflight.readFailed'))}
+                      >
+                        {t('preflight.preview')}
+                      </button>
+                    </>
+                  )}
+                </details>
               </section>
             )}
           </>
@@ -633,8 +730,8 @@ function Panel({
             epoch.current++;
             returningFromPreview.current = true;
             setBusy(undefined);
+            // Closing a refused preview must not make its old report look ready again.
             setPreviewOpen(false);
-            setError(undefined);
           }}
           wide
           className="preflight-preview"
@@ -652,11 +749,13 @@ function Panel({
               {t(error)}
             </p>
           )}
-          {expired && <p role="status">{t('preflight.expired')}</p>}
+          {expired && error !== 'preflight.expired' && (
+            <p role="status">{t('preflight.expired')}</p>
+          )}
           <button
             type="button"
             className="primary"
-            disabled={expired || !!busy}
+            disabled={reportUnavailable || !!busy}
             onClick={() => exportPackage().catch(() => setError('preflight.readFailed'))}
           >
             {t('preflight.download')}

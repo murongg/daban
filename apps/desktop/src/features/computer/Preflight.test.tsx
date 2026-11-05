@@ -129,8 +129,9 @@ it('requires an explicit check and submits only selected requirements', async ()
   );
   const user = userEvent.setup();
   await openPanel(user);
+  await editChecks(user);
   await user.click(screen.getByRole('checkbox', { name: '工具调用声明' }));
-  await user.type(screen.getByRole('spinbutton', { name: '最小输入预算（tokens）' }), '12000');
+  await user.type(screen.getByRole('spinbutton', { name: '最低输入容量（tokens）' }), '12000');
   await user.click(screen.getByRole('checkbox', { name: '搜索配置' }));
   await user.click(screen.getByRole('button', { name: '检查已选需求' }));
   const command = backend.invoke.mock.calls
@@ -230,8 +231,10 @@ it('shows source and time without claiming a model call, and invalidates a chang
   await user.click(screen.getByRole('button', { name: '检查已选需求' }));
   expect(await screen.findByText('所选配置条件已满足')).toBeVisible();
   expect(screen.getByText('外部服务与模型连通性：本次未测试。')).toBeVisible();
+  await openDiagnostics(user);
   expect(screen.getByText(/^已保存配置/)).toBeVisible();
   expect(screen.getByRole('time')).toHaveAttribute('dateTime');
+  await editChecks(user);
   await user.click(screen.getByRole('checkbox', { name: '图片输入声明' }));
   expect(screen.queryByText('所选配置条件已满足')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: '预览诊断包' })).not.toBeInTheDocument();
@@ -280,6 +283,8 @@ it('previews exact JSON and downloads only the identical explicitly exported byt
   const user = userEvent.setup();
   await openPanel(user);
   await user.click(screen.getByRole('button', { name: '检查已选需求' }));
+  await screen.findByText('所选配置条件已满足');
+  await openDiagnostics(user);
   await user.click(await screen.findByRole('button', { name: '预览诊断包' }));
   const preview = await screen.findByRole('dialog', { name: '诊断包预览' });
   expect(within(preview).getByRole('textbox', { name: '确切导出 JSON' })).toHaveValue(pack?.json);
@@ -337,6 +342,8 @@ it('rejects corrupt digests and an exported package differing from the preview',
   const user = userEvent.setup();
   await openPanel(user);
   await user.click(screen.getByRole('button', { name: '检查已选需求' }));
+  await screen.findByText('所选配置条件已满足');
+  await openDiagnostics(user);
   await user.click(await screen.findByRole('button', { name: '预览诊断包' }));
   await screen.findByRole('dialog', { name: '诊断包预览' });
   await user.click(screen.getByRole('button', { name: '下载此诊断包' }));
@@ -373,6 +380,7 @@ it('loads exact MCP options on demand and clears a stale page with its selection
   render(panel());
   const user = userEvent.setup();
   await openPanel(user);
+  await editChecks(user);
   expect(backend.invoke.mock.calls.map(([command]) => command.type)).toEqual(['status']);
   await user.click(screen.getByRole('button', { name: '选择 MCP 工具' }));
   await user.click(await screen.findByRole('checkbox', { name: '<mock-connection> · Mock read' }));
@@ -418,6 +426,7 @@ it('marks a report stale after 30 seconds and expires it after five minutes with
     await vi.advanceTimersByTimeAsync(270000);
   });
   expect(screen.getByText('报告已过期，请重新进行只读检查。')).toBeVisible();
+  await openDiagnostics(user);
   expect(screen.getByRole('button', { name: '预览诊断包' })).toBeDisabled();
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'preflight.inspect'),
@@ -449,6 +458,7 @@ it('discards a late MCP page when the Host changes and never falls back to the l
   );
   const user = userEvent.setup();
   await openPanel(user);
+  await editChecks(user);
   await user.click(screen.getByRole('button', { name: '选择 MCP 工具' }));
   view.rerender(
     <RuntimeProvider host={'b'.repeat(64)}>
@@ -502,6 +512,7 @@ it('previews the exact selected MCP tool and computer access before checking', a
   render(panel());
   const user = userEvent.setup();
   await openPanel(user);
+  await editChecks(user);
   await user.click(screen.getByRole('button', { name: /电脑需求$/ }));
   await user.click(screen.getByRole('option', { name: '本机电脑' }));
   await user.click(screen.getByRole('button', { name: /所需权限$/ }));
@@ -551,6 +562,8 @@ it('discards an export that returns after the initiating selection has been repl
   const user = userEvent.setup();
   await openPanel(user);
   await user.click(screen.getByRole('button', { name: '检查已选需求' }));
+  await screen.findByText('所选配置条件已满足');
+  await openDiagnostics(user);
   await user.click(await screen.findByRole('button', { name: '预览诊断包' }));
   await screen.findByRole('dialog', { name: '诊断包预览' });
   await user.click(screen.getByRole('button', { name: '下载此诊断包' }));
@@ -573,6 +586,7 @@ it('keeps unknown declarations distinct and opens settings only after an explici
   render(panel('mock', action));
   const user = userEvent.setup();
   await openPanel(user);
+  await editChecks(user);
   await user.click(screen.getByRole('checkbox', { name: '工具调用声明' }));
   await user.click(screen.getByRole('button', { name: '检查已选需求' }));
   expect(await screen.findByText('模型尚未声明所需能力，无法确认。')).toBeVisible();
@@ -631,8 +645,284 @@ it('retains exact MCP options in tuple order when connection IDs share a prefix'
   render(panel());
   const user = userEvent.setup();
   await openPanel(user);
+  await editChecks(user);
   await user.click(screen.getByRole('button', { name: '选择 MCP 工具' }));
   expect(await screen.findByRole('checkbox', { name: 'Mock A · Mock read' })).toBeVisible();
   expect(screen.getByRole('checkbox', { name: 'Mock AB · Mock read' })).toBeVisible();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+function attentionReport(command: RuntimeCommand) {
+  const { digest: _previous, ...value } = makeReport(command);
+  value.checks = value.requirements.map((requirement, index) => ({
+    ...value.checks[index],
+    state:
+      requirement.kind === 'model'
+        ? 'missing'
+        : requirement.kind === 'search'
+          ? 'unknown'
+          : requirement.kind === 'office'
+            ? 'unsupported'
+            : 'stale',
+    reason:
+      requirement.kind === 'model'
+        ? 'MODEL_NOT_CONFIGURED'
+        : requirement.kind === 'search'
+          ? 'OWNER_UNAVAILABLE'
+          : requirement.kind === 'office'
+            ? 'CAPABILITY_UNSUPPORTED'
+            : 'CONFIG_CHANGED',
+    action:
+      requirement.kind === 'model'
+        ? 'models'
+        : requirement.kind === 'search'
+          ? 'search'
+          : requirement.kind === 'office'
+            ? 'environment'
+            : 'recheck',
+    evidence: requirement.kind === 'search' ? 'unavailable' : 'local-config',
+  }));
+  value.summary = 'attention';
+  return { ...value, digest: hash(canonical(value)) };
+}
+async function editChecks(user: ReturnType<typeof userEvent.setup>) {
+  const summary = screen.queryByText('调整检查项', { exact: true });
+  if (summary && !(summary.closest('details') as HTMLDetailsElement | null)?.open)
+    await user.click(summary);
+}
+async function openDiagnostics(user: ReturnType<typeof userEvent.setup>) {
+  const summary = screen.queryByText('诊断详情', { exact: true });
+  if (summary && !(summary.closest('details') as HTMLDetailsElement | null)?.open)
+    await user.click(summary);
+}
+
+it('keeps a progressive one-line selection and exposes exact checks only when manually adjusted', async () => {
+  const backend = bridge((command) =>
+    command.type === 'preflight.options'
+      ? {
+          bot: 'mock-bot',
+          workspace: 'mock-host-scope',
+          state: 'ready',
+          version: 'a'.repeat(64),
+          truncated: false,
+          items: [
+            {
+              connection: 'mock-connection',
+              catalogDigest: 'b'.repeat(64),
+              tool: 'ext_01234567890123456789',
+              connectionLabel: 'Mock connection',
+              toolLabel: 'Mock read',
+            },
+          ],
+        }
+      : makeReport(command),
+  );
+  render(panel());
+  const user = userEvent.setup();
+  await openPanel(user);
+  expect(screen.queryByRole('checkbox', { name: '模型配置' })).not.toBeInTheDocument();
+  expect(screen.getByLabelText('已选检查项')).toHaveTextContent('模型配置');
+  await user.click(screen.getByText('调整检查项', { exact: true }));
+  await user.click(screen.getByRole('checkbox', { name: '工具调用声明' }));
+  await user.click(screen.getByRole('button', { name: '选择 MCP 工具' }));
+  await user.click(await screen.findByRole('checkbox', { name: 'Mock connection · Mock read' }));
+  expect(
+    within(screen.getByRole('region', { name: '需求预览' })).getByText(
+      'Mock connection · Mock read',
+    ),
+  ).toBeVisible();
+  expect(backend.invoke.mock.calls.map(([command]) => command.type)).toEqual([
+    'status',
+    'preflight.options',
+  ]);
+  await user.click(screen.getByText('调整检查项', { exact: true }));
+  expect(screen.queryByRole('checkbox', { name: '工具调用声明' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '检查已选需求' })).toBeEnabled();
+});
+
+it('keeps primary missing unknown unsupported and changed reasons actionable without diagnostics metadata', async () => {
+  const action = vi.fn();
+  bridge(attentionReport);
+  render(panel('mock', action));
+  const user = userEvent.setup();
+  await openPanel(user);
+  await editChecks(user);
+  await user.click(screen.getByRole('checkbox', { name: '搜索配置' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Office 文档解析' }));
+  await user.click(screen.getByRole('button', { name: /电脑需求$/ }));
+  await user.click(screen.getByRole('option', { name: 'Linux 电脑' }));
+  await user.click(screen.getByRole('button', { name: '检查已选需求' }));
+  expect(await screen.findByText('当前 Bot 的模型路由或凭据未配置。')).toBeVisible();
+  expect(screen.getByText('事实来源暂不可用，不能确认条件。')).toBeVisible();
+  expect(screen.getByText('当前目标未声明此检查所需的能力。')).toBeVisible();
+  expect(screen.getByText('检查期间配置或连接已变化。')).toBeVisible();
+  expect(screen.getByText('外部服务与模型连通性：本次未测试。')).toBeVisible();
+  expect(screen.queryByRole('time')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '预览诊断包' })).not.toBeInTheDocument();
+  expect(
+    (screen.getByText('诊断详情', { exact: true }).closest('details') as HTMLDetailsElement).open,
+  ).toBe(false);
+  await user.click(screen.getByRole('button', { name: '打开模型设置' }));
+  expect(action).toHaveBeenCalledWith('models');
+});
+
+it('keeps advanced preview collapsed and preserves keyboard access focus return and cancelled downloads', async () => {
+  let pack: ReturnType<typeof makePackage> | undefined;
+  const backend = bridge((command) => {
+    if (command.type === 'preflight.inspect') {
+      const report = makeReport(command);
+      pack = makePackage(report);
+      return report;
+    }
+    return pack;
+  });
+  const download = vi.spyOn(downloads, 'downloadBlob').mockImplementation(() => {});
+  render(panel());
+  const user = userEvent.setup();
+  await openPanel(user);
+  await user.click(screen.getByRole('button', { name: '检查已选需求' }));
+  await screen.findByText('所选配置条件已满足');
+  expect(screen.queryByRole('button', { name: '预览诊断包' })).not.toBeInTheDocument();
+  await user.tab();
+  const summary = screen.getByText('诊断详情', { exact: true }).closest('summary')!;
+  expect(summary).toHaveFocus();
+  // user-event does not emulate native summary activation; Chromium QA verifies Enter.
+  await user.click(summary);
+  expect((summary.closest('details') as HTMLDetailsElement).open).toBe(true);
+  expect(screen.getByRole('time')).toBeVisible();
+  await user.tab();
+  const preview = screen.getByRole('button', { name: '预览诊断包' });
+  expect(preview).toHaveFocus();
+  await user.keyboard('{Enter}');
+  await screen.findByRole('dialog', { name: '诊断包预览' });
+  await user.keyboard('{Escape}');
+  expect(preview).toHaveFocus();
+  expect((summary.closest('details') as HTMLDetailsElement).open).toBe(true);
+  expect(download).not.toHaveBeenCalled();
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'preflight.export')).toBe(
+    false,
+  );
+});
+
+it('keeps folded edit controls out of Tab until expanded and returns focus on Escape', async () => {
+  const backend = bridge(() => {
+    throw Error('SYNTHETIC UNEXPECTED PROBE');
+  });
+  render(panel());
+  const user = userEvent.setup();
+  await openPanel(user);
+  await user.tab();
+  const summary = screen.getByText('调整检查项', { exact: true }).closest('summary')!;
+  expect(summary).toHaveFocus();
+  // Native summary Enter is checked in the real browser alongside this Tab/Escape path.
+  await user.click(summary);
+  await screen.findByRole('checkbox', { name: '模型配置' });
+  await user.tab();
+  expect(screen.getByRole('checkbox', { name: '模型配置' })).toHaveFocus();
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '检查所需能力' })).toHaveFocus();
+  expect(backend.invoke.mock.calls.map(([command]) => command.type)).toEqual(['status']);
+});
+
+it.each([
+  ['PREFLIGHT_AUTHORITY_CHANGED', '目标来源已变化，请在当前目标重新检查。'],
+  ['PREFLIGHT_REPORT_EXPIRED', '报告已过期，请重新进行只读检查。'],
+])(
+  'keeps known export refusal %s visible after closing advanced review instead of restoring Ready',
+  async (code, message) => {
+    let pack: ReturnType<typeof makePackage> | undefined;
+    bridge((command) => {
+      if (command.type === 'preflight.inspect') {
+        const report = makeReport(command);
+        pack = makePackage(report);
+        return report;
+      }
+      if (command.type === 'preflight.export') throw Error(code);
+      return pack;
+    });
+    const download = vi.spyOn(downloads, 'downloadBlob').mockImplementation(() => {});
+    render(panel());
+    const user = userEvent.setup();
+    await openPanel(user);
+    await user.click(screen.getByRole('button', { name: '检查已选需求' }));
+    await screen.findByText('所选配置条件已满足');
+    await openDiagnostics(user);
+    await user.click(screen.getByRole('button', { name: '预览诊断包' }));
+    await screen.findByRole('dialog', { name: '诊断包预览' });
+    await user.click(screen.getByRole('button', { name: '下载此诊断包' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: '重新检查' })).toHaveFocus();
+    const summary = screen.queryByText('诊断详情', { exact: true });
+    if (summary) await user.click(summary);
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+    expect(screen.queryByText('所选配置条件已满足')).not.toBeInTheDocument();
+    expect(screen.getByText('外部服务与模型连通性：本次未测试。')).toBeVisible();
+    expect(screen.getByRole('button', { name: '重新检查' })).toBeEnabled();
+    await openDiagnostics(user);
+    expect(screen.getByRole('button', { name: '预览诊断包' })).toBeDisabled();
+    expect(download).not.toHaveBeenCalled();
+  },
+);
+
+it('keeps the exact failed MCP target primary and retains ready as well as missing item states in details', async () => {
+  bridge((command) => {
+    if (command.type === 'preflight.options')
+      return {
+        bot: 'mock-bot',
+        workspace: 'mock-host-scope',
+        state: 'ready',
+        version: 'a'.repeat(64),
+        truncated: false,
+        items: [
+          {
+            connection: 'mock-a',
+            catalogDigest: 'b'.repeat(64),
+            tool: 'ext_01234567890123456789',
+            connectionLabel: 'Mock documents',
+            toolLabel: 'Read document',
+          },
+          {
+            connection: 'mock-b',
+            catalogDigest: 'c'.repeat(64),
+            tool: 'ext_12345678901234567890',
+            connectionLabel: 'Mock calendar',
+            toolLabel: 'Read calendar',
+          },
+        ],
+      };
+    const { digest: _previous, ...value } = makeReport(command);
+    value.checks[1] = {
+      ...value.checks[1],
+      state: 'missing',
+      reason: 'MCP_NOT_SELECTED',
+      action: 'integrations',
+      evidence: 'cached-catalog',
+    };
+    value.summary = 'attention';
+    return { ...value, digest: hash(canonical(value)) };
+  });
+  render(panel());
+  const user = userEvent.setup();
+  await openPanel(user);
+  await editChecks(user);
+  await user.click(screen.getByRole('checkbox', { name: '模型配置' }));
+  await user.click(screen.getByRole('button', { name: '选择 MCP 工具' }));
+  await user.click(await screen.findByRole('checkbox', { name: 'Mock documents · Read document' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Mock calendar · Read calendar' }));
+  await user.click(screen.getByRole('button', { name: '检查已选需求' }));
+  await screen.findByText('部分需求尚需处理或确认');
+  expect(screen.getByText('Mock calendar · Read calendar', { exact: true })).toBeVisible();
+  expect(
+    screen.queryByText('Mock documents · Read document', { exact: true }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '打开工具设置' })).toBeVisible();
+  await openDiagnostics(user);
+  const details = screen.getByText('诊断详情', { exact: true }).closest('details')!;
+  expect(
+    within(details).getByText('Mock documents · Read document', { exact: true }),
+  ).toBeVisible();
+  expect(within(details).getByText('就绪', { exact: true })).toBeVisible();
+  expect(within(details).getByText('缺少条件', { exact: true })).toBeVisible();
 });

@@ -94,6 +94,15 @@
 }
 .preflight-check-heading {
   justify-content: space-between;
+  align-items: flex-start;
+}
+.preflight-check-heading strong {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.preflight-check-heading > span {
+  flex-shrink: 0;
 }
 .preflight-results li p {
   margin: 6px 0;
@@ -105,5 +114,89 @@
   resize: vertical;
   font-family: monospace;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.preflight-description,
+.preflight-probe-note {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.preflight-probe-note {
+  margin-bottom: 18px;
+}
+.preflight-editor > summary,
+.preflight-diagnostics > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 14px;
+}
+.preflight-editor > summary::-webkit-details-marker,
+.preflight-diagnostics > summary::-webkit-details-marker {
+  display: none;
+}
+.preflight-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preflight-disclosure-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.preflight-editor[open] > summary svg,
+.preflight-diagnostics[open] > summary svg {
+  transform: rotate(180deg);
+}
+.preflight-editor[open] {
+  margin-bottom: 18px;
+}
+.preflight-toolbar {
+  margin-top: 14px;
+}
+.preflight-result-summary {
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+.preflight-issues:empty {
+  display: none;
+}
+.preflight-diagnostics {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.preflight-evidence {
+  margin-top: 10px;
+}
+.preflight-evidence li strong {
+  font-weight: 500;
+}
+.preflight-evidence time {
+  font-variant-numeric: tabular-nums;
+}
+.preflight-identities {
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.preflight-identities div {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 14px;
+  padding: 4px 0;
+}
+.preflight-identities dd {
+  margin: 0;
   overflow-wrap: anywhere;
 }

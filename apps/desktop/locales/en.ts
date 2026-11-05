@@ -1,18 +1,27 @@
 export const english = {
-  'preflight.budgetValue': 'Minimum input {0} tokens',
+  'preflight.adjustChecks': 'Adjust checks',
+  'preflight.selectionSummary': 'Selected checks',
+  'preflight.noneSelected': 'No checks selected',
+  'preflight.mcpCount': 'MCP tools ({0})',
+  'preflight.diagnosticDetails': 'Diagnostic details',
+  'preflight.needsRecheck': 'The result needs confirmation. Check again.',
+  'preflight.reportId': 'Check ID',
+  'preflight.targetBot': 'Bot ID',
+  'preflight.workspace': 'Source scope',
+  'preflight.budgetValue': 'Minimum input capacity {0} tokens',
   'preflight.trigger': 'Check required capabilities',
   'preflight.title': 'Task capability preflight',
   'preflight.explanation':
-    'Select explicit requirements. This check reads saved configuration and local status; it does not test external services or guarantee task success.',
+    'Choose the checks you need. This reads configuration and local status; passing does not guarantee task success.',
   'preflight.unsupported':
     'This service does not support task preflight. Existing environment checks remain available.',
   'preflight.requirements': 'Select requirements',
   'preflight.model': 'Model configuration',
   'preflight.vision': 'Image input declaration',
   'preflight.tools': 'Tool calling declaration',
-  'preflight.budget': 'Minimum input budget (tokens)',
+  'preflight.budget': 'Minimum input capacity (tokens)',
   'preflight.budgetExplanation':
-    'Compares the configured context window minus maximum output. This does not estimate the full input for this task. Leave blank to skip the budget check.',
+    'Compares the configured context window minus maximum output. This does not estimate the full input for this task. Leave blank to skip the capacity check.',
   'preflight.search': 'Search configuration',
   'preflight.office': 'Office document parsing',
   'preflight.computer': 'Computer requirement',
@@ -33,7 +42,7 @@ export const english = {
   'preflight.nextPage': 'Load next page',
   'preflight.selection': 'Selected requirements',
   'preflight.invalidSelection':
-    'Select at least one requirement. The input budget must be an integer from 1 to 1000000; select at most 10 MCP tools.',
+    'Select at least one requirement. The input capacity must be an integer from 1 to 1000000; select at most 10 MCP tools.',
   'preflight.inspect': 'Check selected requirements',
   'preflight.recheck': 'Check again',
   'preflight.cancel': 'Cancel waiting',
@@ -78,7 +87,7 @@ export const english = {
   'preflight.reason.modelCapabilityMissing':
     'The model declares that the required capability is unsupported.',
   'preflight.reason.inputBudgetTooSmall':
-    'The configured input budget is below the selected minimum.',
+    'The configured input capacity is below the selected minimum.',
   'preflight.reason.searchNotConfigured': 'No usable search connection is configured.',
   'preflight.reason.computerDisconnected': 'The current Bot computer is disconnected.',
   'preflight.reason.controlHeldByHuman':
