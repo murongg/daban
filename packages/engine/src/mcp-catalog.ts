@@ -53,6 +53,35 @@ const observationStopCodes = [
   'MCP_OBSERVATION_NODE_LIMIT',
   'MCP_OBSERVATION_UNAVAILABLE',
 ] as const;
+type ByteStopKind =
+  | 'definition_bytes'
+  | 'retained_catalog_bytes'
+  | 'aggregate_bytes'
+  | 'definition_and_retained_bytes';
+interface ByteFrame {
+  kind: ByteStopKind;
+  frameBudgetBytes: number;
+  remaining: number;
+  toolOffset?: number;
+}
+type CatalogLimitStop =
+  | {
+      kind: ByteStopKind;
+      frameBudgetBytes: number;
+      remainingBytes: number;
+      fragmentBytes: number;
+      fragmentBasis: 'exact' | 'minimum';
+      toolOffset?: number;
+    }
+  | { kind: 'duplicate_names'; toolCount: number; uniqueCount: number }
+  | { kind: 'budget_accounting' | 'unclassified_limit' };
+
+class CatalogLimitError extends Fault {
+  constructor(readonly stop: CatalogLimitStop) {
+    super('MCP_CATALOG_LIMIT', 400);
+  }
+}
+
 type CatalogMeasurement = typeof observationLimits &
   (
     | {
@@ -64,7 +93,11 @@ type CatalogMeasurement = typeof observationLimits &
         maxDefinitionBytes: number;
         catalogBytes: number;
       }
-    | { status: 'incomplete'; stopCode: (typeof observationStopCodes)[number] }
+    | { status: 'incomplete'; stopCode: 'MCP_CATALOG_LIMIT'; stop: CatalogLimitStop }
+    | {
+        status: 'incomplete';
+        stopCode: Exclude<(typeof observationStopCodes)[number], 'MCP_CATALOG_LIMIT'>;
+      }
   );
 interface CatalogObservation {
   nodes: number;
@@ -73,8 +106,7 @@ interface CatalogObservation {
   maxDefinitionBytes: number;
   catalogBytes: number;
 }
-interface CanonicalBudget {
-  remaining: number;
+interface CanonicalBudget extends ByteFrame {
   depth: number;
   observation: CatalogObservation;
 }
@@ -93,16 +125,58 @@ function rejectCatalog(diagnostic: McpCatalogDiagnostic): never {
   throw new McpCatalogError(diagnostic);
 }
 
+function limitFault(budget: ByteFrame, bytes: number, basis: 'exact' | 'minimum') {
+  if (
+    ![budget.frameBudgetBytes, budget.remaining, bytes].every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) ||
+    budget.frameBudgetBytes > 256000 ||
+    budget.remaining > budget.frameBudgetBytes ||
+    (budget.toolOffset !== undefined &&
+      (!Number.isSafeInteger(budget.toolOffset) ||
+        budget.toolOffset < 0 ||
+        budget.toolOffset >= mcpCatalogToolLimit))
+  )
+    return new CatalogLimitError({ kind: 'budget_accounting' });
+  // Project only locally known fields; foreign exceptions and budget internals must never enter the diagnostic.
+  return new CatalogLimitError({
+    kind: budget.kind,
+    frameBudgetBytes: budget.frameBudgetBytes,
+    remainingBytes: budget.remaining,
+    fragmentBytes: bytes,
+    fragmentBasis: basis,
+    ...(budget.toolOffset === undefined ? {} : { toolOffset: budget.toolOffset }),
+  });
+}
+
+function definitionBudget(observation: CatalogObservation, toolOffset: number): CanonicalBudget {
+  const retained = 256000 - observation.catalogBytes - Number(toolOffset > 0);
+  const remaining = Math.min(32768, retained);
+  return {
+    kind:
+      retained < 32768
+        ? 'retained_catalog_bytes'
+        : retained === 32768
+          ? 'definition_and_retained_bytes'
+          : 'definition_bytes',
+    frameBudgetBytes: remaining,
+    remaining,
+    toolOffset,
+    depth: 0,
+    observation,
+  };
+}
+
 function spend(bytes: number, budget: CanonicalBudget) {
   if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > budget.remaining)
-    throw new Fault('MCP_CATALOG_LIMIT', 400);
+    throw limitFault(budget, bytes, 'exact');
   budget.remaining -= bytes;
 }
 
 function scalar(value: string | number | boolean | null, budget?: CanonicalBudget) {
   // JSON encoding cannot be shorter than its UTF16 input plus quotes; bound allocation before escaping.
   if (budget && typeof value === 'string' && value.length + 2 > budget.remaining)
-    throw new Fault('MCP_CATALOG_LIMIT', 400);
+    throw limitFault(budget, value.length + 2, 'minimum');
   const json = JSON.stringify(value);
   if (budget) spend(Buffer.byteLength(json), budget);
   return json;
@@ -236,6 +310,13 @@ function observeCatalog(
     const stopCode = observationStopCodes.find(
       (code) => error instanceof Fault && error.code === code,
     );
+    if (stopCode === 'MCP_CATALOG_LIMIT')
+      return {
+        ...observationLimits,
+        status: 'incomplete',
+        stopCode,
+        stop: error instanceof CatalogLimitError ? error.stop : { kind: 'unclassified_limit' },
+      };
     return {
       ...observationLimits,
       status: 'incomplete',
@@ -332,15 +413,23 @@ function catalog(
         inputSchema: value.inputSchema as Record<string, unknown>,
       };
       // Apply the remaining catalog allowance while encoding each definition, before shared graphs can expand.
-      const budget = observation
-        ? {
-            remaining: Math.min(32768, 256000 - observation.catalogBytes - Number(index > 0)),
-            depth: 0,
-            observation,
-          }
-        : undefined;
+      const budget = observation ? definitionBudget(observation, index) : undefined;
       const json = canonical(definition, 0, `tools[${index}]`, 'definition', budget);
-      if (Buffer.byteLength(json) > 32768) throw new Fault('MCP_CATALOG_LIMIT', 400);
+      const bytes = Buffer.byteLength(json);
+      if (bytes > 32768) {
+        if (observation)
+          throw limitFault(
+            {
+              kind: 'definition_bytes',
+              frameBudgetBytes: 32768,
+              remaining: 32768,
+              toolOffset: index,
+            },
+            bytes,
+            'exact',
+          );
+        throw new Fault('MCP_CATALOG_LIMIT', 400);
+      }
       if (secrets.some((secret) => secret && json.includes(JSON.stringify(secret).slice(1, -1))))
         throw new Fault('MCP_SECRET_IN_CATALOG', 400);
       // Diagnostic traversal retains references to avoid expanding shared input graphs through cloning.
@@ -352,11 +441,22 @@ function catalog(
         ? createHash('sha256').update(json).digest('hex')
         : mcpDigest(definition);
       if (observation && budget) {
-        const bytes = Buffer.byteLength(json);
         // Merging two JSON objects removes two braces and adds one comma.
         const extra = Buffer.byteLength(JSON.stringify({ alias, digest })) - 1;
-        observation.catalogBytes += bytes + extra + Number(index > 0);
-        if (observation.catalogBytes > 256000) throw new Fault('MCP_CATALOG_LIMIT', 400);
+        const before = observation.catalogBytes;
+        const added = bytes + extra + Number(index > 0);
+        observation.catalogBytes += added;
+        if (observation.catalogBytes > 256000)
+          throw limitFault(
+            {
+              kind: 'retained_catalog_bytes',
+              frameBudgetBytes: 256000,
+              remaining: 256000 - before,
+              toolOffset: index,
+            },
+            added,
+            'exact',
+          );
         observation.definitionDepth = Math.max(observation.definitionDepth, budget.depth);
         observation.maxDefinitionBytes = Math.max(observation.maxDefinitionBytes, bytes);
       }
@@ -368,13 +468,38 @@ function catalog(
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
-  const budget = observation ? { remaining: 256000, depth: 0, observation } : undefined;
-  if (
-    new Set(tools.map((tool) => tool.name)).size !== tools.length ||
-    // The catalog array still participates in the original depth16 bound after each definition passes.
-    Buffer.byteLength(canonical(tools, 0, 'tools', 'catalog', budget)) > 256000
-  )
+  const budget: CanonicalBudget | undefined = observation
+    ? {
+        kind: 'aggregate_bytes',
+        frameBudgetBytes: 256000,
+        remaining: 256000,
+        depth: 0,
+        observation,
+      }
+    : undefined;
+  const uniqueCount = new Set(tools.map((tool) => tool.name)).size;
+  if (uniqueCount !== tools.length) {
+    if (observation)
+      throw new CatalogLimitError(
+        [tools.length, uniqueCount].every(
+          (value) => Number.isSafeInteger(value) && value >= 0 && value <= mcpCatalogToolLimit,
+        )
+          ? { kind: 'duplicate_names', toolCount: tools.length, uniqueCount }
+          : { kind: 'budget_accounting' },
+      );
     throw new Fault('MCP_CATALOG_LIMIT', 400);
+  }
+  // Preserve duplicate-before-serialization order and the original aggregate depth16 admission bound.
+  const catalogBytes = Buffer.byteLength(canonical(tools, 0, 'tools', 'catalog', budget));
+  if (catalogBytes > 256000) {
+    if (observation)
+      throw limitFault(
+        { kind: 'aggregate_bytes', frameBudgetBytes: 256000, remaining: 256000 },
+        catalogBytes,
+        'exact',
+      );
+    throw new Fault('MCP_CATALOG_LIMIT', 400);
+  }
   if (observation && budget) {
     observation.catalogDepth = budget.depth;
     observation.catalogBytes = 256000 - budget.remaining;

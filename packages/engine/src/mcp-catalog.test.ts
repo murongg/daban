@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest';
-import { canonicalJson, mcpCatalog, mcpDigest } from './mcp-catalog.js';
+import { Fault } from './control.js';
+import { canonicalJson, McpJsonError, type McpTool, mcpCatalog, mcpDigest } from './mcp-catalog.js';
 
 const tool = {
   name: 'synthetic_echo',
@@ -29,6 +30,220 @@ function rejectedCatalog(input: unknown, secrets: readonly string[] = []) {
   }
   return expect.unreachable('Measurement must not make the depth16 catalog acceptable');
 }
+
+type Definition = Omit<McpTool, 'alias' | 'digest'>;
+
+function retainedBytes(items: Definition[]) {
+  return Buffer.byteLength(
+    JSON.stringify(
+      items.map((entry) => ({ ...entry, alias: `ext_${'0'.repeat(20)}`, digest: '0'.repeat(64) })),
+    ),
+  );
+}
+
+function retainedPrefix(target: number) {
+  const items: Definition[] = [deepDefinition('synthetic-first', 15)];
+  while (true) {
+    const next = {
+      ...tool,
+      name: `synthetic-prefix-${items.length}`,
+      inputSchema: { type: 'object', padding: '' },
+    };
+    const room = target - retainedBytes([...items, next]);
+    expect(room).toBeGreaterThanOrEqual(0);
+    items.push({
+      ...next,
+      inputSchema: { type: 'object', padding: 'x'.repeat(Math.min(room, 30000)) },
+    });
+    if (room < 30000) break;
+  }
+  expect(retainedBytes(items)).toBe(target);
+  return items;
+}
+
+function limitStop(input: unknown) {
+  const error = rejectedCatalog(input);
+  expect(error).toMatchObject({
+    code: 'INVALID_MCP_JSON',
+    status: 400,
+    diagnostic: {
+      reason: 'json_depth',
+      depth: 17,
+      limit: 16,
+      measurement: { status: 'incomplete', stopCode: 'MCP_CATALOG_LIMIT' },
+    },
+  });
+  for (const key of [
+    'schemaDepth',
+    'definitionDepth',
+    'catalogDepth',
+    'maxDefinitionBytes',
+    'catalogBytes',
+  ])
+    expect(error).not.toHaveProperty(`diagnostic.measurement.${key}`);
+  expect(error).toHaveProperty('diagnostic.measurement.stop');
+  expect(JSON.stringify(error)).not.toContain('synthetic-private');
+  return (error as { diagnostic: { measurement: { stop: Record<string, unknown> } } }).diagnostic
+    .measurement.stop;
+}
+
+test('encoded definition bytes and scalar minimums retain distinct evidence', () => {
+  const exact = limitStop([
+    deepDefinition('synthetic-first', 15),
+    { ...tool, inputSchema: { type: 'object', padding: '\0'.repeat(6000) } },
+  ]);
+  expect(exact).toMatchObject({
+    kind: 'definition_bytes',
+    frameBudgetBytes: 32768,
+    fragmentBytes: 36002,
+    fragmentBasis: 'exact',
+    toolOffset: 1,
+  });
+  expect(Number(exact.remainingBytes)).toBeLessThan(32768);
+  const minimum = limitStop([
+    deepDefinition('synthetic-first', 15),
+    { ...tool, inputSchema: { type: 'object', padding: 'x'.repeat(1048576) } },
+  ]);
+  expect(minimum).toMatchObject({
+    kind: 'definition_bytes',
+    frameBudgetBytes: 32768,
+    fragmentBytes: 1048578,
+    fragmentBasis: 'minimum',
+    toolOffset: 1,
+  });
+});
+
+test('remaining retained credit and equal constraints identify their original budget origin', () => {
+  for (const [prefixBytes, kind, credit] of [
+    [240000, 'retained_catalog_bytes', 15999],
+    [223231, 'definition_and_retained_bytes', 32768],
+  ] as const) {
+    const prefix = retainedPrefix(prefixBytes);
+    const stop = limitStop([
+      ...prefix,
+      {
+        ...tool,
+        name: 'synthetic-tail',
+        inputSchema: { type: 'object', padding: 'x'.repeat(1048576) },
+      },
+    ]);
+    expect(stop).toMatchObject({
+      kind,
+      frameBudgetBytes: credit,
+      fragmentBasis: 'minimum',
+      toolOffset: prefix.length,
+    });
+    expect(Number(stop.remainingBytes)).toBeGreaterThanOrEqual(0);
+    expect(Number(stop.remainingBytes)).toBeLessThanOrEqual(credit);
+  }
+});
+
+test('fixed retained metadata can exhaust credit after the definition itself fits', () => {
+  const prefix = retainedPrefix(240000);
+  const last = { ...tool, name: 'synthetic-tail', inputSchema: { type: 'object', padding: '' } };
+  const definitionBytes = 15949;
+  last.inputSchema.padding = 'x'.repeat(definitionBytes - Buffer.byteLength(JSON.stringify(last)));
+  expect(Buffer.byteLength(JSON.stringify(last))).toBe(definitionBytes);
+  const added = retainedBytes([...prefix, last]) - retainedBytes(prefix);
+  expect(limitStop([...prefix, last])).toEqual({
+    kind: 'retained_catalog_bytes',
+    frameBudgetBytes: 256000,
+    remainingBytes: 16000,
+    fragmentBytes: added,
+    fragmentBasis: 'exact',
+    toolOffset: prefix.length,
+  });
+});
+
+test('aggregate exhaustion is labeled at that traversal without a second scan', () => {
+  let reads = 0;
+  const later = {
+    ...tool,
+    inputSchema: {
+      type: 'object',
+      get padding() {
+        return ++reads === 1 ? 'synthetic' : 'x'.repeat(300000);
+      },
+    },
+  };
+  const stop = limitStop([deepDefinition('synthetic-first', 15), later]);
+  expect(stop).toMatchObject({
+    kind: 'aggregate_bytes',
+    frameBudgetBytes: 256000,
+    fragmentBytes: 300002,
+    fragmentBasis: 'minimum',
+  });
+  expect(stop).not.toHaveProperty('toolOffset');
+  expect(reads).toBe(2);
+});
+
+test('duplicate names expose only counts and still short-circuit aggregate encoding', () => {
+  const stringify = JSON.stringify;
+  let aliases = 0;
+  const spy = vi.spyOn(JSON, 'stringify').mockImplementation((value: unknown) => {
+    if (typeof value === 'string' && /^ext_[a-f0-9]{20}$/.test(value)) aliases++;
+    return stringify(value);
+  });
+  try {
+    expect(
+      limitStop([
+        deepDefinition('synthetic-private-name', 15),
+        { ...tool, name: 'synthetic-private-name' },
+      ]),
+    ).toEqual({ kind: 'duplicate_names', toolCount: 2, uniqueCount: 1 });
+    expect(aliases).toBe(0);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test('unsafe bookkeeping never becomes numeric diagnostic content', () => {
+  const padding = new Proxy([], {
+    get(target, key, receiver): unknown {
+      return key === 'length' ? Number.NaN : Reflect.get(target, key, receiver);
+    },
+  });
+  expect(
+    limitStop([
+      deepDefinition('synthetic-first', 15),
+      { ...tool, inputSchema: { type: 'object', padding } },
+    ]),
+  ).toEqual({ kind: 'budget_accounting' });
+});
+
+test('unbranded catalog-limit details cannot impersonate a local stop', () => {
+  const later = {
+    ...tool,
+    get inputSchema(): Record<string, unknown> {
+      throw Object.assign(new Fault('MCP_CATALOG_LIMIT', 400, 'synthetic-private-error'), {
+        stop: { kind: 'synthetic-private-detail', fragmentBytes: Number.NaN },
+      });
+    },
+  };
+  expect(limitStop([deepDefinition('synthetic-first', 15), later])).toEqual({
+    kind: 'unclassified_limit',
+  });
+});
+
+test('diagnostic annotation rethrows the original depth error instance', () => {
+  const original = new McpJsonError({
+    reason: 'json_depth',
+    stage: 'definition',
+    path: 'tools[0]',
+    kind: 'object',
+    depth: 17,
+    limit: 16,
+  });
+  const input = [
+    {
+      ...tool,
+      get inputSchema(): Record<string, unknown> {
+        throw original;
+      },
+    },
+  ];
+  expect(rejectedCatalog(input)).toBe(original);
+});
 
 test.each([
   {
