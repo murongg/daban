@@ -8,7 +8,7 @@ import { count, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test, vi } from 'vitest';
 import { errorCode } from './control.js';
-import { tables } from './database.js';
+import { type Database, type Transaction, tables } from './database.js';
 import { secureDirectory } from './private-files.js';
 import { Work } from './work.js';
 import { workItems, workMeta, workOperations } from './work-schema.js';
@@ -437,10 +437,68 @@ test('stable bounded pages retain old items through edits, literal search and th
     lastError: string | undefined;
   let before: number | undefined;
   let quotaReceiptState: string | undefined;
+  const timing = () => ({ calls: 0, ms: 0, maxMs: 0, errors: 0 });
+  const bucket = () => ({
+    authority: timing(),
+    transaction: timing(),
+    body: timing(),
+    entryMs: 0,
+    postBodyMs: 0,
+    failedRemainderMs: 0,
+  });
+  const buckets = {
+    seed1to100: bucket(),
+    seed101to500: bucket(),
+    seed501to1000: bucket(),
+    nonseed: bucket(),
+  };
+  const observer = {
+    calls: 0,
+    clockCalls: 0,
+    bookkeepingLowerMs: 0,
+    reportCallMs: 0,
+    setupMs: 0,
+    missingBodies: 0,
+  };
+  const clock = () => {
+    observer.clockCalls++;
+    return performance.now();
+  };
+  const currentBucket = () =>
+    phase !== 'seed'
+      ? buckets.nonseed
+      : writes < 100
+        ? buckets.seed1to100
+        : writes < 500
+          ? buckets.seed101to500
+          : buckets.seed501to1000;
+  const record = (value: ReturnType<typeof timing>, ms: number, completed: boolean) => {
+    value.calls++;
+    value.ms += ms;
+    value.maxMs = Math.max(value.maxMs, ms);
+    if (!completed) value.errors++;
+  };
+  const observations = () => {
+    const values: Record<string, number> = {};
+    for (const range of ['seed1to100', 'seed101to500', 'seed501to1000', 'nonseed'] as const) {
+      for (const group of ['authority', 'transaction', 'body'] as const)
+        for (const metric of ['calls', 'ms', 'maxMs', 'errors'] as const)
+          values[`obs_${range}_${group}_${metric}`] =
+            Math.round(buckets[range][group][metric] * 1000) / 1000;
+      for (const metric of ['entryMs', 'postBodyMs', 'failedRemainderMs'] as const)
+        values[`obs_${range}_${metric}`] = Math.round(buckets[range][metric] * 1000) / 1000;
+    }
+    return values;
+  };
+  let restoreAuthority: (() => unknown) | undefined;
+  let restoreTransaction: (() => unknown) | undefined;
   const report = (event: string) => {
+    const reportAt = clock();
     process.stderr.write(
-      `[work-bounds-phase] ${JSON.stringify({ event, phase, elapsedMs: Math.round(performance.now() - started), writes, pages, cursor: before, quotaReceiptState, lastError, aborted: t.signal.aborted })}\n`,
+      `[work-bounds-phase] ${JSON.stringify({ event, phase, elapsedMs: Math.round(performance.now() - started), writes, pages, cursor: before, quotaReceiptState, lastError, aborted: t.signal.aborted, obsCalls: observer.calls, obsClockCalls: observer.clockCalls, obsBookkeepingLowerMs: observer.bookkeepingLowerMs, obsReportCallMs: observer.reportCallMs, obsSetupMs: observer.setupMs, obsMissingBodies: observer.missingBodies, ...observations() })}\n`,
     );
+    // These lower bounds omit spy dispatch, clock/JIT/scheduling effects and this record's own write cost.
+    observer.reportCallMs += clock() - reportAt;
   };
   const mark = (value: string) => {
     phase = value;
@@ -452,6 +510,101 @@ test('stable bounded pages retain old items through edits, literal search and th
   mark('fixture');
   const f = await fixture();
   try {
+    const setupAt = clock();
+    try {
+      // Temporary diagnostic view of pinned private members; it must never become a production hook.
+      type ObservedWork = {
+        db?: Database;
+        commentAuthority: (db?: Database) => number;
+      };
+      const store = f.store as unknown as ObservedWork;
+      const db = store.db;
+      if (
+        !db ||
+        typeof store.commentAuthority !== 'function' ||
+        typeof db.transaction !== 'function'
+      )
+        throw new Error('WORK_OBSERVER_UNAVAILABLE');
+      const originalAuthority = store.commentAuthority;
+      const originalTransaction = db.transaction;
+      const authoritySpy = vi.spyOn(store, 'commentAuthority');
+      restoreAuthority = () => authoritySpy.mockRestore();
+      authoritySpy.mockImplementation(function (
+        this: ObservedWork,
+        ...args: Parameters<ObservedWork['commentAuthority']>
+      ) {
+        const enteredAt = clock();
+        authoritySpy.mockClear();
+        const active = currentBucket();
+        observer.calls++;
+        let completed = false;
+        const callAt = clock();
+        try {
+          const result = originalAuthority.apply(this, args);
+          completed = true;
+          return result;
+        } finally {
+          const returnedAt = clock();
+          record(active.authority, returnedAt - callAt, completed);
+          observer.bookkeepingLowerMs += callAt - enteredAt + (clock() - returnedAt);
+        }
+      });
+      const transactionSpy = vi.spyOn(db, 'transaction');
+      restoreTransaction = () => transactionSpy.mockRestore();
+      transactionSpy.mockImplementation(function (
+        this: Database,
+        ...args: Parameters<Database['transaction']>
+      ) {
+        const enteredAt = clock();
+        // Keep spy history bounded too; aggregated counters must not retain per-row receipts/callbacks.
+        transactionSpy.mockClear();
+        const active = currentBucket();
+        const [callback, ...configuration] = args;
+        const invoke = originalTransaction.bind(this);
+        observer.calls++;
+        let bodyEnteredAt: number | undefined;
+        let bodyExitedAt: number | undefined;
+        let completed = false;
+        const callAt = clock();
+        try {
+          const result = invoke(
+            (tx: Transaction) => {
+              const enteredBodyAt = clock();
+              bodyEnteredAt ??= enteredBodyAt;
+              observer.calls++;
+              let bodyCompleted = false;
+              const bodyCallAt = clock();
+              try {
+                const value = callback(tx);
+                bodyCompleted = true;
+                return value;
+              } finally {
+                const bodyReturnedAt = clock();
+                record(active.body, bodyReturnedAt - bodyCallAt, bodyCompleted);
+                bodyExitedAt = clock();
+                observer.bookkeepingLowerMs +=
+                  bodyCallAt - enteredBodyAt + (bodyExitedAt - bodyReturnedAt);
+              }
+            },
+            ...configuration,
+          );
+          completed = true;
+          return result;
+        } finally {
+          const returnedAt = clock();
+          record(active.transaction, returnedAt - callAt, completed);
+          if (bodyEnteredAt !== undefined) active.entryMs += bodyEnteredAt - callAt;
+          if (completed) {
+            if (bodyExitedAt === undefined) observer.missingBodies++;
+            else active.postBodyMs += returnedAt - bodyExitedAt;
+          } else active.failedRemainderMs += returnedAt - (bodyExitedAt ?? callAt);
+          // Outer time includes body/observer work; post-body also includes driver return or rollback.
+          observer.bookkeepingLowerMs += callAt - enteredAt + (clock() - returnedAt);
+        }
+      });
+    } finally {
+      observer.setupMs += clock() - setupAt;
+    }
     mark('seed');
     for (let index = 0; index < 1000; index++) {
       await f.store.write(
@@ -519,6 +672,8 @@ test('stable bounded pages retain old items through edits, literal search and th
     report('error');
     throw error;
   } finally {
+    restoreTransaction?.();
+    restoreAuthority?.();
     mark('close');
     try {
       await f.close(mark).catch((error: unknown) => {
