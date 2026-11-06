@@ -19,11 +19,13 @@ function connect(
   uncertain = false,
   agent?: RuntimeSnapshot['agent'],
   setup?: RuntimeSnapshot['setup'],
+  searchSettings = false,
 ) {
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = 39;
   snapshot.agent = agent;
   snapshot.setup = setup;
+  if (searchSettings) snapshot.searchSettings = true;
   snapshot.model = {
     configured: true,
     available: true,
@@ -50,6 +52,19 @@ function connect(
   const listeners = new Set<(value: RuntimeSnapshot) => unknown>();
   let writes = 0;
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
+    if (command.type === 'search.status')
+      return {
+        ok: true,
+        value: {
+          revision: 0,
+          checkRevision: 0,
+          enabled: false,
+          provider: 'deepseek',
+          credentialConfigured: false,
+          credentialSource: 'none',
+          health: 'disabled',
+        },
+      };
     if (command.type === 'model.configure') {
       if (uncertain && ++writes === 1) return { ok: false, error: 'RUNTIME_UNAVAILABLE' };
       snapshot.model.revision = command.input.revision + 1;
@@ -265,4 +280,29 @@ it('explains native-only setup without offering Linux installation or VM recover
     within(panel).getByText('在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。'),
   ).toBeVisible();
   expect(within(dialog).queryByRole('button', { name: '检查并恢复' })).toBeNull();
+});
+
+it('keeps a search key only while Settings is open and never stops a background task on close', async () => {
+  const invoke = connect(false, undefined, undefined, true);
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  const settings = await screen.findByRole('dialog', { name: '设置' });
+  await userEvent.click(within(settings).getByRole('tab', { name: '搜索' }));
+  const key = await within(settings).findByLabelText('搜索 API Key');
+  await userEvent.type(key, 'synthetic-search-draft');
+  await userEvent.click(within(settings).getByRole('tab', { name: '通用' }));
+  expect(key).not.toBeVisible();
+  await userEvent.click(within(settings).getByRole('tab', { name: '搜索' }));
+  expect(key).toHaveValue('synthetic-search-draft');
+  expect(JSON.stringify(localStorage)).not.toContain('synthetic-search-draft');
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  const reopened = screen.getByRole('dialog', { name: '设置' });
+  await userEvent.click(within(reopened).getByRole('tab', { name: '搜索' }));
+  expect(await within(reopened).findByLabelText('搜索 API Key')).toHaveValue('');
+  expect(
+    invoke.mock.calls.some(([command]) =>
+      ['search.configure', 'search.check', 'task.stop'].includes(command.type),
+    ),
+  ).toBe(false);
 });

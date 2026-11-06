@@ -1,4 +1,80 @@
 export const english = {
+  'search.duckduckgoOption': 'DuckDuckGo (no API key)',
+  'search.keylessCredential': 'Keyless search; no credentials needed',
+  'search.keylessHint':
+    'No API key needed. Searches DuckDuckGo public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
+  'search.confirmKeyless':
+    'Send one fixed search without personal content to DuckDuckGo. No search API key is needed. This will not retry automatically or switch providers.',
+  'search.healthKeylessForbidden':
+    'DuckDuckGo restricted this request or requires verification. Try again later explicitly.',
+
+  'search.independentKeyRequired':
+    'Enter an independent API key for this search provider. The previous credential cannot be reused for this save.',
+  'search.keyReplacementHint': 'This save needs a new independent key; it cannot be left blank.',
+
+  'search.legacyInUse':
+    'Search still uses this DeepSeek connection. Add an independent search key or disable search before changing its destination or protocol.',
+  'search.title': 'Search',
+  'search.description': 'Choose a search service separately from your chat model.',
+  'search.legacyHost':
+    'This service does not support independent search settings yet. Update the Host service. Legacy search still follows model connections.',
+  'search.offline': 'Connect to the Host service to manage search.',
+  'search.loading': 'Reading search settings…',
+  'search.enabled': 'Enable search',
+  'search.provider': 'Search provider',
+  'search.key': 'Search API Key',
+  'search.keyHint':
+    'Leave blank to keep the saved key for this provider. Changing provider requires a new key. Unsaved keys are cleared when Settings closes.',
+  'search.legacyCredential': 'Linked to the previous DeepSeek model connection',
+  'search.independentCredential': 'Independent search credential configured',
+  'search.noCredential': 'No search credential configured',
+  'search.fetchIndependent':
+    'When search is off, public URL reading and the browser still follow their own permissions.',
+  'search.save': 'Save search settings',
+  'search.saving': 'Saving…',
+  'search.saved': 'Search settings saved. No remote test has run.',
+  'search.refresh': 'Refresh search status',
+  'search.check': 'Test search',
+  'search.checking': 'Testing search…',
+  'search.confirmTitle': 'Test search?',
+  'search.confirmCost':
+    'One fixed search without personal content will be sent to the current provider. It may incur one search charge. There is no automatic retry or provider switch.',
+  'search.confirm': 'Confirm and test once',
+  'search.cancel': 'Cancel',
+  'search.receipt': 'Look up operation receipt',
+  'search.pending':
+    'The result is unconfirmed. Look up the original receipt before making another change. No request will be resent automatically.',
+  'search.claimed':
+    'The Host accepted this test. Look up its receipt to check progress; another test will not start.',
+  'search.superseded':
+    'This receipt is no longer retained. Review the current settings before explicitly starting another operation.',
+  'search.failure':
+    'Could not confirm the search operation. Check the Host connection and look up the original receipt.',
+  'search.storageFailure':
+    'The operation ID could not be saved locally. No change or search was sent. Check local storage and try again.',
+  'search.conflict':
+    'Search settings changed elsewhere. Your input is kept; review the current provider before saving again.',
+  'search.useCurrentRevision': 'Keep input and use the current version',
+  'search.saveFirst': 'Save your changes before testing the configured provider.',
+  'search.checkedAt': 'Last test: {0}',
+  'search.testScope':
+    'A successful test is a point-in-time result, not a promise of continued availability or quota.',
+  'search.healthDisabled': 'Search is disabled',
+  'search.healthUnconfigured': 'Search needs a credential',
+  'search.healthUnchecked': 'Not tested remotely',
+  'search.healthReady': 'Test passed; search is available',
+  'search.healthEmpty': 'Test passed with no results',
+  'search.healthUnauthorized': 'Authentication failed. Replace this search key.',
+  'search.healthForbidden': 'This key lacks search permission. Check the provider account.',
+  'search.healthRateLimited': 'Search is rate limited. Wait before explicitly testing again.',
+  'search.retryAfter': 'The provider suggests waiting {0} seconds.',
+  'search.healthUnavailable': 'Search service is unavailable. Check the connection and test again.',
+  'search.healthTimeout': 'The search timed out. You can explicitly test again.',
+  'search.healthInvalid': 'The provider returned an invalid response. No source was trusted.',
+  'search.healthChanged':
+    'The configuration changed during this operation. Review the current settings.',
+  'search.healthCancelled': 'This search was cancelled.',
+  'search.healthUnknown': 'The test outcome is unknown. It will not be resent automatically.',
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',

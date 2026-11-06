@@ -89,7 +89,6 @@ export interface ResolvedModel {
   contextWindow: number;
   maxTokens: number;
   binding: string;
-  searchApiKey?: string;
   secrets: string[];
 }
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -152,6 +151,9 @@ const legacyConnection = (apiKey: string): PrivateConnection => ({
     maxTokens: 8192,
   })),
 });
+const officialSearch = (item: ModelConnection) =>
+  modelApi(item) === 'openai-completions' &&
+  item.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1';
 const metadata = ({ apiKey: _apiKey, ...connection }: PrivateConnection): ModelConnection =>
   connection;
 const allConnections = (config: PrivateConfig) =>
@@ -194,6 +196,11 @@ const readConfig = async (file: string): Promise<unknown> => {
 };
 
 export class ModelSettings {
+  withConnectionChange?: <T>(
+    connection: ModelConnection,
+    commit: () => Promise<T>,
+    removing?: boolean,
+  ) => Promise<T>;
   private readonly referenceChecks = new Set<
     (connection: ModelConnection) => Promise<ModelReference[]>
   >();
@@ -363,6 +370,21 @@ export class ModelSettings {
   async status(includeConnections = false) {
     return this.publicConfig(await this.serial(() => this.recover()), includeConnections);
   }
+  async searchConnection(reference?: string) {
+    // The model commit can wait on Search ownership; this read must not reenter the model queue.
+    const config = await this.privateConfig();
+    if (!config) return undefined;
+    const connections = allConnections(config);
+    const selected = findModel(connections, config.model)?.connection;
+    const connection =
+      reference !== undefined
+        ? connections.find((item) => item.id === reference && officialSearch(item))
+        : selected && officialSearch(selected)
+          ? selected
+          : connections.find((item) => item.id === 'deepseek-official' && officialSearch(item)) ||
+            connections.find(officialSearch);
+    return connection ? { id: connection.id, key: connection.apiKey } : undefined;
+  }
   async resolve(reference?: ModelId): Promise<ResolvedModel> {
     const config = await this.serial(() => this.recover());
     return this.resolveConfig(config, reference);
@@ -377,18 +399,7 @@ export class ModelSettings {
     return {
       revision: config?.revision || 0,
       primary,
-      ...(fallback
-        ? {
-            fallback: {
-              ...fallback,
-              searchApiKey: primary.searchApiKey,
-              binding: digest([
-                fallback.binding,
-                primary.searchApiKey ? digest(primary.searchApiKey) : null,
-              ]),
-            },
-          }
-        : {}),
+      ...(fallback ? { fallback } : {}),
     };
   }
   async available(route: ResolvedModel) {
@@ -405,14 +416,6 @@ export class ModelSettings {
     const selected = findModel(connections, reference ?? config.model);
     if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
     const { connection, model } = selected;
-    const official = (item: PrivateConnection) =>
-      modelApi(item) === 'openai-completions' &&
-      item.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1';
-    // The configured destination authorizes this key; generated connection IDs do not identify the vendor.
-    const search = official(connection)
-      ? connection
-      : connections.find((item) => item.id === 'deepseek-official' && official(item)) ||
-        connections.find(official);
     return {
       ...(model.capabilities ? { capabilities: structuredClone(model.capabilities) } : {}),
       credentialVersion: digest([
@@ -440,9 +443,7 @@ export class ModelSettings {
         modelApi(connection),
         model,
         digest(connection.apiKey),
-        search ? digest(search.apiKey) : null,
       ]),
-      ...(search ? { searchApiKey: search.apiKey } : {}),
       secrets: [...new Set(connections.map((item) => item.apiKey))],
     };
   }
@@ -564,15 +565,18 @@ export class ModelSettings {
       const selected = findModel(connections, model);
       if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
       if (prior?.fallbackModel === model) throw new Fault('MODEL_FALLBACK_INVALID', 400);
-      return this.persist({
-        ...(prior?.fallbackModel ? { fallbackModel: prior.fallbackModel } : {}),
-        ...(prior?.probe ? { probe: prior.probe, probeRevision: prior.probeRevision } : {}),
-        apiKey: selected.connection.apiKey,
-        model,
-        provider: selected.connection.id,
-        connections,
-        revision: (prior?.revision || 0) + 1,
-      });
+      const commit = () =>
+        this.persist({
+          ...(prior?.fallbackModel ? { fallbackModel: prior.fallbackModel } : {}),
+          ...(prior?.probe ? { probe: prior.probe, probeRevision: prior.probeRevision } : {}),
+          apiKey: selected.connection.apiKey,
+          model,
+          provider: selected.connection.id,
+          connections,
+          revision: (prior?.revision || 0) + 1,
+        });
+      const changed = connections.find((connection) => connection.id === 'deepseek-official')!;
+      return this.withConnectionChange ? this.withConnectionChange(changed, commit) : commit();
     });
   }
   private async probe(connection: PrivateConnection, models: string[]) {
@@ -852,44 +856,59 @@ export class ModelSettings {
       )
         references.push('fallback');
       if (
+        !this.withConnectionChange &&
         connections.length > 1 &&
         modelApi(removed) === 'openai-completions' &&
         removed.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1'
       )
         references.push('search');
-      const operation: ModelOperation = {
-        id: input.requestId,
-        fingerprint,
-        kind: 'remove',
-        revision: input.revision,
-        connection: removed.id,
-        model: config.model,
-        phase: references.length ? 'failed' : 'committed',
-        ...(references.length
-          ? { code: 'MODEL_CONNECTION_REFERENCED', references: [...new Set(references)] }
-          : { committedRevision: input.revision + 1 }),
+      const commit = async () => {
+        const operation: ModelOperation = {
+          id: input.requestId,
+          fingerprint,
+          kind: 'remove',
+          revision: input.revision,
+          connection: removed.id,
+          model: config.model,
+          phase: references.length ? 'failed' : 'committed',
+          ...(references.length
+            ? { code: 'MODEL_CONNECTION_REFERENCED', references: [...new Set(references)] }
+            : { committedRevision: input.revision + 1 }),
+        };
+        const next: PrivateConfig = references.length
+          ? { ...config, operations: [...(config.operations || []), operation] }
+          : disconnect
+            ? {
+                configured: false,
+                connections: [],
+                revision: input.revision + 1,
+                scope: config.scope,
+                operations: [operation],
+                receipt: { id: input.requestId, fingerprint },
+                ...(config.probe
+                  ? { probe: config.probe, probeRevision: config.probeRevision }
+                  : {}),
+              }
+            : {
+                ...config,
+                connections: connections.filter((item) => item.id !== removed.id),
+                revision: input.revision + 1,
+                operations: [operation],
+                receipt: { id: input.requestId, fingerprint },
+              };
+        await this.persist(next);
+        return this.operationView(next, operation);
       };
-      const next: PrivateConfig = references.length
-        ? { ...config, operations: [...(config.operations || []), operation] }
-        : disconnect
-          ? {
-              configured: false,
-              connections: [],
-              revision: input.revision + 1,
-              scope: config.scope,
-              operations: [operation],
-              receipt: { id: input.requestId, fingerprint },
-              ...(config.probe ? { probe: config.probe, probeRevision: config.probeRevision } : {}),
-            }
-          : {
-              ...config,
-              connections: connections.filter((item) => item.id !== removed.id),
-              revision: input.revision + 1,
-              operations: [operation],
-              receipt: { id: input.requestId, fingerprint },
-            };
-      await this.persist(next);
-      return this.operationView(next, operation);
+      try {
+        return this.withConnectionChange
+          ? await this.withConnectionChange(removed, commit, true)
+          : await commit();
+      } catch (error) {
+        if (errorCode(error) !== 'SEARCH_LEGACY_IN_USE') throw error;
+        // A search refusal is a durable removal receipt, just like the other canonical references.
+        references.push('search');
+        return commit();
+      }
     });
   }
   async diagnose(value: unknown): Promise<ModelSaved> {
@@ -1073,6 +1092,7 @@ export class ModelSettings {
     const checked = edited || selected.connection;
     if (existing && value.connection)
       await this.assertModelRemoval(existing, value.connection.models);
+    if (edited) await this.withConnectionChange?.(edited, async () => undefined);
     const claim: ModelOperation = {
       id: value.requestId,
       fingerprint,
@@ -1129,13 +1149,18 @@ export class ModelSettings {
         const previous = allConnections(current).find((item) => item.id === connection.id);
         // Hold the same owner as withModel admission through persist; pending writes retain their reservation until durable.
         if (previous) await this.assertModelRemoval(previous, connection.models);
-        // A reference refusal is known; only an attempted atomic replacement can leave an unknown durable outcome.
-        committing = true;
-        return this.persist({
-          ...candidate,
-          ...(current.probe ? { probe: current.probe, probeRevision: current.probeRevision } : {}),
-          operations: [{ ...claim, phase: 'committed', committedRevision: candidate.revision }],
-        });
+        const commit = () => {
+          // Guard refusals remain known failures; only an attempted replacement can have an unknown durable outcome.
+          committing = true;
+          return this.persist({
+            ...candidate,
+            ...(current.probe
+              ? { probe: current.probe, probeRevision: current.probeRevision }
+              : {}),
+            operations: [{ ...claim, phase: 'committed', committedRevision: candidate.revision }],
+          });
+        };
+        return this.withConnectionChange ? this.withConnectionChange(connection, commit) : commit();
       });
     } catch (error) {
       const unknown = committing || error instanceof ModelRequestUnknown;

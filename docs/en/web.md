@@ -6,9 +6,21 @@ Research on public pages usually does not require connecting a computer. Search,
 
 ## Search or provide a URL
 
-- Ask for research with original sources and a comparison of findings. Built-in search currently uses a configured official DeepSeek connection. A connection to another model provider alone does not enable this search service.
-- Paste exact public HTTP(S) URLs to have the Bot read and cite them. Anonymous URL reading does not require the DeepSeek search connection.
+- Ask for research with original sources and a comparison of findings. Search is configured separately from the chat model. Users without a search configuration default to keyless DuckDuckGo; an old automatically created empty default with no saved choice or credentials is also upgraded. Existing provider choices, disabled search and saved legacy DeepSeek links remain unchanged.
+- Paste exact public HTTP(S) URLs to have the Bot read and cite them. Anonymous URL reading does not require a search API key.
 - Exact URLs supplied in the current request or returned by a successful search in this run can be read under the current rules. Changed or additional URLs may require one-time approval.
+
+## Configure search
+
+With a client and Host that include independent search, open Settings → Search, choose a provider, and save:
+
+- **DuckDuckGo (no API key)**: no credentials needed. Uses public search result pages and requires internet access. Rate limits, verification or HTML changes may temporarily block searches.
+- **DeepSeek**: enter an official DeepSeek platform API key, or keep an existing saved official-connection link.
+- **Brave**: enter a Brave Search API key.
+
+Saving and refreshing status never dispatch a search. Test search asks for confirmation and sends one fixed query to the selected provider; DeepSeek/Brave may charge for it. Start a new task after configuring search; running tasks retain their captured configuration. Failures do not automatically retry or switch providers.
+
+Search uses the Host's saved `network.json` proxy when present (`null` explicitly disables it). Otherwise it uses `DSH_NETWORK_PROXY`, `https_proxy`/`HTTPS_PROXY`, or `all_proxy`/`ALL_PROXY`, respecting `no_proxy`/`NO_PROXY`. HTTP(S) proxies are supported; invalid settings fail without a direct retry. Set these on the Host process, which may run separately from the desktop client. This does not change the operating system's proxy settings or automatically read PAC settings. With proxy-mapped DNS addresses, public DNS resolution also follows the configured proxy; destination IP checks and TLS certificate verification remain required.
 
 ## How articles are read
 
