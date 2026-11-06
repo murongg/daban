@@ -157,6 +157,11 @@ export function isDiagnosticReport(value: unknown): value is DiagnosticReport {
     )
   );
 }
+export * from './app-connections.js';
+export * from './app-providers.js';
+
+import type { AppCommand, AppConnectionsCapability } from './app-connections.js';
+
 export interface McpTool {
   name: string;
   alias: string;
@@ -164,6 +169,12 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
   digest: string;
 }
+export const mcpCatalogToolLimit = 128;
+// The absent view header preserves the closed 64-tool Bearer response understood by older clients.
+export const legacyMcpCatalogToolLimit = 64;
+export const mcpAppsView = { header: 'x-daban-mcp-view', value: 'apps' } as const;
+export type McpView = 'bearer' | 'apps';
+
 export interface McpConnection {
   ownerBot?: string;
   id: string;
@@ -370,7 +381,7 @@ export function isMcpConnection(value: unknown): value is McpConnection {
     typeof value.deleted === 'boolean' &&
     ['unchecked', 'ready', 'unavailable'].includes(String(value.health)) &&
     browserNumber(value.toolCount) &&
-    Number(value.toolCount) <= 64 &&
+    Number(value.toolCount) <= mcpCatalogToolLimit &&
     (value.catalogDigest === undefined || mcpHash(value.catalogDigest)) &&
     (value.health !== 'ready' || mcpHash(value.catalogDigest)) &&
     (value.checkedAt === undefined || mcpDate(value.checkedAt)) &&
@@ -1548,6 +1559,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  appConnections?: AppConnectionsCapability;
   localFolders?: true;
   linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
@@ -1625,6 +1637,8 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'search.status' || command.type === 'search.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
+    'app.catalog',
+    'app.oauth.status',
     'frame',
     'files.list',
     'files.read',
@@ -4159,6 +4173,7 @@ export type RuntimeCommand =
   | { type: 'recovery.inspect' | 'recovery.cancel' | 'recovery.start'; id: string }
   | { type: 'runtime.inspect' }
   | McpCommand
+  | AppCommand
   | { type: 'skill.list'; bot: string; includeDeleted?: boolean }
   | { type: 'skill.read'; bot: string; id: string }
   | SkillPackageCommand

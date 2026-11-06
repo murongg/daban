@@ -2198,7 +2198,7 @@ export const english = {
   'integrations.credentialsConfigured': 'Credentials configured',
   'integrations.currentConfiguration': 'Current configuration:',
   'integrations.currentlySupportsPublicHttpsStreamableHttpLocal':
-    'Currently supports public HTTPS Streamable HTTP. Local programs, OAuth login and custom headers are not connected yet.',
+    'Supports public HTTPS Streamable HTTP. App authorization is offered only for reviewed directory entries. Local programs and custom headers are unavailable.',
   'integrations.disablesAllBotsAccessConnectionCancelsCalls':
     "” disables all Bots' access to this connection and cancels calls that have not started. External operations already sent may have taken effect.",
   'integrations.editConnection': 'Edit connection',
@@ -3573,6 +3573,62 @@ export const english = {
   'tasks.updatedAndCompletedAt': 'Updated at {0} · Completed at {1}',
   'tasks.currentRevisionSummary': '{0} · {1}',
   'tasks.currentDeletedRevisionSummary': '{0} · {1} (in Trash)',
+  'apps.connect': 'Connect {0}',
+  'apps.adminApproval':
+    'monday.com custom clients require administrator approval. Complete it on the official page; the account remains unauthorized until the callback succeeds.',
+  'apps.details': 'Connection details',
+  'apps.restart': 'Start a new authorization',
+  'apps.upgradeRequired':
+    'Update the Host to connect these apps. Existing connections and custom Bearer remain available.',
+  'apps.partialHistory':
+    'Only recent authorization attempts are shown. Reconcile uncertain outcomes using the original request.',
+  'apps.checkNext': 'Next: check the connection, then explicitly select allowed tools.',
+  'apps.chooseTools': 'Connection check passed. Review and explicitly select tool permissions.',
+  'apps.accountImpact':
+    'Disconnect clears local credentials and invalidates tool access. Revoke provider-side access separately in the official account.',
+  'apps.transportDetails': 'Custom connection requirements',
+  'apps.addApp': 'Add an app',
+  'apps.title': 'App connections',
+  'apps.notion': 'Notion',
+  'apps.custom': 'Custom remote MCP',
+  'apps.description':
+    'Authorize an account, then inspect and select tools. Each tool call still needs its own approval.',
+  'apps.connectNotion': 'Connect Notion',
+  'apps.unverified':
+    'Notion is unavailable until independent test-account verification is complete.',
+  'apps.remoteUnavailable':
+    'A local browser callback is unavailable for this connection. Use custom Bearer authentication.',
+  'apps.authorize': 'Authorize in system browser',
+  'apps.cancel': 'Cancel authorization',
+  'apps.retry': 'Check and reopen this authorization',
+  'apps.reconnect': 'Reconnect {0}',
+  'apps.disconnect': 'Disconnect {0}',
+  'apps.disconnectedNotice':
+    'Local credentials were cleared and tool access was disabled. Provider revocation is unconfirmed.',
+  'apps.preparing': 'Preparing authorization',
+  'apps.waiting': 'Complete authorization in your system browser',
+  'apps.exchanging': 'Confirming authorization',
+  'apps.connected': 'Account authorized. Inspect and explicitly select tools before use.',
+  'apps.cancelled': 'Authorization cancelled',
+  'apps.expired': 'Authorization expired. Start again.',
+  'apps.failed': 'Authorization failed. Start again.',
+  'apps.interrupted':
+    'Authorization was not confirmed. Start again; the previous request will not be replayed.',
+  'apps.stateConnected': 'Account authorized',
+  'apps.stateAuthorizing': 'Authorizing account',
+  'apps.stateDisconnected': 'Account disconnected',
+  'apps.stateReconnect': 'Account needs reconnection',
+  'apps.error':
+    'The operation was not confirmed. Check the original operation before starting another request.',
+  'apps.browserUnavailable':
+    'The system browser could not open. Reopen this authorization using its original request.',
+  'apps.conflict': 'The connection or its ownership changed. Refresh and review it again.',
+  'apps.metadataRejected': 'Authorization metadata was rejected. No authorization page was opened.',
+  'apps.scope': 'Authorized scope: {0}',
+  'apps.scopeRequired':
+    'The service rejected these permissions. Review account access and reconnect explicitly.',
+  'apps.publisher': 'Publisher: {0}',
+  'apps.retryDisconnect': 'Check and retry this disconnect',
   'models.connectionChecks': 'Connection checks',
   'models.checkSavedModel': 'Check saved model: {0}',
   'models.fallbackManagement': 'Fallback and connection management',

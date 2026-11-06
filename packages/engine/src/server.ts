@@ -6,12 +6,14 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  appDirectoryProtocol,
   type BotProfile,
   botBundleLimit,
   chatAssistantProtocol,
   type ExecutionSnapshot,
   type Group,
   type GroupPage,
+  isAppCommand,
   isAttachmentId,
   isAttachmentQuery,
   isAttachmentUpload,
@@ -61,6 +63,7 @@ import {
   legacyWorkList,
   legacyWorkReceipt,
   managedProtocol,
+  mcpAppsView,
   parseBotJSON,
   type RebootStatus,
   type RuntimeCommand,
@@ -81,7 +84,7 @@ import { folderRequest } from './folders-api.js';
 import { GroupTools } from './group-tools.js';
 import { Groups } from './groups.js';
 import { HostBrowser } from './host-browser.js';
-import { integrationCommand } from './integration-api.js';
+import { appCommand, integrationCommand } from './integration-api.js';
 import { jinaEnabled, jinaSettingFile, setJinaEnabled } from './jina.js';
 import { BotLifecycle } from './lifecycle.js';
 import { LinuxTools } from './linux-tools.js';
@@ -351,6 +354,7 @@ export async function startPrototype({
   // Search configuration is optional; its status endpoint reports corruption without blocking ordinary Host startup.
   await searches.status().catch(() => undefined);
   const authority = new Authority(path.join(modelDir, 'control-token'));
+  const appAuthority = host ? new Authority(path.join(modelDir, 'app-control-token')) : undefined;
   const token = authority.token;
   const viewers = new ViewerGrants();
   const assets = new Map();
@@ -802,6 +806,33 @@ export async function startPrototype({
               return json(res, await recovery.cancel(data.id, Number(data.revision)));
             throw new Fault('INVALID_RECOVERY_REQUEST', 400);
           }
+          const directoryRoute = url.pathname === '/api/mcp/apps';
+          if (directoryRoute && req.method === 'GET') {
+            if (url.search) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+            return json(res, { protocol: appDirectoryProtocol });
+          }
+          const appRoute = url.pathname === '/api/mcp/app' || directoryRoute;
+          const appInput = appRoute ? await body(req, 32000) : undefined;
+          if (appInput) {
+            if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+            if (req.method !== 'POST' || url.search || !isAppCommand(appInput))
+              throw new Fault('OAUTH_INVALID_REQUEST', 400);
+            if (directoryRoute !== ['app.directory', 'app.oauth.connect'].includes(appInput.type))
+              throw new Fault('OAUTH_INVALID_REQUEST', 400);
+            // Local reads and revocation cannot launch a task or bypass the recovery fence for a new authorization.
+            if (appInput.type !== 'app.oauth.start' && appInput.type !== 'app.oauth.connect')
+              return json(
+                res,
+                await appCommand(
+                  models,
+                  appInput,
+                  appAuthority?.accepts(req.headers['x-daban-app-control'])
+                    ? 'interactive'
+                    : 'service',
+                  !!host,
+                ),
+              );
+          }
           if (
             recovery &&
             req.method !== 'GET' &&
@@ -1088,6 +1119,22 @@ export async function startPrototype({
             if (url.search) throw new Fault('INVALID_DIAGNOSTIC_REQUEST', 400);
             return json(res, await diagnostics.inspect());
           }
+          if ((url.pathname === '/api/mcp/app' || directoryRoute) && req.method === 'POST') {
+            if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+            const command = appInput;
+            if (!isAppCommand(command) || url.search) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+            return json(
+              res,
+              await appCommand(
+                models,
+                command,
+                appAuthority?.accepts(req.headers['x-daban-app-control'])
+                  ? 'interactive'
+                  : 'service',
+                !!host,
+              ),
+            );
+          }
           if (url.pathname.startsWith('/api/mcp/') && req.method === 'POST') {
             if (!models) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
             const data = await body(req);
@@ -1096,11 +1143,26 @@ export async function startPrototype({
               data.type !== `mcp.${url.pathname.slice('/api/mcp/'.length)}`
             )
               throw new Fault('INVALID_MCP_CONFIG', 400);
+            // Both client generations send protocol28; this header selects metadata only, never OAuth authority.
+            const mcpView = req.headers[mcpAppsView.header];
+            if (mcpView !== undefined && mcpView !== mcpAppsView.value)
+              throw new Fault('INVALID_MCP_VIEW', 400);
             const controller = new AbortController();
             const cancel = () => controller.abort();
             res.once('close', cancel);
             try {
-              return json(res, await integrationCommand(models, data, controller.signal));
+              return json(
+                res,
+                await integrationCommand(
+                  models,
+                  data,
+                  controller.signal,
+                  appAuthority?.accepts(req.headers['x-daban-app-control'])
+                    ? 'interactive'
+                    : 'service',
+                  mcpView === mcpAppsView.value ? 'apps' : 'bearer',
+                ),
+              );
             } finally {
               res.off('close', cancel);
             }
@@ -1765,6 +1827,7 @@ export async function startPrototype({
               mcp: models
                 ? await models.integrations.status()
                 : { available: false, error: 'MCP_STORE_UNAVAILABLE' },
+              appConnections: { catalog: true, oauthLoopback: !!host },
               ...(models?.tools.software ? { software: await models.tools.software.status() } : {}),
               skills: models
                 ? await models.skills.status()
@@ -2137,6 +2200,7 @@ export async function startPrototype({
   try {
     // Publish only after binding: a pre-existing listener must never receive the new credential.
     await authority.publish();
+    await appAuthority?.publish();
     if (host?.execution && !host.nativeWorkspace) {
       const snapshot = await host.execution!.ready;
       if (!isExecutionSnapshot(snapshot)) throw new Fault('EXECUTION_INVALID_RESPONSE');

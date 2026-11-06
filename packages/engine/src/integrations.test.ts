@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
+import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
+import { Interactions } from './interactions.js';
 import { privateMetadata, secureDirectory } from './private-files.js';
 
 const save = {
@@ -265,6 +267,161 @@ test('only reviewed catalogs can enable selected tools for a Bot, and catalog ch
     expect((await f.store.assignments('mock-a')).items[0].enabled).toBe(false);
     expect((await f.store.capture('mock-a')).connections.length).toBe(0);
   } finally {
+    await f.close();
+  }
+});
+
+test.each([64, 77])(
+  'a %i-tool candidate catalog reopens intact without automatically exposing more than the 32 explicitly bound tools',
+  async (count) => {
+    const f = await fixture();
+    let reopened: Integrations | undefined;
+    try {
+      await f.store.save(save, 'mock-a');
+      const input = Array.from({ length: count }, (_, index) => ({
+        ...tools[0],
+        name: `synthetic_capacity_${index}`,
+      }));
+      const catalog = await f.store.catalog(save.id, 1, input);
+      expect(catalog.current.toolCount).toBe(count);
+      expect((await f.store.capture('mock-a')).connections).toEqual([]);
+      const selected = input.slice(0, 32).map((entry) => entry.name);
+      await f.store.bind('mock-a', {
+        connection: save.id,
+        configRevision: 1,
+        bindingRevision: 0,
+        catalogDigest: catalog.current.catalogDigest,
+        tools: selected,
+        enabled: true,
+      });
+      expect((await f.store.capture('mock-a')).connections[0].tools).toHaveLength(32);
+      await f.store.close();
+      reopened = new Integrations(f.store.file);
+      await reopened.ready;
+      expect((await reopened.list(false, 'mock-a')).items[0].toolCount).toBe(count);
+      expect((await reopened.catalogView(save.id, 'mock-a')).tools).toEqual(catalog.tools);
+      const restored = await reopened.capture('mock-a');
+      expect(restored.connections[0].tools.map((entry) => entry.name)).toEqual(
+        [...selected].sort(),
+      );
+      await expect(
+        reopened.bind('mock-a', {
+          connection: save.id,
+          configRevision: 1,
+          bindingRevision: 1,
+          catalogDigest: catalog.current.catalogDigest,
+          tools: [...selected, input[32].name],
+          enabled: true,
+        }),
+      ).rejects.toMatchObject({ code: 'INVALID_MCP_BINDING' });
+      expect((await reopened.capture('mock-a')).connections).toEqual(restored.connections);
+    } finally {
+      await reopened?.close();
+      await f.close();
+    }
+  },
+);
+
+test('the existing 32-tool selection budget remains global to a Bot across multiple reviewed bindings', async () => {
+  const f = await fixture();
+  try {
+    for (const suffix of ['first', 'second']) {
+      const id = `mock-${suffix}`;
+      await f.store.save(
+        { ...save, id, requestId: `mock-save-${suffix}`, name: `Synthetic ${suffix}` },
+        'mock-a',
+      );
+      const definitions = Array.from({ length: 32 }, (_, index) => ({
+        ...tools[0],
+        name: `synthetic_${suffix}_${index}`,
+      }));
+      const catalog = await f.store.catalog(id, 1, definitions);
+      await f.store.bind('mock-a', {
+        connection: id,
+        configRevision: 1,
+        bindingRevision: 0,
+        catalogDigest: catalog.current.catalogDigest,
+        tools: definitions.slice(0, 16).map((entry) => entry.name),
+        enabled: true,
+      });
+    }
+    const captured = await f.store.capture('mock-a');
+    expect(captured.connections).toHaveLength(2);
+    expect(captured.connections.every((entry) => entry.tools.length === 16)).toBe(true);
+    expect(captured.connections.flatMap((entry) => entry.tools)).toHaveLength(32);
+    const second = (await f.store.catalogView('mock-second', 'mock-a')).current;
+    await expect(
+      f.store.bind('mock-a', {
+        connection: second.id,
+        configRevision: second.revision,
+        bindingRevision: 1,
+        catalogDigest: second.catalogDigest,
+        tools: Array.from({ length: 17 }, (_, index) => `synthetic_second_${index}`),
+        enabled: true,
+      }),
+    ).rejects.toMatchObject({ code: 'MCP_TOOL_LIMIT' });
+    expect((await f.store.capture('mock-a')).connections).toEqual(captured.connections);
+  } finally {
+    await f.close();
+  }
+});
+
+test('binding admission totals enabled connections, releases replaced selections, and keeps other Bots independent', async () => {
+  const f = await fixture();
+  const interactions = new Interactions(path.join(f.root, 'synthetic-budget-interactions'));
+  const service = new IntegrationTools(f.store, interactions);
+  await interactions.ready;
+  try {
+    const catalogs = new Map<string, Awaited<ReturnType<Integrations['catalog']>>>();
+    for (const [id, bot] of [
+      ['mock-budget-a', 'mock-a'],
+      ['mock-budget-b', 'mock-a'],
+      ['mock-budget-c', 'mock-b'],
+    ]) {
+      await f.store.save({ ...save, id, requestId: `save-${id}`, name: `Synthetic ${id}` }, bot);
+      catalogs.set(
+        id,
+        await f.store.catalog(
+          id,
+          1,
+          Array.from({ length: 32 }, (_, index) => ({ ...tools[0], name: `synthetic_${index}` })),
+        ),
+      );
+    }
+    const input = (id: string, revision: number, count: number, enabled = true) => ({
+      connection: id,
+      configRevision: 1,
+      bindingRevision: revision,
+      catalogDigest: catalogs.get(id)!.current.catalogDigest,
+      tools: Array.from({ length: count }, (_, index) => `synthetic_${index}`),
+      enabled,
+    });
+    await f.store.bind('mock-a', input('mock-budget-a', 0, 32));
+    const before = await f.store.status();
+    await expect(f.store.bind('mock-a', input('mock-budget-b', 0, 1))).rejects.toMatchObject({
+      code: 'MCP_TOOL_LIMIT',
+    });
+    expect(await f.store.status()).toEqual(before);
+    expect(
+      (await f.store.assignments('mock-a')).items.find(
+        (entry) => entry.connection.id === 'mock-budget-b',
+      ),
+    ).toMatchObject({ revision: 0, enabled: false, tools: [] });
+    const offered = async (bot: string) =>
+      service.list({ bot, abort: new AbortController(), integrations: await f.store.capture(bot) });
+    expect(await offered('mock-a')).toHaveLength(32);
+    await f.store.bind('mock-b', input('mock-budget-c', 0, 32));
+    expect(await offered('mock-b')).toHaveLength(32);
+    expect(await offered('mock-a')).toHaveLength(32);
+    await f.store.bind('mock-a', input('mock-budget-a', 1, 16));
+    await f.store.bind('mock-a', input('mock-budget-b', 0, 16));
+    expect(await offered('mock-a')).toHaveLength(32);
+    await f.store.bind('mock-a', input('mock-budget-a', 2, 0, false));
+    await f.store.bind('mock-a', input('mock-budget-b', 1, 32));
+    expect(await offered('mock-a')).toHaveLength(32);
+    expect(await offered('mock-b')).toHaveLength(32);
+  } finally {
+    await service.close();
     await f.close();
   }
 });

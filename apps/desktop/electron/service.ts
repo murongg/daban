@@ -4,13 +4,18 @@ import { join } from 'node:path';
 import { readVmConnection } from '@daban/engine/host';
 import { secureDirectory } from '@daban/engine/local-computer';
 import {
+  type AppCommand,
   type BrowserBinding,
   type DiagnosticReport,
   diagnosticIds,
   disconnected,
+  isAppAuthorizeUrl,
+  isAppCommand,
+  isAppOAuthReceipt,
   isGroupPage,
   isLocalComputerCommand,
   isRebootStatus,
+  type McpCommand,
   modelCatalog,
   modelHasVision,
   type RebootStatus,
@@ -39,7 +44,7 @@ import { RuntimeClient } from './runtime';
 import { Setup } from './setup';
 import { pickSkill } from './skill-picker';
 import { controlSocket } from './socket';
-import { readAgentToken, unixFetch } from './unix';
+import { readAgentToken, readAppControlToken, unixFetch } from './unix';
 import { prepareAgentUpdate } from './upgrade';
 import { VmSettings } from './vm-settings';
 
@@ -537,6 +542,11 @@ export function runtimeService(
     return connecting;
   }
   async function dispatch(command: RuntimeCommand): Promise<unknown> {
+    if (
+      isAppCommand(command) &&
+      !['app.catalog', 'app.directory', 'app.oauth.status'].includes(command.type)
+    )
+      throw new Error('OAUTH_INTERACTIVE_REQUIRED');
     if (updating) {
       if (command.type === 'status') return state;
       throw new Error('AGENT_UPDATING');
@@ -820,6 +830,69 @@ export function runtimeService(
       await refresh();
     return result;
   }
+  async function interactiveApp(command: AppCommand | Extract<McpCommand, { revision: number }>) {
+    if (
+      !agentConfig ||
+      !client ||
+      state.phase !== 'ready' ||
+      !state.appConnections?.oauthLoopback ||
+      updating ||
+      recovering ||
+      closed
+    )
+      throw new Error('OAUTH_CALLBACK_UNAVAILABLE');
+    const owner = client,
+      epoch = connection;
+    const response = await unixFetch(agentConfig.socketPath, {
+      certificateFile: join(agentConfig.dataRoot, 'model/control-certificate.pem'),
+      maxBytes: 64000,
+    })('http://127.0.0.1:8766/agent/identity');
+    const identity: unknown = await response.json();
+    if (
+      !response.ok ||
+      !identity ||
+      typeof identity !== 'object' ||
+      !('role' in identity) ||
+      identity.role !== 'agent' ||
+      !('scope' in identity) ||
+      identity.scope !== agentScope ||
+      !('dataRoot' in identity) ||
+      identity.dataRoot !== agentConfig.dataRoot ||
+      !('socketPath' in identity) ||
+      identity.socketPath !== agentConfig.socketPath
+    )
+      throw new Error('OAUTH_CALLBACK_UNAVAILABLE');
+    const proof = await readAppControlToken(agentConfig.dataRoot);
+    if (closed || client !== owner || connection !== epoch) throw new Error('RUNTIME_OFFLINE');
+    const result = isAppCommand(command)
+      ? await owner.appInteractive(command, proof)
+      : await owner.invoke(command, proof);
+    if (closed || client !== owner || connection !== epoch) throw new Error('RUNTIME_OFFLINE');
+    if (command.type !== 'app.oauth.start' && command.type !== 'app.oauth.connect') return result;
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      !('receipt' in result) ||
+      !isAppOAuthReceipt(result.receipt)
+    )
+      throw new Error('INVALID_RUNTIME_STATE');
+    if ('authorize' in result && result.authorize !== undefined) {
+      const authorize = result.authorize;
+      if (
+        !authorize ||
+        typeof authorize !== 'object' ||
+        !('url' in authorize) ||
+        !isAppAuthorizeUrl(authorize.url, command.input.app)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      try {
+        await shell.openExternal(String(authorize.url));
+      } catch {
+        throw new Error('OAUTH_BROWSER_UNAVAILABLE');
+      }
+    }
+    return result.receipt;
+  }
   ipcMain.handle('daban:runtime', async (event, value): Promise<RuntimeReply> => {
     const frame = event.senderFrame;
     if (
@@ -834,7 +907,16 @@ export function runtimeService(
     )
       return { ok: false, error: 'UNTRUSTED_SENDER' };
     try {
-      return { ok: true, value: await dispatch(parseCommand(value)) };
+      const command = parseCommand(value);
+      // This closure is entered only after validating the owned renderer frame; invokeLocal/remote dispatch cannot mint it.
+      const result =
+        (isAppCommand(command) &&
+          !['app.catalog', 'app.directory', 'app.oauth.status'].includes(command.type)) ||
+        (state.appConnections?.catalog &&
+          (command.type === 'mcp.archive' || command.type === 'mcp.restore'))
+          ? await interactiveApp(command)
+          : await dispatch(command);
+      return { ok: true, value: result };
     } catch (error) {
       return {
         ok: false,

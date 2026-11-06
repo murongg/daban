@@ -161,6 +161,8 @@ export function runtimeMessage(code: string, fallback = code) {
     LOCAL_FILE_CONFLICT: t('folders.changed'),
     LOCAL_FOLDERS_UNAVAILABLE: t('folders.unavailable'),
     LOCAL_OUTCOME_UNKNOWN: t('folders.unknownHint'),
+    MCP_RECONNECT_REQUIRED: t('apps.stateReconnect'),
+    MCP_SCOPE_REQUIRED: t('apps.scopeRequired'),
     SEARCH_LEGACY_IN_USE: t('search.legacyInUse'),
     SEARCH_CONFIG_CHANGED: t('search.healthChanged'),
     AGENT_LEGACY_RESTART_REQUIRED: t('agentUpgrade.required'),
