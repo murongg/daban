@@ -1,7 +1,51 @@
+export * from './approval-rules.js';
+
+import {
+  type AutomationCommand,
+  type AutomationNotice,
+  type AutomationSource,
+  type AutomationView,
+  type FileTrigger,
+  isAutomationNotice,
+  isAutomationSource,
+  isAutomationView,
+  isFileTrigger,
+  isMonitorDecision,
+  type MonitorDecision,
+} from './automation.js';
+import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
+
+export * from './automation.js';
+
+import { isProjectFileRequest, isProjectScope } from './projects.js';
+
+export * from './projects.js';
+
+import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
+
 export * from './goals.js';
+export * from './model-access.js';
+
+import type {
+  ApprovalRulesCommand,
+  ApprovalRulesStatus,
+  McpPurposeScope,
+  PolicyDecision,
+} from './approval-rules.js';
+import { isMcpPurposeScope, isPolicyDecision } from './approval-rules.js';
 
 import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
+import {
+  isModelAccess,
+  isModelAttempts,
+  type ModelAccess,
+  type ModelAttempt,
+  type ModelDiagnoseRequest,
+  type ModelFallbackRequest,
+  type ModelRemoveRequest,
+  type ModelSavedRequest,
+} from './model-access.js';
 import {
   isSkillPackage,
   isSkillPackageInfo,
@@ -11,6 +55,7 @@ import {
   type SkillPackageInfo,
   type SkillResource,
 } from './skills.js';
+import type { BotTemplateCommand } from './templates.js';
 
 export * from './execution.js';
 export * from './local-computer.js';
@@ -193,6 +238,7 @@ export type McpStatus =
   | { available: true; revision: number }
   | { available: false; error: 'MCP_STORE_UNAVAILABLE' };
 export interface McpReceipt {
+  policyDecision?: PolicyDecision;
   id: string;
   bot: string;
   run: string;
@@ -471,6 +517,7 @@ export function isMcpReceipt(value: unknown): value is McpReceipt {
   return (
     profileObject(value) &&
     browserKeys(value, [
+      'policyDecision',
       'id',
       'bot',
       'run',
@@ -489,6 +536,10 @@ export function isMcpReceipt(value: unknown): value is McpReceipt {
     typeof value.session === 'string' &&
     value.session.length <= 200 &&
     mcpRevision(value.configRevision) &&
+    (value.policyDecision === undefined ||
+      (isPolicyDecision(value.policyDecision) &&
+        value.policyDecision.scope.kind === 'bot' &&
+        value.policyDecision.scope.bot === value.bot)) &&
     typeof value.tool === 'string' &&
     !!value.tool &&
     value.tool.length <= 200 &&
@@ -1343,6 +1394,9 @@ export function isRunTurn(value: unknown): value is RunTurn {
   );
 }
 export interface RuntimeTask {
+  attemptSummary?: ModelAttempt[];
+  rootRunId?: string;
+  project?: ProjectScope;
   goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;
@@ -1370,6 +1424,9 @@ export interface RuntimeTask {
   inserts?: RunInsert[];
 }
 export interface RuntimeTaskSummary {
+  attemptSummary?: ModelAttempt[];
+  rootRunId?: string;
+  project?: ProjectScope;
   elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
@@ -1384,6 +1441,7 @@ export interface RuntimeTaskSummary {
   turns?: RunTurn[];
 }
 export type RuntimeNotice =
+  | AutomationNotice
   | {
       kind: 'task';
       id: string;
@@ -1398,6 +1456,7 @@ export interface RuntimeNoticeStatus {
   error?: string;
 }
 export function isRuntimeNotice(value: unknown): value is RuntimeNotice {
+  if (isAutomationNotice(value)) return true;
   if (
     !profileObject(value) ||
     !validAgentId(value.id) ||
@@ -1516,7 +1575,9 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  approvalRules?: ApprovalRulesStatus;
   botCapabilities?: true;
+  botReleases?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
     location: 'host';
@@ -1538,13 +1599,21 @@ export interface RuntimeSnapshot {
   browsers?: Partial<Record<RuntimeBot, BrowserState>>;
   groups?: { available: boolean; revision: number; items: Group[]; error?: string };
   knowledge?: { available: boolean; revision?: number; error?: string; documentParsing?: boolean };
-  schedules?: { available: boolean; items: Schedule[]; error?: string };
+  schedules?: {
+    available: boolean;
+    items: Schedule[];
+    error?: string;
+    automation?: { changes: boolean; files: boolean; error?: string };
+  };
   interactions?: Interaction[];
   software?: SoftwareState;
   phase: 'connecting' | 'ready' | 'offline' | 'unsupported';
   error?: string;
   protocolVersion: number;
   model: {
+    modelAccess?: ModelAccess;
+    fallbackModel?: ModelId;
+    probeRevision?: number;
     configured: boolean;
     available: boolean;
     provider: string;
@@ -1575,9 +1644,13 @@ export function recoveryBlocked(snapshot: Pick<RuntimeSnapshot, 'reboot' | 'reco
   );
 }
 export function recoveryReader(command: RuntimeCommand) {
+  if (command.type === 'model.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'frame',
+    'projects.list',
+    'projects.status',
+    'projects.receipt',
     'files.list',
     'files.read',
     'files.download',
@@ -1600,6 +1673,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
+    'budget.settings',
+    'budget.read',
     'transcript.statistics',
     'transcript.list',
     'transcript.content',
@@ -1623,6 +1698,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'group.receipt',
     'schedule.get',
     'schedule.preview',
+    'schedule.receipt',
     'mcp.list',
     'mcp.saved',
     'mcp.catalog',
@@ -1660,6 +1736,7 @@ export interface GroupCopyAck {
 }
 export type GroupCopyReceipt = GroupCopyAck | { request: GroupCopyRequest; state: 'unknown' };
 export interface Group extends GroupInput {
+  project?: ProjectScope;
   archived?: boolean;
   revision: number;
   createdAt: string;
@@ -1937,7 +2014,16 @@ export function isGroup(value: unknown): value is Group {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['id', 'name', 'members', 'revision', 'createdAt', 'updatedAt', 'archived'].includes(key),
+      [
+        'id',
+        'name',
+        'members',
+        'revision',
+        'createdAt',
+        'updatedAt',
+        'archived',
+        'project',
+      ].includes(key),
     ) &&
     isGroupInput({ id: value.id, name: value.name, members: value.members }) &&
     Number.isSafeInteger(value.revision) &&
@@ -1946,7 +2032,8 @@ export function isGroup(value: unknown): value is Group {
     Number.isFinite(Date.parse(value.createdAt)) &&
     typeof value.updatedAt === 'string' &&
     Number.isFinite(Date.parse(value.updatedAt)) &&
-    (value.archived === undefined || typeof value.archived === 'boolean')
+    (value.archived === undefined || typeof value.archived === 'boolean') &&
+    (value.project === undefined || isProjectScope(value.project))
   );
 }
 export function isGroupActionRequest(value: unknown): value is GroupActionRequest {
@@ -2036,6 +2123,7 @@ export function isChatPage(value: unknown): value is ChatPage {
         profileObject(item) &&
         Object.keys(item).every((key) =>
           [
+            'project',
             'chatRevision',
             'runId',
             'requestId',
@@ -2047,11 +2135,16 @@ export function isChatPage(value: unknown): value is ChatPage {
             'response',
             'turns',
             'elapsedMs',
+            'attemptSummary',
+            'rootRunId',
           ].includes(key),
         ) &&
         item.chatRevision === value.revision &&
         validAgentId(item.runId) &&
         validAgentId(item.requestId) &&
+        (item.attemptSummary === undefined || isModelAttempts(item.attemptSummary)) &&
+        (item.rootRunId === undefined || validAgentId(item.rootRunId)) &&
+        (item.project === undefined || isProjectScope(item.project)) &&
         typeof item.phase === 'string' &&
         ['completed', 'failed', 'stopped', 'interrupted'].includes(item.phase) &&
         typeof item.prompt === 'string' &&
@@ -2165,6 +2258,7 @@ export interface BotCopyRequest {
   revision: number;
   name: string;
   memory: boolean;
+  sourceInstructions?: string;
 }
 export function botCopyKey(request: BotCopyRequest) {
   // Persisted copy origins hash this tuple; changing its order would invalidate existing receipts.
@@ -2175,6 +2269,7 @@ export function botCopyKey(request: BotCopyRequest) {
     request.revision,
     request.name,
     request.memory,
+    ...(request.sourceInstructions === undefined ? [] : [request.sourceInstructions]),
   ]);
 }
 export interface BotCopyAck {
@@ -2435,6 +2530,9 @@ export const isModelConnections = (value: unknown): value is ModelConnection[] =
   value.every(isModelConnection) &&
   new Set(value.map((connection) => connection.id)).size === value.length;
 export interface ModelStatus {
+  modelAccess?: ModelAccess;
+  fallbackModel?: ModelId;
+  probeRevision?: number;
   provider: string;
   model: ModelId;
   configured: boolean;
@@ -2572,11 +2670,24 @@ export function isModelStatus(value: unknown): value is ModelStatus {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['provider', 'model', 'configured', 'revision', 'requestId', 'connections'].includes(key),
+      [
+        'provider',
+        'model',
+        'configured',
+        'revision',
+        'requestId',
+        'connections',
+        'modelAccess',
+        'fallbackModel',
+        'probeRevision',
+      ].includes(key),
     ) &&
     validAgentId(value.provider) &&
     isModelId(value.model) &&
     typeof value.configured === 'boolean' &&
+    (value.modelAccess === undefined || isModelAccess(value.modelAccess)) &&
+    (value.fallbackModel === undefined || isModelId(value.fallbackModel)) &&
+    (value.probeRevision === undefined || modelRevision(value.probeRevision)) &&
     (value.connections === undefined || isModelConnections(value.connections)) &&
     modelRevision(value.revision) &&
     (value.requestId === undefined || validAgentId(value.requestId))
@@ -2651,7 +2762,9 @@ export function isBotProfile(value: unknown): value is BotProfile {
 export function isBotCopyRequest(value: unknown): value is BotCopyRequest {
   return (
     profileObject(value) &&
-    Object.keys(value).every((key) => ['id', 'bot', 'revision', 'name', 'memory'].includes(key)) &&
+    Object.keys(value).every((key) =>
+      ['id', 'bot', 'revision', 'name', 'memory', 'sourceInstructions'].includes(key),
+    ) &&
     validAgentId(value.id) &&
     // Legacy display aliases would collapse a new profile into an existing client identity.
     agentId(value.id) === value.id &&
@@ -2660,7 +2773,8 @@ export function isBotCopyRequest(value: unknown): value is BotCopyRequest {
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) >= 1 &&
     boundedText(value.name, 30) &&
-    typeof value.memory === 'boolean'
+    typeof value.memory === 'boolean' &&
+    (value.sourceInstructions === undefined || boundedText(value.sourceInstructions, 4000, true))
   );
 }
 export function isBotCopyReceipt(value: unknown): value is BotCopyReceipt {
@@ -2788,7 +2902,7 @@ export interface UserQuestion {
 }
 export type UserReply =
   | { kind: 'answer'; answers: { id: string; selected: string[]; custom?: string }[] }
-  | { kind: 'decision'; allow: boolean };
+  | { kind: 'decision'; allow: boolean; confirmPurpose?: true };
 export type InteractionInput = { id: string; sessionId: string } & (
   | { kind: 'question'; questions: UserQuestion[] }
   | { kind: 'approval'; tool: 'web_fetch'; url: string }
@@ -2815,6 +2929,8 @@ export type InteractionInput = { id: string; sessionId: string } & (
     }
 );
 export type Interaction = InteractionInput & {
+  purposeScope?: McpPurposeScope;
+  policyDecision?: PolicyDecision;
   decisionSource?: 'policy';
   conversationId?: string;
   bot: string;
@@ -2959,7 +3075,12 @@ export function isInteractionInput(value: unknown): value is InteractionInput {
 export function isUserReply(value: unknown): value is UserReply {
   if (!profileObject(value)) return false;
   if (value.kind === 'decision')
-    return exactKeys(value, ['kind', 'allow']) && typeof value.allow === 'boolean';
+    return (
+      exactKeys(value, ['kind', 'allow', 'confirmPurpose']) &&
+      typeof value.allow === 'boolean' &&
+      (value.confirmPurpose === undefined ||
+        (value.confirmPurpose === true && value.allow === true))
+    );
   return (
     value.kind === 'answer' &&
     exactKeys(value, ['kind', 'answers']) &&
@@ -2982,9 +3103,17 @@ export function isUserReply(value: unknown): value is UserReply {
     new Set(value.answers.map((answer) => answer.id)).size === value.answers.length
   );
 }
-export function matchesReply(input: InteractionInput, reply: unknown): reply is UserReply {
+export function matchesReply(
+  input: InteractionInput & { purposeScope?: McpPurposeScope },
+  reply: unknown,
+): reply is UserReply {
   if (!isUserReply(reply)) return false;
-  if (input.kind === 'approval') return reply.kind === 'decision';
+  if (input.kind === 'approval')
+    return (
+      reply.kind === 'decision' &&
+      (!reply.confirmPurpose ||
+        (input.tool === 'mcp_call' && isMcpPurposeScope(input.purposeScope)))
+    );
   return (
     reply.kind === 'answer' &&
     reply.answers.length === input.questions.length &&
@@ -3009,17 +3138,29 @@ export function isInteraction(value: unknown): value is Interaction {
     updatedAt,
     conversationId,
     decisionSource,
+    policyDecision,
+    purposeScope,
     ...input
   } = value;
   return (
     isInteractionInput(input) &&
+    (purposeScope === undefined ||
+      (isMcpPurposeScope(purposeScope) &&
+        input.kind === 'approval' &&
+        input.tool === 'mcp_call' &&
+        isPolicyDecision(policyDecision))) &&
+    (policyDecision === undefined ||
+      (isPolicyDecision(policyDecision) &&
+        policyDecision.scope.kind === 'bot' &&
+        policyDecision.scope.bot === bot)) &&
     (decisionSource === undefined ||
       (decisionSource === 'policy' &&
         input.kind === 'approval' &&
         status === 'resolved' &&
         profileObject(reply) &&
         reply.kind === 'decision' &&
-        reply.allow === true)) &&
+        reply.allow === true &&
+        reply.confirmPurpose === undefined)) &&
     validAgentId(bot) &&
     validAgentId(runId) &&
     (conversationId === undefined || validAgentId(conversationId)) &&
@@ -3028,7 +3169,12 @@ export function isInteraction(value: unknown): value is Interaction {
     Number.isFinite(Date.parse(createdAt)) &&
     boundedText(updatedAt, 100) &&
     Number.isFinite(Date.parse(updatedAt)) &&
-    (status === 'resolved' ? matchesReply(input, reply) : reply === undefined)
+    (status === 'resolved'
+      ? matchesReply(
+          { ...input, ...(isMcpPurposeScope(purposeScope) ? { purposeScope } : {}) },
+          reply,
+        )
+      : reply === undefined)
   );
 }
 export type ApprovalMode = 'ask' | 'auto' | 'full';
@@ -3036,6 +3182,8 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
   return value === 'ask' || value === 'auto' || value === 'full';
 }
 export interface TaskRequest {
+  goalResume?: GoalResumeTarget;
+  project?: ProjectScope;
   approvalMode?: ApprovalMode;
   chatRevision?: number;
   requestId: string;
@@ -3192,7 +3340,7 @@ export function isAttachmentReceipt(value: unknown): value is AttachmentReceipt 
   const { content, ...ref } = value;
   return isAttachmentRef(ref) && isKnowledgeContent(content) && !!content.trim();
 }
-export interface RuntimeFile {
+export interface RuntimeFile extends ProjectFileRequest {
   path: string;
   name: string;
   size: number;
@@ -3202,7 +3350,8 @@ export interface RuntimeFile {
 export function isRuntimeFileMetadata(value: unknown): value is RuntimeFile {
   return (
     profileObject(value) &&
-    exactKeys(value, ['path', 'name', 'size', 'modified']) &&
+    exactKeys(value, ['path', 'name', 'size', 'modified', 'project', 'task']) &&
+    isProjectFileRequest(value) &&
     typeof value.path === 'string' &&
     value.path.length > 0 &&
     value.path.length <= 512 &&
@@ -3224,7 +3373,8 @@ export interface RuntimeDownload extends Omit<RuntimeFile, 'content'> {
 export function isRuntimeDownload(value: unknown): value is RuntimeDownload {
   return (
     profileObject(value) &&
-    exactKeys(value, ['path', 'name', 'size', 'modified', 'data', 'sha256']) &&
+    exactKeys(value, ['path', 'name', 'size', 'modified', 'data', 'sha256', 'project', 'task']) &&
+    isProjectFileRequest(value) &&
     typeof value.path === 'string' &&
     value.path.length > 0 &&
     value.path.length <= 512 &&
@@ -3457,6 +3607,7 @@ export function isKnowledgeVersion(value: unknown): value is KnowledgeVersion {
   );
 }
 export type ScheduleRule =
+  | FileTrigger
   | { kind: 'every'; everySeconds: number }
   | { kind: 'daily'; time: string; timeZone: string }
   | { kind: 'weekly'; time: string; timeZone: string; weekdays: number[] }
@@ -3472,6 +3623,8 @@ export interface ScheduleInput {
   locked?: boolean;
 }
 export interface ScheduleFiring {
+  source?: AutomationSource;
+  monitor?: MonitorDecision;
   id: string;
   occurrenceAt: string;
   createdAt: string;
@@ -3489,6 +3642,7 @@ export interface ScheduleFiring {
   error?: string;
 }
 export interface Schedule extends ScheduleInput {
+  automation?: AutomationView;
   revision: number;
   enabled: boolean;
   nextRunAt?: string;
@@ -3501,6 +3655,7 @@ export type SchedulePatch = Partial<
 >;
 export function isScheduleRule(value: unknown): value is ScheduleRule {
   if (!profileObject(value)) return false;
+  if (value.kind === 'file') return isFileTrigger(value);
   if (value.kind === 'every')
     return (
       exactKeys(value, ['kind', 'everySeconds']) &&
@@ -3568,8 +3723,20 @@ export function isSchedulePatch(value: unknown): value is SchedulePatch {
 export function isScheduleFiring(item: unknown): item is ScheduleFiring {
   return (
     profileObject(item) &&
-    exactKeys(item, ['id', 'requestId', 'occurrenceAt', 'createdAt', 'state', 'runId', 'error']) &&
+    exactKeys(item, [
+      'id',
+      'requestId',
+      'occurrenceAt',
+      'createdAt',
+      'state',
+      'runId',
+      'error',
+      'source',
+      'monitor',
+    ]) &&
     validAgentId(item.id) &&
+    (item.source === undefined || isAutomationSource(item.source)) &&
+    (item.monitor === undefined || isMonitorDecision(item.monitor)) &&
     boundedText(item.requestId, 100) &&
     [
       'pending',
@@ -3591,9 +3758,10 @@ export function isScheduleFiring(item: unknown): item is ScheduleFiring {
 }
 export function isSchedule(value: unknown): value is Schedule {
   if (!profileObject(value)) return false;
-  const { revision, nextRunAt, createdAt, updatedAt, history, ...input } = value;
+  const { revision, nextRunAt, createdAt, updatedAt, history, automation, ...input } = value;
   return (
     isScheduleInput(input) &&
+    (automation === undefined || isAutomationView(automation)) &&
     typeof value.enabled === 'boolean' &&
     Number.isSafeInteger(revision) &&
     Number(revision) > 0 &&
@@ -3944,6 +4112,11 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
+  | BotTemplateCommand
+  | ApprovalRulesCommand
+  | BudgetCommand
+  | AutomationCommand
+  | ProjectCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4001,6 +4174,10 @@ export type RuntimeCommand =
   | { type: 'group.action'; request: GroupActionRequest }
   | { type: 'group.receipt'; group: string; id: string }
   | { type: 'model.configure'; input: ModelUpdate }
+  | { type: 'model.saved'; input: ModelSavedRequest }
+  | { type: 'model.fallback.configure'; input: ModelFallbackRequest }
+  | { type: 'model.remove'; input: ModelRemoveRequest }
+  | { type: 'model.diagnose'; input: ModelDiagnoseRequest }
   | { type: 'model.check'; revision: number }
   | { type: 'model.inspect'; input: ModelInspectionRequest }
   | { type: 'clipboard.write'; text: string }
@@ -4059,9 +4236,9 @@ export type RuntimeCommand =
       instance?: string;
       app: 'terminal' | 'files' | 'editor' | 'browser';
     }
-  | { type: 'files.list' }
-  | { type: 'files.read'; path: string }
-  | { type: 'files.download'; path: string };
+  | ({ type: 'files.list' } & ProjectFileRequest)
+  | ({ type: 'files.read'; path: string } & ProjectFileRequest)
+  | ({ type: 'files.download'; path: string } & ProjectFileRequest);
 export type RuntimeReply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 export interface RuntimeBridge {
   invoke<T = unknown>(command: RuntimeCommand): Promise<RuntimeReply<T>>;
@@ -4391,3 +4568,8 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
     (value.cancelRequested === undefined || typeof value.cancelRequested === 'boolean')
   );
 }
+
+export * from './budgets.js';
+export * from './gallery.js';
+export * from './releases.js';
+export * from './templates.js';

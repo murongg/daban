@@ -1,0 +1,36 @@
+{
+  "name": "@daban/gallery",
+  "version": "0.1.8",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node --experimental-strip-types ../../tools/gallery-migrations.ts && next build && node --experimental-strip-types ../../tools/gallery-web.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json && tsc -p tsconfig.worker.json",
+    "start": "node ../../dist-gallery/main.js",
+    "admin": "node ../../dist-gallery/main.js",
+    "dev:cf": "wrangler dev",
+    "deploy:cf": "wrangler deploy",
+    "check:cf": "wrangler deploy --dry-run --outdir ../../outputs/gallery-worker",
+    "db:local": "wrangler d1 migrations apply daban-gallery --local",
+    "db:remote": "wrangler d1 migrations apply daban-gallery --remote",
+    "dev": "next dev"
+  },
+  "dependencies": {
+    "@daban/engine": "0.1.8",
+    "@daban/protocol": "0.1.8",
+    "better-auth": "1.7.17",
+    "drizzle-orm": "1.0.0-rc.5",
+    "next": "16.4.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261104.1",
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "6.0.3",
+    "wrangler": "4.157.0"
+  }
+}

@@ -1,8 +1,10 @@
 import {
   type GoalProgress,
+  isModelAttempts,
   isRunStatistics,
   isTranscriptContent,
   isTranscriptPage,
+  type ModelAttempt,
   type ReplyStream,
   type SessionStats,
   sameTranscriptScope,
@@ -18,7 +20,17 @@ import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app
 import { IconButton } from '../../components/controls/Button';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { taskPhase } from '../../i18n/tasks';
+import { Usage } from '../budgets/Usage';
+import { modelName } from '../models/model-options';
 
+const failureLabels: Record<NonNullable<ModelAttempt['failure']>, MessageKey> = {
+  auth: 'models.failure.auth',
+  quota: 'models.failure.quota',
+  'rate-limit': 'models.failure.rateLimit',
+  unavailable: 'models.failure.unavailable',
+  timeout: 'models.failure.timeout',
+  unknown: 'models.failure.unknown',
+};
 const tools: Record<string, MessageKey> = {
   group_directory: 'execution.groupDirectory',
   group_create: 'execution.groupCreate',
@@ -346,6 +358,7 @@ function Reader({
         <RefreshCw />
       </IconButton>
       <Statistics scope={target} refresh={page} />
+      <Usage scope={target} running={page?.state === 'recording'} />
       {page?.state === 'unavailable' && (
         <p className="inline-note">{t('execution.noExecutionDetailsWereRetainedTask')}</p>
       )}
@@ -523,6 +536,7 @@ function Disclosure({
 }
 
 export function Execution(props: {
+  attemptSummary?: ModelAttempt[];
   scope: TranscriptScope;
   phase?: TaskPhase;
   elapsedMs?: number;
@@ -530,15 +544,43 @@ export function Execution(props: {
 }) {
   useLocale();
   const { scope } = props;
+  const runtime = useRuntime();
+  const active = runtime.snapshot.agents[scope.bot];
+  const matching =
+    active?.runId === scope.runId
+      ? active
+      : active?.history.find((row) => row.runId === scope.runId);
+  const attempts = props.attemptSummary || matching?.attemptSummary;
   return (
-    <Disclosure
-      key={JSON.stringify([
-        scope.bot,
-        scope.runId,
-        scope.chatRevision ?? null,
-        scope.conversationId ?? null,
-      ])}
-      {...props}
-    />
+    <>
+      {isModelAttempts(attempts) && (
+        <section aria-label={t('models.attempts')} className="field-help">
+          <p>
+            {t('models.actualModel', {
+              0: modelName(attempts.at(-1)!.model, runtime.snapshot.model.connections),
+            })}
+          </p>
+          <ol>
+            {attempts.map((attempt) => (
+              <li key={attempt.attemptId}>
+                {modelName(attempt.model, runtime.snapshot.model.connections)} ·{' '}
+                {taskPhase(attempt.phase)}
+                {attempt.failure ? ` · ${t(failureLabels[attempt.failure])}` : ''}
+              </li>
+            ))}
+          </ol>
+          <p>{t('models.usageUnknown')}</p>
+        </section>
+      )}
+      <Disclosure
+        key={JSON.stringify([
+          scope.bot,
+          scope.runId,
+          scope.chatRevision ?? null,
+          scope.conversationId ?? null,
+        ])}
+        {...props}
+      />
+    </>
   );
 }

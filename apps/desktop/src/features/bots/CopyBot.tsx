@@ -66,6 +66,7 @@ function CopyEditor({
             revision: source.revision,
             name: name.trim(),
             memory,
+            ...(runtime.snapshot.botReleases ? { sourceInstructions: source.instructions } : {}),
           }).catch(() => {});
         }}
       >
@@ -127,9 +128,11 @@ function CopyEditor({
                 readOnly
               />
             )}
-            {latest && latest.revision !== source.revision && (
-              <p className="inline-note">{t('copybot.sourceContentChangedLoadReviewNewName')}</p>
-            )}
+            {latest &&
+              (latest.revision !== source.revision ||
+                latest.instructions !== source.instructions) && (
+                <p className="inline-note">{t('copybot.sourceContentChangedLoadReviewNewName')}</p>
+              )}
             {latest && (
               <button
                 type="button"

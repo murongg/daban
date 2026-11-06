@@ -1,0 +1,328 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-05T00:52:01.567295+00:00",
+  "title": "Design System: Daban Gallery",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Page canvas",
+        "canonical": "#ffffff"
+      },
+      "soft": {
+        "role": "neutral",
+        "displayName": "Soft tile surface",
+        "canonical": "#f7f7f6"
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover surface",
+        "canonical": "#eeeeec"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Primary text",
+        "canonical": "#0a0a0a"
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Supporting text",
+        "canonical": "#666666"
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Fine divider",
+        "canonical": "#e9e9e7"
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Field border",
+        "canonical": "#d5d5d2"
+      },
+      "strong": {
+        "role": "primary",
+        "displayName": "Strong action",
+        "canonical": "#0a0a0a"
+      },
+      "strong-hover": {
+        "role": "primary",
+        "displayName": "Strong action hover",
+        "canonical": "#303030"
+      },
+      "on-strong": {
+        "role": "primary",
+        "displayName": "Action text",
+        "canonical": "#ffffff"
+      },
+      "focus": {
+        "role": "neutral",
+        "displayName": "Neutral focus",
+        "canonical": "#0a0a0a"
+      },
+      "danger": {
+        "role": "neutral",
+        "displayName": "Error red",
+        "canonical": "#b23e3e"
+      },
+      "danger-soft": {
+        "role": "neutral",
+        "displayName": "Error surface",
+        "canonical": "#fff3f3"
+      },
+      "canvas-dark": {
+        "role": "neutral",
+        "displayName": "Page canvas — dark mode",
+        "canonical": "#0a0a0a"
+      },
+      "soft-dark": {
+        "role": "neutral",
+        "displayName": "Soft tile surface — dark mode",
+        "canonical": "#191919"
+      },
+      "hover-dark": {
+        "role": "neutral",
+        "displayName": "Hover surface — dark mode",
+        "canonical": "#252525"
+      },
+      "ink-dark": {
+        "role": "neutral",
+        "displayName": "Primary text — dark mode",
+        "canonical": "#f5f5f5"
+      },
+      "muted-dark": {
+        "role": "neutral",
+        "displayName": "Supporting text — dark mode",
+        "canonical": "#a3a3a3"
+      },
+      "line-dark": {
+        "role": "neutral",
+        "displayName": "Fine divider — dark mode",
+        "canonical": "#292929"
+      },
+      "line-strong-dark": {
+        "role": "neutral",
+        "displayName": "Field border — dark mode",
+        "canonical": "#424242"
+      },
+      "strong-dark": {
+        "role": "primary",
+        "displayName": "Strong action — dark mode",
+        "canonical": "#f5f5f5"
+      },
+      "strong-hover-dark": {
+        "role": "primary",
+        "displayName": "Strong action hover — dark mode",
+        "canonical": "#d7d7d7"
+      },
+      "on-strong-dark": {
+        "role": "primary",
+        "displayName": "Action text — dark mode",
+        "canonical": "#0a0a0a"
+      },
+      "focus-dark": {
+        "role": "neutral",
+        "displayName": "Neutral focus — dark mode",
+        "canonical": "#f5f5f5"
+      },
+      "danger-dark": {
+        "role": "neutral",
+        "displayName": "Error red — dark mode",
+        "canonical": "#f19b9b"
+      },
+      "danger-soft-dark": {
+        "role": "neutral",
+        "displayName": "Error surface — dark mode",
+        "canonical": "#331f1f"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Medium-weight page and template titles, 36–48px; 36px on phones."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Medium-weight catalog names, 18px; 17px on phones."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base workspace copy; introductory and authored role text use larger sizes and more open leading."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Normal-weight capsule actions and navigation."
+      },
+      "metadata": {
+        "displayName": "Metadata",
+        "purpose": "Supporting publisher and version details; phone tile metadata is 11px."
+      }
+    },
+    "shadows": [
+      {
+        "name": "modal-separation",
+        "value": "0 24px 100px #00000026",
+        "purpose": "Intentional native login dialog separation; catalog tiles stay flat."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-transition",
+        "value": "160ms ease",
+        "purpose": "Action, navigation, and arrow state feedback."
+      },
+      {
+        "name": "tile-background",
+        "value": "180ms ease",
+        "purpose": "Quiet tile surface feedback."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "none",
+        "purpose": "Reduced-motion preference removes transitions."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "three-column",
+        "value": "1240px"
+      },
+      {
+        "name": "two-column",
+        "value": "960px"
+      },
+      {
+        "name": "stacked-header",
+        "value": "760px"
+      },
+      {
+        "name": "phone-tiles",
+        "value": "560px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "description": "Strong neutral action for publishing, downloading, and sign-in.",
+      "html": "<button type=\"button\" class=\"ds-button ds-primary\">下载此版本</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:10px 20px;border:1px solid transparent;border-radius:999px;background:var(--soft,#f7f7f6);color:var(--ink,#0a0a0a);font-size:14px;font-weight:400;line-height:1.5;cursor:pointer;transition:background 160ms ease,color 160ms ease;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-button:hover{background:var(--hover,#eeeeec)}.ds-button:focus-visible{outline:2px solid var(--focus,#0a0a0a);outline-offset:4px;}.ds-button:disabled{opacity:.45;cursor:default}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-primary{background:var(--strong,#0a0a0a);color:var(--on-strong,#ffffff)}.ds-primary:hover{background:var(--strong-hover,#303030)}",
+      "refersTo": "button-primary"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "description": "Soft capsule for supporting actions on the page canvas.",
+      "html": "<button type=\"button\" class=\"ds-button \">加载更多</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:10px 20px;border:1px solid transparent;border-radius:999px;background:var(--soft,#f7f7f6);color:var(--ink,#0a0a0a);font-size:14px;font-weight:400;line-height:1.5;cursor:pointer;transition:background 160ms ease,color 160ms ease;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-button:hover{background:var(--hover,#eeeeec)}.ds-button:focus-visible{outline:2px solid var(--focus,#0a0a0a);outline-offset:4px;}.ds-button:disabled{opacity:.45;cursor:default}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}",
+      "refersTo": "button-secondary"
+    },
+    {
+      "name": "Quiet action",
+      "kind": "button",
+      "description": "Low-priority action with a quiet hover surface.",
+      "html": "<button type=\"button\" class=\"ds-button ds-quiet\">返回</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:10px 20px;border:1px solid transparent;border-radius:999px;background:var(--soft,#f7f7f6);color:var(--ink,#0a0a0a);font-size:14px;font-weight:400;line-height:1.5;cursor:pointer;transition:background 160ms ease,color 160ms ease;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-button:hover{background:var(--hover,#eeeeec)}.ds-button:focus-visible{outline:2px solid var(--focus,#0a0a0a);outline-offset:4px;}.ds-button:disabled{opacity:.45;cursor:default}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-quiet{background:transparent;color:var(--muted,#666666)}.ds-quiet:hover{background:var(--soft,#f7f7f6);color:var(--ink,#0a0a0a)}",
+      "refersTo": "button-quiet"
+    },
+    {
+      "name": "Destructive outline",
+      "kind": "button",
+      "description": "Red text for destructive operations.",
+      "html": "<button type=\"button\" class=\"ds-button ds-danger\">撤下版本</button>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:42px;padding:10px 20px;border:1px solid transparent;border-radius:999px;background:var(--soft,#f7f7f6);color:var(--ink,#0a0a0a);font-size:14px;font-weight:400;line-height:1.5;cursor:pointer;transition:background 160ms ease,color 160ms ease;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-button:hover{background:var(--hover,#eeeeec)}.ds-button:focus-visible{outline:2px solid var(--focus,#0a0a0a);outline-offset:4px;}.ds-button:disabled{opacity:.45;cursor:default}@media(prefers-reduced-motion:reduce){.ds-button{transition:none}}.ds-danger{border-color:var(--line-strong,#d5d5d2);background:transparent;color:var(--danger,#b23e3e)}.ds-danger:hover{background:var(--danger-soft,#fff3f3)}",
+      "refersTo": "button-danger"
+    },
+    {
+      "name": "Labelled field",
+      "kind": "input",
+      "description": "Label above a canvas field with a visible keyboard boundary.",
+      "html": "<label class=\"ds-field\">命名空间<input class=\"ds-input\" placeholder=\"team-space\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:10px;font-size:14px;font-weight:500;color:var(--ink,#0a0a0a);font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-input{color:var(--ink,#0a0a0a);background:var(--canvas,#ffffff);border:1px solid var(--line-strong,#d5d5d2);border-radius:12px;min-width:0;padding:12px 16px;font-size:15px;line-height:1.5;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-input::placeholder{color:var(--muted,#666666);opacity:1}.ds-input:focus-visible{outline:2px solid var(--focus,#0a0a0a);outline-offset:4px;}@media(max-width:560px){.ds-input{font-size:16px}}",
+      "refersTo": "input"
+    },
+    {
+      "name": "Workspace navigation",
+      "kind": "nav",
+      "description": "Text-only header pill with a quiet selected surface.",
+      "html": "<nav class=\"ds-nav\"><button type=\"button\" class=\"ds-nav-item\" aria-current=\"page\">Bot 广场</button></nav>",
+      "css": ".ds-nav{display:flex;flex-wrap:wrap;gap:4px;background:var(--canvas,#ffffff)}.ds-nav-item{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:9px 16px;border:0;border-radius:999px;background:transparent;font-size:14px;font-weight:400;color:var(--muted,#666666);cursor:pointer;transition:background 160ms ease,color 160ms ease;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-nav-item:hover,.ds-nav-item[aria-current=\"page\"]{background:var(--soft,#f7f7f6);color:var(--ink,#0a0a0a)}.ds-nav-item:focus-visible{outline:2px solid var(--focus,#0a0a0a);outline-offset:4px;}@media(prefers-reduced-motion:reduce){.ds-nav-item{transition:none}}",
+      "refersTo": "navigation"
+    },
+    {
+      "name": "Version status",
+      "kind": "chip",
+      "description": "Quiet status label; withdrawn versions use the error pair.",
+      "html": "<span class=\"ds-badge\">已发布</span> <span class=\"ds-badge ds-withdrawn\">已撤下</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;background:var(--canvas,#ffffff);color:var(--muted,#666666);font-size:12px;font-weight:400;line-height:1.5;padding:4px 10px;border-radius:999px;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-withdrawn{color:var(--danger,#b23e3e);background:var(--danger-soft,#fff3f3)}",
+      "refersTo": "badge"
+    },
+    {
+      "name": "Detail tabs",
+      "kind": "nav",
+      "description": "Overview and version history remain in the detail workspace.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button type=\"button\" class=\"ds-tab\" role=\"tab\" aria-selected=\"true\">概览</button><button type=\"button\" class=\"ds-tab\" role=\"tab\" aria-selected=\"false\">版本历史</button></div>",
+      "css": ".ds-tabs{display:flex;flex-wrap:wrap;gap:8px;padding-bottom:24px;border-bottom:1px solid var(--line,#e9e9e7)}.ds-tab{padding:10px 20px;font-size:14px;font-weight:400;color:var(--ink,#0a0a0a);border:0;border-radius:999px;background:var(--soft,#f7f7f6);cursor:pointer;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-tab:hover{background:var(--hover,#eeeeec)}.ds-tab[aria-selected=\"true\"]{color:var(--on-strong,#ffffff);background:var(--strong,#0a0a0a)}.ds-tab:focus-visible{outline:2px solid var(--focus,#0a0a0a);outline-offset:4px;}"
+    },
+    {
+      "name": "Login dialog surface",
+      "kind": "custom",
+      "description": "Preview samples the floating surface; native modal behavior belongs to the runtime.",
+      "html": "<section class=\"ds-dialog\" aria-label=\"登录\"><h2 class=\"ds-dialog-title\">登录</h2><p class=\"ds-dialog-copy\">使用访问令牌登录</p></section>",
+      "css": ".ds-dialog{position:relative;border:0;border-radius:24px;background:var(--canvas,#ffffff);color:var(--ink,#0a0a0a);width:min(440px,calc(100vw - 32px));padding:36px;box-shadow:0 24px 100px #00000026;font-family:var(--font,\"Helvetica Neue\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif);}.ds-dialog-title{margin:0;font-size:26px;font-weight:500;letter-spacing:-.025em}.ds-dialog-copy{margin:16px 0 0;color:var(--muted,#666666);font-size:14px;line-height:1.75}@media(max-width:760px){.ds-dialog{padding:30px}}",
+      "refersTo": "login-dialog"
+    }
+  ],
+  "narrative": {
+    "northStar": "The open Bot catalog",
+    "overview": "The gallery follows the user's supplied [x.ai/bot](https://x.ai/bot) reference and its [marketplace](https://x.ai/bot/marketplace) adaptation: spacious medium-weight type, horizontal navigation, capsule controls, and pale-gray avatar tiles. This newer direction supersedes the earlier desktop-sidebar and divided-list contract. Daban retains its own otter mark, six robot assets, and local system font stack.\n\nThis app-scoped record describes the built `src/app`, React components in `src/web`, and `style.css`. Browsing, search, inline details, downloads, publication, and token administration share the same neutral surfaces. Existing copy and real loaded records carry the content; reference-site assets, font files, endorsements, categories, and marketing claims are not part of this system.",
+    "keyCharacteristics": [
+      "White and near-black surfaces with quiet gray supporting text.",
+      "Large medium-weight headings, generous space, and a full-width search capsule.",
+      "Soft avatar-led tiles with compact horizontal phone layouts.",
+      "Pill actions, navigation, badges, and detail tabs.",
+      "Persistent Daban robot identity and equivalent system dark-theme states."
+    ],
+    "rules": [
+      {
+        "name": "The Neutral Action Rule",
+        "body": "Primary actions use the strong neutral pair; robot colors distinguish identities rather than capability, trust, or action priority.",
+        "section": "colors"
+      },
+      {
+        "name": "The Measured Hierarchy Rule",
+        "body": "Give the gallery title room and keep medium-weight names, readable descriptions, and quiet metadata distinct beneath it.",
+        "section": "typography"
+      },
+      {
+        "name": "The Single Account Action Rule",
+        "body": "Keep sign-in or sign-out in the shared header; permission-gated management views use the same navigation on desktop and mobile.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Tile Rule",
+        "body": "Use soft filled catalog tiles without elevation; reserve the modal shadow for the deliberately invoked login dialog.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Stable Identity Rule",
+        "body": "Keep a template's robot color consistent across gallery views and loading states. The downloaded package preserves its authored profile color independently of the gallery's ID-derived artwork.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do carry the neutral palette, generous spacing, and capsule controls through every gallery view.",
+      "Do preserve Daban's existing otter and robot artwork with stable ID-derived gallery identity.",
+      "Do use soft tiles and panels for grouping while keeping the catalog flat.",
+      "Do show real template names, useful summaries, publishers, versions, and loaded counts.",
+      "Do preserve visible focus, native dialog dismissal, focus restoration, reduced motion, and readable phone layouts."
+    ],
+    "donts": [
+      "Don't restore the superseded sidebar, divided-list catalog, or duplicate workspace header.",
+      "Don't import reference-site assets, font files, endorsements, categories, or marketing claims.",
+      "Don't turn robot colors into status, trust, or permission indicators.",
+      "Don't switch gallery artwork to the package profile color after its content loads.",
+      "Don't place publication or administrative forms inside the browsing grid or login dialog."
+    ]
+  }
+}

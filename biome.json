@@ -14,10 +14,15 @@
       "!package-lock.json",
       "!apps/runtime/standalone-lock.json",
       "!apps/agent/standalone-lock.json",
+      "!apps/gallery/standalone-lock.json",
       "!packages/engine/drizzle",
       "!**/dist",
+      "!**/.wrangler",
       "!!outputs",
-      "!**/node_modules"
+      "!**/node_modules",
+      "!**/.next",
+      "!apps/gallery/out",
+      "!apps/gallery/next-env.d.ts"
     ]
   },
   "formatter": {
@@ -54,6 +59,11 @@
   "html": {
     "formatter": {
       "enabled": true
+    }
+  },
+  "markdown": {
+    "parser": {
+      "frontmatter": true
     }
   }
 }

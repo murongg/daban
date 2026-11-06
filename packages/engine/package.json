@@ -7,8 +7,10 @@
     "node": "^22.16.0 || >=24.0.0"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "1.7.17",
     "@daban/protocol": "0.1.8",
     "@modelcontextprotocol/client": "2.2.0",
+    "better-auth": "1.7.17",
     "drizzle-orm": "1.0.0-rc.5",
     "fflate": "0.8.3",
     "officeparser": "8.2.0",
@@ -18,6 +20,7 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20261104.1",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.2.0",
     "drizzle-kit": "1.0.0-rc.5",
@@ -27,7 +30,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node --experimental-strip-types ../../tools/engine.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json",
-    "test": "npm run test:runtime --prefix ../.."
+    "test": "npm run test:runtime --prefix ../..",
+    "build:gallery": "tsc -p tsconfig.gallery.json"
   },
   "exports": {
     "./archive": {
@@ -65,6 +69,18 @@
     "./skill-package": {
       "types": "./dist/skill-package.d.ts",
       "import": "./dist/skill-package.js"
+    },
+    "./gallery": {
+      "types": "./dist/gallery.d.ts",
+      "import": "./dist/gallery.js"
+    },
+    "./gallery-http": {
+      "types": "./dist/gallery-http.d.ts",
+      "import": "./dist/gallery-http.js"
+    },
+    "./gallery-cloudflare": {
+      "types": "./dist/gallery-cloudflare.d.ts",
+      "import": "./dist/gallery-cloudflare.js"
     }
   },
   "license": "AGPL-3.0-only"

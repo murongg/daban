@@ -1,5 +1,8 @@
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
 import { validAgentId } from '@daban/protocol';
 import type { ViewerGrants } from './authority.js';
+import { BrowserProfiles } from './browser-profiles.js';
 import { type ComputerDriver, type ComputerResource, ComputerStartFailure } from './computers.js';
 import type { Control } from './control.js';
 import { Fault } from './control.js';
@@ -7,6 +10,7 @@ import { Screens } from './desktop.js';
 import { Native } from './native.js';
 import type { Browser } from './runtime.js';
 import { createBrowser } from './runtime.js';
+import { WorkspaceFiles } from './workspace.js';
 
 export interface MachineOptions {
   dir: string;
@@ -17,52 +21,58 @@ export interface MachineOptions {
   fullGuest?: boolean;
 }
 export class Machine implements ComputerDriver {
-  private current?: Browser;
-  private starting?: Promise<Browser>;
-  private control?: Control;
-  private browserAlive = false;
+  private readonly active = new Map<
+    string,
+    { profile: string; browser: Browser; alive: boolean }
+  >();
+  private readonly selected = new Map<
+    string,
+    { profile?: string; workspace: string; key: string }
+  >();
   private closed = false;
-  constructor(readonly options: MachineOptions) {}
-  private browser(control: Control) {
-    if (this.closed) return Promise.reject(new Fault('COMPUTER_SERVICE_CLOSED', 503));
-    if (this.control && this.control !== control)
-      return Promise.reject(new Fault('INVALID_COMPUTER_STATE', 503));
-    this.control = control;
-    if (this.current && this.browserAlive && !this.current.closed)
-      return Promise.resolve(this.current);
-    if (!this.starting)
-      this.starting = (async () => {
-        const previous = this.current;
-        if (previous) await previous.close();
-        const browser = await createBrowser({
-          profileDir: this.options.profileDir,
-          origin: this.options.origin,
-          bots: [],
-          control,
-        });
-        this.current = browser;
-        this.browserAlive = true;
-        browser.context.on('close', () => {
-          if (this.current === browser) this.browserAlive = false;
-        });
-        return browser;
-      })().finally(() => {
-        this.starting = undefined;
+  private readonly profiles: BrowserProfiles;
+  constructor(readonly options: MachineOptions) {
+    this.profiles = new BrowserProfiles(async (profileDir, control) => {
+      const canonical =
+        profileDir === options.profileDir
+          ? await realpath(profileDir)
+          : await new WorkspaceFiles(profileDir, profileDir).base();
+      return createBrowser({
+        profileDir: canonical,
+        origin: options.origin,
+        bots: [],
+        control,
+        networkFile: path.resolve(options.profileDir, '../model/network.json'),
+      }).catch((error) => {
+        if (error instanceof Fault) throw error;
+        throw new Fault('BROWSER_PROFILE_UNAVAILABLE', 503);
       });
-    return this.starting;
+    });
+  }
+  checkProfile(profile: string, control: Control) {
+    return this.profiles.check(profile, control);
+  }
+  binding(bot: string) {
+    return this.selected.get(bot)?.key ?? 'legacy-shared';
+  }
+  bind(bot: string, binding?: { profile?: string; workspace: string; key: string }) {
+    if (this.active.has(bot)) throw new Fault('PROJECT_BUSY');
+    if (binding) this.selected.set(bot, binding);
+    else this.selected.delete(bot);
   }
   hasBrowser(bot: string) {
+    const active = this.active.get(bot);
     return (
       !this.closed &&
-      this.browserAlive &&
-      !!this.current &&
-      !this.current.closed &&
-      !!this.current.tabs?.has(bot)
+      !!active &&
+      active.alive &&
+      !active.browser.closed &&
+      !!active.browser.tabs?.has(bot)
     );
   }
   browserFor(bot: string) {
     if (!this.hasBrowser(bot)) throw new Fault('BROWSER_UNAVAILABLE', 503);
-    return this.current!;
+    return this.active.get(bot)!.browser;
   }
   async start(bot: string, slot: number, control: Control): Promise<ComputerResource> {
     if (this.closed || process.platform !== 'linux')
@@ -76,6 +86,7 @@ export class Machine implements ComputerDriver {
       viewers: this.options.viewers,
       displayBase: this.options.displayBase + slot,
       fullGuest: this.options.fullGuest,
+      workspace: this.selected.get(bot)?.workspace,
     });
     const resource: ComputerResource = {
       bot,
@@ -90,8 +101,17 @@ export class Machine implements ComputerDriver {
     try {
       await screens.start([bot]);
       resource.instance = screens.instance(bot);
-      const browser = await this.browser(control);
-      await browser.attach(bot);
+      const profile = this.selected.has(bot)
+        ? this.selected.get(bot)?.profile
+        : this.options.profileDir;
+      if (profile) {
+        const browser = await this.profiles.acquire(profile, bot, control);
+        const active = { profile, browser, alive: true };
+        browser.context.on('close', () => {
+          active.alive = false;
+        });
+        this.active.set(bot, active);
+      }
       return resource;
     } catch (error) {
       resource.instance ??= screens.bots.get(bot)?.instance;
@@ -108,12 +128,16 @@ export class Machine implements ComputerDriver {
     }
   }
   async stop(resource: ComputerResource) {
-    if (this.current?.pages.has(resource.bot)) await this.current.detach(resource.bot);
+    const active = this.active.get(resource.bot);
+    if (active) {
+      await this.profiles.release(active.profile, resource.bot);
+      this.active.delete(resource.bot);
+    }
     await resource.native.close();
   }
   async close() {
     this.closed = true;
-    await this.starting?.catch(() => {});
-    await this.current?.close();
+    await this.profiles.close();
+    this.active.clear();
   }
 }

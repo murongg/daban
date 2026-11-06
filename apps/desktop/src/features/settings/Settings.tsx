@@ -7,6 +7,7 @@ import {
   Moon,
   Plug,
   Settings2,
+  Store,
   Sun,
   Waypoints,
 } from 'lucide-react';
@@ -17,7 +18,10 @@ import type { Action, State } from '../../app/state';
 import { serialize } from '../../app/storage';
 import { Dialog } from '../../components/controls/Dialog';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
+import { Rules } from '../approvals/Rules';
 import { ArchiveList } from '../bots/Archive';
+import { GallerySources } from '../bots/GallerySources';
+import { Budgets } from '../budgets/Budgets';
 import { Diagnostics } from '../computer/Diagnostics';
 import { RecoveryEntry } from '../computer/Recovery';
 import { download } from '../files/files';
@@ -25,6 +29,7 @@ import { Integrations } from '../integrations/Integrations';
 import { Models } from '../models/Models';
 import { Notifications } from '../notifications/Notifications';
 import { LinuxSetup } from '../onboarding/LinuxSetup';
+import { Projects } from '../projects/Projects';
 import { AgentUpgradePanel } from './AgentUpgrade';
 import { Language } from './Language';
 import { UpdatesPanel } from './Updates';
@@ -38,6 +43,7 @@ export function Settings({
   active = true,
   onLifecycle,
   onRecovery,
+  initialCategory = 'general',
 }: {
   state: State;
   dispatch: Dispatch<Action>;
@@ -45,6 +51,7 @@ export function Settings({
   active?: boolean;
   onLifecycle?: (bot: string) => unknown;
   onRecovery?: () => unknown;
+  initialCategory?: string;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -56,7 +63,7 @@ export function Settings({
     !!preparation &&
     ['downloading', 'extracting', 'verifying', 'cancelling'].includes(preparation.phase);
   const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
-  const [category, setCategory] = useState('general');
+  const [category, setCategory] = useState(initialCategory);
   const [error, setError] = useState('');
   const [connectionDialog, setConnectionDialog] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
@@ -116,7 +123,26 @@ export function Settings({
       label: t('models.title'),
       icon: Waypoints,
       description: t('settings.connectModelServicesChooseWorkspacePerBot'),
-      content: <Models />,
+      content: (
+        <>
+          <Models />
+          <Budgets />
+        </>
+      ),
+    },
+    {
+      id: 'gallery',
+      label: t('common.botGallery'),
+      icon: Store,
+      description: t('templates.settingsDescription'),
+      content: <GallerySources active={category === 'gallery'} />,
+    },
+    {
+      id: 'projects',
+      label: t('projects.title'),
+      icon: Database,
+      description: t('projects.boundary'),
+      content: <Projects state={state} dispatch={dispatch} />,
     },
     {
       id: 'computer',
@@ -223,6 +249,13 @@ export function Settings({
       icon: Plug,
       description: t('settings.connectMcpServicesManageExternalToolsBots'),
       content: <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />,
+    },
+    {
+      id: 'approval-rules',
+      label: t('rules.title'),
+      icon: Settings2,
+      description: t('rules.settingsHint'),
+      content: <Rules bots={state.bots} />,
     },
     {
       id: 'archive',

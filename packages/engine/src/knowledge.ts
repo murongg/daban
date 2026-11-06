@@ -15,6 +15,7 @@ import {
   type KnowledgeDocument,
   type KnowledgeFile,
   type KnowledgeVersion,
+  type KnowledgeWrite,
   validAgentId,
 } from '@daban/protocol';
 import { and, asc, count, desc, eq, lt, max, sql, sum } from 'drizzle-orm';
@@ -28,6 +29,26 @@ interface Cause {
   runId?: string;
   signal?: AbortSignal;
 }
+export interface KnowledgeOverlay {
+  list(bot: string, includeDeleted: boolean, runId?: string): KnowledgeDocument[];
+  read(bot: string, id: string, revision?: number, runId?: string): KnowledgeDocument;
+  write(bot: string, input: KnowledgeWrite, cause?: Cause): KnowledgeDocument;
+  change(
+    bot: string,
+    id: string,
+    revision: number,
+    patch: { oldText?: string; newText?: string; deleted?: boolean; target?: number },
+    cause?: Cause,
+  ): KnowledgeDocument;
+  source(bot: string, id: string): DocumentOriginal;
+  versions(
+    bot: string,
+    id: string,
+    before: number,
+    limit: number,
+    runId?: string,
+  ): KnowledgeVersion[];
+}
 type Row = typeof documents.$inferSelect;
 type Version = typeof revisions.$inferSelect;
 
@@ -39,6 +60,18 @@ function legacy(client: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS document_owner ON documents(bot,deleted,updated);`);
 }
 export class Knowledge {
+  template?: KnowledgeOverlay;
+  assertTemplatePaths(bot: string, paths: string[]) {
+    if (
+      this.db
+        .select({ path: documents.path })
+        .from(documents)
+        .where(and(eq(documents.bot, bot), eq(documents.deleted, 0)))
+        .all()
+        .some((row) => paths.includes(row.path))
+    )
+      throw new Fault('KNOWLEDGE_PATH_CONFLICT');
+  }
   readonly ready: Promise<unknown>;
   private db!: Database;
   private chain: Promise<unknown> = Promise.resolve();
@@ -154,6 +187,8 @@ export class Knowledge {
       (cause.runId !== undefined && !validAgentId(cause.runId))
     )
       throw new Fault('INVALID_KNOWLEDGE', 400);
+    if (!deleted && this.template?.list(bot, false).some((document) => document.path === name))
+      throw new Fault('KNOWLEDGE_PATH_CONFLICT');
     const prior = this.db
       .select({ id: documents.id })
       .from(documents)
@@ -215,7 +250,7 @@ export class Knowledge {
         .run();
     return this.document(this.row(bot, id));
   }
-  list(bot: string, includeDeleted = false) {
+  list(bot: string, includeDeleted = false, runId?: string) {
     return this.exclusive(bot, () =>
       this.db
         .select()
@@ -223,10 +258,17 @@ export class Knowledge {
         .where(and(eq(documents.bot, bot), includeDeleted ? undefined : eq(documents.deleted, 0)))
         .orderBy(desc(documents.updated), asc(documents.path))
         .all()
-        .map((row) => this.meta(this.document(row))),
+        .map((row) => this.meta(this.document(row)))
+        .concat(
+          (this.template?.list(bot, includeDeleted, runId) ?? []).map((document) =>
+            this.meta(document),
+          ),
+        ),
     );
   }
-  read(bot: string, id: string, version?: number) {
+  read(bot: string, id: string, version?: number, runId?: string) {
+    if (this.template && id.startsWith('tpl-'))
+      return Promise.resolve().then(() => this.template!.read(bot, id, version, runId));
     if (version !== undefined && !this.revision(version))
       return Promise.reject(new Fault('INVALID_KNOWLEDGE', 400));
     return this.exclusive(bot, () => {
@@ -246,6 +288,10 @@ export class Knowledge {
   write(bot: string, input: unknown, cause?: Cause) {
     if (!isKnowledgeWrite(input)) return Promise.reject(new Fault('INVALID_KNOWLEDGE', 400));
     const value = structuredClone(input);
+    if (this.template && value.id?.startsWith('tpl-'))
+      return Promise.resolve().then(() => this.template!.write(bot, value, cause));
+    if (this.template?.list(bot, false).some((document) => document.path === value.path))
+      return Promise.reject(new Fault('KNOWLEDGE_PATH_CONFLICT'));
     return this.exclusive(
       bot,
       () =>
@@ -404,6 +450,8 @@ export class Knowledge {
     );
   }
   source(bot: string, id: string): Promise<DocumentOriginal> {
+    if (this.template && id.startsWith('tpl-'))
+      return Promise.resolve().then(() => this.template!.source(bot, id));
     return this.exclusive(bot, () => {
       this.row(bot, id);
       const source = this.db
@@ -435,6 +483,10 @@ export class Knowledge {
     });
   }
   edit(bot: string, id: string, revision: number, oldText: string, newText: string, cause?: Cause) {
+    if (this.template && id.startsWith('tpl-'))
+      return Promise.resolve().then(() =>
+        this.template!.change(bot, id, revision, { oldText, newText }, cause),
+      );
     if (
       !this.revision(revision) ||
       typeof oldText !== 'string' ||
@@ -469,6 +521,10 @@ export class Knowledge {
     );
   }
   remove(bot: string, id: string, revision: number, cause?: Cause) {
+    if (this.template && id.startsWith('tpl-'))
+      return Promise.resolve().then(() =>
+        this.template!.change(bot, id, revision, { deleted: true }, cause),
+      );
     if (!this.revision(revision)) return Promise.reject(new Fault('INVALID_KNOWLEDGE', 400));
     return this.exclusive(
       bot,
@@ -485,7 +541,9 @@ export class Knowledge {
       cause,
     );
   }
-  versions(bot: string, id: string, before = Number.MAX_SAFE_INTEGER, limit = 20) {
+  versions(bot: string, id: string, before = Number.MAX_SAFE_INTEGER, limit = 20, runId?: string) {
+    if (this.template && id.startsWith('tpl-'))
+      return Promise.resolve().then(() => this.template!.versions(bot, id, before, limit, runId));
     if (!this.revision(before) || !this.revision(limit) || limit > 20)
       return Promise.reject(new Fault('INVALID_KNOWLEDGE', 400));
     return this.exclusive(bot, () => {
@@ -511,6 +569,10 @@ export class Knowledge {
     });
   }
   restore(bot: string, id: string, revision: number, target: number, cause?: Cause) {
+    if (this.template && id.startsWith('tpl-'))
+      return Promise.resolve().then(() =>
+        this.template!.change(bot, id, revision, { target }, cause),
+      );
     if (!this.revision(revision) || !this.revision(target))
       return Promise.reject(new Fault('INVALID_KNOWLEDGE', 400));
     return this.exclusive(

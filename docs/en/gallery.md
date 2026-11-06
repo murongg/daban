@@ -2,6 +2,10 @@
 
 [User guide](README.md) · [简体中文](../zh-CN/gallery.md)
 
+Clients with template-version support can add official or self-hosted galleries, preview and install a specific release, or import an offline v3 Bot package. The server supports Cloudflare Workers/D1/R2 and standalone private deployments. See [Deploy a Bot gallery](gallery-deployment.md).
+
+Saved Bot profiles expose template authoring and version management. Review the role, separately authored default preferences, skills and documents before downloading or publishing. Exported and published versions are immutable. Updating a template uses a three-way comparison and explicit conflict choices; configuration history supports rollback while retaining personal memory, models and permissions. New or changed skills stay disabled until reviewed. Closing the client does not stop accepted tasks; uncertain operations retain a receipt/retry action.
+
 Open **Bot gallery** in the sidebar. Presets provide a role to start from rather than prefilled sample conversations.
 
 ## Use a preset
