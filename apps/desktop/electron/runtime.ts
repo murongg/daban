@@ -23,9 +23,6 @@ import {
   isBrowserReceipt,
   isBrowserState,
   isBrowserView,
-  isBudgetScope,
-  isBudgetSettings,
-  isBudgetView,
   isChatAck,
   isChatPage,
   isChatStatus,
@@ -34,7 +31,6 @@ import {
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
-  isGoalResumeTarget,
   isGroup,
   isGroupActionAck,
   isGroupCopyReceipt,
@@ -71,7 +67,6 @@ import {
   isNoteList,
   isNoteReceipt,
   isNoteStatusResult,
-  isProjectScope,
   isRebootStatus,
   isRecoveryReceipt,
   isRecoveryReview,
@@ -95,7 +90,6 @@ import {
   isTaskPlan,
   isTranscriptContent,
   isTranscriptPage,
-  isTranscriptScope,
   isWorkCommentCommand,
   isWorkCommentList,
   isWorkCommentReceipt,
@@ -106,14 +100,13 @@ import {
   noteKey,
   noteQueryKey,
   parseBotJSON,
-  projectFileMatches,
   type RecoveryReceipt,
   type RecoveryRequest,
   type RuntimeCommand,
+  type RuntimeFile,
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
-  sameProjectScope,
   sameTranscriptScope,
   unavailableLocalComputer,
   validAgentId,
@@ -198,7 +191,6 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
-    ...(isProjectScope(task.project) ? { project: task.project } : {}),
     ...(task.conversationId ? { conversationId: task.conversationId } : {}),
     ...(isModelId(task.model) ? { model: task.model } : {}),
     response: isReplyStream(task.response) ? task.response : undefined,
@@ -226,7 +218,6 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       ...(isModelAttempts(item.attemptSummary) ? { attemptSummary: item.attemptSummary } : {}),
       ...(validAgentId(item.rootRunId) ? { rootRunId: item.rootRunId } : {}),
       chatRevision: item.chatRevision,
-      ...(isProjectScope(item.project) ? { project: item.project } : {}),
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       runId: item.runId,
       requestId: item.requestId,
@@ -764,82 +755,6 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
-    if (command.type.startsWith('budget.')) {
-      const captured = structuredClone(command);
-      let value: unknown;
-      if (captured.type === 'budget.goal') {
-        const target: unknown = await this.api('/api/budgets/goal', {
-          owner: captured.owner,
-        }).catch((error) => {
-          // Only a missing endpoint identifies an older Host; refusals and uncertain transport cannot grant a resume.
-          if (error instanceof Error && error.message === 'NOT_FOUND') return null;
-          throw error;
-        });
-        if (target === null) return null;
-        if (
-          !isGoalResumeTarget(target) ||
-          target.owner.bot !== captured.owner.bot ||
-          target.owner.chatRevision !== captured.owner.chatRevision ||
-          target.owner.conversationId !== captured.owner.conversationId ||
-          !sameProjectScope(target.owner.project, captured.owner.project)
-        )
-          throw new Error('INVALID_GOAL_TARGET');
-        return target;
-      }
-      if (captured.type === 'budget.settings') value = await this.api('/api/budgets/settings', {});
-      else if (captured.type === 'budget.configure')
-        value = await this.api('/api/budgets/configure', captured.request);
-      else if (captured.type === 'budget.read')
-        value = await this.api('/api/budgets/read', captured.query);
-      else if (captured.type === 'budget.increase')
-        value = await this.api('/api/budgets/increase', captured.request);
-      else if (captured.type === 'budget.continue') {
-        const reply: unknown = await this.api('/api/budgets/continue', {
-          scope: captured.scope,
-          budget: captured.budget,
-          id: captured.id,
-          ...(captured.goalResume ? { goalResume: captured.goalResume } : {}),
-        });
-        if (
-          !reply ||
-          typeof reply !== 'object' ||
-          !('budget' in reply) ||
-          !isBudgetScope(reply.budget) ||
-          reply.budget.budgetId !== captured.budget.budgetId ||
-          reply.budget.revision !== captured.budget.revision ||
-          !('owner' in reply) ||
-          !isTranscriptScope(reply.owner) ||
-          !sameTranscriptScope(reply.owner, captured.scope) ||
-          !('id' in reply) ||
-          reply.id !== captured.id ||
-          !('queued' in reply) ||
-          typeof reply.queued !== 'boolean'
-        )
-          throw new Error('INVALID_BUDGET_CONTINUATION');
-        return reply;
-      } else throw new Error('INVALID_COMMAND');
-      if (captured.type === 'budget.settings' || captured.type === 'budget.configure') {
-        if (!isBudgetSettings(value)) throw new Error('INVALID_BUDGET_SETTINGS');
-      } else if (value !== null) {
-        if (!isBudgetView(value)) throw new Error('INVALID_BUDGET_VIEW');
-        const owner =
-          captured.type === 'budget.read'
-            ? captured.query.scope
-            : captured.type === 'budget.increase'
-              ? captured.request.scope
-              : undefined;
-        if (!owner || !value.owner || !sameTranscriptScope(value.owner, owner))
-          throw new Error('INVALID_BUDGET_OWNER');
-        if (
-          captured.type === 'budget.increase' &&
-          (value.scope.budgetId !== captured.request.budgetId ||
-            value.scope.revision !== captured.request.revision + 1)
-        )
-          throw new Error('INVALID_BUDGET_ACK');
-      }
-      return value;
-    }
-
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
       const value = await this.api('/api/host/recovery', captured);
@@ -1930,53 +1845,13 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       return profile;
     }
-    if (command.type === 'projects.status') return this.api('/api/projects/status', {});
-    if (command.type === 'projects.select')
-      return this.api('/api/projects/select', {
-        bot: command.bot,
-        ...(command.scope ? { scope: command.scope } : {}),
-      });
-    if (command.type === 'projects.list') return this.api('/api/projects/list', {});
-    if (command.type === 'projects.write')
-      return this.api('/api/projects/write', { request: command.request });
-    if (command.type === 'projects.resume')
-      return this.api('/api/projects/resume', { requestId: command.requestId });
-    if (command.type === 'projects.receipt')
-      return this.api('/api/projects/receipt', { requestId: command.requestId });
-    if (command.type === 'files.list') {
-      const result = await (command.project
-        ? this.api('/api/files/list', {
-            project: command.project,
-            ...(command.task ? { task: command.task } : {}),
-          })
-        : this.api('/api/files'));
-      if (
-        (command.project && !Array.isArray(result)) ||
-        (Array.isArray(result) &&
-          !result.every((file: unknown) => projectFileMatches(file, command)))
-      )
-        throw Error('INVALID_RUNTIME_FILE');
-      return result;
-    }
-    if (command.type === 'files.read') {
-      const result = await this.api('/api/files/read', {
-        path: command.path,
-        ...(command.project ? { project: command.project } : {}),
-        ...(command.task ? { task: command.task } : {}),
-      });
-      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
-      return result;
-    }
+    if (command.type === 'files.list') return this.api('/api/files') as Promise<RuntimeFile[]>;
+    if (command.type === 'files.read') return this.api('/api/files/read', { path: command.path });
     if (command.type === 'files.download') {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 11) throw new Error('RUNTIME_TOO_OLD');
-      const result = await this.api('/api/files/download', {
-        path: command.path,
-        ...(command.project ? { project: command.project } : {}),
-        ...(command.task ? { task: command.task } : {}),
-      });
-      if (!projectFileMatches(result, command)) throw Error('INVALID_RUNTIME_FILE');
+      const result = await this.api('/api/files/download', { path: command.path });
       if (
         !isRuntimeDownload(result) ||
         result.path !== command.path ||

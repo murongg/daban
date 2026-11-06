@@ -20,6 +20,36 @@ test('full guest instructions describe VM sudo and host approval without exposin
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
 
+test('legacy scoped history stays readable and cannot recover as an ordinary task', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-retired-history-'));
+  const task = {
+    bot: 'mock-bot',
+    runId: 'mock-scoped-run',
+    requestId: 'mock-scoped-request',
+    prompt: 'SYNTHETIC OLD TASK',
+    phase: 'failed',
+    running: false,
+    result: '',
+    error: '',
+    trace: [],
+    project: { projectId: 'mock-retired', revision: 1 },
+  };
+  try {
+    await writeFile(path.join(dir, `${task.runId}.json`), JSON.stringify({ version: 1, task }));
+    const journal = new TaskJournal(dir);
+    await journal.load();
+    expect((await journal.read(task.bot, task.runId))?.project).toEqual(task.project);
+    expect((await journal.recovery(task.bot, task.runId))?.blocked).toBe(true);
+    await journal.put({ ...task, phase: 'failed' });
+    const reopened = new TaskJournal(dir);
+    await reopened.load();
+    expect((await reopened.read(task.bot, task.runId))?.project).toEqual(task.project);
+    expect((await reopened.recovery(task.bot, task.runId))?.blocked).toBe(true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('task approval mode accepts only the three explicit user policies', () => {
   const task = { requestId: 'mock-policy-request', prompt: 'Synthetic task' };
   for (const approvalMode of ['ask', 'auto', 'full'])
@@ -248,31 +278,6 @@ test('restart retains a durable clean fence for explicit recovery while interrup
     expect(record?.phase).toBe('interrupted');
     expect(record?.attemptSummary?.[0]).toMatchObject({ phase: 'interrupted', fence: 'clean' });
     expect(record?.activeMs).toBeGreaterThanOrEqual(1200);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('a corrupt authoritative budget identity cannot be loaded as a legacy unmetered task', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-budget-journal-'));
-  try {
-    const task = {
-      bot: 'mock-bot',
-      runId: 'synthetic-budget-run',
-      requestId: 'synthetic-request',
-      prompt: 'SYNTHETIC TASK',
-      kind: 'chat',
-      phase: 'completed',
-      running: false,
-      result: 'SYNTHETIC RESULT',
-      error: '',
-      trace: [],
-      budget: { budgetId: 'synthetic-budget', revision: -1 },
-    };
-    await writeFile(path.join(root, `${task.runId}.json`), JSON.stringify({ version: 1, task }));
-    const journal = new TaskJournal(root);
-    await journal.load();
-    expect(journal.findRequest(task.bot, task.requestId)).toBeUndefined();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

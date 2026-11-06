@@ -15,11 +15,9 @@ import {
   isBrowserBinding,
   isBrowserCommandRequest,
   isBrowserInput,
-  isBudgetCommand,
   isChatRequest,
   isComputerRequest,
   isDocumentUpload,
-  isGoalResumeTarget,
   isGroupActionRequest,
   isGroupCopyRequest,
   isGroupInput,
@@ -35,9 +33,6 @@ import {
   isModelSavedRequest,
   isModelUpdate,
   isNoteCommand,
-  isProjectCommand,
-  isProjectFileRequest,
-  isProjectScope,
   isRecoveryRequest,
   isScheduleInput,
   isSchedulePatch,
@@ -87,7 +82,6 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
-  if (value.type.startsWith('projects.')) return isProjectCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
@@ -100,7 +94,6 @@ export function parseCommand(value: unknown): RuntimeCommand {
     value.type === 'skill.resource'
   )
     return isSkillPackageCommand(value) ? value : fail();
-  if (value.type.startsWith('budget.')) return isBudgetCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
     'work.list': ['type', 'query'],
@@ -209,9 +202,9 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'recovery.cancel': ['type', 'id'],
     'recovery.start': ['type', 'id'],
     connect: ['type'],
-    'files.list': ['type', 'project', 'task'],
-    'files.read': ['type', 'path', 'project', 'task'],
-    'files.download': ['type', 'path', 'project', 'task'],
+    'files.list': ['type'],
+    'files.read': ['type', 'path'],
+    'files.download': ['type', 'path'],
     'task.start': ['type', 'bot', 'task'],
     'task.insert': ['type', 'bot', 'id', 'text', 'runId', 'chatRevision'],
     'task.stop': ['type', 'bot'],
@@ -463,7 +456,6 @@ export function parseCommand(value: unknown): RuntimeCommand {
     (!Number.isSafeInteger(v.epoch) || Number(v.epoch) < 0)
   )
     return fail();
-  if (String(v.type).startsWith('files.') && !isProjectFileRequest(v)) return fail();
   if ((v.type === 'files.read' || v.type === 'files.download') && !safeRelative(v.path))
     return fail();
   if (v.type === 'control' && !['agent', 'human'].includes(v.owner as string)) return fail();
@@ -475,7 +467,6 @@ export function parseCommand(value: unknown): RuntimeCommand {
     if (
       !object(t) ||
       !keys(t, [
-        'goalResume',
         'requestId',
         'prompt',
         'retryOf',
@@ -484,14 +475,11 @@ export function parseCommand(value: unknown): RuntimeCommand {
         'files',
         'chatRevision',
         'approvalMode',
-        'project',
       ]) ||
       !string(t.requestId, 100) ||
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
-      (t.goalResume !== undefined && !isGoalResumeTarget(t.goalResume)) ||
-      (t.project !== undefined && !isProjectScope(t.project)) ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
       (t.memory !== undefined && !string(t.memory, 12000)) ||
       (t.chatRevision !== undefined &&

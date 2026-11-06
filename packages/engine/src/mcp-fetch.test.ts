@@ -1,8 +1,6 @@
 import { X509Certificate } from 'node:crypto';
-import type { Duplex } from 'node:stream';
 import { gzipSync } from 'node:zlib';
 import { expect, test } from 'vitest';
-import { Fault } from './control.js';
 import { McpFetch } from './mcp-fetch.js';
 import { tlsFixture } from './tls.fixture.js';
 
@@ -95,113 +93,6 @@ test('MCP fetch refuses redirects, bounded decompression and cancelled reads wit
     const pending = request.fetch(fixture.endpoint, { method: 'POST', signal: abort.signal });
     abort.abort();
     await expect(pending).rejects.toThrowError();
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('MCP rechecks send authority after asynchronous dialing before sending request bytes', async () => {
-  let effects = 0,
-    active = true;
-  let release: (() => unknown) | undefined, arrived: (() => unknown) | undefined;
-  const gate = new Promise<unknown>((resolve) => {
-    release = () => resolve(undefined);
-  });
-  const waiting = new Promise<unknown>((resolve) => {
-    arrived = () => resolve(undefined);
-  });
-  const fixture = await tlsFixture((_req, res) => {
-    effects++;
-    res.setHeader('content-type', 'application/json');
-    res.end('{"ok":true}');
-  });
-  try {
-    const request = new McpFetch(fixture.endpoint, {
-      ...fixture,
-      dial: async (address, port, signal) => {
-        arrived?.();
-        await gate;
-        return fixture.dial(address, port, signal);
-      },
-      onDispatch: () => {
-        if (!active) throw new Fault('PROJECT_SCOPE_STALE');
-      },
-    });
-    const pending = request
-      .fetch(fixture.endpoint, {
-        method: 'POST',
-        body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"synthetic_echo","arguments":{}}}',
-      })
-      .then(
-        () => 'sent',
-        (error: unknown) => error,
-      );
-    await waiting;
-    active = false;
-    release?.();
-    expect(await pending).toMatchObject({ code: 'PROJECT_SCOPE_STALE' });
-    expect(effects).toBe(0);
-  } finally {
-    release?.();
-    await fixture.close();
-  }
-});
-
-test('MCP validates authority again after the asynchronous dispatch receipt commits', async () => {
-  let effects = 0,
-    active = true;
-  const fixture = await tlsFixture((_req, res) => {
-    effects++;
-    res.end('{"ok":true}');
-  });
-  try {
-    const request = new McpFetch(fixture.endpoint, {
-      ...fixture,
-      onDispatch: async () => {
-        active = false;
-      },
-      authorize: () => {
-        if (!active) throw new Fault('PROJECT_SCOPE_STALE');
-      },
-    });
-    await expect(
-      request.fetch(fixture.endpoint, {
-        method: 'POST',
-        body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"synthetic_echo","arguments":{}}}',
-      }),
-    ).rejects.toMatchObject({ code: 'PROJECT_SCOPE_STALE' });
-    expect(effects).toBe(0);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test('MCP closes a connection lost while persisting its dispatch receipt without sending a request', async () => {
-  let effects = 0;
-  let transport: Duplex | undefined;
-  const fixture = await tlsFixture((_req, res) => {
-    effects++;
-    res.end('{"ok":true}');
-  });
-  try {
-    const request = new McpFetch(fixture.endpoint, {
-      ...fixture,
-      dial: async (address, port, signal) => {
-        transport = await fixture.dial(address, port, signal);
-        return transport;
-      },
-      onDispatch: async () => {
-        transport!.destroy(new Error('SYNTHETIC CONNECTION CLOSED'));
-        await new Promise((resolve) => setImmediate(resolve));
-      },
-    });
-    await expect(
-      request.fetch(fixture.endpoint, {
-        method: 'POST',
-        body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"synthetic_echo","arguments":{}}}',
-      }),
-    ).rejects.toThrow();
-    expect(effects).toBe(0);
   } finally {
     await fixture.close();
   }

@@ -19,7 +19,6 @@ export interface BrowserOptions {
   bots?: readonly string[];
   control?: Control;
   profileDir: string;
-  networkFile?: string;
   origin: string;
   interval?: number;
   fixture?: boolean;
@@ -28,7 +27,6 @@ export interface BrowserOptions {
 }
 export async function createBrowser({
   profileDir,
-  networkFile,
   origin,
   interval = 700,
   workerAction,
@@ -45,7 +43,7 @@ export async function createBrowser({
   if (!proxyOptions) {
     try {
       const network: unknown = JSON.parse(
-        await readFile(networkFile ?? path.resolve(profileDir, '../model/network.json'), 'utf8'),
+        await readFile(path.resolve(profileDir, '../model/network.json'), 'utf8'),
       );
       if (!network || typeof network !== 'object' || Array.isArray(network))
         throw new Fault('BROWSER_PROXY_CONFIG_INVALID', 503);

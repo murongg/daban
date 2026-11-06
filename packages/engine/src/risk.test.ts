@@ -301,27 +301,3 @@ test('a live task review uses its captured route rather than a later workspace d
   expect(await new Risk(options).review(request('node -p "1+2"'))).toBe('allow');
   expect(destinations).toStrictEqual(['https://task-provider.example.test/v1/chat/completions']);
 });
-
-test('budget admission precedes a paid Risk send and denial always falls back to ask', async () => {
-  let sent = 0,
-    metered = 0;
-  const options = {
-    settings,
-    fetcher: async () => {
-      sent++;
-      return Response.json({
-        choices: [{ finish_reason: 'stop', message: { content: '{"risk":"low"}' } }],
-      });
-    },
-    meter: (_request: CommandReview, _api: unknown, _fetcher: unknown) => async () => {
-      metered++;
-      throw new Error('BUDGET_LIMIT_REACHED');
-    },
-  };
-  const risk = new Risk(options);
-  expect(await risk.review(request("python3 -c 'print(2 + 3)'"))).toBe('ask');
-  expect(metered).toBe(1);
-  expect(sent).toBe(0);
-  expect(await risk.review(request('ls'))).toBe('allow');
-  expect(metered).toBe(1);
-});

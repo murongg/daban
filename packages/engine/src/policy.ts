@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { type ApprovalMode, type BudgetScope, isTaskPlan } from '@daban/protocol';
+import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
 import { type BridgeConfig, type BridgeFetch, callBridge } from './bridge.js';
 import { readOwner } from './delegation.js';
 
@@ -60,13 +60,12 @@ export function apply(
     urls: string[];
     approvalMode?: ApprovalMode;
     attemptId?: string;
-    budget?: BudgetScope;
   } & Partial<BridgeConfig>,
   request: BridgeFetch = fetch,
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
-  // Waiting on a guard cannot retarget the captured physical attempt or its shared budget.
+  // Waiting on a guard cannot retarget the captured physical attempt .
   config = structuredClone(config);
   const bridge = config.url
     ? {
@@ -115,40 +114,7 @@ export function apply(
       }
     };
     const dispatch = async (effect = next) => {
-      if (config.budget) {
-        try {
-          const roots = ctx.agents?.roots();
-          const rootSession = roots?.length === 1 ? roots[0].session?.id : undefined;
-          if (!config.url || !rootSession || !executionId)
-            throw new Error('BUDGET_OWNER_UNAVAILABLE');
-          const result = await callBridge(
-            { ...config, url: config.url },
-            'budget.tool',
-            {
-              scope: config.budget,
-              modelAttemptId: config.attemptId,
-              sessionId: rootSession,
-              callId: executionId,
-            },
-            exec.signal,
-            request,
-          );
-          if (
-            !result ||
-            typeof result !== 'object' ||
-            !('accepted' in result) ||
-            result.accepted !== true
-          )
-            throw new Error('BUDGET_TOOL_LIMIT');
-        } catch {
-          return {
-            kind: 'deny',
-            reason: 'BUDGET_TOOL_LIMIT',
-            info: { name: 'BudgetError', code: 'BUDGET_TOOL_LIMIT' },
-          };
-        }
-      }
-      // The budget/approval waits happen after the first fence; only this attempt may enter the body.
+      // Approval waits happen after the first fence; only this attempt may enter the body.
       const changedAttempt = await fence();
       if (changedAttempt) return changedAttempt;
       if (exec.signal.aborted) return { kind: 'cancel' };

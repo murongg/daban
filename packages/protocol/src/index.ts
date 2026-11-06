@@ -1,13 +1,4 @@
 export { type AutomationSource, isAutomationSource } from './automation.js';
-
-import type { BudgetCommand, GoalResumeTarget } from './budgets.js';
-
-import { isProjectFileRequest, isProjectScope } from './projects.js';
-
-export * from './projects.js';
-
-import type { ProjectCommand, ProjectFileRequest, ProjectScope } from './projects.js';
-
 export * from './goals.js';
 export * from './model-access.js';
 
@@ -1366,7 +1357,6 @@ export function isRunTurn(value: unknown): value is RunTurn {
 export interface RuntimeTask {
   attemptSummary?: ModelAttempt[];
   rootRunId?: string;
-  project?: ProjectScope;
   goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;
@@ -1396,7 +1386,6 @@ export interface RuntimeTask {
 export interface RuntimeTaskSummary {
   attemptSummary?: ModelAttempt[];
   rootRunId?: string;
-  project?: ProjectScope;
   elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
@@ -1609,9 +1598,6 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'frame',
-    'projects.list',
-    'projects.status',
-    'projects.receipt',
     'files.list',
     'files.read',
     'files.download',
@@ -1634,8 +1620,6 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.receipt',
     'chat.receipt',
     'chat.history',
-    'budget.settings',
-    'budget.read',
     'transcript.statistics',
     'transcript.list',
     'transcript.content',
@@ -1696,7 +1680,6 @@ export interface GroupCopyAck {
 }
 export type GroupCopyReceipt = GroupCopyAck | { request: GroupCopyRequest; state: 'unknown' };
 export interface Group extends GroupInput {
-  project?: ProjectScope;
   archived?: boolean;
   revision: number;
   createdAt: string;
@@ -1974,16 +1957,7 @@ export function isGroup(value: unknown): value is Group {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      [
-        'id',
-        'name',
-        'members',
-        'revision',
-        'createdAt',
-        'updatedAt',
-        'archived',
-        'project',
-      ].includes(key),
+      ['id', 'name', 'members', 'revision', 'createdAt', 'updatedAt', 'archived'].includes(key),
     ) &&
     isGroupInput({ id: value.id, name: value.name, members: value.members }) &&
     Number.isSafeInteger(value.revision) &&
@@ -1992,8 +1966,7 @@ export function isGroup(value: unknown): value is Group {
     Number.isFinite(Date.parse(value.createdAt)) &&
     typeof value.updatedAt === 'string' &&
     Number.isFinite(Date.parse(value.updatedAt)) &&
-    (value.archived === undefined || typeof value.archived === 'boolean') &&
-    (value.project === undefined || isProjectScope(value.project))
+    (value.archived === undefined || typeof value.archived === 'boolean')
   );
 }
 export function isGroupActionRequest(value: unknown): value is GroupActionRequest {
@@ -2083,7 +2056,6 @@ export function isChatPage(value: unknown): value is ChatPage {
         profileObject(item) &&
         Object.keys(item).every((key) =>
           [
-            'project',
             'chatRevision',
             'runId',
             'requestId',
@@ -2104,7 +2076,6 @@ export function isChatPage(value: unknown): value is ChatPage {
         validAgentId(item.requestId) &&
         (item.attemptSummary === undefined || isModelAttempts(item.attemptSummary)) &&
         (item.rootRunId === undefined || validAgentId(item.rootRunId)) &&
-        (item.project === undefined || isProjectScope(item.project)) &&
         typeof item.phase === 'string' &&
         ['completed', 'failed', 'stopped', 'interrupted'].includes(item.phase) &&
         typeof item.prompt === 'string' &&
@@ -3105,8 +3076,6 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
   return value === 'ask' || value === 'auto' || value === 'full';
 }
 export interface TaskRequest {
-  goalResume?: GoalResumeTarget;
-  project?: ProjectScope;
   approvalMode?: ApprovalMode;
   chatRevision?: number;
   requestId: string;
@@ -3263,7 +3232,7 @@ export function isAttachmentReceipt(value: unknown): value is AttachmentReceipt 
   const { content, ...ref } = value;
   return isAttachmentRef(ref) && isKnowledgeContent(content) && !!content.trim();
 }
-export interface RuntimeFile extends ProjectFileRequest {
+export interface RuntimeFile {
   path: string;
   name: string;
   size: number;
@@ -3273,8 +3242,7 @@ export interface RuntimeFile extends ProjectFileRequest {
 export function isRuntimeFileMetadata(value: unknown): value is RuntimeFile {
   return (
     profileObject(value) &&
-    exactKeys(value, ['path', 'name', 'size', 'modified', 'project', 'task']) &&
-    isProjectFileRequest(value) &&
+    exactKeys(value, ['path', 'name', 'size', 'modified']) &&
     typeof value.path === 'string' &&
     value.path.length > 0 &&
     value.path.length <= 512 &&
@@ -3296,8 +3264,7 @@ export interface RuntimeDownload extends Omit<RuntimeFile, 'content'> {
 export function isRuntimeDownload(value: unknown): value is RuntimeDownload {
   return (
     profileObject(value) &&
-    exactKeys(value, ['path', 'name', 'size', 'modified', 'data', 'sha256', 'project', 'task']) &&
-    isProjectFileRequest(value) &&
+    exactKeys(value, ['path', 'name', 'size', 'modified', 'data', 'sha256']) &&
     typeof value.path === 'string' &&
     value.path.length > 0 &&
     value.path.length <= 512 &&
@@ -4017,8 +3984,6 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
   );
 }
 export type RuntimeCommand =
-  | BudgetCommand
-  | ProjectCommand
   | VmCommand
   | NoteCommand
   | WorkCommentCommand
@@ -4138,9 +4103,9 @@ export type RuntimeCommand =
       instance?: string;
       app: 'terminal' | 'files' | 'editor' | 'browser';
     }
-  | ({ type: 'files.list' } & ProjectFileRequest)
-  | ({ type: 'files.read'; path: string } & ProjectFileRequest)
-  | ({ type: 'files.download'; path: string } & ProjectFileRequest);
+  | { type: 'files.list' }
+  | { type: 'files.read'; path: string }
+  | { type: 'files.download'; path: string };
 export type RuntimeReply<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
 export interface RuntimeBridge {
   invoke<T = unknown>(command: RuntimeCommand): Promise<RuntimeReply<T>>;
@@ -4470,5 +4435,3 @@ export function isBotImportReference(value: unknown): value is BotImportReferenc
     (value.cancelRequested === undefined || typeof value.cancelRequested === 'boolean')
   );
 }
-
-export * from './budgets.js';

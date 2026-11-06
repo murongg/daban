@@ -11,13 +11,6 @@ export interface BridgeConfig {
   certificateFile?: string;
 }
 export type BridgeFetch = (url: string, options: RequestInit) => Promise<Response>;
-export class BridgeRejected extends Error {
-  readonly code = 'BRIDGE_REJECTED';
-  constructor(readonly status: number) {
-    super('BRIDGE_REJECTED');
-  }
-}
-
 const responseLimit = 16 * 1024 * 1024;
 
 async function unixRequest(config: BridgeConfig, body: string, signal: AbortSignal) {
@@ -90,7 +83,6 @@ export async function bridgeRequest(
   signal: AbortSignal,
   request: BridgeFetch = fetch,
   timeoutMs = 20000,
-  distinguishRejection = false,
 ): Promise<unknown> {
   const bounded = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
   try {
@@ -112,7 +104,6 @@ export async function bridgeRequest(
         : await unixRequest(config, body, bounded);
     if (!response.ok) {
       await response.body?.cancel();
-      if (distinguishRejection) throw new BridgeRejected(response.status);
       throw new Error('BRIDGE_UNAVAILABLE');
     }
     if (response.status === 202) {
@@ -136,47 +127,16 @@ export async function bridgeRequest(
       await reader.cancel();
     }
     bounded.throwIfAborted();
-    let value: unknown;
-    try {
-      value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch (error) {
-      if (distinguishRejection) throw new BridgeRejected(response.status);
-      throw error;
-    }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      if (distinguishRejection) throw new BridgeRejected(response.status);
+    const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error('BRIDGE_UNAVAILABLE');
-    }
     return value;
-  } catch (error) {
+  } catch {
     if (signal.aborted) throw new DOMException('Bridge request aborted', 'AbortError');
-    if (distinguishRejection && error instanceof BridgeRejected) throw error;
     throw new Error('BRIDGE_UNAVAILABLE');
   }
 }
 
-async function bridgeCall(
-  config: BridgeConfig,
-  method: string,
-  params: unknown,
-  signal: AbortSignal,
-  request: BridgeFetch,
-  distinguishRejection: boolean,
-): Promise<unknown> {
-  const value = await bridgeRequest(
-    config,
-    { jsonrpc: '2.0', id: randomUUID(), method, params },
-    signal,
-    request,
-    20000,
-    distinguishRejection,
-  );
-  if (!value || typeof value !== 'object' || !Object.hasOwn(value, 'result') || 'error' in value) {
-    if (distinguishRejection) throw new BridgeRejected(200);
-    throw new Error('BRIDGE_UNAVAILABLE');
-  }
-  return (value as { result: unknown }).result;
-}
 export async function callBridge(
   config: BridgeConfig,
   method: string,
@@ -184,15 +144,13 @@ export async function callBridge(
   signal: AbortSignal,
   request: BridgeFetch = fetch,
 ): Promise<unknown> {
-  return bridgeCall(config, method, params, signal, request, false);
-}
-/** An explicit authorization/admission refusal must never become statistics-mode permission to send. */
-export async function callBudgetBridge(
-  config: BridgeConfig,
-  method: string,
-  params: unknown,
-  signal: AbortSignal,
-  request: BridgeFetch = fetch,
-): Promise<unknown> {
-  return bridgeCall(config, method, params, signal, request, true);
+  const value = await bridgeRequest(
+    config,
+    { jsonrpc: '2.0', id: randomUUID(), method, params },
+    signal,
+    request,
+  );
+  if (!value || typeof value !== 'object' || !Object.hasOwn(value, 'result') || 'error' in value)
+    throw new Error('BRIDGE_UNAVAILABLE');
+  return (value as { result: unknown }).result;
 }

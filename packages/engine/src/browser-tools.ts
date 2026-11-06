@@ -200,7 +200,6 @@ export class BrowserTools {
           throw new Fault('INVALID_BROWSER_ACTION', 400);
         const file = await this.files.read(run, args.path);
         run.abort.signal.throwIfAborted();
-        await this.computer.authorize?.(run);
         result = await this.tabs.upload(
           run.bot,
           'agent',

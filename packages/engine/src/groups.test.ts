@@ -12,6 +12,65 @@ import { groupTurns } from './groups-schema.js';
 import { WorkspaceFiles } from './workspace.js';
 
 const input = { id: 'mock-group', name: '合成协作群', members: ['mock-alpha', 'mock-beta'] };
+
+test.each(['pending', 'claimed', 'running'])(
+  'a legacy scoped %s queue stays inert while ordinary groups in the same file keep working',
+  async (state) => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-retired-group-'));
+    const file = path.join(dir, 'groups.sqlite');
+    const fake = runner();
+    const scoped = 'mock-retired-group';
+    let groups = new Groups(file, fake.value);
+    try {
+      await groups.register(input);
+      await groups.register({ ...input, id: scoped });
+      for (const [group, prompt] of [
+        [scoped, 'SYNTHETIC SCOPED'],
+        [input.id, 'SYNTHETIC ORDINARY'],
+      ])
+        await groups.send({
+          id: `turn-${group}`,
+          group,
+          prompt,
+          recipients: group === scoped ? input.members : ['mock-alpha'],
+        });
+      await groups.close();
+      const old = new DatabaseSync(file);
+      const row = old.prepare('SELECT value FROM group_defs WHERE id = ?').get(scoped)!;
+      const saved = {
+        ...JSON.parse(String(row.value)),
+        project: { projectId: 'mock-retired', revision: 1 },
+      };
+      old
+        .prepare('UPDATE group_defs SET value = ? WHERE id = ?')
+        .run(JSON.stringify(saved), scoped);
+      old.prepare('UPDATE group_deliveries SET state = ? WHERE grp = ?').run(state, scoped);
+      old.close();
+      groups = new Groups(file, fake.value);
+      await groups.ready;
+      await groups.tick();
+      expect(fake.calls.map((call) => call.prompt)).toEqual(['SYNTHETIC ORDINARY']);
+      expect((await groups.status()).items.map((group) => group.id)).toEqual([input.id]);
+      await expect(groups.read(scoped)).rejects.toMatchObject({ code: 'PROJECT_RETIRED' });
+      await groups.close();
+      const retained = new DatabaseSync(file);
+      try {
+        expect(
+          JSON.parse(
+            String(
+              retained.prepare('SELECT value FROM group_defs WHERE id = ?').get(scoped)!.value,
+            ),
+          ),
+        ).toEqual(saved);
+      } finally {
+        retained.close();
+      }
+    } finally {
+      await groups.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
 const legacyFiles = {
   // The first shipped layout: no copy origin, turn inputs, message runs or later receipt tables.
   initial: `CREATE TABLE group_defs(id TEXT PRIMARY KEY,value TEXT NOT NULL);

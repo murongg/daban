@@ -1,4 +1,3 @@
-import type { BudgetScope, GoalResumeTarget } from '@daban/protocol';
 import { sql } from 'drizzle-orm';
 import {
   check,
@@ -31,7 +30,7 @@ export const groupTurns = sqliteTable(
   {
     grp: text().notNull(),
     id: text().notNull(),
-    budget: text({ mode: 'json' }).$type<BudgetScope>(),
+    budget: text({ mode: 'json' }).$type<unknown>(),
     prompt: text().notNull(),
     recipients: text().notNull(),
     signature: text().notNull(),
@@ -79,7 +78,7 @@ export const groupDeliveries = sqliteTable(
     run: text(),
     retryOf: text(),
     retryStage: text(),
-    goalResume: text({ mode: 'json' }).$type<GoalResumeTarget>(),
+    goalResume: text({ mode: 'json' }).$type<unknown>(),
     context: text(),
     name: text(),
     error: text(),

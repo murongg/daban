@@ -2,13 +2,11 @@ import {
   type AttachmentReceipt,
   imageMime,
   isDocumentName,
-  type ProjectScope,
-  projectFileKey,
   type RuntimeDownload,
   type RuntimeFile,
 } from '@daban/protocol';
 import { Download, FileText, Paperclip, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { WorkspaceFile } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
@@ -19,7 +17,6 @@ import { Attachments } from '../chat/Attachments';
 import { attachment, canParseDocuments, download, downloadBlob, stagedAttachment } from './files';
 
 export function RuntimeFiles({
-  project,
   preview,
   notify,
   attach,
@@ -27,7 +24,6 @@ export function RuntimeFiles({
   onAttaching,
   attachmentLimit = false,
 }: {
-  project?: ProjectScope;
   preview: (file: WorkspaceFile) => unknown;
   notify: (text: string) => unknown;
   attach?: (file: WorkspaceFile) => unknown;
@@ -40,15 +36,6 @@ export function RuntimeFiles({
     [files, setFiles] = useState<RuntimeFile[]>([]),
     [error, setError] = useState(''),
     [attaching, setAttaching] = useState(false);
-  const scopeKey = JSON.stringify(project);
-  const scopeRef = useRef(scopeKey);
-  scopeRef.current = scopeKey;
-  const [loadedScope, setLoadedScope] = useState(scopeKey);
-  const reference = (file?: RuntimeFile) => ({
-    ...(project ? { project } : {}),
-    ...(file?.project ? { project: file.project } : {}),
-    ...(file?.task ? { task: file.task } : {}),
-  });
   const [manager, setManager] = useState<string>();
   const closeManager = useCallback(() => setManager(undefined), []);
   const revision = [
@@ -58,26 +45,21 @@ export function RuntimeFiles({
     .map((task) => `${task?.runId}:${task?.phase}`)
     .join('|');
   async function refresh() {
-    const key = scopeKey;
     try {
-      const values = await runtime.command<RuntimeFile[]>({ type: 'files.list', ...reference() });
-      if (scopeRef.current !== key) return;
-      setFiles(values);
-      setLoadedScope(key);
+      setFiles(await runtime.command<RuntimeFile[]>({ type: 'files.list' }));
       setError('');
     } catch (error) {
-      if (scopeRef.current === key) setError(runtimeError(error));
+      setError(runtimeError(error));
     }
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: The refresh counter intentionally reloads the file list.
   useEffect(() => {
     let active = true;
     runtime
-      .command<RuntimeFile[]>({ type: 'files.list', ...reference() })
+      .command<RuntimeFile[]>({ type: 'files.list' })
       .then((value) => {
         if (active) {
           setFiles(value);
-          setLoadedScope(scopeKey);
           setError('');
         }
       })
@@ -87,17 +69,16 @@ export function RuntimeFiles({
     return () => {
       active = false;
     };
-  }, [runtime.command, revision, scopeKey]);
+  }, [runtime.command, revision]);
   function item(file: RuntimeFile): WorkspaceFile {
     return {
-      id: file.project ? `runtime:${projectFileKey(file)}` : `runtime:${file.path}`,
+      id: `runtime:${file.path}`,
       name: file.name,
       kind: file.name.split('.').at(-1)?.toUpperCase() || t('common.files'),
       size: `${(file.size / 1024).toFixed(1)} KB`,
       modified: file.modified,
       content: '',
       runtimePath: file.path,
-      ...(project || file.project ? { runtimeScope: reference(file) } : {}),
     };
   }
   return (
@@ -118,20 +99,16 @@ export function RuntimeFiles({
           <RefreshCw />
         </IconButton>
       </div>
-      <p className="panel-description">
-        {project
-          ? t('projects.filesScope', { 0: project.projectId })
-          : t('runtimefiles.allBotsShareFilesAddTextPdf')}
-      </p>
+      <p className="panel-description">{t('runtimefiles.allBotsShareFilesAddTextPdf')}</p>
       {error && (
         <p className="form-error" role="alert">
           {error}
         </p>
       )}
       <WindowList
-        scope={project ? `runtime-files:${project.projectId}:${project.revision}` : 'runtime-files'}
+        scope="runtime-files"
         className="file-list"
-        items={loadedScope === scopeKey ? files : []}
+        items={files}
         getKey={(file) => file.path}
         renderItem={(file) => (
           <div className="file-row" key={file.path}>
@@ -177,7 +154,6 @@ export function RuntimeFiles({
                       const original = await runtime.command<RuntimeDownload>({
                         type: 'files.download',
                         path: file.path,
-                        ...reference(file),
                       });
                       const receipt = await runtime.command<AttachmentReceipt>({
                         type: 'attachment.upload',
@@ -191,7 +167,6 @@ export function RuntimeFiles({
                     const actual = await runtime.command<RuntimeFile>({
                       type: 'files.read',
                       path: file.path,
-                      ...reference(file),
                     });
                     if (typeof actual.content !== 'string') throw new Error('INVALID_ATTACHMENT');
                     destination(attachment(file.name, actual.content));
@@ -214,7 +189,6 @@ export function RuntimeFiles({
                     const actual = await runtime.command<RuntimeDownload>({
                       type: 'files.download',
                       path: file.path,
-                      ...reference(file),
                     });
                     const bytes = Uint8Array.from(atob(actual.data), (character) =>
                       character.charCodeAt(0),
@@ -228,7 +202,6 @@ export function RuntimeFiles({
                   const actual = await runtime.command<RuntimeFile>({
                     type: 'files.read',
                     path: file.path,
-                    ...reference(file),
                   });
                   download({ ...item(file), content: actual.content || '' });
                 } catch (error) {

@@ -861,7 +861,7 @@ test('retiring a computer-only session preserves its conversation context and st
     expect.assert(models.status().bots.a.history.some((item) => item.runId === 'old-run'));
     const record = models.journal.findRequest('a', 'new-general-request');
     expect((record as unknown as Record<string, unknown>).sessionProfile).toBe(
-      'general-v13-basic-approval',
+      'general-v14-retired-scopes',
     );
     await models.close();
   } finally {

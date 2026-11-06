@@ -7,11 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import type {
   BotProfile,
-  BudgetScope,
-  GoalBudgetOwner,
   GoalProgress,
-  GoalResumeTarget,
-  ModelApi,
   ModelAttempt,
   ModelAttemptFence,
   ModelId,
@@ -29,13 +25,10 @@ import type {
 import {
   type AutomationSource,
   type ChatPage,
-  goalResumeKey,
   imageMime,
   isAttachmentId,
   isAutomationSource,
-  isBudgetScope,
   isChatPage,
-  isGoalBudgetOwner,
   isGoalProgress,
   isInteractionInput,
   isModelId,
@@ -44,27 +37,18 @@ import {
   isTaskFileName,
   isTaskInsert,
   isTaskPlan,
-  isTokenUsage,
-  legacyExecutionToolLimit,
   modelHasVision,
   modelReference,
-  type ProjectFileRequest,
-  type ProjectScope,
-  projectCapability,
   replyLimit,
-  sameProjectScope,
-  taskRunCapability,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
 import { type AgentToolRun, AgentTools, executionAttemptId } from './agent-tools.js';
 import { Attachments } from './attachments.js';
-import { Budgets } from './budgets.js';
 import { BotBundles, type BundleDocuments } from './bundles.js';
 import { CatalogTools } from './catalog.js';
 import { Chats } from './chats.js';
 import { CheckpointTracker, type ConversationCheckpoint, recoveryContext } from './checkpoint.js';
-import type { CommandReview } from './commands.js';
 import { type ComputerFacade, computerToolList } from './computer-tools.js';
 import { contextBudget, contextEstimate, recoveryBudget } from './context.js';
 import { errorCode, errorMessage, Fault } from './control.js';
@@ -72,7 +56,7 @@ import type { Desktop } from './desktop.js';
 import { DshLog, defaultSdkFile, readDshStartup } from './dsh.js';
 import { observeTools } from './events.js';
 import { builtinSkills } from './find-skills.js';
-import { goalCommand, goalGrantPatch, goalOperation, goalView, projectGoal } from './goals.js';
+import { goalCommand, goalOperation, goalView, projectGoal } from './goals.js';
 import { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
 import { IntegrationTools } from './integration-tools.js';
@@ -90,7 +74,6 @@ import { NotesTools } from './notes-tools.js';
 import { planningCommand, projectPlanning } from './planning.js';
 import { requestedUrls } from './policy.js';
 import { BotProfiles, personaKey } from './profiles.js';
-import { Projects } from './projects.js';
 import { promptCacheId } from './prompt-cache.js';
 import { programmatic } from './ptc.js';
 import { redact, redactStream } from './redaction.js';
@@ -121,7 +104,6 @@ import {
   type TranscriptEvent,
   Transcripts,
 } from './transcripts.js';
-import { usageFetch, usagePatch } from './usage.js';
 import { webDownloadLimit } from './webpage.js';
 import { Work } from './work.js';
 import { WorkTools } from './work-tools.js';
@@ -133,21 +115,11 @@ const timeLimit = 300000;
 // Every task owns its Harness process, so the native Google catalog route cannot alias another connection's key or session.
 const sdkProvider = (route: Pick<ResolvedModel, 'provider' | 'api'>) =>
   route.api === 'google-generative-ai' ? 'google' : route.provider;
-// Retire SDK sessions containing persistent rule hooks while keeping visible chat history.
-const sessionProfile = 'general-v13-basic-approval';
-// A directory switch does not clear an SDK conversation; project revisions must partition its identity.
-const sessionKey = (
-  bot: string,
-  conversationId?: string,
-  chatRevision = 0,
-  project?: ProjectScope,
-) =>
+// Retire SDK sessions carrying project or budget hooks while keeping visible chat history.
+const sessionProfile = 'general-v14-retired-scopes';
+const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
   JSON.stringify(
-    project
-      ? [bot, conversationId ?? null, chatRevision, project.projectId, project.revision]
-      : conversationId || !chatRevision
-        ? [bot, conversationId ?? null]
-        : [bot, null, chatRevision],
+    conversationId || !chatRevision ? [bot, conversationId ?? null] : [bot, null, chatRevision],
   );
 export function sdkPatch(
   origin: string,
@@ -586,9 +558,6 @@ interface HarnessOptions {
 }
 type HarnessConstructor = new (options: HarnessOptions) => Harness;
 interface ModelJob extends AgentToolRun {
-  budget?: BudgetScope;
-  goalGrant?: { id: string; target: GoalResumeTarget };
-  routeRevision?: number;
   activityBase?: { toolCount: number; activeMs: number };
   activeMs?: number;
   attemptId?: string;
@@ -599,7 +568,6 @@ interface ModelJob extends AgentToolRun {
   fallback?: ResolvedModel;
   beforeTool?: () => Promise<unknown>;
   automation?: AutomationSource;
-  project?: ProjectScope;
   goalCreated?: boolean;
   goalSession?: boolean;
   goal?: GoalProgress;
@@ -702,13 +670,11 @@ export class ModelRuns {
   readonly dir: string;
   readonly tools: AgentTools;
   readonly jobs = new Map<string, ModelJob>();
-  readonly budgets: Budgets;
   readonly journal: TaskJournal;
   readonly transcripts: Transcripts;
   readonly knowledge: Knowledge;
   readonly work: Work;
   readonly notes: Notes;
-  readonly projects: Projects;
   readonly attachments: Attachments;
   readonly profiles: BotProfiles;
   readonly chats: Chats;
@@ -717,7 +683,6 @@ export class ModelRuns {
   readonly integrations: Integrations;
   readonly interactions: Interactions;
   readonly ready: Promise<unknown>;
-  private readonly projectSelections = new Set<string>();
   private readonly workspace: AgentWorkspace;
   private readonly sdkFile: string;
   private readonly execution?: WorkspaceExecutor;
@@ -791,16 +756,10 @@ export class ModelRuns {
                 runtime?.screens.screen('a').workspace ||
                 path.resolve(dir, '../workspace'),
             );
-    this.tools = new AgentTools(computer, this.workspace, {
-      execution,
-      nativeOnly,
-      projectAccess: (run, access) =>
-        run.project && this.projects.assertScope(run.bot, run.project, access),
-    });
+    this.tools = new AgentTools(computer, this.workspace, { execution, nativeOnly });
     this.tools.localComputer = localComputer;
     if (localComputer)
       localComputer.modelRevision = async () => (await this.settings.status()).revision ?? 0;
-    this.budgets = new Budgets(path.join(dir, 'budgets.sqlite'));
     this.journal = new TaskJournal(path.join(dir, 'task-journal'));
     this.transcripts = new Transcripts(path.join(dir, 'transcripts.sqlite'));
     this.tools.history = new HistoryTools(this.journal, this.transcripts);
@@ -829,40 +788,6 @@ export class ModelRuns {
       )
         references.push('running');
       return references;
-    });
-    this.projects = new Projects(path.join(dir, 'projects.sqlite'), {
-      registered: (bot) => {
-        this.profiles.assertRegistered(bot);
-        this.profiles.assertActive(bot);
-      },
-      busy: (bots) =>
-        bots.some(
-          (bot) =>
-            this.projectSelections.has(bot) ||
-            execution?.snapshot?.computer?.bots[bot]?.owner === 'human' ||
-            this.running(bot) ||
-            (() => {
-              try {
-                return this.tools.computer?.runtime.control.state(bot).owner === 'human';
-              } catch {
-                return false;
-              }
-            })(),
-        ),
-      prepare: async (resources) => {
-        if (execution?.snapshot?.capabilities.includes(projectCapability))
-          await execution.call('projects.sync', resources as unknown as Record<string, unknown>);
-      },
-      changed: async (project) => {
-        // Withdraw pending grants without cancelling or replaying guest effects that were already dispatched.
-        for (const job of this.jobs.values()) {
-          if (
-            job.task?.project?.projectId === project.id &&
-            job.task.project.revision !== project.revision
-          )
-            await this.interactions.endRun(job.bot, job.id);
-        }
-      },
     });
     this.work = new Work(path.join(dir, 'work.sqlite'), (actor) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -935,10 +860,7 @@ export class ModelRuns {
       async (run, bundle) => {
         if (!run.id) throw new Fault('MODEL_RUN_UNKNOWN');
         const native = this.tools.options.nativeOnly || this.tools.localSelected(run.bot, run);
-        let files = this.workspaceFor(run.project, run.bot, run.id).scope(
-          run.workdir,
-          run.canonicalRoot,
-        );
+        let files = this.workspace.scope(run.workdir, run.canonicalRoot);
         if (native && !this.tools.options.nativeOnly) {
           const hostFiles = new NativeWorkspace(path.join(dir, 'skill-workspaces'));
           await hostFiles.prepare();
@@ -969,7 +891,6 @@ export class ModelRuns {
       networkFile: path.join(dir, 'network.json'),
     });
     this.tools.authorizeComputer = async (run) => {
-      if (run.project) this.projects.assertScope(run.bot, run.project, 'read');
       const approvals = (await this.interactions.list()).filter(
         (item) =>
           item.bot === run.bot &&
@@ -978,7 +899,6 @@ export class ModelRuns {
           item.kind === 'approval' &&
           item.tool !== 'software_install',
       );
-      if (run.project) this.projects.assertScope(run.bot, run.project, 'read');
       // A pending/refused public-read permission must not be bypassed through a more privileged browser or desktop surface.
       if (approvals.some((item) => item.status === 'pending'))
         throw new Fault('WEB_APPROVAL_PENDING');
@@ -1000,80 +920,7 @@ export class ModelRuns {
     if (this.tools.computer) this.tools.computer.authorize = this.tools.authorizeComputer;
     this.ready = this.restore();
   }
-  projectStatus() {
-    return {
-      available: this.projects.available(),
-      execution:
-        this.projects.available() &&
-        !!this.execution?.snapshot?.capabilities.includes(projectCapability),
-      ...(!this.projects.available() ? { error: 'PROJECT_STORE_UNAVAILABLE' } : {}),
-    };
-  }
-  async selectProject(bot: string, scope?: ProjectScope) {
-    await this.ready;
-    this.profiles.assertRegistered(bot);
-    this.profiles.assertActive(bot);
-    if (!this.admission() || !this.botAdmission(bot)) throw new Fault('RUNTIME_RECOVERY_PENDING');
-    if (this.running(bot) || this.projectSelections.has(bot)) throw new Fault('PROJECT_BUSY');
-    if (!this.execution?.snapshot?.capabilities.includes(projectCapability))
-      throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    this.projectSelections.add(bot);
-    try {
-      return await this.bindProject(bot, scope);
-    } finally {
-      this.projectSelections.delete(bot);
-    }
-  }
-  private async bindProject(bot: string, scope?: ProjectScope, job?: ModelJob) {
-    if (!this.execution?.snapshot?.capabilities.includes(projectCapability))
-      throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    const live = () => {
-      if (!this.admission() || !this.botAdmission(bot)) throw new Fault('RUNTIME_RECOVERY_PENDING');
-      this.profiles.assertActive(bot);
-      if (job && (this.jobs.get(bot) !== job || !job.running || job.abort.signal.aborted))
-        throw new Fault('MODEL_CANCELLED');
-      if (scope) this.projects.assertScope(bot, scope, 'read');
-    };
-    live();
-    if (scope)
-      await this.execution.call(
-        'projects.sync',
-        this.projects.resources(scope.projectId) as unknown as Record<string, unknown>,
-      );
-    live();
-    const result = await this.execution.call('projects.bind', { bot, ...(scope ? { scope } : {}) });
-    live();
-    return result;
-  }
-  filesFor(reference: ProjectFileRequest) {
-    if (!reference.project) return this.workspace;
-    const binding = this.projects.assertHumanScope(reference.project);
-    if (!this.execution?.snapshot?.capabilities.includes(projectCapability))
-      throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    return new RemoteWorkspace(
-      this.execution,
-      '',
-      undefined,
-      undefined,
-      {
-        ...binding,
-        ...(reference.task ? { bot: reference.task.bot, runId: reference.task.runId } : {}),
-      },
-      () => this.projects.assertHumanScope(reference.project!),
-    );
-  }
-  private workspaceFor(project?: ProjectScope, bot?: string, runId?: string) {
-    if (!project) return this.workspace;
-    if (!this.execution || !bot || !runId) throw new Fault('EXECUTION_UPGRADE_REQUIRED');
-    const binding = { ...this.projects.assertScope(bot, project, 'read'), runId };
-    return new RemoteWorkspace(this.execution, '', undefined, undefined, binding, () =>
-      this.projects.assertScope(bot, project, 'read'),
-    );
-  }
   private async restore() {
-    await this.budgets.ready;
-    // A failed optional project store must not take legacy task receipts and their owners offline.
-    await this.projects.ready.catch(() => undefined);
     await this.chats.ready;
     await this.transcripts.ready;
     await this.journal.load();
@@ -1092,7 +939,6 @@ export class ModelRuns {
       // Legacy history remains readable if accounting is damaged; continuation revalidates the root and fails closed.
       const recovery = await this.journal.recovery(bot, latest.runId).catch(() => undefined);
       const job: ModelJob = {
-        budget: latest.budget,
         ...(recovery
           ? {
               activityBase: {
@@ -1137,7 +983,6 @@ export class ModelRuns {
         inputs: latest.inputs || ['input.csv'],
         documentInputs: latest.documentInputs,
         bot,
-        project: latest.project,
         automation: latest.automation,
         id: latest.runId,
         intentId: latest.intentId || latest.runId,
@@ -1169,10 +1014,7 @@ export class ModelRuns {
       this.jobs.set(bot, job);
       const conversations = new Map<string, TaskRecord>();
       for (const record of records)
-        conversations.set(
-          sessionKey(bot, record.conversationId, record.chatRevision, record.project),
-          record,
-        );
+        conversations.set(sessionKey(bot, record.conversationId, record.chatRevision), record);
       const profile = await this.profiles.get(bot).catch((error) => {
         if (errorCode(error) === 'BOT_PROFILE_CORRUPT') return undefined;
         throw error;
@@ -1218,7 +1060,6 @@ export class ModelRuns {
       runId: t.runId,
       elapsedMs: t.elapsedMs,
       requestId: t.requestId || t.runId,
-      ...(t.project ? { project: t.project } : {}),
       prompt: t.prompt,
       phase: t.phase as RuntimeTaskSummary['phase'],
       result: t.result,
@@ -1244,20 +1085,6 @@ export class ModelRuns {
   async transcript(scope: TranscriptScope, after = 0) {
     await this.transcriptOwner(scope);
     return this.transcripts.page(scope, after);
-  }
-  async budget(scope: TranscriptScope) {
-    await this.transcriptOwner(scope);
-    const record = await this.journal.read(scope.bot, scope.runId);
-    if (!record?.budget) return null;
-    const view = this.budgets.view(record.budget.budgetId);
-    const goal = this.budgets.goals.prepare(
-      this.goalOwner(scope.bot, scope.conversationId, scope.chatRevision ?? 0, record?.project),
-    );
-    return {
-      ...view,
-      owner: structuredClone(scope),
-      ...(goal?.budget?.budgetId === view.scope.budgetId ? { goalResume: goal } : {}),
-    };
   }
   async statistics(scope: TranscriptScope) {
     await this.transcriptOwner(scope);
@@ -1336,7 +1163,6 @@ export class ModelRuns {
         result: row.result,
         error: row.error,
         files: row.files,
-        ...(row.project ? { project: row.project } : {}),
         ...(row.turns?.length ? { turns: row.turns } : {}),
         response: row.phase === 'completed' ? undefined : row.response,
       };
@@ -1378,7 +1204,6 @@ export class ModelRuns {
       rootRunId: job.intentId || job.id,
       chatRevision: job.chatRevision,
       ...(job.conversationId ? { conversationId: job.conversationId } : {}),
-      ...(job.project ? { project: job.project } : {}),
       ...(job.model ? { model: job.model } : {}),
       response: job.phase === 'completed' ? undefined : job.response,
       elapsedMs: job.running ? Math.max(0, Date.now() - Date.parse(job.createdAt)) : job.elapsedMs,
@@ -1400,7 +1225,7 @@ export class ModelRuns {
       requestId: job.requestId,
       prompt: job.task?.prompt || job.prompt || '',
       sessionId: job.sessionId,
-      ...(job.project ? {} : { outputDirectory: job.workdir }),
+      outputDirectory: job.workdir,
       result: job.result,
       error: job.error,
       verified: job.verification.passed,
@@ -1486,13 +1311,7 @@ export class ModelRuns {
     const existing = job.insertWrites.get(insert.id);
     if (existing) return existing;
     if (!job.inserts.includes(insert)) job.inserts.push(insert);
-    const receipt = this.persist(job).then(() => {
-      this.budgets.goals.noteHuman(
-        this.goalOwner(job.bot, job.conversationId, job.chatRevision ?? 0, job.project),
-        insert.id,
-      );
-      return { ok: true, id: insert.id };
-    });
+    const receipt = this.persist(job).then(() => ({ ok: true, id: insert.id }));
     job.insertWrites.set(insert.id, receipt);
     receipt.catch(() => {
       if (job.insertWrites.get(insert.id) === receipt) job.insertWrites.delete(insert.id);
@@ -1507,183 +1326,11 @@ export class ModelRuns {
     if (index < 0) return;
     job.inserts.splice(index, 1);
   }
-  meterReview(
-    request: CommandReview,
-    api: ModelApi,
-    fetcher: (url: string, init: RequestInit) => Promise<Response>,
-  ) {
-    const job = this.jobs.get(request.bot);
-    const scope = job?.budget;
-    if (!job || !scope || !job.route) throw new Fault('BUDGET_OWNER_UNAVAILABLE');
-    const route = job.route;
-    const auth = createHash('sha256').update(`Bearer ${job.token}`).digest('hex');
-    const wire = usageFetch(
-      {
-        api,
-        begin: async (wireRequest) => {
-          const requestHash = createHash('sha256')
-            .update(Buffer.from(await wireRequest.clone().arrayBuffer()))
-            .digest('hex');
-          if (
-            !job.running ||
-            job.abort.signal.aborted ||
-            job.id !== request.runId ||
-            job.sessionId !== request.sessionId ||
-            this.jobs.get(job.bot) !== job
-          )
-            throw new Fault('BUDGET_OWNER_UNAVAILABLE');
-          const attemptId = randomBytes(16).toString('hex');
-          this.budgets.reserve(scope, {
-            attemptId,
-            runId: job.id,
-            modelAttemptId: job.attemptId!,
-            rootSessionId: job.sessionId!,
-            sessionId: job.sessionId!,
-            purpose: 'review',
-            requestHash,
-            routeKey: JSON.stringify([
-              route.provider,
-              route.api,
-              route.apiModel,
-              job.routeRevision ?? 0,
-            ]),
-            auth,
-            reservedTokens: route.contextWindow + 128,
-          });
-          if (
-            !this.budgets.dispatch(scope, attemptId, {
-              runId: job.id,
-              modelAttemptId: job.attemptId!,
-              auth,
-            })
-          )
-            throw new Fault('BUDGET_SEND_UNCONFIRMED');
-          return attemptId;
-        },
-        report: async (id, usage) => this.budgets.report(id, usage, job.id, auth, scope),
-      },
-      async (input, init) => {
-        if (typeof input !== 'string') throw new Error('INVALID_REVIEW_REQUEST');
-        return fetcher(input, init ?? {});
-      },
-    );
-    return (url: string, init: RequestInit) => wire(url, init);
-  }
   reviewModel(bot: string, runId: string) {
     const job = this.jobs.get(bot);
     return job?.id === runId && job.running && !job.abort.signal.aborted
       ? (job.route ?? null)
       : null;
-  }
-  private goalOwner(
-    bot: string,
-    conversationId?: string,
-    chatRevision = 0,
-    project?: ProjectScope,
-  ): GoalBudgetOwner {
-    return {
-      ...(conversationId ? { bot, conversationId } : { bot, chatRevision }),
-      ...(project ? { project: structuredClone(project) } : {}),
-    };
-  }
-  private goalAutomation(target: GoalResumeTarget) {
-    const origins = [...this.journal.records.values()]
-      .filter(
-        (record) =>
-          record.bot === target.owner.bot &&
-          record.conversationId === target.owner.conversationId &&
-          (record.conversationId !== undefined ||
-            (record.chatRevision ?? 0) === target.owner.chatRevision) &&
-          sameProjectScope(record.project, target.owner.project) &&
-          record.sessionId === target.sessionId &&
-          record.goal?.id === target.goalId &&
-          (target.budget ? record.budget?.budgetId === target.budget.budgetId : !record.budget) &&
-          record.automation !== undefined,
-      )
-      .map((record) => record.automation!);
-    const origin = origins[0];
-    if (origins.some((value) => !isDeepStrictEqual(value, origin)))
-      throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
-    return origin;
-  }
-  async goalTarget(owner: GoalBudgetOwner): Promise<GoalResumeTarget> {
-    await this.ready;
-    if (!isGoalBudgetOwner(owner)) throw new Fault('INVALID_GOAL_TARGET', 400);
-    if (!owner.conversationId) this.chats.assertCurrent(owner.bot, owner.chatRevision);
-    if (owner.project) this.projects.assertScope(owner.bot, owner.project, 'read');
-    const target = this.budgets.goals.prepare(owner);
-    if (target) return target;
-    const job = this.jobs.get(owner.bot);
-    if (
-      !job?.goal ||
-      !job.sessionId ||
-      job.conversationId !== owner.conversationId ||
-      !sameProjectScope(job.project, owner.project) ||
-      (!owner.conversationId && (job.chatRevision ?? 0) !== owner.chatRevision)
-    )
-      throw new Fault('GOAL_TARGET_UNAVAILABLE', 409);
-    if (job.budget) throw new Fault('GOAL_BUDGET_LINK_MISSING', 409);
-    return {
-      owner: structuredClone(owner),
-      sessionId: job.sessionId,
-      goalId: job.goal.id,
-      goalRevision: job.goal.revision,
-      humanEpoch: this.budgets.goals.epoch(owner),
-      historyUnmetered: true,
-    };
-  }
-  budgetResumeIssue(bot: string, runId: string, goal?: GoalResumeTarget) {
-    const record = this.journal.records.get(runId);
-    if (!record || record.bot !== bot) return 'BUDGET_CONTINUE_UNAVAILABLE';
-    const target = this.budgets.goals.prepare(
-      this.goalOwner(bot, record.conversationId, record.chatRevision ?? 0, record.project),
-    );
-    if (
-      goal &&
-      (!record.budget ||
-        goal.budget?.budgetId !== record.budget.budgetId ||
-        goalResumeKey(goal) !== goalResumeKey(target))
-    )
-      return 'GOAL_TARGET_CHANGED';
-    if (record.goalSession && target?.budget?.budgetId === record.budget?.budgetId && !goal)
-      return 'GOAL_TARGET_REQUIRED';
-    return undefined;
-  }
-  private async reconcileGoalHistory(scope: BudgetScope) {
-    let tools = 0,
-      activeMs = 0;
-    await this.journal.writing;
-    for (const run of this.budgets.runs(scope.budgetId)) {
-      const record = this.journal.records.get(run);
-      if (!record) throw new Fault('TASK_OUTCOME_UNKNOWN');
-      const recovery = await this.journal.recovery(record.bot, run);
-      if (!recovery || recovery.blocked) throw new Fault('TASK_OUTCOME_UNKNOWN');
-      tools += recovery.contribution.toolCount;
-      activeMs += recovery.contribution.activeMs;
-      if (!Number.isSafeInteger(tools) || !Number.isSafeInteger(activeMs))
-        throw new Fault('INVALID_RETRY', 400);
-    }
-    this.budgets.reconcileOwner(scope, tools, activeMs);
-  }
-  private observeGoalBudget(job: ModelJob) {
-    if (!job.budget || !job.goal || !job.sessionId) return;
-    const sameGrant =
-      job.goalGrant?.target.goalId === job.goal.id &&
-      job.goalGrant.target.sessionId === job.sessionId;
-    this.budgets.goals.observe(
-      this.goalOwner(job.bot, job.conversationId, job.chatRevision ?? 0, job.project),
-      job.sessionId,
-      job.goal,
-      job.budget,
-      job.goalCreated === true || sameGrant,
-    );
-  }
-  groupBudget(group: string, sourceId: string) {
-    return this.budgets.ensure(
-      createHash('sha256')
-        .update(JSON.stringify(['group', group, sourceId]))
-        .digest('hex'),
-    );
   }
   groupRunning(group: string) {
     return Array.from(this.jobs.values()).some(
@@ -1704,8 +1351,6 @@ export class ModelRuns {
     // Model-owned intent survives retries; tool arguments must never choose a new collaboration identity.
     return {
       intentId: job.intentId || job.id,
-      ...(job.budget ? { budget: job.budget } : {}),
-      ...(job.project ? { project: job.project } : {}),
       ...(job.automation ? { automation: structuredClone(job.automation) } : {}),
     };
   }
@@ -1771,8 +1416,6 @@ export class ModelRuns {
       if (!job.running && job.elapsedMs === undefined && Number.isFinite(Date.parse(job.createdAt)))
         job.elapsedMs = Math.max(0, Date.now() - Date.parse(job.createdAt));
       const record: TaskRecord = {
-        approvalMode: job.task ? (job.task.approvalMode ?? 'auto') : undefined,
-        budget: job.budget,
         activeMs:
           job.activeMs === undefined ? undefined : job.activeMs - (job.activityBase?.activeMs ?? 0),
         ...(job.attemptSummary ? { attemptSummary: job.attemptSummary } : {}),
@@ -1793,7 +1436,6 @@ export class ModelRuns {
         intentId: job.intentId,
         requestId: job.requestId,
         fingerprint: job.fingerprint,
-        project: job.project,
         prompt: job.task?.prompt || '桌面验收任务',
         kind: job.task ? 'chat' : 'acceptance',
         phase: job.phase,
@@ -1838,51 +1480,21 @@ export class ModelRuns {
     const recovery = await this.journal.recovery(bot, runId);
     if (!recovery?.record.outputDirectory) throw new Fault('RETRY_NOT_FOUND', 404);
     if (recovery.blocked) throw new Fault('TASK_OUTCOME_UNKNOWN');
-    const policy = recovery.record.budget
-      ? this.budgets.view(recovery.record.budget.budgetId).policy
-      : undefined;
-    if (recovery.toolCount >= (policy?.toolLimit ?? toolLimit)) throw new Fault('TOOL_LIMIT');
-    if (recovery.activeMs >= (policy?.activeMs ?? timeLimit)) throw new Fault('MODEL_TIME_LIMIT');
+    if (recovery.toolCount >= toolLimit) throw new Fault('TOOL_LIMIT');
+    if (recovery.activeMs >= timeLimit) throw new Fault('MODEL_TIME_LIMIT');
     return {
       ...recovery,
       record: { ...recovery.record, outputDirectory: recovery.record.outputDirectory },
     };
   }
-  startHuman(
-    bot: string,
-    input?: unknown,
-    conversation?: ConversationScope,
-    budget?: BudgetScope,
-    automation?: AutomationSource,
-  ) {
-    return this.startAccepted(bot, input, conversation, budget, true, automation);
-  }
-  start(
+  async start(
     bot: string,
     input?: unknown,
     conversation?: ConversationScope,
     automation?: AutomationSource,
   ) {
-    return this.startAccepted(bot, input, conversation, undefined, false, automation);
-  }
-  private async startAccepted(
-    bot: string,
-    input?: unknown,
-    conversation?: ConversationScope,
-    budget?: BudgetScope,
-    human = false,
-    automation?: AutomationSource,
-  ) {
-    let acceptedBudget = budget
-      ? structuredClone(budget)
-      : conversation?.budget
-        ? structuredClone(conversation.budget)
-        : undefined;
-    if (acceptedBudget && !isBudgetScope(acceptedBudget))
-      throw new Fault('INVALID_BUDGET_SCOPE', 400);
     if (automation !== undefined && !isAutomationSource(automation))
       throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
-    // Provenance is captured by the Host; it never grants Human continuation authority.
     let trustedSource = automation ? structuredClone(automation) : undefined;
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('UNKNOWN_BOT', 404);
@@ -1895,11 +1507,7 @@ export class ModelRuns {
         typeof conversation.context !== 'string' ||
         conversation.context.length > 32000 ||
         conversation.context.includes('\0') ||
-        (conversation.budget !== undefined && !isBudgetScope(conversation.budget)) ||
-        (conversation.sourceId !== undefined && !validAgentId(conversation.sourceId)) ||
-        Object.keys(conversation).some(
-          (key) => !['id', 'context', 'budget', 'sourceId'].includes(key),
-        ))
+        Object.keys(conversation).some((key) => !['id', 'context'].includes(key)))
     )
       throw new Fault('INVALID_CONVERSATION', 400);
     const scope = conversation ? structuredClone(conversation) : undefined;
@@ -1907,33 +1515,18 @@ export class ModelRuns {
     if (input === undefined && !this.tools.hasComputer(bot))
       throw new Fault('COMPUTER_NOT_CONNECTED');
     const task = input === undefined ? undefined : validateTask(input);
-    const resumingGoal = !!task && !task.retryOf && goalCommand(task.prompt)?.action === 'resume';
-    if (resumingGoal && (!human || !task?.goalResume))
-      throw new Fault('GOAL_HUMAN_COMMAND_REQUIRED', 403);
-    if (task?.goalResume && (!human || !resumingGoal)) throw new Fault('INVALID_GOAL_TARGET', 400);
-    // A continuation retains canonical provenance, but only the named Human entry authorizes native resume.
-    if (task?.retryOf || task?.goalResume) {
-      const prior = task.retryOf ? await this.journal.read(bot, task.retryOf) : undefined;
-      const recorded = task.retryOf ? prior?.automation : this.goalAutomation(task.goalResume!);
-      // Raising a quota never widens the accepted approval policy; legacy records without it remain unspecified.
-      if (task.retryOf && task.approvalMode === undefined && prior?.approvalMode)
-        task.approvalMode = prior.approvalMode;
+    if (task?.retryOf) {
+      const recorded = (await this.journal.read(bot, task.retryOf))?.automation;
       if (trustedSource && !isDeepStrictEqual(trustedSource, recorded))
         throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
       trustedSource = recorded ? structuredClone(recorded) : undefined;
     }
-
-    if (trustedSource?.scope && !sameProjectScope(trustedSource.scope, task?.project))
-      throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
+    if (trustedSource?.scope) throw new Fault('PROJECT_RETIRED', 409);
     if (scope && task?.chatRevision !== undefined) throw new Fault('INVALID_CONVERSATION', 400);
     const data = task
       ? {
-          ...(task.goalResume ? { goalResume: task.goalResume } : {}),
           prompt: task.prompt,
           ...(trustedSource ? { automation: trustedSource } : {}),
-          ...(task.project
-            ? { project: { projectId: task.project.projectId, revision: task.project.revision } }
-            : {}),
           memory: task.memory || '',
           files: task.files || [],
           ...(scope ? { conversationId: scope.id, context: scope.context } : {}),
@@ -1953,67 +1546,23 @@ export class ModelRuns {
       }
       if (saved) {
         if (saved.fingerprint !== fingerprint) throw new Fault('REQUEST_ID_REUSED');
-        const receipt = { ...saved, history: this.history(bot) };
-        if (saved.project) delete receipt.outputDirectory;
-        return receipt;
+        return { ...saved, history: this.history(bot) };
       }
-    }
-    if (task?.goalResume) {
-      const target = task.goalResume;
-      const owner = this.goalOwner(
-        bot,
-        scope?.id,
-        task.chatRevision ?? this.chats.current(bot).revision,
-        task.project,
-      );
-      if (
-        target.owner.bot !== owner.bot ||
-        target.owner.conversationId !== owner.conversationId ||
-        target.owner.chatRevision !== owner.chatRevision ||
-        !sameProjectScope(target.owner.project, owner.project)
-      )
-        throw new Fault('GOAL_TARGET_CHANGED', 409);
-      const current = await this.goalTarget(owner);
-      if (
-        current.sessionId !== target.sessionId ||
-        current.goalId !== target.goalId ||
-        current.goalRevision !== target.goalRevision
-      )
-        throw new Fault('GOAL_TARGET_CHANGED', 409);
-      if (
-        acceptedBudget &&
-        target.budget &&
-        (acceptedBudget.budgetId !== target.budget.budgetId ||
-          acceptedBudget.revision !== target.budget.revision)
-      )
-        throw new Fault('BUDGET_REVISION_CONFLICT', 409);
-      acceptedBudget = target.budget ? structuredClone(target.budget) : acceptedBudget;
-    }
-    if (task?.project) {
-      this.projects.assertScope(bot, task.project, 'read');
-      if (
-        !this.execution?.snapshot?.capabilities.includes(projectCapability) ||
-        !this.execution.snapshot.capabilities.includes(taskRunCapability)
-      )
-        throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
     }
     let cachedInputs: TaskRequest['files'];
     let intentId: string | undefined;
-    let priorBudget: BudgetScope | undefined;
     let continuedInserts: RunInsert[] = [];
     let continuedTools = 0;
     let continuedMs = 0;
     if (task?.retryOf) {
       const recovery = await this.continuation(bot, task.retryOf);
       const prior = recovery.record;
-      if (!sameProjectScope(prior.project, task.project)) throw new Fault('INVALID_RETRY', 400);
-      const retryWorkspace = this.workspaceFor(task.project, bot, prior.runId);
+      const retryWorkspace = this.workspace;
       if (
         prior.conversationId !== scope?.id ||
         (!scope && (prior.chatRevision ?? 0) !== (task.chatRevision ?? 0))
       )
         throw new Fault('INVALID_RETRY', 400);
-      priorBudget = prior.budget;
       continuedTools = recovery.toolCount;
       continuedMs = recovery.activeMs;
       // Retries get a new writable directory, but retain identity for durable side effects such as schedules.
@@ -2040,10 +1589,7 @@ export class ModelRuns {
       intentId = recovery.intentId;
       const root = await retryWorkspace.base(),
         directory = await retryWorkspace.scope(prior.outputDirectory).base();
-      if (
-        (!task.project || directory !== root) &&
-        !directory.startsWith(root + this.workspacePaths.sep)
-      )
+      if (!directory.startsWith(root + this.workspacePaths.sep))
         throw new Fault('INVALID_RETRY', 400);
       cachedInputs = [];
       const documents = prior.documentInputs || [];
@@ -2072,7 +1618,7 @@ export class ModelRuns {
           ['.', '..'].includes(name)
         )
           throw new Fault('INVALID_RETRY', 400);
-        const file = await retryWorkspace.read(
+        const file = await this.workspace.read(
           this.workspacePaths
             .relative(root, this.workspacePaths.join(directory, name))
             .split(this.workspacePaths.sep)
@@ -2127,7 +1673,6 @@ export class ModelRuns {
       persona: '',
       inputs: [],
       bot,
-      project: task?.project,
       automation: trustedSource,
       id,
       intentId: intentId || id,
@@ -2156,89 +1701,12 @@ export class ModelRuns {
     };
     // Every human turn keeps its own request and eventual reply; inserted turns append below.
     if (task) job.turns = [{ id: task.requestId, prompt: task.prompt, result: '' }];
-    if (this.projectSelections.has(bot)) throw new Fault('PROJECT_BUSY');
     // Admission and publication must stay in one synchronous turn, so attachment cannot change a task's authority mid-start.
     if (this.tools.computer?.runtime.admit?.(bot) === false) throw new Fault('COMPUTER_CHANGING');
     if (!this.admission() || !this.botAdmission(bot)) throw new Fault('COMPUTER_CHANGING');
-    if (acceptedBudget && priorBudget && acceptedBudget.budgetId !== priorBudget.budgetId)
-      throw new Fault('BUDGET_OWNER_CONFLICT', 403);
-    const inherited = acceptedBudget ?? priorBudget;
-    try {
-      job.budget = inherited
-        ? this.budgets.view(inherited.budgetId).scope
-        : this.budgets.ensure(
-            createHash('sha256')
-              .update(
-                JSON.stringify(
-                  scope?.sourceId ? ['group', scope.id, scope.sourceId] : [bot, job.intentId],
-                ),
-              )
-              .digest('hex'),
-            undefined,
-            !!task?.retryOf || !!scope?.sourceId || task?.goalResume?.historyUnmetered === true,
-          );
-    } catch (error) {
-      if (error instanceof Error && error.message === 'BUDGET_HISTORY_UNMETERED')
-        throw new Fault('BUDGET_HISTORY_UNMETERED', 400);
-      throw error;
-    }
-    // A slow preparation must not upgrade a stale continuation or queued group stage into a later human revision.
-    if (
-      acceptedBudget &&
-      (job.budget.budgetId !== acceptedBudget.budgetId ||
-        job.budget.revision !== acceptedBudget.revision)
-    )
-      throw new Fault('BUDGET_REVISION_CONFLICT', 409);
-    // Negotiate the expanded run contract before binding a run or recording a Human Goal grant.
-    if (
-      this.execution &&
-      this.budgets.view(job.budget.budgetId).policy.toolLimit > legacyExecutionToolLimit &&
-      !this.execution.snapshot?.capabilities.includes(taskRunCapability)
-    )
-      throw new Fault('EXECUTION_UPGRADE_REQUIRED', 409);
-    if (task?.goalResume) {
-      await this.reconcileGoalHistory(job.budget);
-      // Reconciliation awaits journal I/O. A competing request may have published while this one waited.
-      const current = this.jobs.get(bot);
-      const saved = this.journal.findRequest(bot, task.requestId);
-      if (current?.requestId === task.requestId) {
-        if (current.fingerprint !== fingerprint) throw new Fault('REQUEST_ID_REUSED');
-        return this.publicJob(current);
-      }
-      if (saved) {
-        if (saved.fingerprint !== fingerprint) throw new Fault('REQUEST_ID_REUSED');
-        const receipt = { ...saved, history: this.history(bot) };
-        if (saved.project) delete receipt.outputDirectory;
-        return receipt;
-      }
-      if (this.running(bot)) throw new Fault('MODEL_ALREADY_RUNNING');
-      this.profiles.assertActive(bot);
-      if (!scope) this.chats.assertCurrent(bot, chatRevision);
-      if (
-        !this.admission() ||
-        !this.botAdmission(bot) ||
-        this.tools.computer?.runtime.admit?.(bot) === false
-      )
-        throw new Fault('COMPUTER_CHANGING');
-      const grant = this.budgets.goals.accept(task.goalResume, task.requestId, job.id, job.budget);
-      job.goalGrant = { id: grant.id, target: structuredClone(task.goalResume) };
-    } else if (human && task) {
-      this.budgets.goals.noteHuman(
-        this.goalOwner(bot, scope?.id, chatRevision ?? 0, job.project),
-        task.requestId,
-      );
-    }
-    if (job.project) this.projects.assertScope(bot, job.project, 'read');
-    this.budgets.bind(job.budget, job.id);
-    const budgetView = this.budgets.view(job.budget.budgetId);
-    if (budgetView.state !== 'active') throw new Fault('BUDGET_LIMIT_REACHED', 409);
-    job.limit = budgetView.policy.toolLimit;
     this.jobs.set(bot, job);
     let inputDirectory: TaskDirectory | undefined;
     try {
-      // Publish the captured request before awaiting resource preparation so concurrent retries only read its receipt.
-      if (this.execution?.snapshot?.capabilities.includes(projectCapability))
-        await this.bindProject(bot, job.project, job);
       job.skills = task ? await this.skills.capture(bot) : { available: true, key: '', skills: [] };
       job.integrations = task
         ? await this.integrations.capture(bot)
@@ -2247,13 +1715,7 @@ export class ModelRuns {
       job.persona = personaKey(job.profile);
       // Per-Bot choice is captured with the task; it never edits the shared credential or a running job.
       const captured = await this.settings.capture(job.profile?.model);
-      job.routeRevision = captured.revision;
       const config = captured.primary;
-      if (
-        budgetView.policy.mode === 'strict' &&
-        !['openai-completions', 'openai-responses'].includes(config.api)
-      )
-        throw new Fault('BUDGET_STRICT_UNAVAILABLE', 400);
       job.fallback = captured.fallback;
       job.attemptSummary = [
         {
@@ -2288,11 +1750,7 @@ export class ModelRuns {
       job.redactResponse = (value) => redactStream(value, secrets);
       if (!task) await this.runtime?.stopWorker(bot);
       job.privateDir = path.join(this.dir, 'runs', job.id, bot);
-      inputDirectory = await this.workspaceFor(job.project, bot, job.id).create([
-        'model-runs',
-        job.id,
-        bot,
-      ]);
+      inputDirectory = await this.workspace.create(['model-runs', job.id, bot]);
       job.workdir = inputDirectory.path;
       await mkdir(job.privateDir, { recursive: true, mode: 0o700 });
       job.canonicalRoot = inputDirectory.canonical;
@@ -2346,10 +1804,6 @@ export class ModelRuns {
       }
       job.abort.signal.throwIfAborted();
       await inputDirectory.verify();
-      if (job.project)
-        job.binding = createHash('sha256')
-          .update(`${job.binding}:project:${job.project.projectId}:${job.project.revision}`)
-          .digest('hex');
       await this.tools.open(job);
       // A Mac grant and a VM connection must never resume each other's native SDK tool context.
       if (this.tools.localSelected(job.bot, job))
@@ -2394,7 +1848,6 @@ export class ModelRuns {
       if (job.skills) this.skills.release(job.skills);
       this.tools.skills?.release(job);
       job.imageInputs = undefined;
-      this.budgets.finishRun(job.id);
       job.running = false;
       job.phase = job.abort.signal.aborted ? 'stopped' : 'failed';
       job.error = job.abort.signal.aborted
@@ -2483,69 +1936,31 @@ export class ModelRuns {
         ? `computer-${job.attemptId}.patch.yml`
         : 'computer.patch.yml',
     );
-    if (
-      job.budget &&
-      this.budgets.view(job.budget.budgetId).policy.mode === 'strict' &&
-      !['openai-completions', 'openai-responses'].includes(config.api)
-    )
-      throw new Fault('BUDGET_STRICT_UNAVAILABLE', 400);
-    this.budgets.coverage(job.id, job.attemptId!, false);
     await writeFile(
       file,
       JSON.stringify(
-        usagePatch(
-          goalGrantPatch(
-            sdkPatch(
-              this.origin,
-              job.bot,
-              job.token,
-              job.task ? { ...job.task, planning: job.planning } : undefined,
-              job.limit - job.toolCount,
-              config.model,
-              job.skills,
-              this.bridge,
-              config,
-              this.sdkFile,
-              promptCacheId({
-                workspace: this.dir,
-                provider: config.provider,
-                model: config.apiModel,
-                bot: job.bot,
-                conversationId: job.conversationId,
-                chatRevision: job.chatRevision,
-              }),
-              path.join(job.privateDir, 'turn.json'),
-              office,
-              job.attemptId,
-            ),
-            job.goalGrant,
-          ),
-          job.budget
-            ? {
-                url: `${this.origin}/mcp/${job.bot}`,
-                capability: job.token,
-                ...(this.bridge
-                  ? {
-                      socketPath: this.bridge.socketPath,
-                      certificateFile: this.bridge.certificateFile,
-                    }
-                  : {}),
-                scope: job.budget,
-                runId: job.id,
-                modelAttemptId: job.attemptId!,
-                routeKey: JSON.stringify([
-                  config.provider,
-                  config.api,
-                  config.apiModel,
-                  job.routeRevision ?? 0,
-                ]),
-                strict: this.budgets.view(job.budget.budgetId).policy.mode === 'strict',
-                api: config.api,
-                baseURL: config.baseURL,
-                model: config.apiModel,
-                provider: sdkProvider(config),
-              }
-            : undefined,
+        sdkPatch(
+          this.origin,
+          job.bot,
+          job.token,
+          job.task ? { ...job.task, planning: job.planning } : undefined,
+          job.limit - job.toolCount,
+          config.model,
+          job.skills,
+          this.bridge,
+          config,
+          this.sdkFile,
+          promptCacheId({
+            workspace: this.dir,
+            provider: config.provider,
+            model: config.apiModel,
+            bot: job.bot,
+            conversationId: job.conversationId,
+            chatRevision: job.chatRevision,
+          }),
+          path.join(job.privateDir, 'turn.json'),
+          office,
+          job.attemptId,
         ),
       ),
       { mode: 0o600 },
@@ -2646,7 +2061,7 @@ export class ModelRuns {
       await startup.log('initialize-ready', { snapshot: await readDshStartup(startupFile) });
       job.phase = 'running';
       attempt.phase = 'running';
-      const key = sessionKey(job.bot, job.conversationId, job.chatRevision, job.project);
+      const key = sessionKey(job.bot, job.conversationId, job.chatRevision);
       const saved = job.task ? this.sessions.get(key) : undefined;
       // Native sessions retain loaded skills and tool catalogs; changed authority needs a fresh session with chat data preserved below.
       const previous =
@@ -2690,7 +2105,6 @@ export class ModelRuns {
             job.goal = goal ?? undefined;
             job.goalSession = goal !== null && goal.phase !== 'complete';
             if (goalOperation(note, session.id) === 'create') job.goalCreated = true;
-            this.observeGoalBudget(job);
             this.persist(job)
               .catch(() => this.stop(job.bot, 'goal-save-failed'))
               .catch(() => {
@@ -2762,9 +2176,7 @@ export class ModelRuns {
             job.prompt +
             JSON.stringify(this.tools.list(job.bot, job.model, job.conversationId, job));
           const context = recoveryContext(
-            (await this.journal.all(job.bot)).filter((record) =>
-              sameProjectScope(record.project, job.project),
-            ),
+            await this.journal.all(job.bot),
             {
               bot: job.bot,
               runId: job.id,
@@ -2948,32 +2360,12 @@ export class ModelRuns {
     };
     job.onInteraction = refreshWait;
     job.onComputerWait = refreshWait;
-    let logicalTimeLimit = timeLimit;
-    const totalActive = () =>
-      job.budget
-        ? this.budgets.time(job.id, Math.max(0, activeUsed() - priorActiveMs), priorActiveMs)
-        : activeUsed();
-    let budgetFailed = false;
-    const budgetFailure = () => {
-      budgetFailed = true;
-      this.markFence(job, 'unknown');
-      job.phase = 'failed';
-      job.error = 'BUDGET_EVIDENCE_SAVE_FAILED';
-    };
     const timeout = setInterval(() => {
       refreshWait();
-      try {
-        if (totalActive() >= logicalTimeLimit)
-          this.stop(job.bot, 'timeout').catch(() => {
-            job.error = 'MODEL_STOP_FAILED';
-          });
-      } catch {
-        budgetFailure();
-        clearInterval(timeout);
-        this.stop(job.bot).catch(() => {
+      if (activeUsed() >= timeLimit)
+        this.stop(job.bot, 'timeout').catch(() => {
           job.error = 'MODEL_STOP_FAILED';
         });
-      }
     }, 1000);
     const startupFile = path.join(job.privateDir, 'dsh-startup.json');
     const diagnostic = (stage: string, details: Record<string, unknown> = {}) =>
@@ -2989,10 +2381,6 @@ export class ModelRuns {
       );
     const startup = { initialized: false, stage: 'sdk-loading', log: diagnostic };
     try {
-      logicalTimeLimit = job.budget
-        ? this.budgets.view(job.budget.budgetId).policy.activeMs
-        : timeLimit;
-      totalActive();
       for (;;) {
         const attempt = job.attemptSummary!.at(-1)!;
         job.attemptActive = true;
@@ -3039,10 +2427,7 @@ export class ModelRuns {
                 !!job.goalSession ||
                 !!goalCommand(job.task?.prompt || ''),
               eligible,
-              budgetAvailable:
-                job.toolCount < job.limit &&
-                totalActive() < logicalTimeLimit &&
-                (!job.budget || this.budgets.view(job.budget.budgetId).state === 'active'),
+              budgetAvailable: job.toolCount < job.limit && activeUsed() < timeLimit,
             });
           if (
             !fallback ||
@@ -3075,9 +2460,7 @@ export class ModelRuns {
           }
           if (!(await this.settings.available(fallback)))
             throw new Fault('MODEL_FALLBACK_UNAVAILABLE');
-          this.sessions.delete(
-            sessionKey(job.bot, job.conversationId, job.chatRevision, job.project),
-          );
+          this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
           job.attemptId = randomBytes(16).toString('hex');
           // Guest run retirement is permanent; each attempt has a lease derived from this same logical task.
           job.executionId = executionAttemptId(job.id, job.attemptId);
@@ -3127,11 +2510,6 @@ export class ModelRuns {
       // Keep queue receipts and admission active until artifacts and the final journal record are complete.
       job.finalizing = true;
       job.activeMs = activeUsed();
-      try {
-        totalActive();
-      } catch {
-        budgetFailure();
-      }
       job.attemptActive = false;
       job.insertable = false;
       clearInterval(timeout);
@@ -3189,7 +2567,7 @@ export class ModelRuns {
       // A committed goal is native session authority. Keep that compatible session even after Stop; its producer is disarmed on reload.
       // Ordinary failed/empty conversations still retire below, and queued goal messages require a fresh owned reservation.
       if (job.task && job.goalSession && job.sessionId)
-        this.sessions.set(sessionKey(job.bot, job.conversationId, job.chatRevision, job.project), {
+        this.sessions.set(sessionKey(job.bot, job.conversationId, job.chatRevision), {
           id: job.sessionId,
           goalSession: true,
           persona: job.persona,
@@ -3199,22 +2577,13 @@ export class ModelRuns {
           mcp: job.integrations?.key ?? '',
         });
       else if (job.task && job.phase !== 'completed')
-        this.sessions.delete(
-          sessionKey(job.bot, job.conversationId, job.chatRevision, job.project),
-        );
+        this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
       const currentAttempt = job.attemptSummary?.at(-1);
       if (currentAttempt) {
         currentAttempt.phase =
           job.phase === 'completed' ? 'completed' : job.abort.signal.aborted ? 'stopped' : 'failed';
         currentAttempt.finishedAt = new Date().toISOString();
       }
-      // Ledger storage can fail independently; it must never strand execution ownership or skip native shutdown.
-      try {
-        this.budgets.finishRun(job.id);
-      } catch {
-        budgetFailure();
-      }
-      if (budgetFailed) budgetFailure();
       job.running = false;
       job.imageInputs = undefined;
       job.token = '';
@@ -3257,25 +2626,19 @@ export class ModelRuns {
         !job.goalSession &&
         this.jobs.get(job.bot) === job
       )
-        this.sessions.delete(
-          sessionKey(job.bot, job.conversationId, job.chatRevision, job.project),
-        );
+        this.sessions.delete(sessionKey(job.bot, job.conversationId, job.chatRevision));
       job.finalizing = false;
     }
   }
   private async collectFiles(job: ModelJob) {
     const inputs = new Set(job.inputs),
       paths = this.workspacePaths,
-      workspace = this.workspaceFor(job.project, job.bot, job.id),
-      prefix = job.project
-        ? ''
-        : paths.relative(this.workspace.root, job.workdir).split(paths.sep).join('/');
-    job.files = (await workspace.scope(job.workdir, job.canonicalRoot).list())
+      prefix = paths.relative(this.workspace.root, job.workdir).split(paths.sep).join('/');
+    job.files = (await this.workspace.scope(job.workdir, job.canonicalRoot).list())
       .filter((file) => !inputs.has(file.path))
       .map((file) => ({
         ...file,
         path: path.posix.join(prefix, file.path.split(paths.sep).join('/')),
-        ...(job.project ? { project: job.project, task: { bot: job.bot, runId: job.id } } : {}),
       }));
     job.verification.passed =
       job.phase === 'completed' &&
@@ -3328,34 +2691,10 @@ export class ModelRuns {
       throw new Fault('INVALID_RPC', 400);
     const rpc = value as Rpc,
       job = this.jobs.get(bot);
-    if (rpc.method === 'budget.report') {
-      const { scope, runId, attemptId, usage, ...extra } = rpc.params ?? {};
-      if (
-        !isBudgetScope(scope) ||
-        typeof runId !== 'string' ||
-        typeof attemptId !== 'string' ||
-        !isTokenUsage(usage) ||
-        Object.keys(extra).length ||
-        !authorization?.startsWith('Bearer ')
-      )
-        throw new Fault('INVALID_BUDGET_REPORT', 403);
-      const receipt = this.budgets.report(
-        attemptId,
-        usage,
-        runId,
-        createHash('sha256').update(authorization).digest('hex'),
-        scope,
-      );
-      if (receipt.scope.budgetId !== scope.budgetId || receipt.scope.revision !== scope.revision)
-        throw new Fault('INVALID_BUDGET_REPORT', 403);
-      return { jsonrpc: '2.0', id: rpc.id, result: { accepted: true } };
-    }
     // Stop may still receive its final observation-only drain acknowledgement; it never permits another tool.
     if (
       !job?.running ||
-      (job.abort.signal.aborted &&
-        rpc.method !== 'attempt.closed' &&
-        rpc.method !== 'budget.coverage') ||
+      (job.abort.signal.aborted && rpc.method !== 'attempt.closed') ||
       !job.token ||
       authorization !== `Bearer ${job.token}`
     )
@@ -3367,98 +2706,7 @@ export class ModelRuns {
       sessionId: job.sessionId,
     };
     let result: unknown;
-    if (rpc.method === 'budget.coverage') {
-      const { scope, modelAttemptId, complete, ...extra } = rpc.params ?? {};
-      if (
-        !isBudgetScope(scope) ||
-        !job.budget ||
-        scope.budgetId !== job.budget.budgetId ||
-        scope.revision !== job.budget.revision ||
-        modelAttemptId !== job.attemptId ||
-        typeof complete !== 'boolean' ||
-        Object.keys(extra).length
-      )
-        throw new Fault('INVALID_BUDGET_COVERAGE', 403);
-      this.budgets.coverage(job.id, job.attemptId!, complete);
-      result = { accepted: true };
-    } else if (rpc.method === 'budget.tool') {
-      const { scope, modelAttemptId, sessionId, callId, ...extra } = rpc.params ?? {};
-      if (
-        !isBudgetScope(scope) ||
-        !job.budget ||
-        scope.budgetId !== job.budget.budgetId ||
-        scope.revision !== job.budget.revision ||
-        modelAttemptId !== job.attemptId ||
-        sessionId !== job.sessionId ||
-        typeof callId !== 'string' ||
-        callId.length > 1024 ||
-        Object.keys(extra).length ||
-        !job.attemptActive
-      )
-        throw new Fault('INVALID_BUDGET_TOOL', 403);
-      this.budgets.tool(
-        scope,
-        createHash('sha256')
-          .update(JSON.stringify([scope.budgetId, modelAttemptId, callId]))
-          .digest('hex'),
-      );
-      result = { accepted: true };
-    } else if (rpc.method === 'budget.reserve' || rpc.method === 'budget.dispatched') {
-      const { scope, modelAttemptId, attemptId, ...rest } = rpc.params ?? {};
-      if (
-        !isBudgetScope(scope) ||
-        !job.budget ||
-        scope.budgetId !== job.budget.budgetId ||
-        scope.revision !== job.budget.revision ||
-        modelAttemptId !== job.attemptId ||
-        !job.attemptActive ||
-        typeof attemptId !== 'string'
-      )
-        throw new Fault('INVALID_BUDGET_ATTEMPT', 403);
-      if (rpc.method === 'budget.reserve') {
-        const { rootSessionId, sessionId, purpose, requestHash, ...extra } = rest;
-        if (
-          typeof requestHash !== 'string' ||
-          !/^[a-f0-9]{64}$/.test(requestHash) ||
-          rootSessionId !== job.sessionId ||
-          typeof sessionId !== 'string' ||
-          !['main', 'subtask', 'compaction', 'session-title'].includes(String(purpose)) ||
-          Object.keys(extra).length ||
-          !job.route
-        )
-          throw new Fault('INVALID_BUDGET_OWNER', 403);
-        this.budgets.reserve(scope, {
-          attemptId,
-          requestHash,
-          runId: job.id,
-          modelAttemptId: job.attemptId!,
-          rootSessionId: job.sessionId!,
-          sessionId,
-          purpose:
-            purpose === 'main' && job.attemptSummary!.length > 1
-              ? 'fallback'
-              : (purpose as 'main' | 'subtask' | 'compaction' | 'session-title'),
-          routeKey: JSON.stringify([
-            job.route.provider,
-            job.route.api,
-            job.route.apiModel,
-            job.routeRevision ?? 0,
-          ]),
-          auth: createHash('sha256').update(authorization!).digest('hex'),
-          reservedTokens: job.route.contextWindow + job.route.maxTokens,
-        });
-        result = { accepted: true };
-      } else {
-        if (Object.keys(rest).length) throw new Fault('INVALID_BUDGET_ATTEMPT', 403);
-        result = {
-          send: this.budgets.dispatch(scope, attemptId, {
-            runId: job.id,
-            modelAttemptId: job.attemptId!,
-            auth: createHash('sha256').update(authorization!).digest('hex'),
-          }),
-        };
-      }
-    } else if (rpc.method === 'attempt.closed') {
+    if (rpc.method === 'attempt.closed') {
       const { sessionId, attemptId, fence, ...extra } = rpc.params || {};
       if (
         sessionId !== job.sessionId ||
@@ -3488,35 +2736,6 @@ export class ModelRuns {
         throw new Fault('INVALID_ATTEMPT', 403);
       await this.fenceAttempt(job, 'tool');
       result = { accepted: true };
-    } else if (rpc.method === 'goal.resume') {
-      const { grantId, sessionId, goalId, revision, ...extra } = rpc.params ?? {};
-      if (
-        !job.goalGrant ||
-        grantId !== job.goalGrant.id ||
-        sessionId !== job.sessionId ||
-        typeof goalId !== 'string' ||
-        !Number.isSafeInteger(revision) ||
-        Object.keys(extra).length
-      )
-        throw new Fault('GOAL_TARGET_CHANGED', 403);
-      await this.fenceAttempt(job, 'tool');
-      if (
-        this.jobs.get(bot) !== job ||
-        !job.running ||
-        job.abort.signal.aborted ||
-        !job.attemptActive ||
-        authorization !== `Bearer ${job.token}`
-      )
-        throw new Fault('GOAL_RESUME_UNCONFIRMED', 403);
-      result = {
-        accepted: this.budgets.goals.claim(
-          job.goalGrant.id,
-          job.id,
-          String(sessionId),
-          goalId,
-          Number(revision),
-        ),
-      };
     } else if (rpc.method === 'goal.observe') {
       const { sessionId, goal, ...extra } = rpc.params ?? {};
       if (!job.task || sessionId !== job.sessionId || Object.keys(extra).length)
@@ -3527,7 +2746,6 @@ export class ModelRuns {
       if (observed || job.goal || job.goalSession) this.markFence(job, 'tool');
       job.goal = observed;
       job.goalSession = observed !== undefined && observed.phase !== 'complete';
-      this.observeGoalBudget(job);
       await this.persist(job);
       result = { accepted: true };
     } else if (rpc.method === 'statistics.update') {
@@ -3627,11 +2845,7 @@ export class ModelRuns {
     // Historical approval records never renew the replaced physical attempt that requested them.
     if (rpc.method === 'interaction.open') this.assertAttempt(job, approvalAttempt);
     // A human wait can outlive the run that authenticated it; never release a grant after stop.
-    if (
-      job.abort.signal.aborted &&
-      rpc.method !== 'attempt.closed' &&
-      rpc.method !== 'budget.coverage'
-    )
+    if (job.abort.signal.aborted && rpc.method !== 'attempt.closed')
       throw new Fault('MODEL_CANCELLED');
     return { jsonrpc: '2.0', id: rpc.id, result };
   }
@@ -3647,11 +2861,9 @@ export class ModelRuns {
     // Each store must close even when another owner fails, including unavailable optional services.
     if (![...this.jobs.values()].some((job) => job.running)) this.releaseModelReferences();
     for (const owner of [
-      this.budgets,
       this.tools.integrations,
       this.work,
       this.notes,
-      this.projects,
       this.attachments,
       this.knowledge,
       this.skills,

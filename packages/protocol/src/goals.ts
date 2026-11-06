@@ -40,16 +40,3 @@ export function isGoalProgress(value: unknown): value is GoalProgress {
       (typeof row.reason === 'string' && row.reason.length <= 1000 && !row.reason.includes('\0')))
   );
 }
-
-export type GoalCommand =
-  | { action: 'create'; objective: string }
-  | { action: 'resume' | 'pause' | 'status' | 'clear' };
-export function goalCommand(prompt: string): GoalCommand | undefined {
-  const text = prompt.trimStart().replace(/^\/ptc\s+/, '');
-  if (!/^\/goal(?:\s|$)/.test(text)) return;
-  const body = text.replace(/^\/goal\s*/, '').trim();
-  const control = /^(resume|pause|status|clear)(?:\s|$)/.exec(body)?.[1];
-  if (control) return { action: control as 'resume' | 'pause' | 'status' | 'clear' };
-  const objective = body.replace(/^create(?:\s|$)/, '').trim();
-  return objective ? { action: 'create', objective } : { action: 'status' };
-}

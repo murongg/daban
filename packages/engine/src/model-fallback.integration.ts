@@ -164,11 +164,6 @@ for (const scenario of ['clean', 'partial'] as const)
       });
       await models.jobs.get('mock-bot')!.done;
       const result = models.status().bots['mock-bot'];
-      const budget = models.budgets.view(models.jobs.get('mock-bot')!.budget!.budgetId);
-      assert.equal(budget.requests, calls.length);
-      assert.equal(budget.unknownCount, calls.length);
-      assert.equal(methods.filter((m) => m.method === 'budget.reserve').length, calls.length);
-      assert.equal(methods.filter((m) => m.method === 'budget.dispatched').length, calls.length);
       assert.equal(result.runId, accepted.runId);
       assert.equal(result.requestId, 'mock-native-request');
       if (scenario === 'clean') {

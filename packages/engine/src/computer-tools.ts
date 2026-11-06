@@ -8,7 +8,7 @@ export const computerToolList = [
   {
     name: 'screenshot',
     description:
-      'Observe your own screen. desktop is the full Linux display (1280x800); browser is the web page bound to this task (960x640). Only needed before GUI actions, and again after human takeover. Ordinary conversation and workspace tools need no screenshot.',
+      'Observe your own screen. desktop is the full Linux display (1280x800); browser is your shared-login web page (960x640). Only needed before GUI actions, and again after human takeover. Ordinary conversation and workspace tools need no screenshot.',
     inputSchema: {
       type: 'object',
       properties: { surface: { type: 'string', enum: ['desktop', 'browser'] } },
@@ -56,7 +56,7 @@ export const computerToolList = [
   {
     name: 'open_app',
     description:
-      'Open or focus a real native application on your desktop. The bound browser is a native viewer; use the browser surface tools for web interaction. Returns the complete desktop screenshot.',
+      'Open or focus a real native application on your desktop. Shared browser is a native viewer; use the browser surface tools for web interaction. Returns the complete desktop screenshot.',
     inputSchema: {
       type: 'object',
       properties: { app: { type: 'string', enum: ['terminal', 'files', 'editor', 'browser'] } },
@@ -75,7 +75,6 @@ export interface ToolTrace {
   code?: string;
 }
 export interface ToolRun {
-  project?: import('@daban/protocol').ProjectScope;
   id?: string;
   conversationId?: string;
   bot: string;

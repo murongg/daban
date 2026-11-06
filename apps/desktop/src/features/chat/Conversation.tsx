@@ -38,7 +38,6 @@ import { getLocale, t, useLocale } from '../../i18n/locale';
 import { Avatar } from '../bots/Avatar';
 import { attachmentAccept, canParseDocuments } from '../files/files';
 import { modelName as displayModel, modelIcon } from '../models/model-options';
-import { Scope } from '../projects/Scope';
 import { Requests } from '../requests/Requests';
 import { ApprovalMode } from './ApprovalMode';
 import { Execution } from './Execution';
@@ -661,15 +660,6 @@ export function Conversation({
               }
             }}
           />
-          {live && (
-            <Scope
-              key={bot.id}
-              bot={bot.id}
-              state={state}
-              dispatch={dispatch}
-              disabled={readOnly || pending || !!agentTask(runtime.snapshot, bot.id)?.running}
-            />
-          )}
           <div className="composer-bottom">
             <IconButton
               label={t('common.addAttachment')}

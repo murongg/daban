@@ -1,9 +1,4 @@
-import {
-  type DocumentOriginal,
-  imageMime,
-  projectFileMatches,
-  type RuntimeDownload,
-} from '@daban/protocol';
+import { type DocumentOriginal, imageMime, type RuntimeDownload } from '@daban/protocol';
 import { useEffect, useState } from 'react';
 import { runtimeError, useRuntime } from '../app/Runtime';
 import type { WorkspaceFile } from '../app/state';
@@ -68,13 +63,8 @@ export function ImagePreview({ file }: { file: WorkspaceFile }) {
         const source = await runtime.command<RuntimeDownload>({
           type: 'files.download',
           path: file.runtimePath,
-          ...file.runtimeScope,
         });
-        if (
-          !projectFileMatches(source, file.runtimeScope ?? {}) ||
-          source.path !== file.runtimePath ||
-          source.name !== file.name
-        )
+        if (source.path !== file.runtimePath || source.name !== file.name)
           throw new Error('INVALID_ATTACHMENT');
         ({ name, data } = source);
       } else throw new Error('INVALID_ATTACHMENT');
@@ -92,7 +82,7 @@ export function ImagePreview({ file }: { file: WorkspaceFile }) {
     return () => {
       active = false;
     };
-  }, [runtime.command, upload, file.name, file.runtimePath, file.runtimeScope]);
+  }, [runtime.command, upload, file.name, file.runtimePath]);
   if (error)
     return (
       <p className="form-error" role="alert">

@@ -3,11 +3,8 @@ import { constants } from 'node:fs';
 import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { ProjectScope } from '@daban/protocol';
 import {
   type AutomationSource,
-  type BudgetScope,
-  type GoalResumeTarget,
   type Group,
   type GroupActionAck,
   type GroupActionReceipt,
@@ -18,7 +15,6 @@ import {
   type GroupMessage,
   type GroupPage,
   type GroupSend,
-  goalResumeKey,
   groupCopyKey,
   isAutomationSource,
   isGroup,
@@ -44,7 +40,6 @@ import { configure, type Database, migrate } from './database.js';
 import { migrations } from './groups-migrations.js';
 import {
   groupActions,
-  groupBudgetResumes,
   groupCollaborations,
   groupDefs,
   groupDeliveries,
@@ -57,8 +52,6 @@ import type { ConversationScope, RunReceipt } from './tasks.js';
 
 export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
-  budgetResumeIssue?(bot: string, runId: string, goal?: GoalResumeTarget): string | undefined;
-  budget?(group: string, sourceId: string): BudgetScope;
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
   directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
   source?(
@@ -68,12 +61,9 @@ export interface GroupRunner {
   ):
     | {
         intentId: string;
-        budget?: BudgetScope;
-        project?: ProjectScope;
         automation?: AutomationSource;
       }
     | undefined;
-  projectScope?(bot: string, scope: ProjectScope): unknown;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
@@ -222,12 +212,18 @@ export class Groups {
     if (!row) throw new Fault('GROUP_CORRUPT');
     return { ...this.page(group), accepted: this.message(row) };
   }
-  private definition(row: { id: string; value: string }): Group {
+  private definition(row: { id: string; value: string }): Group & { project?: unknown } {
     let value: unknown;
     try {
       value = JSON.parse(String(row.value));
     } catch {
       throw new Fault('GROUP_CORRUPT');
+    }
+    if (object(value) && value.project !== undefined) {
+      const { project, ...snapshot } = value;
+      if (!isGroup(snapshot) || snapshot.id !== row.id) throw new Fault('GROUP_CORRUPT');
+      // Keep the retired identity internally; never project it as an ordinary group.
+      return { ...snapshot, project };
     }
     if (!isGroup(value) || value.id !== row.id) throw new Fault('GROUP_CORRUPT');
     return value;
@@ -236,7 +232,9 @@ export class Groups {
     if (!validAgentId(id)) throw new Fault('INVALID_GROUP', 400);
     const row = this.db.select().from(groupDefs).where(eq(groupDefs.id, id)).get();
     if (!row) throw new Fault('GROUP_NOT_FOUND', 404);
-    return this.definition(row);
+    const group = this.definition(row);
+    if (group.project !== undefined) throw new Fault('PROJECT_RETIRED', 409);
+    return group;
   }
   private actionRecord(id: string): GroupActionReceipt | undefined {
     const row = this.db.select().from(groupActions).where(eq(groupActions.id, id)).get();
@@ -412,7 +410,8 @@ export class Groups {
           .from(groupDefs)
           .orderBy(asc(groupDefs.id))
           .all()
-          .map((row) => this.definition(row)),
+          .map((row) => this.definition(row))
+          .filter((group) => group.project === undefined),
         ...(this.failure ? { error: this.failure } : {}),
       }));
     } catch {
@@ -458,11 +457,6 @@ export class Groups {
     if (await this.runner.member(id)) throw new Fault('GROUP_ID_CONFLICT');
     for (const member of members)
       if (!(await this.runner.member(member))) throw new Fault('GROUP_MEMBER_REQUIRED');
-  }
-  private projectMembers(project: ProjectScope | undefined, members: string[]) {
-    if (!project) return;
-    if (!this.runner.projectScope) throw new Fault('PROJECT_ACCESS_DENIED', 403);
-    for (const bot of members) this.runner.projectScope(bot, project);
   }
   private admitCreation(members: string[]) {
     // Directory awaits must finish first; commit in this same turn before lifecycle permission can change.
@@ -536,7 +530,6 @@ export class Groups {
     return this.exclusive(async () => {
       const identity = this.collaborationSource(source);
       const origin = this.runner.source?.(source.bot, source.runId);
-      const project = origin?.project;
       const automation = origin?.automation ? structuredClone(origin.automation) : undefined;
       const signature = JSON.stringify(value);
       const prior = this.db
@@ -559,11 +552,9 @@ export class Groups {
       if (this.collaborationSource(source) !== identity || !author)
         throw new Fault('GROUP_SOURCE_CLOSED');
       this.admitCreation(members);
-      this.projectMembers(project, members);
       const now = new Date().toISOString();
       const group: Group = {
         id,
-        ...(project ? { project } : {}),
         name: value.name,
         members,
         revision: 1,
@@ -584,11 +575,7 @@ export class Groups {
               prompt: value.message,
               recipients: [...value.members, source.bot],
             },
-            {
-              bot: source.bot,
-              name: author.name,
-              budget: this.runner.source?.(source.bot, source.runId)?.budget,
-            },
+            { bot: source.bot, name: author.name },
             automation,
           );
           // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
@@ -607,7 +594,7 @@ export class Groups {
     if (!row) return undefined;
     const origin = createHash('sha256').update(groupCopyKey(request)).digest('hex');
     if (row.copyOrigin !== origin) throw new Fault('GROUP_COPY_CONFLICT');
-    return { request, state: 'complete', group: this.definition(row) };
+    return { request, state: 'complete', group: this.group(row.id) };
   }
   copyReceipt(input: unknown): Promise<GroupCopyReceipt> {
     if (!isGroupCopyRequest(input)) return Promise.reject(new Fault('INVALID_GROUP_COPY', 400));
@@ -628,13 +615,11 @@ export class Groups {
       if (source.revision !== request.revision) throw new Fault('GROUP_CONFLICT');
       await this.creationMembers(request.id, source.members);
       this.admitCreation(source.members);
-      this.projectMembers(source.project, source.members);
       const now = new Date().toISOString();
       const group: Group = {
         id: request.id,
         name: request.name.trim(),
         members: [...source.members],
-        ...(source.project ? { project: source.project } : {}),
         revision: 1,
         createdAt: now,
         updatedAt: now,
@@ -661,7 +646,7 @@ export class Groups {
     const value = structuredClone(input);
     return this.exclusive(async () => {
       const prior = this.db.select().from(groupDefs).where(eq(groupDefs.id, value.id)).get();
-      if (prior) return this.definition(prior);
+      if (prior) return this.group(prior.id);
       await this.creationMembers(value.id, value.members);
       this.admitCreation(value.members);
       const now = new Date().toISOString();
@@ -713,7 +698,6 @@ export class Groups {
         JSON.stringify(current.members) === JSON.stringify(value.members)
       )
         return current;
-      this.projectMembers(current.project, value.members);
       const group = {
         ...current,
         ...value,
@@ -816,7 +800,7 @@ export class Groups {
   }
   private enqueue(
     value: GroupSend,
-    author?: { bot: string; name: string; budget?: BudgetScope },
+    author?: { bot: string; name: string },
     automation?: AutomationSource,
   ) {
     const group = this.group(value.group),
@@ -851,7 +835,6 @@ export class Groups {
       throw new Fault('GROUP_REVISION_REQUIRED');
     if (value.revision !== undefined && value.revision !== group.revision)
       throw new Fault('GROUP_CONFLICT');
-    this.projectMembers(group.project, [...value.recipients, ...(author ? [author.bot] : [])]);
     if (value.recipients.some((bot) => !group.members.includes(bot)))
       throw new Fault('GROUP_MEMBER_REQUIRED');
     if (value.recipients.some((bot) => this.runner.admit?.(bot) === false))
@@ -892,7 +875,6 @@ export class Groups {
       .values({
         grp: group.id,
         id: value.id,
-        budget: author?.budget ?? this.runner.budget?.(group.id, value.id),
         prompt: value.prompt,
         recipients: JSON.stringify(value.recipients),
         signature,
@@ -990,6 +972,16 @@ export class Groups {
         .run();
   }
   private reconcile(row: Delivery, recovering = false) {
+    const saved = this.db.select().from(groupDefs).where(eq(groupDefs.id, row.grp)).get();
+    if (saved && this.definition(saved).project !== undefined) {
+      // Retire the queue record without cancelling or replaying a possibly dispatched guest effect.
+      this.db
+        .update(groupDeliveries)
+        .set({ state: 'interrupted', error: 'PROJECT_RETIRED' })
+        .where(eq(groupDeliveries.id, row.id))
+        .run();
+      return;
+    }
     const receipt = this.runner.findRequest(String(row.bot), requestId(row));
     if (!receipt && !recovering && row.state === 'claimed') return;
     this.db.transaction(
@@ -1135,7 +1127,7 @@ export class Groups {
         )
           break;
         const group = this.definition(definition);
-        if (group.archived) continue;
+        if (group.archived || group.project !== undefined) continue;
         const turn = this.db
           .select()
           .from(groupTurns)
@@ -1183,7 +1175,6 @@ export class Groups {
             };
           }),
         );
-        this.projectMembers(group.project, [String(row.bot)]);
         const context = row.context ? String(row.context) : this.context(row, group, directory);
         // Directory reads yield; recheck eligibility in the same turn that claims the delivery.
         if (this.runner.admit?.(String(row.bot)) === false) continue;
@@ -1213,19 +1204,10 @@ export class Groups {
             String(row.bot),
             {
               requestId: requestId(row),
-              ...(group.project ? { project: group.project } : {}),
-              prompt: row.goalResume ? '/goal resume' : String(turn.prompt),
-              ...(row.goalResume ? { goalResume: row.goalResume } : {}),
-              ...(row.retryOf
-                ? { retryOf: row.retryOf }
-                : { files: this.inputs(group.id, String(turn.id)) }),
+              prompt: String(turn.prompt),
+              files: this.inputs(group.id, String(turn.id)),
             },
-            {
-              id: group.id,
-              context,
-              sourceId: String(turn.id),
-              ...(turn.budget ? { budget: turn.budget } : {}),
-            },
+            { id: group.id, context },
             this.automationSource(turn.automation),
           );
           this.reconcile(row, true);
@@ -1233,13 +1215,9 @@ export class Groups {
           if (this.runner.findRequest(String(row.bot), requestId(row))) this.reconcile(row, true);
           // Definite admission refusals issued no model effect, so retain the original queue identity.
           else if (
-            [
-              'MODEL_ALREADY_RUNNING',
-              'BOT_CHANGING',
-              'RUNTIME_RECOVERY_PENDING',
-              'BUDGET_LIMIT_REACHED',
-              'BUDGET_REVISION_CONFLICT',
-            ].includes(errorCode(error) || '')
+            ['MODEL_ALREADY_RUNNING', 'BOT_CHANGING', 'RUNTIME_RECOVERY_PENDING'].includes(
+              errorCode(error) || '',
+            )
           )
             this.db.transaction(
               () => {
@@ -1269,92 +1247,6 @@ export class Groups {
       }
       this.failure = '';
     });
-  }
-  private resumeRecord(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
-    const prior = this.db
-      .select()
-      .from(groupBudgetResumes)
-      .where(eq(groupBudgetResumes.id, id))
-      .get();
-    if (
-      prior &&
-      prior.signature !== JSON.stringify([scope.budgetId, scope.revision, goalResumeKey(goal)])
-    )
-      throw new Fault('BUDGET_CONTINUE_CONFLICT', 409);
-    return prior !== undefined;
-  }
-  budgetResume(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
-    return this.exclusive(() => this.resumeRecord(scope, id, goal));
-  }
-  resumeBudget(scope: BudgetScope, id: string, goal?: GoalResumeTarget) {
-    if (!validAgentId(id)) return Promise.reject(new Fault('INVALID_BUDGET_CONTINUATION', 400));
-    return this.exclusive(() =>
-      this.db.transaction(
-        () => {
-          const signature = JSON.stringify([scope.budgetId, scope.revision, goalResumeKey(goal)]);
-          if (this.resumeRecord(scope, id, goal)) return true;
-          const turns = this.db
-            .select()
-            .from(groupTurns)
-            .all()
-            .filter((turn) => turn.budget?.budgetId === scope.budgetId);
-          if (!turns.length) return false;
-          for (const turn of turns) {
-            const group = this.group(turn.grp);
-            if (group.archived) throw new Fault('GROUP_ARCHIVED');
-            const stages = this.stages(turn.grp, turn.id);
-            if (stages.some((stage) => this.runner.running(stage.bot)))
-              throw new Fault('BUDGET_TASK_RUNNING', 409);
-            const failed = stages.find(
-              (stage) =>
-                ['failed', 'interrupted'].includes(stage.state) &&
-                !stages.some((next) => next.retryStage === stage.id),
-            );
-            if (failed) {
-              const issue = failed.run
-                ? this.runner.budgetResumeIssue?.(failed.bot, failed.run, goal)
-                : undefined;
-              if (issue) throw new Fault(issue, 409);
-              // A new delivery keeps the failed reply and its receipt intact; only an explicit human continuation can retry it.
-              this.db
-                .insert(groupDeliveries)
-                .values({
-                  id: `budget-${digest([id, failed.id])}`,
-                  grp: failed.grp,
-                  source: failed.source,
-                  bot: failed.bot,
-                  position: failed.position,
-                  state: 'pending',
-                  retryOf: goal ? undefined : (failed.run ?? undefined),
-                  goalResume: goal,
-                  retryStage: failed.id,
-                  context: failed.context,
-                  name: failed.name,
-                })
-                .run();
-              for (const stage of stages.filter(
-                (stage) => stage.position > failed.position && stage.state === 'cancelled',
-              ))
-                this.db
-                  .update(groupDeliveries)
-                  .set({ state: 'pending', error: null })
-                  .where(eq(groupDeliveries.id, stage.id))
-                  .run();
-            }
-            const waiting = !!failed || stages.some((stage) => stage.state === 'pending');
-            this.db
-              .update(groupTurns)
-              .set({ budget: scope, ...(waiting ? { state: 'pending' } : {}) })
-              .where(and(eq(groupTurns.grp, turn.grp), eq(groupTurns.id, turn.id)))
-              .run();
-          }
-          this.db.insert(groupBudgetResumes).values({ id, signature }).run();
-          this.changed();
-          return true;
-        },
-        { behavior: 'immediate' },
-      ),
-    );
   }
   async cancel(group: string, sourceId: string) {
     if (!validAgentId(sourceId)) throw new Fault('INVALID_GROUP_MESSAGE', 400);
@@ -1457,7 +1349,6 @@ export class Groups {
       terminal.has(receipt.phase)
     )
       throw new Fault('GROUP_SOURCE_CLOSED');
-    this.projectMembers(group.project, [source.bot]);
     return { group, row };
   }
   history(source: GroupSource, args: Record<string, unknown>) {
@@ -1567,7 +1458,6 @@ export class Groups {
               deliveryId: String(previous.target),
             };
           }
-          this.projectMembers(group.project, [source.bot, value.bot]);
           if (this.runner.admit?.(value.bot) === false) throw new Fault('BOT_UNAVAILABLE');
           const stages = this.stages(group.id, String(row.source));
           let target: { id: string } | undefined = stages.find(

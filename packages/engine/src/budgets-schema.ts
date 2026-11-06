@@ -1,12 +1,3 @@
-import type {
-  BudgetPolicy,
-  BudgetPrice,
-  BudgetSettings,
-  BudgetView,
-  GoalResumeTarget,
-  TokenUsage,
-  UsagePurpose,
-} from '@daban/protocol';
 import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const budgetTasks = sqliteTable(
@@ -15,9 +6,9 @@ export const budgetTasks = sqliteTable(
     id: text().primaryKey(),
     root: text().notNull(),
     revision: integer().notNull(),
-    policy: text({ mode: 'json' }).$type<BudgetPolicy>().notNull(),
-    prices: text({ mode: 'json' }).$type<BudgetPrice[]>().notNull(),
-    state: text().$type<BudgetView['state']>().notNull(),
+    policy: text({ mode: 'json' }).$type<unknown>().notNull(),
+    prices: text({ mode: 'json' }).$type<unknown>().notNull(),
+    state: text().$type<string>().notNull(),
     warned: integer({ mode: 'boolean' }).notNull().default(false),
     historyUnmetered: integer({ mode: 'boolean' }).notNull().default(false),
     toolAdjustment: integer().notNull().default(0),
@@ -35,7 +26,7 @@ export const budgetReceipts = sqliteTable('budget_receipts', {
   modelAttempt: text().notNull(),
   session: text().notNull(),
   rootSession: text().notNull(),
-  purpose: text().$type<UsagePurpose>().notNull(),
+  purpose: text().$type<string>().notNull(),
   route: text().notNull(),
   auth: text().notNull(),
   fingerprint: text().notNull(),
@@ -43,21 +34,21 @@ export const budgetReceipts = sqliteTable('budget_receipts', {
   tokens: integer().notNull(),
   micros: integer(),
   estimated: integer(),
-  price: text({ mode: 'json' }).$type<BudgetPrice>(),
-  usage: text({ mode: 'json' }).$type<TokenUsage>(),
+  price: text({ mode: 'json' }).$type<unknown>(),
+  usage: text({ mode: 'json' }).$type<unknown>(),
   created: text().notNull(),
 });
 export const budgetSettings = sqliteTable('budget_settings', {
   scope: text().notNull().default(''),
   id: integer().primaryKey(),
   revision: integer().notNull(),
-  policy: text({ mode: 'json' }).$type<BudgetPolicy>().notNull(),
-  prices: text({ mode: 'json' }).$type<BudgetPrice[]>().notNull(),
+  policy: text({ mode: 'json' }).$type<unknown>().notNull(),
+  prices: text({ mode: 'json' }).$type<unknown>().notNull(),
 });
 export const budgetActions = sqliteTable('budget_actions', {
   id: text().primaryKey(),
   fingerprint: text().notNull(),
-  result: text({ mode: 'json' }).$type<BudgetView | BudgetSettings>().notNull(),
+  result: text({ mode: 'json' }).$type<unknown>().notNull(),
 });
 export const budgetRuns = sqliteTable('budget_runs', {
   id: text().primaryKey(),
@@ -76,7 +67,7 @@ export const budgetTools = sqliteTable('budget_tools', {
 
 export const budgetPrices = sqliteTable('budget_prices', {
   id: text().primaryKey(),
-  snapshot: text({ mode: 'json' }).$type<BudgetPrice>().notNull(),
+  snapshot: text({ mode: 'json' }).$type<unknown>().notNull(),
 });
 
 export const budgetGoalLinks = sqliteTable('budget_goal_links', {
@@ -101,7 +92,7 @@ export const budgetGoalGrants = sqliteTable('budget_goal_grants', {
   id: text().primaryKey(),
   owner: text().notNull(),
   run: text().notNull(),
-  target: text({ mode: 'json' }).$type<GoalResumeTarget>().notNull(),
+  target: text({ mode: 'json' }).$type<unknown>().notNull(),
   budget: text()
     .notNull()
     .references(() => budgetTasks.id),

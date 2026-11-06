@@ -3,7 +3,6 @@ import {
   isRunTurn,
   isTaskPlan,
   type RuntimeFile,
-  sameProjectScope,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
@@ -15,7 +14,6 @@ import type { Transcripts } from './transcripts.js';
 const fields = ['prompt', 'result', 'partial', 'error', 'files', 'checkpoint', 'plan'] as const;
 type TextField = Exclude<(typeof fields)[number], 'files'>;
 interface Run {
-  project?: import('@daban/protocol').ProjectScope;
   conversationId?: string;
   bot: string;
   id?: string;
@@ -156,7 +154,6 @@ export class HistoryTools {
     if (
       task.bot !== run.bot ||
       task.conversationId !== run.conversationId ||
-      !sameProjectScope(task.project, run.project) ||
       task.runId === run.id ||
       task.running ||
       !terminal.has(task.phase)
@@ -250,7 +247,6 @@ export class HistoryTools {
     if (
       raw?.kind !== 'chat' ||
       raw.conversationId !== run.conversationId ||
-      !sameProjectScope(raw.project, run.project) ||
       (raw.runId !== run.id && (raw.running || !terminal.has(raw.phase)))
     )
       throw new Fault('HISTORY_NOT_FOUND', 404);

@@ -26,14 +26,9 @@ import {
   isGroupActionRequest,
   isGroupCopyRequest,
   isKnowledgeDocument,
-  isProjectScope,
   isSkillDocument,
   type KnowledgeDocument,
   type ModelId,
-  type ProjectFileRequest,
-  type ProjectScope,
-  type ProjectWrite,
-  projectFileKey,
   type RuntimeTaskSummary,
   type ScheduleInput,
   type SkillDocument,
@@ -53,12 +48,6 @@ import { t } from '../i18n/locale';
 import { type Organization, type OrganizationAction, organization, organize } from './organization';
 
 export type Color = 'mint' | 'violet' | 'orange' | 'blue' | 'teal' | 'pink';
-export function projectScope(state: Pick<State, 'projectScopes'>, bot: string) {
-  const scopes = state.projectScopes;
-  return scopes && Object.hasOwn(scopes, bot) && isProjectScope(scopes[bot])
-    ? scopes[bot]
-    : undefined;
-}
 export function chatRevision(state: Pick<State, 'chatStates'>, bot: string, latest?: ChatStatus) {
   return Math.max(
     state.chatStates[bot]?.revision ?? 0,
@@ -179,7 +168,6 @@ export interface Approval {
   handoff?: boolean;
 }
 export interface WorkspaceFile {
-  runtimeScope?: ProjectFileRequest;
   upload?: AttachmentRef;
   id: string;
   name: string;
@@ -213,7 +201,6 @@ export interface QueuedInsertTarget {
   chatRevision: number;
 }
 export interface QueuedTask {
-  project?: ProjectScope;
   id: string;
   prompt: string;
   files: string[];
@@ -222,8 +209,6 @@ export interface QueuedTask {
   verify?: QueuedInsertTarget;
 }
 export interface State {
-  projectScopes?: Record<string, ProjectScope | undefined>;
-  projectRequest?: ProjectWrite;
   sampleRevision?: 1 | 2;
   comments?: CommentsState;
   notes?: Record<string, NotesState | undefined>;
@@ -332,8 +317,6 @@ export function lifecycleRequest(
   };
 }
 export type Action =
-  | { type: 'project-scope'; bot: string; scope?: ProjectScope }
-  | { type: 'project-request'; request?: ProjectWrite }
   | CommentAction
   | NotesAction
   | WorkAction
@@ -855,11 +838,6 @@ export function reduce(state: State, action: Action): State {
             : bot,
         ),
       };
-    case 'project-scope':
-      if (action.scope !== undefined && !isProjectScope(action.scope)) return state;
-      return { ...state, projectScopes: { ...state.projectScopes, [action.bot]: action.scope } };
-    case 'project-request':
-      return { ...state, projectRequest: action.request };
     case 'approval-mode':
       if (
         !isApprovalMode(action.mode) ||
@@ -936,16 +914,13 @@ export function reduce(state: State, action: Action): State {
       const artifacts: string[] = [];
       for (const file of task.files || []) {
         const item: WorkspaceFile = {
-          id: file.project ? `runtime:${projectFileKey(file)}` : `runtime:${file.path}`,
+          id: `runtime:${file.path}`,
           name: file.name,
           kind: file.name.split('.').at(-1)?.toUpperCase() || t('common.files'),
           size: `${(file.size / 1024).toFixed(1)} KB`,
           modified: file.modified,
           content: '',
           runtimePath: file.path,
-          ...(file.project
-            ? { runtimeScope: { project: file.project, ...(file.task ? { task: file.task } : {}) } }
-            : {}),
         };
         const index = files.findIndex((f) => f.id === item.id);
         if (index < 0) {
