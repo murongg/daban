@@ -90,7 +90,7 @@ it('starts an ordinary tool-capable conversation directly without a Bot setup fo
   localStorage.setItem(storageKey, serialize(initialState()));
   const invoke = bridge(ready());
   render(<App />);
-  await userEvent.click((await screen.findAllByRole('button', { name: '新对话', exact: true }))[0]);
+  await userEvent.click((await screen.findAllByRole('button', { name: '新对话' }))[0]);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(invoke.mock.calls.some(([command]) => command.type === 'bot.register')).toBe(false);
   const input = await screen.findByRole('textbox', { name: '发送消息' });
