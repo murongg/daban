@@ -7,13 +7,15 @@ import {
   type SkillOrigin,
   type SkillPackage,
   type SkillPlatform,
+  skillPackageFiles,
+  skillPackageLimit,
   validAgentId,
 } from '@daban/protocol';
 import type { AgentToolRun } from './agent-tools.js';
 import type { ToolResult } from './computer-tools.js';
 import { Fault } from './control.js';
 import type { Interactions } from './interactions.js';
-import { inspectSkillPackage } from './skill-package.js';
+import { authorSkillPackage, inspectSkillPackage } from './skill-package.js';
 import { invokedSkills } from './skill-provider.js';
 import { SkillSources } from './skill-sources.js';
 import type { SkillSnapshot, Skills } from './skills.js';
@@ -30,7 +32,7 @@ const json = (value: unknown, isError = false): ToolResult => ({
 });
 interface Preview {
   bundle: SkillPackage;
-  origin: SkillOrigin;
+  origin?: SkillOrigin;
   created: number;
   digest: string;
   declined?: boolean;
@@ -40,6 +42,7 @@ export class SkillDiscovery {
   readonly fields: Record<string, string[]> = {
     skill_search: ['query', 'platform'],
     skill_preview: ['source'],
+    skill_create: ['content', 'files'],
     skill_install: ['previewId'],
   };
   readonly list = [
@@ -74,6 +77,29 @@ export class SkillDiscovery {
           ],
         },
       }),
+    },
+    {
+      name: 'skill_create',
+      description:
+        'Validate and preview a new skill authored in this conversation, without saving or enabling it. Supply complete SKILL.md as UTF-8 content and optional text resources with relative path/content/executable fields. No network, scripts, hooks or dependency installers run. Explain the draft to the Human, then use skill_install with the returned previewId for the existing per-Bot confirmation. Never copy unrelated private data or overwrite an existing skill.',
+      inputSchema: object(
+        {
+          content: { type: 'string', maxLength: 100000 },
+          files: {
+            type: 'array',
+            maxItems: skillPackageFiles - 1,
+            items: object(
+              {
+                path: { type: 'string', maxLength: 240 },
+                content: { type: 'string', maxLength: skillPackageLimit },
+                executable: { type: 'boolean' },
+              },
+              ['path', 'content'],
+            ),
+          },
+        },
+        ['content'],
+      ),
     },
     {
       name: 'skill_install',
@@ -126,14 +152,22 @@ export class SkillDiscovery {
       if (!isSkillSearchResult(result)) throw new Fault('SKILL_SOURCE_INVALID_RESPONSE', 502);
       return json(result);
     }
-    if (name === 'skill_preview') {
-      if (!isSkillSource(args.source)) throw new Fault('SKILL_SOURCE_INVALID', 400);
-      const result = await this.sources.preview(args.source, run.abort.signal);
-      run.abort.signal.throwIfAborted();
-      if (!isSkillRemoteResult(result)) throw new Fault('SKILL_SOURCE_INVALID_RESPONSE', 502);
-      if (result.kind === 'choices') return json(result);
-      const preview = inspectSkillPackage(result.selection.package);
-      if (preview.digest !== result.selection.preview.digest)
+    if (name === 'skill_preview' || name === 'skill_create') {
+      let bundle: SkillPackage, origin: SkillOrigin | undefined, expectedDigest: string | undefined;
+      if (name === 'skill_create') {
+        bundle = authorSkillPackage(args.content, args.files);
+      } else {
+        if (!isSkillSource(args.source)) throw new Fault('SKILL_SOURCE_INVALID', 400);
+        const result = await this.sources.preview(args.source, run.abort.signal);
+        run.abort.signal.throwIfAborted();
+        if (!isSkillRemoteResult(result)) throw new Fault('SKILL_SOURCE_INVALID_RESPONSE', 502);
+        if (result.kind === 'choices') return json(result);
+        bundle = result.selection.package;
+        origin = result.origin;
+        expectedDigest = result.selection.preview.digest;
+      }
+      const preview = inspectSkillPackage(bundle);
+      if (expectedDigest && preview.digest !== expectedDigest)
         throw new Fault('SKILL_SOURCE_CHANGED', 409);
       let values = this.previews.get(run);
       if (!values) {
@@ -147,23 +181,25 @@ export class SkillDiscovery {
       const previewId = randomUUID();
       // Keep immutable bytes outside the model's arguments; confirmation cannot later resolve a moving branch.
       values.set(previewId, {
-        bundle: structuredClone(result.selection.package),
-        origin: structuredClone(result.origin),
+        bundle: structuredClone(bundle),
+        ...(origin ? { origin: structuredClone(origin) } : {}),
         created: Date.now(),
         digest: preview.digest,
       });
-      const main = result.selection.package.files.find((file) => file.path === 'SKILL.md')!;
+      const main = bundle.files.find((file) => file.path === 'SKILL.md')!;
+      const instructions = Buffer.from(main.data, 'base64').toString('utf8');
       return json({
         previewId,
         name: preview.name,
         description: preview.description,
-        origin: result.origin,
+        ...(origin ? { origin } : { source: 'conversation' }),
         digest: preview.digest,
         fileCount: preview.fileCount,
         bytes: preview.bytes,
         files: preview.files.slice(0, 30),
         filesTruncated: preview.files.length > 30,
-        instructions: Buffer.from(main.data, 'base64').toString('utf8').slice(0, 8000),
+        instructions: instructions.slice(0, 8000),
+        instructionsTruncated: instructions.length > 8000,
         notice:
           'Preview only. Platform-specific tools, installers and hooks are not enabled by importing this package.',
       });
@@ -179,6 +215,19 @@ export class SkillDiscovery {
     if (!run.id || !run.sessionId) throw new Fault('MODEL_RUN_UNKNOWN');
     const info = inspectSkillPackage(preview.bundle),
       id = randomUUID();
+    const source = preview.origin
+      ? `${preview.origin.url}\nVersion: ${preview.origin.revision}`
+      : 'Created in this conversation';
+    const instructions = preview.origin
+      ? ''
+      : Buffer.from(
+          preview.bundle.files.find((file) => file.path === 'SKILL.md')!.data,
+          'base64',
+        ).toString('utf8');
+    // Keep authored instructions visible in the confirmation while respecting the question detail limit.
+    const draft = instructions
+      ? `\n\nSKILL.md:\n${instructions.slice(0, 2500)}${instructions.length > 2500 ? '\n… Review the complete draft in the conversation.' : ''}`
+      : '';
     await this.cards.open(
       run.bot,
       run.id,
@@ -191,7 +240,7 @@ export class SkillDiscovery {
             id: 'install',
             header: 'Install skill',
             question: `Install ${info.name} only for the current Bot (${run.bot})?`,
-            detail: `${info.description.slice(0, 400)}\n${preview.origin.url}\nVersion: ${preview.origin.revision}\n${info.fileCount} files · ${info.bytes} bytes\nSHA-256: ${info.digest}\nScripts and dependencies will not run. Only this Bot receives the skill. It can read and use the approved instructions in this task.`,
+            detail: `${info.description.slice(0, 400)}\n${source}\n${info.fileCount} files · ${info.bytes} bytes\nSHA-256: ${info.digest}\nScripts and dependencies will not run. Only this Bot receives the skill. It can read and use the approved instructions in this task.${draft}`,
             options: [{ label: 'Install and enable' }, { label: 'Cancel' }],
           },
         ],

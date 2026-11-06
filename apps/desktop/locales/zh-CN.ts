@@ -1,6 +1,24 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'conversations.newChat': '新对话',
+  'conversations.untitled': '新对话',
+  'conversations.recent': '最近对话',
+  'conversations.recentList': '最近对话列表',
+  'conversations.placeholder': '发送消息，或描述要完成的任务…',
+  'conversations.startTitle': '今天想聊什么，或做点什么？',
+  'conversations.startHint': '直接提问或交给我一个任务，需要时可以使用工具。',
+  'conversations.welcomeHint': '直接开始一段对话，也可以选择 Bot 持续合作。',
+  'conversations.continue': '继续此对话',
+  'conversations.historyHint': '打开会话后可沿用已保存的上下文继续聊天，打开本身不会执行任务。',
+  'conversations.otherTask': '这个 Bot 正在处理另一段对话，你可以先写下消息，等待任务结束后发送。',
+  'conversations.openRunning': '查看运行中的对话',
+  'conversations.model': '本次对话的模型',
+  'conversations.modelHint': '用于本次对话后续发送的消息，Bot 的默认模型保持原设置。',
+  'conversations.modelSaved': '已保存本次对话的模型',
+  'conversations.rename': '重命名对话',
+  'conversations.saveTitle': '保存',
+  'conversations.plainContext': '普通对话 · 可使用工具',
   'vm.managed': '这台 Linux 电脑由搭伴自动管理，无需填写或修改连接参数。',
   'setup.windowsResources': '运行时使用 {0} GB 内存 · {1} GB 虚拟磁盘，按实际使用增长',
   'setup.windowsSpace': '至少需要 {0} GB 可用空间 · 当前可用 {1} GB',
@@ -2909,7 +2927,7 @@ export const chinese = {
   'workspace.viewBotSComputerFilesAppsTake':
     '查看 Bot 的电脑、文件和应用。需要时可以接管，完成后再交还，让协作继续。',
   'workspace.weekdays': '工作日',
-  'workspace.welcomeTitle': '从第一位搭档开始',
+  'workspace.welcomeTitle': '从一段对话开始',
   'workspace.workBetterTogether': '让协作更默契',
   'workspace.workHappensHere': '工作正在这里发生',
   'workspace.workPreferences': '工作偏好',

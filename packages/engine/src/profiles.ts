@@ -427,22 +427,43 @@ export class BotProfiles {
       );
     });
   }
-  register(input: unknown) {
-    if (!isBotProfileInput(input)) return Promise.reject(new Fault('INVALID_BOT_PROFILE', 400));
+  register(input: unknown, cause?: { bot: string; signal: AbortSignal; origin: ImportOrigin }) {
+    if (
+      !isBotProfileInput(input) ||
+      (cause && (!validAgentId(cause.bot) || !importOrigin(cause.origin)))
+    )
+      return Promise.reject(new Fault('INVALID_BOT_PROFILE', 400));
     const value = structuredClone(input);
+    const accepted = cause ? { ...cause, origin: structuredClone(cause.origin) } : undefined;
     return this.mutate(async () => {
+      accepted?.signal.throwIfAborted();
+      if (accepted) {
+        this.assertRegistered(accepted.bot);
+        this.assertActive(accepted.bot);
+      }
       if (this.corrupt.has(value.id)) throw new Fault('BOT_PROFILE_CORRUPT');
       const existing = this.records.get(value.id);
+      if (existing && accepted) {
+        const origin = this.origins.get(value.id);
+        // Receipts survive edits and archives; a different payload must never overwrite or recreate the Bot.
+        if (origin?.id !== accepted.origin.id || origin.sha256 !== accepted.origin.sha256)
+          throw new Fault('BOT_REQUEST_ID_REUSED');
+      }
       // Client migration creates missing records only; a late import must never overwrite a newer edit.
       if (existing) return structuredClone(existing);
+      if (accepted && this.records.size >= 2000) throw new Fault('BOT_LIMIT');
       const now = new Date().toISOString();
-      return this.commit({
-        ...value,
-        name: value.name.trim(),
-        revision: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
+      return this.commit(
+        {
+          ...value,
+          name: value.name.trim(),
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+        accepted?.signal,
+        accepted?.origin,
+      );
     });
   }
   async history(id: string, query: MemoryQuery): Promise<MemoryPage> {

@@ -1,7 +1,37 @@
-import { isChatAck, isChatPage, recoveryReader } from '@daban/protocol';
+import { isBotProfileInput, isChatAck, isChatPage, recoveryReader } from '@daban/protocol';
 import { expect, it } from 'vitest';
 import { parseCommand } from './ipc';
 import { RuntimeClient } from './runtime';
+
+it('accepts classified ordinary conversations and requires a current boundary for explicit historical continuation', () => {
+  expect(
+    isBotProfileInput({
+      id: 'mock-chat',
+      name: 'Synthetic chat',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+      kind: 'chat',
+    }),
+  ).toBe(true);
+  const task = {
+    requestId: 'mock-resume',
+    prompt: 'SYNTHETIC CONTINUE',
+    chatRevision: 2,
+    contextRevision: 0,
+    model: 'deepseek-flash',
+  };
+  expect(parseCommand({ type: 'task.start', bot: 'mock-chat', task })).toMatchObject({ task });
+  for (const patch of [
+    { contextRevision: -1 },
+    { contextRevision: 3 },
+    { chatRevision: undefined },
+    { model: 'unknown-model' },
+  ])
+    expect(() =>
+      parseCommand({ type: 'task.start', bot: 'mock-chat', task: { ...task, ...patch } }),
+    ).toThrow('INVALID_COMMAND');
+});
 
 it('strictly binds private conversation commands and validates history and acknowledgement scope', async () => {
   const request = { id: 'mock-chat-new', bot: 'mock-alpha', revision: 0 };
@@ -152,4 +182,21 @@ it('strictly binds private conversation commands and validates history and ackno
   });
   result = { ...(result as object), requestId: 'mock-wrong' };
   await expect(client.invoke(start)).rejects.toThrow('INVALID_TASK_ACK');
+  const continued = parseCommand({
+    type: 'task.start',
+    bot: request.bot,
+    task: {
+      requestId: 'mock-accepted',
+      prompt: 'SYNTHETIC OLD',
+      chatRevision: 2,
+      contextRevision: 0,
+    },
+  });
+  version = 45;
+  await expect(client.invoke(continued)).rejects.toThrow('RUNTIME_TOO_OLD');
+  version = 46;
+  result = { ...(result as object), requestId: 'mock-accepted' };
+  expect(await client.invoke(continued)).toMatchObject({ chatRevision: 0 });
+  result = { ...(result as object), chatRevision: 2 };
+  await expect(client.invoke(continued)).rejects.toThrow('INVALID_TASK_ACK');
 });

@@ -11,6 +11,7 @@ import {
   ArrowUpToLine,
   ChevronDown,
   CornerDownRight,
+  MessageSquare,
   Paperclip,
   Pencil,
   Plus,
@@ -40,6 +41,7 @@ import { attachmentAccept, canParseDocuments } from '../files/files';
 import { modelName as displayModel, modelIcon } from '../models/model-options';
 import { Requests } from '../requests/Requests';
 import { ApprovalMode } from './ApprovalMode';
+import { conversationModel } from './conversations';
 import { Execution } from './Execution';
 import { useFollow } from './follow';
 import { useHistory } from './history';
@@ -151,8 +153,13 @@ export function Conversation({
       ? undefined
       : currentTask;
   const busyInGroup = currentTask?.running && currentTask.conversationId;
+  const busyElsewhere =
+    !!currentTask?.running &&
+    !currentTask.conversationId &&
+    (currentTask.chatRevision ?? 0) !== revision;
   const modelPicker = live && runtime.snapshot.protocolVersion >= 14;
   const configuredModel =
+    conversationModel(state, bot.id, revision) ||
     bot.model ||
     (isModelId(runtime.snapshot.model.model) ? runtime.snapshot.model.model : undefined);
   const shownModel = task?.running ? task.model : configuredModel;
@@ -173,10 +180,13 @@ export function Conversation({
             0: modelName,
             1: configuredModel !== task.model ? t('chat.nextTask', { 0: nextModelName }) : '',
           })
-        : `${modelName} · ${bot.model ? t('chat.botSettings') : t('common.followWorkspace')}`;
+        : `${modelName} · ${conversationModel(state, bot.id, revision) ? t('conversations.model') : bot.model ? t('chat.botSettings') : t('common.followWorkspace')}`;
     }
   }
   const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (bot.kind === 'chat') input.current?.focus();
+  }, [bot.kind]);
   const refocus = useRef(false);
   useEffect(() => {
     if (pending || !refocus.current) return;
@@ -221,6 +231,7 @@ export function Conversation({
   const queued = live ? messageQueue(state, bot.id) : [];
   const pendingIds = (runtime.snapshot.interactions || [])
     .filter((item) => item.bot === target && !item.conversationId && item.status === 'pending')
+    .filter((item) => runtime.snapshot.protocolVersion < 46 || item.runId === task?.runId)
     .map((item) => item.id)
     .join(',');
   const scroll = useFollow(`${bot.id}:${revision}`, pendingIds);
@@ -245,7 +256,8 @@ export function Conversation({
       notify(t('common.waitUntilAttachmentsReadySending'));
       return;
     }
-    if (busyInGroup || computerChanging || (!draft.trim() && !attachments.length)) return;
+    if (busyInGroup || busyElsewhere || computerChanging || (!draft.trim() && !attachments.length))
+      return;
     if (task?.running && onQueue) {
       onQueue();
       input.current?.focus();
@@ -301,7 +313,12 @@ export function Conversation({
     );
   }
   const rows: TranscriptEntry[] = [];
-  if (history.more)
+  if (
+    history.more &&
+    (bot.kind !== 'chat' ||
+      cached.length > 0 ||
+      runtime.snapshot.profiles.some((profile) => profile.id === target))
+  )
     rows.push({
       id: 'older',
       anchor: false,
@@ -345,9 +362,21 @@ export function Conversation({
       anchor: false,
       content: (
         <div className="empty-chat">
-          <Avatar bot={bot} size="large" />
-          <h2>{t('chat.collaborateWith', { 0: bot.name })}</h2>
-          <p>{bot.role || t('chat.giveBotGoalStartFirstMessage')}</p>
+          {bot.kind === 'chat' ? (
+            <MessageSquare className="chat-symbol" aria-hidden="true" />
+          ) : (
+            <Avatar bot={bot} size="large" />
+          )}
+          <h2>
+            {bot.kind === 'chat'
+              ? t('conversations.startTitle')
+              : t('chat.collaborateWith', { 0: bot.name })}
+          </h2>
+          <p>
+            {bot.kind === 'chat'
+              ? t('conversations.startHint')
+              : bot.role || t('chat.giveBotGoalStartFirstMessage')}
+          </p>
           <div className="suggestions">
             {[
               t('chat.organizeReferenceMaterials'),
@@ -398,7 +427,15 @@ export function Conversation({
       persistent: true,
       content: (
         <div ref={scroll.attention}>
-          <Requests state={state} dispatch={dispatch} notify={notify} bot={bot.id} />
+          <Requests
+            state={state}
+            dispatch={dispatch}
+            notify={notify}
+            bot={bot.id}
+            runs={
+              runtime.snapshot.protocolVersion >= 46 ? (task?.runId ? [task.runId] : []) : undefined
+            }
+          />
         </div>
       ),
     });
@@ -410,6 +447,23 @@ export function Conversation({
     <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
       <Transcript scope={`${bot.id}:${revision}`} entries={rows} scroll={scroll} />
       <div className="composer-wrap">
+        {busyElsewhere && (
+          <div className="live-task" role="status">
+            <span>{t('conversations.otherTask')}</span>
+            <button
+              type="button"
+              onClick={() =>
+                dispatch({
+                  type: 'chat-select',
+                  bot: bot.id,
+                  revision: currentTask.chatRevision ?? 0,
+                })
+              }
+            >
+              {t('conversations.openRunning')}
+            </button>
+          </div>
+        )}
         {!!state.chatRequests[bot.id] && (
           <div className="archive-banner">
             <p>{t('chat.conversationActionNeedsVerificationHistoryDraftsRetained')}</p>
@@ -641,7 +695,11 @@ export function Conversation({
           <textarea
             ref={input}
             aria-label={t('common.sendMessage')}
-            placeholder={t('chat.messageRecipient', { 0: bot.name })}
+            placeholder={
+              bot.kind === 'chat'
+                ? t('conversations.placeholder')
+                : t('chat.messageRecipient', { 0: bot.name })
+            }
             value={draft}
             maxLength={12000}
             rows={2}
@@ -726,6 +784,7 @@ export function Conversation({
                 state.attachmentUploads[bot.id] ||
                 computerChanging ||
                 !!busyInGroup ||
+                busyElsewhere ||
                 (!draft.trim() && !attachments.length) ||
                 !!(
                   live &&

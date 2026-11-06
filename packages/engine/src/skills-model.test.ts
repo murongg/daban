@@ -129,7 +129,7 @@ test('captured Bot skills use native plugins, change only the next task, and fen
           skills: { name: string }[];
         }
       ).skills.map((item) => item.name),
-    ).toStrictEqual(['find-skills']);
+    ).toStrictEqual(['bot-manager', 'find-skills', 'skill-creator']);
     const changed = await turn('mock-a', 'mock-skill-updated', '按启用技能处理合成记录');
     expect(changed).not.toBe(held.sessionId);
     expect(resumed.includes(held.sessionId!)).toBe(false);
@@ -152,7 +152,7 @@ test('captured Bot skills use native plugins, change only the next task, and fen
           skills: { name: string }[];
         }
       ).skills.map((item) => item.name),
-    ).toStrictEqual(['find-skills']);
+    ).toStrictEqual(['bot-manager', 'find-skills', 'skill-creator']);
     expect(models.journal.history('mock-a').length).toBe(5);
   } finally {
     hold = false;

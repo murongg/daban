@@ -1,4 +1,26 @@
 export const english = {
+  'conversations.newChat': 'New chat',
+  'conversations.untitled': 'New conversation',
+  'conversations.recent': 'Recent conversations',
+  'conversations.recentList': 'Recent conversation list',
+  'conversations.placeholder': 'Send a message or describe a task…',
+  'conversations.startTitle': 'What would you like to work on?',
+  'conversations.startHint': 'Ask a question or give me a task. Tools are available when needed.',
+  'conversations.welcomeHint':
+    'Start a conversation, or choose a Bot for an ongoing collaboration.',
+  'conversations.continue': 'Continue this conversation',
+  'conversations.historyHint':
+    'Open a conversation to continue with its saved context. Opening it does not run tasks.',
+  'conversations.otherTask':
+    'Another conversation with this Bot is running. You can draft a message while it finishes.',
+  'conversations.openRunning': 'Open running conversation',
+  'conversations.model': 'Conversation model',
+  'conversations.modelHint':
+    'Applies to future messages in this conversation. The Bot default stays the same.',
+  'conversations.modelSaved': 'Conversation model saved',
+  'conversations.rename': 'Rename conversation',
+  'conversations.saveTitle': 'Save',
+  'conversations.plainContext': 'Conversation · Tools available',
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',
@@ -3218,7 +3240,7 @@ export const english = {
   'workspace.viewBotSComputerFilesAppsTake':
     "View the Bot's computer, files and apps. Take over when needed and hand back when finished to continue working together.",
   'workspace.weekdays': 'Weekdays',
-  'workspace.welcomeTitle': 'Start with your first Bot',
+  'workspace.welcomeTitle': 'Start a conversation',
   'workspace.workBetterTogether': 'Work better together',
   'workspace.workHappensHere': 'Work happens here',
   'workspace.workPreferences': 'Work preferences',

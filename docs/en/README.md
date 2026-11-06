@@ -2,7 +2,7 @@
 
 [简体中文](../zh-CN/README.md) · [Documentation home](../README.md) · [Project overview](../../README.md)
 
-For a first session, read Getting started, Models & providers, and Create Bots. Later, jump to the feature you need. Each page explains its entry point, operation, scope, and important distinctions.
+For a first session, read Getting started, Models & providers, and Conversations and history. Create a Bot when you want an ongoing companion. Later, jump to the feature you need. Each page explains its entry point, operation, scope, and important distinctions.
 
 ## Start here
 
@@ -18,7 +18,7 @@ For a first session, read Getting started, Models & providers, and Create Bots. 
 
 | Feature | Contents |
 | --- | --- |
-| [Conversations and history](conversations.md) | Messages, drafts, new conversations, and read-only history |
+| [Conversations and history](conversations.md) | Ordinary chats, multiple Bot conversations, drafts, and historical continuation |
 | [Context and API usage](context.md) | Compaction, durable memory, caching, and cost boundaries |
 | [Attachments](attachments.md) | Text, images, PDF/Office, and retained attachment management |
 | [Web research](web.md) | Search, anonymous article reading, paging, and browser differences |

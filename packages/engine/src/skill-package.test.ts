@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { skillPackageLimit } from '@daban/protocol';
 import { zipSync } from 'fflate';
 import { expect, test } from 'vitest';
 
@@ -14,6 +15,20 @@ const files = {
   'assets/data.json': Buffer.from('{"synthetic":true}'),
   'assets/template.bin': Uint8Array.from([0, 1, 255, 0]),
 };
+test('authored resources enforce the UTF-8 byte budget across the complete package', async () => {
+  const codec = await import(entry);
+  const oversized = '合'.repeat(Math.floor(skillPackageLimit / 3) + 1);
+  expect(() =>
+    codec.authorSkillPackage(content, [{ path: 'references/mock.txt', content: oversized }]),
+  ).toThrowError(expect.objectContaining({ code: 'SKILL_PACKAGE_TOO_LARGE' }));
+  const half = 'x'.repeat(Math.floor(skillPackageLimit / 2));
+  expect(() =>
+    codec.authorSkillPackage(content, [
+      { path: 'references/first.txt', content: half },
+      { path: 'references/second.txt', content: half },
+    ]),
+  ).toThrowError(expect.objectContaining({ code: 'SKILL_PACKAGE_TOO_LARGE' }));
+});
 test('preserves namespaced OpenClaw metadata as inert package data', async () => {
   const codec = await import(entry);
   const text =

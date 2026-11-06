@@ -171,7 +171,7 @@ export function Create({
                   </span>
                   <div className="member-choices">
                     {state.bots
-                      .filter((b) => !b.members && !b.archived)
+                      .filter((b) => !b.members && !b.archived && b.kind !== 'chat')
                       .map((bot) => (
                         <label className="member-choice" key={bot.id}>
                           <Avatar bot={bot} />

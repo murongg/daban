@@ -12,6 +12,7 @@ import {
   modelHasVision,
   type TaskRequest,
 } from '@daban/protocol';
+import type { BotTools } from './bot-tools.js';
 import { BrowserTools } from './browser-tools.js';
 import type { CatalogTools } from './catalog.js';
 import {
@@ -143,6 +144,7 @@ export class AgentTools {
   private readonly localRequests = new WeakMap<AgentToolRun, Set<string>>();
   private readonly localRuns = new WeakMap<AgentToolRun, boolean>();
   groups?: GroupTools;
+  bots?: BotTools;
   memory?: MemoryTools;
   history?: HistoryTools;
   knowledge?: KnowledgeTools;
@@ -246,6 +248,7 @@ export class AgentTools {
       ...(!this.options.execution && this.hasBrowser(bot, run) ? this.browser?.list || [] : []),
       ...(this.schedules ? scheduleToolList : []),
       ...(this.memory?.list || []),
+      ...(run?.task ? this.bots?.list || [] : []),
       ...(this.history?.list || []),
       ...(this.knowledge?.list || []),
       ...(this.work?.list || []),
@@ -834,6 +837,7 @@ export class AgentTools {
         : { isError: true, content: [{ type: 'text', text: 'COMPUTER_NOT_CONNECTED' }] };
     }
     const dataTool = [
+      this.bots,
       this.memory,
       this.history,
       this.knowledge,

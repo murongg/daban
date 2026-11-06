@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { packageNotices } from './notices.ts';
 import { buildExecutor, moduleGraph } from './roles.ts';
 
@@ -27,11 +29,22 @@ test('desktop artifacts retain third-party notices and include a separate Daban 
   }
 });
 
-test('executor artifacts include the project license alongside their package metadata', async () => {
+test('executor artifacts include the project license and standalone database dependencies', async () => {
   const target = await mkdtemp(path.join(tmpdir(), 'daban-license-artifact-'));
   try {
     await buildExecutor(target);
     assert.deepEqual(await readFile(path.join(target, 'LICENSE')), await readFile('LICENSE'));
+    const database = pathToFileURL(
+      path.join(target, 'node_modules/@daban/engine/dist/database.js'),
+    ).href;
+    // Resolve from the built artifact so workspace dependencies cannot mask a missing package.
+    assert.doesNotThrow(() =>
+      execFileSync(
+        process.execPath,
+        ['--input-type=module', '-e', `await import(${JSON.stringify(database)})`],
+        { stdio: 'pipe' },
+      ),
+    );
   } finally {
     await rm(target, { recursive: true, force: true });
   }
