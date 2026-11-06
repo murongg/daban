@@ -1,0 +1,94 @@
+.context-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 4px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.context-trigger:hover:not(:disabled) {
+  color: var(--ink);
+}
+.context-toolbar,
+.context-source-heading,
+.context-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.context-toolbar {
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.context-toolbar .select-field {
+  flex: 1;
+  min-width: 180px;
+}
+.context-inspector h3 {
+  margin: 18px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.context-numbers {
+  margin: 16px 0;
+  font-variant-numeric: tabular-nums;
+}
+.context-numbers > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 7px 0;
+}
+.context-numbers dt {
+  color: var(--muted);
+}
+.context-numbers dd {
+  margin: 0;
+  text-align: right;
+}
+.context-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.context-sources > li {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.context-source-heading {
+  justify-content: space-between;
+}
+.context-source-heading h3 {
+  margin: 0;
+}
+.context-sources .field-help {
+  margin: 4px 0;
+}
+.context-refs button {
+  min-height: 32px;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.context-gaps {
+  color: var(--muted);
+  padding-left: 20px;
+  font-size: 12px;
+  margin: 8px 0 20px;
+}
+.context-source-text {
+  margin-top: 20px;
+}
+.context-details {
+  margin-top: 20px;
+}
+.context-details > summary {
+  cursor: pointer;
+  padding: 10px 0;
+}
+.context-details dd {
+  overflow-wrap: anywhere;
+}
