@@ -213,3 +213,42 @@ test('the turn carries current computer availability rather than advertising una
   expect(taskPrompt('chief', '/synthetic/run', input)).toMatch(/No computer is connected/);
   expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/A computer is connected/);
 });
+
+test('restart retains a durable clean fence for explicit recovery while interrupting every running attempt', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-clean-restart-'));
+  try {
+    const journal = new TaskJournal(root);
+    await journal.load();
+    await journal.put({
+      bot: 'mock-bot',
+      runId: 'mock-run',
+      prompt: 'Synthetic accepted request',
+      phase: 'running',
+      running: true,
+      result: '',
+      error: '',
+      trace: [],
+      createdAt: new Date().toISOString(),
+      activeMs: 1200,
+      attemptSummary: [
+        {
+          attemptId: 'mock-attempt',
+          model: 'deepseek-flash',
+          phase: 'running',
+          fence: 'clean',
+          usage: 'unknown',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    const restored = new TaskJournal(root);
+    await restored.load();
+    expect(restored.findRequest('mock-bot', 'mock-run')).toBeUndefined();
+    const record = await restored.read('mock-bot', 'mock-run');
+    expect(record?.phase).toBe('interrupted');
+    expect(record?.attemptSummary?.[0]).toMatchObject({ phase: 'interrupted', fence: 'clean' });
+    expect(record?.activeMs).toBeGreaterThanOrEqual(1200);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

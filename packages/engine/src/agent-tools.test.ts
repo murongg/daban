@@ -559,6 +559,49 @@ test('draining a run waits for its in-flight tool before lifecycle cleanup', asy
   expect(settled).toBe(true);
 });
 
+test('draining also retires a remote lease whose open completes during an active call', async () => {
+  let entered: () => unknown = () => undefined;
+  let release: () => unknown = () => undefined;
+  const ready = new Promise<undefined>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  const gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const calls: string[] = [];
+  const tools = new AgentTools(undefined, new WorkspaceFiles('/mock-unused'), {
+    execution: {
+      call: async (method: string) => {
+        calls.push(method);
+        if (method === 'tools.open') {
+          entered();
+          await gate;
+          return { tools: [] };
+        }
+        return { phase: 'settled', result: { content: [] } };
+      },
+    },
+  });
+  const run: AgentToolRun = {
+    id: 'mock-late-lease',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    workdir: '/mock/task',
+    canonicalRoot: '/mock/task',
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+  };
+  const pending = tools.invoke(run, 'write_file', { path: 'result.txt', content: 'SYNTHETIC' });
+  await ready;
+  const drained = tools.drain(run);
+  release();
+  await pending;
+  await drained;
+  expect(calls).toEqual(['tools.open', 'tools.invoke', 'tools.drain']);
+});
+
 test('a parent replaced after validation cannot make a tool create even an empty file in a private directory', async (t) => {
   const fs = (await import('node:fs/promises')).default;
   const { syncBuiltinESMExports } = await import('node:module');
@@ -690,4 +733,50 @@ test('unavailable native-only tools still consume the run budget and report its 
   expect(run.toolCount).toBe(1);
   const second = await tools.invoke(run, 'read_file', { path: 'synthetic.txt' });
   expect(JSON.stringify(second)).toMatch(/TOOL_LIMIT/);
+});
+
+test('durability waits pin the task identity and the exact tool arguments before dispatch', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-tool-fence-owner-'));
+  const canonicalRoot = await realpath(root);
+  const tools = new AgentTools(undefined, new WorkspaceFiles(root));
+  let release: () => unknown = () => undefined;
+  let gate = new Promise<undefined>((resolve) => {
+    release = () => resolve(undefined);
+  });
+  const run: AgentToolRun = {
+    id: 'mock-run',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    workdir: root,
+    canonicalRoot,
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    beforeTool: async () => gate,
+  };
+  try {
+    const args = { path: 'mock.txt', content: 'Synthetic accepted content' };
+    const first = tools.invoke(run, 'write_file', args);
+    args.content = 'Synthetic later mutation';
+    release();
+    const firstResult = await first;
+    expect(firstResult.isError, JSON.stringify(firstResult)).not.toBe(true);
+    expect(await readFile(path.join(root, 'mock.txt'), 'utf8')).toBe('Synthetic accepted content');
+    gate = new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const second = tools.invoke(run, 'write_file', {
+      path: 'other.txt',
+      content: 'Synthetic forbidden write',
+    });
+    run.bot = 'mock-other-bot';
+    release();
+    await expect(second).rejects.toMatchObject({ code: 'TOOL_CONTEXT_CHANGED' });
+    await expect(readFile(path.join(root, 'other.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    release();
+    await tools.drain(run);
+    await rm(root, { recursive: true, force: true });
+  }
 });
