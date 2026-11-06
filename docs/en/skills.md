@@ -12,6 +12,22 @@ Ask, for example, “Find a skill for working with PDFs.” The Bot can search s
 
 Declining prevents repeated installation prompts for the same content within that task. Installing a skill runs no scripts, hooks or dependency installers, and does not provide platform-specific tools. Rate limits or network restrictions can interrupt discovery; retry later or import a local package.
 
+## Built-in bot-manager
+
+`bot-manager` is the unified skill entry point for Bot operations, enabled by default and independently switchable for each Bot. Ask “Create a Bot to organize reference material,” or invoke `/bot-manager`. The Bot proposes a name and role from your purpose; after saving, open the new assistant in the sidebar.
+
+The new Bot follows the workspace model and starts with empty private memory. It does not copy the current Bot's chats, documents, skills or computer authority, or start a task. Identical creation retries in the same task save only one Bot; changed arguments conflict instead of overwriting it. This creates an ordinary Bot; use the gallery to install and upgrade gallery templates.
+
+Creation can currently run directly in conversation. Profile edits, copying, archiving and restoration guide you to the appropriate management surface. Gallery publication, upgrades and rollback require the corresponding runtime capabilities; enabling the skill grants no additional authority.
+
+## Built-in skill-creator
+
+Ask “Turn this workflow into a skill so we can reuse it,” or invoke `/skill-creator`. The Bot drafts the purpose, trigger conditions and procedure in `SKILL.md`, adding text scripts, references or templates when useful.
+
+Drafting only previews the package. **Install and enable** confirms saving for the current Bot, after which the same task can read it and continue. The confirmation shows the skill instructions, file count and digest; when instructions are truncated, review the complete draft in the conversation. Supporting files use relative paths. Import binary resources through the existing package import UI.
+
+Drafting and installation run no scripts, hooks or dependency installers. Declining prevents repeated prompts for identical content in the same task. Saving does not overwrite differing existing content or change another Bot's skills. Use **Capabilities → Skills** to edit an existing skill or replace its package.
+
 ## Local import and enablement
 
 1. Import a skill folder, ZIP or single `SKILL.md`.

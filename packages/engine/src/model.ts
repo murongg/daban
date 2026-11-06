@@ -38,6 +38,8 @@ import {
 } from '@daban/protocol';
 import { AgentTools } from './agent-tools.js';
 import { Attachments } from './attachments.js';
+import { BotTools } from './bot-tools.js';
+import { builtinSkills } from './builtin-skills.js';
 import { BotBundles, type BundleDocuments } from './bundles.js';
 import { CatalogTools } from './catalog.js';
 import { Chats } from './chats.js';
@@ -49,7 +51,6 @@ import { errorCode, errorMessage, Fault } from './control.js';
 import type { Desktop } from './desktop.js';
 import { DshLog, defaultSdkFile, readDshStartup } from './dsh.js';
 import { observeTools } from './events.js';
-import { builtinSkills } from './find-skills.js';
 import { goalCommand, goalOperation, goalView, projectGoal } from './goals.js';
 import { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
@@ -818,6 +819,7 @@ export class ModelRuns {
       },
       new SkillDiscovery(this.skills, this.interactions),
     );
+    this.tools.bots = new BotTools(this.profiles);
     if (software)
       this.tools.software = new SoftwareTools(this.interactions, software, {
         assertLive: (run) => {
