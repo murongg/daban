@@ -1,7 +1,8 @@
 import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
+import { type BridgeConfig, callBridge } from './bridge.js';
 
 export const name = 'daban-budget';
-export const inject = ['tools', 'approval'];
+export const inject = ['tools', 'approval', 'agents'];
 interface Execution {
   signal: AbortSignal;
   name: string;
@@ -11,6 +12,7 @@ interface Execution {
 }
 
 interface Context {
+  agents?: { roots: () => { session: { id: string } }[] };
   on: (
     ...hook:
       | ['tools/pre-execute', (exec: Execution, next: () => Promise<unknown>) => Promise<unknown>]
@@ -50,7 +52,12 @@ export function requestedUrls(prompt: string) {
 }
 export function apply(
   ctx: Context,
-  config: { limit: number; urls: string[]; approvalMode?: ApprovalMode },
+  config: {
+    limit: number;
+    urls: string[];
+    approvalMode?: ApprovalMode;
+    attemptId?: string;
+  } & Partial<BridgeConfig>,
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
@@ -60,6 +67,32 @@ export function apply(
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
   ctx.on('tools/pre-execute', async (exec: Execution, next: () => Promise<unknown>) => {
     if (exec.signal.aborted) return { kind: 'cancel' };
+    if (config.attemptId) {
+      try {
+        const roots = ctx.agents?.roots();
+        if (!config.url || roots?.length !== 1) throw new Error('MODEL_FENCE_UNAVAILABLE');
+        // Even read-only/native tools and approval requests close the clean window before their body can begin.
+        const result = await callBridge(
+          { ...config, url: config.url },
+          'attempt.fence',
+          { sessionId: roots[0].session.id, attemptId: config.attemptId, kind: 'tool' },
+          exec.signal,
+        );
+        if (
+          !result ||
+          typeof result !== 'object' ||
+          !('accepted' in result) ||
+          result.accepted !== true
+        )
+          throw new Error('MODEL_FENCE_UNAVAILABLE');
+      } catch {
+        return {
+          kind: 'deny',
+          reason: 'MODEL_FENCE_UNAVAILABLE',
+          info: { name: 'AttemptFenceError', code: 'MODEL_FENCE_UNAVAILABLE' },
+        };
+      }
+    }
     if (++calls > config.limit)
       return {
         kind: 'deny',

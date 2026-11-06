@@ -2351,7 +2351,7 @@ export const english = {
   'models.testing': 'Testing…',
   'models.testingSendsFixedShortPromptMayIncur':
     'Testing sends a fixed short prompt and may incur a small API charge. It includes no chat content and does not save settings.',
-  'models.testModel': 'Test model {0}',
+  'models.testModel': 'Test model {0} (may incur charges)',
   'models.title': 'Models & providers',
   'models.updateLocalAgentLoadModelsTestCalls':
     'Update the local Agent to load models, test calls, and match context limits.',
@@ -3301,6 +3301,82 @@ export const english = {
   'tasks.updatedAndCompletedAt': 'Updated at {0} · Completed at {1}',
   'tasks.currentRevisionSummary': '{0} · {1}',
   'tasks.currentDeletedRevisionSummary': '{0} · {1} (in Trash)',
+  'models.connectionChecks': 'Connection checks',
+  'models.checkSavedModel': 'Check saved model: {0}',
+  'models.fallbackManagement': 'Fallback and connection management',
+  'models.fallbackDisabled': 'Fallback off',
+  'models.fallbackTitle': 'Fallback model',
+  'models.fallbackOff': 'Automatic fallback off',
+  'models.fallbackSave': 'Save fallback policy',
+  'models.fallbackConfirmTitle': 'Enable fallback model?',
+  'models.fallbackEnable': 'Enable fallback model',
+  'models.fallbackConsent':
+    'If the primary fails before output or tools and has stopped, switch to {0} at most once. Task context and attachments may be sent to its connection.',
+  'models.fallbackHint':
+    'Off by default. Fallback retains the task, permissions and remaining budget. Output or tool activity requires explicit recovery.',
+  'models.fallbackSaved': 'Fallback policy saved for the next task.',
+  'models.fallbackInvalid': 'Choose a different, configured API model as the fallback.',
+  'models.unknownTools': 'Tool support is unknown; tasks with tools will not switch automatically.',
+  'models.credentialsSaved': 'API key saved',
+  'models.cliDisabled':
+    'CLI sign-in has not passed restricted-tool verification. Use an API connection.',
+  'models.removeConnection': 'Remove {0}',
+  'models.removeTitle': 'Remove model connection?',
+  'models.removeConfirm':
+    'Remove local credentials for {0}. Bot, fallback, search or running-task references prevent removal.',
+  'models.disconnectAll': 'Disconnect all models',
+  'models.connectionRemoved': 'Connection removed.',
+  'models.connectionReferenced':
+    'Connection is still referenced by {0}. Change those bindings first.',
+  'models.reference.default': 'the default model',
+  'models.reference.bot': 'Bot models',
+  'models.reference.fallback': 'the fallback model',
+  'models.reference.search': 'search',
+  'models.reference.running': 'running tasks',
+  'models.queryReceipt': 'Check save receipt',
+  'models.queryDiagnostic': 'Check diagnostic receipt',
+  'models.operationUnknown':
+    'The outcome is unconfirmed. Keep the existing configuration and query the receipt without resending validation.',
+  'models.probeDirectory': 'Check model directory',
+  'models.probeInference': 'Test inference (may incur charges)',
+  'models.directoryPassed': 'Directory visible · {0}. This does not prove inference works.',
+  'models.inferencePassed': 'Inference passed · {0}',
+  'models.inferenceCostHint':
+    'Inference testing sends a short request and may incur charges. An uncertain outcome is checked through its original receipt.',
+  'models.configureCostHint':
+    'Saving validates the models and may send a small inference request when a directory endpoint is absent.',
+  'models.busy': 'Another model configuration is being validated. Wait and check its receipt.',
+  'models.diagnosticsChanged':
+    'The diagnostic revision changed. Check the latest receipt before choosing a new test.',
+  'models.credentialsRevoked':
+    'The captured credentials changed or were removed. No further attempt was started.',
+  'models.fallbackUnavailable':
+    'The fallback is no longer available. The task stopped; check the connection and remaining budget.',
+  'models.shutdownUnconfirmed':
+    'The previous attempt could not be confirmed stopped, so the fallback was not started.',
+  'models.fenceUnavailable':
+    'Tool ownership could not be durably confirmed. The tool was not executed; inspect the task record.',
+  'models.attempts': 'Model attempts',
+  'models.actualModel': 'Actual model: {0}',
+  'models.usageUnknown': 'Billable usage is unconfirmed. Failed requests may still incur charges.',
+  'models.failure.auth': 'authentication failed',
+  'models.failure.quota': 'quota exhausted',
+  'models.failure.rateLimit': 'rate limited',
+  'models.failure.unavailable': 'service unavailable',
+  'models.failure.timeout': 'model request timed out',
+  'models.failure.unknown': 'outcome unknown',
+  'models.recoverSelected': 'Continue with selected model',
+  'models.unknownToolRecovery':
+    'Inspect progress and operation receipts first. Tools with unknown outcomes cannot be rerun directly.',
+  'models.removeAction': 'Remove connection',
+  'models.fallbackVisionRequired':
+    "The fallback does not support this task's image input. Task context was not sent.",
+  'models.fallbackContextRequired':
+    'The fallback context window is too small. Task context was not sent.',
+  'models.fallbackToolsRequired':
+    'The fallback does not support the required tools. Task context was not sent.',
+  'models.fallbackToolsUnknown':
+    'Fallback tool support is unconfirmed. Tasks with tools do not switch automatically.',
 };
 
 export type MessageKey = keyof typeof english;

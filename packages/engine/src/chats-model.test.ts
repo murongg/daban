@@ -94,6 +94,9 @@ test('explicit historical continuation resumes only its original context while r
       model: 'deepseek-flash',
     });
     expect(models.jobs.get('a')!.model).toBe('deepseek-flash');
+    expect(models.jobs.get('a')!.attemptSummary).toEqual([
+      expect.objectContaining({ model: 'deepseek-flash', phase: 'starting', fence: 'clean' }),
+    ]);
     expect((await models.profiles.get('a'))?.model).toBe('deepseek-v4-pro');
     await models.jobs.get('a')!.done;
   } finally {

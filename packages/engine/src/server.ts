@@ -120,6 +120,7 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/model/saved',
   '/api/notes/status',
   '/api/notes/list',
   '/api/notes/read',
@@ -1135,18 +1136,29 @@ export async function startPrototype({
               return json(res, await models.chats.receipt(data.bot, data.id));
             if (
               url.pathname === '/api/chats/history' &&
-              Object.keys(data).every((key) => ['bot', 'revision', 'before', 'runId'].includes(key))
+              Object.keys(data).every((key) =>
+                ['bot', 'revision', 'before', 'runId', 'modelAccess'].includes(key),
+              )
             ) {
               if (
                 typeof data.revision !== 'number' ||
                 (data.before !== undefined && typeof data.before !== 'string') ||
-                (data.runId !== undefined && typeof data.runId !== 'string')
+                (data.runId !== undefined && typeof data.runId !== 'string') ||
+                (data.modelAccess !== undefined && data.modelAccess !== true)
               )
                 throw new Fault('INVALID_CHAT_QUERY', 400);
-              return json(
-                res,
-                await models.chatHistory(data.bot, data.revision, data.before, data.runId),
+              const page = await models.chatHistory(
+                data.bot,
+                data.revision,
+                data.before,
+                data.runId,
               );
+              // Legacy readers reject unknown history fields; the accepted hint changes schema, never authorization.
+              if (data.modelAccess !== true)
+                page.items = page.items.map(
+                  ({ attemptSummary: _attempts, rootRunId: _root, ...item }) => item,
+                );
+              return json(res, page);
             }
             throw new Fault('INVALID_CHAT_REQUEST', 400);
           }
@@ -1410,6 +1422,17 @@ export async function startPrototype({
               return json(res, await schedules.run(data.id, data.requestId));
             throw new Fault('INVALID_SCHEDULE', 400);
           }
+          if (
+            [
+              '/api/model/saved',
+              '/api/model/fallback',
+              '/api/model/remove',
+              '/api/model/diagnose',
+            ].includes(url.pathname)
+          ) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+          }
           if (url.pathname === '/api/model/settings') {
             if (req.method === 'GET')
               return json(res, await settings.status(url.searchParams.get('catalog') === '1'));
@@ -1418,6 +1441,17 @@ export async function startPrototype({
           }
           if (url.pathname === '/api/model/configure' && req.method === 'POST')
             return json(res, await settings.configure(await body(req)));
+          if (url.pathname === '/api/model/saved' && req.method === 'POST')
+            return json(res, await settings.saved(await body(req)));
+          if (url.pathname === '/api/model/fallback' && req.method === 'POST')
+            return json(res, await settings.fallback(await body(req)));
+          if (url.pathname === '/api/model/remove' && req.method === 'POST') {
+            if (!models) throw new Fault('STARTING', 503);
+            await models.ready;
+            return json(res, await settings.remove(await body(req)));
+          }
+          if (url.pathname === '/api/model/diagnose' && req.method === 'POST')
+            return json(res, await settings.diagnose(await body(req)));
           if (url.pathname === '/api/model/inspect' && req.method === 'POST')
             return json(res, await settings.inspect(await body(req)));
           if (url.pathname === '/api/model/check' && req.method === 'POST') {
