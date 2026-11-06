@@ -8,7 +8,14 @@ import {
 } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
-import { type Action, type Bot, chatRevision, lifecycleRequest, type State } from '../../app/state';
+import {
+  type Action,
+  type Bot,
+  chatBoundary,
+  chatRevision,
+  lifecycleRequest,
+  type State,
+} from '../../app/state';
 import { Dialog } from '../../components/controls/Dialog';
 import { t, useLocale } from '../../i18n/locale';
 import { Avatar } from '../bots/Avatar';
@@ -39,7 +46,7 @@ export function NewChat({
   useLocale();
   const runtime = useRuntime();
   const pending = state.chatRequests[bot.id];
-  const revision = chatRevision(state, bot.id, runtime.snapshot.chats);
+  const revision = chatBoundary(state, bot.id, runtime.snapshot.chats);
   const task = agentTask(runtime.snapshot, bot.id);
   const available =
     runtime.enabled &&
@@ -71,7 +78,19 @@ export function NewChat({
       value.receipt.request.revision !== request.revision
     )
       throw new Error('INVALID_CHAT_ACK');
-    dispatch({ type: 'chats', items: [value.chat] });
+    if (runtime.snapshot.protocolVersion >= 46 && mounted.current)
+      dispatch({
+        type: 'chat-open',
+        bot: bot.id,
+        chat: value.chat,
+        previous: chatRevision(state, bot.id, runtime.snapshot.chats),
+      });
+    else
+      dispatch({
+        type: 'chats',
+        items: [value.chat],
+        keepSelection: runtime.snapshot.protocolVersion >= 46,
+      });
     dispatch({ type: 'chat-clear', bot: bot.id, id: request.id });
     if (!mounted.current) return;
     notify(
@@ -102,6 +121,13 @@ export function NewChat({
       bot: agentId(bot.id),
       revision,
     };
+    // Pin the source editor before polling can publish the new boundary.
+    if (runtime.snapshot.protocolVersion >= 46 && !pending)
+      dispatch({
+        type: 'chat-select',
+        bot: bot.id,
+        revision: chatRevision(state, bot.id, runtime.snapshot.chats),
+      });
     dispatch({ type: 'chat-pending', bot: bot.id, request });
     try {
       apply(await runtime.command<ChatAck>({ type: 'chat.new', request }), request);

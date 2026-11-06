@@ -26,6 +26,7 @@ import {
   isLocalComputerCommand,
   isMcpCommand,
   isMemoryQuery,
+  isModelId,
   isModelInspectionRequest,
   isModelUpdate,
   isNoteCommand,
@@ -463,12 +464,20 @@ export function parseCommand(value: unknown): RuntimeCommand {
         'files',
         'chatRevision',
         'approvalMode',
+        'contextRevision',
+        'model',
       ]) ||
       !string(t.requestId, 100) ||
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
+      (t.model !== undefined && !isModelId(t.model)) ||
+      (t.contextRevision !== undefined &&
+        (!Number.isSafeInteger(t.contextRevision) ||
+          Number(t.contextRevision) < 0 ||
+          !Number.isSafeInteger(t.chatRevision) ||
+          Number(t.contextRevision) > Number(t.chatRevision))) ||
       (t.memory !== undefined && !string(t.memory, 12000)) ||
       (t.chatRevision !== undefined &&
         (!Number.isSafeInteger(t.chatRevision) || Number(t.chatRevision) < 0))
