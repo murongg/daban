@@ -38,6 +38,7 @@ import {
   isScheduleInput,
   isSchedulePatch,
   isScheduleRule,
+  isSearchCommand,
   isSkillBinding,
   isSkillContent,
   isSkillPackageCommand,
@@ -86,6 +87,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
+  if (value.type.startsWith('search.')) return isSearchCommand(value) ? value : fail();
   if (['work.comments', 'work.comment', 'work.comment-receipt'].includes(value.type))
     return isWorkCommentCommand(value) ? value : fail();
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();

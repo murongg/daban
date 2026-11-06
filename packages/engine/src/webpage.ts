@@ -10,7 +10,7 @@ export interface ExtractedPage {
 }
 export type Convert = (html: string, url: string) => ExtractedPage;
 
-function checkDepth(html: string) {
+export function checkHtmlDepth(html: string) {
   const lower = html.toLowerCase(),
     stack: string[] = [];
   const empty = new Set([
@@ -92,7 +92,7 @@ export function createConverter(sdkFile: string): Convert {
   return (html, url) => {
     if (html.length > webDownloadLimit) throw new Fault('WEB_FETCH_TOO_LARGE', 413);
     // Reject pathological nesting before the parser can spend unbounded synchronous work building it.
-    checkDepth(html);
+    checkHtmlDepth(html);
     try {
       const document = createDocument(html);
       const pending: { node: Node; depth: number }[] = [{ node: document.body, depth: 0 }];

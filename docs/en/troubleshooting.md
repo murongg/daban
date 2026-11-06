@@ -11,9 +11,9 @@ Preserve existing conversations, files, and settings before diagnosis. An empty 
 3. Test actual inference. Listing success is not inference success; balance, rate limits, model permissions, and networking can cause failure.
 4. Handle any active task or pending approval first.
 
-## Search asks for DeepSeek despite another configured model
+## Search requires a key or is temporarily unavailable
 
-Other providers work for ordinary conversation, but built-in search currently needs an official DeepSeek connection. Exact public URLs can be read directly, or use an appropriate browser task. See [Web research](web.md).
+Check Settings → Search. DuckDuckGo needs no key; DeepSeek and Brave require their own configured search credentials. A chat model key does not automatically replace them. New users default to DuckDuckGo and existing choices remain intact. Verification, rate limits or HTML changes can block DuckDuckGo; failures never switch providers automatically. Update the client and Host if an older Host still requires DeepSeek. Exact public URLs can be read directly. See [Web research](web.md).
 
 ## A page contains only a title or appears truncated
 

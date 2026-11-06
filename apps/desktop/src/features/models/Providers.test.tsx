@@ -605,7 +605,7 @@ it('keeps supplier key drafts and pending intent through offline or catalog-miss
   expect(screen.getByLabelText('API Key')).toHaveValue('');
 });
 
-it.each(['MODEL_UNAVAILABLE', 'MODEL_CREDENTIAL_REQUIRED'])(
+it.each(['MODEL_UNAVAILABLE', 'MODEL_CREDENTIAL_REQUIRED', 'SEARCH_LEGACY_IN_USE'])(
   'keeps the editor repairable after the definitive %s decision',
   async (code) => {
     const { writes } = connect(code);

@@ -79,6 +79,9 @@ import {
   isRuntimeNoticeStatus,
   isSchedule,
   isScheduleFiring,
+  isSearchCommand,
+  isSearchReceipt,
+  isSearchStatus,
   isSkillArchiveResult,
   isSkillBindingResult,
   isSkillCatalogResult,
@@ -332,9 +335,11 @@ export class RuntimeClient {
       signal: AbortSignal.timeout(
         route === '/api/host/recovery'
           ? 600000
-          : route.startsWith('/api/bundles/')
-            ? 120000
-            : 20000,
+          : route === '/api/search/check'
+            ? 35000
+            : route.startsWith('/api/bundles/')
+              ? 120000
+              : 20000,
       ),
     });
     const decode = async () =>
@@ -380,6 +385,7 @@ export class RuntimeClient {
       const raw = data as unknown as {
         clientProtocol?: number;
         botCapabilities?: unknown;
+        searchSettings?: unknown;
         localComputer?: unknown;
         chats?: unknown;
         notices?: unknown;
@@ -490,6 +496,7 @@ export class RuntimeClient {
       snapshot.protocolVersion = raw.clientProtocol || 0;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
+      if (raw.searchSettings === true) snapshot.searchSettings = true;
       if (this.agent && raw.localComputer !== undefined)
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer
@@ -763,6 +770,51 @@ export class RuntimeClient {
     return value;
   }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (command.type.startsWith('search.')) {
+      if (!isSearchCommand(command)) throw new Error('INVALID_COMMAND');
+      // Keep the original request ID and revisions across status/authentication waits and lost replies.
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.searchSettings !== true) throw new Error('RUNTIME_TOO_OLD');
+      if (
+        (captured.type === 'search.configure' || captured.type === 'search.check') &&
+        recoveryBlocked(state)
+      )
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      if (captured.type === 'search.status') {
+        const value = await this.api('/api/search/status');
+        if (!isSearchStatus(value)) throw new Error('INVALID_RUNTIME_STATE');
+        return value;
+      }
+      const value = await this.api(
+        `/api/search/${captured.type.slice('search.'.length)}`,
+        captured.type === 'search.saved' ? captured.query : captured.input,
+      );
+      if (!isSearchReceipt(value)) throw new Error('INVALID_RUNTIME_STATE');
+      if (captured.type === 'search.saved') {
+        if (value.kind !== captured.query.kind || value.requestId !== captured.query.requestId)
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (captured.type === 'search.configure') {
+        if (
+          value.kind !== 'configure' ||
+          value.phase !== 'saved' ||
+          value.requestId !== captured.input.requestId ||
+          value.revision !== captured.input.revision + 1 ||
+          value.status?.provider !== captured.input.provider ||
+          value.status.enabled !== captured.input.enabled
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (
+        value.kind !== 'check' ||
+        value.phase === 'superseded' ||
+        value.requestId !== captured.input.requestId ||
+        value.revision !== captured.input.revision ||
+        value.checkRevision !== captured.input.checkRevision + 1
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
       const value = await this.api('/api/host/recovery', captured);

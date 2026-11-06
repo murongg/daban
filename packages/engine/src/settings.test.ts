@@ -671,7 +671,7 @@ test('pending legacy settings receipts remain replayable after the provider cata
   }
 });
 
-test('model resolution binds supplier, endpoint, abilities and search credentials without exposing them in status', async () => {
+test('model resolution binds supplier, endpoint, abilities independently of unrelated search credentials without exposing them in status', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-provider-resolution-'));
   try {
     const settings = new ModelSettings(path.join(dir, 'credentials.json'), async () =>
@@ -691,14 +691,14 @@ test('model resolution binds supplier, endpoint, abilities and search credential
     expect(first.vision).toBe(true);
     expect(first.contextWindow).toBe(65536);
     expect(first.maxTokens).toBe(4096);
-    expect(first.searchApiKey).toBe(undefined);
+    expect(await settings.searchConnection()).toBe(undefined);
     expect(first.secrets).toStrictEqual(['synthetic-primary-key']);
     await settings.save({ apiKey: 'synthetic-search-key' });
     const next = await settings.resolve();
     expect(next.model).toBe(first.model);
     expect(next.apiKey).toBe(first.apiKey);
-    expect(next.searchApiKey).toBe('synthetic-search-key');
-    expect(next.binding).not.toBe(first.binding);
+    expect((await settings.searchConnection())?.key).toBe('synthetic-search-key');
+    expect(next.binding).toBe(first.binding);
     expect(new Set(next.secrets)).toStrictEqual(
       new Set(['synthetic-primary-key', 'synthetic-search-key']),
     );
@@ -997,7 +997,7 @@ test('official search follows the explicitly configured official endpoint even w
         requestId: 'mock-first-official-search',
       });
       const firstRoute = await settings.resolve();
-      expect(firstRoute.searchApiKey).toBe('synthetic-first-search-key');
+      expect((await settings.searchConnection())?.key).toBe('synthetic-first-search-key');
       await settings.configure({
         model: 'provider:mock-generated-second:mock-text',
         connection: syntheticConnection('mock-generated-second', 'https://api.deepseek.com/v1/'),
@@ -1006,7 +1006,7 @@ test('official search follows the explicitly configured official endpoint even w
         requestId: 'mock-second-official-search',
       });
       const secondRoute = await settings.resolve();
-      expect(secondRoute.searchApiKey).toBe('synthetic-second-search-key');
+      expect((await settings.searchConnection())?.key).toBe('synthetic-second-search-key');
       expect(secondRoute.binding).not.toBe(firstRoute.binding);
       await settings.configure({
         model: 'provider:mock-custom:mock-text',
@@ -1016,21 +1016,25 @@ test('official search follows the explicitly configured official endpoint even w
         requestId: 'mock-custom-search',
       });
       const customRoute = await settings.resolve();
-      expect(customRoute.searchApiKey).toBe(
+      expect((await settings.searchConnection())?.key).toBe(
         legacy ? 'synthetic-legacy-search-key' : 'synthetic-first-search-key',
       );
       const restarted = new ModelSettings(settings.file);
-      expect((await restarted.resolve()).searchApiKey).toBe(customRoute.searchApiKey);
-      expect(
-        (await restarted.resolve('provider:mock-generated-second:mock-text')).searchApiKey,
-      ).toBe('synthetic-second-search-key');
+      expect((await restarted.searchConnection())?.key).toBe(
+        (await settings.searchConnection())?.key,
+      );
+      expect((await restarted.searchConnection('mock-generated-second'))?.key).toBe(
+        'synthetic-second-search-key',
+      );
       await settings.configure({
         model: customRoute.model,
         connection: { ...first, name: 'Renamed synthetic connection' },
         revision: (await settings.status()).revision,
         requestId: 'mock-rename-official-search',
       });
-      expect((await settings.resolve()).searchApiKey).toBe(customRoute.searchApiKey);
+      expect((await settings.searchConnection())?.key).toBe(
+        legacy ? 'synthetic-legacy-search-key' : 'synthetic-first-search-key',
+      );
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

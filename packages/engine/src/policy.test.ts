@@ -1,6 +1,65 @@
 import { expect, test } from 'vitest';
 import { apply, inject, requestedUrls } from './policy.js';
 
+test('registry execution counts survive a lost fence acknowledgement without trusting provider IDs', async () => {
+  const fences: unknown[] = [];
+  let lost = true;
+  let bodies = 0;
+  type Execution = {
+    token: symbol;
+    callId: string;
+    signal: AbortSignal;
+    name: string;
+    arguments: unknown;
+  };
+  let pre: (exec: Execution, next: () => Promise<unknown>) => Promise<unknown> = async () =>
+    undefined;
+  apply(
+    {
+      agents: rootAgents('synthetic-root'),
+      on: (...hook) => {
+        if (hook[0] === 'tools/pre-execute') pre = hook[1];
+      },
+    },
+    {
+      limit: 2,
+      urls: [],
+      attemptId: 'synthetic-attempt',
+      url: 'http://127.0.0.1:12345/mcp/synthetic-bot',
+    },
+    async (_url, init) => {
+      const rpc = JSON.parse(String(init.body)) as { params: { toolCount?: number } };
+      fences.push(rpc.params.toolCount);
+      if (lost) {
+        lost = false;
+        throw new Error('SYNTHETIC_ACK_LOST');
+      }
+      return Response.json({ result: { accepted: true } });
+    },
+  );
+  const execution = {
+    token: Symbol('synthetic-first'),
+    callId: 'synthetic-reused-provider-id',
+    signal: new AbortController().signal,
+    name: 'todo_write',
+    arguments: { todos: [{ content: 'SYNTHETIC STEP', status: 'completed' }] },
+  };
+  const next = async () => {
+    bodies++;
+    return { kind: 'allow' };
+  };
+  expect(await pre(execution, next)).toMatchObject({ kind: 'deny' });
+  expect(await pre(execution, next)).toMatchObject({ kind: 'allow' });
+  expect(await pre({ ...execution, token: Symbol('synthetic-second') }, next)).toMatchObject({
+    kind: 'allow',
+  });
+  expect(await pre({ ...execution, token: Symbol('synthetic-third') }, next)).toMatchObject({
+    kind: 'deny',
+  });
+  expect(bodies).toBe(2);
+  expect(fences).toEqual([1, 1, 1, 2, 2]);
+});
+
 test('ask mode requests approval even for a URL supplied in the accepted task', async () => {
   let listener: (
     exec: { signal: AbortSignal; name: string; arguments: unknown; agent?: unknown },
@@ -379,10 +438,188 @@ test('attempt policy waits for durable Host fence acknowledgement before native 
     expect(order).toEqual(['fence']);
     release();
     await pending;
-    expect(order).toEqual(['fence', 'execute']);
+    expect(order).toEqual(['fence', 'fence', 'execute']);
   } finally {
     release();
     await pending?.catch(() => undefined);
     vi.unstubAllGlobals();
   }
+});
+
+function rootAgents(sessionId: string) {
+  const root = { id: sessionId, session: { id: sessionId } };
+  return {
+    roots: () => [root],
+    get: (id: string) => (id === root.id ? root : undefined),
+    isOwnedBy: () => false,
+  };
+}
+
+test.each(['human', 'fence', 'owner'] as const)(
+  'a removed child cannot request or use web consent at the %s boundary',
+  async (stage) => {
+    const root = { id: 'mock-root', session: { id: 'mock-session' } };
+    const child = { id: 'mock-child', session: { id: 'mock-child-session' } };
+    let owned = stage !== 'owner';
+    let effects = 0;
+    let fences = 0;
+    let approvals = 0;
+    let pre: (
+      exec: {
+        signal: AbortSignal;
+        name: string;
+        arguments: unknown;
+        token?: symbol;
+        agent?: typeof child;
+      },
+      next: () => Promise<unknown>,
+    ) => Promise<unknown> = async () => undefined;
+    apply(
+      {
+        agents: {
+          roots: () => [root],
+          get: (id) => (id === root.id ? root : owned && id === child.id ? child : undefined),
+          isOwnedBy: (id) => owned && id === child.id,
+        },
+        on: (...hook: unknown[]) => {
+          if (hook[0] === 'tools/pre-execute') pre = hook[1] as typeof pre;
+        },
+        approval: {
+          request: async (request) => {
+            approvals++;
+            expect(request.agent).toBe(child);
+            owned = false;
+            return 'allowed-once';
+          },
+        },
+      },
+      {
+        limit: 10,
+        urls: stage === 'fence' ? ['https://example.test/child'] : [],
+        attemptId: 'mock-attempt',
+        url: 'http://127.0.0.1/mcp/mock-bot',
+        capability: 'synthetic-capability',
+      },
+      async () => {
+        if (++fences === 2 && stage === 'fence') owned = false;
+        return Response.json({ result: { accepted: true } });
+      },
+    );
+    const result = await pre(
+      {
+        signal: new AbortController().signal,
+        name: 'web_fetch',
+        arguments: { url: 'https://example.test/child' },
+        token: Symbol('synthetic-call'),
+        agent: child,
+      },
+      async () => {
+        effects++;
+        return undefined;
+      },
+    );
+    expect(result).toMatchObject({ kind: 'deny' });
+    expect(effects).toBe(0);
+    expect(approvals).toBe(stage === 'human' ? 1 : 0);
+  },
+);
+
+test('abort during the final durable attempt acknowledgement cannot enter a native body', async () => {
+  let pre: (
+    exec: { signal: AbortSignal; name: string; arguments: unknown; token?: symbol },
+    next: () => Promise<unknown>,
+  ) => Promise<unknown> = async () => undefined;
+  const abort = new AbortController();
+  let fences = 0;
+  let effects = 0;
+  apply(
+    {
+      agents: rootAgents('mock-session'),
+      on: (...hook: unknown[]) => {
+        if (hook[0] === 'tools/pre-execute') pre = hook[1] as typeof pre;
+      },
+    },
+    {
+      limit: 10,
+      urls: [],
+      attemptId: 'mock-attempt',
+      url: 'http://127.0.0.1/mcp/mock-bot',
+      capability: 'synthetic-capability',
+    },
+    async (_url, init) => {
+      const body = JSON.parse(String(init.body)) as { method: string };
+      if (body.method === 'attempt.fence' && ++fences === 2) abort.abort();
+      return Response.json({ result: { accepted: true } });
+    },
+  );
+  const result = await pre(
+    {
+      signal: abort.signal,
+      name: 'todo_write',
+      arguments: { todos: [{ content: 'Synthetic step', status: 'pending' }] },
+      token: Symbol('synthetic-call'),
+    },
+    async () => {
+      effects++;
+      return { kind: 'allow' };
+    },
+  );
+  expect(result).toMatchObject({ kind: expect.stringMatching(/^(deny|cancel)$/) });
+  expect(effects).toBe(0);
+});
+
+test('the flat physical attempt and private bridge are captured before caller mutation', async () => {
+  let pre: (
+    exec: { signal: AbortSignal; name: string; arguments: unknown; token?: symbol },
+    next: () => Promise<unknown>,
+  ) => Promise<unknown> = async () => undefined;
+  const config = {
+    limit: 10,
+    urls: [],
+    attemptId: 'mock-original-attempt',
+    url: 'http://127.0.0.1/mcp/mock-bot',
+    capability: 'synthetic-original-capability',
+  };
+  let effects = 0;
+  const bodies: { method: string; params: Record<string, unknown> }[] = [];
+  apply(
+    {
+      agents: rootAgents('mock-session'),
+      on: (...hook: unknown[]) => {
+        if (hook[0] === 'tools/pre-execute') pre = hook[1] as typeof pre;
+      },
+    },
+    config,
+    async (_url, init) => {
+      expect(new Headers(init.headers).get('authorization')).toBe(
+        'Bearer synthetic-original-capability',
+      );
+      const body = JSON.parse(String(init.body)) as {
+        method: string;
+        params: Record<string, unknown>;
+      };
+      bodies.push(body);
+      return Response.json({ result: { accepted: true } });
+    },
+  );
+  config.attemptId = 'mock-replacement-attempt';
+  config.capability = 'synthetic-replacement-capability';
+  await pre(
+    {
+      signal: new AbortController().signal,
+      name: 'todo_write',
+      arguments: { todos: [{ content: 'Synthetic step', status: 'pending' }] },
+      token: Symbol('synthetic-call'),
+    },
+    async () => {
+      effects++;
+      return { kind: 'allow' };
+    },
+  );
+  expect(effects).toBe(1);
+  expect(
+    bodies
+      .filter((body) => body.method === 'attempt.fence')
+      .every((body) => body.params.attemptId === 'mock-original-attempt'),
+  ).toBe(true);
 });

@@ -1,5 +1,6 @@
 export * from './goals.js';
 export * from './model-access.js';
+export * from './search.js';
 
 import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
@@ -13,6 +14,7 @@ import {
   type ModelRemoveRequest,
   type ModelSavedRequest,
 } from './model-access.js';
+import type { SearchCommand } from './search.js';
 import {
   isSkillPackage,
   isSkillPackageInfo,
@@ -1531,6 +1533,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  searchSettings?: true;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1594,6 +1597,7 @@ export function recoveryBlocked(snapshot: Pick<RuntimeSnapshot, 'reboot' | 'reco
 }
 export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'model.saved') return true;
+  if (command.type === 'search.status' || command.type === 'search.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'frame',
@@ -4074,6 +4078,7 @@ export type RuntimeCommand =
   | { type: 'group.cancel'; group: string; sourceId: string }
   | { type: 'group.action'; request: GroupActionRequest }
   | { type: 'group.receipt'; group: string; id: string }
+  | SearchCommand
   | { type: 'model.configure'; input: ModelUpdate }
   | { type: 'model.saved'; input: ModelSavedRequest }
   | { type: 'model.fallback.configure'; input: ModelFallbackRequest }

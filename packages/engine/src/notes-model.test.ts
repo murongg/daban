@@ -4,6 +4,7 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 import type { ToolResult } from './computer-tools.js';
 import { ModelRuns } from './model.js';
+import { modelPhase, observeSearch } from './model-timing.fixture.js';
 import { ModelSettings } from './settings.js';
 
 function result(value: unknown) {
@@ -94,21 +95,24 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
     workspace: path.join(root, 'shared'),
     origin: 'http://127.0.0.1:12345',
   });
+  observeSearch(models.search);
   async function turn(bot: string, requestId: string, retryOf?: string) {
-    await models.start(bot, {
-      requestId,
-      prompt: 'MOCK CURRENT HUMAN NOTE REQUEST',
-      ...(retryOf ? { retryOf } : {}),
-    });
+    await modelPhase(`notes:${requestId}:start`, () =>
+      models.start(bot, {
+        requestId,
+        prompt: 'MOCK CURRENT HUMAN NOTE REQUEST',
+        ...(retryOf ? { retryOf } : {}),
+      }),
+    );
     const job = models.jobs.get(bot)!;
-    await job.done;
+    await modelPhase(`notes:${requestId}:done`, () => job.done);
     expect(job.phase, job.error).toBe('completed');
     expect(job.files.length).toBe(0);
     return job;
   }
   try {
-    await settings.save({ apiKey: 'mock-notes-provider-key' });
-    await models.ready;
+    await modelPhase('notes:settings', () => settings.save({ apiKey: 'mock-notes-provider-key' }));
+    await modelPhase('notes:ready', () => models.ready);
     for (const id of ['mock-alpha', 'mock-beta'])
       await models.profiles.register({
         id,
@@ -171,8 +175,8 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
     );
     expect.assert(first.trace.every((row) => row.surface === 'notes'));
   } finally {
-    await models.close();
-    await rm(root, { recursive: true, force: true });
+    await modelPhase('notes:close', () => models.close());
+    await modelPhase('notes:cleanup', () => rm(root, { recursive: true, force: true }));
   }
 });
 
@@ -200,11 +204,14 @@ test('notes capabilities replace a general-v6 native tool context while retainin
     origin: 'http://127.0.0.1:12345',
   };
   let models = new ModelRuns(options);
+  observeSearch(models.search);
   try {
     await settings.save({ apiKey: 'mock-notes-migration-key' });
-    await models.start('mock-alpha', { requestId: 'mock-old', prompt: 'MOCK OLD MESSAGE' });
+    await modelPhase('notes:migration:old:start', () =>
+      models.start('mock-alpha', { requestId: 'mock-old', prompt: 'MOCK OLD MESSAGE' }),
+    );
     const old = models.jobs.get('mock-alpha')!;
-    await old.done;
+    await modelPhase('notes:migration:old:done', () => old.done);
     expect(old.phase).toBe('completed');
     await models.close();
     const file = path.join(root, 'model/task-journal', `${old.id}.json`),
@@ -212,9 +219,12 @@ test('notes capabilities replace a general-v6 native tool context while retainin
     journal.task.sessionProfile = 'general-v6';
     await writeFile(file, JSON.stringify(journal), { mode: 0o600 });
     models = new ModelRuns(options);
-    await models.start('mock-alpha', { requestId: 'mock-new', prompt: 'MOCK NEW GREETING' });
+    observeSearch(models.search);
+    await modelPhase('notes:migration:new:start', () =>
+      models.start('mock-alpha', { requestId: 'mock-new', prompt: 'MOCK NEW GREETING' }),
+    );
     const current = models.jobs.get('mock-alpha')!;
-    await current.done;
+    await modelPhase('notes:migration:new:done', () => current.done);
     expect(current.phase).toBe('completed');
     expect(current.sessionId).not.toBe(old.sessionId);
     expect(resumed).toStrictEqual([]);

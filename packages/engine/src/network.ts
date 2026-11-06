@@ -1,9 +1,10 @@
 import type { LookupAddress } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { request } from 'node:http';
-import { request as secureRequest } from 'node:https';
+import { Agent, request as secureRequest } from 'node:https';
 import { BlockList, connect, isIP, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
+import { connect as secureConnect } from 'node:tls';
 import { Fault } from './control.js';
 import { fallbackLookup } from './dns.js';
 
@@ -106,6 +107,62 @@ async function through(
   });
 }
 
+async function proxyDns(query: string, signal: AbortSignal, upstream: URL) {
+  // Fake-IP DNS must use the same proxy as the supplier. Pin the resolver too, without OS DNS recursion.
+  const socket = await dialAddress('1.1.1.1', 443, signal, upstream);
+  const agent = new Agent({ keepAlive: false });
+  agent.createConnection = () =>
+    secureConnect({
+      socket,
+      servername: 'cloudflare-dns.com',
+      rejectUnauthorized: true,
+    });
+  try {
+    signal.throwIfAborted();
+    return await new Promise<Response>((resolve, reject) => {
+      const req = secureRequest(
+        {
+          hostname: 'cloudflare-dns.com',
+          port: 443,
+          path: `/dns-query${query}`,
+          method: 'GET',
+          agent,
+          signal,
+          headers: { accept: 'application/dns-json', 'accept-encoding': 'identity' },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          let size = 0;
+          res.on('data', (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > 16384) {
+              const error = new Error('WEB_DNS_RESPONSE_TOO_LARGE');
+              reject(error);
+              res.destroy(error);
+              return;
+            }
+            chunks.push(chunk);
+          });
+          res.once('error', reject);
+          res.once('end', () => {
+            const encoding = res.headers['content-encoding'];
+            if (res.statusCode !== 200 || (encoding && encoding !== 'identity')) {
+              reject(new Error('WEB_DNS_UNAVAILABLE'));
+              return;
+            }
+            resolve(new Response(Buffer.concat(chunks)));
+          });
+        },
+      );
+      req.once('error', reject);
+      req.end();
+    });
+  } finally {
+    socket.destroy();
+    agent.destroy();
+  }
+}
+
 export async function resolvePublic(
   host: string,
   signal: AbortSignal,
@@ -113,12 +170,21 @@ export async function resolvePublic(
     host: string,
     options: { all: true; order: 'verbatim' },
   ) => Promise<LookupAddress[]> = lookup,
+  upstream?: URL,
 ) {
   signal.throwIfAborted();
   const literal = isIP(host);
   const addresses = literal
     ? [{ address: host, family: literal }]
-    : await fallbackLookup(host, signal, resolve, fetch, publicAddress);
+    : await fallbackLookup(
+        host,
+        signal,
+        resolve,
+        upstream
+          ? (input, init) => proxyDns(new URL(input).search, init.signal ?? signal, upstream)
+          : fetch,
+        publicAddress,
+      );
   signal.throwIfAborted();
   if (
     !addresses.length ||
