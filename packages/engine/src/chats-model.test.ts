@@ -5,6 +5,106 @@ import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
+test('explicit historical continuation resumes only its original context while retaining current-boundary and request-identity fences', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-chat-resume-'));
+  const settings = new ModelSettings(path.join(root, 'credentials.json'));
+  const resumed: string[] = [];
+  let sequence = 0;
+  class Harness {
+    async start() {}
+    async close() {}
+    session(id = `mock-context-${++sequence}`) {
+      return { id, run: async () => ({ sessionId: id, finalResponse: 'SYNTHETIC ANSWER' }) };
+    }
+    async resumeSession(id: string) {
+      resumed.push(id);
+      return this.session(id);
+    }
+  }
+  const options = {
+    settings,
+    Harness,
+    dir: path.join(root, 'model'),
+    workspace: path.join(root, 'shared'),
+    origin: 'http://127.0.0.1:12345',
+  };
+  let models = new ModelRuns(options);
+  try {
+    await settings.save({ apiKey: 'synthetic-model-key' });
+    await models.ready;
+    await models.profiles.register({
+      id: 'a',
+      name: 'Synthetic Bot',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+      model: 'deepseek-v4-pro',
+    });
+    await models.start('a', { requestId: 'mock-first', prompt: 'SYNTHETIC FIRST' });
+    await models.jobs.get('a')!.done;
+    await models.chats.renew({ id: 'mock-new', bot: 'a', revision: 0 });
+    await models.start('a', {
+      requestId: 'mock-second',
+      prompt: 'SYNTHETIC SECOND',
+      chatRevision: 1,
+    });
+    await models.jobs.get('a')!.done;
+    const request = {
+      requestId: 'mock-resume',
+      prompt: 'SYNTHETIC CONTINUE',
+      chatRevision: 1,
+      contextRevision: 0,
+    };
+    const accepted = await models.start('a', request);
+    expect(accepted.chatRevision).toBe(0);
+    await models.jobs.get('a')!.done;
+    expect(resumed).toEqual(['mock-context-1']);
+    await expect(models.start('a', { ...request, contextRevision: 1 })).rejects.toMatchObject({
+      code: 'REQUEST_ID_REUSED',
+    });
+    await expect(models.start('a', { ...request, model: 'deepseek-v4-pro' })).rejects.toMatchObject(
+      { code: 'REQUEST_ID_REUSED' },
+    );
+    await expect(
+      models.start('a', { ...request, requestId: 'mock-stale', chatRevision: 0 }),
+    ).rejects.toMatchObject({ code: 'CHAT_CONFLICT' });
+    await expect(
+      models.start('a', { ...request, requestId: 'mock-future', contextRevision: 2 }),
+    ).rejects.toMatchObject({ code: 'INVALID_TASK' });
+    expect((await models.chatHistory('a', 0)).items).toHaveLength(2);
+    expect((await models.chatHistory('a', 1)).items).toHaveLength(1);
+    expect(models.journal.conversations()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ bot: 'a', revision: 0, title: 'SYNTHETIC FIRST' }),
+        expect.objectContaining({ bot: 'a', revision: 1, title: 'SYNTHETIC SECOND' }),
+      ]),
+    );
+    await models.close();
+    models = new ModelRuns(options);
+    await models.ready;
+    expect((await models.start('a', request)).runId).toBe(accepted.runId);
+    await models.start('a', { ...request, requestId: 'mock-restarted' });
+    await models.jobs.get('a')!.done;
+    expect(resumed.at(-1)).toBe('mock-context-1');
+    await models.start('a', {
+      requestId: 'mock-model-choice',
+      prompt: 'SYNTHETIC MODEL CHOICE',
+      chatRevision: 1,
+      contextRevision: 1,
+      model: 'deepseek-flash',
+    });
+    expect(models.jobs.get('a')!.model).toBe('deepseek-flash');
+    expect(models.jobs.get('a')!.attemptSummary).toEqual([
+      expect.objectContaining({ model: 'deepseek-flash', phase: 'starting', fence: 'clean' }),
+    ]);
+    expect((await models.profiles.get('a'))?.model).toBe('deepseek-v4-pro');
+    await models.jobs.get('a')!.done;
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('new private context fences stale sends/retries, retains records, and neither resumes nor injects the old DSH context across restart', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-chat-model-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));

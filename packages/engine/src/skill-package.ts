@@ -27,6 +27,47 @@ const large = (): never => {
 };
 export const skillHash = (data: string | Uint8Array) =>
   createHash('sha256').update(data).digest('hex');
+export function authorSkillPackage(content: unknown, resources: unknown = []): SkillPackage {
+  if (
+    typeof content !== 'string' ||
+    content.length > skillPackageLimit ||
+    !Array.isArray(resources) ||
+    resources.length >= skillPackageFiles
+  )
+    return invalid();
+  let bytes = Buffer.byteLength(content);
+  if (bytes > skillPackageLimit) return large();
+  return normalizeSkillPackage({
+    files: [
+      { path: 'SKILL.md', data: Buffer.from(content).toString('base64') },
+      ...resources.map((file: unknown) => {
+        if (
+          !file ||
+          typeof file !== 'object' ||
+          Array.isArray(file) ||
+          Object.keys(file).some((key) => !['path', 'content', 'executable'].includes(key)) ||
+          !('path' in file) ||
+          !isSkillPath(file.path) ||
+          !('content' in file) ||
+          typeof file.content !== 'string' ||
+          file.content.length > skillPackageLimit ||
+          ('executable' in file &&
+            file.executable !== undefined &&
+            typeof file.executable !== 'boolean')
+        )
+          return invalid();
+        // Reject the aggregate UTF-8 size before allocating base64 buffers for the next resource.
+        bytes += Buffer.byteLength(file.content);
+        if (bytes > skillPackageLimit) return large();
+        return {
+          path: file.path,
+          data: Buffer.from(file.content).toString('base64'),
+          executable: 'executable' in file ? file.executable : false,
+        };
+      }),
+    ],
+  });
+}
 export function normalizeSkillPackage(value: unknown): SkillPackage {
   if (!isSkillPackage(value)) return invalid();
   const main = value.files.find((file) => file.path === 'SKILL.md')!;

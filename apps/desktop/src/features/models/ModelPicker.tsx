@@ -1,4 +1,4 @@
-import { type BotProfile, isModelId } from '@daban/protocol';
+import { type BotProfile, isModelId, type ModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { profileInput } from '../../app/profiles';
 import { runtimeError, useRuntime } from '../../app/Runtime';
@@ -14,6 +14,7 @@ export function ModelPicker({
   dispatch,
   close,
   notify,
+  conversation,
 }: {
   bot: Bot;
   memory: string;
@@ -21,12 +22,13 @@ export function ModelPicker({
   dispatch: Dispatch<Action>;
   close: () => unknown;
   notify: (message: string) => unknown;
+  conversation?: { revision: number; model?: ModelId };
 }) {
   useLocale();
   const runtime = useRuntime();
   const available =
     runtime.enabled && runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion >= 14;
-  const [model, setModel] = useState(bot.model || '');
+  const [model, setModel] = useState(conversation ? conversation.model || '' : bot.model || '');
   const [revision, setRevision] = useState(version);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -48,6 +50,17 @@ export function ModelPicker({
       onSubmit={async (event) => {
         event.preventDefault();
         if (!available || inFlight.current || conflict || !selectedAvailable) return;
+        if (conversation) {
+          dispatch({
+            type: 'chat-model',
+            bot: bot.id,
+            revision: conversation.revision,
+            model: isModelId(model) ? model : undefined,
+          });
+          notify(t('conversations.modelSaved'));
+          close();
+          return;
+        }
         inFlight.current = true;
         setSaving(true);
         setError('');
@@ -97,18 +110,26 @@ export function ModelPicker({
     >
       <div className="form-stack">
         <div className="field-label">
-          {t('common.modelBot')}
+          {t(conversation ? 'conversations.model' : 'common.modelBot')}
           <Select
-            label={t('common.modelBot')}
+            label={t(conversation ? 'conversations.model' : 'common.modelBot')}
             value={model}
             disabled={!available || saving}
             onValueChange={setModel}
             options={[
               {
                 value: '',
-                label: modelName(runtime.snapshot.model.model, runtime.snapshot.model.connections),
-                description: t('common.followWorkspace'),
-                icon: modelIcon(runtime.snapshot.model.model, runtime.snapshot.model.connections),
+                label: modelName(
+                  conversation && bot.model ? bot.model : runtime.snapshot.model.model,
+                  runtime.snapshot.model.connections,
+                ),
+                description: t(
+                  conversation && bot.model ? 'chat.botSettings' : 'common.followWorkspace',
+                ),
+                icon: modelIcon(
+                  conversation && bot.model ? bot.model : runtime.snapshot.model.model,
+                  runtime.snapshot.model.connections,
+                ),
                 detail: modelInputs(
                   runtime.snapshot.model.model,
                   runtime.snapshot.model.connections,
@@ -118,9 +139,11 @@ export function ModelPicker({
             ]}
           />
           <span className="field-help">
-            {available
-              ? t('profile.usesSelectedProviderConnectionFutureTasksOnly')
-              : t('profile.updateLocalRuntimeSelectModelsPerBot')}
+            {conversation
+              ? t('conversations.modelHint')
+              : available
+                ? t('profile.usesSelectedProviderConnectionFutureTasksOnly')
+                : t('profile.updateLocalRuntimeSelectModelsPerBot')}
           </span>
         </div>
         {error && (

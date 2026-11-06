@@ -43,6 +43,8 @@ import {
 } from '@daban/protocol';
 import { type AgentToolRun, AgentTools, executionAttemptId } from './agent-tools.js';
 import { Attachments } from './attachments.js';
+import { BotTools } from './bot-tools.js';
+import { builtinSkills } from './builtin-skills.js';
 import { BotBundles, type BundleDocuments } from './bundles.js';
 import { CatalogTools } from './catalog.js';
 import { Chats } from './chats.js';
@@ -53,7 +55,6 @@ import { errorCode, errorMessage, Fault } from './control.js';
 import type { Desktop } from './desktop.js';
 import { DshLog, defaultSdkFile, readDshStartup } from './dsh.js';
 import { observeTools } from './events.js';
-import { builtinSkills } from './find-skills.js';
 import { goalCommand, goalOperation, goalView, projectGoal } from './goals.js';
 import { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
@@ -596,6 +597,7 @@ interface ModelJob extends AgentToolRun {
   transcript?: TranscriptScope;
   transcriptFailed?: boolean;
   chatRevision?: number;
+  contextRevision?: number;
   skills?: SkillSnapshot;
   integrations?: McpSnapshot;
   conversationId?: string;
@@ -906,6 +908,7 @@ export class ModelRuns {
       },
       new SkillDiscovery(this.skills, this.interactions),
     );
+    this.tools.bots = new BotTools(this.profiles);
     if (software)
       this.tools.software = new SoftwareTools(this.interactions, software, {
         assertLive: (run) => {
@@ -981,6 +984,7 @@ export class ModelRuns {
         fence: 'unknown',
         attemptActive: false,
         chatRevision: latest.chatRevision,
+        contextRevision: latest.contextRevision,
         planning: latest.planning,
         goal: latest.goal,
         conversationId: latest.conversationId,
@@ -1212,9 +1216,11 @@ export class ModelRuns {
     return page;
   }
   private publicJob(job: ModelJob): RawModelTask {
+    // Explicit historical sends keep their receipt visible after restart, even when a newer topic exists.
     if (
       !job.running &&
       !job.conversationId &&
+      job.contextRevision === undefined &&
       (job.chatRevision ?? 0) !== this.chats.current(job.bot).revision
     )
       return {
@@ -1456,6 +1462,7 @@ export class ModelRuns {
         ...(job.searchClaims?.length ? { searchClaims: job.searchClaims } : {}),
         elapsedMs: job.elapsedMs,
         chatRevision: job.chatRevision,
+        contextRevision: job.contextRevision,
         conversationId: job.conversationId,
         documentInputs: job.documentInputs,
         response: job.phase === 'completed' ? undefined : response || job.response,
@@ -1541,7 +1548,13 @@ export class ModelRuns {
     if (input === undefined && !this.tools.hasComputer(bot))
       throw new Fault('COMPUTER_NOT_CONNECTED');
     const task = input === undefined ? undefined : validateTask(input);
-    if (scope && task?.chatRevision !== undefined) throw new Fault('INVALID_CONVERSATION', 400);
+    if (
+      scope &&
+      (task?.chatRevision !== undefined ||
+        task?.contextRevision !== undefined ||
+        task?.model !== undefined)
+    )
+      throw new Fault('INVALID_CONVERSATION', 400);
     const data = task
       ? {
           prompt: task.prompt,
@@ -1552,6 +1565,8 @@ export class ModelRuns {
           ...(task.retryTurn ? { retryTurn: task.retryTurn } : {}),
           ...(task.chatRevision === undefined ? {} : { chatRevision: task.chatRevision }),
           ...(task.approvalMode === undefined ? {} : { approvalMode: task.approvalMode }),
+          ...(task.contextRevision === undefined ? {} : { contextRevision: task.contextRevision }),
+          ...(task.model === undefined ? {} : { model: task.model }),
         }
       : undefined;
     const fingerprint = task ? createHash('sha256').update(JSON.stringify(data)).digest('hex') : '';
@@ -1577,7 +1592,7 @@ export class ModelRuns {
       const prior = recovery.record;
       if (
         prior.conversationId !== scope?.id ||
-        (!scope && (prior.chatRevision ?? 0) !== (task.chatRevision ?? 0))
+        (!scope && (prior.chatRevision ?? 0) !== (task.contextRevision ?? task.chatRevision ?? 0))
       )
         throw new Fault('INVALID_RETRY', 400);
       continuedTools = recovery.toolCount;
@@ -1654,9 +1669,11 @@ export class ModelRuns {
     // Recovery may begin during retry reads; fence immediately before publishing a new job.
     if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
     this.profiles.assertActive(bot);
-    const chatRevision = scope
+    const boundary = scope
       ? undefined
       : this.chats.assertCurrent(bot, task ? task.chatRevision : this.chats.current(bot).revision);
+    // A historical context is explicit; the latest boundary still fences stale and raced sends.
+    const chatRevision = task?.contextRevision ?? boundary;
     if (this.running(bot)) throw new Fault('MODEL_ALREADY_RUNNING');
     if (!this.Harness && !existsSync(this.sdkFile)) throw new Fault('DSH_NOT_INSTALLED', 503);
     const id = `${Date.now()}-${randomBytes(4).toString('hex')}`;
@@ -1673,6 +1690,7 @@ export class ModelRuns {
       fence: 'clean',
       attemptActive: false,
       chatRevision,
+      contextRevision: task?.contextRevision,
       conversationId: scope?.id,
       conversationContext: scope?.context,
       planning: task
@@ -1729,8 +1747,8 @@ export class ModelRuns {
         : { available: true, key: '', connections: [], warnings: [] };
       job.profile = await this.profiles.get(bot);
       job.persona = personaKey(job.profile);
-      // Per-Bot choice is captured with the task; it never edits the shared credential or a running job.
-      const captured = await this.settings.capture(job.profile?.model);
+      // Capture the per-turn override and fallback together without changing the Bot's saved choice.
+      const captured = await this.settings.capture(task?.model ?? job.profile?.model);
       const config = captured.primary;
       job.fallback = captured.fallback;
       job.attemptSummary = [

@@ -94,7 +94,7 @@ it('keeps shipped migration matching independent of mutable preview data', () =>
 
 it('opens an empty workspace, searches presets, edits a preset and creates a fresh Bot without a desktop', async () => {
   render(<App />);
-  expect(screen.getByRole('heading', { name: '从第一位搭档开始' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: '从一段对话开始' })).toBeVisible();
   expect(
     within(screen.getByRole('navigation', { name: 'Bot 列表' })).queryAllByRole('button'),
   ).toHaveLength(0);

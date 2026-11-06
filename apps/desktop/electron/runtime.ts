@@ -252,6 +252,7 @@ export class RuntimeClient {
   private readonly tokenProvider?: Options['tokenProvider'];
   private authenticating?: Promise<unknown>;
   private readonly agent: boolean;
+  private stateProtocol = 28;
   constructor({ origin, serverOrigin = origin, fetcher, tokenProvider, agent = false }: Options) {
     const url = new URL(origin);
     if (agent && !fetcher) throw new Error('AGENT_TRANSPORT_REQUIRED');
@@ -370,10 +371,17 @@ export class RuntimeClient {
   }
   async status(): Promise<RuntimeSnapshot> {
     try {
-      const [data, settings] = (await Promise.all([
-        this.api('/api/state'),
+      let [data, settings] = (await Promise.all([
+        this.api('/api/state', undefined, true, this.stateProtocol),
         this.api('/api/model/settings'),
       ])) as [Record<string, unknown>, { configured?: boolean }];
+      const protocol =
+        Number.isSafeInteger(data.clientProtocol) && Number(data.clientProtocol) >= 46 ? 46 : 28;
+      if (this.stateProtocol !== protocol) {
+        // Older services downgrade future group shapes; negotiate before asking for the new chat catalogue.
+        this.stateProtocol = protocol;
+        data = (await this.api('/api/state', undefined, true, protocol)) as Record<string, unknown>;
+      }
       const raw = data as unknown as {
         clientProtocol?: number;
         botCapabilities?: unknown;
@@ -1872,6 +1880,12 @@ export class RuntimeClient {
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 3) throw new Error('RUNTIME_TOO_OLD');
       if (
+        command.type === 'bot.register' &&
+        command.profile.kind === 'chat' &&
+        state.protocolVersion < 46
+      )
+        throw new Error('RUNTIME_TOO_OLD');
+      if (
         state.protocolVersion < 14 &&
         (command.type === 'bot.register'
           ? command.profile.model !== undefined
@@ -1924,6 +1938,11 @@ export class RuntimeClient {
         if (command.task.approvalMode !== undefined && current.protocolVersion < 44)
           throw new Error('RUNTIME_TOO_OLD');
         if (
+          (command.task.contextRevision !== undefined || command.task.model !== undefined) &&
+          current.protocolVersion < 46
+        )
+          throw new Error('RUNTIME_TOO_OLD');
+        if (
           current.protocolVersion < 11 &&
           command.task.files?.some((file) => file.attachmentId !== undefined)
         )
@@ -1958,7 +1977,8 @@ export class RuntimeClient {
           raw.conversationId !== undefined ||
           receipt.requestId !== command.task.requestId ||
           receipt.prompt !== command.task.prompt ||
-          (receipt.chatRevision ?? 0) !== (command.task.chatRevision ?? 0)
+          (receipt.chatRevision ?? 0) !==
+            (command.task.contextRevision ?? command.task.chatRevision ?? 0)
         )
           throw new Error('INVALID_TASK_ACK');
         return receipt;

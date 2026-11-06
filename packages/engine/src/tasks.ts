@@ -2,6 +2,7 @@ import { lstat, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/prom
 import path from 'node:path';
 import type {
   BotProfile,
+  ConversationSummary,
   GoalProgress,
   ModelAttempt,
   ModelId,
@@ -19,6 +20,7 @@ import {
   isApprovalMode,
   isGoalProgress,
   isModelAttempts,
+  isModelId,
   isReplyStream,
   isRunInsert,
   isRunTurn,
@@ -52,6 +54,8 @@ export function validateTask(input: unknown): TaskRequest {
           'files',
           'chatRevision',
           'approvalMode',
+          'contextRevision',
+          'model',
         ].includes(k),
     )
   )
@@ -72,6 +76,15 @@ export function validateTask(input: unknown): TaskRequest {
     fail();
   if (value.retryOf && value.files?.length) fail();
   if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode)) fail();
+  if (value.model !== undefined && !isModelId(value.model)) fail();
+  if (
+    value.contextRevision !== undefined &&
+    (!Number.isSafeInteger(value.contextRevision) ||
+      value.contextRevision < 0 ||
+      value.chatRevision === undefined ||
+      value.contextRevision > value.chatRevision)
+  )
+    fail();
   if (value.retryTurn !== undefined && (!value.retryOf || !validAgentId(value.retryTurn))) fail();
   if (
     value.chatRevision !== undefined &&
@@ -297,6 +310,7 @@ export interface TaskRecord {
   activeMs?: number;
   attemptSummary?: ModelAttempt[];
   search?: { provider: import('@daban/protocol').SearchProvider; revision: number };
+  contextRevision?: number;
   goalSession?: boolean;
   goal?: GoalProgress;
   planning?: boolean;
@@ -419,6 +433,10 @@ export class TaskJournal {
           !/^[a-zA-Z0-9_-]+$/.test(task.runId) ||
           !phases.has(task.phase) ||
           (task.conversationId !== undefined && !validAgentId(task.conversationId)) ||
+          (task.contextRevision !== undefined &&
+            (!Number.isSafeInteger(task.contextRevision) ||
+              task.contextRevision < 0 ||
+              task.contextRevision !== task.chatRevision)) ||
           (task.chatRevision !== undefined &&
             (!Number.isSafeInteger(task.chatRevision) || task.chatRevision < 0))
         )
@@ -521,6 +539,10 @@ export class TaskJournal {
       !validAgentId(value.bot) ||
       !/^[a-zA-Z0-9_-]+$/.test(value.runId) ||
       (value.conversationId !== undefined && !validAgentId(value.conversationId)) ||
+      (value.contextRevision !== undefined &&
+        (!Number.isSafeInteger(value.contextRevision) ||
+          value.contextRevision < 0 ||
+          value.contextRevision !== value.chatRevision)) ||
       (value.chatRevision !== undefined &&
         (!Number.isSafeInteger(value.chatRevision) || value.chatRevision < 0))
     )
@@ -530,6 +552,7 @@ export class TaskJournal {
       'attemptSummary',
       'bot',
       'chatRevision',
+      'contextRevision',
       'conversationId',
       'kind',
       'runId',
@@ -612,6 +635,25 @@ export class TaskJournal {
     return [...this.records.values()]
       .filter((task) => task.bot === bot)
       .map((task) => structuredClone(task));
+  }
+  conversations(): ConversationSummary[] {
+    const conversations = new Map<string, ConversationSummary>();
+    const ordered = [...this.records.values()].sort((a, b) => a.runId.localeCompare(b.runId));
+    for (const task of ordered) {
+      if (task.kind !== 'chat' || task.conversationId) continue;
+      const revision = task.chatRevision ?? 0;
+      const key = `${task.bot}:${revision}`;
+      const previous = conversations.get(key);
+      conversations.set(key, {
+        bot: task.bot,
+        revision,
+        title: previous?.title || task.prompt.replace(/\s+/g, ' ').trim().slice(0, 120),
+        updatedAt: task.createdAt || new Date(0).toISOString(),
+      });
+    }
+    return [...conversations.values()]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 1000);
   }
   notices(): RuntimeNotice[] {
     return [...this.records.values()]

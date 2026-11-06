@@ -85,6 +85,7 @@ export const suites = {
     'freeform.test',
     'budget.test',
     'agent-tools.test',
+    'bot-tools.test',
     'profiles.test',
     'copies.test',
     'copies-api.test',

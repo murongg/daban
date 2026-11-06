@@ -1,5 +1,5 @@
 import { disconnected, type RuntimeBridge } from '@daban/protocol';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../app/App';
@@ -61,7 +61,7 @@ it('switches the whole workspace immediately and retains the chosen language aft
   expect(document.documentElement.lang).toBe('en');
   await userEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
   await act(async () => {});
-  expect(await screen.findByRole('heading', { name: 'Start with your first Bot' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Start a conversation' })).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
   expect(selectControl('Interface language')).toHaveTextContent('English');
 });
@@ -85,8 +85,9 @@ it('keeps authored content and an unsent draft literal when translating app chro
     await setLocale('en');
   });
   expect(screen.getByRole('button', { name: 'Settings' })).toBeVisible();
-  expect(screen.getByText('设置')).toBeVisible();
-  expect(screen.getByText('需要确认')).toBeVisible();
+  const conversation = within(screen.getByRole('region', { name: /SYNTHETIC BOT/ }));
+  expect(conversation.getByText('设置')).toBeVisible();
+  expect(conversation.getByText('需要确认')).toBeVisible();
   expect(screen.getByRole('textbox', { name: 'Send message' })).toHaveValue(
     state.drafts['mock-bot'],
   );

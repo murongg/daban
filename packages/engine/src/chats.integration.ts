@@ -60,6 +60,33 @@ test('personal conversation boundaries and receipt/history reads require authent
       profiles.find((item: { id: string }) => item.id === bot),
       registered,
     );
+    await call('/api/bots', {
+      id: 'mock-ordinary',
+      name: 'Synthetic conversation',
+      kind: 'chat',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+    const olderState = await (await call('/api/state')).json();
+    assert.equal(
+      olderState.profiles.some((profile: { id: string }) => profile.id === 'mock-ordinary'),
+      false,
+    );
+    assert.equal(olderState.chats.conversations, undefined);
+    const modernState = await (
+      await fetch(app.url + '/api/state', {
+        headers: {
+          'x-prototype-token': app.token,
+          'x-daban-client-protocol': String(managedProtocol),
+        },
+      })
+    ).json();
+    assert.equal(
+      modernState.profiles.find((profile: { id: string }) => profile.id === 'mock-ordinary').kind,
+      'chat',
+    );
+    assert.deepEqual(modernState.chats.conversations, []);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

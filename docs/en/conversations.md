@@ -2,7 +2,9 @@
 
 [User guide](README.md) · [简体中文](../zh-CN/conversations.md)
 
-Select a Bot in the sidebar to chat privately. Questions, writing, and content organization do not require connecting a computer first. The Bot uses tools available for the task.
+Choose **New chat** in the sidebar to start an ordinary conversation without creating a Bot. Ordinary conversations can use authorized tools too. Questions, writing, and content organization do not require connecting a computer; connect one when a task needs a graphical application.
+
+Choose a Bot for a lasting role, memory, and reference library. An ordinary conversation keeps its own context and does not automatically include another chat or Bot's private material.
 
 ## Send a task
 
@@ -13,13 +15,19 @@ Select a Bot in the sidebar to chat privately. Questions, writing, and content o
 
 “Compare these two proposals by cost, restrictions, and unanswered questions; do not create files” is easier to verify than “Take a look.”
 
-The model selector reflects the Bot's configuration. Editing it does not switch a task already in progress. Responses can contain Markdown, tables, code, and supported diagrams. Open file outputs from the conversation or the files panel.
+Ordinary chats inherit the workspace model; Bot conversations inherit the Bot's model. The composer model selector applies to future messages in the current conversation. Edit the Bot profile to change its default. Model changes do not switch a running task. Responses can contain Markdown, tables, code, and supported diagrams. Open file outputs from the conversation or the files panel.
 
 ## New conversations and saved history
 
-Use **New conversation** in the header for a fresh context. Save lasting preferences to [Memory](memory.md) and reference material to [Knowledge](knowledge.md) instead of relying on a distant message.
+**Recent conversations** lists ordinary chats and Bot conversations together, with the Bot's name beside its topics. Selecting a conversation never runs tasks or replays tools. Titles come from the first message and can be renamed in the header menu. Custom titles and conversation model choices are stored on this device.
 
-Conversation history is read-only saved material. Opening it does not restore the exact historical model context, rerun tools, approve old operations, or recreate files. Historical file links read files still available now; they do not prove those files have never changed.
+Use **New conversation** in a Bot's header to start another topic. The previous topic retains its drafts, attachments, and approval choice. A Bot can have several conversations sharing its lasting role, [Memory](memory.md), and [Knowledge](knowledge.md).
+
+**Conversation history** also offers **Continue this conversation** for older topics. Sending a message explicitly uses the selected conversation's context. Changes to the model or tool authority may rebuild a compatible context from retained history; old permissions and tools are never replayed. Historical file links read files still available now and do not recreate files or prove they have never changed.
+
+Switching conversations or closing the client does not stop running background work. A Bot handles one task at a time: you can draft in another topic and send once it finishes, or choose **Open running conversation** to return. Ordinary chats have separate execution identities. Queued messages stay with their original topic and are not sent automatically after reopening the client.
+
+Ordinary chats, unified recent conversations, and historical continuation require an updated background component. Older components continue to support existing Bot chats and read-only history.
 
 ## Long conversations and drafts
 

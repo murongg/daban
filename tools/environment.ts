@@ -23,7 +23,7 @@ export const environmentVersions = {
   node: '24.22.1',
   dsh: '0.2.1-rc.3',
   // The host test binds this to managedProtocol; this helper must also load in the bare guest.
-  protocol: 45,
+  protocol: 46,
 };
 export const environmentAssets = {
   lima: {

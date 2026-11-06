@@ -13,6 +13,8 @@ A Bot is a persistent working companion with its own profile, private conversati
 
 A useful role describes the goal, output, and working style: “Help organize business documents; lead with conclusions and sources; ask when information is missing.” Role instructions do not grant tool or computer permissions.
 
+You can also ask “Create a Bot to organize reference material.” The built-in [bot-manager skill](skills.md#built-in-bot-manager) saves a new assistant in the sidebar, following the workspace model with empty private memory.
+
 ## Edit a Bot
 
 Open **Edit Bot profile** in the conversation header to change its name, role, and model. Role and model changes apply to future tasks, not work already underway. Avatar colors distinguish companions rather than capability levels.

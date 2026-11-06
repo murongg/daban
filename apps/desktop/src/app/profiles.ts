@@ -6,6 +6,7 @@ import type { Action, Bot, State } from './state';
 export function profileInput(bot: Bot, memory: string): BotProfileInput {
   return {
     id: agentId(bot.id),
+    ...(bot.kind ? { kind: bot.kind } : {}),
     name: bot.name,
     instructions: bot.role,
     memory,
@@ -41,6 +42,8 @@ export function useProfiles(
       if (
         bot.members ||
         bot.archived ||
+        // Opening an ordinary editor has no backend effect; its first explicit send registers the identity.
+        bot.kind === 'chat' ||
         known.has(agentId(bot.id)) ||
         state.profileRevisions[agentId(bot.id)] > 0
       )

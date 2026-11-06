@@ -607,6 +607,7 @@ export async function startPrototype({
           groupVersion >= 28 &&
           groupVersion <= managedProtocol;
         const coordinatedWork = groupVersion >= 39 && groupVersion <= managedProtocol;
+        const conversationAware = groupVersion >= 46 && groupVersion <= managedProtocol;
         const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
         if (mcp) {
           if (recovery && !recovery.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -1514,7 +1515,13 @@ export async function startPrototype({
           }
           if (url.pathname === '/api/bots') {
             if (!models) throw new Fault('STARTING', 503);
-            if (req.method === 'GET') return json(res, await models.profiles.list());
+            if (req.method === 'GET')
+              return json(
+                res,
+                (await models.profiles.list()).filter(
+                  (profile) => conversationAware || profile.kind !== 'chat',
+                ),
+              );
             if (req.method === 'POST')
               return json(res, await models.profiles.register(await body(req)));
             throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -1557,7 +1564,10 @@ export async function startPrototype({
               ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
               notices: await noticeStatus(models, groups),
               chats: models
-                ? await models.chats.status()
+                ? {
+                    ...(await models.chats.status()),
+                    ...(conversationAware ? { conversations: models.journal.conversations() } : {}),
+                  }
                 : { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' },
               ...(recovery ? { recovery: recovery.status() } : {}),
               mcp: models
@@ -1601,7 +1611,11 @@ export async function startPrototype({
                     documentParsing: !!host?.execution || platform() === 'linux',
                   }
                 : { available: false, documentParsing: false },
-              profiles: models ? await models.profiles.list() : [],
+              profiles: models
+                ? (await models.profiles.list()).filter(
+                    (profile) => conversationAware || profile.kind !== 'chat',
+                  )
+                : [],
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
               // Capability metadata stays outside saved-model status so older clients can still validate that status.
@@ -2100,7 +2114,8 @@ export async function startPrototype({
         path.join(modelDir, 'groups.sqlite'),
         {
           member: (bot) => models!.profiles.get(bot),
-          directory: () => models!.profiles.list(),
+          directory: async () =>
+            (await models!.profiles.list()).filter((profile) => profile.kind !== 'chat'),
           source: (bot, runId, group) => models!.groupSource(bot, runId, group),
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),
