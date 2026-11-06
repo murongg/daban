@@ -24,6 +24,7 @@ import {
   History,
   Info,
   Menu,
+  MessageSquare,
   MessageSquarePlus,
   Monitor,
   Moon,
@@ -47,7 +48,9 @@ import { Profile } from '../features/bots/Profile';
 import type { BotPreset } from '../features/bots/presets';
 import { ChatHistory } from '../features/chat/ChatHistory';
 import { Conversation } from '../features/chat/Conversation';
+import { conversationModel, recentConversations } from '../features/chat/conversations';
 import { NewChat } from '../features/chat/NewChat';
+import { RenameConversation } from '../features/chat/RenameConversation';
 import { pendingInserts } from '../features/chat/response';
 import { Computer, type ComputerSurface } from '../features/computer/Computer';
 import { Desktop } from '../features/computer/Desktop';
@@ -78,6 +81,7 @@ import { Sidebar } from './Sidebar';
 import {
   type Action,
   chatApprovalMode,
+  chatBoundary,
   chatRevision,
   initialState,
   lifecycleRequest,
@@ -93,6 +97,7 @@ import { Welcome } from './Welcome';
 import { Workspace } from './Workspace';
 
 type Modal =
+  | { type: 'chat-title'; bot: string; revision: number; title: string }
   | { type: 'chat'; bot: string }
   | {
       type: 'chat-history';
@@ -281,10 +286,61 @@ function Workbench() {
   const workspaceVisible =
     !!state.panel && (!historyOnly || ['computer', 'files', 'notes'].includes(state.panel));
   const chatVersion = bot ? chatRevision(state, bot.id, runtime.snapshot.chats) : 0;
+  const boundary = bot ? chatBoundary(state, bot.id, runtime.snapshot.chats) : 0;
+  const title =
+    bot && !bot.members
+      ? recentConversations(state, runtime.snapshot.chats).find(
+          (row) => row.bot === bot.id && row.revision === chatVersion,
+        )?.title
+      : undefined;
+  function createChat() {
+    if (
+      runtime.enabled &&
+      (runtime.snapshot.phase !== 'ready' || runtime.snapshot.protocolVersion < 46)
+    ) {
+      notify(
+        runtimeError(
+          new Error(runtime.snapshot.phase !== 'ready' ? 'RUNTIME_OFFLINE' : 'RUNTIME_TOO_OLD'),
+        ),
+      );
+      return;
+    }
+    dispatch({
+      type: 'create',
+      id: `chat_${crypto.randomUUID()}`,
+      name: t('conversations.untitled'),
+      role: '',
+      color: 'mint',
+      kind: 'chat',
+    });
+    setSidebarOpen(false);
+    closeModal();
+  }
+  function newConversation() {
+    if (bot?.kind === 'chat') createChat();
+    else if (bot) setModal({ type: 'chat', bot: bot.id });
+  }
   useEffect(() => {
-    if (runtime.snapshot.chats?.available)
-      dispatch({ type: 'chats', items: runtime.snapshot.chats.items });
-  }, [runtime.snapshot.chats, dispatch]);
+    if (runtime.snapshot.chats?.available) {
+      const chats = runtime.snapshot.chats;
+      dispatch({
+        type: 'chats',
+        keepSelection: runtime.snapshot.protocolVersion >= 46,
+        items:
+          runtime.snapshot.protocolVersion >= 46
+            ? state.bots
+                .filter((bot) => !bot.members)
+                .map(
+                  (bot) =>
+                    chats.items.find((chat) => chat.bot === agentId(bot.id)) ?? {
+                      bot: agentId(bot.id),
+                      revision: 0,
+                    },
+                )
+            : chats.items,
+      });
+    }
+  }, [runtime.snapshot.chats, runtime.snapshot.protocolVersion, state.bots, dispatch]);
   let subtitle = bot?.role || t('app.aiWorkCompanion');
   if (runtime.enabled && bot && !bot.members) {
     subtitle =
@@ -360,7 +416,9 @@ function Workbench() {
   function imagesUnsupported(botId: string, files: WorkspaceFile[]) {
     if (!files.some((file) => imageMime(file.upload?.name || file.name))) return false;
     const model =
-      state.bots.find((entry) => entry.id === botId)?.model || runtime.snapshot.model.model;
+      conversationModel(state, botId, chatRevision(state, botId, runtime.snapshot.chats)) ||
+      state.bots.find((entry) => entry.id === botId)?.model ||
+      runtime.snapshot.model.model;
     return (
       !isModelId(model) || !modelHasVision(model, modelCatalog(runtime.snapshot.model.connections))
     );
@@ -403,7 +461,25 @@ function Workbench() {
     const task: TaskRequest = state.runtimeRequests[botId] ||
       continued || {
         ...(runtime.snapshot.protocolVersion >= 29
-          ? { chatRevision: chatRevision(state, botId, runtime.snapshot.chats) }
+          ? { chatRevision: chatBoundary(state, botId, runtime.snapshot.chats) }
+          : {}),
+        ...(runtime.snapshot.protocolVersion >= 46
+          ? {
+              contextRevision: chatRevision(state, botId, runtime.snapshot.chats),
+              ...(conversationModel(
+                state,
+                botId,
+                chatRevision(state, botId, runtime.snapshot.chats),
+              )
+                ? {
+                    model: conversationModel(
+                      state,
+                      botId,
+                      chatRevision(state, botId, runtime.snapshot.chats),
+                    ),
+                  }
+                : {}),
+            }
           : {}),
         requestId: crypto.randomUUID(),
         ...(runtime.snapshot.protocolVersion >= 44
@@ -451,7 +527,7 @@ function Workbench() {
           !isTaskReceipt(receipt) ||
           receipt.requestId !== task.requestId ||
           receipt.prompt !== task.prompt ||
-          (receipt.chatRevision ?? 0) !== (task.chatRevision ?? 0)
+          (receipt.chatRevision ?? 0) !== (task.contextRevision ?? task.chatRevision ?? 0)
         )
           throw new Error('INVALID_TASK_ACK');
         dispatch({ type: 'runtime-task', bot: botId, task: receipt });
@@ -467,6 +543,7 @@ function Workbench() {
         error instanceof Error &&
         [
           'INVALID_TASK',
+          'RUNTIME_TOO_OLD',
           'CHAT_CONFLICT',
           'CHAT_REVISION_REQUIRED',
           'INVALID_COMMAND',
@@ -526,7 +603,21 @@ function Workbench() {
         : {}),
       ...(target && runtime.snapshot.protocolVersion >= 43 ? { retryTurn: target.id } : {}),
       ...(runtime.snapshot.protocolVersion >= 29
-        ? { chatRevision: task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats) }
+        ? {
+            chatRevision:
+              runtime.snapshot.protocolVersion >= 46
+                ? chatBoundary(state, botId, runtime.snapshot.chats)
+                : (task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats)),
+          }
+        : {}),
+      ...(runtime.snapshot.protocolVersion >= 46
+        ? {
+            contextRevision:
+              task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats),
+            ...(conversationModel(state, botId, task.chatRevision ?? 0)
+              ? { model: conversationModel(state, botId, task.chatRevision ?? 0) }
+              : {}),
+          }
         : {}),
       ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
     });
@@ -790,6 +881,7 @@ function Workbench() {
           setSidebarOpen(false);
           setModal({ type: 'create', group: !!group });
         }}
+        onNewChat={createChat}
         open={sidebarOpen}
         close={() => setSidebarOpen(false)}
       />
@@ -804,10 +896,16 @@ function Workbench() {
           </IconButton>
           {state.view === 'chat' && bot ? (
             <>
-              <Avatar bot={bot} />
+              {bot.kind === 'chat' ? (
+                <MessageSquare className="chat-symbol" aria-hidden="true" />
+              ) : (
+                <Avatar bot={bot} />
+              )}
               <div className="chat-identity">
-                <h1>{bot.name}</h1>
-                <p className="chat-subtitle">{subtitle}</p>
+                <h1>{bot.kind === 'chat' ? title || t('conversations.untitled') : bot.name}</h1>
+                <p className="chat-subtitle">
+                  {bot.kind === 'chat' ? t('conversations.plainContext') : subtitle}
+                </p>
               </div>
               <span className="spacer" />
               <div className="header-actions">
@@ -825,7 +923,7 @@ function Workbench() {
                       runtime.snapshot.protocolVersion < 29 ||
                       (historyOnly && !state.chatRequests[bot.id])
                     }
-                    onClick={() => setModal({ type: 'chat', bot: bot.id })}
+                    onClick={newConversation}
                   >
                     <MessageSquarePlus aria-hidden="true" />
                     <span>{t('common.newConversation')}</span>
@@ -845,6 +943,22 @@ function Workbench() {
                 <Actions
                   key={bot.id}
                   items={[
+                    ...(!bot.members && (!runtime.enabled || runtime.snapshot.protocolVersion >= 46)
+                      ? [
+                          {
+                            id: 'rename-conversation',
+                            label: t('conversations.rename'),
+                            icon: <Pencil />,
+                            onSelect: () =>
+                              setModal({
+                                type: 'chat-title',
+                                bot: bot.id,
+                                revision: chatVersion,
+                                title: title || t('conversations.untitled'),
+                              }),
+                          },
+                        ]
+                      : []),
                     ...(bot.members
                       ? [
                           {
@@ -866,25 +980,27 @@ function Workbench() {
                             onSelect: () => setModal({ type: 'archive', bot: bot.id }),
                           },
                         ]
-                      : [
-                          {
-                            id: 'history',
-                            label: t('chat.conversationHistory'),
-                            icon: <History />,
-                            disabled:
-                              !runtime.enabled ||
-                              runtime.snapshot.protocolVersion < 29 ||
-                              !chatVersion,
-                            onSelect: () => setModal({ type: 'chat-history', bot: bot.id }),
-                          },
-                          {
-                            id: 'profile',
-                            label: t('app.editBotProfile'),
-                            icon: <Pencil />,
-                            disabled: historyOnly,
-                            onSelect: () => setModal({ type: 'profile', bot: bot.id }),
-                          },
-                        ]),
+                      : bot.kind === 'chat'
+                        ? []
+                        : [
+                            {
+                              id: 'history',
+                              label: t('chat.conversationHistory'),
+                              icon: <History />,
+                              disabled:
+                                !runtime.enabled ||
+                                runtime.snapshot.protocolVersion < 29 ||
+                                !boundary,
+                              onSelect: () => setModal({ type: 'chat-history', bot: bot.id }),
+                            },
+                            {
+                              id: 'profile',
+                              label: t('app.editBotProfile'),
+                              icon: <Pencil />,
+                              disabled: historyOnly || bot.kind === 'chat',
+                              onSelect: () => setModal({ type: 'profile', bot: bot.id }),
+                            },
+                          ]),
                     {
                       id: 'theme',
                       label:
@@ -949,6 +1065,7 @@ function Workbench() {
                 />
               ) : (
                 <Conversation
+                  key={`${bot.id}:${chatVersion}`}
                   state={state}
                   bot={bot}
                   dispatch={dispatch}
@@ -1005,7 +1122,7 @@ function Workbench() {
                   }
                   onContinue={() => continueTask(bot.id)}
                   onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
-                  onNewChat={() => setModal({ type: 'chat', bot: bot.id })}
+                  onNewChat={newConversation}
                   pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
                   onModel={() => {
                     if (!bot.members && runtime.snapshot.protocolVersion >= 14)
@@ -1030,6 +1147,7 @@ function Workbench() {
             </div>
           ) : (
             <Welcome
+              chat={createChat}
               create={() => setModal({ type: 'create', group: false })}
               explore={() => dispatch({ type: 'view', view: 'gallery' })}
             />
@@ -1087,7 +1205,15 @@ function Workbench() {
           key={modal.bot}
           bot={state.bots.find((bot) => bot.id === modal.bot)!}
           revision={
-            chatRevision(state, modal.bot, runtime.snapshot.chats) + (modal.includeCurrent ? 1 : 0)
+            chatBoundary(state, modal.bot, runtime.snapshot.chats) + (modal.includeCurrent ? 1 : 0)
+          }
+          onContinue={
+            runtime.snapshot.protocolVersion >= 46 && !modal.runId
+              ? (revision) => {
+                  dispatch({ type: 'chat-select', bot: modal.bot, revision });
+                  closeModal();
+                }
+              : undefined
           }
           initialRevision={modal.initialRevision}
           runId={modal.runId}
@@ -1096,6 +1222,16 @@ function Workbench() {
           preview={previewFile}
           cached={state.messages[modal.bot]}
           cachedFiles={state.files}
+        />
+      )}
+      {modal?.type === 'chat-title' && (
+        <RenameConversation
+          title={modal.title}
+          close={closeModal}
+          save={(title) => {
+            dispatch({ type: 'chat-title', bot: modal.bot, revision: modal.revision, title });
+            closeModal();
+          }}
         />
       )}
       {modal?.type === 'group' && (
@@ -1115,6 +1251,18 @@ function Workbench() {
             bot={state.bots.find((bot) => bot.id === modal.bot)!}
             memory={state.memories[modal.bot]}
             version={state.profileRevisions[agentId(modal.bot)]}
+            conversation={
+              runtime.snapshot.protocolVersion >= 46
+                ? {
+                    revision: chatRevision(state, modal.bot, runtime.snapshot.chats),
+                    model: conversationModel(
+                      state,
+                      modal.bot,
+                      chatRevision(state, modal.bot, runtime.snapshot.chats),
+                    ),
+                  }
+                : undefined
+            }
             dispatch={dispatch}
             close={closeModal}
             notify={notify}

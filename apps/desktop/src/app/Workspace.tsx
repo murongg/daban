@@ -88,11 +88,14 @@ export function Workspace({
     notes: 'workspace.notesPurpose',
     routines: 'workspace.schedulesPurpose',
   };
-  const tabs = bot.members
-    ? allTabs.filter(([id]) => id === 'computer' || id === 'files')
-    : allTabs;
+  const tabs =
+    bot.members || bot.kind === 'chat'
+      ? allTabs.filter(([id]) => id === 'computer' || id === 'files')
+      : allTabs;
   const panel =
-    bot.members && !['computer', 'files'].includes(state.panel || '') ? 'computer' : state.panel;
+    (bot.members || bot.kind === 'chat') && !['computer', 'files'].includes(state.panel || '')
+      ? 'computer'
+      : state.panel;
   const [memoryStatus, setMemoryStatus] = useState<
     Record<string, { saving?: boolean; error?: string; conflict?: BotProfile }>
   >({});

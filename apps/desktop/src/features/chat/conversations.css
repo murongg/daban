@@ -1,0 +1,64 @@
+.sidebar-new-chat {
+  margin-bottom: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--canvas);
+  font-weight: 600;
+}
+.recent-conversations {
+  padding-bottom: 16px;
+}
+.recent-conversation {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.recent-conversation:hover {
+  background: var(--hover);
+}
+.recent-conversation.selected {
+  background: var(--selected);
+}
+.recent-conversation > svg {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.recent-conversation-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.recent-conversation-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 20px;
+}
+.recent-conversation-detail {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+.chat-symbol {
+  width: 24px;
+  height: 24px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.chat-identity h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

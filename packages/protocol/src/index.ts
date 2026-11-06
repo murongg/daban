@@ -38,7 +38,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 45;
+export const managedProtocol = 46;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1688,7 +1688,14 @@ export interface ChatStatus {
   available: boolean;
   revision: number;
   items: ChatState[];
+  conversations?: ConversationSummary[];
   error?: string;
+}
+export interface ConversationSummary {
+  bot: string;
+  revision: number;
+  title: string;
+  updatedAt: string;
 }
 export interface ChatPage {
   bot: string;
@@ -2010,7 +2017,9 @@ export function isChatAck(value: unknown): value is ChatAck {
 export function isChatStatus(value: unknown): value is ChatStatus {
   return (
     profileObject(value) &&
-    Object.keys(value).every((key) => ['available', 'revision', 'items', 'error'].includes(key)) &&
+    Object.keys(value).every((key) =>
+      ['available', 'revision', 'items', 'error', 'conversations'].includes(key),
+    ) &&
     typeof value.available === 'boolean' &&
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) >= 0 &&
@@ -2018,7 +2027,27 @@ export function isChatStatus(value: unknown): value is ChatStatus {
     value.items.length <= 10000 &&
     value.items.every(isChatState) &&
     new Set(value.items.map((item) => item.bot)).size === value.items.length &&
+    (value.conversations === undefined ||
+      (Array.isArray(value.conversations) &&
+        value.conversations.length <= 1000 &&
+        value.conversations.every(isConversationSummary) &&
+        new Set(value.conversations.map((item) => `${item.bot}:${item.revision}`)).size ===
+          value.conversations.length)) &&
     browserCode(value.error)
+  );
+}
+export function isConversationSummary(value: unknown): value is ConversationSummary {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) => ['bot', 'revision', 'title', 'updatedAt'].includes(key)) &&
+    validAgentId(value.bot) &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 0 &&
+    typeof value.title === 'string' &&
+    value.title.length <= 120 &&
+    !value.title.includes('\0') &&
+    typeof value.updatedAt === 'string' &&
+    Number.isFinite(Date.parse(value.updatedAt))
   );
 }
 export function isChatPage(value: unknown): value is ChatPage {
@@ -2126,6 +2155,7 @@ export function isGroupSend(value: unknown): value is GroupSend {
   );
 }
 export interface BotProfileInput {
+  kind?: 'chat';
   id: string;
   name: string;
   instructions: string;
@@ -2156,7 +2186,7 @@ export interface BotLifecycleAck {
   receipt: BotLifecycleState & { bot: string; error?: 'BOT_ARCHIVE_INCOMPLETE' };
   profile: BotProfile;
 }
-export type BotProfilePatch = Partial<Omit<BotProfileInput, 'id' | 'model'>> & {
+export type BotProfilePatch = Partial<Omit<BotProfileInput, 'id' | 'model' | 'kind'>> & {
   model?: ModelId | null;
 };
 export interface BotCopyRequest {
@@ -2607,14 +2637,15 @@ function profileFields(value: Record<string, unknown>) {
     !value.memory.includes('\0') &&
     typeof value.color === 'string' &&
     ['mint', 'violet', 'orange', 'blue', 'teal', 'pink'].includes(value.color) &&
-    (value.model === undefined || isModelId(value.model))
+    (value.model === undefined || isModelId(value.model)) &&
+    (value.kind === undefined || value.kind === 'chat')
   );
 }
 export function isBotProfileInput(value: unknown): value is BotProfileInput {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['id', 'name', 'instructions', 'memory', 'color', 'model'].includes(key),
+      ['id', 'name', 'instructions', 'memory', 'color', 'model', 'kind'].includes(key),
     ) &&
     profileFields(value)
   );
@@ -2635,6 +2666,7 @@ export function isBotProfile(value: unknown): value is BotProfile {
         'updatedAt',
         'archived',
         'lifecycle',
+        'kind',
       ].includes(key),
     ) &&
     profileFields(value) &&
@@ -3037,7 +3069,10 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
 }
 export interface TaskRequest {
   approvalMode?: ApprovalMode;
+  // The latest boundary fences the send; contextRevision explicitly selects a retained conversation.
   chatRevision?: number;
+  contextRevision?: number;
+  model?: ModelId;
   requestId: string;
   prompt: string;
   retryOf?: string;
