@@ -16,29 +16,3 @@ export const mcpStdioEntry = fileURLToPath(new URL('./mcp-stdio.js', import.meta
 
 export { startNativeAgent } from './host-server.js';
 export { LocalComputerClient, localComputerPaths } from './local-computer.js';
-
-export type {
-  Artifact,
-  Check,
-  Json,
-  Rule,
-  Terminal,
-  ToolAttempt,
-  Trajectory,
-  TrajectoryCapture,
-  TrajectoryCase,
-  TrajectoryReport,
-  TrajectorySuiteReport,
-  UnknownCode,
-  Verdict,
-} from './trajectory.js';
-export {
-  canonicalTrajectory,
-  compareTrajectoryReports,
-  evaluateTrajectory,
-  hashTrajectory,
-  normalizeTrajectory,
-  TrajectoryInputError,
-  trajectoryLimits,
-  validateTrajectoryCase,
-} from './trajectory.js';

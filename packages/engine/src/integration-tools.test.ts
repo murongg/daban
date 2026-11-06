@@ -26,7 +26,7 @@ async function ready(check: () => Promise<boolean>) {
   }
   expect.unreachable('Synthetic integration did not reach expected state');
 }
-async function fixture(start?: () => Promise<unknown>, beforeSend?: () => Promise<unknown>) {
+async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-integration-tools-'));
   const store = new Integrations(path.join(root, 'integrations.sqlite'));
   const interactions = new Interactions(path.join(root, 'interactions'));
@@ -52,21 +52,14 @@ async function fixture(start?: () => Promise<unknown>, beforeSend?: () => Promis
     effects = 0,
     unknown = false,
     changed = false;
-  const options = {
-    remote: async (
-      _config: { endpoint: string; bearer?: string },
-      options: import('./mcp-fetch.js').McpFetchOptions,
-    ) => {
+  const tools = new IntegrationTools(store, interactions, {
+    remote: async (_config, options) => {
       factories++;
       return {
-        start: async () => {
-          await start?.();
-        },
+        start: async () => {},
         tools: async () => (changed ? [{ ...offered[0], description: '合成目录已更新' }] : offered),
-        call: async (_name: string, args: Record<string, unknown>) => {
+        call: async (_name, args) => {
           await options.onDispatch?.();
-          await beforeSend?.();
-          options.authorize?.();
           effects++;
           if (unknown) throw new Error('synthetic lost reply');
           return { content: [{ type: 'text', text: `SYNTHETIC:${args.value}` }] };
@@ -74,8 +67,7 @@ async function fixture(start?: () => Promise<unknown>, beforeSend?: () => Promis
         close: async () => {},
       };
     },
-  };
-  const tools = new IntegrationTools(store, interactions, options);
+  });
   const run = {
     id: 'mock-run',
     bot: 'mock-a',
@@ -205,69 +197,6 @@ test('catalog drift after approval cannot execute the old reviewed tool definiti
     expect(f.counts().effects).toBe(0);
     expect((await f.store.capture(f.run.bot)).connections.length).toBe(0);
   } finally {
-    await f.close();
-  }
-});
-
-test('the granted MCP arguments are immutable while awaiting approval', async () => {
-  const f = await fixture();
-  try {
-    const args = { value: 'mock-reviewed' };
-    const pending = f.tools.invoke(f.run, f.alias, args, 'mock-immutable-call');
-    await ready(async () =>
-      (await f.interactions.list()).some((item) => item.status === 'pending'),
-    );
-    const card = (await f.interactions.list())[0];
-    args.value = 'mock-changed';
-    await f.interactions.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
-    expect(JSON.stringify(await pending)).toContain('SYNTHETIC:mock-reviewed');
-    expect(f.counts().effects).toBe(1);
-  } finally {
-    await f.close();
-  }
-});
-
-test('the final MCP send checks the original binding even if its change notification is delayed', async () => {
-  let signalReady: () => unknown = () => undefined;
-  let release: () => unknown = () => undefined;
-  const readyToSend = new Promise<unknown>((resolve) => {
-    signalReady = () => resolve(undefined);
-  });
-  const held = new Promise<unknown>((resolve) => {
-    release = () => resolve(undefined);
-  });
-  const f = await fixture(undefined, async () => {
-    signalReady();
-    await held;
-  });
-  try {
-    const pending = f.tools.invoke(
-      f.run,
-      f.alias,
-      { value: 'mock-binding-race' },
-      'mock-binding-race',
-    );
-    await ready(async () =>
-      (await f.interactions.list()).some((item) => item.status === 'pending'),
-    );
-    const card = (await f.interactions.list())[0];
-    await f.interactions.reply(f.run.bot, f.run.id, card.id, { kind: 'decision', allow: true });
-    await readyToSend;
-    const capture = f.run.integrations.connections[0];
-    f.store.onChange = undefined;
-    await f.store.bind(f.run.bot, {
-      connection: capture.connection,
-      configRevision: capture.revision,
-      bindingRevision: capture.bindingRevision,
-      catalogDigest: capture.catalogDigest,
-      tools: ['synthetic_echo'],
-      enabled: false,
-    });
-    release();
-    expect(JSON.stringify(await pending)).toContain('MCP_AUTHORITY_CHANGED');
-    expect(f.counts().effects).toBe(0);
-  } finally {
-    release();
     await f.close();
   }
 });

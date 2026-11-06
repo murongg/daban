@@ -18,11 +18,4 @@ export const migrations: Migration[] = [
     hash: '7a641c6090df0054bf0bbf989a21e40efbad5a2ff5775cabcf407cfb2c50dc05',
     name: '20261103131126_baseline',
   },
-  {
-    sql: ['ALTER TABLE `call_receipts` ADD `policyDecision` text;'],
-    bps: true,
-    folderMillis: 1793789605000,
-    hash: '401436292d92fb1b1d1fb7ba6be2c143b23af9a7b5520286780df027df71fde7',
-    name: '20261104105325_approval-decision',
-  },
 ];

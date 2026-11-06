@@ -31,10 +31,6 @@ test('human waiting does not cancel a model task, while the active execution bud
     const computerReturned = new Promise<unknown>((resolve) => {
       observed = () => resolve(undefined);
     });
-    let paused: () => unknown = () => undefined;
-    const computerWaiting = new Promise<undefined>((resolve) => {
-      paused = () => resolve(undefined);
-    });
     class FakeHarness {
       async start() {}
       async close() {
@@ -47,11 +43,6 @@ test('human waiting does not cancel a model task, while the active execution bud
           run: async () => {
             entered();
             const job = models.jobs.get('a')!;
-            const changed = job.onComputerWait;
-            job.onComputerWait = () => {
-              changed?.();
-              if (job.waitingForComputer) paused();
-            };
             await models.rpc('a', `Bearer ${job.token}`, {
               id: 'mock-budget-screen',
               method: 'tools/call',
@@ -89,7 +80,8 @@ test('human waiting does not cancel a model task, while the active execution bud
     });
     await models.start('a', { requestId: 'synthetic-budget-request', prompt: '合成等待任务' });
     await ready;
-    await computerWaiting;
+    for (let i = 0; i < 10 && !models.jobs.get('a')!.waitingForComputer; i++)
+      await new Promise(setImmediate);
     expect(models.status().bots.a.phase).toBe('paused');
     now = 30 * 60 * 1000;
     vi.advanceTimersByTime(30 * 60 * 1000);

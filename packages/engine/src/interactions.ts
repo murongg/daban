@@ -13,39 +13,6 @@ import {
 import { Fault } from './control.js';
 import { syncDirectory } from './durability.js';
 
-function storedInteraction(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const {
-    policyDecision: _decision,
-    purposeScope,
-    reply,
-    ...input
-  } = value as Record<string, unknown>;
-  let savedReply = reply;
-  if (reply && typeof reply === 'object' && 'confirmPurpose' in reply) {
-    const { confirmPurpose, ...decision } = reply as Record<string, unknown>;
-    if (
-      confirmPurpose !== true ||
-      decision.kind !== 'decision' ||
-      decision.allow !== true ||
-      input.decisionSource !== undefined ||
-      input.kind !== 'approval' ||
-      input.tool !== 'mcp_call' ||
-      !purposeScope ||
-      typeof purposeScope !== 'object' ||
-      !('taskId' in purposeScope) ||
-      !validAgentId(purposeScope.taskId) ||
-      !('turnId' in purposeScope) ||
-      !validAgentId(purposeScope.turnId)
-    )
-      return undefined;
-    savedReply = decision;
-  }
-  // Retired rule metadata is readable history only; new requests never use this projection.
-  const projected = { ...input, ...(savedReply === undefined ? {} : { reply: savedReply }) };
-  return isInteraction(projected) ? projected : undefined;
-}
-
 export class Interactions {
   readonly ready: Promise<unknown>;
   private records = new Map<string, Interaction>();
@@ -82,8 +49,9 @@ export class Interactions {
         if (!info.isFile() || info.isSymbolicLink() || info.size > 128 * 1024)
           throw new Error('invalid record');
         const value = JSON.parse(await readFile(file, 'utf8'));
-        const item = storedInteraction(value.request);
-        if (value.version !== 1 || !item || item.id !== id) throw new Error('invalid record');
+        if (value.version !== 1 || !isInteraction(value.request) || value.request.id !== id)
+          throw new Error('invalid record');
+        const item: Interaction = value.request;
         this.closed.add(`${item.bot}/${item.runId}`);
         if (item.status === 'pending') {
           item.status = 'interrupted';

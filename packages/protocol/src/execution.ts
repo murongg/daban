@@ -12,7 +12,6 @@ import { isSkillPackage, skillPackageCapability } from './skills.js';
 export const executionVersion = 1;
 export const modelExecutionCapability = 'model-capabilities-v1';
 export const browserTaskCapability = 'browser-task-v1';
-export const taskRunCapability = 'task-run-v1';
 export const executionCapabilities = [
   'workspace',
   'tools',
@@ -66,8 +65,6 @@ export interface ExecutionSnapshot {
   status: ComputerStatus;
 }
 export interface ExecutionRun {
-  /** Accepted task directory owner; id remains the physical attempt lease. */
-  taskRunId?: string;
   id: string;
   bot: string;
   workdir: string;
@@ -134,7 +131,6 @@ export function isExecutionRun(value: unknown): value is ExecutionRun {
     executionRecord(value) &&
     executionKeys(value, [
       'id',
-      'taskRunId',
       'bot',
       'workdir',
       'canonicalRoot',
@@ -143,7 +139,6 @@ export function isExecutionRun(value: unknown): value is ExecutionRun {
       'prompt',
       'limit',
     ]) &&
-    (value.taskRunId === undefined || validAgentId(value.taskRunId)) &&
     validAgentId(value.id) &&
     validAgentId(value.bot) &&
     absolute(value.workdir) &&
@@ -317,7 +312,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 6 ||
+    value.capabilities.length > executionCapabilities.length + 3 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
       [
@@ -325,9 +320,6 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         modelExecutionCapability,
         skillPackageCapability,
         browserTaskCapability,
-        // Existing executors may still advertise this retired capability during a Host-only upgrade.
-        'file-observation-read-v1',
-        taskRunCapability,
       ].includes(capability),
     ) ||
     !executionCapabilities.every(

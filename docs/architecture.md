@@ -41,5 +41,3 @@ Applications depend on the public exports of `@daban/engine` and `@daban/protoco
 The root `vitest.config.ts` owns all unit tests: the `desktop` project uses jsdom, while the `node` project runs compiled agent/engine tests and TypeScript tooling tests. Linux and browser integration tests retain the Node test runner. `apps/desktop/vite.config.ts` owns the renderer build, and `apps/desktop/electron/vite.config.ts` owns main/preload bundling. Root scripts continue building protocol, engine and applications in dependency order.
 
 See [development](development.md) for commands and [project guidelines](../AGENTS.md) for language, package-boundary and verification rules. Project code is licensed under [AGPL-3.0-only](../LICENSE); third-party notices retain their original licenses.
-
-Ordinary time schedules retain durable firing/request identity and historical provenance. File-change triggers and quiet result monitoring are retired; old file rules are disabled without deleting saved definitions or execution receipts. Persistent approval rules are also retired, while ordinary per-request approval remains in the existing owner paths.

@@ -452,10 +452,6 @@ test('a text-model browser wait excludes human time from the DSH budget and comp
   const ready = new Promise<unknown>((resolve) => {
     entered = () => resolve(undefined);
   });
-  let paused: () => unknown = () => undefined;
-  const computerWaiting = new Promise<undefined>((resolve) => {
-    paused = () => resolve(undefined);
-  });
   class Harness {
     async start() {}
     async close() {}
@@ -464,11 +460,6 @@ test('a text-model browser wait excludes human time from the DSH budget and comp
         id,
         run: async () => {
           const job = models.jobs.get('a')!;
-          const changed = job.onComputerWait;
-          job.onComputerWait = () => {
-            changed?.();
-            if (job.waitingForComputer) paused();
-          };
           entered();
           await models.rpc('a', `Bearer ${job.token}`, {
             id: 'mock-browser-read',
@@ -504,7 +495,8 @@ test('a text-model browser wait excludes human time from the DSH budget and comp
     const held = await fake.value.control.transfer('a', 0, 'human');
     await models.start('a', { requestId: 'mock-browser-budget', prompt: '读取当前合成网页。' });
     await ready;
-    await computerWaiting;
+    for (let i = 0; i < 10 && !models.jobs.get('a')!.waitingForComputer; i++)
+      await new Promise(setImmediate);
     expect(models.status().bots.a.phase).toBe('paused');
     now = 600000;
     vi.advanceTimersByTime(1000);

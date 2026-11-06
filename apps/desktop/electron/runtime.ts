@@ -5,7 +5,6 @@ import {
   botBundleLimit,
   botBundleText,
   botCopyKey,
-  diagnosticModel,
   disconnected,
   groupCopyKey,
   imageProtocol,
@@ -53,13 +52,10 @@ import {
   isMcpSaved,
   isMcpStatus,
   isMemoryPage,
-  isModelAccess,
-  isModelAttempts,
   isModelCheck,
   isModelConnection,
   isModelId,
   isModelInspection,
-  isModelSaved,
   isModelStatus,
   isNoteAvailability,
   isNoteCommand,
@@ -165,11 +161,6 @@ async function localRequest(url: string, init: RequestInit = {}): Promise<Respon
 
 function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   if (
-    (task.attemptSummary !== undefined && !isModelAttempts(task.attemptSummary)) ||
-    (task.rootRunId !== undefined && !validAgentId(task.rootRunId))
-  )
-    throw new Error('INVALID_RUNTIME_STATE');
-  if (
     task.chatRevision !== undefined &&
     (!Number.isSafeInteger(task.chatRevision) || task.chatRevision < 0)
   )
@@ -186,8 +177,6 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   )
     throw new Error('INVALID_RUNTIME_STATE');
   return {
-    ...(isModelAttempts(task.attemptSummary) ? { attemptSummary: task.attemptSummary } : {}),
-    ...(task.rootRunId ? { rootRunId: task.rootRunId } : {}),
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
@@ -215,8 +204,6 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       ? { inserts: task.inserts }
       : {}),
     history: (task.history || []).map((item) => ({
-      ...(isModelAttempts(item.attemptSummary) ? { attemptSummary: item.attemptSummary } : {}),
-      ...(validAgentId(item.rootRunId) ? { rootRunId: item.rootRunId } : {}),
       chatRevision: item.chatRevision,
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       runId: item.runId,
@@ -399,9 +386,6 @@ export class RuntimeClient {
         computerError?: unknown;
         sharedLogin?: boolean;
         model?: {
-          modelAccess?: unknown;
-          fallbackModel?: unknown;
-          probeRevision?: unknown;
           connections?: unknown;
           inspection?: unknown;
           revision?: number;
@@ -463,13 +447,6 @@ export class RuntimeClient {
         throw new Error('INVALID_RUNTIME_STATE');
       }
       if ((raw.clientProtocol || 0) >= 13 && !isModelStatus(settings))
-        throw new Error('INVALID_RUNTIME_STATE');
-      if (
-        (raw.model?.modelAccess !== undefined && !isModelAccess(raw.model.modelAccess)) ||
-        (raw.model?.fallbackModel !== undefined && !isModelId(raw.model.fallbackModel)) ||
-        (raw.model?.probeRevision !== undefined &&
-          (!Number.isSafeInteger(raw.model.probeRevision) || Number(raw.model.probeRevision) < 0))
-      )
         throw new Error('INVALID_RUNTIME_STATE');
       if (
         raw.model?.connections !== undefined &&
@@ -651,17 +628,6 @@ export class RuntimeClient {
               model: settings.model,
               provider: settings.provider,
               revision: settings.revision,
-              ...(raw.model?.revision === settings.revision && isModelAccess(raw.model.modelAccess)
-                ? {
-                    modelAccess: raw.model.modelAccess,
-                    ...(isModelId(raw.model.fallbackModel)
-                      ? { fallbackModel: raw.model.fallbackModel }
-                      : {}),
-                    ...(typeof raw.model.probeRevision === 'number'
-                      ? { probeRevision: raw.model.probeRevision }
-                      : {}),
-                  }
-                : {}),
               ...(raw.model?.inspection === true ? { inspection: true } : {}),
               ...(Array.isArray(raw.model?.connections) && raw.model.revision === settings.revision
                 ? { connections: raw.model.connections }
@@ -991,7 +957,6 @@ export class RuntimeClient {
       if (command.type === 'chat.history') {
         if (command.runId && state.protocolVersion < 30) throw new Error('RUNTIME_TOO_OLD');
         const value = await this.api('/api/chats/history', {
-          ...(state.model.modelAccess ? { modelAccess: true } : {}),
           bot: command.bot,
           revision: command.revision,
           before: command.before,
@@ -1463,58 +1428,6 @@ export class RuntimeClient {
           throw new Error('INVALID_RUNTIME_STATE');
       }
       return result;
-    }
-    if (
-      command.type === 'model.saved' ||
-      command.type === 'model.fallback.configure' ||
-      command.type === 'model.remove' ||
-      command.type === 'model.diagnose'
-    ) {
-      const state = await this.status();
-      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
-      if (!state.model.modelAccess) throw new Error('RUNTIME_TOO_OLD');
-      if (state.model.modelAccess.scope !== command.input.scope)
-        throw new Error('RUNTIME_SESSION_CHANGED');
-      const route =
-        command.type === 'model.fallback.configure'
-          ? 'fallback'
-          : command.type.slice('model.'.length);
-      const value = await this.api(`/api/model/${route}`, command.input);
-      if (command.type === 'model.fallback.configure') {
-        if (
-          !isModelStatus(value) ||
-          value.requestId !== command.input.requestId ||
-          value.revision !== command.input.revision + 1 ||
-          value.fallbackModel !== (command.input.model || undefined)
-        )
-          throw new Error('INVALID_RUNTIME_STATE');
-      } else {
-        if (
-          !isModelSaved(value) ||
-          value.scope !== command.input.scope ||
-          value.requestId !== command.input.requestId ||
-          value.revision !== command.input.revision
-        )
-          throw new Error('INVALID_RUNTIME_STATE');
-        if (
-          command.type === 'model.saved' &&
-          (value.connection !== command.input.connection || value.model !== command.input.model)
-        )
-          throw new Error('INVALID_RUNTIME_STATE');
-        if (
-          command.type === 'model.remove' &&
-          (value.kind !== 'remove' || value.connection !== command.input.connection)
-        )
-          throw new Error('INVALID_RUNTIME_STATE');
-        if (
-          command.type === 'model.diagnose' &&
-          (value.kind !== 'diagnose' ||
-            value.connection !== command.input.connection.id ||
-            value.model !== diagnosticModel(command.input))
-        )
-          throw new Error('INVALID_RUNTIME_STATE');
-      }
-      return value;
     }
     if (command.type === 'model.inspect') {
       const state = await this.status();

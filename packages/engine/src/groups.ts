@@ -4,7 +4,6 @@ import { chmod, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  type AutomationSource,
   type Group,
   type GroupActionAck,
   type GroupActionReceipt,
@@ -16,7 +15,6 @@ import {
   type GroupPage,
   type GroupSend,
   groupCopyKey,
-  isAutomationSource,
   isGroup,
   isGroupActionReceipt,
   isGroupActionRequest,
@@ -54,26 +52,12 @@ export type GroupReceipt = RunReceipt;
 export interface GroupRunner {
   member(bot: string): Promise<{ id: string; name: string; instructions?: string } | undefined>;
   directory?(): Promise<{ id: string; name: string; instructions?: string }[]>;
-  source?(
-    bot: string,
-    runId: string,
-    conversationId?: string,
-  ):
-    | {
-        intentId: string;
-        automation?: AutomationSource;
-      }
-    | undefined;
+  source?(bot: string, runId: string, conversationId?: string): { intentId: string } | undefined;
   running(bot: string): boolean;
   groupRunning?(group: string): boolean;
   admit?(bot: string): boolean;
   findRequest(bot: string, requestId: string): GroupReceipt | undefined;
-  start(
-    bot: string,
-    task: TaskRequest,
-    scope: ConversationScope,
-    automation?: AutomationSource,
-  ): Promise<unknown>;
+  start(bot: string, task: TaskRequest, scope: ConversationScope): Promise<unknown>;
   stopRequest(bot: string, requestId: string, conversationId: string): Promise<unknown>;
 }
 export interface GroupSource {
@@ -212,18 +196,12 @@ export class Groups {
     if (!row) throw new Fault('GROUP_CORRUPT');
     return { ...this.page(group), accepted: this.message(row) };
   }
-  private definition(row: { id: string; value: string }): Group & { project?: unknown } {
+  private definition(row: { id: string; value: string }): Group {
     let value: unknown;
     try {
       value = JSON.parse(String(row.value));
     } catch {
       throw new Fault('GROUP_CORRUPT');
-    }
-    if (object(value) && value.project !== undefined) {
-      const { project, ...snapshot } = value;
-      if (!isGroup(snapshot) || snapshot.id !== row.id) throw new Fault('GROUP_CORRUPT');
-      // Keep the retired identity internally; never project it as an ordinary group.
-      return { ...snapshot, project };
     }
     if (!isGroup(value) || value.id !== row.id) throw new Fault('GROUP_CORRUPT');
     return value;
@@ -232,9 +210,7 @@ export class Groups {
     if (!validAgentId(id)) throw new Fault('INVALID_GROUP', 400);
     const row = this.db.select().from(groupDefs).where(eq(groupDefs.id, id)).get();
     if (!row) throw new Fault('GROUP_NOT_FOUND', 404);
-    const group = this.definition(row);
-    if (group.project !== undefined) throw new Fault('PROJECT_RETIRED', 409);
-    return group;
+    return this.definition(row);
   }
   private actionRecord(id: string): GroupActionReceipt | undefined {
     const row = this.db.select().from(groupActions).where(eq(groupActions.id, id)).get();
@@ -410,8 +386,7 @@ export class Groups {
           .from(groupDefs)
           .orderBy(asc(groupDefs.id))
           .all()
-          .map((row) => this.definition(row))
-          .filter((group) => group.project === undefined),
+          .map((row) => this.definition(row)),
         ...(this.failure ? { error: this.failure } : {}),
       }));
     } catch {
@@ -426,12 +401,7 @@ export class Groups {
   notices(): Promise<RuntimeNotice[]> {
     return this.exclusive(() =>
       this.db
-        .select({
-          grp: groupTurns.grp,
-          id: groupTurns.id,
-          state: groupTurns.state,
-          automation: groupTurns.automation,
-        })
+        .select({ grp: groupTurns.grp, id: groupTurns.id, state: groupTurns.state })
         .from(groupTurns)
         .where(inArray(groupTurns.state, ['completed', 'failed', 'interrupted']))
         // rowid is the implicit insertion order; it is not a declared column.
@@ -446,12 +416,6 @@ export class Groups {
           phase: row.state as 'completed' | 'failed' | 'interrupted',
         })),
     );
-  }
-  private automationSource(value: string | null) {
-    if (value === null) return undefined;
-    const source: unknown = JSON.parse(value);
-    if (!isAutomationSource(source)) throw new Fault('GROUP_CORRUPT');
-    return source;
   }
   private async creationMembers(id: string, members: string[]) {
     if (await this.runner.member(id)) throw new Fault('GROUP_ID_CONFLICT');
@@ -529,8 +493,6 @@ export class Groups {
     };
     return this.exclusive(async () => {
       const identity = this.collaborationSource(source);
-      const origin = this.runner.source?.(source.bot, source.runId);
-      const automation = origin?.automation ? structuredClone(origin.automation) : undefined;
       const signature = JSON.stringify(value);
       const prior = this.db
         .select()
@@ -576,7 +538,6 @@ export class Groups {
               recipients: [...value.members, source.bot],
             },
             { bot: source.bot, name: author.name },
-            automation,
           );
           // The group, initial dispatch and durable origin are one effect, including after a crash or retry.
           this.db
@@ -594,7 +555,7 @@ export class Groups {
     if (!row) return undefined;
     const origin = createHash('sha256').update(groupCopyKey(request)).digest('hex');
     if (row.copyOrigin !== origin) throw new Fault('GROUP_COPY_CONFLICT');
-    return { request, state: 'complete', group: this.group(row.id) };
+    return { request, state: 'complete', group: this.definition(row) };
   }
   copyReceipt(input: unknown): Promise<GroupCopyReceipt> {
     if (!isGroupCopyRequest(input)) return Promise.reject(new Fault('INVALID_GROUP_COPY', 400));
@@ -646,7 +607,7 @@ export class Groups {
     const value = structuredClone(input);
     return this.exclusive(async () => {
       const prior = this.db.select().from(groupDefs).where(eq(groupDefs.id, value.id)).get();
-      if (prior) return this.group(prior.id);
+      if (prior) return this.definition(prior);
       await this.creationMembers(value.id, value.members);
       this.admitCreation(value.members);
       const now = new Date().toISOString();
@@ -798,11 +759,7 @@ export class Groups {
   private commitSend(value: GroupSend) {
     return this.db.transaction(() => this.enqueue(value), { behavior: 'immediate' });
   }
-  private enqueue(
-    value: GroupSend,
-    author?: { bot: string; name: string },
-    automation?: AutomationSource,
-  ) {
+  private enqueue(value: GroupSend, author?: { bot: string; name: string }) {
     const group = this.group(value.group),
       signature = JSON.stringify([
         value.prompt,
@@ -810,7 +767,6 @@ export class Groups {
         value.files || [],
         ...(value.revision === undefined ? [] : [value.revision]),
         ...(author ? [{ author: author.bot }] : []),
-        ...(automation ? [{ automation }] : []),
       ]);
     const prior = this.db
       .select()
@@ -882,8 +838,6 @@ export class Groups {
         created: now,
         state: 'pending',
         inputs: JSON.stringify(value.files || []),
-        // This belongs to the accepted turn, so a later independent human message never inherits its authority.
-        automation: automation ? JSON.stringify(automation) : null,
       })
       .run();
     value.recipients.forEach((bot, position) => {
@@ -972,16 +926,6 @@ export class Groups {
         .run();
   }
   private reconcile(row: Delivery, recovering = false) {
-    const saved = this.db.select().from(groupDefs).where(eq(groupDefs.id, row.grp)).get();
-    if (saved && this.definition(saved).project !== undefined) {
-      // Retire the queue record without cancelling or replaying a possibly dispatched guest effect.
-      this.db
-        .update(groupDeliveries)
-        .set({ state: 'interrupted', error: 'PROJECT_RETIRED' })
-        .where(eq(groupDeliveries.id, row.id))
-        .run();
-      return;
-    }
     const receipt = this.runner.findRequest(String(row.bot), requestId(row));
     if (!receipt && !recovering && row.state === 'claimed') return;
     this.db.transaction(
@@ -1127,7 +1071,7 @@ export class Groups {
         )
           break;
         const group = this.definition(definition);
-        if (group.archived || group.project !== undefined) continue;
+        if (group.archived) continue;
         const turn = this.db
           .select()
           .from(groupTurns)
@@ -1208,7 +1152,6 @@ export class Groups {
               files: this.inputs(group.id, String(turn.id)),
             },
             { id: group.id, context },
-            this.automationSource(turn.automation),
           );
           this.reconcile(row, true);
         } catch (error) {

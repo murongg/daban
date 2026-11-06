@@ -1,11 +1,10 @@
 import { BrowserWindow, type BrowserWindowConstructorOptions, ipcMain } from 'electron';
 import { trustedSender } from './ipc';
 
-// Native controls sit above DOM overlays; transparency lets modal backdrops cover their background.
-// Keep symbol colors aligned with the renderer's ink tokens, not the OS theme.
+// Keep these colors aligned with the renderer's canvas/ink tokens, not the OS theme.
 const themes = {
-  light: { color: '#00000000', symbolColor: '#252523' },
-  dark: { color: '#00000000', symbolColor: '#eaeae5' },
+  light: { color: '#ffffff', symbolColor: '#252523' },
+  dark: { color: '#1c1c1a', symbolColor: '#eaeae5' },
 };
 
 export function titlebarOptions(platform: NodeJS.Platform): BrowserWindowConstructorOptions {

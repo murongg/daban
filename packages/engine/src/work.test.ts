@@ -7,7 +7,6 @@ import { workKey } from '@daban/protocol';
 import { count, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test, vi } from 'vitest';
-import { errorCode } from './control.js';
 import { tables } from './database.js';
 import { secureDirectory } from './private-files.js';
 import { Work } from './work.js';
@@ -45,12 +44,9 @@ async function fixture() {
       store = new Work(file);
       await store.ready;
     },
-    async close(observe?: (phase: 'close.store' | 'close.remove' | 'close.complete') => unknown) {
-      observe?.('close.store');
+    async close() {
       await store.close();
-      observe?.('close.remove');
       await rm(temporary, { recursive: true, force: true });
-      observe?.('close.complete');
     },
   };
 }
@@ -429,31 +425,10 @@ test('item, operation receipt and global revision commit atomically and cancella
   }
 });
 
-test('stable bounded pages retain old items through edits, literal search and the retained-item quota', async (t) => {
-  const started = performance.now();
-  let phase = 'fixture',
-    writes = 0,
-    pages = 0,
-    lastError: string | undefined;
-  let before: number | undefined;
-  let quotaReceiptState: string | undefined;
-  const report = (event: string) => {
-    process.stderr.write(
-      `[work-bounds-phase] ${JSON.stringify({ event, phase, elapsedMs: Math.round(performance.now() - started), writes, pages, cursor: before, quotaReceiptState, lastError, aborted: t.signal.aborted })}\n`,
-    );
-  };
-  const mark = (value: string) => {
-    phase = value;
-    report('phase');
-  };
-  // Observe the runner's existing deadline without cancelling or shortening the real write loop.
-  const aborted = () => report('test.abort');
-  t.signal.addEventListener('abort', aborted, { once: true });
-  mark('fixture');
+test('stable bounded pages retain old items through edits, literal search and the retained-item quota', async () => {
   const f = await fixture();
   try {
-    mark('seed');
-    for (let index = 0; index < 1000; index++) {
+    for (let index = 0; index < 1000; index++)
       await f.store.write(
         {
           ...create(`mock-item-${index}`, `mock-create-${index}`),
@@ -465,18 +440,12 @@ test('stable bounded pages retain old items through edits, literal search and th
         },
         human,
       );
-      writes++;
-      if (writes === 100 || writes === 500 || writes === 1000) report('seed.progress');
-    }
-    mark('first-page');
     const first = await f.store.list({ filter: 'all', limit: 50 });
-    pages++;
     expect(first.items.length).toBe(50);
     expect.assert(first.nextBefore);
     expect(first.items[0].progress.length).toBe(200);
     expect(first.items[0].progressTruncated).toBe(true);
     expect(Object.hasOwn(first.items[0], 'description')).toBe(false);
-    mark('oldest-edit');
     await f.store.write(
       {
         id: 'mock-edit-oldest',
@@ -488,50 +457,26 @@ test('stable bounded pages retain old items through edits, literal search and th
       bot,
     );
     const ids = first.items.map((row) => row.id);
-    before = first.nextBefore;
-    mark('paging');
+    let before: number | undefined = first.nextBefore;
     while (before) {
       const next = await f.store.list({ filter: 'all', limit: 50, before });
-      pages++;
       ids.push(...next.items.map((row) => row.id));
       before = next.nextBefore;
     }
     expect(ids.length).toBe(1000);
     expect(new Set(ids).size).toBe(1000);
     expect.assert(ids.includes('mock-item-0'));
-    mark('literal-search');
     expect((await f.store.list({ text: '_100%' })).items.map((row) => row.id)).toStrictEqual([
       'mock-item-0',
     ]);
-    mark('quota');
     await expect(
       f.store.write(create('mock-over-limit', 'mock-over-operation'), human),
     ).rejects.toThrowError(/WORK_LIMIT/);
-    mark('quota-receipt');
-    const receipt = await f.store.receipt(create('mock-over-limit', 'mock-over-operation'), human);
-    quotaReceiptState = receipt.state;
-    report('quota.receipt');
-    expect(receipt.state).toBe('unknown');
-    mark('verified');
-  } catch (error) {
-    const code = errorCode(error);
-    lastError = code && /^[A-Z][A-Z0-9_]{0,79}$/.test(code) ? code : 'UNCLASSIFIED';
-    report('error');
-    throw error;
+    expect(
+      (await f.store.receipt(create('mock-over-limit', 'mock-over-operation'), human)).state,
+    ).toBe('unknown');
   } finally {
-    mark('close');
-    try {
-      await f.close(mark).catch((error: unknown) => {
-        const code = errorCode(error);
-        lastError = code && /^[A-Z][A-Z0-9_]{0,79}$/.test(code) ? code : 'UNCLASSIFIED';
-        report('error');
-        throw error;
-      });
-      mark('closed');
-    } finally {
-      t.signal.removeEventListener('abort', aborted);
-      report('test.finished');
-    }
+    await f.close();
   }
 });
 

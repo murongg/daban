@@ -1,11 +1,4 @@
-import {
-  agentId,
-  agentTask,
-  isModelId,
-  modelRecoveryBlocked,
-  type RuntimeTask,
-  recoveryBlocked,
-} from '@daban/protocol';
+import { agentId, agentTask, isModelId, type RuntimeTask, recoveryBlocked } from '@daban/protocol';
 import {
   ArrowUp,
   ArrowUpToLine,
@@ -449,22 +442,14 @@ export function Conversation({
           ['failed', 'stopped', 'interrupted'].includes(task.phase) &&
           task.prompt && (
             <div className="live-task" role="status">
-              <span>
-                {t(
-                  modelRecoveryBlocked(task)
-                    ? 'models.unknownToolRecovery'
-                    : 'chat.taskInterruptedSavedFilesRetained',
-                )}
-              </span>
-              {!modelRecoveryBlocked(task) && (
-                <button
-                  type="button"
-                  disabled={pending || runtime.snapshot.phase !== 'ready'}
-                  onClick={onContinue}
-                >
-                  {t(task.attemptSummary ? 'models.recoverSelected' : 'chat.continueWorking')}
-                </button>
-              )}
+              <span>{t('chat.taskInterruptedSavedFilesRetained')}</span>
+              <button
+                type="button"
+                disabled={pending || runtime.snapshot.phase !== 'ready'}
+                onClick={onContinue}
+              >
+                {t('chat.continueWorking')}
+              </button>
             </div>
           )}
         {live && task?.running && (

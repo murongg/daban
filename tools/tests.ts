@@ -4,7 +4,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const suites = {
   runtime: [
-    'approval-dispatch.test',
     'host-vm.test',
     'reboot-private.test',
     'vm-config.test',
@@ -48,13 +47,6 @@ export const suites = {
     'worker.test',
     'desktop.test',
     'settings.test',
-    'model-access.test',
-    'model-access-api.test',
-    'model-failure.test',
-    'model-fallback.test',
-    'model-executor.test',
-    'model-fallback.integration',
-    'discovery.test',
     'inference.test',
     'computer-tools.test',
     'model.test',
@@ -63,7 +55,6 @@ export const suites = {
     'dsh.test',
     'prompt-cache.test',
     'tasks.test',
-    'trajectory.test',
     'transcripts.test',
     'transcripts-model.test',
     'transcripts-api.test',

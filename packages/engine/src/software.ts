@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
 import { request } from 'node:http';
-import { isDeepStrictEqual } from 'node:util';
 import {
   isSoftwarePackages,
   isSoftwareReceipt,
@@ -121,7 +120,7 @@ const result = (value: unknown, isError = false): ToolResult => ({
 });
 function failure(error: unknown, fallback: string) {
   const code = errorCode(error);
-  return code && /^(SOFTWARE|APPROVAL|PROJECT)_[A-Z_]+$/.test(code) ? code : fallback;
+  return code && /^SOFTWARE_[A-Z_]+$/.test(code) ? code : fallback;
 }
 function delay(milliseconds: number, signal: AbortSignal) {
   return new Promise<undefined>((resolve, reject) => {
@@ -243,7 +242,7 @@ export class SoftwareTools {
         // An existing decision is a receipt to inspect, never fresh authority to dispatch again.
         return await this.inspect(previous.plan);
       }
-      const prepared = structuredClone(await this.backend.plan(packages));
+      const prepared = await this.backend.plan(packages);
       this.live(run);
       if (prepared.phase === 'installed') return result({ receipt: prepared, shared: true });
       if (
@@ -276,23 +275,6 @@ export class SoftwareTools {
         !approval.reply.allow
       )
         throw new Fault('SOFTWARE_APPROVAL_REJECTED');
-      if (
-        approval.kind !== 'approval' ||
-        approval.tool !== 'software_install' ||
-        !isDeepStrictEqual(approval.plan, prepared.plan) ||
-        Date.parse(prepared.plan.expiresAt) <= Date.now()
-      )
-        throw new Fault('SOFTWARE_PLAN_CHANGED');
-      // Persisted consent never authorizes a changed package/dependency plan.
-      const current = await this.backend.receipt(prepared.plan.id);
-      this.live(run);
-      if (
-        !isDeepStrictEqual(current.plan, prepared.plan) ||
-        Date.parse(prepared.plan.expiresAt) <= Date.now()
-      )
-        throw new Fault('SOFTWARE_PLAN_CHANGED');
-      if (current.phase !== 'planned')
-        return result({ receipt: current, shared: true }, current.phase !== 'installed');
       // The privileged broker owns installation after dispatch; task stop must not kill dpkg halfway through.
       dispatched = true;
       let receipt = await this.backend.install(prepared.plan);

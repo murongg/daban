@@ -81,7 +81,7 @@ test('global recovery rejects active work without fencing its tools and prevents
     expect(models.admit('mock-b')).toBe(true);
     release();
     await models.jobs.get('mock-a')!.done;
-    const original = models.journal.recovery.bind(models.journal);
+    const original = models.journal.read.bind(models.journal);
     let entered: () => unknown = () => undefined;
     const enteredRead = new Promise((resolve) => {
       entered = () => resolve(undefined);
@@ -89,7 +89,7 @@ test('global recovery rejects active work without fencing its tools and prevents
     const hold = new Promise((resolve) => {
       continueRead = () => resolve(undefined);
     });
-    models.journal.recovery = async (bot, runId) => {
+    models.journal.read = async (bot, runId) => {
       entered();
       await hold;
       return original(bot, runId);
@@ -110,7 +110,7 @@ test('global recovery rejects active work without fencing its tools and prevents
     });
     continueRead();
     await rejected;
-    models.journal.recovery = original;
+    models.journal.read = original;
     expect(models.findRequest('mock-a', 'mock-late-job')).toBe(undefined);
     expect(models.admit('mock-a')).toBe(false);
     expect(models.admit('mock-b')).toBe(false);

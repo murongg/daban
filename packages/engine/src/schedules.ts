@@ -3,8 +3,6 @@ import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  type AutomationSource,
-  isAutomationSource,
   isScheduleInput,
   isSchedulePatch,
   isScheduleRule,
@@ -27,12 +25,7 @@ interface Runner {
     bot: string,
     id: string,
   ): { runId: string; phase: string; error?: string } | undefined;
-  start(
-    bot: string,
-    task: { requestId: string; prompt: string },
-    conversation?: undefined,
-    source?: AutomationSource,
-  ): Promise<unknown>;
+  start(bot: string, task: { requestId: string; prompt: string }): Promise<unknown>;
 }
 type Row = typeof schedules.$inferSelect;
 type Firing = typeof firings.$inferSelect;
@@ -116,32 +109,7 @@ export class Schedules {
         throw new Fault('SCHEDULE_CORRUPT');
       throw error;
     }
-    this.db.transaction(
-      () => {
-        for (const row of this.db.select().from(schedules).all()) {
-          const input: unknown = JSON.parse(row.input);
-          if (
-            input &&
-            typeof input === 'object' &&
-            'rule' in input &&
-            input.rule &&
-            typeof input.rule === 'object' &&
-            'kind' in input.rule &&
-            input.rule.kind === 'file'
-          ) {
-            // Retire obsolete triggers without erasing their saved input or uncertain execution receipts.
-            if (!row.deleted || row.enabled)
-              this.db
-                .update(schedules)
-                .set({ enabled: 0, deleted: 1, revision: sql`${schedules.revision} + 1` })
-                .where(eq(schedules.id, row.id))
-                .run();
-            this.cancelPending(row.id);
-          } else this.decode(row);
-        }
-      },
-      { behavior: 'immediate' },
-    );
+    for (const row of this.db.select().from(schedules).all()) this.decode(row);
     // A prior claim may have started the model before crashing. Inspect its receipt; never issue it again.
     for (const row of this.active()) this.reconcile(row, true);
   }
@@ -443,7 +411,7 @@ export class Schedules {
       ),
     );
   }
-  private enqueue(row: Row, id: string, occurrence: string, trigger: 'time' | 'manual' = 'time') {
+  private enqueue(row: Row, id: string, occurrence: string) {
     const existing = this.firingRow(id);
     if (existing) return this.firing(existing);
     const { input } = this.decode(row);
@@ -463,13 +431,6 @@ export class Schedules {
         created: new Date(this.clock()).toISOString(),
         state: pending ? 'coalesced' : 'pending',
         prompt,
-        source: JSON.stringify({
-          scheduleId: row.id,
-          firingId: id,
-          configRevision: row.revision,
-          trigger,
-          policy: { kind: 'all' },
-        } satisfies AutomationSource),
       })
       .run();
     return this.firing(this.firingRow(id)!);
@@ -485,7 +446,7 @@ export class Schedules {
           if (previous) return this.firing(previous);
           const row = this.row(id);
           this.requireAdmission(String(row.bot));
-          return this.enqueue(row, key, new Date(this.clock()).toISOString(), 'manual');
+          return this.enqueue(row, key, new Date(this.clock()).toISOString());
         },
         { behavior: 'immediate' },
       ),
@@ -553,8 +514,6 @@ export class Schedules {
         const bot = String(row.bot);
         if (this.options.runner.admit?.(bot) === false) continue;
         if (this.options.runner.running(bot)) continue;
-        const owner = this.db.select().from(schedules).where(eq(schedules.id, row.schedule)).get();
-        if (!owner || owner.deleted) continue;
         // Commit the claim before model effects. Only a definite busy rejection is safe to requeue.
         if (
           !this.db
@@ -565,18 +524,10 @@ export class Schedules {
         )
           continue;
         try {
-          const source: unknown = row.source ? JSON.parse(row.source) : undefined;
-          if (source !== undefined && !isAutomationSource(source))
-            throw new Fault('SCHEDULE_CORRUPT');
-          await this.options.runner.start(
-            bot,
-            {
-              requestId: `schedule-${row.id}`,
-              prompt: String(row.prompt),
-            },
-            undefined,
-            source,
-          );
+          await this.options.runner.start(bot, {
+            requestId: `schedule-${row.id}`,
+            prompt: String(row.prompt),
+          });
           this.reconcile(row, true);
         } catch (error) {
           const code = errorCode(error);

@@ -3,7 +3,6 @@ import path from 'node:path';
 import type {
   BotProfile,
   GoalProgress,
-  ModelAttempt,
   ModelId,
   ReplyStream,
   RunInsert,
@@ -16,17 +15,13 @@ import type {
   TaskTrace,
 } from '@daban/protocol';
 import {
-  type AutomationSource,
   isApprovalMode,
-  isAutomationSource,
   isGoalProgress,
-  isModelAttempts,
   isReplyStream,
   isRunInsert,
   isRunTurn,
   isSessionStats,
   isTaskFile,
-  modelRecoveryBlocked,
   turnLimit,
   validAgentId,
 } from '@daban/protocol';
@@ -252,10 +247,6 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
-  activeMs?: number;
-  attemptSummary?: ModelAttempt[];
-  automation?: AutomationSource;
-  project?: unknown;
   goalSession?: boolean;
   goal?: GoalProgress;
   planning?: boolean;
@@ -383,41 +374,15 @@ export class TaskJournal {
         )
           continue;
         if (task.running || ['starting', 'running', 'paused', 'waiting'].includes(task.phase)) {
-          // A crash loses exact human-wait timing; charge elapsed wall time conservatively instead of resetting the root budget.
-          const elapsed = Date.now() - Date.parse(task.createdAt || '');
-          if (Number.isFinite(elapsed) && elapsed >= 0)
-            task.activeMs = Math.min(
-              300000,
-              (Number.isSafeInteger(task.activeMs) && task.activeMs >= 0 ? task.activeMs : 0) +
-                elapsed,
-            );
           task.phase = 'interrupted';
           task.running = false;
           task.error = 'TASK_INTERRUPTED';
         }
-        if (task.automation !== undefined && !isAutomationSource(task.automation)) continue;
         if (task.goalSession !== undefined && typeof task.goalSession !== 'boolean')
           delete task.goalSession;
         if (task.goal !== undefined && !isGoalProgress(task.goal)) delete task.goal;
         if (task.planning !== undefined && typeof task.planning !== 'boolean') delete task.planning;
         if (task.stats !== undefined && !isSessionStats(task.stats)) delete task.stats;
-        if (
-          task.activeMs !== undefined &&
-          (!Number.isSafeInteger(task.activeMs) || task.activeMs < 0)
-        )
-          delete task.activeMs;
-        if (task.attemptSummary !== undefined && !isModelAttempts(task.attemptSummary))
-          delete task.attemptSummary;
-        if (task.phase === 'interrupted' && task.attemptSummary)
-          task.attemptSummary = task.attemptSummary.map((attempt: ModelAttempt) =>
-            ['starting', 'running'].includes(attempt.phase)
-              ? {
-                  ...attempt,
-                  phase: 'interrupted',
-                  fence: attempt.fence === 'clean' ? 'clean' : 'unknown',
-                }
-              : attempt,
-          );
         if (task.response !== undefined && !isReplyStream(task.response)) delete task.response;
         if (
           task.elapsedMs !== undefined &&
@@ -453,15 +418,6 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
-    if (
-      value.activeMs !== undefined &&
-      (!Number.isSafeInteger(value.activeMs) || value.activeMs < 0)
-    )
-      throw new Fault('INVALID_TASK_RECORD', 400);
-    if (value.attemptSummary !== undefined && !isModelAttempts(value.attemptSummary))
-      throw new Fault('INVALID_TASK_RECORD', 400);
-    if (value.automation !== undefined && !isAutomationSource(value.automation))
-      throw new Fault('INVALID_AUTOMATION_SOURCE', 400);
     if (value.goalSession !== undefined && typeof value.goalSession !== 'boolean')
       throw new Fault('INVALID_GOAL_STATE', 400);
     if (value.goal !== undefined && !isGoalProgress(value.goal))
@@ -481,11 +437,6 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
-      'activeMs',
-      'attemptSummary',
-      'automation',
-      'approvalMode',
-      'project',
       'bot',
       'chatRevision',
       'conversationId',
@@ -592,48 +543,5 @@ export class TaskJournal {
     await this.writing;
     const record = this.records.get(runId);
     return record?.bot === bot ? structuredClone(record) : undefined;
-  }
-  async recovery(bot: string, runId: string) {
-    await this.writing;
-    const record = this.records.get(runId);
-    if (record?.bot !== bot) return undefined;
-    const intentId = record.intentId || record.runId;
-    let toolCount = 0;
-    let activeMs = 0;
-    let blocked = false;
-    let contribution = { toolCount: 0, activeMs: 0 };
-    for (const task of this.records.values()) {
-      if (task.bot !== bot || (task.intentId || task.runId) !== intentId) continue;
-      if (
-        task.conversationId !== record.conversationId ||
-        (!record.conversationId && (task.chatRevision ?? 0) !== (record.chatRevision ?? 0))
-      )
-        throw new Fault('INVALID_RETRY', 400);
-      const counters = [
-        task.toolCount ?? 0,
-        task.executedCount ?? 0,
-        task.activeMs ?? task.elapsedMs ?? 0,
-      ];
-      if (counters.some((value) => !Number.isSafeInteger(value) || value < 0))
-        throw new Fault('INVALID_RETRY', 400);
-      // Records contribute once per run, independently of clocks or the selected retry ancestor.
-      // Older cumulative snapshots may overcharge; never reinterpret them as a lower/empty budget.
-      const tools = Math.max(counters[0], counters[1], taskActivity(task).executedCount);
-      toolCount += tools;
-      activeMs += counters[2];
-      if (task.runId === record.runId) contribution = { toolCount: tools, activeMs: counters[2] };
-      if (!Number.isSafeInteger(toolCount) || !Number.isSafeInteger(activeMs))
-        throw new Fault('INVALID_RETRY', 400);
-      // Historical scope must not become ordinary workspace authority after retirement.
-      blocked ||= task.project !== undefined || modelRecoveryBlocked(task);
-    }
-    return {
-      record: structuredClone(record),
-      intentId,
-      toolCount,
-      activeMs,
-      blocked,
-      contribution,
-    };
   }
 }

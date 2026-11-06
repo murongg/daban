@@ -19,7 +19,6 @@ export interface CommandRun {
   sessionId?: string;
   conversationId?: string;
   workdir: string;
-  canonicalRoot?: string;
   abort: AbortController;
   task?: { prompt: string; approvalMode?: ApprovalMode };
   waitingForComputer?: boolean;
@@ -141,7 +140,7 @@ export class Commands {
     tool: string,
     args: Record<string, unknown>,
     wireId: string | undefined,
-    dispatch: (assertAuthority?: () => unknown) => Promise<ToolResult>,
+    dispatch: () => Promise<ToolResult>,
   ): Promise<ToolResult> {
     let request: CommandReview;
     try {
@@ -221,7 +220,7 @@ export class Commands {
     id: string,
     fingerprint: string,
     request: CommandReview,
-    dispatch: (assertAuthority?: () => unknown) => Promise<ToolResult>,
+    dispatch: () => Promise<ToolResult>,
   ) {
     let dispatched = false;
     try {
@@ -292,16 +291,6 @@ export class Commands {
         }
       }
       this.live(run);
-      const assertAuthority = () => {
-        try {
-          this.live(run);
-        } catch (error) {
-          // This callback runs before the transport sends; a failed guard proves no effect was issued.
-          dispatched = false;
-          throw error;
-        }
-      };
-      assertAuthority();
       // Persist the one-use claim before crossing into the guest; a restart may only inspect this receipt.
       const claimed = this.db!.update(commands)
         .set({ phase: 'dispatching', decision })
@@ -310,9 +299,8 @@ export class Commands {
       if (Number(claimed.changes) !== 1) return failure('COMMAND_OUTCOME_UNKNOWN');
       await new Promise((resolve) => setImmediate(resolve));
       this.live(run);
-      assertAuthority();
       dispatched = true;
-      const result = await dispatch(assertAuthority);
+      const result = await dispatch();
       return this.finish(id, 'settled', result);
     } catch (error) {
       const code = run.abort.signal.aborted

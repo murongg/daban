@@ -11,11 +11,4 @@ export const migrations: Migration[] = [
     hash: 'e6e3aae710784db5d6a24d780c31a76ed30e24e479d6a994b04cda48f45eb39e',
     name: '20261103131127_baseline',
   },
-  {
-    sql: ['ALTER TABLE `commands` ADD `policyDecision` text;'],
-    bps: true,
-    folderMillis: 1793789456000,
-    hash: '82c5dd2761419bfdf36e990badd134df2382eb1b253a774918d3a0ea47dd17a6',
-    name: '20261104105056_approval-decision',
-  },
 ];

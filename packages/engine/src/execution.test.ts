@@ -39,31 +39,6 @@ test('executor snapshots negotiate the bounded browser task capability without a
   ).toBe(false);
 });
 
-test('an existing executor can still serve ordinary file reads after a retired capability is removed', async () => {
-  const remote = new RemoteExecutor({
-    url: 'http://127.0.0.1:12345/exec',
-    token: 'synthetic-token',
-    fetcher: async (_url, options) => {
-      const request = JSON.parse(String(options?.body));
-      return Response.json({
-        role: 'executor',
-        version: 1,
-        id: request.id,
-        boot: 'mock-boot',
-        ok: true,
-        value:
-          request.method === 'computer.snapshot'
-            ? { ...snapshot, capabilities: [...snapshot.capabilities, 'file-observation-read-v1'] }
-            : 'SYNTHETIC FILE CONTENT',
-      });
-    },
-  });
-  await remote.ready;
-  expect(await remote.call('workspace.read', { root: '/mock/workspace', path: 'mock.txt' })).toBe(
-    'SYNTHETIC FILE CONTENT',
-  );
-});
-
 test('remote executor rejects authority-shaped or mismatched role snapshots', async () => {
   for (const value of [
     { ...snapshot, role: 'agent' },

@@ -128,14 +128,7 @@ test.each(['auto', 'full'] as const)(
         prompt: '先询问合成选择，再执行计划。',
         approvalMode,
       });
-      await Promise.race([
-        ready,
-        models.jobs.get('mock-bot')!.done!.then(() => {
-          throw new Error(
-            `Synthetic run ended before interaction: ${models!.jobs.get('mock-bot')!.error}`,
-          );
-        }),
-      ]);
+      await ready;
       expect(models.status().bots['mock-bot'].phase).toBe('waiting');
       expect(models.status().bots.b.running).toBe(false);
       await models.interactions.reply('mock-bot', models.jobs.get('mock-bot')!.id, 'mock-request', {

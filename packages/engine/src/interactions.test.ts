@@ -20,68 +20,6 @@ test('health keeps corrupt interaction records private and retained', async () =
   }
 });
 
-test('historical MCP consent stays readable after restart but cannot approve a new call', async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-historical-consent-'));
-  const input = {
-    id: 'mock-historical',
-    sessionId: 'mock-session',
-    kind: 'approval',
-    tool: 'mcp_call',
-    connection: 'mock-connection',
-    configRevision: 1,
-    catalogDigest: 'a'.repeat(64),
-    name: 'Synthetic connection',
-    origin: 'https://example.test',
-    operation: 'synthetic_write',
-    arguments: '{"value":"SYNTHETIC"}',
-    inputHash: 'b'.repeat(64),
-  };
-  const historical = {
-    ...input,
-    bot: 'mock-bot',
-    runId: 'mock-old-run',
-    status: 'resolved',
-    reply: { kind: 'decision', allow: true, confirmPurpose: true },
-    purposeScope: { taskId: 'mock-task', turnId: 'mock-turn' },
-    policyDecision: { effect: 'allow', source: 'rule', requestHash: 'c'.repeat(64) },
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-01-01T00:00:00Z',
-  };
-  try {
-    const file = path.join(directory, `${input.id}.json`);
-    const bytes = JSON.stringify({ version: 1, request: historical });
-    await writeFile(file, bytes);
-    const store = new Interactions(directory);
-    expect(await store.status()).toEqual({ available: true, corrupt: 0 });
-    expect(await store.list()).toEqual([
-      expect.objectContaining({
-        id: input.id,
-        status: 'resolved',
-        reply: { kind: 'decision', allow: true },
-      }),
-    ]);
-    expect(await readFile(file, 'utf8')).toBe(bytes);
-    await writeFile(
-      path.join(directory, 'mock-invalid.json'),
-      JSON.stringify({
-        version: 1,
-        request: { ...historical, id: 'mock-invalid', decisionSource: 'policy' },
-      }),
-    );
-    const reopened = new Interactions(directory);
-    expect(await reopened.status()).toEqual({ available: true, corrupt: 1 });
-    expect(await reopened.list()).toHaveLength(1);
-    const fresh = await store.open('mock-bot', 'mock-new-run', { ...input, id: 'mock-new-call' });
-    expect(fresh.status).toBe('pending');
-    await expect(
-      store.reply('mock-other', 'mock-new-run', fresh.id, { kind: 'decision', allow: true }),
-    ).rejects.toMatchObject({ code: 'INTERACTION_NOT_FOUND' });
-    await store.endRun('mock-bot', 'mock-new-run');
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 const question = {
   id: 'mock-question',
   sessionId: 'mock-session',

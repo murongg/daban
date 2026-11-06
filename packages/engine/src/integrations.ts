@@ -785,9 +785,6 @@ export class Integrations {
   }
   async assertLive(bot: string, capture: McpCapture, tool: string) {
     await this.ready;
-    return this.assertLiveNow(bot, capture, tool);
-  }
-  assertLiveNow(bot: string, capture: McpCapture, tool: string) {
     const config = this.config(this.scoped(capture.connection, bot)),
       binding = this.binding(bot, capture.connection);
     if (

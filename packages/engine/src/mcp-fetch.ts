@@ -1,9 +1,8 @@
 import type { LookupAddress } from 'node:dns';
-import { once } from 'node:events';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import type { Duplex } from 'node:stream';
-import { connect as secureConnect, type TLSSocket } from 'node:tls';
+import { connect as secureConnect } from 'node:tls';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 import { Fault } from './control.js';
 import { dialAddress, resolvePublic } from './network.js';
@@ -16,7 +15,6 @@ export interface McpFetchOptions {
   maxBytes?: number;
   timeoutMs?: number;
   onDispatch?: () => unknown | Promise<unknown>;
-  authorize?: () => unknown;
 }
 export class McpFetch {
   private readonly endpoint: URL;
@@ -106,6 +104,7 @@ export class McpFetch {
       if (!this.options.onDispatch) throw new Fault('MCP_APPROVAL_REQUIRED');
       // The receipt commits before a tool request can leave the host. SDK auth/version retries cannot replay an effect.
       this.sentTool = true;
+      await this.options.onDispatch();
     }
     signal.throwIfAborted();
     const port = Number(url.port || 443),
@@ -114,29 +113,16 @@ export class McpFetch {
       ? this.options.dial(address, port, signal)
       : dialAddress(address, port, signal, this.upstream));
     const agent = new HttpsAgent({ keepAlive: false });
-    let secure: TLSSocket | undefined;
-    let connectionError: Error | undefined;
-    const limit = this.options.maxBytes ?? 1024 * 1024;
-    try {
-      secure = secureConnect({
+    agent.createConnection = () =>
+      secureConnect({
         socket,
         host,
         ...(isIP(host) ? {} : { servername: host }),
         rejectUnauthorized: true,
         ...(this.options.ca ? { ca: this.options.ca } : {}),
       });
-      // Observe failures while receipt persistence is waiting and no HTTP request owns the socket yet.
-      secure.on('error', (error: Error) => {
-        connectionError = error;
-      });
-      await once(secure, 'secureConnect', { signal });
-      agent.createConnection = () => secure!;
-      if (tool) await this.options.onDispatch!();
-      signal.throwIfAborted();
-      if (connectionError) throw connectionError;
-      if (secure.destroyed) throw new Fault('MCP_CONNECTION_FAILED');
-      // Dialing, TLS and durable receipt writes can yield; validate again before queuing any tool bytes.
-      if (tool) this.options.authorize?.();
+    const limit = this.options.maxBytes ?? 1024 * 1024;
+    try {
       return await new Promise<Response>((resolve, reject) => {
         const req = httpsRequest(
           {
@@ -211,7 +197,6 @@ export class McpFetch {
         else req.end(body);
       });
     } finally {
-      secure?.destroy();
       socket.destroy();
       agent.destroy();
     }

@@ -1,1 +1,0 @@
-ALTER TABLE `commands` ADD `policyDecision` text;

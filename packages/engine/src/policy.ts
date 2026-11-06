@@ -1,12 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import { type ApprovalMode, isTaskPlan } from '@daban/protocol';
-import { type BridgeConfig, type BridgeFetch, callBridge } from './bridge.js';
-import { readOwner } from './delegation.js';
 
 export const name = 'daban-budget';
-export const inject = ['tools', 'approval', 'agents'];
+export const inject = ['tools', 'approval'];
 interface Execution {
-  readonly token?: symbol;
   signal: AbortSignal;
   name: string;
   arguments: unknown;
@@ -15,7 +11,6 @@ interface Execution {
 }
 
 interface Context {
-  agents?: Parameters<typeof readOwner>[0];
   on: (
     ...hook:
       | ['tools/pre-execute', (exec: Execution, next: () => Promise<unknown>) => Promise<unknown>]
@@ -55,88 +50,22 @@ export function requestedUrls(prompt: string) {
 }
 export function apply(
   ctx: Context,
-  config: {
-    limit: number;
-    urls: string[];
-    approvalMode?: ApprovalMode;
-    attemptId?: string;
-  } & Partial<BridgeConfig>,
-  request: BridgeFetch = fetch,
+  config: { limit: number; urls: string[]; approvalMode?: ApprovalMode },
 ) {
   if (!Number.isSafeInteger(config.limit) || config.limit < 1)
     throw new Error('INVALID_TOOL_LIMIT');
-  // Waiting on a guard cannot retarget the captured physical attempt .
-  config = structuredClone(config);
-  const bridge = config.url
-    ? {
-        url: config.url,
-        capability: config.capability,
-        socketPath: config.socketPath,
-        certificateFile: config.certificateFile,
-      }
-    : undefined;
   let calls = 0;
-  const executions = new Map<symbol, string>();
   // Search authority belongs to this accepted run and must not survive SDK session resumes.
   const urls = new Set(config.urls);
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
   ctx.on('tools/pre-execute', async (exec: Execution, next: () => Promise<unknown>) => {
     if (exec.signal.aborted) return { kind: 'cancel' };
-    // Provider call IDs repeat across responses and children. The SDK registry owns this token for one execution.
-    let executionId = typeof exec.token === 'symbol' ? executions.get(exec.token) : undefined;
-    const fence = async () => {
-      if (!config.attemptId) return;
-      try {
-        const roots = ctx.agents?.roots();
-        const rootSession = roots?.length === 1 ? roots[0].session?.id : undefined;
-        if (!config.url || !rootSession) throw new Error('MODEL_FENCE_UNAVAILABLE');
-        // Even read-only/native tools and approval requests close the clean window before their body can begin.
-        const result = await callBridge(
-          { ...config, url: config.url },
-          'attempt.fence',
-          { sessionId: rootSession, attemptId: config.attemptId, kind: 'tool' },
-          exec.signal,
-          request,
-        );
-        if (
-          !result ||
-          typeof result !== 'object' ||
-          !('accepted' in result) ||
-          result.accepted !== true
-        )
-          throw new Error('MODEL_FENCE_UNAVAILABLE');
-      } catch {
-        return {
-          kind: 'deny',
-          reason: 'MODEL_FENCE_UNAVAILABLE',
-          info: { name: 'AttemptFenceError', code: 'MODEL_FENCE_UNAVAILABLE' },
-        };
-      }
-    };
-    const dispatch = async (effect = next) => {
-      // Approval waits happen after the first fence; only this attempt may enter the body.
-      const changedAttempt = await fence();
-      if (changedAttempt) return changedAttempt;
-      if (exec.signal.aborted) return { kind: 'cancel' };
-      return effect();
-    };
-
-    const blockedAttempt = await fence();
-    if (blockedAttempt) return blockedAttempt;
-    if (!executionId) {
-      if (calls >= config.limit)
-        return {
-          kind: 'deny',
-          reason: 'TOOL_LIMIT',
-          info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
-        };
-      calls++;
-      // A lost Host acknowledgement can retry this token, but cannot consume another local or shared claim.
-      if (typeof exec.token === 'symbol') {
-        executionId = randomUUID();
-        executions.set(exec.token, executionId);
-      }
-    }
+    if (++calls > config.limit)
+      return {
+        kind: 'deny',
+        reason: 'TOOL_LIMIT',
+        info: { name: 'ToolLimitError', code: 'TOOL_LIMIT' },
+      };
     if (
       ['schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete'].includes(exec.name)
     )
@@ -165,46 +94,16 @@ export function apply(
         value && typeof value === 'object' && 'url' in value && typeof value.url === 'string'
           ? normalizedUrl(value.url)
           : undefined;
-      const owner = bridge && ctx.agents ? readOwner(ctx.agents, exec.agent, exec.name) : undefined;
-      const sessionId = owner?.session?.id;
-      const ownsRead = () =>
-        !bridge ||
-        (!!sessionId &&
-          !!ctx.agents &&
-          readOwner(ctx.agents, exec.agent, exec.name) === owner &&
-          owner?.session?.id === sessionId);
-      const blocked = () => ({
-        kind: 'deny',
-        reason: 'The executing agent no longer owns this request. No HTTP request was made.',
-        info: { name: 'WebPolicyError', code: 'APPROVAL_POLICY_CHANGED' },
-      });
-      if (!ownsRead()) return blocked();
-      const needsApproval = config.approvalMode === 'ask' || !url || !urls.has(url);
-      const checkRead = () => {
-        if (!ownsRead()) return blocked();
-        if (exec.signal.aborted) return { kind: 'cancel' };
-      };
-      const approvedDispatch = async () => {
-        // Human and quota waits can outlive the child that obtained this exact permission.
-        const refused = checkRead();
-        if (refused) return refused;
-        return dispatch(async () => {
-          const changed = checkRead();
-          if (changed) return changed;
-          return next();
-        });
-      };
       // Page text cannot authorize another destination or append private data to an approved URL.
-      if (url && needsApproval && exec.agent && ctx.approval) {
+      if (url && (config.approvalMode === 'ask' || !urls.has(url)) && exec.agent && ctx.approval) {
         const decision = await ctx.approval.request({
-          // The child keeps its own native approval pin and turn-enclosed audit.
           agent: exec.agent,
           toolName: 'web_fetch',
           callId: exec.callId,
           reason: JSON.stringify({ url }),
           signal: exec.signal,
         });
-        if (decision === 'allowed-once' && !exec.signal.aborted) return approvedDispatch();
+        if (decision === 'allowed-once' && !exec.signal.aborted) return next();
         return {
           kind: 'deny',
           reason:
@@ -231,9 +130,8 @@ export function apply(
             'Only fetch exact URLs provided by the user in this task. Ask the user to supply another URL.',
           info: { name: 'WebPolicyError', code: 'WEB_URL_NOT_AUTHORIZED' },
         };
-      return approvedDispatch();
     }
-    return dispatch();
+    return next();
   });
   ctx.on(
     'tools/post-execute',
