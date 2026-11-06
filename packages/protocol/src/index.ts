@@ -1,3 +1,4 @@
+export * from './context-inspector.js';
 export * from './goals.js';
 export * from './model-access.js';
 
@@ -1531,6 +1532,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  contextInspector?: 1;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1620,6 +1622,8 @@ export function recoveryReader(command: RuntimeCommand) {
     'chat.receipt',
     'chat.history',
     'transcript.statistics',
+    'context.inspect',
+    'context.source',
     'transcript.list',
     'transcript.content',
     'memory.history',
@@ -3989,6 +3993,8 @@ export type RuntimeCommand =
   | { type: 'work.list'; query: WorkQuery }
   | { type: 'work.read'; id: string }
   | { type: 'work.write' | 'work.receipt'; request: WorkWrite }
+  | { type: 'context.inspect'; query: import('./context-inspector.js').ContextQuery }
+  | { type: 'context.source'; query: import('./context-inspector.js').ContextSourceQuery }
   | { type: 'transcript.statistics'; query: TranscriptQuery }
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }

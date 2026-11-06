@@ -28,6 +28,7 @@ import {
   isChatStatus,
   isComputerAck,
   isComputerStatus,
+  isContextView,
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
@@ -370,6 +371,7 @@ export class RuntimeClient {
         this.api('/api/model/settings'),
       ])) as [Record<string, unknown>, { configured?: boolean }];
       const raw = data as unknown as {
+        contextInspector?: unknown;
         clientProtocol?: number;
         botCapabilities?: unknown;
         localComputer?: unknown;
@@ -479,6 +481,9 @@ export class RuntimeClient {
       )
         throw new Error('INVALID_RUNTIME_STATE');
       const snapshot = disconnected('ready');
+      if (raw.contextInspector !== undefined && raw.contextInspector !== 1)
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (raw.contextInspector === 1) snapshot.contextInspector = 1;
       snapshot.protocolVersion = raw.clientProtocol || 0;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
@@ -946,6 +951,34 @@ export class RuntimeClient {
         (copying && value.state !== 'complete')
       )
         throw new Error('INVALID_BOT_COPY_ACK');
+      return value;
+    }
+    if (command.type === 'context.inspect' || command.type === 'context.source') {
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.contextInspector !== 1) throw new Error('CONTEXT_UNSUPPORTED');
+      const query = captured.query;
+      const value: unknown = await this.api(
+        `/api/context/${captured.type === 'context.inspect' ? 'inspect' : 'source'}`,
+        query,
+      );
+      if (captured.type === 'context.inspect') {
+        if (
+          !isContextView(value) ||
+          !sameTranscriptScope(value.scope, query.scope) ||
+          (query.revision !== undefined &&
+            value.state === 'captured' &&
+            value.selected.revision !== query.revision)
+        )
+          throw new Error('INVALID_CONTEXT_VIEW');
+      } else if (
+        !isTranscriptContent(value) ||
+        !sameTranscriptScope(value, captured.query.ref.scope) ||
+        value.seq !== captured.query.ref.seq ||
+        value.offset !== (captured.query.offset ?? 0)
+      )
+        throw new Error('INVALID_CONTEXT_SOURCE');
       return value;
     }
     if (

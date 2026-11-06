@@ -29,6 +29,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { isConversationCheckpoint } from './checkpoint.js';
+import { type ContextArchive, isContextArchive } from './context-inspector.js';
 import { Fault } from './control.js';
 
 export function validateTask(input: unknown): TaskRequest {
@@ -250,6 +251,8 @@ const phases = new Set([
   'interrupted',
 ]);
 export interface TaskRecord {
+  contextCaptures?: ContextArchive;
+  contextCaptureFailed?: true;
   activeMs?: number;
   attemptSummary?: ModelAttempt[];
   goalSession?: boolean;
@@ -441,6 +444,21 @@ export class TaskJournal {
           delete task.turns;
         if (task.checkpoint !== undefined && !isConversationCheckpoint(task.checkpoint))
           delete task.checkpoint;
+        if (task.contextCaptureFailed !== undefined && task.contextCaptureFailed !== true)
+          delete task.contextCaptureFailed;
+        if (
+          task.contextCaptures !== undefined &&
+          !isContextArchive(
+            task.contextCaptures,
+            task.conversationId
+              ? { bot: task.bot, runId: task.runId, conversationId: task.conversationId }
+              : { bot: task.bot, runId: task.runId, chatRevision: task.chatRevision ?? 0 },
+          )
+        ) {
+          delete task.contextCaptures;
+          // Keep task history readable while quarantining damaged diagnostic revisions.
+          task.contextCaptureFailed = true;
+        }
         this.records.set(task.runId, task);
       } catch {
         /* An incomplete journal must not prevent access to other saved tasks and files. */
@@ -448,6 +466,17 @@ export class TaskJournal {
     }
   }
   async put(value: TaskRecord & { token?: string }) {
+    if (
+      (value.contextCaptureFailed !== undefined && value.contextCaptureFailed !== true) ||
+      (value.contextCaptures !== undefined &&
+        !isContextArchive(
+          value.contextCaptures,
+          value.conversationId
+            ? { bot: value.bot, runId: value.runId, conversationId: value.conversationId }
+            : { bot: value.bot, runId: value.runId, chatRevision: value.chatRevision ?? 0 },
+        ))
+    )
+      throw new Fault('INVALID_CONTEXT_CAPTURE', 400);
     if (
       value.activeMs !== undefined &&
       (!Number.isSafeInteger(value.activeMs) || value.activeMs < 0)
@@ -474,6 +503,8 @@ export class TaskJournal {
     )
       throw new Fault('INVALID_TASK_RECORD', 400);
     const fields = [
+      'contextCaptures',
+      'contextCaptureFailed',
       'activeMs',
       'attemptSummary',
       'bot',
@@ -580,6 +611,12 @@ export class TaskJournal {
   }
   async read(bot: string, runId: string) {
     await this.writing;
+    const record = this.records.get(runId);
+    return record?.bot === bot ? structuredClone(record) : undefined;
+  }
+  async readCommitted(bot: string, runId: string) {
+    // Optional diagnostics retain their last durable archive after a failed write.
+    await this.writing.catch(() => undefined);
     const record = this.records.get(runId);
     return record?.bot === bot ? structuredClone(record) : undefined;
   }

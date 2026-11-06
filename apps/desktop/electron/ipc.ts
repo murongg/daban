@@ -17,6 +17,8 @@ import {
   isBrowserInput,
   isChatRequest,
   isComputerRequest,
+  isContextQuery,
+  isContextSourceQuery,
   isDocumentUpload,
   isGroupActionRequest,
   isGroupCopyRequest,
@@ -136,6 +138,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'chat.new': ['type', 'request'],
     'chat.receipt': ['type', 'bot', 'id'],
     'chat.history': ['type', 'bot', 'revision', 'before', 'runId'],
+    'context.inspect': ['type', 'query'],
+    'context.source': ['type', 'query'],
     'transcript.statistics': ['type', 'query'],
     'transcript.list': ['type', 'query'],
     'transcript.content': ['type', 'query'],
@@ -270,6 +274,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if ((v.type === 'work.write' || v.type === 'work.receipt') && !isWorkWrite(v.request))
     return fail();
   if (v.type === 'chat.new' && !isChatRequest(v.request)) return fail();
+  if (v.type === 'context.inspect' && !isContextQuery(v.query)) return fail();
+  if (v.type === 'context.source' && !isContextSourceQuery(v.query)) return fail();
   if (
     (v.type === 'transcript.list' || v.type === 'transcript.statistics') &&
     !isTranscriptQuery(v.query)
