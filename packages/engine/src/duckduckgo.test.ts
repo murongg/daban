@@ -14,7 +14,7 @@ const hit = (
 ) =>
   `<tr><td>1.</td><td><a class="result-link" href="${url.replaceAll('&', '&amp;')}">${title}</a></td></tr><tr><td></td><td class="result-snippet">${snippet}</td></tr>`;
 
-test('DuckDuckGo sends one keyless fixed-site HTML request and returns normalized sources', async () => {
+test('DuckDuckGo submits the keyless Lite search form once and returns normalized sources', async () => {
   const request = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) =>
     page(`<table>${hit()}</table>`),
   );
@@ -33,11 +33,13 @@ test('DuckDuckGo sends one keyless fixed-site HTML request and returns normalize
   const [input, init] = request.mock.calls[0];
   const url = new URL(String(input));
   expect(url.origin + url.pathname).toBe('https://lite.duckduckgo.com/lite/');
-  expect([...url.searchParams]).toEqual([['q', 'synthetic query']]);
+  expect([...url.searchParams]).toEqual([]);
+  expect([...new URLSearchParams(String(init?.body))]).toEqual([['q', 'synthetic query']]);
   const headers = new Headers(init?.headers);
+  expect(headers.get('content-type')).toBe('application/x-www-form-urlencoded');
   for (const name of ['authorization', 'x-subscription-token', 'cookie'])
     expect(headers.has(name)).toBe(false);
-  expect(init).toMatchObject({ method: 'GET', redirect: 'error', credentials: 'omit' });
+  expect(init).toMatchObject({ method: 'POST', redirect: 'error', credentials: 'omit' });
 });
 
 test('DuckDuckGo unwraps only declared result redirects and preserves the exact destination query', async () => {

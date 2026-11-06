@@ -28,9 +28,16 @@ afterEach(() => {
 
 test('synthetic CONNECT and verified TLS carry fake-IP DNS and one search, but never forward proxy credentials or trust an unverified origin', async () => {
   let searches = 0;
-  const supplier = await tlsFixture((req, res) => {
+  const supplier = await tlsFixture(async (req, res) => {
     searches++;
-    expect(req.url).toBe('/lite/?q=synthetic+query');
+    expect(req.method).toBe('POST');
+    expect(req.url).toBe('/lite/');
+    expect(req.headers['content-type']).toBe('application/x-www-form-urlencoded');
+    const body: Buffer[] = [];
+    for await (const chunk of req) body.push(Buffer.from(chunk));
+    expect([...new URLSearchParams(Buffer.concat(body).toString('utf8'))]).toEqual([
+      ['q', 'synthetic query'],
+    ]);
     expect(req.headers.host).toBe('lite.duckduckgo.com');
     expect(req.headers.authorization).toBeUndefined();
     expect(req.headers['proxy-authorization']).toBeUndefined();
