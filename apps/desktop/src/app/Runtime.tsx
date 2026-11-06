@@ -132,6 +132,8 @@ export function runtimeMessage(code: string, fallback = code) {
   const key = taskErrorKey(code);
   if (key) return t(key);
   const messages: Record<string, string> = {
+    MCP_RECONNECT_REQUIRED: t('apps.stateReconnect'),
+    MCP_SCOPE_REQUIRED: t('apps.scopeRequired'),
     AGENT_LEGACY_RESTART_REQUIRED: t('agentUpgrade.required'),
     AGENT_LEGACY_RESTART_UNAVAILABLE: t('agentUpgrade.manual'),
     AGENT_LEGACY_SCHEDULES_ACTIVE: t('agentUpgrade.schedules'),
