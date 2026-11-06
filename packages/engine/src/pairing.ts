@@ -167,7 +167,11 @@ async function exchange(endpoint: PairingEndpoint, route: 'start' | 'finish', bo
       },
     );
     call.on('error', (error: Error) =>
-      reject(error.name === 'AbortError' ? Error('REMOTE_CODE_UNREACHABLE') : error),
+      reject(
+        error.message.startsWith('REMOTE_CODE_')
+          ? error
+          : Error('REMOTE_CODE_UNREACHABLE', { cause: error }),
+      ),
     );
     call.on('timeout', () => call.destroy(Error('REMOTE_CODE_UNREACHABLE')));
     call.once('close', () => agent.destroy());

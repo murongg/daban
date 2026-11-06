@@ -34,6 +34,8 @@ export const chinese = {
   'remote.codeAttempts': '尝试次数过多，请在受控电脑上刷新配对码。',
   'remote.codeAmbiguous': '多台电脑使用相同配对码，请在受控电脑上刷新后重试。',
   'remote.discoveryFailed': '无法搜索局域网电脑，请允许搭伴访问本地网络后重试。',
+  'remote.noDevices': '没有发现已开启接入的电脑。请在受控端刷新配对码，并检查局域网与防火墙权限。',
+  'remote.peerUnreachable': '发现了电脑，但连接不到接入服务。请检查受控端的防火墙权限和网络连接。',
   'remote.sharingFailed': '无法开启本机接入，请重试或重新启动搭伴。',
   'remote.copyFailed': '配对码未能复制，请重试或手动输入。',
   'remote.networkUnavailable': '未找到可用局域网。连接 Wi-Fi 或网线后重试。',

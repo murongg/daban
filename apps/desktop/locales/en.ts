@@ -39,6 +39,10 @@ export const english = {
     'Multiple computers have this code. Refresh it on the host and try again.',
   'remote.discoveryFailed':
     'Local discovery is unavailable. Allow Daban to access your local network and retry.',
+  'remote.noDevices':
+    'No enabled host was discovered. Refresh its code and check local network and firewall access.',
+  'remote.peerUnreachable':
+    'The computer was found, but its connection service is unreachable. Check its firewall and network access.',
   'remote.sharingFailed': 'Could not enable local access. Try again or restart Daban.',
   'remote.copyFailed': 'Could not copy the code. Retry or enter it manually.',
   'remote.networkUnavailable':

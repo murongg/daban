@@ -160,6 +160,23 @@ it('rejects a wrong code before asking for approval or recording a device', asyn
   expect(f.host.state().pending).toHaveLength(0);
   expect(f.client.state().hosts).toHaveLength(0);
 });
+it('distinguishes no discovered hosts from a rejected pairing code', async () => {
+  const f = await fixture();
+  await expect(f.client.command({ type: 'pair', code: '123456' })).rejects.toThrow(
+    'REMOTE_DISCOVERY_EMPTY',
+  );
+});
+it('distinguishes an unreachable advertised service from a rejected pairing code', async () => {
+  const f = await fixture();
+  await f.host.command({ type: 'invite' });
+  const id = f.host.state().identity.id;
+  const stale = f.offers.get(id)!;
+  await f.host.close();
+  f.offers.set(id, stale);
+  await expect(f.client.command({ type: 'pair', code: '123456' })).rejects.toThrow(
+    'REMOTE_CODE_UNREACHABLE',
+  );
+});
 it('rejects ambiguous code matches rather than choosing another computer silently', async () => {
   const f = await fixture();
   const other = new RemoteAccess({

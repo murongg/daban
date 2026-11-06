@@ -324,6 +324,7 @@ export class RemoteAccess {
         const candidates = (await this.discovery.find())
           .filter((item) => item.host.id !== this.keys.identity.id)
           .slice(0, 8);
+        if (!candidates.length) throw Error('REMOTE_DISCOVERY_EMPTY');
         const results = await Promise.allSettled(
           candidates.map((item) => redeemPairing(item, command.code)),
         );
@@ -342,6 +343,15 @@ export class RemoteAccess {
             )
           )
             throw Error('REMOTE_CODE_ATTEMPTS');
+          if (
+            results.every(
+              (result) =>
+                result.status === 'rejected' &&
+                result.reason instanceof Error &&
+                result.reason.message === 'REMOTE_CODE_UNREACHABLE',
+            )
+          )
+            throw Error('REMOTE_CODE_UNREACHABLE');
           throw Error('REMOTE_CODE_NOT_FOUND');
         }
         await this.pair(matches[0]);

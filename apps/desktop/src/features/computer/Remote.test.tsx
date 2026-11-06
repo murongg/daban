@@ -186,6 +186,26 @@ it('preserves a bounded refusal code wrapped by Electron IPC', async () => {
   await userEvent.click(screen.getByRole('button', { name: '连接' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('拒绝');
 });
+it.each([
+  ['REMOTE_DISCOVERY_EMPTY', '没有发现已开启接入的电脑'],
+  ['REMOTE_CODE_UNREACHABLE', '发现了电脑，但连接不到接入服务'],
+])('explains the failed pairing stage for %s', async (code, message) => {
+  const f = fixture();
+  f.invoke.mockImplementation(async (command) => {
+    if (command.type === 'pair') throw Error(code);
+    return structuredClone(f.state);
+  });
+  render(
+    <RemoteProvider>
+      <RemoteButton />
+    </RemoteProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '当前电脑：本机' }));
+  await userEvent.click(screen.getByRole('button', { name: '连接另一台电脑' }));
+  await userEvent.type(screen.getByRole('textbox', { name: '配对码' }), f.pairingCode);
+  await userEvent.click(screen.getByRole('button', { name: '连接' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
+});
 it('reports a local service startup failure without blaming the other computer network', async () => {
   const f = fixture();
   f.invoke.mockImplementation(async (command) => {

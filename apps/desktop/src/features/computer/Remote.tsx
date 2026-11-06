@@ -17,6 +17,22 @@ import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import './remote.css';
 
 type Page = 'devices' | 'join' | 'share';
+const errors = new Map<string, MessageKey>([
+  ['REMOTE_CODE_EXPIRED', 'remote.codeExpired'],
+  ['REMOTE_CODE_INVALID', 'remote.codeInvalid'],
+  ['REMOTE_CODE_NOT_FOUND', 'remote.codeInvalid'],
+  ['REMOTE_CODE_ATTEMPTS', 'remote.codeAttempts'],
+  ['REMOTE_CODE_AMBIGUOUS', 'remote.codeAmbiguous'],
+  ['REMOTE_DISCOVERY_UNAVAILABLE', 'remote.discoveryFailed'],
+  ['REMOTE_DISCOVERY_EMPTY', 'remote.noDevices'],
+  ['REMOTE_CODE_UNREACHABLE', 'remote.peerUnreachable'],
+  ['REMOTE_PAIR_REFUSED', 'remote.pairRefused'],
+  ['REMOTE_LAN_NETWORK_UNAVAILABLE', 'remote.networkUnavailable'],
+  ['REMOTE_CERTIFICATE_CHANGED', 'remote.repairRequired'],
+  ['REMOTE_REPAIR_REQUIRED', 'remote.repairRequired'],
+  ['REMOTE_UNAUTHORIZED', 'remote.repairRequired'],
+  ['REMOTE_OUTCOME_UNKNOWN', 'remote.outcomeUnknown'],
+]);
 export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'header' }) {
   useLocale();
   const remote = useRemote();
@@ -75,29 +91,7 @@ export function RemoteButton({ variant = 'sidebar' }: { variant?: 'sidebar' | 'h
     } catch (cause) {
       if (!current()) return;
       const code = cause instanceof Error ? cause.message : '';
-      setError(
-        code === 'REMOTE_CODE_EXPIRED'
-          ? t('remote.codeExpired')
-          : code === 'REMOTE_CODE_INVALID' || code === 'REMOTE_CODE_NOT_FOUND'
-            ? t('remote.codeInvalid')
-            : code === 'REMOTE_CODE_ATTEMPTS'
-              ? t('remote.codeAttempts')
-              : code === 'REMOTE_CODE_AMBIGUOUS'
-                ? t('remote.codeAmbiguous')
-                : code === 'REMOTE_DISCOVERY_UNAVAILABLE'
-                  ? t('remote.discoveryFailed')
-                  : code === 'REMOTE_PAIR_REFUSED'
-                    ? t('remote.pairRefused')
-                    : code === 'REMOTE_LAN_NETWORK_UNAVAILABLE'
-                      ? t('remote.networkUnavailable')
-                      : code === 'REMOTE_CERTIFICATE_CHANGED' ||
-                          code === 'REMOTE_REPAIR_REQUIRED' ||
-                          code === 'REMOTE_UNAUTHORIZED'
-                        ? t('remote.repairRequired')
-                        : code === 'REMOTE_OUTCOME_UNKNOWN'
-                          ? t('remote.outcomeUnknown')
-                          : t(fallback),
-      );
+      setError(t(errors.get(code) ?? fallback));
     } finally {
       if (current()) setBusy(false);
     }
