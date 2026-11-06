@@ -1,12 +1,22 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import fs, {
+  type FileHandle,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { type BotBundle, botBundleText, isBotBundle } from '@daban/protocol';
-import { expect, test } from 'vitest';
+import { expect, type MockInstance, test, vi } from 'vitest';
 import { BotBundles, isBundleRecord } from './bundles.js';
 import { Fault } from './control.js';
 import { Knowledge } from './knowledge.js';
+import * as privateFiles from './private-files.js';
 import { BotProfiles } from './profiles.js';
 import { Skills } from './skills.js';
 
@@ -65,6 +75,8 @@ async function fixture() {
     extract: async () => 'SYNTHETIC EXTRACTED TEXT',
   };
   const transfers = new BotBundles(options);
+  const owners = new Set([transfers]);
+  let closing: Promise<unknown> | undefined;
   return {
     root,
     profiles,
@@ -72,14 +84,262 @@ async function fixture() {
     knowledge,
     options,
     transfers,
-    async close() {
-      await transfers.close();
-      await skills.close();
-      await knowledge.close();
-      await rm(root, { recursive: true, force: true });
+    reopen() {
+      if (closing) throw Error('SYNTHETIC_FIXTURE_CLOSED');
+      const owner = new BotBundles(options);
+      owners.add(owner);
+      return owner;
+    },
+    close() {
+      closing ??= (async () => {
+        await Promise.all([...owners].map((owner) => owner.close()));
+        await skills.close();
+        await knowledge.close();
+        await rm(root, { recursive: true, force: true });
+      })();
+      return closing;
     },
   };
 }
+
+async function seed(directory: string, signal: AbortSignal) {
+  for (let start = 0; start < 4096; start += 128) {
+    signal.throwIfAborted();
+    const writes = Array.from({ length: 128 }, async (_, index) => {
+      const id = `mock-cancel-${start + index}`;
+      await writeFile(
+        path.join(directory, `${id}.json`),
+        JSON.stringify({
+          version: 1,
+          header: header(bundle(), id),
+          target: 'mock-target',
+          state: 'cancelled',
+          applying: false,
+        }),
+        { mode: 0o600, flag: 'wx' },
+      );
+    });
+    try {
+      await Promise.all(writes);
+    } catch (error) {
+      // The first rejection must not let teardown remove paths still owned by other writes in this batch.
+      await Promise.allSettled(writes);
+      throw error;
+    }
+  }
+}
+
+function barrier() {
+  let resolve!: (value: undefined) => unknown;
+  const promise = new Promise<undefined>((ready) => {
+    resolve = ready;
+  });
+  return { promise, release: () => resolve(undefined) };
+}
+
+test('a failed seed batch drains held writes before teardown and preserves its original failure', async () => {
+  const f = await fixture();
+  await Promise.all([f.transfers.ready, f.skills.ready, f.knowledge.ready]);
+  await f.transfers.close();
+  const held = barrier();
+  const rejected = barrier();
+  const release = barrier();
+  const firstError = Error('SYNTHETIC_FIRST_SEED_FAILURE');
+  const laterError = Error('SYNTHETIC_LATER_SEED_FAILURE');
+  const originalWrite = fs.writeFile;
+  const originalRemove = fs.rm;
+  let started = 0;
+  let heldWrote = false;
+  let removing = false;
+  const write = vi.spyOn(fs, 'writeFile').mockImplementation(async (...args) => {
+    if (typeof args[0] === 'string' && path.dirname(args[0]) === f.options.directory) {
+      started++;
+      if (path.basename(args[0]) === 'mock-cancel-0.json') {
+        held.release();
+        await release.promise;
+        await originalWrite(...args);
+        heldWrote = true;
+        throw laterError;
+      }
+      if (path.basename(args[0]) === 'mock-cancel-1.json') {
+        rejected.release();
+        throw firstError;
+      }
+    }
+    return originalWrite(...args);
+  });
+  const remove = vi.spyOn(fs, 'rm').mockImplementation(async (...args) => {
+    if (args[0] === f.root) removing = true;
+    return originalRemove(...args);
+  });
+  syncBuiltinESMExports();
+  let seedError: unknown;
+  let settled = false;
+  const seeding = seed(f.options.directory, new AbortController().signal).catch((error) => {
+    seedError = error;
+    settled = true;
+  });
+  const teardown = seeding.then(() => f.close());
+  const finished = Promise.allSettled([teardown]);
+  try {
+    await Promise.all([held.promise, rejected.promise]);
+    await new Promise((ready) => setImmediate(ready));
+    expect(started).toBe(128);
+    expect(removing).toBe(false);
+    expect(settled).toBe(false);
+    expect((await stat(f.options.directory)).isDirectory()).toBe(true);
+    release.release();
+    await seeding;
+    expect(seedError).toBe(firstError);
+    expect(heldWrote).toBe(true);
+    expect(started).toBe(128);
+    expect((await finished)[0].status).toBe('fulfilled');
+    await expect(stat(f.root)).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    release.release();
+    await seeding;
+    await finished;
+    write.mockRestore();
+    remove.mockRestore();
+    syncBuiltinESMExports();
+    await f.close();
+  }
+});
+
+test('close owns pending directory verification and starts no later initialization IO', async () => {
+  const f = await fixture();
+  await Promise.all([f.transfers.ready, f.skills.ready, f.knowledge.ready]);
+  await f.transfers.close();
+  const entered = barrier();
+  const release = barrier();
+  const original = privateFiles.secureDirectory;
+  const secure = vi.spyOn(privateFiles, 'secureDirectory').mockImplementation(async (directory) => {
+    if (directory === f.options.directory) {
+      entered.release();
+      await release.promise;
+    }
+    return original(directory);
+  });
+  const metadata = vi.spyOn(privateFiles, 'privateMetadata');
+  const read = vi.spyOn(fs, 'readdir');
+  syncBuiltinESMExports();
+  const reopened = f.reopen();
+  let finished = false;
+  let closing: Promise<unknown> | undefined;
+  try {
+    await entered.promise;
+    closing = reopened.close().then(() => {
+      finished = true;
+    });
+    // One event-loop turn observes settlement while the gate stays held; no elapsed-time delay is used.
+    await new Promise((ready) => setImmediate(ready));
+    expect(finished).toBe(false);
+    release.release();
+    await closing;
+    await reopened.close();
+    expect(metadata).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    await expect(reopened.status('mock-closed')).rejects.toMatchObject({
+      code: 'BOT_IMPORT_STORE',
+    });
+  } finally {
+    release.release();
+    try {
+      await reopened.ready;
+      await closing;
+    } finally {
+      secure.mockRestore();
+      metadata.mockRestore();
+      read.mockRestore();
+      syncBuiltinESMExports();
+      await f.close();
+    }
+  }
+});
+
+test.each(['owner close', 'fixture teardown'])(
+  '%s drains the current initialization handle without reading it or opening the next record',
+  async (mode) => {
+    const f = await fixture();
+    await Promise.all([f.transfers.ready, f.skills.ready, f.knowledge.ready]);
+    await f.transfers.close();
+    for (const id of ['mock-load-a', 'mock-load-b'])
+      await writeFile(
+        path.join(f.options.directory, `${id}.json`),
+        JSON.stringify({
+          version: 1,
+          header: header(bundle(), id),
+          target: 'mock-target',
+          state: 'cancelled',
+          applying: false,
+        }),
+        { mode: 0o600, flag: 'wx' },
+      );
+    const directory = await realpath(f.options.directory);
+    const record = (file: string) => path.dirname(file) === directory && file.endsWith('.json');
+    const entered = barrier();
+    const release = barrier();
+    const originalMetadata = privateFiles.privateMetadata;
+    let held = false;
+    const metadata = vi
+      .spyOn(privateFiles, 'privateMetadata')
+      .mockImplementation(async (file, info, permission) => {
+        if (record(file) && !held) {
+          held = true;
+          entered.release();
+          await release.promise;
+        }
+        return originalMetadata(file, info, permission);
+      });
+    const handles: FileHandle[] = [];
+    const reads: MockInstance[] = [];
+    const originalOpen = fs.open;
+    const open = vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args);
+      if (typeof args[0] === 'string' && record(args[0])) {
+        handles.push(handle);
+        reads.push(vi.spyOn(handle, 'read'));
+      }
+      return handle;
+    });
+    syncBuiltinESMExports();
+    const reopened = f.reopen();
+    let finished = false;
+    let closing: Promise<unknown> | undefined;
+    try {
+      await entered.promise;
+      expect(handles).toHaveLength(1);
+      expect(handles[0].fd).toBeGreaterThanOrEqual(0);
+      closing = (mode === 'owner close' ? reopened.close() : f.close()).then(() => {
+        finished = true;
+      });
+      await new Promise((ready) => setImmediate(ready));
+      expect(finished).toBe(false);
+      release.release();
+      await closing;
+      expect(handles).toHaveLength(1);
+      expect(handles[0].fd).toBe(-1);
+      expect(reads.every((spy) => spy.mock.calls.length === 0)).toBe(true);
+      await new Promise((ready) => setImmediate(ready));
+      expect(handles).toHaveLength(1);
+      await expect(reopened.status('mock-load-a')).rejects.toMatchObject({
+        code: 'BOT_IMPORT_STORE',
+      });
+    } finally {
+      release.release();
+      try {
+        await reopened.ready;
+        await closing;
+      } finally {
+        metadata.mockRestore();
+        open.mockRestore();
+        for (const spy of reads) spy.mockRestore();
+        syncBuiltinESMExports();
+        await f.close();
+      }
+    }
+  },
+);
 
 test('a shared document port validates imports without acquiring or closing its ownership', async () => {
   const f = await fixture();
@@ -148,38 +408,38 @@ test('concurrent retries admit only one validation worker', async () => {
     await f.close();
   }
 });
-test('unknown cancellations respect the durable record limit so a later restart can still read it', async () => {
+test('unknown cancellations respect the durable record limit so a later restart can still read it', async (t) => {
   const f = await fixture();
   let reopened: BotBundles | undefined;
+  let seeding: Promise<unknown> | undefined;
+  let closing: Promise<unknown> | undefined;
+  const teardown = () => {
+    closing ??= (async () => {
+      await reopened?.close();
+      await seeding?.catch(() => {});
+      await f.close();
+    })();
+    return closing;
+  };
+  // The runner can time out before this callback's finally runs; it still owns these stores and writes.
+  t.onTestFinished(async () => {
+    await teardown();
+  });
   try {
     await f.transfers.ready;
     await f.transfers.close();
-    for (let start = 0; start < 4096; start += 128)
-      await Promise.all(
-        Array.from({ length: 128 }, async (_, index) => {
-          const id = `mock-cancel-${start + index}`;
-          await writeFile(
-            path.join(f.options.directory, `${id}.json`),
-            JSON.stringify({
-              version: 1,
-              header: header(bundle(), id),
-              target: 'mock-target',
-              state: 'cancelled',
-              applying: false,
-            }),
-            { mode: 0o600, flag: 'wx' },
-          );
-        }),
-      );
-    reopened = new BotBundles(f.options);
+    t.signal.throwIfAborted();
+    seeding = seed(f.options.directory, t.signal);
+    await seeding;
+    t.signal.throwIfAborted();
+    reopened = f.reopen();
     await expect(reopened.cancel(header(bundle(), 'mock-over-limit'))).rejects.toMatchObject({
       code: 'BOT_IMPORT_LIMIT',
     });
     expect((await reopened.status('mock-cancel-0')).state).toBe('cancelled');
     expect((await readdir(f.options.directory)).length).toBe(4096);
   } finally {
-    await reopened?.close();
-    await f.close();
+    await teardown();
   }
 });
 test('portable import uses a fresh identity, disabled recipes, immutable originals and an origin receipt that survives edits', async () => {

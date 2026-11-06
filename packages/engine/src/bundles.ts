@@ -127,6 +127,7 @@ export class BotBundles {
   private closed = false;
   private reading = false;
   private active?: { id: string; abort: AbortController };
+  private readonly loadAbort = new AbortController();
   private readonly documents: BundleDocuments;
   private readonly ownedDocuments?: Documents;
   constructor(readonly options: Options) {
@@ -140,21 +141,29 @@ export class BotBundles {
     return this.reading || !!this.active;
   }
   private async load() {
+    const signal = this.loadAbort.signal;
+    signal.throwIfAborted();
     await secureDirectory(this.options.directory);
+    signal.throwIfAborted();
     const info = await lstat(this.options.directory);
+    signal.throwIfAborted();
     if (
       !info.isDirectory() ||
       info.isSymbolicLink() ||
       !(await privateMetadata(this.options.directory, info, 0o700))
     )
       throw new Fault('BOT_IMPORT_STORE');
+    signal.throwIfAborted();
     this.canonical = await realpath(this.options.directory);
+    signal.throwIfAborted();
     const files = (await readdir(this.canonical)).filter((file) => file.endsWith('.json'));
+    signal.throwIfAborted();
     if (files.length > 4096) throw new Fault('BOT_IMPORT_LIMIT');
     for (const file of files) {
       const id = file.slice(0, -5);
       if (!validAgentId(id)) throw new Fault('BOT_IMPORT_STORE');
-      const text = await this.readMeta(path.join(this.canonical, file));
+      const text = await this.readMeta(path.join(this.canonical, file), signal);
+      signal.throwIfAborted();
       const value: unknown = JSON.parse(text);
       if (!validRecord(value) || value.header.id !== id) throw new Fault('BOT_IMPORT_STORE');
       this.records.set(id, { data: value, hash: sha(text) });
@@ -168,10 +177,14 @@ export class BotBundles {
     if ((await realpath(this.options.directory)) !== this.canonical)
       throw new Fault('BOT_IMPORT_STORE');
   }
-  private async readMeta(file: string) {
+  private async readMeta(file: string, signal?: AbortSignal) {
+    // Only initialization is cancellable here; already-admitted durable writes must still finish.
+    signal?.throwIfAborted();
     const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
+      signal?.throwIfAborted();
       const info = await handle.stat();
+      signal?.throwIfAborted();
       if (
         !info.isFile() ||
         info.nlink !== 1 ||
@@ -179,8 +192,10 @@ export class BotBundles {
         info.size > 16384
       )
         throw new Fault('BOT_IMPORT_STORE');
+      signal?.throwIfAborted();
       const buffer = Buffer.alloc(16385);
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      signal?.throwIfAborted();
       if (bytesRead > 16384) throw new Fault('BOT_IMPORT_STORE');
       return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead));
     } finally {
@@ -652,10 +667,13 @@ export class BotBundles {
   }
   async close() {
     this.closed = true;
+    // Initialization is separate from the import worker: stop new reads, then drain its current handle.
+    this.loadAbort.abort(new Fault('BOT_IMPORT_STORE', 503));
     if (this.active) {
       const record = this.record(this.active.id);
       if (!record?.applying) this.active.abort.abort();
     }
+    await this.ready;
     await this.settled;
     await this.writing;
     // Injected parsers belong to their composition root and may serve other stores.
