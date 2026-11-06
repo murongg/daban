@@ -393,7 +393,10 @@ export class SearchClient {
         }).toString();
       } else {
         headers.set('user-agent', 'Mozilla/5.0 (compatible; Daban)');
-        endpoint.search = new URLSearchParams({ q: query }).toString();
+        // Match the Lite page's search form; query text belongs in the POST body.
+        headers.set('content-type', 'application/x-www-form-urlencoded');
+        init.method = 'POST';
+        init.body = new URLSearchParams({ q: query }).toString();
       }
       guard();
       const response = await bounded(this.request(endpoint.href, init, guard), signal);
