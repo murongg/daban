@@ -5,13 +5,31 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isExecutionParams } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
-import { type AgentToolRun, AgentTools, agentToolList } from './agent-tools.js';
+import { type AgentToolRun, AgentTools, agentToolList, validWindowsPath } from './agent-tools.js';
 import { Commands } from './commands.js';
 import type { ComputerFacade, ToolResult } from './computer-tools.js';
 import { Control } from './control.js';
 import { Interactions } from './interactions.js';
 import { NativeWorkspace } from './native-workspace.js';
 import { WorkspaceFiles } from './workspace.js';
+
+test('Windows workspace references preserve drive prefixes without allowing streams or reserved filenames', () => {
+  for (const value of [
+    '',
+    '/workspace/summary.csv',
+    '/shared/source.csv',
+    'C:/synthetic/shared/report.csv',
+  ])
+    expect(validWindowsPath(value), value).toBe(true);
+  for (const value of [
+    'C:relative.csv',
+    'C:/synthetic/shared/report.csv:extra',
+    '/workspace/CON.txt',
+    'C:/synthetic/trailing.',
+    '/workspace/file?.csv',
+  ])
+    expect(validWindowsPath(value), value).toBe(false);
+});
 
 test('host negotiates model capabilities before sending new execution fields to older Linux guests', async () => {
   const calls: Record<string, unknown>[] = [];

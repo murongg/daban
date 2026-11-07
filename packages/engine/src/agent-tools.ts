@@ -144,6 +144,12 @@ const windowsName = (name: string) =>
   !/[<>:"|?*]/.test(name) &&
   !/[. ]$/.test(name) &&
   !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
+export const validWindowsPath = (value: string) =>
+  // Only an absolute drive prefix may contain a colon; other colons can address NTFS alternate streams.
+  value
+    .replace(/^[a-z]:\//i, '')
+    .split('/')
+    .every((name) => !name || windowsName(name));
 
 export class AgentTools {
   readonly browser?: BrowserTools;
@@ -539,11 +545,7 @@ export class AgentTools {
       value.split('/').includes('..')
     )
       throw new Fault('INVALID_FILE', 400);
-    if (
-      !this.options.execution &&
-      process.platform === 'win32' &&
-      value.split('/').some((name) => name && !windowsName(name))
-    )
+    if (!this.options.execution && process.platform === 'win32' && !validWindowsPath(value))
       throw new Fault('INVALID_FILE', 400);
     const root = await this.workspace.base();
     if (this.options.execution) {
