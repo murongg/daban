@@ -3380,6 +3380,9 @@ export const english = {
   'apps.connect': 'Connect {0}',
   'apps.adminApproval':
     'monday.com custom clients require administrator approval. Complete it on the official page; the account remains unauthorized until the callback succeeds.',
+  'apps.browserAuthorization': 'Browser authorization',
+  'apps.requiresAdmin': 'Admin approval required',
+  'apps.unavailable': 'Currently unavailable',
   'apps.details': 'Connection details',
   'apps.restart': 'Start a new authorization',
   'apps.upgradeRequired':
@@ -3428,6 +3431,7 @@ export const english = {
     'The system browser could not open. Reopen this authorization using its original request.',
   'apps.conflict': 'The connection or its ownership changed. Refresh and review it again.',
   'apps.metadataRejected': 'Authorization metadata was rejected. No authorization page was opened.',
+  'apps.scopeLabel': 'Requested permissions',
   'apps.scope': 'Authorized scope: {0}',
   'apps.scopeRequired':
     'The service rejected these permissions. Review account access and reconnect explicitly.',

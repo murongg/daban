@@ -10,10 +10,13 @@ import type {
   McpConnection,
 } from '@daban/protocol';
 import { isAppCatalog, isAppDirectory } from '@daban/protocol';
+import { ArrowUpRight, ChevronDown, Info, Link2, Plus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
+import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
+import './app-catalog.css';
 
 export interface AppCatalogProps {
   bot: string;
@@ -84,7 +87,7 @@ export function AppCatalog({
   useLocale();
   const runtime = useRuntime();
   const [catalog, setCatalog] = useState<Catalog | AppDirectory>();
-  const [editor, setEditor] = useState<{ app: AppId; name: string }>();
+  const [editor, setEditor] = useState<{ app: AppId; name: string; editName?: boolean }>();
   const [pending, setPending] = useState<AppConnect>();
   const [receipt, setReceipt] = useState<AppOAuthReceipt>();
   const [disconnect, setDisconnect] = useState<{ target: AppTarget; requestId: string }>();
@@ -234,7 +237,12 @@ export function AppCatalog({
       ) {
         currentPending.current = undefined;
         setPending(undefined);
-        if (input.revision === 0) setEditor({ app: input.app, name: input.name ?? '' });
+        if (input.revision === 0)
+          setEditor({
+            app: input.app,
+            name: input.name ?? '',
+            editName: cause.message === 'MCP_NAME_CONFLICT',
+          });
       }
       throw cause;
     }
@@ -267,6 +275,7 @@ export function AppCatalog({
   if (!available) return null;
   const directory = catalog && 'protocol' in catalog ? catalog : undefined;
   const apps: AppDirectoryEntry[] = catalog?.apps ?? [];
+  const editorApp = apps.find((app) => app.id === editor?.app);
   const unresolved = !!pending && (!receipt || activePhase(receipt));
   const disabled = busy || blocked || unresolved || !!disconnect;
   function open(app: AppDirectoryEntry) {
@@ -279,13 +288,13 @@ export function AppCatalog({
     let name = app.publisher;
     for (let index = 2; rows.some((row) => row.name === name); index++)
       name = `${app.publisher} ${index}`;
-    setEditor({ app: app.id, name: directory ? name : '' });
+    setEditor({ app: app.id, name });
     setReceipt(undefined);
     setNotice('');
   }
   return (
-    <section aria-label={t('apps.title')}>
-      <h3>{t('apps.title')}</h3>
+    <section className="app-catalog" aria-label={t('apps.title')}>
+      <h3 className="app-catalog-title">{t('apps.title')}</h3>
       {!canAuthorize && <p className="field-help">{t('apps.remoteUnavailable')}</p>}
       {catalog?.connections.map((auth) => {
         const row = rows.find((r) => r.id === auth.connection);
@@ -303,7 +312,15 @@ export function AppCatalog({
         const name = identity?.name ?? row?.name;
         if (!name || (!identity && !row)) return null;
         return (
-          <div className="integration-row" key={auth.connection}>
+          <div className="integration-row app-connection-row" key={auth.connection}>
+            <span className="app-logo" aria-hidden="true">
+              <img
+                src={`${import.meta.env.BASE_URL}apps/${appId}.svg`}
+                alt=""
+                width="24"
+                height="24"
+              />
+            </span>
             <div className="integration-meta">
               <h3>{name}</h3>
               <p>
@@ -430,37 +447,67 @@ export function AppCatalog({
           </div>
         );
       })}
-      <details open={!catalog?.connections.length}>
-        <summary>{t('apps.addApp')}</summary>
-        {apps
-          .filter((app) => app.auth === 'oauth')
-          .map((app) => (
-            <div className="integration-row" key={app.id}>
-              <div className="integration-meta">
-                <h3>{app.publisher}</h3>
-                {app.scope && <p className="field-help">{t('apps.scope', { 0: app.scope })}</p>}
-                {app.adminApproval && <p className="field-help">{t('apps.adminApproval')}</p>}
+      <details className="app-picker" open={!catalog?.connections.length}>
+        <summary className="app-picker-heading">
+          {t('apps.addApp')}
+          <ChevronDown aria-hidden="true" />
+        </summary>
+        <ul className="app-grid" aria-label={t('apps.addApp')}>
+          {apps
+            .filter((app) => app.auth === 'oauth')
+            .map((app) => (
+              <li className="app-card" key={app.id}>
+                <div className="app-card-heading">
+                  <span className="app-logo" aria-hidden="true">
+                    <img
+                      src={`${import.meta.env.BASE_URL}apps/${app.id}.svg`}
+                      alt=""
+                      width="24"
+                      height="24"
+                    />
+                  </span>
+                  <div className="app-card-identity">
+                    <h4>{app.publisher}</h4>
+                    <p>
+                      {t(
+                        !app.available
+                          ? 'apps.unavailable'
+                          : app.adminApproval
+                            ? 'apps.requiresAdmin'
+                            : 'apps.browserAuthorization',
+                      )}
+                    </p>
+                  </div>
+                  <IconButton
+                    className="app-connect"
+                    label={t('apps.connect', { 0: app.publisher })}
+                    disabled={disabled || !canAuthorize || !app.available}
+                    onClick={() => open(app)}
+                  >
+                    <Link2 aria-hidden="true" />
+                  </IconButton>
+                </div>
                 {!app.available && app.reason === 'OAUTH_NOT_VERIFIED' && (
-                  <p className="field-help">{t('apps.unverified')}</p>
+                  <p className="app-card-note">{t('apps.unverified')}</p>
                 )}
-                <details>
-                  <summary>{t('apps.details')}</summary>
-                  <p>{t('apps.publisher', { 0: app.publisher })}</p>
-                  <p>{app.origin}</p>
+                <details className="app-details">
+                  <summary>
+                    {t('apps.details')}
+                    <ChevronDown aria-hidden="true" />
+                  </summary>
+                  <div className="app-details-content">
+                    <p>{t('apps.publisher', { 0: app.publisher })}</p>
+                    <p>{app.origin}</p>
+                    {app.scope && <p>{t('apps.scope', { 0: app.scope })}</p>}
+                    {app.adminApproval && <p>{t('apps.adminApproval')}</p>}
+                  </div>
                 </details>
-              </div>
-              <button
-                type="button"
-                className="secondary"
-                disabled={disabled || !canAuthorize || !app.available}
-                onClick={() => open(app)}
-              >
-                {t('apps.connect', { 0: app.publisher })}
-              </button>
-            </div>
-          ))}
+              </li>
+            ))}
+        </ul>
         {canControl && (
-          <button type="button" className="secondary" disabled={disabled} onClick={onCustom}>
+          <button type="button" className="app-custom" disabled={disabled} onClick={onCustom}>
+            <Plus aria-hidden="true" />
             {t('apps.custom')}
           </button>
         )}
@@ -534,9 +581,15 @@ export function AppCatalog({
       {directory?.attemptsMore && <p className="field-help">{t('apps.partialHistory')}</p>}
       {editor && (
         <Dialog
-          title={t('apps.connect', {
-            0: apps.find((app) => app.id === editor.app)?.publisher ?? editor.app,
-          })}
+          title={
+            <span className="app-authorization-title">
+              <span className="app-logo" aria-hidden="true">
+                <img src={`${import.meta.env.BASE_URL}apps/${editor.app}.svg`} alt="" />
+              </span>
+              <span>{t('apps.connect', { 0: editorApp?.publisher ?? editor.app })}</span>
+            </span>
+          }
+          className="app-authorization"
           onClose={() => setEditor(undefined)}
           closeDisabled={busy}
         >
@@ -546,6 +599,7 @@ export function AppCatalog({
             </p>
           )}
           <form
+            className="app-authorization-form"
             onSubmit={async (event) => {
               event.preventDefault();
               await perform(() =>
@@ -560,30 +614,60 @@ export function AppCatalog({
               );
             }}
           >
-            <label className="field-label">
-              {t('integrations.connectionName')}
-              <input
-                className="field"
-                value={editor.name}
-                maxLength={60}
-                required
-                onChange={(event) => setEditor({ ...editor, name: event.target.value })}
-              />
-            </label>
-            <p className="field-help">{t('apps.description')}</p>
-            {apps.find((app) => app.id === editor.app)?.scope && (
-              <p className="field-help">
-                {t('apps.scope', { 0: apps.find((app) => app.id === editor.app)?.scope ?? '' })}
+            <p className="app-authorization-description">{t('apps.description')}</p>
+            {editor.editName && (
+              <label className="field-label">
+                {t('integrations.connectionName')}
+                <input
+                  className="field"
+                  data-autofocus
+                  value={editor.name}
+                  maxLength={60}
+                  required
+                  onChange={(event) => setEditor({ ...editor, name: event.target.value })}
+                />
+              </label>
+            )}
+            {editorApp?.scope && (
+              <section className="app-authorization-scopes">
+                <h3>{t('apps.scopeLabel')}</h3>
+                <ul aria-label={t('apps.scopeLabel')}>
+                  {editorApp.scope
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .map((scope) => (
+                      <li key={scope}>
+                        <code>{scope}</code>
+                      </li>
+                    ))}
+                </ul>
+              </section>
+            )}
+            {editor.app === 'monday' && (
+              <p className="app-authorization-notice">
+                <Info aria-hidden="true" />
+                <span>{t('apps.adminApproval')}</span>
               </p>
             )}
-            {editor.app === 'monday' && <p className="field-help">{t('apps.adminApproval')}</p>}
-            <button
-              type="submit"
-              className="primary"
-              disabled={busy || !editor.name.trim() || !canAuthorize}
-            >
-              {t('apps.authorize')}
-            </button>
+            <div className="app-authorization-actions">
+              <button
+                type="button"
+                className="secondary"
+                data-autofocus={editor.editName ? undefined : true}
+                onClick={() => setEditor(undefined)}
+                disabled={busy}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="submit"
+                className="primary"
+                disabled={busy || !editor.name.trim() || !canAuthorize}
+              >
+                {t('apps.authorize')}
+                <ArrowUpRight aria-hidden="true" />
+              </button>
+            </div>
           </form>
         </Dialog>
       )}
