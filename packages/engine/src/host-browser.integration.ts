@@ -5,7 +5,12 @@ import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import type { BrowserAck, BrowserView, HostBrowserStatus } from '@daban/protocol';
+import {
+  type BrowserAck,
+  type BrowserView,
+  type HostBrowserStatus,
+  isHostBrowserStatus,
+} from '@daban/protocol';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { HostBrowser } from './host-browser.js';
 import { NativeWorkspace } from './native-workspace.js';
@@ -102,6 +107,31 @@ test('standalone browser preserves login, transfers task reports and supports fe
     await host.request({ action: 'open', bot: 'mock-a' });
     let owner = await connection();
     assert.equal(owner.owner, 'human');
+    assert.ok(actual);
+    const unavailable = new URL('/synthetic-network-failure', url).href;
+    await actual.page('mock-a').route(unavailable, (route) => route.abort('connectionclosed'));
+    const errorDocument = actual.page('mock-a').waitForEvent('framenavigated', {
+      predicate: (frame) =>
+        frame === actual!.page('mock-a').mainFrame() &&
+        frame.url() === 'chrome-error://chromewebdata/',
+    });
+    const failed = (await host.request({
+      action: 'command',
+      bot: owner.bot,
+      request: {
+        id: 'mock-failed-navigation',
+        instance: owner.state.instance,
+        epoch: owner.epoch,
+        action: 'navigate',
+        tab: owner.state.active,
+        url: unavailable,
+      },
+    })) as BrowserAck;
+    assert.equal(failed.error, 'BROWSER_NAVIGATION_FAILED');
+    assert.equal(failed.uncertain, true);
+    await errorDocument;
+    assert.equal(isHostBrowserStatus(await host.status()), true);
+    assert.equal(failed.state.tabs[0].url, unavailable);
     const navigation = (await host.request({
       action: 'command',
       bot: owner.bot,

@@ -481,6 +481,7 @@ export const chinese = {
   'browser.newBrowserTab': '新建浏览器标签',
   'browser.nextPage': '下一页',
   'browser.openWebpage': '打开网页',
+  'browser.navigationFailed': '网页未能加载，请检查网址和网络连接。你可以修改地址或手动重新加载。',
   'browser.operationMayHaveOccurredWillNotRetried':
     '操作可能已经发生。不会自动重试，请先核对网页状态，再决定后续操作。',
   'browser.operationResultUnconfirmedSystemWillNotRetry':

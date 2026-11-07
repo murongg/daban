@@ -465,6 +465,7 @@ export function runtimeMessage(code: string, fallback = code) {
     STALE_CONTROL: t('errors.controlOwnershipChangedOldOperationWasRejected'),
     INVALID_BROWSER_FILE: t('errors.selectUpFilesNoPathsTheirNames'),
     INVALID_BROWSER_URL: t('errors.invalidWebpageUrlUsePublicHttpHttps'),
+    BROWSER_NAVIGATION_FAILED: t('browser.navigationFailed'),
     BROWSER_HUMAN_REQUIRED: t('errors.webpageNeedsAttentionTakeOverBrowserPanel'),
     BROWSER_VIEW_STALE: t('errors.pageChangedInputOldScreenWasRejected'),
     BROWSER_INSTANCE_CHANGED: t('errors.browserRestartedCheckCurrentPageContinuing'),

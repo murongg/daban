@@ -2,9 +2,9 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { BrowserCommandRequest } from '@daban/protocol';
+import { type BrowserCommandRequest, isBrowserState } from '@daban/protocol';
 import type { BrowserContext, Dialog, Page } from 'playwright';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { ComputerTools, type ToolRun } from './computer-tools.js';
 import { errorCode } from './control.js';
 import { Browser } from './runtime.js';
@@ -189,6 +189,101 @@ test('human browser commands claim before effects and exact retries do not creat
     expect(app.created.length, 'only the saved second tab is restored, with no replay').toBe(1);
     expect((await app.tabs.receipt('b', command.id)).phase).toBe('unknown');
   } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test.each(['connection', 'timeout'])(
+  'a %s navigation failure keeps valid metadata and permits a different address without replay',
+  async (kind) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-failed-navigation-'));
+    const app = await setup(path.join(root, 'tabs.sqlite'));
+    try {
+      const lease = await app.browser.transfer('a', 0, 'human');
+      const navigate = app.a.goto;
+      const failure = vi.spyOn(app.a, 'goto').mockImplementation(async () => {
+        await navigate('chrome-error://chromewebdata/');
+        const error = new Error(
+          kind === 'connection'
+            ? 'page.goto: net::ERR_CONNECTION_CLOSED at https://example.test/unavailable'
+            : 'page.goto: Timeout 18000ms exceeded.',
+        );
+        if (kind === 'timeout') error.name = 'TimeoutError';
+        throw error;
+      });
+      const request: BrowserCommandRequest = {
+        id: 'mock-network-failure',
+        instance: app.tabs.instance,
+        epoch: lease.epoch,
+        action: 'navigate',
+        tab: app.tabs.binding('a').tab,
+        url: 'https://example.test/unavailable',
+      };
+      const failed = await app.tabs.human('a', request);
+      expect(failed.error).toBe('BROWSER_NAVIGATION_FAILED');
+      expect(failed.uncertain).toBe(true);
+      expect(isBrowserState(failed.state)).toBe(true);
+      expect(failed.state.tabs[0].url).toBe(request.url);
+      const retry = await app.tabs.human('a', request);
+      expect(retry.error).toBe(failed.error);
+      expect(failure).toHaveBeenCalledTimes(1);
+      failure.mockRestore();
+      const recovered = await app.tabs.human('a', {
+        ...request,
+        id: 'mock-next-address',
+        url: 'https://example.test/recovered',
+      });
+      expect(recovered.error).toBeUndefined();
+      expect(isBrowserState(recovered.state)).toBe(true);
+      expect(recovered.state.tabs[0].url).toBe('https://example.test/recovered');
+    } finally {
+      await app.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test('an internal error document from page navigation never invalidates the browser protocol', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-internal-document-'));
+  const app = await setup(path.join(root, 'tabs.sqlite'));
+  try {
+    await app.a.goto('https://example.test/last-public-page');
+    await app.a.goto('chrome-error://chromewebdata/');
+    const state = await app.tabs.state('a');
+    expect(isBrowserState(state)).toBe(true);
+    expect(state.tabs[0].url).toBe('https://example.test/last-public-page');
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a navigation interrupted by its deadline reports a load failure without replaying', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-navigation-deadline-'));
+  const app = await setup(path.join(root, 'tabs.sqlite'));
+  const lease = await app.browser.transfer('a', 0, 'human');
+  const deadline = new DOMException('Synthetic deadline expired', 'TimeoutError');
+  const timeout = AbortSignal.timeout;
+  const abort = vi
+    .spyOn(AbortSignal, 'timeout')
+    .mockImplementation((milliseconds) =>
+      milliseconds === 18000 ? AbortSignal.abort(deadline) : timeout(milliseconds),
+    );
+  try {
+    const result = await app.tabs.human('a', {
+      id: 'mock-navigation-deadline',
+      instance: app.tabs.instance,
+      epoch: lease.epoch,
+      action: 'navigate',
+      tab: app.tabs.binding('a').tab,
+      url: 'https://example.test/delayed',
+    });
+    expect(result.error).toBe('BROWSER_NAVIGATION_FAILED');
+    expect(result.uncertain).toBe(true);
+    expect(app.a.events).toEqual([]);
+  } finally {
+    abort.mockRestore();
     await app.close();
     await rm(root, { recursive: true, force: true });
   }

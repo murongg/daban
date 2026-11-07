@@ -564,6 +564,8 @@ export const english = {
   'browser.newBrowserTab': 'New browser tab',
   'browser.nextPage': 'Next page',
   'browser.openWebpage': 'Open webpage',
+  'browser.navigationFailed':
+    'The webpage could not load. Check the address and network connection. You can change the address or reload manually.',
   'browser.operationMayHaveOccurredWillNotRetried':
     'The operation may have occurred and will not be retried automatically. Verify webpage state before deciding what to do next.',
   'browser.operationResultUnconfirmedSystemWillNotRetry':

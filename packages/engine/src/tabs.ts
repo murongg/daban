@@ -211,7 +211,14 @@ export class Tabs {
     if (existing) return existing;
     if ([...this.records.values()].filter((tab) => tab.bot === bot).length >= 8)
       throw new Fault('BROWSER_TAB_LIMIT');
-    const tab: Tab = { id: randomUUID(), bot, page, generation: 0, url: page.url(), title: '' };
+    const tab: Tab = {
+      id: randomUUID(),
+      bot,
+      page,
+      generation: 0,
+      url: publicUrl(page.url()) ? page.url() : 'about:blank',
+      title: '',
+    };
     this.records.set(page, tab);
     this.guardDownloads(page);
     page.on('framenavigated', (frame) => {
@@ -494,6 +501,12 @@ export class Tabs {
       throw new Fault('INVALID_BROWSER_URL', 400);
     return url.href;
   }
+  private location(tab: Tab) {
+    if (tab.suspended) return 'about:blank';
+    const current = tab.page.url();
+    // Failed loads can leave about:blank or an internal error URL; keep the safe destination in public state.
+    return publicUrl(current) ? current : tab.url;
+  }
   async state(bot: string, signal = new AbortController().signal): Promise<BrowserTabs> {
     await inspect(() => Promise.allSettled([...this.adopting]), signal);
     signal.throwIfAborted();
@@ -511,7 +524,7 @@ export class Tabs {
         .filter((tab) => tab.bot === bot)
         .map((tab) => ({
           id: tab.id,
-          url: tab.page.url(),
+          url: this.location(tab),
           title: tab.title,
           generation: tab.generation,
           ...(tab.suspended ? { suspended: true, restoreUrl: tab.url } : {}),
@@ -665,40 +678,56 @@ export class Tabs {
     input: { action: string; tab?: string; url?: string },
     signal: AbortSignal,
   ) {
-    this.current(bot);
-    signal.throwIfAborted();
-    if (!['select', 'close'].includes(input.action)) this.prompts.clear(bot);
-    let tab: Tab;
-    if (input.action === 'open' || input.action === 'new') {
-      const page = await this.newPage(bot);
-      tab = this.records.get(page)!;
-      this.pages.set(bot, page);
-    } else tab = this.owned(bot, input.tab);
-    if (
-      ['navigate', 'back', 'forward', 'reload'].includes(input.action) &&
-      this.current(bot) !== tab
-    )
-      throw new Fault('BROWSER_VIEW_STALE');
-    if (input.action === 'select' || input.action === 'resume') this.pages.set(bot, tab.page);
-    this.invalidate(bot);
-    if (input.action === 'select') return;
-    if (input.action === 'close') {
-      if ([...this.records.values()].filter((value) => value.bot === bot).length === 1)
-        this.pages.set(bot, await this.newPage(bot));
-      await tab.page.close({ reason: 'Owned browser tab closed' });
-      return;
-    }
-    await this.prompts.guard(tab, signal, async (signal) => {
-      const options = { waitUntil: 'domcontentloaded' as const, timeout: 18000, signal };
-      if (input.action === 'open' || input.action === 'navigate')
-        await tab.page.goto(this.url(input.url), options);
-      if (input.action === 'resume') {
-        if (tab.suspended) await tab.page.goto(this.url(tab.url), options);
+    try {
+      this.current(bot);
+      signal.throwIfAborted();
+      if (!['select', 'close'].includes(input.action)) this.prompts.clear(bot);
+      let tab: Tab;
+      if (input.action === 'open' || input.action === 'new') {
+        const page = await this.newPage(bot);
+        tab = this.records.get(page)!;
+        this.pages.set(bot, page);
+      } else tab = this.owned(bot, input.tab);
+      if (
+        ['navigate', 'back', 'forward', 'reload'].includes(input.action) &&
+        this.current(bot) !== tab
+      )
+        throw new Fault('BROWSER_VIEW_STALE');
+      if (input.action === 'select' || input.action === 'resume') this.pages.set(bot, tab.page);
+      this.invalidate(bot);
+      if (input.action === 'select') return;
+      if (input.action === 'close') {
+        if ([...this.records.values()].filter((value) => value.bot === bot).length === 1)
+          this.pages.set(bot, await this.newPage(bot));
+        await tab.page.close({ reason: 'Owned browser tab closed' });
+        return;
       }
-      if (input.action === 'back') await tab.page.goBack(options);
-      if (input.action === 'forward') await tab.page.goForward(options);
-      if (input.action === 'reload') await tab.page.reload(options);
-    });
+      await this.prompts.guard(tab, signal, async (signal) => {
+        const options = { waitUntil: 'domcontentloaded' as const, timeout: 18000, signal };
+        if (input.action === 'open' || input.action === 'navigate') {
+          tab.url = this.url(input.url);
+          await tab.page.goto(tab.url, options);
+        }
+        if (input.action === 'resume') {
+          if (tab.suspended) await tab.page.goto(this.url(tab.url), options);
+        }
+        if (input.action === 'back') await tab.page.goBack(options);
+        if (input.action === 'forward') await tab.page.goForward(options);
+        if (input.action === 'reload') await tab.page.reload(options);
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Fault) &&
+        ((error instanceof Error &&
+          (error.name === 'TimeoutError' ||
+            /\bnet::ERR_(?!ABORTED\b)[A-Z_]+\b/.test(error.message))) ||
+          (signal.aborted &&
+            signal.reason instanceof Error &&
+            signal.reason.name === 'TimeoutError'))
+      )
+        throw new Fault('BROWSER_NAVIGATION_FAILED');
+      throw error;
+    }
   }
 
   private owned(bot: string, id: unknown) {
@@ -772,7 +801,7 @@ export class Tabs {
       return {
         id: randomUUID(),
         tab: tab.id,
-        url: tab.page.url(),
+        url: this.location(tab),
         title: tab.title,
         text,
         offset: 0,
@@ -820,7 +849,7 @@ export class Tabs {
             run,
             text: text.slice(0, 256000),
             total: text.length,
-            url: tab.page.url(),
+            url: this.location(tab),
             title: (await inspect(() => tab.page.title(), signal)).slice(0, 200),
             refs: new Set(),
           };

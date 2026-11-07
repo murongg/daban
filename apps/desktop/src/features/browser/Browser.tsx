@@ -27,6 +27,7 @@ import { LiveBrowser } from './LiveBrowser';
 import { useBrowserCommand } from './transport';
 
 function outcome({ error, uncertain }: Pick<BrowserAck, 'error' | 'uncertain'>) {
+  if (error === 'BROWSER_NAVIGATION_FAILED') return runtimeError(new Error(error));
   // A settled receipt may still have an unknown page outcome; it must not become retry advice.
   if (uncertain) return t('browser.operationMayHaveOccurredWillNotRetried');
   return error ? runtimeError(new Error(error)) : '';
