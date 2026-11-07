@@ -5877,7 +5877,7 @@ textarea.skill-source {
   border-radius: 0;
   background: var(--canvas);
 }
-.host-browser .browser-panel.expanded .live-screen {
+.host-browser .browser-panel.expanded .live-screen:not(.native-browser) {
   /* Preserve the image ratio: pointer coordinates map the rendered image to a 960x640 page. */
   max-height: none;
 }
@@ -5891,6 +5891,25 @@ textarea.skill-source {
 }
 .host-browser .live-view-label {
   display: none;
+}
+.host-browser .native-browser {
+  width: 100%;
+  max-width: 960px;
+  max-height: min(640px, calc(100dvh - 280px));
+  margin-inline: auto;
+  aspect-ratio: 1.5;
+}
+.host-browser .live-view-label.native-browser-help {
+  position: static;
+  display: block;
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
 }
 .browser-typing.compact {
   border-top: 1px solid var(--line);

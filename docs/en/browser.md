@@ -7,7 +7,7 @@ The browser panel is for actual website interaction. The standalone browser need
 ## Standalone browser
 
 1. Choose **Browser** above the conversation, or in the computer panel.
-2. Review the account and page-content scope, then choose **Open browser**. The Agent uses Chrome, Edge or an installed Chromium with a dedicated Daban profile; it does not read your personal browser profile.
+2. Review the account and page-content scope, then choose **Open browser**. The desktop client uses a built-in Chromium webpage view and a dedicated Daban session. Chrome does not need to be installed, and personal browser profiles are not read. A standalone service without the desktop bridge continues to use an installed Chrome, Edge or Chromium.
 3. You have control when it opens. Enter a URL and complete sign-in or verification in the panel.
 4. Choose **Hand back to Bot**, then request a website task. The Bot uses the current sign-in to read pages, click and fill forms.
 
@@ -15,11 +15,17 @@ Each Bot owns its tabs, while the Daban workspace shares standalone-browser sign
 
 Standalone, Linux and personal Chrome profiles are separate. Finish the current task and disconnect this Bot’s standalone browser before switching to the desktop or Linux. A running task never switches operation environments because its browser disconnected.
 
+While you have control, the webpage receives mouse input, keyboard input, IME composition and text selection directly. AI control shows a read-only preview. App dialogs, a hidden panel and handback remove the interactive native view. Complete CAPTCHAs, sign-in and verification codes yourself, then explicitly hand control back. The Bot does not solve CAPTCHAs. Some websites restrict embedded browsers or require extra verification; not every sign-in flow is supported.
+
+Switching from the older dedicated Chrome profile requires signing in again the first time. The old profile remains on disk, and existing tab records remain suspended until you reopen them. Direct human downloads use the system save dialog; Bot downloads still go into the managed task directory.
+
+The built-in browser requires the desktop client to keep running. Quitting Daban disconnects this browser capability; closing its panel does not. Linux background tasks continue in their independent service.
+
 The standalone browser supports task-file uploads, downloads and text processing. For example, ask the Bot to download a signed-in CSV report, read and summarize it, write an output and upload it to your requested destination. Each transfer is limited to 5 MB. Downloads go into the current task directory and never overwrite an existing file. Relative paths and `/workspace` address the current task; `/shared` provides read-only access to the shared workspace. Arbitrary host files are unavailable. Native mode exposes no shell or process tools; programmatic PDF/Office extraction still requires the Linux workspace. Transfers to a Linux workspace need an executor advertising browser file support; older executors retain page interaction without transfer tools.
 
 Text models use page-structure tools. Image-capable models can also capture the browser and click, type, scroll or drag by coordinates for canvas and other controls. Each operation is bound to its Bot, tab and control lease. Takeover, navigation, failures and uncertain results require a fresh observation; clicks and submissions are never automatically replayed. Passwords, verification codes, page dialogs and ordinary file pickers still require human handling. Coordinate input cannot fill passwords or verification codes either. Model screenshots mask password and verification-code inputs; the human takeover view remains interactive without that mask.
 
-Browser operations reuse open-source Playwright. The standalone browser accesses public websites and retains private-network and local-service restrictions; native desktop authorization is a separate capability.
+Webpages use Electron and automation reuses open-source Playwright. The standalone browser accesses public websites and retains private-network and local-service restrictions; native desktop authorization is a separate capability. Recognized visible CAPTCHA controls block automation. Take over for other verification challenges as well.
 
 ## Open and take over the Linux browser
 

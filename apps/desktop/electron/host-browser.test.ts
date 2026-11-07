@@ -1,4 +1,9 @@
-import { disconnected, isHostBrowserRequest, isHostBrowserStatus } from '@daban/protocol';
+import {
+  disconnected,
+  isBrowserView,
+  isHostBrowserRequest,
+  isHostBrowserStatus,
+} from '@daban/protocol';
 import { expect, it, vi } from 'vitest';
 import { parseCommand } from './ipc';
 import { RuntimeClient } from './runtime';
@@ -16,6 +21,12 @@ it('accepts only closed host browser requests and rejects extra authority or uns
   for (const request of [
     { action: 'open', bot: 'mock-bot' },
     { action: 'state', bot: 'mock-bot' },
+    {
+      action: 'target',
+      bot: 'mock-bot',
+      epoch: 2,
+      binding: { instance: 'mock-browser', tab: 'mock-tab', generation: 0 },
+    },
     { action: 'control', bot: 'mock-bot', instance: 'mock-browser', epoch: 1, owner: 'human' },
     {
       action: 'command',
@@ -62,6 +73,22 @@ it('binds each advertised host browser connection to its own Bot and rejects dup
     false,
   );
   expect(isHostBrowserStatus({ available: false, connections: [connection] })).toBe(false);
+});
+
+it('accepts bounded native viewport images and an explicit embedded-browser capability', () => {
+  const view = {
+    bot: 'mock-bot',
+    epoch: 2,
+    binding: { instance: 'mock-browser', tab: 'mock-tab', generation: 0 },
+    image: 'data:image/jpeg;base64,c3ludGhldGlj',
+    width: 700,
+    height: 467,
+  };
+  expect(isBrowserView(view)).toBe(true);
+  for (const size of [0, -1, 960.5, 4097])
+    expect(isBrowserView({ ...view, width: size })).toBe(false);
+  expect(isHostBrowserStatus({ available: true, embedded: true, connections: [] })).toBe(true);
+  expect(isHostBrowserStatus({ available: true, embedded: 'true', connections: [] })).toBe(false);
 });
 
 it('refuses unavailable host browser calls before sending and rejects cross-Bot replies', async () => {

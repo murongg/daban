@@ -14,7 +14,8 @@ import { type Browser, type BrowserOptions, createBrowser } from './runtime.js';
 test('standalone browser preserves login, transfers task reports and supports fenced canvas input without Linux', {
   timeout: 60000,
 }, async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-host-browser-live-'));
+  const suppliedRoot = process.env.DABAN_EMBEDDED_BROWSER_ROOT;
+  const root = suppliedRoot || (await mkdtemp(path.join(tmpdir(), 'synthetic-host-browser-live-')));
   let uploaded = false;
   const server = createServer(async (request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
@@ -176,12 +177,11 @@ test('standalone browser preserves login, transfers task reports and supports fe
       .find((line) => line.includes('Synthetic increment'))
       ?.match(/\[ref=([a-z0-9]+)\]/)?.[1];
     assert.ok(button);
-    const result = payload(
-      await tools.invoke(run, 'browser_act', {
-        observation: observation.id,
-        actions: [{ kind: 'click', ref: button }],
-      }),
-    );
+    const clicked = await tools.invoke(run, 'browser_act', {
+      observation: observation.id,
+      actions: [{ kind: 'click', ref: button }],
+    });
+    const result = payload(clicked);
     assert.equal(result.completed, 1);
     assert.equal(await page.getByRole('button', { name: 'SYNTHETIC CLICKED' }).count(), 1);
     const reportPage = payload(await tools.invoke(run, 'browser_snapshot', {}));
@@ -267,6 +267,15 @@ test('standalone browser preserves login, transfers task reports and supports fe
     const humanView = (await host.request({ action: 'view', bot: 'mock-a' })) as BrowserView;
     const firstShot = await tools.invoke(visual, 'screenshot', { surface: 'browser' });
     assert.ok(!firstShot.isError, JSON.stringify(firstShot));
+    const dimensions = JSON.parse(
+      firstShot.content[0].type === 'text' ? firstShot.content[0].text : '{}',
+    ) as { width: number; height: number };
+    assert.equal(
+      dimensions.width,
+      960,
+      'AI screenshots and pointer input must use CSS pixels, including Retina displays',
+    );
+    assert.equal(dimensions.height, 640);
     const modelImage = firstShot.content.find((part) => part.type === 'image');
     assert.ok(modelImage?.type === 'image');
     assert.equal(
@@ -325,6 +334,42 @@ test('standalone browser preserves login, transfers task reports and supports fe
       ).isError,
     );
     assert.equal(await page.getByLabel('Synthetic alias').inputValue(), 'SYNTHETIC ORDINARY INPUT');
+    await page.evaluate(() => {
+      const label = document.createElement('label');
+      label.id = 'synthetic-verification';
+      label.textContent = 'Synthetic CAPTCHA';
+      const input = document.createElement('input');
+      input.name = 'captcha';
+      label.append(input);
+      document.body.prepend(label);
+    });
+    const verification = await tools.invoke(visual, 'browser_snapshot', {});
+    assert.match(
+      JSON.stringify(verification),
+      /humanRequired/,
+      'A visible CAPTCHA must ask for human verification',
+    );
+    const blockedShot = await tools.invoke(visual, 'screenshot', { surface: 'browser' });
+    assert.ok(blockedShot.isError, 'Do not offer a CAPTCHA image to the model for solving');
+    owner = await connection();
+    await host.request({
+      action: 'control',
+      bot: owner.bot,
+      instance: owner.state.instance,
+      epoch: owner.epoch,
+      owner: 'human',
+    });
+    await page.getByLabel('Synthetic CAPTCHA').fill('SYNTHETIC HUMAN CODE');
+    assert.equal(await page.getByLabel('Synthetic CAPTCHA').inputValue(), 'SYNTHETIC HUMAN CODE');
+    await page.locator('#synthetic-verification').evaluate((element) => element.remove());
+    owner = await connection();
+    await host.request({
+      action: 'control',
+      bot: owner.bot,
+      instance: owner.state.instance,
+      epoch: owner.epoch,
+      owner: 'agent',
+    });
     await tools.invoke(visual, 'screenshot', { surface: 'browser' });
     owner = await connection();
     const handover = await host.request({
@@ -410,6 +455,6 @@ test('standalone browser preserves login, transfers task reports and supports fe
     await host.close();
     server.closeAllConnections();
     await new Promise<unknown>((resolve) => server.close(() => resolve(undefined)));
-    await rm(root, { recursive: true, force: true });
+    if (!suppliedRoot) await rm(root, { recursive: true, force: true });
   }
 });

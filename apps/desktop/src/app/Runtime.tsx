@@ -149,6 +149,7 @@ export function runtimeMessage(code: string, fallback = code) {
   if (key) return t(key);
   const messages: Record<string, string> = {
     HOST_BROWSER_START_FAILED: t('hostBrowser.startFailed'),
+    HOST_BROWSER_DESKTOP_UNAVAILABLE: t('hostBrowser.nativeUnavailable'),
     HOST_BROWSER_DISCONNECTED: t('hostBrowser.disconnected'),
     HOST_BROWSER_UNAVAILABLE: t('hostBrowser.unavailable'),
     HOST_BROWSER_NOT_CONNECTED: t('hostBrowser.disconnected'),

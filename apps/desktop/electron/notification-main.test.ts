@@ -31,7 +31,7 @@ vi.mock('electron', () => ({
   app: {
     setName: vi.fn(),
     setAppUserModelId: vi.fn(),
-    commandLine: { getSwitchValue: vi.fn(() => '') },
+    commandLine: { getSwitchValue: vi.fn(() => ''), appendSwitch: vi.fn() },
     getVersion: () => '1.0.0',
     getPath: () => '/mock',
     setPath: vi.fn(),
@@ -92,6 +92,14 @@ vi.mock('./native', () => ({
   })),
 }));
 vi.mock('./local-server', () => ({ localServer: vi.fn(async () => async () => {}) }));
+vi.mock('./browser-host', () => ({
+  BrowserHost: class {
+    start = vi.fn(async () => {});
+    close = vi.fn(async () => {});
+    hideAll = vi.fn();
+  },
+}));
+vi.mock('./browser-ipc', () => ({ browserIpc: vi.fn(() => () => {}) }));
 vi.mock('./service', () => ({
   runtimeService: (...args: unknown[]) => {
     mock.serviceArgs.push(args);

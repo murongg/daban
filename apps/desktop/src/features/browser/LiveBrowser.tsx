@@ -160,7 +160,10 @@ export function LiveBrowser({
   function point(event: PointerEvent) {
     const rect = picture.current?.getBoundingClientRect();
     return rect
-      ? desktopPoint(rect, event.clientX, event.clientY, { width: 960, height: 640 })
+      ? desktopPoint(rect, event.clientX, event.clientY, {
+          width: painted?.width ?? 960,
+          height: painted?.height ?? 640,
+        })
       : null;
   }
   async function pointer(event: PointerEvent<HTMLDivElement>, phase: 'down' | 'move' | 'up') {

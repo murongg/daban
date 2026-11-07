@@ -1,9 +1,39 @@
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { BrowserContext } from 'playwright';
 import { expect, test, vi } from 'vitest';
+import { Control } from './control.js';
 import { HostBrowser } from './host-browser.js';
-import type { Browser, BrowserOptions } from './runtime.js';
+import { Browser, type BrowserOptions } from './runtime.js';
+
+test('blocks native input before AI handback and publishes the new lease only after transfer', async () => {
+  const control = new Control(['mock-a']);
+  await control.transfer('mock-a', 0, 'human');
+  const calls: unknown[] = [];
+  const desktop = {
+    context: {} as BrowserContext,
+    control: vi.fn(async (...args: unknown[]) => {
+      calls.push([args, control.state('mock-a')]);
+    }),
+    close: vi.fn(async () => {}),
+  };
+  const browser = new Browser(desktop.context, new Map(), 700, undefined, { control, desktop });
+  browser.tabs = {
+    instance: 'mock-instance',
+    invalidate: vi.fn(),
+    prompts: { blocked: () => false },
+  } as unknown as NonNullable<Browser['tabs']>;
+  await browser.transfer('mock-a', 1, 'agent');
+  expect(calls).toEqual([
+    [['mock-a', 'mock-instance', 2, 'handoff'], { owner: 'human', epoch: 1 }],
+    [['mock-a', 'mock-instance', 2, 'agent'], { owner: 'agent', epoch: 2 }],
+  ]);
+  await expect(browser.transfer('mock-a', 1, 'human')).rejects.toMatchObject({
+    code: 'STALE_CONTROL',
+  });
+  expect(desktop.control).toHaveBeenCalledTimes(2);
+});
 
 test('host browser starts only on explicit open, shares one private context and fences stale control', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-host-browser-'));

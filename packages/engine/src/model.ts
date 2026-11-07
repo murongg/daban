@@ -1863,7 +1863,7 @@ export class ModelRuns {
         // Browser file and vision tools change the SDK catalog; never resume a context with obsolete permissions.
         job.binding = createHash('sha256')
           .update(
-            `${job.binding}:host-browser-v2:${this.tools
+            `${job.binding}:host-browser-v3:${this.tools
               .list(job.bot, job.model, job.conversationId, job)
               .map((tool) => tool.name)
               .join(',')}`,

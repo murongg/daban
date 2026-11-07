@@ -22,6 +22,7 @@ import {
   clearBrowserRequest,
   forgetAddress,
 } from './browsing';
+import { EmbeddedBrowser } from './EmbeddedBrowser';
 import { LiveBrowser } from './LiveBrowser';
 import { useBrowserCommand } from './transport';
 
@@ -382,17 +383,30 @@ export function Browser({
           send={send}
         />
       ))}
-      <LiveBrowser
-        key={bot}
-        bot={bot}
-        host={host}
-        name={name}
-        state={state}
-        owner={control?.owner || 'agent'}
-        epoch={control?.epoch || 0}
-        notify={notify}
-        disabled={blocked}
-      />
+      {host && human && runtime.snapshot.hostBrowser?.embedded && window.daban?.browser ? (
+        <EmbeddedBrowser
+          key={bot}
+          bot={bot}
+          name={name}
+          state={state}
+          owner={control?.owner || 'agent'}
+          epoch={control?.epoch || 0}
+          notify={notify}
+          disabled={blocked || !!state?.pending?.length}
+        />
+      ) : (
+        <LiveBrowser
+          key={bot}
+          bot={bot}
+          host={host}
+          name={name}
+          state={state}
+          owner={control?.owner || 'agent'}
+          epoch={control?.epoch || 0}
+          notify={notify}
+          disabled={blocked}
+        />
+      )}
       {!human && !host && (
         <p className="inline-note browser-feedback">
           {t('browser.takeOverOpenWebpagesSwitchTabsHandle')}

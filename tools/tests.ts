@@ -134,6 +134,7 @@ export const suites = {
     'tabs.test',
     'browser-tools.test',
     'host-browser.test',
+    'browser-desktop.test',
     'native-agent.test',
     'tab-store.test',
     'browser-client.test',

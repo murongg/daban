@@ -1463,6 +1463,16 @@ export class RuntimeClient {
       } else if (request.action === 'view') {
         if (!isBrowserView(result) || result.bot !== request.bot)
           throw new Error('INVALID_RUNTIME_STATE');
+      } else if (request.action === 'target') {
+        if (
+          !result ||
+          typeof result !== 'object' ||
+          Object.keys(result).length !== 1 ||
+          !('target' in result) ||
+          typeof result.target !== 'string' ||
+          !/^[a-zA-Z0-9_-]{1,128}$/.test(result.target)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
       } else if (request.action === 'command' || request.action === 'answer') {
         const instance =
           request.action === 'command'

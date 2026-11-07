@@ -2,10 +2,16 @@ import type { MessageKey } from './en';
 
 export const chinese = {
   'hostBrowser.title': '浏览器',
-  'hostBrowser.description': '使用 Daban 专属浏览器，无需 Linux 或本机屏幕权限。支持文本模型。',
-  'hostBrowser.startTitle': '登录一次，交给 Bot 继续',
+  'hostBrowser.nativeLoading': '正在打开网页…',
+  'hostBrowser.nativeUnavailable': '网页暂时无法显示，请重试或重新打开浏览器。',
+  'hostBrowser.retry': '重试',
+  'hostBrowser.verificationHelp':
+    '可直接操作网页。遇到登录或验证码请自行填写，完成后再交还给 Bot。',
+  'hostBrowser.description':
+    '直接在搭伴内浏览网页，无需 Linux 或本机屏幕权限。需要时交给 Bot 操作。',
+  'hostBrowser.startTitle': '打开网页，随时让 Bot 帮忙',
   'hostBrowser.signInHelp':
-    '打开后由你控制。在这里登录网站，再交还给 Bot。登录会保存在本机，各 Bot 共用登录、分别管理标签。',
+    '打开后可直接浏览、登录和填写验证码。需要 Bot 操作时，再交还控制。登录保存在本机，各 Bot 共用登录、分别管理标签。',
   'hostBrowser.consent':
     '交还后，Bot 可使用此浏览器中的账号和页面，并按任务上传、下载工作区文件。页面及读取的文件内容会发送给所选模型。此浏览器与个人 Chrome 分开。',
   'hostBrowser.open': '打开浏览器',
@@ -25,7 +31,7 @@ export const chinese = {
   'hostBrowser.handbackHelp':
     '完成登录或验证码后交还给 Bot。关掉面板不会断开浏览器；断开会关闭这位 Bot 的标签并保留登录。',
   'hostBrowser.startFailed':
-    '浏览器未能启动。请确认已安装 Chrome 或 Edge，关闭其他占用 Daban 浏览器配置的进程后重试。',
+    '浏览器未能启动。请重新打开搭伴后重试；独立后台模式需安装 Chrome、Edge 或 Chromium。',
   'hostBrowser.disconnected': '浏览器已断开。重新打开后核对页面，再继续任务。',
   'hostBrowser.unavailable': '浏览器能力暂不可用，请更新或重新连接后台。',
   'hostBrowser.switchFirst': '请先在浏览器面板断开连接，再授权本机桌面。',

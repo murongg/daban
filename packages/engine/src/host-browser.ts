@@ -101,7 +101,12 @@ export class HostBrowser {
         /* A crashed optional browser must not make ordinary chat unavailable. */
       }
     }
-    return { available: !this.closed, connections, ...(this.error ? { error: this.error } : {}) };
+    return {
+      available: !this.closed,
+      connections,
+      ...(this.current?.embedded ? { embedded: true } : {}),
+      ...(this.error ? { error: this.error } : {}),
+    };
   }
   private async open(bot: string) {
     if (this.closed) throw new Fault('HOST_BROWSER_UNAVAILABLE', 503);
@@ -117,6 +122,7 @@ export class HostBrowser {
         const executablePath = this.options.launch ? undefined : chromeExecutable();
         const browser = await (this.options.launch ?? createBrowser)({
           profileDir,
+          endpointFile: path.resolve(this.options.directory, '../browser-bridge.json'),
           origin: 'http://127.0.0.1:8766',
           bots: [],
           control: this.control,
@@ -175,6 +181,8 @@ export class HostBrowser {
     }
     if (request.action === 'state') return tabs.state(request.bot);
     if (request.action === 'view') return browser.view(request.bot);
+    if (request.action === 'target')
+      return browser.target(request.bot, request.epoch, request.binding);
     if (request.action === 'command') return tabs.human(request.bot, request.request);
     if (request.action === 'answer') return tabs.answer(request.bot, request.request);
     if (request.action === 'receipt') return tabs.receipt(request.bot, request.id);

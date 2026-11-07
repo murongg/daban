@@ -20,6 +20,7 @@ export interface HostBrowserConnection {
 }
 export interface HostBrowserStatus {
   available: boolean;
+  embedded?: boolean;
   connections: HostBrowserConnection[];
   error?: string;
 }
@@ -30,6 +31,7 @@ export type HostBrowserRequest =
   | { action: 'command'; bot: string; request: BrowserCommandRequest }
   | { action: 'answer'; bot: string; request: BrowserAnswerRequest }
   | { action: 'receipt'; bot: string; id: string }
+  | { action: 'target'; bot: string; epoch: number; binding: BrowserBinding }
   | { action: 'input'; bot: string; epoch: number; binding: BrowserBinding; input: DesktopInput };
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -65,6 +67,12 @@ export function isHostBrowserRequest(value: unknown): value is HostBrowserReques
       return exact(value, ['action', 'bot', 'request']) && isBrowserAnswerRequest(value.request);
     case 'receipt':
       return exact(value, ['action', 'bot', 'id']) && validAgentId(value.id);
+    case 'target':
+      return (
+        exact(value, ['action', 'bot', 'epoch', 'binding']) &&
+        epoch(value.epoch) &&
+        isBrowserBinding(value.binding)
+      );
     case 'input':
       return (
         exact(value, ['action', 'bot', 'epoch', 'binding', 'input']) &&
@@ -79,8 +87,9 @@ export function isHostBrowserRequest(value: unknown): value is HostBrowserReques
 export function isHostBrowserStatus(value: unknown): value is HostBrowserStatus {
   if (
     !record(value) ||
-    !exact(value, ['available', 'connections', 'error']) ||
+    !exact(value, ['available', 'embedded', 'connections', 'error']) ||
     typeof value.available !== 'boolean' ||
+    (value.embedded !== undefined && typeof value.embedded !== 'boolean') ||
     !Array.isArray(value.connections) ||
     value.connections.length > 16 ||
     (!value.available && value.connections.length > 0) ||

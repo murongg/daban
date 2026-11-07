@@ -143,8 +143,21 @@ export async function inspect<T>(read: () => Promise<T>, signal: AbortSignal): P
   }
 }
 
-export const secretInputs =
-  'input[type="password" i],input[autocomplete="current-password" i],input[autocomplete="new-password" i],input[autocomplete="one-time-code" i]';
+const captchaInputs =
+  'input[name*="captcha" i],input[id*="captcha" i],input[aria-label*="captcha" i],input[aria-label*="验证码"]';
+export const secretInputs = `input[type="password" i],input[autocomplete="current-password" i],input[autocomplete="new-password" i],input[autocomplete="one-time-code" i],${captchaInputs}`;
+const captchaSurfaces = `${captchaInputs},iframe[src*="/recaptcha/api2/bframe"],iframe[src*="/recaptcha/enterprise/bframe"],iframe[src*="hcaptcha.com" i][title*="challenge" i],iframe[src*="challenges.cloudflare.com" i],form#challenge-form`;
+export async function verificationRequired(page: Page, signal: AbortSignal) {
+  // Ignore hidden challenge frames and passive badges; only visible verification controls stop automation.
+  const counts = await inspect(
+    () =>
+      Promise.all(
+        page.frames().map((frame) => frame.locator(`:is(${captchaSurfaces}):visible`).count()),
+      ),
+    signal,
+  );
+  return counts.some(Boolean);
+}
 
 export class Tabs {
   private readonly attached = new Set<string>();
@@ -521,6 +534,8 @@ export class Tabs {
     return this.prompts.guard(tab, AbortSignal.timeout(4000), (signal) =>
       tab.page.screenshot({
         type: 'jpeg',
+        // Native views can inherit Retina/DPI scaling; input coordinates remain CSS pixels.
+        scale: 'css',
         quality: 75,
         timeout: 4000,
         signal,
@@ -530,6 +545,17 @@ export class Tabs {
   }
   input<T>(bot: string, action: (signal: AbortSignal) => Promise<T>) {
     return this.prompts.guard(this.current(bot), AbortSignal.timeout(5000), action);
+  }
+  async humanRequired(bot: string, signal = AbortSignal.timeout(5000)) {
+    if (this.prompts.blocked(bot)) return true;
+    try {
+      return await this.prompts.guard(this.current(bot), signal, (bounded) =>
+        verificationRequired(this.current(bot).page, bounded),
+      );
+    } catch (error) {
+      if (this.prompts.blocked(bot)) return true;
+      throw error;
+    }
   }
   assertBinding(bot: string, value: unknown) {
     const current = this.binding(bot);
@@ -735,7 +761,10 @@ export class Tabs {
     run?: string,
     limit = 16000,
   ): Promise<BrowserObservation> {
-    if (this.prompts.blocked(bot)) {
+    if (
+      this.prompts.blocked(bot) ||
+      (actor === 'agent' && (await this.humanRequired(bot, signal)))
+    ) {
       signal.throwIfAborted();
       const tab = this.current(bot),
         text =
@@ -890,6 +919,8 @@ export class Tabs {
         await this.prompts.guard(tab, signal, async (signal) => {
           for (const step of steps) {
             signal.throwIfAborted();
+            if (actor === 'agent' && (await verificationRequired(tab.page, signal)))
+              throw new Fault('BROWSER_HUMAN_REQUIRED');
             if (this.current(bot) !== tab || tab.generation !== observed.generation)
               throw new Fault('BROWSER_OBSERVATION_STALE');
             const locator = 'ref' in step ? tab.page.locator(`aria-ref=${step.ref}`) : undefined;
@@ -957,6 +988,8 @@ export class Tabs {
       const chooserStop = new AbortController();
       try {
         await this.prompts.guard(observed.tab, signal, async (signal) => {
+          if (actor === 'agent' && (await verificationRequired(observed.tab.page, signal)))
+            throw new Fault('BROWSER_HUMAN_REQUIRED');
           const locator = observed.tab.page.locator(`aria-ref=${ref}`);
           const type = await locator.getAttribute('type', { timeout: 4000, signal });
           if (type === 'file') {
@@ -1018,6 +1051,8 @@ export class Tabs {
         const observed = this.saved(bot, actor, epoch, id, run);
         if (!observed.refs.has(ref)) throw new Fault('BROWSER_REF_NOT_OBSERVED');
         await this.prompts.guard(observed.tab, signal, async (signal) => {
+          if (actor === 'agent' && (await verificationRequired(observed.tab.page, signal)))
+            throw new Fault('BROWSER_HUMAN_REQUIRED');
           this.invalidate(bot);
           page = observed.tab.page;
           this.expecting.set(page, {});

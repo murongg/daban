@@ -202,8 +202,8 @@ export class ComputerTools {
           text: JSON.stringify({
             bot: run.bot,
             surface,
-            width: surface === 'desktop' ? 1280 : 960,
-            height: surface === 'desktop' ? 800 : 640,
+            width: surface === 'desktop' ? 1280 : (view?.width ?? 960),
+            height: surface === 'desktop' ? 800 : (view?.height ?? 640),
             epoch,
           }),
         },

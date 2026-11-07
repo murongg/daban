@@ -3744,8 +3744,8 @@ export interface BrowserView {
   epoch: number;
   binding: BrowserBinding;
   image?: string;
-  width: 960;
-  height: 640;
+  width: number;
+  height: number;
 }
 export interface BrowserCommandRequest {
   epoch: number;
@@ -3950,8 +3950,12 @@ export function isBrowserView(value: unknown): value is BrowserView {
     validAgentId(value.bot) &&
     browserNumber(value.epoch) &&
     isBrowserBinding(value.binding) &&
-    value.width === 960 &&
-    value.height === 640 &&
+    browserNumber(value.width) &&
+    value.width > 0 &&
+    value.width <= 4096 &&
+    browserNumber(value.height) &&
+    value.height > 0 &&
+    value.height <= 4096 &&
     (value.paused === undefined || value.paused === true) &&
     ((value.paused === true && value.image === undefined) ||
       (typeof value.image === 'string' &&

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readVmConnection } from '@daban/engine/host';
 import { secureDirectory } from '@daban/engine/local-computer';
 import {
+  type BrowserBinding,
   type DiagnosticReport,
   diagnosticIds,
   disconnected,
@@ -865,6 +866,14 @@ export function runtimeService(
   }
   return {
     connect,
+    async browserTarget(bot: string, epoch: number, binding: BrowserBinding) {
+      if (!client || state.phase !== 'ready' || closed || updating || recoveryBlocked(state))
+        throw new Error('RUNTIME_OFFLINE');
+      return (await client.invoke({
+        type: 'hostBrowser',
+        request: { action: 'target', bot, epoch, binding },
+      })) as { target: string };
+    },
     releaseInputs,
     async prepareUpdate() {
       if (closed || !agentConfig) throw new Error('AGENT_UPDATE_UNAVAILABLE');

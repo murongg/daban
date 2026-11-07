@@ -1,10 +1,16 @@
 export const english = {
   'hostBrowser.title': 'Browser',
+  'hostBrowser.nativeLoading': 'Opening webpage…',
+  'hostBrowser.nativeUnavailable':
+    'The webpage could not be displayed. Try again or reopen the browser.',
+  'hostBrowser.retry': 'Try again',
+  'hostBrowser.verificationHelp':
+    'Use the page directly. Complete sign-in or verification yourself, then hand control back to the Bot.',
   'hostBrowser.description':
-    'Use Daban’s dedicated browser without Linux or screen permissions. Text models are supported.',
-  'hostBrowser.startTitle': 'Sign in once, then hand back',
+    'Browse inside Daban without Linux or screen permissions. Hand control to your Bot when needed.',
+  'hostBrowser.startTitle': 'Browse here, ask your Bot when you need help',
   'hostBrowser.signInHelp':
-    'You control the browser when it opens. Sign in here, then hand it back to the Bot. Sign-ins stay on this computer; Bots share sign-ins and manage separate tabs.',
+    'Browse, sign in and complete verification directly. Hand control back when you want the Bot to act. Sign-ins stay on this computer; Bots share sign-ins and manage separate tabs.',
   'hostBrowser.consent':
     'After handback, the Bot can use accounts and pages in this browser and transfer workspace files for your task. Page content and files it reads are sent to the selected model. This browser is separate from your personal Chrome.',
   'hostBrowser.open': 'Open browser',
@@ -25,7 +31,7 @@ export const english = {
   'hostBrowser.handbackHelp':
     'Hand back after signing in or completing verification. Closing this panel keeps the browser connected. Disconnect closes this Bot’s tabs and keeps sign-ins.',
   'hostBrowser.startFailed':
-    'The browser could not start. Check that Chrome or Edge is installed and close any other process using Daban’s browser profile before retrying.',
+    'The browser could not start. Reopen Daban and try again. Standalone service mode requires Chrome, Edge or Chromium.',
   'hostBrowser.disconnected':
     'The browser disconnected. Reopen and check the page before continuing the task.',
   'hostBrowser.unavailable':
