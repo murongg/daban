@@ -1,7 +1,9 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import { connect } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { afterEach, expect, test, vi } from 'vitest';
 import { resolvePublic } from './network.js';
+import { createProxy } from './proxy.js';
 
 const transport = vi.hoisted(() => ({
   lookup: vi.fn(),
@@ -105,6 +107,28 @@ test('proxy fake-IP DNS fallback uses CONNECT to the fixed public resolver and v
   );
   expect(transport.request.mock.calls[0][0]).toMatchObject({ hostname: 'cloudflare-dns.com' });
   expect(socket.destroyed).toBe(true);
+});
+
+test('the browser public proxy routes fake-IP resolution through its configured upstream before pinning the page connection', async () => {
+  const { direct } = mockProxyDns();
+  const dial = vi.fn(async () => new PassThrough());
+  const proxy = await createProxy({ upstream: 'http://127.0.0.1:19876', dial });
+  const client = connect({ host: '127.0.0.1', port: Number(new URL(proxy.url).port) });
+  try {
+    await once(client, 'connect');
+    const response = once(client, 'data');
+    client.write(
+      'CONNECT browser.example.test:443 HTTP/1.1\r\nHost: browser.example.test:443\r\n\r\n',
+    );
+    const [headers] = await response;
+    expect(headers.toString()).toContain('HTTP/1.1 200 Connection Established');
+    expect(direct).not.toHaveBeenCalled();
+    expect(transport.connect.mock.calls[0][0]).toMatchObject({ path: '1.1.1.1:443' });
+    expect(dial).toHaveBeenCalledWith('8.8.8.8', 443, expect.any(AbortSignal));
+  } finally {
+    client.destroy();
+    await proxy.close();
+  }
 });
 
 test.each([

@@ -118,7 +118,7 @@ export class PublicProxy {
     if (fixture) return { address: host, port, fixture };
     let addresses: LookupAddress[];
     try {
-      addresses = await resolvePublic(host, signal, this.options.resolve || lookup);
+      addresses = await resolvePublic(host, signal, this.options.resolve || lookup, this.upstream);
     } catch (error) {
       if (error instanceof Fault && error.code === 'NETWORK_BLOCKED') throw denied();
       throw error;
