@@ -5,6 +5,81 @@ import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
+test('trashed contexts reject new tasks and normal history until restored without restarting old work', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-trashed-context-'));
+  const settings = new ModelSettings(path.join(root, 'credentials.json'));
+  let starts = 0;
+  class Harness {
+    async start() {}
+    async close() {}
+    session() {
+      return {
+        id: 'mock-trash-session',
+        run: async () => {
+          starts++;
+          return { sessionId: 'mock-trash-session', finalResponse: 'SYNTHETIC RETAINED' };
+        },
+      };
+    }
+    async resumeSession() {
+      return this.session();
+    }
+  }
+  const models = new ModelRuns({
+    settings,
+    Harness,
+    dir: path.join(root, 'model'),
+    workspace: path.join(root, 'shared'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  try {
+    await settings.save({ apiKey: 'synthetic-model-key' });
+    await models.ready;
+    await models.start('a', { requestId: 'mock-trash-original', prompt: 'SYNTHETIC ORIGINAL' });
+    await models.jobs.get('a')!.done;
+    const request = {
+      id: 'mock-trash-context',
+      bot: 'a',
+      revision: 0,
+      version: 0,
+      action: 'trash' as const,
+      title: 'SYNTHETIC TOPIC',
+    };
+    await models.chats.action(request);
+    const current = models.chats.current('a').revision;
+    await expect(
+      models.start('a', {
+        requestId: 'mock-trashed-send',
+        prompt: 'SYNTHETIC BLOCKED',
+        chatRevision: current,
+        contextRevision: 0,
+      }),
+    ).rejects.toMatchObject({ code: 'CONVERSATION_TRASHED' });
+    await expect(models.chatHistory('a', 0)).rejects.toMatchObject({
+      code: 'CONVERSATION_TRASHED',
+    });
+    await models.chats.action({
+      ...request,
+      id: 'mock-restore-context',
+      version: 1,
+      action: 'restore',
+    });
+    expect(starts).toBe(1);
+    expect((await models.chatHistory('a', 0)).items).toHaveLength(1);
+    await models.start('a', {
+      requestId: 'mock-restored-send',
+      prompt: 'SYNTHETIC AFTER RESTORE',
+      chatRevision: current,
+      contextRevision: 0,
+    });
+    await models.jobs.get('a')!.done;
+    expect(starts).toBe(2);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('explicit historical continuation resumes only its original context while retaining current-boundary and request-identity fences', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-chat-resume-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));

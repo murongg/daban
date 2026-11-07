@@ -160,9 +160,9 @@ it('opens another local conversation from the header while connecting and retain
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC SECOND DRAFT');
   const recent = screen.getByRole('navigation', { name: '最近对话列表' });
-  await userEvent.click(within(recent).getByRole('button', { current: false }));
+  await userEvent.click(within(recent).getByRole('button', { name: '新对话', current: false }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC FIRST DRAFT');
-  await userEvent.click(within(recent).getByRole('button', { current: false }));
+  await userEvent.click(within(recent).getByRole('button', { name: '新对话', current: false }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC SECOND DRAFT');
   expect(
     invoke.mock.calls.some(
@@ -321,11 +321,11 @@ it('switches Bot topics without executing anything and explicitly continues the 
   const invoke = bridge(snapshot);
   render(<App />);
   const recent = await screen.findByRole('navigation', { name: '最近对话列表' });
-  await userEvent.click(within(recent).getByRole('button', { name: /SYNTHETIC OLD TOPIC/ }));
+  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC OLD TOPIC/ }));
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC DRAFT');
-  await userEvent.click(within(recent).getByRole('button', { name: /SYNTHETIC NEW TOPIC/ }));
+  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC NEW TOPIC/ }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
-  await userEvent.click(within(recent).getByRole('button', { name: /SYNTHETIC OLD TOPIC/ }));
+  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC OLD TOPIC/ }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC DRAFT');
   expect(invoke.mock.calls.some(([command]) => command.type === 'task.start')).toBe(false);
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
@@ -350,7 +350,7 @@ it('switches Bot topics without executing anything and explicitly continues the 
     request: expect.objectContaining({ bot: 'a', revision: 1 }),
   });
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
-  await userEvent.click(within(recent).getByRole('button', { name: /SYNTHETIC OLD TOPIC/ }));
+  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC OLD TOPIC/ }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(
     'SYNTHETIC OLD TOPIC DRAFT',
   );

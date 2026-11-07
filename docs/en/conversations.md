@@ -21,6 +21,8 @@ Ordinary chats inherit the workspace model; Bot conversations inherit the Bot's 
 
 ## New conversations and saved history
 
+The **＋ New conversation** button beside **Recent conversations** starts an ordinary chat and remains available when the list is empty.
+
 **Recent conversations** lists ordinary chats and Bot conversations together, with the Bot's name beside its topics. Selecting a conversation never runs tasks or replays tools. Titles come from the first message and can be renamed in the header menu. Custom titles and conversation model choices are stored on this device.
 
 Use **New conversation** in a Bot's header to start another topic. The previous topic retains its drafts, attachments, and approval choice. A Bot can have several conversations sharing its lasting role, [Memory](memory.md), and [Knowledge](knowledge.md).
@@ -30,6 +32,14 @@ Use **New conversation** in a Bot's header to start another topic. The previous 
 Switching conversations or closing the client does not stop running background work. A Bot handles one task at a time: you can draft in another topic and send once it finishes, or choose **Open running conversation** to return. Ordinary chats have separate execution identities. Queued messages stay with their original topic and are not sent automatically after reopening the client.
 
 Ordinary chats, unified recent conversations, and historical continuation require an updated background component. Older components continue to support existing Bot chats and read-only history.
+
+## Conversation trash
+
+Choose **Move to trash** from a recent conversation row or its header menu. Use **Undo** in the confirmation toast, or restore it later from **Settings → Conversation trash**. There is no permanent deletion or automatic cleanup.
+
+Trashing a conversation retains its messages, unsent drafts, attachments, and generated files, along with the Bot's memory and reference material. Restoring adds it back to the list without running previous tasks or sending queued messages. Restore an archived Bot first before restoring its conversation.
+
+Running tasks and tasks awaiting confirmation must finish before the conversation can be trashed. Choose **View task** to return to it. If an operation is uncertain, explicitly **Verify operation result** and, when necessary, **Retry the same operation**. Reopening the client never resends it automatically. Organizing and restoring require a backend with conversation trash support; local records remain available while disconnected.
 
 ## Long conversations and drafts
 

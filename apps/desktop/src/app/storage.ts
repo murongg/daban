@@ -6,6 +6,8 @@ import {
   isBotImportReference,
   isBotLifecycleRequest,
   isChatRequest,
+  isConversationRequest,
+  isConversationState,
   isGroupActionRequest,
   isGroupCopyRequest,
   isGroupSend,
@@ -57,6 +59,8 @@ export function restore(raw: string | null): State {
     const s = saved.state;
     s.comments = restoreComments(s.comments);
     s.work = restoreWork(s.work);
+    if (s.comments === undefined) delete s.comments;
+    if (s.work === undefined) delete s.work;
     if (!isBotImportReference(s.botImport)) delete s.botImport;
     if (!isBotCopyRequest(s.botCopy)) delete s.botCopy;
     if (!isGroupCopyRequest(s.groupCopy)) delete s.groupCopy;
@@ -113,6 +117,26 @@ export function restore(raw: string | null): State {
     s.conversationTitles = Object.fromEntries(
       Object.entries(record(s.conversationTitles) ? s.conversationTitles : {}).filter(
         ([key, title]) => conversationKey(key) && typeof title === 'string' && title.length <= 120,
+      ),
+    );
+    s.conversationStates = Object.fromEntries(
+      Object.entries(record(s.conversationStates) ? s.conversationStates : {}).filter(
+        ([key, value]) =>
+          conversationKey(key) &&
+          isConversationState(value) &&
+          bots.some(
+            (bot) => key === `${bot.id}:${value.revision}` && agentId(String(bot.id)) === value.bot,
+          ),
+      ),
+    );
+    s.conversationRequests = Object.fromEntries(
+      Object.entries(record(s.conversationRequests) ? s.conversationRequests : {}).filter(
+        ([key, value]) =>
+          conversationKey(key) &&
+          isConversationRequest(value) &&
+          bots.some(
+            (bot) => key === `${bot.id}:${value.revision}` && agentId(String(bot.id)) === value.bot,
+          ),
       ),
     );
     s.conversationDrafts = Object.fromEntries(

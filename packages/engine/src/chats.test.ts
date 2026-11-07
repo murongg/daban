@@ -101,3 +101,114 @@ test('failed admission or a still-stopping private job cannot commit a new bound
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('conversation trash and restore persist exact scoped receipts, preserve boundaries and reject stale undo', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-conversation-trash-'));
+  const file = path.join(root, 'chats.sqlite');
+  let chats = new Chats(file, () => {});
+  const request = {
+    id: 'mock-trash',
+    bot: 'mock-alpha',
+    revision: 0,
+    version: 0,
+    action: 'trash' as const,
+    title: 'SYNTHETIC TOPIC',
+  };
+  try {
+    await chats.ready;
+    const first = await chats.action(request);
+    expect((await chats.status()).lifecycle).toEqual([first.conversation]);
+    expect(first.conversation).toMatchObject({
+      bot: request.bot,
+      revision: 0,
+      version: 1,
+      trashed: true,
+    });
+    expect(first.chat.revision).toBe(1);
+    expect(chats.current('mock-beta').revision).toBe(0);
+    expect(() => chats.assertVisible(request.bot, 0)).toThrow('CONVERSATION_TRASHED');
+    await chats.close();
+    chats = new Chats(file, () => {});
+    await chats.ready;
+    expect(await chats.actionReceipt(request)).toEqual(first);
+    const restored = await chats.action({
+      ...request,
+      id: 'mock-restore',
+      action: 'restore',
+      version: 1,
+    });
+    expect(restored.conversation).toMatchObject({ trashed: false, version: 2 });
+    expect(restored.chat.revision).toBe(1);
+    expect(() => chats.assertVisible(request.bot, 0)).not.toThrow();
+    const second = await chats.action({ ...request, id: 'mock-trash-again', version: 2 });
+    expect(second.conversation.version).toBe(3);
+    await expect(
+      chats.action({ ...request, id: 'mock-stale-undo', action: 'restore', version: 1 }),
+    ).rejects.toMatchObject({ code: 'CONVERSATION_CONFLICT' });
+    expect((await chats.action(request)).conversation.version).toBe(3);
+    await expect(chats.action({ ...request, title: 'SYNTHETIC CHANGED' })).rejects.toMatchObject({
+      code: 'CONVERSATION_REQUEST_ID_REUSED',
+    });
+    await expect(chats.actionReceipt({ ...request, bot: 'mock-beta' })).rejects.toMatchObject({
+      code: 'CONVERSATION_RECEIPT_NOT_FOUND',
+    });
+    expect((await chats.conversations()).filter((entry) => entry.trashed)).toHaveLength(1);
+    await expect(
+      chats.action({ ...request, id: 'mock-future', revision: 9 }),
+    ).rejects.toMatchObject({ code: 'CHAT_NOT_FOUND' });
+  } finally {
+    await chats.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('trash admission is atomic and never stops active work or commits a receipt on rejection', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-conversation-busy-'));
+  let busy = true;
+  const chats = new Chats(path.join(root, 'chats.sqlite'), () => {
+    if (busy) throw Object.assign(new Error('CHAT_BUSY'), { code: 'CHAT_BUSY' });
+  });
+  const request = {
+    id: 'mock-busy-trash',
+    bot: 'mock-alpha',
+    revision: 0,
+    version: 0,
+    action: 'trash' as const,
+    title: 'SYNTHETIC BUSY',
+  };
+  try {
+    await chats.ready;
+    await expect(chats.action(request)).rejects.toMatchObject({ code: 'CHAT_BUSY' });
+    expect(chats.current(request.bot).revision).toBe(0);
+    expect(await chats.conversations()).toEqual([]);
+    await expect(chats.actionReceipt(request)).rejects.toMatchObject({
+      code: 'CONVERSATION_RECEIPT_NOT_FOUND',
+    });
+    busy = false;
+    await chats.action(request);
+    busy = true;
+    expect((await chats.action(request)).conversation.trashed).toBe(true);
+  } finally {
+    await chats.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a corrupt lifecycle record reports unavailable state without hiding retained data', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-corrupt-conversation-'));
+  const file = path.join(root, 'chats.sqlite');
+  const chats = new Chats(file, () => {});
+  try {
+    await chats.ready;
+    const corrupt = new DatabaseSync(file);
+    corrupt
+      .prepare('INSERT INTO conversation_states(bot, revision, value) VALUES(?, ?, ?)')
+      .run('mock-alpha', 0, '{');
+    corrupt.close();
+    expect(await chats.status()).toMatchObject({ available: false, error: 'CHAT_UNAVAILABLE' });
+    await expect(chats.conversations()).rejects.toMatchObject({ code: 'CHAT_CORRUPT' });
+  } finally {
+    await chats.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

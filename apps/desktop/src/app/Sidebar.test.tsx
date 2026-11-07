@@ -13,6 +13,28 @@ import { App } from './App';
 import { Sidebar } from './Sidebar';
 import { restore, storageKey } from './storage';
 
+it('opens the archive flow from a Bot row without selecting that Bot', async () => {
+  const onLifecycle = vi.fn();
+  const dispatch = vi.fn();
+  render(
+    <Sidebar
+      state={seedDemoState()}
+      dispatch={dispatch}
+      query=""
+      setQuery={vi.fn()}
+      searchRef={createRef<HTMLInputElement>()}
+      onCreate={vi.fn()}
+      onLifecycle={onLifecycle}
+      open
+      close={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: '整理 写作搭档' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: '归档 Bot' }));
+  expect(onLifecycle).toHaveBeenCalledWith('writer');
+  expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'select' }));
+});
+
 it.each([
   ['win32', 'MacIntel', 'Ctrl K'],
   ['darwin', 'Win32', '⌘ K'],

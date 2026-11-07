@@ -1,5 +1,6 @@
 import { agentId, agentTask, computerTarget, recoveryBlocked } from '@daban/protocol';
 import {
+  Archive,
   ArrowDown,
   ArrowUp,
   ChevronDown,
@@ -44,6 +45,8 @@ export function Sidebar({
   searchRef,
   onCreate,
   onNewChat,
+  onLifecycle,
+  onTrash,
   onChats,
   onImport,
   onCopy,
@@ -59,6 +62,8 @@ export function Sidebar({
   searchRef: RefObject<HTMLInputElement | null>;
   onCreate: (group?: boolean) => unknown;
   onNewChat?: () => unknown;
+  onLifecycle?: (bot: string) => unknown;
+  onTrash?: (bot: string, revision: number, title: string) => unknown;
   onChats?: () => unknown;
   onImport?: () => unknown;
   onCopy?: (bot?: string) => unknown;
@@ -360,7 +365,14 @@ export function Sidebar({
           </button>
         </div>
         <div className="sidebar-scroll">
-          <RecentConversations state={state} dispatch={dispatch} query={query} close={close} />
+          <RecentConversations
+            state={state}
+            dispatch={dispatch}
+            query={query}
+            close={close}
+            onNewChat={onNewChat}
+            onTrash={onTrash}
+          />
           <div className="section-label">
             <span>{t('sidebar.bots')}</span>
             <span className="spacer" />
@@ -655,6 +667,17 @@ export function Sidebar({
                         setEdit({ kind: 'create', bot: bot.id, focusId: menu.focusId }),
                     },
                   ];
+                  if (onLifecycle)
+                    items.push(
+                      { id: 'archive-divider', kind: 'separator' },
+                      {
+                        id: 'archive',
+                        kind: 'action',
+                        label: bot.members ? t('common.archiveGroup') : t('common.archiveBot'),
+                        icon: <Archive />,
+                        onSelect: () => onLifecycle(bot.id),
+                      },
+                    );
                   return items;
                 })()
               : (() => {

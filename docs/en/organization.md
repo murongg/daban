@@ -22,6 +22,6 @@ A section is a list category, not a Bot group. Putting Bots together does not sh
 
 ## Copy and archive entries
 
-Bot menus provide [Copy Bot](copy-bot.md); group menus can copy an empty group or open archiving. Imports and unconfirmed operations may retain progress entries in the sidebar. Check these before creating another item.
+Bot menus provide [Copy Bot](copy-bot.md) and [Archive Bot](archives.md); group menus can copy an empty group or open archiving. Imports and unconfirmed operations may retain progress entries in the sidebar. Check these before creating another item.
 
 Organization, unread markers, and view preferences belong to this client's workspace rather than a cross-device real-time synchronization service. See [Workspace export](workspace-export.md) for their relationship to retained data.

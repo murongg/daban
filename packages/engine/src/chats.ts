@@ -7,14 +7,27 @@ import {
   type ChatReceipt,
   type ChatState,
   type ChatStatus,
+  type ConversationAck,
+  type ConversationRequest,
+  type ConversationState,
   isChatAck,
   isChatRequest,
   isChatState,
+  isConversationAck,
+  isConversationRequest,
+  isConversationState,
+  sameConversationRequest,
   validAgentId,
 } from '@daban/protocol';
-import { asc, count, eq, sql } from 'drizzle-orm';
+import { and, asc, count, eq, sql } from 'drizzle-orm';
 import { migrations } from './chats-migrations.js';
-import { chatMeta, chatReceipts, chats } from './chats-schema.js';
+import {
+  chatMeta,
+  chatReceipts,
+  chats,
+  conversationReceipts,
+  conversationStates,
+} from './chats-schema.js';
 import { Fault } from './control.js';
 import { configure, type Database, migrate } from './database.js';
 
@@ -32,7 +45,7 @@ export class Chats {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(
     readonly file: string,
-    readonly admit: (bot: string) => undefined,
+    readonly admit: (bot: string, revision?: number) => undefined,
   ) {
     this.ready = this.load();
     this.ready.catch(() => {
@@ -84,6 +97,154 @@ export class Chats {
     if (revision === undefined && current.revision) throw new Fault('CHAT_REVISION_REQUIRED');
     if ((revision ?? 0) !== current.revision) throw new Fault('CHAT_CONFLICT');
     return current.revision;
+  }
+  private conversation(bot: string, revision: number): ConversationState | undefined {
+    this.usable();
+    const row = this.db
+      .select()
+      .from(conversationStates)
+      .where(and(eq(conversationStates.bot, bot), eq(conversationStates.revision, revision)))
+      .get();
+    if (!row) return;
+    return this.readConversation(row);
+  }
+  private readConversation(row: {
+    bot: string;
+    revision: number;
+    value: string;
+  }): ConversationState {
+    let value: unknown;
+    try {
+      value = JSON.parse(row.value);
+    } catch {
+      throw new Fault('CHAT_CORRUPT');
+    }
+    if (!isConversationState(value) || value.bot !== row.bot || value.revision !== row.revision)
+      throw new Fault('CHAT_CORRUPT');
+    return value;
+  }
+  private allConversations() {
+    return this.db
+      .select()
+      .from(conversationStates)
+      .orderBy(asc(conversationStates.bot), asc(conversationStates.revision))
+      .all()
+      .map((row) => this.readConversation(row));
+  }
+  assertVisible(bot: string, revision: number) {
+    if (this.conversation(bot, revision)?.trashed) throw new Fault('CONVERSATION_TRASHED');
+  }
+  conversations(): Promise<ConversationState[]> {
+    return this.exclusive(() => this.allConversations());
+  }
+  private conversationReceipt(request: ConversationRequest): ConversationAck | undefined {
+    const row = this.db
+      .select()
+      .from(conversationReceipts)
+      .where(eq(conversationReceipts.id, request.id))
+      .get();
+    if (!row) return;
+    let receipt: unknown;
+    try {
+      receipt = JSON.parse(row.value);
+    } catch {
+      throw new Fault('CHAT_CORRUPT');
+    }
+    const ack = {
+      chat: this.current(request.bot),
+      conversation: this.conversation(request.bot, request.revision),
+      receipt,
+    };
+    if (!isConversationAck(ack)) throw new Fault('CONVERSATION_RECEIPT_NOT_FOUND', 404);
+    if (!sameConversationRequest(ack.receipt.request, request))
+      throw new Fault('CONVERSATION_REQUEST_ID_REUSED');
+    return ack;
+  }
+  action(input: unknown): Promise<ConversationAck> {
+    if (!isConversationRequest(input))
+      return Promise.reject(new Fault('INVALID_CONVERSATION_REQUEST', 400));
+    const request: ConversationRequest = {
+      id: input.id,
+      bot: input.bot,
+      revision: input.revision,
+      version: input.version,
+      action: input.action,
+      title: input.title,
+    };
+    return this.exclusive(() =>
+      this.db.transaction(
+        (tx) => {
+          const prior = this.conversationReceipt(request);
+          if (prior) return prior;
+          let chat = this.current(request.bot);
+          if (request.revision > chat.revision) throw new Fault('CHAT_NOT_FOUND', 404);
+          const current = this.conversation(request.bot, request.revision);
+          if ((current?.version ?? 0) !== request.version) throw new Fault('CONVERSATION_CONFLICT');
+          if ((current?.trashed ?? false) === (request.action === 'trash'))
+            throw new Fault('CONVERSATION_CONFLICT');
+          // Admission and the tombstone commit share one synchronous transaction; no job can start between them.
+          this.admit(request.bot, request.revision);
+          if (tx.select({ n: count() }).from(conversationReceipts).get()!.n >= 10000)
+            throw new Fault('CHAT_LIMIT');
+          const completedAt = new Date().toISOString();
+          const conversation: ConversationState = {
+            bot: request.bot,
+            revision: request.revision,
+            version: request.version + 1,
+            trashed: request.action === 'trash',
+            title: request.title,
+            updatedAt: completedAt,
+          };
+          if (conversation.trashed && chat.revision === request.revision) {
+            if (chat.revision >= Number.MAX_SAFE_INTEGER - 1) throw new Fault('CHAT_LIMIT');
+            // Leave a fresh writable boundary so legacy clients cannot append to the trashed latest topic.
+            chat = { bot: request.bot, revision: chat.revision + 1, updatedAt: completedAt };
+            tx.insert(chats)
+              .values({ bot: chat.bot, value: JSON.stringify(chat) })
+              .onConflictDoUpdate({ target: chats.bot, set: { value: sql`excluded.value` } })
+              .run();
+          }
+          tx.insert(conversationStates)
+            .values({
+              bot: request.bot,
+              revision: request.revision,
+              value: JSON.stringify(conversation),
+            })
+            .onConflictDoUpdate({
+              target: [conversationStates.bot, conversationStates.revision],
+              set: { value: sql`excluded.value` },
+            })
+            .run();
+          const receipt = { request, version: conversation.version, completedAt };
+          tx.insert(conversationReceipts)
+            .values({ id: request.id, value: JSON.stringify(receipt) })
+            .run();
+          tx.update(chatMeta)
+            .set({ revision: sql`${chatMeta.revision} + 1` })
+            .where(eq(chatMeta.id, 1))
+            .run();
+          return { chat, conversation, receipt };
+        },
+        { behavior: 'immediate' },
+      ),
+    );
+  }
+  actionReceipt(input: unknown): Promise<ConversationAck> {
+    if (!isConversationRequest(input))
+      return Promise.reject(new Fault('INVALID_CONVERSATION_REQUEST', 400));
+    const request: ConversationRequest = {
+      id: input.id,
+      bot: input.bot,
+      revision: input.revision,
+      version: input.version,
+      action: input.action,
+      title: input.title,
+    };
+    return this.exclusive(() => {
+      const ack = this.conversationReceipt(request);
+      if (!ack) throw new Fault('CONVERSATION_RECEIPT_NOT_FOUND', 404);
+      return ack;
+    });
   }
   private record(id: string): ChatReceipt | undefined {
     const row = this.db
@@ -167,6 +328,7 @@ export class Chats {
     try {
       return await this.exclusive(() => ({
         available: true,
+        lifecycle: this.allConversations(),
         revision: this.db.select({ revision: chatMeta.revision }).from(chatMeta).get()!.revision,
         items: this.db
           .select({ bot: chats.bot })

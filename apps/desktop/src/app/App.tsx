@@ -4,6 +4,7 @@ import {
   agentTask,
   type BotProfile,
   type BotProfileInput,
+  type ConversationAck,
   computerTarget,
   type DocumentOriginal,
   type Group,
@@ -30,6 +31,7 @@ import {
   Moon,
   Pencil,
   Sun,
+  Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { I18nProvider } from 'react-aria-components';
@@ -48,10 +50,17 @@ import { Profile } from '../features/bots/Profile';
 import type { BotPreset } from '../features/bots/presets';
 import { ChatHistory } from '../features/chat/ChatHistory';
 import { Conversation } from '../features/chat/Conversation';
-import { conversationModel, recentConversations } from '../features/chat/conversations';
+import { TrashProblem } from '../features/chat/ConversationTrash';
+import {
+  conversationModel,
+  conversationPending,
+  conversationState,
+  recentConversations,
+} from '../features/chat/conversations';
 import { NewChat } from '../features/chat/NewChat';
 import { RenameConversation } from '../features/chat/RenameConversation';
 import { pendingInserts } from '../features/chat/response';
+import { useTrash } from '../features/chat/useTrash';
 import { Computer, type ComputerSurface } from '../features/computer/Computer';
 import { Desktop } from '../features/computer/Desktop';
 import { Recovery, RecoveryNotice } from '../features/computer/Recovery';
@@ -206,14 +215,38 @@ function Workbench() {
   const [query, setQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
-  useAttention(state, dispatch, !!modal || settingsOpen);
+
   const [toast, setToast] = useState('');
+  const [undo, setUndo] = useState<{
+    bot: string;
+    revision: number;
+    title: string;
+    version: number;
+  }>();
   const [verifyTick, setVerifyTick] = useState(0);
   const [inboxFocus, setInboxFocus] = useState<string>();
   const search = useRef<HTMLInputElement>(null);
   const storageFailed = useRef(false);
   const ingested = useRef(new Map<string, string>());
-  const notify = useCallback((text: string) => setToast(text), []);
+  const notify = useCallback((text: string) => {
+    setToast(text);
+    setUndo(undefined);
+  }, []);
+  const trash = useTrash(state, dispatch, (ack: ConversationAck, bot: string) => {
+    if (ack.conversation.version !== ack.receipt.version) {
+      notify(t('trash.changed'));
+      return;
+    }
+    notify(t(ack.conversation.trashed ? 'trash.moved' : 'trash.restored'));
+    if (ack.conversation.trashed)
+      setUndo({
+        bot,
+        revision: ack.conversation.revision,
+        title: ack.conversation.title,
+        version: ack.conversation.version,
+      });
+  });
+  useAttention(state, dispatch, !!modal || settingsOpen || !!trash.issue);
   const work = useWork(state, dispatch, notify);
   const closeModal = useCallback(() => setModal(null), []);
   const closeSettings = useCallback(() => {
@@ -282,7 +315,18 @@ function Workbench() {
       )
     : undefined;
   const pendingGroup = bot ? state.groupActions[bot.id] : undefined;
-  const historyOnly = !!bot?.archived || !!pendingLifecycle || !!pendingGroup;
+  const conversationBlocked =
+    !!bot &&
+    !bot.members &&
+    (!!conversationPending(state, bot.id, chatRevision(state, bot.id, runtime.snapshot.chats)) ||
+      !!conversationState(
+        state,
+        bot.id,
+        chatRevision(state, bot.id, runtime.snapshot.chats),
+        runtime.snapshot.chats,
+      )?.trashed);
+  const historyOnly =
+    !!bot?.archived || !!pendingLifecycle || !!pendingGroup || conversationBlocked;
   const workspaceVisible =
     !!state.panel && (!historyOnly || ['computer', 'files', 'notes'].includes(state.panel));
   const chatVersion = bot ? chatRevision(state, bot.id, runtime.snapshot.chats) : 0;
@@ -321,22 +365,22 @@ function Workbench() {
   useEffect(() => {
     if (runtime.snapshot.chats?.available) {
       const chats = runtime.snapshot.chats;
-      dispatch({
-        type: 'chats',
-        keepSelection: runtime.snapshot.protocolVersion >= 46,
-        items:
-          runtime.snapshot.protocolVersion >= 46
-            ? state.bots
-                .filter((bot) => !bot.members)
-                .map(
-                  (bot) =>
-                    chats.items.find((chat) => chat.bot === agentId(bot.id)) ?? {
-                      bot: agentId(bot.id),
-                      revision: 0,
-                    },
-                )
-            : chats.items,
-      });
+      const items =
+        runtime.snapshot.protocolVersion >= 46
+          ? state.bots
+              .filter((bot) => !bot.members)
+              .map(
+                (bot) =>
+                  chats.items.find((chat) => chat.bot === agentId(bot.id)) ?? {
+                    bot: agentId(bot.id),
+                    revision: 0,
+                  },
+              )
+          : chats.items;
+      if (runtime.snapshot.protocolVersion >= 47)
+        dispatch({ type: 'conversation-sync', items: chats.lifecycle ?? [], chats: items });
+      else
+        dispatch({ type: 'chats', items, keepSelection: runtime.snapshot.protocolVersion >= 46 });
     }
   }, [runtime.snapshot.chats, runtime.snapshot.protocolVersion, state.bots, dispatch]);
   let subtitle = bot?.role || t('app.aiWorkCompanion');
@@ -434,7 +478,14 @@ function Workbench() {
     if (
       state.bots.find((entry) => entry.id === botId)?.archived ||
       state.chatRequests[botId] ||
-      lifecycleRequest(state, botId)
+      lifecycleRequest(state, botId) ||
+      conversationPending(state, botId, chatRevision(state, botId, runtime.snapshot.chats)) ||
+      conversationState(
+        state,
+        botId,
+        chatRevision(state, botId, runtime.snapshot.chats),
+        runtime.snapshot.chats,
+      )?.trashed
     ) {
       notify(t('app.restoreBotVerifyOperationResultSendingNew'));
       return skipped;
@@ -624,7 +675,18 @@ function Workbench() {
     const entry = state.bots.find((bot) => bot.id === botId);
     if (!entry || entry.archived) return;
     if (state.runtimeRequests[botId] || state.attachmentUploads[botId]) return;
-    if (state.chatRequests[botId] || lifecycleRequest(state, botId)) return;
+    if (
+      state.chatRequests[botId] ||
+      lifecycleRequest(state, botId) ||
+      conversationPending(state, botId, chatRevision(state, botId, runtime.snapshot.chats)) ||
+      conversationState(
+        state,
+        botId,
+        chatRevision(state, botId, runtime.snapshot.chats),
+        runtime.snapshot.chats,
+      )?.trashed
+    )
+      return;
     const prompt = state.drafts[botId].trim();
     const files = state.attachments[botId]
       .map((id) => state.files.find((file) => file.id === id))
@@ -736,7 +798,22 @@ function Workbench() {
       // An unconfirmed insert pauses delivery until its receipt is reconciled.
       if (item.error || item.verify) continue;
       if (state.runtimeRequests[entry.id] || state.attachmentUploads[entry.id]) continue;
-      if (entry.archived || state.chatRequests[entry.id] || lifecycleRequest(state, entry.id))
+      if (
+        entry.archived ||
+        state.chatRequests[entry.id] ||
+        lifecycleRequest(state, entry.id) ||
+        conversationPending(
+          state,
+          entry.id,
+          chatRevision(state, entry.id, runtime.snapshot.chats),
+        ) ||
+        conversationState(
+          state,
+          entry.id,
+          chatRevision(state, entry.id, runtime.snapshot.chats),
+          runtime.snapshot.chats,
+        )?.trashed
+      )
         continue;
       const attached = item.files
         .map((id) => state.files.find((file) => file.id === id))
@@ -836,9 +913,15 @@ function Workbench() {
   }, [state, notify]);
   useEffect(() => {
     if (!toast) return;
-    const timeout = setTimeout(() => setToast(''), 4500);
+    const timeout = setTimeout(
+      () => {
+        setToast('');
+        setUndo(undefined);
+      },
+      undo ? 12000 : 4500,
+    );
     return () => clearTimeout(timeout);
-  }, [toast]);
+  }, [toast, undo]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       // Local editors share Dialog without owning the main modal state.
@@ -880,6 +963,8 @@ function Workbench() {
           setModal({ type: 'create', group: !!group });
         }}
         onNewChat={createChat}
+        onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
+        onTrash={trash.move}
         onChats={openChats}
         open={sidebarOpen}
         close={() => setSidebarOpen(false)}
@@ -945,6 +1030,13 @@ function Workbench() {
                   items={[
                     ...(!bot.members && (!runtime.enabled || runtime.snapshot.protocolVersion >= 46)
                       ? [
+                          {
+                            id: 'trash-conversation',
+                            label: t('trash.move'),
+                            icon: <Trash2 />,
+                            onSelect: () =>
+                              trash.move(bot.id, chatVersion, title || t('conversations.untitled')),
+                          },
                           {
                             id: 'rename-conversation',
                             label: t('conversations.rename'),
@@ -1123,6 +1215,7 @@ function Workbench() {
                   onContinue={() => continueTask(bot.id)}
                   onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
                   onNewChat={newConversation}
+                  onTrashRecovery={() => dispatch({ type: 'view', view: 'settings' })}
                   pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
                   onModel={() => {
                     if (!bot.members && runtime.snapshot.protocolVersion >= 14)
@@ -1172,7 +1265,8 @@ function Workbench() {
           state={state}
           dispatch={dispatch}
           onClose={closeSettings}
-          active={!modal}
+          active={!modal && !trash.issue}
+          trash={trash}
           onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
           onRecovery={() => setModal({ type: 'recovery' })}
         />
@@ -1204,6 +1298,9 @@ function Workbench() {
         <ChatHistory
           key={modal.bot}
           bot={state.bots.find((bot) => bot.id === modal.bot)!}
+          trashedRevisions={Object.values(state.conversationStates ?? {})
+            .filter((item) => item.bot === agentId(modal.bot) && item.trashed)
+            .map((item) => item.revision)}
           revision={
             chatBoundary(state, modal.bot, runtime.snapshot.chats) + (modal.includeCurrent ? 1 : 0)
           }
@@ -1494,10 +1591,30 @@ function Workbench() {
           </div>
         </Dialog>
       )}
+      <TrashProblem
+        state={state}
+        trash={trash}
+        onTask={(id, revision) => {
+          dispatch({ type: 'chat-select', bot: id, revision });
+          dispatch({ type: 'select', bot: id });
+          setSidebarOpen(false);
+        }}
+        onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
+      />
       {toast && (
         <div className="toast" role="status" aria-live="polite">
           <Info />
           <span>{toast}</span>
+          {undo && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={trash.busy}
+              onClick={() => trash.restore(undo.bot, undo.revision, undo.title, undo.version)}
+            >
+              {t('trash.undo')}
+            </button>
+          )}
         </div>
       )}
     </div>
