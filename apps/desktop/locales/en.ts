@@ -97,6 +97,8 @@ export const english = {
   'conversations.rename': 'Rename conversation',
   'conversations.saveTitle': 'Save',
   'conversations.plainContext': 'Conversation · Tools available',
+  'conversations.connectToSend': 'Connect to the workspace to send. Your draft is retained.',
+  'conversations.updateToSend': 'Update the background component to send. Your draft is retained.',
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',

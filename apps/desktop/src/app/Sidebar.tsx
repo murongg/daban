@@ -43,6 +43,7 @@ export function Sidebar({
   searchRef,
   onCreate,
   onNewChat,
+  onChats,
   onImport,
   onCopy,
   onCopyGroup,
@@ -57,6 +58,7 @@ export function Sidebar({
   searchRef: RefObject<HTMLInputElement | null>;
   onCreate: (group?: boolean) => unknown;
   onNewChat?: () => unknown;
+  onChats?: () => unknown;
   onImport?: () => unknown;
   onCopy?: (bot?: string) => unknown;
   onCopyGroup?: (group?: string) => unknown;
@@ -298,15 +300,7 @@ export function Sidebar({
         </div>
         <div className="nav-main">
           {onNewChat && (
-            <button
-              type="button"
-              className="nav-row sidebar-new-chat"
-              onClick={onNewChat}
-              disabled={
-                runtime.enabled &&
-                (runtime.snapshot.phase !== 'ready' || runtime.snapshot.protocolVersion < 46)
-              }
-            >
+            <button type="button" className="nav-row sidebar-new-chat" onClick={onNewChat}>
               <Plus aria-hidden="true" />
               {t('conversations.newChat')}
             </button>
@@ -353,9 +347,10 @@ export function Sidebar({
           </button>
           <button
             type="button"
-            className={`nav-row ${state.view === 'chat' ? 'selected' : ''}`}
+            className={`nav-row ${state.view === 'chat' && state.bots.find((bot) => bot.id === state.selected)?.kind === 'chat' ? 'selected' : ''}`}
             onClick={() => {
-              dispatch({ type: 'view', view: 'chat' });
+              if (onChats) onChats();
+              else dispatch({ type: 'view', view: 'chat' });
               close();
             }}
           >
