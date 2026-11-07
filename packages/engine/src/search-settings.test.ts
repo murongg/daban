@@ -89,7 +89,7 @@ test('a missing configuration initializes locally without claiming credentials',
     credentialConfigured: false,
     credentialSource: 'none',
     health: 'unchecked',
-    provider: 'duckduckgo',
+    provider: 'bing',
   });
 });
 test('saved legacy key-only credentials stay as a fixed reference and are never copied', async () => {
@@ -373,7 +373,7 @@ test('legacy resolution preserves official-ID priority while missing search file
   );
   expect((await models.searchConnection())?.id).toBe('deepseek-official');
   expect(await search.status()).toMatchObject({
-    provider: 'duckduckgo',
+    provider: 'bing',
     credentialConfigured: false,
   });
   for (const foreign of [
@@ -385,7 +385,7 @@ test('legacy resolution preserves official-ID priority while missing search file
     expect(await new SearchSettings(search.file, models).status()).toMatchObject({
       credentialConfigured: false,
       health: 'unchecked',
-      provider: 'duckduckgo',
+      provider: 'bing',
     });
   }
 });

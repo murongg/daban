@@ -28,14 +28,15 @@ export const english = {
   'conversations.actions': 'Organize conversation {0}',
   'trash.move': 'Move to trash',
 
+  'search.bingOption': 'Bing (no API key)',
   'search.duckduckgoOption': 'DuckDuckGo (no API key)',
   'search.keylessCredential': 'Keyless search; no credentials needed',
   'search.keylessHint':
-    'No API key needed. Searches DuckDuckGo public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
+    'No API key needed. Searches {0} public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
   'search.confirmKeyless':
-    'Send one fixed search without personal content to DuckDuckGo. No search API key is needed. This will not retry automatically or switch providers.',
+    'Send one fixed search without personal content to {0}. No search API key is needed. This will not retry automatically or switch providers.',
   'search.healthKeylessForbidden':
-    'DuckDuckGo restricted this request or requires verification. Try again later explicitly.',
+    '{0} restricted this request or requires verification. Try again later explicitly or switch search providers.',
 
   'search.independentKeyRequired':
     'Enter an independent API key for this search provider. The previous credential cannot be reused for this save.',
@@ -85,14 +86,14 @@ export const english = {
     'Search settings changed elsewhere. Your input is kept; review the current provider before saving again.',
   'search.useCurrentRevision': 'Keep input and use the current version',
   'search.saveFirst': 'Save your changes before testing the configured provider.',
-  'search.checkedAt': 'Last test: {0}',
+  'search.checkedAt': 'Last search: {0}',
   'search.testScope':
-    'A successful test is a point-in-time result, not a promise of continued availability or quota.',
+    'Status reflects the latest search or test, not a promise of continued availability or quota.',
   'search.healthDisabled': 'Search is disabled',
   'search.healthUnconfigured': 'Search needs a credential',
   'search.healthUnchecked': 'Not tested remotely',
-  'search.healthReady': 'Test passed; search is available',
-  'search.healthEmpty': 'Test passed with no results',
+  'search.healthReady': 'The latest search succeeded',
+  'search.healthEmpty': 'The latest search returned no results',
   'search.healthUnauthorized': 'Authentication failed. Replace this search key.',
   'search.healthForbidden': 'This key lacks search permission. Check the provider account.',
   'search.healthRateLimited': 'Search is rate limited. Wait before explicitly testing again.',

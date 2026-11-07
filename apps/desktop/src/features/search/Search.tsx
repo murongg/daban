@@ -22,6 +22,7 @@ import './search.css';
 
 const pendingKey = 'daban.search.pending.v1';
 const providerNames: Record<SearchProvider, string> = {
+  bing: 'Bing',
   duckduckgo: 'DuckDuckGo',
   deepseek: 'DeepSeek',
   brave: 'Brave',
@@ -291,10 +292,11 @@ export function Search() {
             <>
               <p className="setting-description" role="status">
                 {t(
-                  status.provider === 'duckduckgo' &&
+                  !searchRequiresKey(status.provider) &&
                     (status.health === 'forbidden' || status.health === 'unauthorized')
                     ? 'search.healthKeylessForbidden'
                     : healthMessages[status.health],
+                  { 0: providerNames[status.provider] },
                 )}
               </p>
               <p className="field-help">
@@ -361,6 +363,7 @@ export function Search() {
                   }
                 }}
                 options={[
+                  { value: 'bing', label: t('search.bingOption') },
                   { value: 'duckduckgo', label: t('search.duckduckgoOption') },
                   { value: 'deepseek', label: 'DeepSeek' },
                   { value: 'brave', label: 'Brave' },
@@ -390,7 +393,9 @@ export function Search() {
                 </p>
               </div>
             ) : (
-              <p className="field-help">{t('search.keylessHint')}</p>
+              <p className="field-help">
+                {t('search.keylessHint', { 0: providerNames[draft.provider] })}
+              </p>
             )}
           </fieldset>
           {conflict && (
@@ -475,6 +480,7 @@ export function Search() {
               searchRequiresKey(confirmation.provider)
                 ? 'search.confirmCost'
                 : 'search.confirmKeyless',
+              { 0: providerNames[confirmation.provider] },
             )}
           </p>
           <div className="inline-form-actions">

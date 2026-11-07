@@ -1,7 +1,8 @@
 import { validAgentId } from './id.js';
 
-export type SearchProvider = 'deepseek' | 'brave' | 'duckduckgo';
-export const searchRequiresKey = (provider: SearchProvider) => provider !== 'duckduckgo';
+export type SearchProvider = 'deepseek' | 'brave' | 'duckduckgo' | 'bing';
+export const searchRequiresKey = (provider: SearchProvider) =>
+  provider !== 'duckduckgo' && provider !== 'bing';
 export interface SearchSource {
   url: string;
   title?: string;
@@ -29,6 +30,7 @@ export type SearchHealth =
   | 'unknown';
 export interface SearchStatus {
   revision: number;
+  // Task outcomes advance this too, so a retained test receipt cannot restore older health.
   checkRevision: number;
   enabled: boolean;
   provider: SearchProvider;
@@ -107,7 +109,7 @@ const fields = (value: Record<string, unknown>, allowed: string[]) =>
 const revision = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) >= 0;
 export const isSearchProvider = (value: unknown): value is SearchProvider =>
-  value === 'deepseek' || value === 'brave' || value === 'duckduckgo';
+  value === 'deepseek' || value === 'brave' || value === 'duckduckgo' || value === 'bing';
 export function isSearchErrorCode(value: unknown): value is SearchErrorCode {
   return searchErrorCodes.some((code) => code === value);
 }
