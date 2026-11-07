@@ -62,8 +62,8 @@ export class HostBrowser {
       browser: {
         available: (bot) => this.selected(bot),
         tabs,
-        frame: (bot) => this.browser(bot).frame(bot),
-        view: (bot) => this.browser(bot).view(bot),
+        frame: (bot) => this.browser(bot).tabs!.frame(bot, true),
+        view: (bot) => this.browser(bot).view(bot, true),
         input: (bot, epoch, input, actor, binding) =>
           this.browser(bot).input(bot, epoch, input, actor, binding),
       },

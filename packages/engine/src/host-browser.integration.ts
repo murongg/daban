@@ -8,14 +8,15 @@ import test from 'node:test';
 import type { BrowserAck, BrowserView, HostBrowserStatus } from '@daban/protocol';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { HostBrowser } from './host-browser.js';
+import { NativeWorkspace } from './native-workspace.js';
 import { type Browser, type BrowserOptions, createBrowser } from './runtime.js';
-import { WorkspaceFiles } from './workspace.js';
 
-test('standalone real browser preserves synthetic login, fences takeover and keeps Bot tabs independent without Linux', {
+test('standalone browser preserves login, transfers task reports and supports fenced canvas input without Linux', {
   timeout: 60000,
 }, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-host-browser-live-'));
-  const server = createServer((request, response) => {
+  let uploaded = false;
+  const server = createServer(async (request, response) => {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     if (request.url?.startsWith('/login?alias=SYNTHETIC-USER')) {
       response.writeHead(303, {
@@ -26,8 +27,26 @@ test('standalone real browser preserves synthetic login, fences takeover and kee
       return;
     }
     const signed = request.headers.cookie?.includes('synthetic_login=accepted');
+    if (request.url === '/frame') {
+      response.end('<label>Synthetic frame OTP<input autocomplete="one-time-code"></label>');
+      return;
+    }
+    if (request.url === '/report') {
+      assert.ok(signed, 'report downloads reuse the signed-in browser session');
+      response.setHeader('content-type', 'text/csv');
+      response.setHeader('content-disposition', 'attachment; filename="synthetic-report.csv"');
+      response.end('region,amount\nSYNTHETIC-NORTH,47\nSYNTHETIC-SOUTH,53\n');
+      return;
+    }
+    if (request.method === 'POST' && request.url === '/upload-report') {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks).toString('utf8');
+      uploaded =
+        !!signed && body.includes('SYNTHETIC-TOTAL,100') && body.includes('filename="summary.csv"');
+    }
     response.end(
-      `<html><head><title>Synthetic browser</title></head><body><h1>${signed ? 'SYNTHETIC SIGNED IN' : 'SYNTHETIC GUEST'}</h1><form action="/login"><label>Synthetic alias<input name="alias"></label><button>Sign in synthetic account</button></form><button onclick="this.textContent='SYNTHETIC CLICKED'">Synthetic increment</button></body></html>`,
+      `<html><head><title>Synthetic browser</title></head><body><h1>${uploaded ? 'SYNTHETIC UPLOAD ACCEPTED' : signed ? 'SYNTHETIC SIGNED IN' : 'SYNTHETIC GUEST'}</h1><form action="/login"><label>Synthetic alias<input name="alias"></label><button>Sign in synthetic account</button></form><button onclick="this.textContent='SYNTHETIC CLICKED'">Synthetic increment</button><a href="/report">Download synthetic report</a><form method="POST" action="/upload-report" enctype="multipart/form-data"><input type="file" name="report" aria-label="Synthetic report upload"><button>Submit synthetic report</button></form><label>Synthetic password<input type="password"></label><label>Synthetic OTP<input autocomplete="one-time-code"></label></body></html>`,
     );
   });
   await new Promise<unknown>((resolve) => server.listen(0, '127.0.0.1', () => resolve(undefined)));
@@ -48,13 +67,33 @@ test('standalone real browser preserves synthetic login, fences takeover and kee
     });
     return actual;
   };
-  let host = new HostBrowser({ directory: root, launch });
+  const profile = path.join(root, 'browser');
+  const workspace = new NativeWorkspace(path.join(root, 'workspace'));
+  await workspace.prepare();
+  const directory = await workspace.create(['mock-live-run']);
+  await directory.close();
+  let host = new HostBrowser({ directory: profile, launch });
   const connection = async (bot = 'mock-a') =>
     (await host.status()).connections.find((item) => item.bot === bot)!;
   const payload = (result: Awaited<ReturnType<AgentTools['invoke']>>) => {
     assert.ok(!result.isError, JSON.stringify(result));
     assert.equal(result.content[0].type, 'text');
-    return JSON.parse(result.content[0].text) as { id: string; text: string; completed?: number };
+    return JSON.parse(result.content[0].text) as {
+      id: string;
+      text: string;
+      completed?: number;
+      content?: string;
+      observation?: { id: string; text: string };
+      file?: { path: string; bytes: number };
+    };
+  };
+  const ref = (text: string, label: string) => {
+    const result = text
+      .split('\n')
+      .find((line) => line.includes(label))
+      ?.match(/\[ref=([a-z0-9]+)\]/)?.[1];
+    assert.ok(result, `Missing synthetic ref: ${label}`);
+    return result;
   };
   try {
     await host.request({ action: 'open', bot: 'mock-a' });
@@ -92,7 +131,7 @@ test('standalone real browser preserves synthetic login, fences takeover and kee
         input,
       });
     await page.getByRole('heading', { name: 'SYNTHETIC SIGNED IN' }).waitFor();
-    const tools = new AgentTools(undefined, new WorkspaceFiles(root), {
+    const tools = new AgentTools(undefined, workspace, {
       nativeOnly: true,
       hostBrowser: host.facade,
     });
@@ -103,12 +142,16 @@ test('standalone real browser preserves synthetic login, fences takeover and kee
       vision: false,
       abort: new AbortController(),
       toolCount: 0,
-      limit: 12,
+      limit: 40,
       seen: {},
       trace: [],
-      workdir: root,
-      canonicalRoot: await realpath(root),
-      task: { requestId: 'mock-live-request', prompt: 'Inspect and click the synthetic page.' },
+      workdir: directory.path,
+      canonicalRoot: await realpath(directory.path),
+      task: {
+        requestId: 'mock-live-request',
+        prompt:
+          'Download the synthetic report, total it and upload summary.csv. Inspect the synthetic canvas.',
+      },
     };
     await tools.open(run);
     let waiting = true;
@@ -128,19 +171,186 @@ test('standalone real browser preserves synthetic login, fences takeover and kee
     });
     const observation = payload(await reading);
     assert.match(observation.text, /SYNTHETIC SIGNED IN/);
-    const ref = observation.text
+    const button = observation.text
       .split('\n')
       .find((line) => line.includes('Synthetic increment'))
       ?.match(/\[ref=([a-z0-9]+)\]/)?.[1];
-    assert.ok(ref);
+    assert.ok(button);
     const result = payload(
       await tools.invoke(run, 'browser_act', {
         observation: observation.id,
-        actions: [{ kind: 'click', ref }],
+        actions: [{ kind: 'click', ref: button }],
       }),
     );
     assert.equal(result.completed, 1);
     assert.equal(await page.getByRole('button', { name: 'SYNTHETIC CLICKED' }).count(), 1);
+    const reportPage = payload(await tools.invoke(run, 'browser_snapshot', {}));
+    const downloaded = payload(
+      await tools.invoke(run, 'browser_download', {
+        observation: reportPage.id,
+        ref: ref(reportPage.text, 'Download synthetic report'),
+        name: 'report.csv',
+      }),
+    );
+    assert.equal(downloaded.file?.path, path.join(directory.canonical, 'report.csv'));
+    const report = payload(await tools.invoke(run, 'read_file', { path: '/workspace/report.csv' }));
+    assert.ok(report.content);
+    const total = report.content
+      .trim()
+      .split('\n')
+      .slice(1)
+      .reduce((sum, line) => sum + Number(line.split(',')[1]), 0);
+    assert.equal(total, 100);
+    payload(
+      await tools.invoke(run, 'write_file', {
+        path: 'summary.csv',
+        content: `item,total\nSYNTHETIC-TOTAL,${total}\n`,
+      }),
+    );
+    const uploadPage = payload(await tools.invoke(run, 'browser_snapshot', {}));
+    const attached = payload(
+      await tools.invoke(run, 'browser_upload', {
+        observation: uploadPage.id,
+        ref: ref(uploadPage.text, 'Synthetic report upload'),
+        path: '/workspace/summary.csv',
+      }),
+    );
+    assert.ok(attached.observation);
+    payload(
+      await tools.invoke(run, 'browser_act', {
+        observation: attached.observation.id,
+        actions: [
+          { kind: 'click', ref: ref(attached.observation.text, 'Submit synthetic report') },
+        ],
+      }),
+    );
+    assert.equal(uploaded, true);
+    assert.equal(await page.getByRole('heading', { name: 'SYNTHETIC UPLOAD ACCEPTED' }).count(), 1);
+
+    await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.id = 'synthetic-canvas';
+      canvas.width = 180;
+      canvas.height = 70;
+      const result = document.createElement('p');
+      result.id = 'synthetic-canvas-result';
+      result.textContent = 'SYNTHETIC CANVAS READY';
+      canvas.getContext('2d')!.fillRect(0, 0, 180, 70);
+      canvas.addEventListener('click', () => {
+        result.textContent = 'SYNTHETIC CANVAS CLICKED';
+      });
+      document.body.prepend(canvas, result);
+      const shadow = document.createElement('div');
+      shadow.id = 'synthetic-shadow';
+      shadow.attachShadow({ mode: 'open' }).innerHTML =
+        '<input type="password" aria-label="Synthetic shadow password">';
+      const frame = document.createElement('iframe');
+      frame.id = 'synthetic-frame';
+      frame.src = '/frame';
+      document.body.append(shadow, frame);
+    });
+    await page.frameLocator('#synthetic-frame').getByLabel('Synthetic frame OTP').waitFor();
+    const visual: AgentToolRun = {
+      ...run,
+      id: 'mock-visual-live-run',
+      model: 'deepseek-flash',
+      vision: true,
+      toolCount: 0,
+      seen: {},
+      trace: [],
+      abort: new AbortController(),
+    };
+    await tools.open(visual);
+    await page.getByLabel('Synthetic OTP').fill('SYNTHETIC HUMAN OTP');
+    await page.getByLabel('Synthetic password').fill('SYNTHETIC HUMAN PASSWORD');
+    await page.getByRole('heading', { name: 'SYNTHETIC UPLOAD ACCEPTED' }).click();
+    const humanView = (await host.request({ action: 'view', bot: 'mock-a' })) as BrowserView;
+    const firstShot = await tools.invoke(visual, 'screenshot', { surface: 'browser' });
+    assert.ok(!firstShot.isError, JSON.stringify(firstShot));
+    const modelImage = firstShot.content.find((part) => part.type === 'image');
+    assert.ok(modelImage?.type === 'image');
+    assert.equal(
+      modelImage.data === humanView.image?.slice('data:image/jpeg;base64,'.length),
+      false,
+      'Model screenshots mask protected inputs while the human view stays interactive',
+    );
+    await page.getByLabel('Synthetic OTP').fill('');
+    await page.getByLabel('Synthetic password').fill('');
+    const canvas = await page.locator('#synthetic-canvas').boundingBox();
+    assert.ok(canvas);
+    const click = {
+      surface: 'browser',
+      actions: [{ type: 'click', x: canvas.x + 20, y: canvas.y + 20 }],
+    };
+    assert.ok(!(await tools.invoke(visual, 'act', click, 'mock-canvas-click')).isError);
+    assert.equal(
+      await page.locator('#synthetic-canvas-result').textContent(),
+      'SYNTHETIC CANVAS CLICKED',
+    );
+    assert.ok((await tools.invoke(visual, 'act', click, 'mock-canvas-click')).isError);
+    await page.evaluate(() => {
+      document.hasFocus = () => false;
+    });
+    for (const input of [
+      page.getByLabel('Synthetic password'),
+      page.getByLabel('Synthetic OTP'),
+      page.locator('#synthetic-shadow input'),
+      page.frameLocator('#synthetic-frame').getByLabel('Synthetic frame OTP'),
+    ]) {
+      await input.focus();
+      await tools.invoke(visual, 'screenshot', { surface: 'browser' });
+      const secret = await tools.invoke(visual, 'act', {
+        surface: 'browser',
+        actions: [{ type: 'text', text: 'SYNTHETIC-MUST-NOT-ENTER' }],
+      });
+      assert.equal(secret.isError, true, 'Protected input must require human takeover');
+      assert.match(JSON.stringify(secret), /BROWSER_HUMAN_REQUIRED/);
+      assert.equal(await input.inputValue(), '');
+      await tools.invoke(visual, 'screenshot', { surface: 'browser' });
+      const pressed = await tools.invoke(visual, 'act', {
+        surface: 'browser',
+        actions: [{ type: 'key', key: 'Enter' }],
+      });
+      assert.ok(pressed.isError);
+      assert.match(JSON.stringify(pressed), /BROWSER_HUMAN_REQUIRED/);
+    }
+    await page.getByLabel('Synthetic alias').focus();
+    await tools.invoke(visual, 'screenshot', { surface: 'browser' });
+    assert.ok(
+      !(
+        await tools.invoke(visual, 'act', {
+          surface: 'browser',
+          actions: [{ type: 'text', text: 'SYNTHETIC ORDINARY INPUT' }],
+        })
+      ).isError,
+    );
+    assert.equal(await page.getByLabel('Synthetic alias').inputValue(), 'SYNTHETIC ORDINARY INPUT');
+    await tools.invoke(visual, 'screenshot', { surface: 'browser' });
+    owner = await connection();
+    const handover = await host.request({
+      action: 'control',
+      bot: owner.bot,
+      instance: owner.state.instance,
+      epoch: owner.epoch,
+      owner: 'human',
+    });
+    assert.ok(handover);
+    const held = tools.invoke(visual, 'act', click);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(visual.waitingForComputer, true);
+    owner = await connection();
+    await host.request({
+      action: 'control',
+      bot: owner.bot,
+      instance: owner.state.instance,
+      epoch: owner.epoch,
+      owner: 'agent',
+    });
+    assert.ok((await held).isError, 'handback requires a new screenshot before coordinate input');
+    await tools.invoke(visual, 'screenshot', { surface: 'browser' });
+    assert.ok(!(await tools.invoke(visual, 'act', click)).isError);
+    owner = await connection();
+    await tools.drain(visual);
     await host.request({ action: 'open', bot: 'mock-b' });
     const second = await connection('mock-b');
     assert.notEqual(second.state.active, owner.state.active);
@@ -166,7 +376,7 @@ test('standalone real browser preserves synthetic login, fences takeover and kee
     assert.equal(forbidden.isError, true);
     await tools.drain(run);
     await host.close();
-    host = new HostBrowser({ directory: root, launch });
+    host = new HostBrowser({ directory: profile, launch });
     const reopened = (await host.request({ action: 'open', bot: 'mock-a' })) as HostBrowserStatus;
     assert.equal(reopened.connections[0].owner, 'human');
     assert.ok(actual);
@@ -191,7 +401,10 @@ test('standalone real browser preserves synthetic login, fences takeover and kee
       },
     })) as BrowserAck;
     assert.equal(resumed.error, undefined);
-    await actual.page('mock-a').getByRole('heading', { name: 'SYNTHETIC SIGNED IN' }).waitFor();
+    await actual
+      .page('mock-a')
+      .getByRole('heading', { name: 'SYNTHETIC UPLOAD ACCEPTED' })
+      .waitFor();
     assert.equal(await actual.page('mock-a').evaluate(() => document.cookie), '');
   } finally {
     await host.close();

@@ -66,6 +66,23 @@ export const computerToolList = [
   },
 ];
 
+export const browserComputerToolList = computerToolList
+  .filter((tool) => tool.name !== 'open_app')
+  .map((tool) => ({
+    ...tool,
+    description:
+      tool.name === 'screenshot'
+        ? 'Observe this Bot’s connected browser (960x640) as pixels before coordinate input. Prefer browser_snapshot and observed-ref browser_act for ordinary webpages; use this for canvas or controls the DOM tools cannot identify. No desktop access is granted. Requires an image-capable model.'
+        : 'Operate the last observed browser screenshot with 1–4 sequential click/key/text/scroll/pointer inputs and inspect the returned image. Coordinates are viewport pixels. Use browser key names such as Enter, ArrowLeft and ControlOrMeta+A. Passwords, verification codes, dialogs and file pickers require human takeover; use browser_upload for authorized task files. After takeover, navigation, errors or uncertain effects, capture a fresh screenshot and never blindly replay an action. No desktop access is granted.',
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        surface: { type: 'string', enum: ['browser'] },
+      },
+    },
+  }));
+
 export interface ToolTrace {
   name: string;
   surface: string;
@@ -239,9 +256,11 @@ export class ComputerTools {
         throw new Fault('FRESH_SCREENSHOT_REQUIRED');
       trace = { name, surface, args, at: new Date().toISOString(), phase: 'running' };
       run.trace.push(trace);
+      const binding = run.browserSeen;
       try {
         // A failed refresh or lost action acknowledgement must never leave older coordinates authorized.
-        if (surface === 'desktop') delete run.seen.desktop;
+        delete run.seen[surface];
+        if (surface === 'browser') delete run.browserSeen;
         if (name === 'screenshot')
           return await this.runtime.control.execute(run.bot, 'agent', lease.epoch, () =>
             this.shot(run, surface, lease.epoch),
@@ -266,11 +285,10 @@ export class ComputerTools {
           });
         }
         // Each browser input uses the same lease queue, rather than nesting that queue.
-        if (this.runtime.browser.view && !run.browserSeen)
-          throw new Fault('FRESH_SCREENSHOT_REQUIRED');
+        if (this.runtime.browser.view && !binding) throw new Fault('FRESH_SCREENSHOT_REQUIRED');
         for (const input of args.actions as unknown[]) {
           await this.authorize?.(run);
-          await this.runtime.browser.input(run.bot, lease.epoch, input, 'agent', run.browserSeen);
+          await this.runtime.browser.input(run.bot, lease.epoch, input, 'agent', binding);
         }
         return await this.runtime.control.execute(run.bot, 'agent', lease.epoch, () =>
           this.shot(run, surface, lease.epoch),

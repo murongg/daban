@@ -1860,7 +1860,15 @@ export class ModelRuns {
       await inputDirectory.verify();
       await this.tools.open(job);
       if (this.tools.hostSelected(job.bot, job))
-        job.binding = createHash('sha256').update(`${job.binding}:host-browser-v1`).digest('hex');
+        // Browser file and vision tools change the SDK catalog; never resume a context with obsolete permissions.
+        job.binding = createHash('sha256')
+          .update(
+            `${job.binding}:host-browser-v2:${this.tools
+              .list(job.bot, job.model, job.conversationId, job)
+              .map((tool) => tool.name)
+              .join(',')}`,
+          )
+          .digest('hex');
       // A Mac grant and a VM connection must never resume each other's native SDK tool context.
       // Transport binding must retain the search and approval identities captured above.
       if (this.tools.localSelected(job.bot, job))

@@ -128,7 +128,7 @@ function actions(value: unknown): Action[] {
 }
 
 // Race only read-only inspection; mutating Playwright calls must use their native AbortSignal to prevent late effects.
-async function inspect<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
+export async function inspect<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
   const bounded = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
   bounded.throwIfAborted();
   let cancel: () => unknown = () => {};
@@ -142,6 +142,9 @@ async function inspect<T>(read: () => Promise<T>, signal: AbortSignal): Promise<
     bounded.removeEventListener('abort', cancel);
   }
 }
+
+export const secretInputs =
+  'input[type="password" i],input[autocomplete="current-password" i],input[autocomplete="new-password" i],input[autocomplete="one-time-code" i]';
 
 export class Tabs {
   private readonly attached = new Set<string>();
@@ -513,10 +516,16 @@ export class Tabs {
     const tab = this.current(bot);
     return { instance: this.instance, tab: tab.id, generation: tab.generation };
   }
-  frame(bot: string) {
+  frame(bot: string, redact = false) {
     const tab = this.current(bot);
     return this.prompts.guard(tab, AbortSignal.timeout(4000), (signal) =>
-      tab.page.screenshot({ type: 'jpeg', quality: 75, timeout: 4000, signal }),
+      tab.page.screenshot({
+        type: 'jpeg',
+        quality: 75,
+        timeout: 4000,
+        signal,
+        ...(redact ? { mask: tab.page.frames().map((frame) => frame.locator(secretInputs)) } : {}),
+      }),
     );
   }
   input<T>(bot: string, action: (signal: AbortSignal) => Promise<T>) {
@@ -757,9 +766,7 @@ export class Tabs {
                   .frames()
                   .map((frame) =>
                     frame
-                      .locator(
-                        'input[type="password"],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
-                      )
+                      .locator(secretInputs)
                       .evaluateAll((elements) =>
                         elements
                           .map((element) => (element as HTMLInputElement).value)

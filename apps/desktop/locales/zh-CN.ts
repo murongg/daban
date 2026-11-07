@@ -7,7 +7,7 @@ export const chinese = {
   'hostBrowser.signInHelp':
     '打开后由你控制。在这里登录网站，再交还给 Bot。登录会保存在本机，各 Bot 共用登录、分别管理标签。',
   'hostBrowser.consent':
-    '交还后，Bot 可使用此浏览器中的账号和页面，按任务将页面内容发送给所选模型。此浏览器与个人 Chrome 分开。',
+    '交还后，Bot 可使用此浏览器中的账号和页面，并按任务上传、下载工作区文件。页面及读取的文件内容会发送给所选模型。此浏览器与个人 Chrome 分开。',
   'hostBrowser.open': '打开浏览器',
   'hostBrowser.openPanel': '打开浏览器面板',
   'hostBrowser.navigation': '浏览器导航',

@@ -13,7 +13,7 @@ import { browserEngine } from './playwright-input.js';
 import { createProxy, type ProxyOptions, type PublicProxy } from './proxy.js';
 import type { LegacySnapshot } from './snapshot.js';
 import { TabStore } from './tab-store.js';
-import { Tabs } from './tabs.js';
+import { inspect, secretInputs, Tabs } from './tabs.js';
 
 export interface BrowserOptions {
   networkFile?: string;
@@ -313,14 +313,15 @@ export class Browser {
       if (input.type === 'key') await page.keyboard.press(input.key!);
     });
   }
-  async view(id: string): Promise<BrowserView> {
+  async view(id: string, redact = false): Promise<BrowserView> {
     if (!this.tabs) throw new Fault('BROWSER_UNAVAILABLE', 503);
     const binding = this.tabs.binding(id),
       { epoch } = this.control.state(id);
     let image: Buffer | undefined;
     if (!this.tabs.prompts.blocked(id)) {
       try {
-        image = await this.frame(id);
+        // Model images must not reuse an unmasked human-view frame from the shared capture cache.
+        image = redact ? await this.tabs.frame(id, true) : await this.frame(id);
       } catch (error) {
         if (!this.tabs.prompts.blocked(id)) throw error;
       }
@@ -355,6 +356,17 @@ export class Browser {
         this.tabs!.input(id, async (signal) => {
           await this.releasing.get(id);
           this.tabs!.assertBinding(id, binding);
+          if (actor === 'agent' && (input.type === 'text' || input.type === 'key')) {
+            // Isolated selectors keep page-script overrides from disabling the password/OTP boundary across frames and shadow roots.
+            const protectedFocus = await inspect(
+              () =>
+                Promise.all(
+                  page.frames().map((frame) => frame.locator(`:is(${secretInputs}):focus`).count()),
+                ),
+              signal,
+            );
+            if (protectedFocus.some(Boolean)) throw new Fault('BROWSER_HUMAN_REQUIRED');
+          }
           if (input.type !== 'pointer') await this.releasePointer(id, signal);
           if (input.type === 'click')
             await page.mouse.click(input.x, input.y, {

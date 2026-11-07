@@ -47,6 +47,10 @@ jobs:
         # Keep temp-file storms in one fixture from stalling another store's deadline.
         # Tests retain their own concurrent calls and the normal per-test timeout.
         run: npx vitest run --maxWorkers=1
+      - name: Install standalone browser integration runtime
+        run: npx playwright install --only-shell chromium
+      - name: Verify standalone browser file workflows and visual takeover
+        run: node --experimental-sqlite --test packages/engine/dist/host-browser.integration.js
       - name: Verify installed SDK fallback and search
         timeout-minutes: 3
         env:

@@ -6,7 +6,7 @@ export const english = {
   'hostBrowser.signInHelp':
     'You control the browser when it opens. Sign in here, then hand it back to the Bot. Sign-ins stay on this computer; Bots share sign-ins and manage separate tabs.',
   'hostBrowser.consent':
-    'After handback, the Bot can use accounts and pages in this browser and send page content to the selected model for your task. This browser is separate from your personal Chrome.',
+    'After handback, the Bot can use accounts and pages in this browser and transfer workspace files for your task. Page content and files it reads are sent to the selected model. This browser is separate from your personal Chrome.',
   'hostBrowser.open': 'Open browser',
   'hostBrowser.openPanel': 'Open browser panel',
   'hostBrowser.navigation': 'Browser navigation',

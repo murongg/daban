@@ -3,9 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { BrowserCommandRequest } from '@daban/protocol';
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Dialog, Page } from 'playwright';
 import { expect, test } from 'vitest';
 import { ComputerTools, type ToolRun } from './computer-tools.js';
+import { errorCode } from './control.js';
 import { Browser } from './runtime.js';
 import { TabStore } from './tab-store.js';
 import { Tabs } from './tabs.js';
@@ -20,6 +21,7 @@ function page() {
     isClosed: () => false,
     title: async () => 'Synthetic page',
     mainFrame: () => frame,
+    frames: () => [{ locator: () => ({ count: async () => 0 }) }],
     goto: async (next: string) => {
       events.push(next);
       url = next;
@@ -90,6 +92,68 @@ async function setup(file: string) {
     },
   };
 }
+test('a dialog cancels a blocked protected-input inspection without holding takeover or dispatching late text', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-input-inspection-'));
+  const app = await setup(path.join(root, 'tabs.sqlite'));
+  let release!: (count: number) => unknown;
+  let entered!: () => unknown;
+  const started = new Promise<unknown>((resolve) => {
+    entered = () => resolve(undefined);
+  });
+  const delayed = new Promise<number>((resolve) => {
+    release = resolve;
+  });
+  Object.assign(app.a, {
+    frames: () => [
+      {
+        locator: () => ({
+          count: () => {
+            entered();
+            return delayed;
+          },
+        }),
+      },
+    ],
+  });
+  const pending = app.browser.boundInput(
+    'a',
+    0,
+    app.tabs.binding('a'),
+    { type: 'text', text: 'SYNTHETIC MUST NOT LAND' },
+    'agent',
+  );
+  const result = pending.then(
+    () => 'completed',
+    (error: unknown) => errorCode(error),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  t.onTestFinished(async () => {
+    clearTimeout(timer);
+    release(0);
+    await result;
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  await started;
+  app.a.emit('dialog', {
+    type: () => 'alert',
+    message: () => 'SYNTHETIC HUMAN PROMPT',
+    defaultValue: () => '',
+    dismiss: async () => {},
+  } as unknown as Dialog);
+  const outcome = await Promise.race([
+    result,
+    new Promise<string>((resolve) => {
+      timer = setTimeout(() => resolve('inspection remained blocked'), 1000);
+    }),
+  ]);
+  clearTimeout(timer);
+  expect(outcome).toBe('BROWSER_HUMAN_REQUIRED');
+  expect((await app.browser.transfer('a', 0, 'human')).owner).toBe('human');
+  release(0);
+  await new Promise(setImmediate);
+  expect(app.a.events).toEqual([]);
+});
 test('human browser commands claim before effects and exact retries do not create extra tabs across restarts', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-client-'));
   let app = await setup(path.join(root, 'tabs.sqlite'));

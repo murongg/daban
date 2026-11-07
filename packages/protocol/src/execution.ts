@@ -6,12 +6,14 @@ import {
   isComputerStatus,
   isDocumentUpload,
   isModelId,
+  isTaskFileName,
 } from './index.js';
 import { isSkillPackage, skillPackageCapability } from './skills.js';
 
 export const executionVersion = 1;
 export const modelExecutionCapability = 'model-capabilities-v1';
 export const browserTaskCapability = 'browser-task-v1';
+export const browserFilesCapability = 'browser-files-v1';
 export const executionCapabilities = [
   'workspace',
   'tools',
@@ -93,6 +95,7 @@ export const executionMethods = [
   'tools.cancel',
   'tools.drain',
   'tools.write',
+  'tools.publish',
   'process.start',
   'process.poll',
   'process.input',
@@ -236,6 +239,22 @@ export function isExecutionParams(
       text(value.content, 200 * 1024) &&
       typeof value.createOnly === 'boolean'
     );
+  if (method === 'tools.publish') {
+    if (
+      !executionKeys(value, ['runId', 'name', 'data']) ||
+      !validAgentId(value.runId) ||
+      !isTaskFileName(value.name) ||
+      value.name.startsWith('.') ||
+      !text(value.data, 4 * Math.ceil(documentLimit / 3)) ||
+      value.data.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(value.data)
+    )
+      return false;
+    const bytes =
+      (value.data.length / 4) * 3 -
+      (value.data.endsWith('==') ? 2 : value.data.endsWith('=') ? 1 : 0);
+    return bytes <= documentLimit && btoa(atob(value.data)) === value.data;
+  }
   if (method === 'process.start')
     return (
       executionKeys(value, ['id', 'command', 'cwd']) &&
@@ -312,7 +331,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
     !validAgentId(value.boot) ||
     !validAgentId(value.nonce) ||
     !Array.isArray(value.capabilities) ||
-    value.capabilities.length > executionCapabilities.length + 3 ||
+    value.capabilities.length > executionCapabilities.length + 4 ||
     new Set(value.capabilities).size !== value.capabilities.length ||
     !value.capabilities.every((capability) =>
       [
@@ -320,6 +339,7 @@ export function isExecutionSnapshot(value: unknown): value is ExecutionSnapshot 
         modelExecutionCapability,
         skillPackageCapability,
         browserTaskCapability,
+        browserFilesCapability,
       ].includes(capability),
     ) ||
     !executionCapabilities.every(
