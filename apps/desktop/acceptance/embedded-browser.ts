@@ -122,6 +122,14 @@ async function verifyBrowser() {
     await page.locator('#note').click({ timeout: 3000 });
     await page.locator('#note').fill('AI synthetic input');
     assert.equal(await page.locator('#note').inputValue(), 'AI synthetic input');
+    const sibling = await context.newPage();
+    await sibling.setContent('<label>Synthetic sibling<input id="sibling"></label>');
+    stage = 'overlapping background pages';
+    await page.locator('#note').click({ timeout: 3000 });
+    await sibling.locator('#sibling').click({ timeout: 3000 });
+    await sibling.locator('#sibling').fill('Synthetic independent tab');
+    assert.equal(await page.locator('#note').inputValue(), 'AI synthetic input');
+    await sibling.close();
     const opened = page.waitForEvent('popup', { timeout: 3000 });
     opened.catch(() => {});
     stage = 'opening popup';
