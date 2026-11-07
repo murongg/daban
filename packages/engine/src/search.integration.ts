@@ -620,20 +620,20 @@ test('the installed DSH pipeline keeps parallel tool batches separate and enforc
   }
 });
 
-test('default keyless DuckDuckGo uses the stock SDK search pipeline and one shared execution claim', {
+test('default keyless Bing uses the stock SDK search pipeline and one shared execution claim', {
   timeout: 15000,
 }, async () => {
   const f = await fixture(
     async () =>
       new Response(
-        `<html><body><table><tr><td><a class="result-link" href="${sourceUrl}">Synthetic DuckDuckGo source</a></td></tr><tr><td class="result-snippet">Synthetic keyless result</td></tr></table></body></html>`,
+        `<html><body><ol id="b_results"><li class="b_algo"><h2><a href="${sourceUrl}">Synthetic Bing source</a></h2><div class="b_caption"><p>Synthetic keyless result</p></div></li></ol></body></html>`,
         { headers: { 'content-type': 'text/html' } },
       ),
     false,
   );
   let p: Awaited<ReturnType<typeof pipeline>> | undefined;
   try {
-    assert.equal((await f.search.status()).provider, 'duckduckgo');
+    assert.equal((await f.search.status()).provider, 'bing');
     assert.equal(f.supplierCalls.length, 0);
     const job = await f.start('mock-keyless-task');
     p = await pipeline(f, job);
@@ -645,7 +645,7 @@ test('default keyless DuckDuckGo uses the stock SDK search pipeline and one shar
     assert.equal(result.isError, false, JSON.stringify(result.error));
     assert.equal(f.supplierCalls.length, 2);
     for (const call of f.supplierCalls) {
-      assert.equal(new URL(call.url).origin, 'https://lite.duckduckgo.com');
+      assert.equal(new URL(call.url).origin, 'https://cn.bing.com');
       assert.equal(call.headers.has('authorization'), false);
       assert.equal(call.headers.has('x-subscription-token'), false);
     }
@@ -662,7 +662,7 @@ test('default keyless DuckDuckGo uses the stock SDK search pipeline and one shar
     );
     assert.equal(rejected.isError, true);
     await f.finish();
-    assert.equal((await f.models.journal.read(job.bot, job.id))?.search?.provider, 'duckduckgo');
+    assert.equal((await f.models.journal.read(job.bot, job.id))?.search?.provider, 'bing');
   } finally {
     await p?.close();
     await f.close();

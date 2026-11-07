@@ -141,7 +141,7 @@ test('a search test requires explicit cost confirmation and dispatches only once
     state.runtime.command.mock.calls.some(([command]) => command.type === 'search.check'),
   ).toBe(false);
   await user.click(within(dialog).getByRole('button', { name: '确认并测试一次' }));
-  expect(await screen.findByText('测试成功，未找到结果')).toBeVisible();
+  expect(await screen.findByText('最近一次搜索未找到结果')).toBeVisible();
   expect(
     state.runtime.command.mock.calls.filter(([command]) => command.type === 'search.check'),
   ).toHaveLength(1);
@@ -253,7 +253,7 @@ test('late check status does not replace edits or a newer refreshed configuratio
     }),
   );
   expect(selectControl('搜索供应商')).toHaveAttribute('data-value', 'brave');
-  expect(screen.queryByText('测试成功，可用于搜索')).not.toBeInTheDocument();
+  expect(screen.queryByText('最近一次搜索成功')).not.toBeInTheDocument();
 });
 
 test('reconnecting recovers a receipt without retaining a detached busy state or accepting its old callback', async () => {
@@ -325,11 +325,11 @@ test('a status read from the claimed phase cannot overwrite the settled health a
       status: initial({ checkRevision: 2, health: 'ready', checkedAt: '2026-01-02T00:00:00.000Z' }),
     });
   });
-  expect(await screen.findByText('测试成功，可用于搜索')).toBeVisible();
+  expect(await screen.findByText('最近一次搜索成功')).toBeVisible();
   await act(async () => {
     refresh(initial({ checkRevision: 2, health: 'unchecked' }));
   });
-  expect(screen.getByText('测试成功，可用于搜索')).toBeVisible();
+  expect(screen.getByText('最近一次搜索成功')).toBeVisible();
   expect(
     state.runtime.command.mock.calls.filter(([command]) => command.type === 'search.check'),
   ).toHaveLength(1);
@@ -362,11 +362,11 @@ test('a delayed claimed receipt cannot replace a terminal receipt from a newer r
   });
   render(<Search />);
   await user.click(await screen.findByRole('button', { name: '查询操作回执' }));
-  expect(await screen.findByText('测试成功，可用于搜索')).toBeVisible();
+  expect(await screen.findByText('最近一次搜索成功')).toBeVisible();
   await act(async () => {
     finish({ ...terminal, phase: 'claimed', status: initial({ checkRevision: 2 }) });
   });
-  expect(screen.getByText('测试成功，可用于搜索')).toBeVisible();
+  expect(screen.getByText('最近一次搜索成功')).toBeVisible();
   expect(screen.queryByRole('button', { name: '查询操作回执' })).not.toBeInTheDocument();
 });
 
@@ -447,7 +447,7 @@ test('keyless DuckDuckGo has no credential field and can run one explicitly conf
   await user.click(screen.getByRole('button', { name: '测试搜索' }));
   expect(screen.getByRole('dialog')).toHaveTextContent('不需要搜索 API Key');
   await user.click(screen.getByRole('button', { name: '确认并测试一次' }));
-  expect(await screen.findByText('测试成功，可用于搜索')).toBeVisible();
+  expect(await screen.findByText('最近一次搜索成功')).toBeVisible();
   expect(
     state.runtime.command.mock.calls.filter(([command]) => command.type === 'search.check'),
   ).toHaveLength(1);
@@ -499,7 +499,7 @@ test.each(['forbidden', 'unauthorized'] as const)(
     );
     render(<Search />);
     expect(
-      await screen.findByText('DuckDuckGo 限制了请求或要求验证，请稍后主动重试。'),
+      await screen.findByText('DuckDuckGo 限制了请求或要求验证，请稍后主动重试或切换搜索供应商。'),
     ).toBeVisible();
     expect(screen.queryByText('认证失败，请更换搜索密钥。')).not.toBeInTheDocument();
   },
@@ -537,4 +537,75 @@ test('changing from keyless search to Brave requires its corresponding key befor
       },
     }),
   );
+});
+
+test('Bing can be saved without a key and its confirmation and website failures name the selected provider', async () => {
+  const user = userEvent.setup();
+  state.runtime.command.mockImplementation(async (command) => {
+    if (command.type === 'search.status') return initial();
+    if (command.type === 'search.configure')
+      return {
+        ...saved(command.input),
+        status: initial({
+          revision: 3,
+          provider: 'bing',
+          credentialConfigured: false,
+          credentialSource: 'none',
+        }),
+      };
+    if (command.type === 'search.check')
+      return {
+        kind: 'check',
+        requestId: command.input.requestId,
+        phase: 'settled',
+        revision: 3,
+        checkRevision: 2,
+        status: initial({
+          revision: 3,
+          checkRevision: 2,
+          provider: 'bing',
+          credentialConfigured: false,
+          credentialSource: 'none',
+          health: 'forbidden',
+        }),
+      };
+    throw new Error('Unexpected synthetic command');
+  });
+  render(<Search />);
+  await screen.findByText('沿用旧 DeepSeek 模型连接');
+  await user.type(screen.getByLabelText('搜索 API Key'), 'synthetic-retired-draft');
+  await selectOption(user, selectControl('搜索供应商'), 'bing');
+  expect(screen.queryByLabelText('搜索 API Key')).not.toBeInTheDocument();
+  expect(screen.getByText(/使用 Bing 的公开搜索页/u)).toBeVisible();
+  await user.click(screen.getByRole('button', { name: '保存搜索设置' }));
+  await screen.findByText('Bing');
+  await user.click(screen.getByRole('button', { name: '测试搜索' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('将向 Bing');
+  await user.click(screen.getByRole('button', { name: '确认并测试一次' }));
+  expect(
+    await screen.findByText('Bing 限制了请求或要求验证，请稍后主动重试或切换搜索供应商。'),
+  ).toBeVisible();
+});
+
+test('refreshing shows a task failure after a successful check without dispatching another search', async () => {
+  const user = userEvent.setup();
+  state.runtime.command.mockResolvedValueOnce(
+    initial({ health: 'ready', checkedAt: '2026-01-01T00:00:00.000Z' }),
+  );
+  render(<Search />);
+  await screen.findByText('最近一次搜索成功');
+  state.runtime.command.mockResolvedValueOnce(
+    initial({
+      checkRevision: 2,
+      health: 'unavailable',
+      error: 'SEARCH_UNAVAILABLE',
+      checkedAt: '2026-01-01T00:01:00.000Z',
+    }),
+  );
+  await user.click(screen.getByRole('button', { name: '刷新搜索状态' }));
+  expect(await screen.findByText('搜索服务暂不可用，请检查连接后主动重试。')).toBeVisible();
+  expect(screen.queryByText('最近一次搜索成功')).not.toBeInTheDocument();
+  expect(
+    state.runtime.command.mock.calls.every(([command]) => command.type === 'search.status'),
+  ).toBe(true);
 });

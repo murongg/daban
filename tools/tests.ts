@@ -56,6 +56,8 @@ export const suites = {
     'discovery.test',
     'search.test',
     'duckduckgo.test',
+    'bing.test',
+    'search-health.test',
     'search-keyless.test',
     'search-fence.test',
     'search-settings.test',

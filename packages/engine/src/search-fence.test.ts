@@ -205,6 +205,8 @@ test.each([
   ['dial', 'brave'],
   ['resolve', 'duckduckgo'],
   ['dial', 'duckduckgo'],
+  ['resolve', 'bing'],
+  ['dial', 'bing'],
 ] as const)(
   'the final gate after %s prevents %s HTTP bytes and closes an acquired socket',
   async (stage, provider) => {
@@ -246,7 +248,7 @@ test.each([
     const client = new SearchClient();
     const pending = Reflect.apply(client.query, client, [
       provider,
-      provider === 'duckduckgo' ? '' : 'synthetic-search-key',
+      provider === 'brave' ? 'synthetic-search-key' : '',
       'synthetic query',
       undefined,
       5,
@@ -333,4 +335,28 @@ test('diagnostic receipt writes do not retire an unchanged search configuration'
   }
   expect(await pending).toEqual({ sources: [], truncated: false });
   expect(calls).toBe(2);
+});
+
+test('cancellation while publishing task health cannot return source authority', async () => {
+  const f = await fixture({
+    query: async () => ({ sources: [{ url: 'https://source.example.test/' }], truncated: false }),
+  });
+  const gate = barrier();
+  const abort = new AbortController();
+  let gates = 0;
+  const pending = f.search.query(f.capture, 'synthetic query', abort.signal, 5, () => {
+    if (++gates === 2) {
+      waitingRead.file = f.search.file;
+      waitingRead.enter = gate.enter;
+      waitingRead.wait = gate.wait;
+    }
+  });
+  const outcome = pending.then(
+    (value) => ({ value }),
+    (error: unknown) => ({ error }),
+  );
+  await gate.entered;
+  abort.abort();
+  gate.release();
+  expect(await outcome).toMatchObject({ error: { code: 'SEARCH_CANCELLED' } });
 });
