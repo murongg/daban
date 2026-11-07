@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { secureDirectory } from '@daban/engine/local-computer';
 import { documentLimit, publicUrl, validAgentId } from '@daban/protocol';
-import { type BrowserWindow, type Rectangle, session, WebContentsView } from 'electron';
+import { BrowserWindow, type Rectangle, session, WebContentsView } from 'electron';
 import { WebSocket, WebSocketServer } from 'ws';
 import { browserPartition } from '../shared/browser';
 import { BrowserCdp, type CdpPage } from './browser-cdp';
@@ -21,6 +21,7 @@ export class BrowserHost {
   private client?: WebSocket;
   private cdp?: BrowserCdp;
   private partition?: Electron.Session;
+  private background?: BrowserWindow;
   private readonly token = randomBytes(32).toString('hex');
   private readonly views = new Map<string, WebContentsView>();
   private readonly guests = new Set<WebContentsView>();
@@ -353,7 +354,24 @@ export class BrowserHost {
     this.guests.add(view);
     view.webContents.once('destroyed', () => this.guests.delete(view));
     view.setBounds({ x: 0, y: 0, width: 960, height: 640 });
+    this.park(view);
     return view;
+  }
+  private park(view: WebContentsView) {
+    // Windows needs a window-backed compositor for animation frames and Playwright's
+    // stability checks. Keep AI pages rendering in a hidden, unfocusable host.
+    if (!this.background || this.background.isDestroyed())
+      this.background = new BrowserWindow({
+        width: 960,
+        height: 640,
+        show: false,
+        focusable: false,
+        skipTaskbar: true,
+        paintWhenInitiallyHidden: true,
+        webPreferences: this.preferences(),
+      });
+    this.background.contentView.addChildView(view);
+    view.setVisible(true);
   }
   private async preparePage(view: WebContentsView, opener?: string): Promise<CdpPage> {
     const cycle = this.cycle;
@@ -521,7 +539,10 @@ export class BrowserHost {
     if (!view.webContents.isDestroyed()) view.setVisible(false);
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.focus();
     if (!window.isDestroyed()) window.contentView.removeChildView(view);
-    if (!view.webContents.isDestroyed()) view.setBounds({ x: 0, y: 0, width: 960, height: 640 });
+    if (!view.webContents.isDestroyed()) {
+      view.setBounds({ x: 0, y: 0, width: 960, height: 640 });
+      this.park(view);
+    }
   }
   hideAll() {
     this.pendingMount = undefined;
@@ -540,6 +561,8 @@ export class BrowserHost {
     for (const view of this.guests) if (!view.webContents.isDestroyed()) view.webContents.close();
     this.guests.clear();
     this.views.clear();
+    this.background?.destroy();
+    this.background = undefined;
   }
   async close() {
     if (this.stopped) return;

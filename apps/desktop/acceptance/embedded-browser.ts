@@ -19,6 +19,8 @@ import { browserIpc } from '../electron/browser-ipc';
 import { browserPartition } from '../shared/browser';
 
 app.commandLine.appendSwitch('disable-quic');
+// The runner, rather than a transient render-host window, owns fixture shutdown.
+app.on('window-all-closed', () => {});
 
 async function verifyBrowser() {
   let stage = 'startup';

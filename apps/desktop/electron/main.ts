@@ -94,6 +94,8 @@ function createWindow() {
     }
     localComputer?.revoke().catch(() => console.error('Local computer cleanup failed'));
     service?.releaseInputs().catch(() => console.error('Desktop input cleanup failed'));
+    // The hidden browser render host must not keep Windows/Linux running without a main window.
+    if (process.platform !== 'darwin' && !exiting) app.quit();
   });
   window.once('ready-to-show', () => {
     if (mainWindow === window) windowReady = true;
@@ -304,7 +306,7 @@ if (primary) {
       );
     });
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    if (process.platform !== 'darwin' && !exiting) app.quit();
   });
 
   app.on('before-quit', async (event) => {

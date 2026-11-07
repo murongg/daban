@@ -23,6 +23,7 @@ const mock = vi.hoisted(() => ({
   connect: vi.fn(async () => {}),
   serviceArgs: [] as unknown[][],
   packaged: false,
+  quit: vi.fn(),
   permissions: undefined as
     | ((a: unknown, b: unknown, callback: (value: boolean) => unknown) => unknown)
     | undefined,
@@ -36,7 +37,7 @@ vi.mock('electron', () => ({
     getPath: () => '/mock',
     setPath: vi.fn(),
     requestSingleInstanceLock: () => true,
-    quit: vi.fn(),
+    quit: mock.quit,
     isReady: () => true,
     get isPackaged() {
       return mock.packaged;
@@ -184,9 +185,23 @@ it.each([false, true])(
         activation,
       });
       mock.windows[0].destroyed = true;
-      mock.windows[0].emit('closed');
-      mock.options!.open(activation);
-      expect(mock.windows).toHaveLength(2);
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      try {
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        mock.quit.mockClear();
+        mock.windows[0].emit('closed');
+        // A hidden browser render host can keep window-all-closed from firing.
+        expect(mock.quit).toHaveBeenCalledTimes(1);
+        mock.options!.open(activation);
+        expect(mock.windows).toHaveLength(2);
+        mock.quit.mockClear();
+        const cleanup = mock.events.get('before-quit')?.({ preventDefault: vi.fn() });
+        mock.events.get('window-all-closed')?.();
+        expect(mock.quit).not.toHaveBeenCalled();
+        await cleanup;
+      } finally {
+        Object.defineProperty(process, 'platform', platform);
+      }
     } finally {
       vi.unstubAllGlobals();
       if (previous) Object.defineProperty(process, 'resourcesPath', previous);
