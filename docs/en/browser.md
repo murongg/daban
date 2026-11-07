@@ -19,7 +19,7 @@ While you have control, the webpage receives mouse input, keyboard input, IME co
 
 Switching from the older dedicated Chrome profile requires signing in again the first time. The old profile remains on disk, and existing tab records remain suspended until you reopen them. Direct human downloads use the system save dialog; Bot downloads still go into the managed task directory.
 
-The built-in browser requires the desktop client to keep running. Quitting Daban disconnects this browser capability; closing its panel does not. Linux background tasks continue in their independent service.
+The built-in browser supports the macOS and Windows desktop clients and requires the client to keep running. Quitting Daban disconnects this browser capability; closing its panel does not. The Linux execution service retains headless Chromium and its existing takeover panel; Linux background tasks continue in their independent service.
 
 The standalone browser supports task-file uploads, downloads and text processing. For example, ask the Bot to download a signed-in CSV report, read and summarize it, write an output and upload it to your requested destination. Each transfer is limited to 5 MB. Downloads go into the current task directory and never overwrite an existing file. Relative paths and `/workspace` address the current task; `/shared` provides read-only access to the shared workspace. Arbitrary host files are unavailable. Native mode exposes no shell or process tools; programmatic PDF/Office extraction still requires the Linux workspace. Transfers to a Linux workspace need an executor advertising browser file support; older executors retain page interaction without transfer tools.
 

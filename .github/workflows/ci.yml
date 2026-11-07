@@ -61,9 +61,6 @@ jobs:
           profile daban-playwright-tests @{HOME}/.cache/ms-playwright/**/chrome-headless-shell flags=(unconfined) {
             userns,
           }
-          profile daban-electron-tests @{HOME}/work/**/node_modules/electron/dist/electron flags=(unconfined) {
-            userns,
-          }
           PROFILE
             sudo install -m 0644 "$RUNNER_TEMP/daban-playwright-tests" /etc/apparmor.d/daban-playwright-tests
             sudo apparmor_parser -r /etc/apparmor.d/daban-playwright-tests
@@ -71,12 +68,9 @@ jobs:
       - name: Verify standalone browser file workflows and visual takeover
         run: node --experimental-sqlite --test packages/engine/dist/host-browser.integration.js
       - name: Verify embedded browser input, verification and file workflows
-        run: |
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a dbus-run-session -- sh -c 'openbox >/dev/null 2>&1 & npm run test:browser:embedded'
-          else
-            npm run test:browser:embedded
-          fi
+        # Desktop clients ship on macOS and Windows; Ubuntu verifies the Linux execution service below.
+        if: runner.os == 'macOS'
+        run: npm run test:browser:embedded
       - run: npx vitest run --maxWorkers=2
       - run: node --experimental-strip-types --test tools/roles.integration.ts
       - name: Verify idle-only host update handoff
