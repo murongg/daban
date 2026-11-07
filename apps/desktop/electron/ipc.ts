@@ -27,13 +27,19 @@ import {
   isLocalComputerCommand,
   isMcpCommand,
   isMemoryQuery,
+  isModelDiagnoseRequest,
+  isModelFallbackRequest,
+  isModelId,
   isModelInspectionRequest,
+  isModelRemoveRequest,
+  isModelSavedRequest,
   isModelUpdate,
   isNoteCommand,
   isRecoveryRequest,
   isScheduleInput,
   isSchedulePatch,
   isScheduleRule,
+  isSearchCommand,
   isSkillBinding,
   isSkillContent,
   isSkillPackageCommand,
@@ -82,6 +88,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();
+  if (value.type.startsWith('search.')) return isSearchCommand(value) ? value : fail();
   if (['work.comments', 'work.comment', 'work.comment-receipt'].includes(value.type))
     return isWorkCommentCommand(value) ? value : fail();
   if (value.type.startsWith('mcp.')) return isMcpCommand(value) ? value : fail();
@@ -142,6 +149,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'group.copy.receipt': ['type', 'request'],
     'group.receipt': ['type', 'group', 'id'],
     'model.configure': ['type', 'input'],
+    'model.saved': ['type', 'input'],
+    'model.fallback.configure': ['type', 'input'],
+    'model.remove': ['type', 'input'],
+    'model.diagnose': ['type', 'input'],
     'model.check': ['type', 'revision'],
     'model.inspect': ['type', 'input'],
     'clipboard.write': ['type', 'text'],
@@ -312,6 +323,10 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if (v.type === 'group.input' && (!validAgentId(v.sourceId) || !isTaskFileName(v.name)))
     return fail();
   if (v.type === 'model.configure' && !isModelUpdate(v.input)) return fail();
+  if (v.type === 'model.saved' && !isModelSavedRequest(v.input)) return fail();
+  if (v.type === 'model.fallback.configure' && !isModelFallbackRequest(v.input)) return fail();
+  if (v.type === 'model.remove' && !isModelRemoveRequest(v.input)) return fail();
+  if (v.type === 'model.diagnose' && !isModelDiagnoseRequest(v.input)) return fail();
   if (v.type === 'model.inspect' && !isModelInspectionRequest(v.input)) return fail();
   if (v.type === 'model.check' && (!Number.isSafeInteger(v.revision) || Number(v.revision) < 0))
     return fail();
@@ -465,12 +480,20 @@ export function parseCommand(value: unknown): RuntimeCommand {
         'files',
         'chatRevision',
         'approvalMode',
+        'contextRevision',
+        'model',
       ]) ||
       !string(t.requestId, 100) ||
       !/^[a-zA-Z0-9_-]{1,100}$/.test(t.requestId as string) ||
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
+      (t.model !== undefined && !isModelId(t.model)) ||
+      (t.contextRevision !== undefined &&
+        (!Number.isSafeInteger(t.contextRevision) ||
+          Number(t.contextRevision) < 0 ||
+          !Number.isSafeInteger(t.chatRevision) ||
+          Number(t.contextRevision) > Number(t.chatRevision))) ||
       (t.memory !== undefined && !string(t.memory, 12000)) ||
       (t.chatRevision !== undefined &&
         (!Number.isSafeInteger(t.chatRevision) || Number(t.chatRevision) < 0))

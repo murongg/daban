@@ -27,6 +27,7 @@ import { type Dispatch, type RefObject, useCallback, useEffect, useMemo, useStat
 import { WindowList } from '../components/collection/WindowList';
 import { IconButton } from '../components/controls/Button';
 import { Avatar, Brand } from '../features/bots/Avatar';
+import { RecentConversations } from '../features/chat/RecentConversations';
 import { t, useLocale } from '../i18n/locale';
 import { useRuntime } from './Runtime';
 import { SectionDialog, type SectionEdit } from './SectionDialog';
@@ -41,6 +42,7 @@ export function Sidebar({
   setQuery,
   searchRef,
   onCreate,
+  onNewChat,
   onImport,
   onCopy,
   onCopyGroup,
@@ -54,6 +56,7 @@ export function Sidebar({
   setQuery: (value: string) => unknown;
   searchRef: RefObject<HTMLInputElement | null>;
   onCreate: (group?: boolean) => unknown;
+  onNewChat?: () => unknown;
   onImport?: () => unknown;
   onCopy?: (bot?: string) => unknown;
   onCopyGroup?: (group?: string) => unknown;
@@ -126,7 +129,7 @@ export function Sidebar({
   const filtered = useMemo(
     () =>
       state.bots
-        .filter((b) => !b.archived)
+        .filter((b) => !b.archived && b.kind !== 'chat')
         .filter((b) => {
           if (!needle) return true;
           return `${b.name} ${b.role} ${runtime.enabled ? '' : b.preview} ${(
@@ -294,6 +297,20 @@ export function Sidebar({
           <kbd>{searchShortcut}</kbd>
         </div>
         <div className="nav-main">
+          {onNewChat && (
+            <button
+              type="button"
+              className="nav-row sidebar-new-chat"
+              onClick={onNewChat}
+              disabled={
+                runtime.enabled &&
+                (runtime.snapshot.phase !== 'ready' || runtime.snapshot.protocolVersion < 46)
+              }
+            >
+              <Plus aria-hidden="true" />
+              {t('conversations.newChat')}
+            </button>
+          )}
           <button
             type="button"
             className={`nav-row ${state.view === 'gallery' ? 'selected' : ''}`}
@@ -347,6 +364,7 @@ export function Sidebar({
           </button>
         </div>
         <div className="sidebar-scroll">
+          <RecentConversations state={state} dispatch={dispatch} query={query} close={close} />
           <div className="section-label">
             <span>{t('sidebar.bots')}</span>
             <span className="spacer" />

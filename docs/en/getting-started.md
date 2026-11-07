@@ -2,7 +2,7 @@
 
 [User guide](README.md) · [简体中文](../zh-CN/getting-started.md)
 
-Daban is a local AI workspace. Configure a model, then create a Bot. Ordinary conversation does not require a connected computer.
+Daban is a local AI workspace. Configure a model, then choose **New chat** to ask a question or give the AI a task. Create a Bot when you want an ongoing companion. Ordinary conversation does not require a connected computer.
 
 ## What you need
 
@@ -21,7 +21,7 @@ Use a complete desktop package supplied by the maintainer and an API key from a 
 2. Choose Simplified Chinese or English.
 3. Let Daban download and cache its core runtime components. No VM is needed to start chatting. You can pause and resume this download. Install Linux later if you need an independent computer.
 4. Select a provider, enter its API key, and select or enter a model. Verify and save, then choose **Start using Daban**. See [Models & providers](models.md).
-5. Add a companion from the [Bot gallery](gallery.md), or [create a Bot](bots.md). A new workspace contains no sample conversations or test Bots.
+5. Choose **New chat** to start directly. For a lasting role, memory, and reference library, add a companion from the [Bot gallery](gallery.md) or [create a Bot](bots.md). A new workspace contains no sample conversations or test Bots.
 6. Send a first task, such as: “Turn the following meeting notes into decisions and action items.”
 
 ## Connect a computer when needed

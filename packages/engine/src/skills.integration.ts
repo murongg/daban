@@ -4,8 +4,113 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { managedProtocol } from '@daban/protocol';
+import type { AgentToolRun } from './agent-tools.js';
 import { startPrototype } from './server.js';
 import { readSkillZip } from './skill-package.js';
+
+test('built-in Bot and skill workflows save current-Bot records through authenticated APIs', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-create-bot-api-'));
+  const app = await startPrototype({
+    profileDir: path.join(root, 'profile'),
+    port: 0,
+    computers: true,
+  });
+  try {
+    assert(app.models);
+    await app.models.profiles.register({
+      id: 'mock-creator',
+      name: 'Mock creator',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+    });
+    const run: AgentToolRun = {
+      id: 'mock-creation-run',
+      bot: 'mock-creator',
+      sessionId: 'mock-creator-session',
+      abort: new AbortController(),
+      workdir: '/mock/task',
+      canonicalRoot: '/mock/task',
+      toolCount: 0,
+      limit: 10,
+      seen: {},
+      trace: [],
+      task: { requestId: 'mock-create-request', prompt: 'Create a synthetic helper Bot.' },
+      skills: await app.models.skills.capture('mock-creator'),
+    };
+    const result = await app.models.tools.invoke(run, 'bot_create', {
+      name: 'Mock created',
+      instructions: 'Organize synthetic examples.',
+      color: 'blue',
+    });
+    assert(!result.isError);
+    const item = result.content[0];
+    assert(item.type === 'text');
+    const receipt = JSON.parse(item.text);
+    const state = await (
+      await fetch(`${app.url}/api/state`, {
+        headers: { 'x-prototype-token': app.token },
+      })
+    ).json();
+    assert.equal(state.profiles.length, 2);
+    assert.deepEqual(
+      state.profiles.find((profile: { id: string }) => profile.id === receipt.id),
+      await app.models.profiles.get(receipt.id),
+    );
+    assert.equal(state.bots[receipt.id], undefined);
+    const snapshot = await app.models.skills.capture(receipt.id);
+    assert(snapshot.skills.some((skill) => skill.name === 'bot-manager'));
+    assert(snapshot.skills.some((skill) => skill.name === 'skill-creator'));
+    assert(
+      app.models.tools
+        .list(run.bot, undefined, undefined, run)
+        .some((tool) => tool.name === 'skill_create'),
+    );
+    const content =
+      '---\nname: mock-authored-api\ndescription: Synthetic authored API skill\n---\nOrganize synthetic examples.\n';
+    const authored = await app.models.tools.invoke(run, 'skill_create', { content });
+    assert(!authored.isError);
+    const preview = authored.content[0];
+    assert(preview.type === 'text');
+    const installation = app.models.tools.invoke(run, 'skill_install', {
+      previewId: JSON.parse(preview.text).previewId,
+    });
+    let question: Awaited<ReturnType<typeof app.models.interactions.list>>[number] | undefined;
+    for (let i = 0; i < 100; i++) {
+      question = (await app.models.interactions.list()).find((item) => item.status === 'pending');
+      if (question) break;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    assert(question);
+    const accepted = await fetch(`${app.url}/api/bots/${run.bot}/reply`, {
+      method: 'POST',
+      headers: { 'x-prototype-token': app.token, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        id: question.id,
+        runId: run.id,
+        reply: { kind: 'answer', answers: [{ id: 'install', selected: ['Install and enable'] }] },
+      }),
+    });
+    assert.equal(accepted.status, 200);
+    assert(!(await installation).isError);
+    const read = await app.models.tools.invoke(run, 'skill_read', {
+      skill: 'mock-authored-api',
+      path: 'SKILL.md',
+    });
+    const text = read.content[0];
+    assert(text.type === 'text');
+    assert.equal(JSON.parse(text.text).content, content);
+    assert(
+      !(await app.models.skills.list(receipt.id)).items.some(
+        (skill) => skill.name === 'mock-authored-api',
+      ),
+    );
+    app.models.tools.skills?.release(run);
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('the package API retains all files and binds resource reads and archive export to a revision', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-skill-package-api-'));
@@ -139,7 +244,7 @@ test('the authenticated skills API installs per Bot and explicitly copies indepe
     );
     assert.equal(
       (await app.models.skills.capture('mock-api-b')).skills.filter(
-        (item) => item.name !== 'find-skills',
+        (item) => item.name === skill.name,
       ).length,
       0,
     );
@@ -192,7 +297,7 @@ test('the authenticated skills API installs per Bot and explicitly copies indepe
     assert.equal(recycled.deleted, true);
     assert.equal(
       (await app.models.skills.capture('mock-api-b')).skills.filter(
-        (item) => item.name !== 'find-skills',
+        (item) => item.name === skill.name,
       ).length,
       1,
     );

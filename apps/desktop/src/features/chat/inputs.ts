@@ -15,7 +15,7 @@ import {
   useState,
 } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
-import { type Action, type Bot, lifecycleRequest, type State } from '../../app/state';
+import { type Action, type Bot, chatRevision, lifecycleRequest, type State } from '../../app/state';
 import { t } from '../../i18n/locale';
 import {
   attachment,
@@ -70,10 +70,11 @@ export function useInputs(
       return;
     }
     const targetBot = bot.id;
+    const revision = chatRevision(state, bot.id, runtime.snapshot.chats);
     let count = state.attachments[targetBot].length;
     // Events can arrive in one React batch; reserve before the first asynchronous file read.
     active.current.add(targetBot);
-    dispatch({ type: 'attachment-uploading', bot: targetBot, uploading: true });
+    dispatch({ type: 'attachment-uploading', bot: targetBot, revision, uploading: true });
     try {
       for (const file of files) {
         if (!isTaskFileName(file.name)) {
@@ -99,7 +100,7 @@ export function useInputs(
               bot: agentId(targetBot),
               file: await attachmentUpload(file),
             });
-            dispatch({ type: 'attach', bot: targetBot, file: stagedAttachment(receipt) });
+            dispatch({ type: 'attach', bot: targetBot, revision, file: stagedAttachment(receipt) });
             count++;
           } catch (error) {
             notify(`${bot.name} · ${file.name}：${runtimeError(error)}`);
@@ -119,6 +120,7 @@ export function useInputs(
           dispatch({
             type: 'attach',
             bot: targetBot,
+            revision,
             file: attachment(file.name, content),
           });
           count++;
@@ -140,7 +142,7 @@ export function useInputs(
       notify(runtimeError(error));
     } finally {
       active.current.delete(targetBot);
-      dispatch({ type: 'attachment-uploading', bot: targetBot, uploading: false });
+      dispatch({ type: 'attachment-uploading', bot: targetBot, revision, uploading: false });
     }
     if (upload.current) upload.current.value = '';
   }

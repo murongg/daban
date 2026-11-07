@@ -1,38 +1,84 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  diagnosticModel,
   isModelConnection,
+  isModelDiagnoseRequest,
+  isModelDiagnostic,
+  isModelFallbackRequest,
   isModelId,
   isModelInspectionRequest,
   isModelKey,
+  isModelRemoveRequest,
+  isModelSavedRequest,
   isModelUpdate,
   type ModelApi,
+  type ModelCapabilities,
   type ModelCheck,
   type ModelConnection,
+  type ModelDiagnoseRequest,
+  type ModelDiagnostic,
   type ModelId,
+  type ModelReference,
+  type ModelSaved,
   type ModelStatus,
+  type ModelUpdate,
   modelApi,
   modelOptions,
   modelReference,
   validAgentId,
 } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
-import { ModelDiscovery, responseJSON } from './discovery.js';
+import { ModelDiscovery, ModelRequestUnknown, responseJSON } from './discovery.js';
+import { syncDirectory } from './durability.js';
 import { inferenceRequest, inferenceText } from './inference.js';
 
 interface PrivateConnection extends ModelConnection {
   apiKey: string;
 }
-interface PrivateConfig {
+interface ModelOperation {
+  id: string;
+  fingerprint: string;
+  revision: number;
+  connection: string;
+  model: ModelId;
+  phase: 'claimed' | 'committed' | 'failed' | 'unknown' | 'settled';
+  kind?: 'configure' | 'fallback' | 'remove' | 'diagnose';
+  code?: string;
+  committedRevision?: number;
+  diagnostic?: ModelDiagnostic;
+  references?: ModelReference[];
+  probeRevision?: number;
+}
+interface PrivateState {
+  revision: number;
+  scope?: string;
+  operations?: ModelOperation[];
+  fallbackModel?: ModelId;
+  probeRevision?: number;
+  probe?: ModelOperation;
+  receipt?: { id: string; fingerprint: string };
+}
+interface ActiveConfig extends PrivateState {
+  configured?: true;
   apiKey: string;
   model: ModelId;
   provider?: string;
-  revision: number;
   connections?: PrivateConnection[];
-  receipt?: { id: string; fingerprint: string };
 }
+type PrivateConfig =
+  | ActiveConfig
+  | (PrivateState & {
+      configured: false;
+      apiKey?: never;
+      model?: never;
+      provider?: never;
+      connections: [];
+    });
 export interface ResolvedModel {
+  capabilities?: ModelCapabilities;
+  credentialVersion?: string;
   api: ModelApi;
   model: ModelId;
   apiModel: string;
@@ -43,12 +89,55 @@ export interface ResolvedModel {
   contextWindow: number;
   maxTokens: number;
   binding: string;
-  searchApiKey?: string;
   secrets: string[];
 }
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const validOperation = (value: unknown): value is ModelOperation =>
+  object(value) &&
+  Object.keys(value).every((key) =>
+    [
+      'id',
+      'fingerprint',
+      'revision',
+      'connection',
+      'model',
+      'phase',
+      'kind',
+      'code',
+      'committedRevision',
+      'diagnostic',
+      'references',
+      'probeRevision',
+    ].includes(key),
+  ) &&
+  validAgentId(value.id) &&
+  typeof value.fingerprint === 'string' &&
+  /^[a-f0-9]{64}$/.test(value.fingerprint) &&
+  Number.isSafeInteger(value.revision) &&
+  Number(value.revision) >= 0 &&
+  validAgentId(value.connection) &&
+  isModelId(value.model) &&
+  ['claimed', 'committed', 'failed', 'unknown', 'settled'].includes(String(value.phase)) &&
+  (value.kind === undefined ||
+    ['configure', 'fallback', 'remove', 'diagnose'].includes(String(value.kind))) &&
+  (value.code === undefined ||
+    (typeof value.code === 'string' && /^[A-Z_]{1,100}$/.test(value.code))) &&
+  (value.committedRevision === undefined ||
+    (Number.isSafeInteger(value.committedRevision) &&
+      Number(value.committedRevision) === Number(value.revision) + 1)) &&
+  (value.diagnostic === undefined ||
+    (isModelDiagnostic(value.diagnostic) && value.diagnostic.model === value.model)) &&
+  (value.probeRevision === undefined ||
+    (Number.isSafeInteger(value.probeRevision) && Number(value.probeRevision) >= 0)) &&
+  (value.references === undefined ||
+    (Array.isArray(value.references) &&
+      value.references.length <= 5 &&
+      value.references.every((item) =>
+        ['default', 'bot', 'fallback', 'search', 'running'].includes(String(item)),
+      )));
+
 const legacyConnection = (apiKey: string): PrivateConnection => ({
   id: 'deepseek-official',
   name: 'DeepSeek',
@@ -62,10 +151,13 @@ const legacyConnection = (apiKey: string): PrivateConnection => ({
     maxTokens: 8192,
   })),
 });
+const officialSearch = (item: ModelConnection) =>
+  modelApi(item) === 'openai-completions' &&
+  item.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1';
 const metadata = ({ apiKey: _apiKey, ...connection }: PrivateConnection): ModelConnection =>
   connection;
 const allConnections = (config: PrivateConfig) =>
-  config.connections || [legacyConnection(config.apiKey)];
+  config.configured === false ? [] : config.connections || [legacyConnection(config.apiKey)];
 const findModel = (connections: PrivateConnection[], reference: ModelId) => {
   for (const connection of connections) {
     const model = connection.models.find(
@@ -104,7 +196,19 @@ const readConfig = async (file: string): Promise<unknown> => {
 };
 
 export class ModelSettings {
+  withConnectionChange?: <T>(
+    connection: ModelConnection,
+    commit: () => Promise<T>,
+    removing?: boolean,
+  ) => Promise<T>;
+  private readonly referenceChecks = new Set<
+    (connection: ModelConnection) => Promise<ModelReference[]>
+  >();
+  private readonly bindings = new Map<string, number>();
   private writing: Promise<unknown> = Promise.resolve();
+  private readonly flights = new Map<string, Promise<ModelStatus>>();
+  private readonly probeFlights = new Map<string, Promise<ModelSaved>>();
+  private scope = randomBytes(16).toString('hex');
   private readonly discovery: ModelDiscovery;
   constructor(
     readonly file: string,
@@ -112,9 +216,72 @@ export class ModelSettings {
   ) {
     this.discovery = new ModelDiscovery(fetcher);
   }
-  async privateConfig(): Promise<PrivateConfig | null> {
+  async privateConfig(): Promise<ActiveConfig | null> {
+    const config = await this.readState();
+    return config?.configured === false ? null : config;
+  }
+  private async readState(): Promise<PrivateConfig | null> {
     try {
       const value = await readConfig(this.file);
+      if (!object(value)) throw new Error('Invalid private model state');
+      if (value.scope !== undefined && !validAgentId(value.scope))
+        throw new Error('Invalid model scope');
+      if (
+        value.receipt !== undefined &&
+        (!object(value.receipt) ||
+          !validAgentId(value.receipt.id) ||
+          typeof value.receipt.fingerprint !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(value.receipt.fingerprint))
+      )
+        throw new Error('Invalid model receipt');
+      if (
+        value.operations !== undefined &&
+        (!Array.isArray(value.operations) ||
+          value.operations.length > 128 ||
+          !value.operations.every(validOperation) ||
+          value.operations.some((item) => item.kind === 'diagnose' || item.phase === 'settled') ||
+          new Set(value.operations.map((item) => item.id)).size !== value.operations.length)
+      )
+        throw new Error('Invalid model operations');
+      const state: PrivateState = {
+        revision: Number(value.revision || 0),
+        ...(value.scope ? { scope: value.scope as string } : {}),
+        ...(value.operations ? { operations: value.operations as ModelOperation[] } : {}),
+        ...(value.receipt ? { receipt: value.receipt as PrivateState['receipt'] } : {}),
+        ...(value.fallbackModel !== undefined
+          ? { fallbackModel: value.fallbackModel as ModelId }
+          : {}),
+        ...(value.probeRevision !== undefined
+          ? { probeRevision: value.probeRevision as number }
+          : {}),
+        ...(value.probe !== undefined ? { probe: value.probe as ModelOperation } : {}),
+      };
+      if (
+        (value.fallbackModel !== undefined && !isModelId(value.fallbackModel)) ||
+        (value.probeRevision !== undefined &&
+          (!Number.isSafeInteger(value.probeRevision) || Number(value.probeRevision) < 0)) ||
+        (value.probe !== undefined &&
+          (!validOperation(value.probe) ||
+            value.probe.kind !== 'diagnose' ||
+            !['claimed', 'settled', 'unknown'].includes(value.probe.phase) ||
+            value.probe.probeRevision === undefined ||
+            value.probe.probeRevision + 1 !== value.probeRevision))
+      )
+        throw new Error('Invalid model access state');
+      if (value.configured === false) {
+        if (
+          !Number.isSafeInteger(value.revision) ||
+          Number(value.revision) < 0 ||
+          value.apiKey !== undefined ||
+          value.model !== undefined ||
+          value.provider !== undefined ||
+          value.fallbackModel !== undefined ||
+          !Array.isArray(value.connections) ||
+          value.connections.length
+        )
+          throw new Error('Invalid disconnected model state');
+        return { ...state, configured: false, connections: [] };
+      }
       if (
         !object(value) ||
         !isModelKey(value.apiKey) ||
@@ -152,12 +319,18 @@ export class ModelSettings {
       const model = value.model || 'deepseek-flash';
       const selected = findModel(connections, model);
       if (
+        state.fallbackModel &&
+        (!findModel(connections, state.fallbackModel) || state.fallbackModel === model)
+      )
+        throw new Error('Invalid saved fallback');
+      if (
         !selected ||
         selected.connection.apiKey !== value.apiKey ||
         (value.provider !== undefined && selected.connection.id !== value.provider)
       )
         throw new Error('Unresolved private model');
       return {
+        ...state,
         apiKey: selected.connection.apiKey,
         model,
         provider: selected.connection.id,
@@ -174,33 +347,84 @@ export class ModelSettings {
     return {
       provider: config?.provider || 'deepseek-official',
       model: config?.model || 'deepseek-flash',
-      configured: !!config,
+      configured: !!config && config.configured !== false,
       revision: config?.revision || 0,
+      ...(includeConnections && config?.fallbackModel
+        ? { fallbackModel: config.fallbackModel }
+        : {}),
       ...(config?.receipt ? { requestId: config.receipt.id } : {}),
       ...(includeConnections
-        ? { connections: config ? allConnections(config).map(metadata) : [] }
+        ? {
+            connections: config ? allConnections(config).map(metadata) : [],
+            modelAccess: {
+              scope: config?.scope || this.scope,
+              fallback: true,
+              diagnostics: true,
+              cli: false,
+            },
+            probeRevision: config?.probeRevision || 0,
+          }
         : {}),
     };
   }
   async status(includeConnections = false) {
-    return this.publicConfig(await this.privateConfig(), includeConnections);
+    return this.publicConfig(await this.serial(() => this.recover()), includeConnections);
+  }
+  async searchConnection(reference?: string) {
+    // The model commit can wait on Search ownership; this read must not reenter the model queue.
+    const config = await this.privateConfig();
+    if (!config) return undefined;
+    const connections = allConnections(config);
+    const selected = findModel(connections, config.model)?.connection;
+    const connection =
+      reference !== undefined
+        ? connections.find((item) => item.id === reference && officialSearch(item))
+        : selected && officialSearch(selected)
+          ? selected
+          : connections.find((item) => item.id === 'deepseek-official' && officialSearch(item)) ||
+            connections.find(officialSearch);
+    return connection ? { id: connection.id, key: connection.apiKey } : undefined;
   }
   async resolve(reference?: ModelId): Promise<ResolvedModel> {
-    const config = await this.privateConfig();
-    if (!config) throw new Fault('MODEL_NOT_CONFIGURED', 400);
+    const config = await this.serial(() => this.recover());
+    return this.resolveConfig(config, reference);
+  }
+  async capture(reference?: ModelId) {
+    const config = await this.serial(() => this.recover());
+    const primary = this.resolveConfig(config, reference);
+    const fallback =
+      config?.fallbackModel && config.fallbackModel !== primary.model
+        ? this.resolveConfig(config, config.fallbackModel)
+        : undefined;
+    return {
+      revision: config?.revision || 0,
+      primary,
+      ...(fallback ? { fallback } : {}),
+    };
+  }
+  async available(route: ResolvedModel) {
+    try {
+      const config = await this.serial(() => this.recover());
+      return this.resolveConfig(config, route.model).credentialVersion === route.credentialVersion;
+    } catch {
+      return false;
+    }
+  }
+  private resolveConfig(config: PrivateConfig | null, reference?: ModelId): ResolvedModel {
+    if (!config || config.configured === false) throw new Fault('MODEL_NOT_CONFIGURED', 400);
     const connections = allConnections(config);
     const selected = findModel(connections, reference ?? config.model);
     if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
     const { connection, model } = selected;
-    const official = (item: PrivateConnection) =>
-      modelApi(item) === 'openai-completions' &&
-      item.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1';
-    // The configured destination authorizes this key; generated connection IDs do not identify the vendor.
-    const search = official(connection)
-      ? connection
-      : connections.find((item) => item.id === 'deepseek-official' && official(item)) ||
-        connections.find(official);
     return {
+      ...(model.capabilities ? { capabilities: structuredClone(model.capabilities) } : {}),
+      credentialVersion: digest([
+        connection.id,
+        connection.baseURL,
+        modelApi(connection),
+        model,
+        digest(connection.apiKey),
+      ]),
       model: modelReference(connection.id, model.id),
       api: modelApi(connection),
       apiModel:
@@ -219,9 +443,7 @@ export class ModelSettings {
         modelApi(connection),
         model,
         digest(connection.apiKey),
-        search ? digest(search.apiKey) : null,
       ]),
-      ...(search ? { searchApiKey: search.apiKey } : {}),
       secrets: [...new Set(connections.map((item) => item.apiKey))],
     };
   }
@@ -230,13 +452,93 @@ export class ModelSettings {
     this.writing = next;
     return next;
   }
+  private async recover() {
+    let config: PrivateConfig | null = (await this.privateConfig()) || (await this.readState());
+    if (config?.scope) this.scope = config.scope;
+    if (
+      config?.operations?.some((item) => item.phase === 'claimed' && !this.flights.has(item.id))
+    ) {
+      // A claim proves dispatch may have happened; a new Host must never recreate that request.
+      config = {
+        ...config,
+        operations: config.operations.map((item) =>
+          item.phase === 'claimed' && !this.flights.has(item.id)
+            ? { ...item, phase: 'unknown', code: 'MODEL_OPERATION_UNKNOWN' }
+            : item,
+        ),
+      };
+      await this.persist(config);
+    }
+    if (config?.probe?.phase === 'claimed' && !this.probeFlights.has(config.probe.id)) {
+      config = {
+        ...config,
+        probe: { ...config.probe, phase: 'unknown', code: 'MODEL_OPERATION_UNKNOWN' },
+      };
+      await this.persist(config);
+    }
+    return config;
+  }
+  private assertIdle(config: PrivateConfig | null) {
+    if (config?.operations?.some((item) => item.phase === 'claimed'))
+      throw new Fault('MODEL_SETTINGS_BUSY');
+  }
+  registerReferences(check: (connection: ModelConnection) => Promise<ModelReference[]>) {
+    this.referenceChecks.add(check);
+    return () => this.referenceChecks.delete(check);
+  }
+  private async assertModelRemoval(previous: PrivateConnection, models: ModelConnection['models']) {
+    const removed = previous.models.filter((model) => !models.some((next) => next.id === model.id));
+    if (!removed.length) return;
+    if (this.bindings.has(previous.id)) throw new Fault('MODEL_CONNECTION_REFERENCED');
+    for (const check of this.referenceChecks) {
+      const references = await check({ ...metadata(previous), models: removed });
+      if (references.some((reference) => ['bot', 'fallback', 'running'].includes(reference)))
+        throw new Fault('MODEL_CONNECTION_REFERENCED');
+    }
+  }
+  async withModel<T>(reference: ModelId, write: () => Promise<T>) {
+    const connection = await this.serial(async () => {
+      const config = await this.recover();
+      const selected = config ? findModel(allConnections(config), reference) : undefined;
+      // Imported Bot metadata may retain an unavailable route; only actual credentials need a removal reservation.
+      if (!selected) return undefined;
+      this.bindings.set(
+        selected.connection.id,
+        (this.bindings.get(selected.connection.id) || 0) + 1,
+      );
+      return selected.connection.id;
+    });
+    try {
+      return await write();
+    } finally {
+      if (connection) {
+        const remaining = (this.bindings.get(connection) || 1) - 1;
+        if (remaining) this.bindings.set(connection, remaining);
+        else this.bindings.delete(connection);
+      }
+    }
+  }
   private async persist(config: PrivateConfig) {
     if (!Number.isSafeInteger(config.revision)) throw new Fault('MODEL_SETTINGS_LIMIT', 409);
     const temporary = `${this.file}.${randomBytes(8).toString('hex')}.tmp`;
     try {
       await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-      await writeFile(temporary, JSON.stringify(config), { mode: 0o600 });
+      const handle = await open(temporary, 'wx', 0o600);
+      try {
+        const data = JSON.stringify({ ...config, scope: config.scope || this.scope });
+        if (Buffer.byteLength(data) > 2 * 1024 * 1024) throw new Fault('MODEL_SETTINGS_LIMIT');
+        await handle.writeFile(data);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
       await rename(temporary, this.file);
+      const directory = await open(path.dirname(this.file), 'r');
+      try {
+        await syncDirectory(directory);
+      } finally {
+        await directory.close();
+      }
       return this.publicConfig(config);
     } catch {
       throw new Fault('MODEL_CONFIG_UNAVAILABLE', 503);
@@ -252,7 +554,8 @@ export class ModelSettings {
     const apiKey = value.apiKey;
     const requestedModel = value.model;
     return this.serial(async () => {
-      const prior = await this.privateConfig();
+      const prior = await this.recover();
+      this.assertIdle(prior);
       const previous = prior ? allConnections(prior) : [];
       const connections = previous.filter((item) => item.id !== 'deepseek-official');
       const legacy = previous.find((item) => item.id === 'deepseek-official');
@@ -261,13 +564,19 @@ export class ModelSettings {
         typeof requestedModel === 'string' ? requestedModel : prior?.model || 'deepseek-flash';
       const selected = findModel(connections, model);
       if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
-      return this.persist({
-        apiKey: selected.connection.apiKey,
-        model,
-        provider: selected.connection.id,
-        connections,
-        revision: (prior?.revision || 0) + 1,
-      });
+      if (prior?.fallbackModel === model) throw new Fault('MODEL_FALLBACK_INVALID', 400);
+      const commit = () =>
+        this.persist({
+          ...(prior?.fallbackModel ? { fallbackModel: prior.fallbackModel } : {}),
+          ...(prior?.probe ? { probe: prior.probe, probeRevision: prior.probeRevision } : {}),
+          apiKey: selected.connection.apiKey,
+          model,
+          provider: selected.connection.id,
+          connections,
+          revision: (prior?.revision || 0) + 1,
+        });
+      const changed = connections.find((connection) => connection.id === 'deepseek-official')!;
+      return this.withConnectionChange ? this.withConnectionChange(changed, commit) : commit();
     });
   }
   private async probe(connection: PrivateConnection, models: string[]) {
@@ -357,12 +666,13 @@ export class ModelSettings {
         throw new Fault('MODEL_API_MODEL_UNAVAILABLE', 400);
     } catch (error) {
       if (error instanceof Fault) throw error;
-      throw new Fault('MODEL_API_UNAVAILABLE', 502);
+      throw new ModelRequestUnknown();
     }
   }
   async inspect(value: unknown) {
     if (!isModelInspectionRequest(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
-    const current = await this.privateConfig();
+    // Disconnect removes credentials, but retains the revision used by new draft diagnostics.
+    const current = await this.readState();
     if ((current?.revision ?? 0) !== value.revision)
       throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
     const existing = current
@@ -385,7 +695,7 @@ export class ModelSettings {
           ]);
     if (key && exposed.some((text) => text.includes(key)))
       throw new Fault('MODEL_API_INVALID_RESPONSE', 502);
-    if (((await this.privateConfig())?.revision ?? 0) !== value.revision)
+    if (((await this.readState())?.revision ?? 0) !== value.revision)
       throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
     return result;
   }
@@ -405,7 +715,319 @@ export class ModelSettings {
   }
   async configure(value: unknown) {
     if (!isModelUpdate(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
-    const before = await this.privateConfig();
+    const input = structuredClone(value);
+    const claimed = await this.serial(() => this.claimConfigure(input));
+    return claimed.result;
+  }
+  async saved(value: unknown): Promise<ModelSaved> {
+    if (!isModelSavedRequest(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+    const input = structuredClone(value);
+    return this.serial(async () => {
+      const config = await this.recover();
+      this.assertScope(input.scope, config);
+      const operation =
+        config?.operations?.find((item) => item.id === input.requestId) ||
+        (config?.probe?.id === input.requestId ? config.probe : undefined);
+      if (operation) {
+        if (
+          operation.connection !== input.connection ||
+          operation.model !== input.model ||
+          operation.revision !== input.revision
+        )
+          throw new Fault('MODEL_OPERATION_MISMATCH', 403);
+        return this.operationView(config, operation);
+      }
+      if (config?.receipt?.id === input.requestId) {
+        if (
+          config.revision !== input.revision + 1 ||
+          config.provider !== input.connection ||
+          config.model !== input.model
+        )
+          throw new Fault('MODEL_OPERATION_MISMATCH', 403);
+        return {
+          ...input,
+          kind: 'configure',
+          phase: 'committed',
+          committedRevision: config.revision,
+          current: this.publicConfig(config, true),
+        };
+      }
+      return {
+        ...input,
+        kind: 'configure',
+        phase: input.revision < (config?.revision || 0) ? 'superseded' : 'missing',
+        current: this.publicConfig(config, true),
+      };
+    });
+  }
+  private assertScope(scope: string, config: PrivateConfig | null) {
+    if (scope !== (config?.scope || this.scope)) throw new Fault('MODEL_SCOPE_MISMATCH', 403);
+  }
+  private operationView(config: PrivateConfig | null, operation: ModelOperation): ModelSaved {
+    return {
+      scope: config?.scope || this.scope,
+      requestId: operation.id,
+      revision: operation.revision,
+      connection: operation.connection,
+      model: operation.model,
+      kind: operation.kind || 'configure',
+      phase: operation.phase,
+      ...(operation.code ? { error: operation.code } : {}),
+      ...(operation.committedRevision === undefined
+        ? {}
+        : { committedRevision: operation.committedRevision }),
+      ...(operation.diagnostic ? { diagnostic: structuredClone(operation.diagnostic) } : {}),
+      ...(operation.references ? { references: [...operation.references] } : {}),
+      current: this.publicConfig(config, true),
+    };
+  }
+  private mutationReplay(config: PrivateConfig | null, id: string, fingerprint: string) {
+    const previous = config?.operations?.find((item) => item.id === id);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new Fault('MODEL_SETTINGS_ID_REUSED');
+      return previous;
+    }
+    if (config?.receipt?.id === id || config?.probe?.id === id)
+      throw new Fault('MODEL_SETTINGS_ID_REUSED');
+    this.assertIdle(config);
+    if ((config?.operations?.length || 0) >= 128) throw new Fault('MODEL_SETTINGS_LIMIT');
+    return undefined;
+  }
+  async fallback(value: unknown): Promise<ModelStatus> {
+    if (!isModelFallbackRequest(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+    const input = structuredClone(value);
+    return this.serial(async () => {
+      const config = await this.recover();
+      this.assertScope(input.scope, config);
+      const fingerprint = digest(['fallback', input]);
+      const replay = this.mutationReplay(config, input.requestId, fingerprint);
+      if (replay) return this.publicConfig(config, true);
+      if ((config?.revision || 0) !== input.revision) throw new Fault('MODEL_SETTINGS_CONFLICT');
+      if (!config || config.configured === false) throw new Fault('MODEL_NOT_CONFIGURED', 400);
+      if (input.model === config.model) throw new Fault('MODEL_FALLBACK_INVALID', 400);
+      if (input.model && !findModel(allConnections(config), input.model))
+        throw new Fault('MODEL_UNAVAILABLE', 400);
+      const { fallbackModel: _fallbackModel, ...previous } = config;
+      const operation: ModelOperation = {
+        id: input.requestId,
+        fingerprint,
+        kind: 'fallback',
+        revision: input.revision,
+        connection: config.provider!,
+        model: config.model,
+        phase: 'committed',
+        committedRevision: input.revision + 1,
+      };
+      const next: PrivateConfig = {
+        ...previous,
+        ...(input.model ? { fallbackModel: input.model } : {}),
+        revision: input.revision + 1,
+        operations: [operation],
+        receipt: { id: input.requestId, fingerprint },
+      };
+      await this.persist(next);
+      return this.publicConfig(next, true);
+    });
+  }
+  async remove(value: unknown): Promise<ModelSaved> {
+    if (!isModelRemoveRequest(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+    const input = structuredClone(value);
+    return this.serial(async () => {
+      const config = await this.recover();
+      this.assertScope(input.scope, config);
+      const fingerprint = digest(['remove', input]);
+      const replay = this.mutationReplay(config, input.requestId, fingerprint);
+      if (replay) return this.operationView(config, replay);
+      if ((config?.revision || 0) !== input.revision) throw new Fault('MODEL_SETTINGS_CONFLICT');
+      if (!config || config.configured === false) throw new Fault('MODEL_NOT_CONFIGURED', 400);
+      const connections = allConnections(config);
+      const removed = connections.find((item) => item.id === input.connection);
+      if (!removed) throw new Fault('MODEL_UNAVAILABLE', 400);
+      const disconnect = input.disconnect === true && connections.length === 1;
+      if (input.disconnect && !disconnect) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+      const references: ModelReference[] = [];
+      if (this.bindings.has(removed.id)) references.push('bot');
+      for (const check of this.referenceChecks)
+        references.push(...(await check(metadata(removed))));
+      if (config.provider === removed.id && !disconnect) references.push('default');
+      if (
+        config.fallbackModel &&
+        findModel(connections, config.fallbackModel)?.connection.id === removed.id
+      )
+        references.push('fallback');
+      if (
+        !this.withConnectionChange &&
+        connections.length > 1 &&
+        modelApi(removed) === 'openai-completions' &&
+        removed.baseURL.replace(/\/+$/, '') === 'https://api.deepseek.com/v1'
+      )
+        references.push('search');
+      const commit = async () => {
+        const operation: ModelOperation = {
+          id: input.requestId,
+          fingerprint,
+          kind: 'remove',
+          revision: input.revision,
+          connection: removed.id,
+          model: config.model,
+          phase: references.length ? 'failed' : 'committed',
+          ...(references.length
+            ? { code: 'MODEL_CONNECTION_REFERENCED', references: [...new Set(references)] }
+            : { committedRevision: input.revision + 1 }),
+        };
+        const next: PrivateConfig = references.length
+          ? { ...config, operations: [...(config.operations || []), operation] }
+          : disconnect
+            ? {
+                configured: false,
+                connections: [],
+                revision: input.revision + 1,
+                scope: config.scope,
+                operations: [operation],
+                receipt: { id: input.requestId, fingerprint },
+                ...(config.probe
+                  ? { probe: config.probe, probeRevision: config.probeRevision }
+                  : {}),
+              }
+            : {
+                ...config,
+                connections: connections.filter((item) => item.id !== removed.id),
+                revision: input.revision + 1,
+                operations: [operation],
+                receipt: { id: input.requestId, fingerprint },
+              };
+        await this.persist(next);
+        return this.operationView(next, operation);
+      };
+      try {
+        return this.withConnectionChange
+          ? await this.withConnectionChange(removed, commit, true)
+          : await commit();
+      } catch (error) {
+        if (errorCode(error) !== 'SEARCH_LEGACY_IN_USE') throw error;
+        // A search refusal is a durable removal receipt, just like the other canonical references.
+        references.push('search');
+        return commit();
+      }
+    });
+  }
+  async diagnose(value: unknown): Promise<ModelSaved> {
+    if (!isModelDiagnoseRequest(value)) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+    const input = structuredClone(value);
+    const claimed = await this.serial(
+      async (): Promise<{ result: ModelSaved | Promise<ModelSaved> }> => {
+        const config = await this.recover();
+        this.assertScope(input.scope, config);
+        if ((config?.revision || 0) !== input.revision) throw new Fault('MODEL_SETTINGS_CONFLICT');
+        const connection = config
+          ? allConnections(config).find((item) => item.id === input.connection.id)
+          : undefined;
+        const same =
+          connection &&
+          connection.baseURL === input.connection.baseURL &&
+          modelApi(connection) === modelApi(input.connection);
+        const apiKey = input.apiKey || (same ? connection.apiKey : undefined);
+        if (!apiKey) throw new Fault('MODEL_CREDENTIAL_REQUIRED', 400);
+        const fingerprint = digest([
+          input.kind,
+          input.connection,
+          input.model,
+          apiKey,
+          input.revision,
+          input.probeRevision,
+        ]);
+        if (config?.probe?.id === input.requestId) {
+          if (config.probe.fingerprint !== fingerprint) throw new Fault('MODEL_SETTINGS_ID_REUSED');
+          const pending = this.probeFlights.get(input.requestId);
+          return { result: pending || this.operationView(config, config.probe) };
+        }
+        if (
+          config?.operations?.some((item) => item.id === input.requestId) ||
+          config?.receipt?.id === input.requestId
+        )
+          throw new Fault('MODEL_SETTINGS_ID_REUSED');
+        if ((config?.probeRevision || 0) !== input.probeRevision)
+          throw new Fault('MODEL_PROBE_CONFLICT');
+        if (config?.probe?.phase === 'claimed') throw new Fault('MODEL_SETTINGS_BUSY');
+        if (!Number.isSafeInteger(input.probeRevision + 1)) throw new Fault('MODEL_SETTINGS_LIMIT');
+        const operation: ModelOperation = {
+          id: input.requestId,
+          fingerprint,
+          kind: 'diagnose',
+          revision: input.revision,
+          connection: input.connection.id,
+          model: diagnosticModel(input),
+          phase: 'claimed',
+          probeRevision: input.probeRevision,
+        };
+        await this.persist({
+          ...(config || { configured: false, connections: [], revision: 0 }),
+          probe: operation,
+          probeRevision: input.probeRevision + 1,
+        });
+        const result = Promise.resolve()
+          .then(() => this.finishDiagnosis(input, apiKey, operation))
+          .finally(() => {
+            this.probeFlights.delete(input.requestId);
+          });
+        this.probeFlights.set(input.requestId, result);
+        return { result };
+      },
+    );
+    return claimed.result;
+  }
+  private async finishDiagnosis(
+    input: ModelDiagnoseRequest,
+    apiKey: string,
+    operation: ModelOperation,
+  ) {
+    const start = performance.now();
+    let settled: ModelOperation;
+    try {
+      const result = await this.inspect({
+        connection: input.connection,
+        apiKey,
+        revision: input.revision,
+        ...(input.kind === 'list' ? { kind: 'list' } : { kind: 'test', model: input.model }),
+      });
+      // Normalize only the Google catalog comparison; receipts retain the authored model reference.
+      const expected =
+        modelApi(input.connection) === 'google-generative-ai'
+          ? input.model.replace(/^models\//, '')
+          : input.model;
+      if (result.kind === 'list' && !result.models.some((model) => model.id === expected))
+        throw new Fault('MODEL_API_MODEL_UNAVAILABLE', 400);
+      settled = {
+        ...operation,
+        phase: 'settled',
+        diagnostic: {
+          kind: input.kind,
+          model: operation.model,
+          checkedAt: new Date().toISOString(),
+          latencyMs: Math.round(performance.now() - start),
+        },
+      };
+    } catch (error) {
+      const unknown = error instanceof ModelRequestUnknown;
+      settled = {
+        ...operation,
+        phase: unknown ? 'unknown' : 'settled',
+        code: unknown ? 'MODEL_OPERATION_UNKNOWN' : errorCode(error) || 'MODEL_OPERATION_UNKNOWN',
+      };
+    }
+    return this.serial(async () => {
+      const config = await this.readState();
+      if (!config || config.probe?.id !== operation.id) throw new Fault('MODEL_PROBE_CONFLICT');
+      const next = { ...config, probe: settled };
+      await this.persist(next);
+      return this.operationView(next, settled);
+    });
+  }
+  private async claimConfigure(
+    value: ModelUpdate,
+  ): Promise<{ result: ModelStatus | Promise<ModelStatus> }> {
+    const before = await this.recover();
+    if (before?.probe?.id === value.requestId) throw new Fault('MODEL_SETTINGS_ID_REUSED');
     const connections = before ? [...allConnections(before)] : [];
     const existing = value.connection
       ? connections.find((item) => item.id === value.connection!.id)
@@ -432,8 +1054,22 @@ export class ModelSettings {
         throw new Fault('MODEL_SETTINGS_ID_REUSED', 409);
       return true;
     };
-    if (replay(before)) return this.publicConfig(before);
+    if (replay(before)) return { result: this.publicConfig(before) };
+    const operation = before?.operations?.find((item) => item.id === value.requestId);
+    if (operation) {
+      if (operation.fingerprint !== fingerprint) throw new Fault('MODEL_SETTINGS_ID_REUSED');
+      const pending = this.flights.get(operation.id);
+      if (operation.phase === 'claimed' && pending) return { result: pending };
+      if (operation.phase === 'committed') return { result: this.publicConfig(before) };
+      throw new Fault(
+        operation.phase === 'failed'
+          ? operation.code || 'MODEL_API_UNAVAILABLE'
+          : 'MODEL_OPERATION_UNKNOWN',
+      );
+    }
+    this.assertIdle(before);
     if ((before?.revision || 0) !== value.revision) throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
+    if ((before?.operations?.length || 0) >= 128) throw new Fault('MODEL_SETTINGS_LIMIT');
     let edited: PrivateConnection | undefined;
     if (value.connection) edited = { ...value.connection, apiKey };
     else if (existing) edited = value.apiKey ? { ...existing, apiKey } : undefined;
@@ -448,25 +1084,113 @@ export class ModelSettings {
     if (connections.length > 20) throw new Fault('MODEL_SETTINGS_LIMIT', 400);
     const selected = findModel(connections, value.model);
     if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
+    if (
+      before?.fallbackModel &&
+      (!findModel(connections, before.fallbackModel) || before.fallbackModel === value.model)
+    )
+      throw new Fault('MODEL_FALLBACK_INVALID', 400);
     const checked = edited || selected.connection;
-    await this.probe(
-      checked,
-      value.connection ? checked.models.map((item) => item.id) : [selected.model.id],
-    );
-    return this.serial(async () => {
-      const current = await this.privateConfig();
-      if (replay(current)) return this.publicConfig(current);
-      // Validation waits on the network; compare again inside the commit owner before replacing any provider.
-      if ((current?.revision || 0) !== value.revision)
-        throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
-      return this.persist({
-        apiKey: selected.connection.apiKey,
-        model: value.model,
-        provider: selected.connection.id,
-        connections,
-        revision: value.revision + 1,
-        receipt: { id: value.requestId, fingerprint },
-      });
+    if (existing && value.connection)
+      await this.assertModelRemoval(existing, value.connection.models);
+    if (edited) await this.withConnectionChange?.(edited, async () => undefined);
+    const claim: ModelOperation = {
+      id: value.requestId,
+      fingerprint,
+      revision: value.revision,
+      connection: selected.connection.id,
+      model: value.model,
+      phase: 'claimed',
+    };
+    await this.persist({
+      ...(before || { configured: false, connections: [], revision: 0 }),
+      operations: [...(before?.operations || []), claim],
     });
+    const candidate: PrivateConfig = {
+      ...(before?.fallbackModel ? { fallbackModel: before.fallbackModel } : {}),
+      apiKey: selected.connection.apiKey,
+      model: value.model,
+      provider: selected.connection.id,
+      connections,
+      revision: value.revision + 1,
+      receipt: { id: value.requestId, fingerprint },
+    };
+    // Register before scheduling network work, and release the CAS owner while that work waits.
+    const result = Promise.resolve()
+      .then(() =>
+        this.finishConfigure(
+          claim,
+          candidate,
+          checked,
+          value.connection ? checked.models.map((item) => item.id) : [selected.model.id],
+        ),
+      )
+      .finally(() => {
+        this.flights.delete(claim.id);
+      });
+    this.flights.set(claim.id, result);
+    return { result };
+  }
+  private async finishConfigure(
+    claim: ModelOperation,
+    candidate: PrivateConfig,
+    connection: PrivateConnection,
+    models: string[],
+  ) {
+    let committing = false;
+    try {
+      await this.probe(connection, models);
+      return await this.serial(async () => {
+        const current = await this.readState();
+        if (
+          current?.revision !== claim.revision ||
+          !current.operations?.some((item) => item.id === claim.id && item.phase === 'claimed')
+        )
+          throw new Fault('MODEL_SETTINGS_CONFLICT');
+        const previous = allConnections(current).find((item) => item.id === connection.id);
+        // Hold the same owner as withModel admission through persist; pending writes retain their reservation until durable.
+        if (previous) await this.assertModelRemoval(previous, connection.models);
+        const commit = () => {
+          // Guard refusals remain known failures; only an attempted replacement can have an unknown durable outcome.
+          committing = true;
+          return this.persist({
+            ...candidate,
+            ...(current.probe
+              ? { probe: current.probe, probeRevision: current.probeRevision }
+              : {}),
+            operations: [{ ...claim, phase: 'committed', committedRevision: candidate.revision }],
+          });
+        };
+        return this.withConnectionChange ? this.withConnectionChange(connection, commit) : commit();
+      });
+    } catch (error) {
+      const unknown = committing || error instanceof ModelRequestUnknown;
+      const committed = await this.serial(async () => {
+        const current = await this.readState();
+        if (current?.operations?.some((item) => item.id === claim.id && item.phase === 'committed'))
+          return this.publicConfig(current);
+        if (
+          current?.revision === claim.revision &&
+          current.operations?.some((item) => item.id === claim.id && item.phase === 'claimed')
+        )
+          await this.persist({
+            ...current,
+            operations: current.operations.map((item) =>
+              item.id === claim.id
+                ? {
+                    ...item,
+                    phase: unknown ? 'unknown' : 'failed',
+                    code: unknown
+                      ? 'MODEL_OPERATION_UNKNOWN'
+                      : errorCode(error) || 'MODEL_API_UNAVAILABLE',
+                  }
+                : item,
+            ),
+          });
+        return undefined;
+      }).catch(() => undefined);
+      if (committed) return committed;
+      if (committing) throw new Fault('MODEL_OPERATION_UNKNOWN');
+      throw error;
+    }
   }
 }

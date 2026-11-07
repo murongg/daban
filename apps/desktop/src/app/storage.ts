@@ -90,6 +90,55 @@ export function restore(raw: string | null): State {
       if (record(bot) && bot.model !== undefined && !isModelId(bot.model)) delete bot.model;
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
+    for (const bot of bots) if (record(bot) && bot.kind !== 'chat') delete bot.kind;
+    const conversationKey = (key: string) => {
+      const split = key.lastIndexOf(':');
+      return (
+        ids.includes(key.slice(0, split)) &&
+        /^\d+$/.test(key.slice(split + 1)) &&
+        Number.isSafeInteger(Number(key.slice(split + 1)))
+      );
+    };
+    s.conversationSelections = Object.fromEntries(
+      Object.entries(record(s.conversationSelections) ? s.conversationSelections : {}).filter(
+        ([bot, revision]) =>
+          ids.includes(bot) && Number.isSafeInteger(revision) && Number(revision) >= 0,
+      ),
+    );
+    s.conversationModels = Object.fromEntries(
+      Object.entries(record(s.conversationModels) ? s.conversationModels : {}).filter(
+        ([key, model]) => conversationKey(key) && isModelId(model),
+      ),
+    );
+    s.conversationTitles = Object.fromEntries(
+      Object.entries(record(s.conversationTitles) ? s.conversationTitles : {}).filter(
+        ([key, title]) => conversationKey(key) && typeof title === 'string' && title.length <= 120,
+      ),
+    );
+    s.conversationDrafts = Object.fromEntries(
+      Object.entries(record(s.conversationDrafts) ? s.conversationDrafts : {}).flatMap(
+        ([key, draft]) => {
+          if (
+            !conversationKey(key) ||
+            !record(draft) ||
+            typeof draft.text !== 'string' ||
+            !strings(draft.attachments)
+          )
+            return [];
+          return [
+            [
+              key,
+              {
+                text: draft.text,
+                attachments: draft.attachments,
+                queued: [],
+                ...(isApprovalMode(draft.mode) ? { mode: draft.mode } : {}),
+              },
+            ],
+          ];
+        },
+      ),
+    );
     s.approvalModes = Object.fromEntries(
       Object.entries(record(s.approvalModes) ? s.approvalModes : {}).filter(
         ([bot, value]) =>
@@ -315,6 +364,10 @@ export function restore(raw: string | null): State {
       (file) => record(file) && (file.upload === undefined || isAttachmentRef(file.upload)),
     );
     const fileIds = new Set((s.files as { id: string }[]).map((file) => file.id));
+    if (record(s.conversationDrafts))
+      for (const draft of Object.values(s.conversationDrafts))
+        if (record(draft) && strings(draft.attachments))
+          draft.attachments = draft.attachments.filter((id) => fileIds.has(id));
     for (const id of ids)
       attachments[id] = (attachments[id] as string[]).filter((file) => fileIds.has(file));
     if (

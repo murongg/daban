@@ -20,6 +20,7 @@ export function ChatHistory({
   cachedFiles = [],
   initialRevision,
   runId,
+  onContinue,
 }: {
   bot: Bot;
   revision: number;
@@ -30,6 +31,7 @@ export function ChatHistory({
   cachedFiles?: WorkspaceFile[];
   initialRevision?: number;
   runId?: string;
+  onContinue?: (revision: number) => unknown;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -113,7 +115,11 @@ export function ChatHistory({
       <p className="dialog-description">
         {runId
           ? t('chathistory.pageReadsSavedTaskResultsWithoutRestoring')
-          : t('chathistory.oldConversationsReadOnlyDoNotRestore')}
+          : t(
+              onContinue
+                ? 'conversations.historyHint'
+                : 'chathistory.oldConversationsReadOnlyDoNotRestore',
+            )}
       </p>
       {!runId && (
         <form
@@ -254,6 +260,7 @@ export function ChatHistory({
                               chatRevision: page.revision,
                             }}
                             phase={item.phase}
+                            attemptSummary={item.attemptSummary}
                             elapsedMs={item.elapsedMs}
                             thinking={item.response?.thinking}
                           />
@@ -293,6 +300,16 @@ export function ChatHistory({
           })}
           {!runId && (
             <div className="dialog-actions">
+              {onContinue && (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy || !available || page.revision !== selected}
+                  onClick={() => onContinue(page.revision)}
+                >
+                  {t('conversations.continue')}
+                </button>
+              )}
               <button
                 className="text-button"
                 type="button"

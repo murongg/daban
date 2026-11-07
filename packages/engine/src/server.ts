@@ -37,6 +37,9 @@ import {
   isNoteCommand,
   isRebootStatus,
   isRecoveryRequest,
+  isSearchCheckRequest,
+  isSearchReceiptQuery,
+  isSearchUpdate,
   isSetupStatus,
   isSkillBinding,
   isSkillContent,
@@ -86,6 +89,7 @@ import { type Browser, createBrowser } from './runtime.js';
 import { nativeSchedules } from './schedule-domain.js';
 import { ScheduleTools } from './schedule-tools.js';
 import { Schedules } from './schedules.js';
+import { SearchSettings } from './search-settings.js';
 import { ModelSettings } from './settings.js';
 import { skillHash, writeSkillZip } from './skill-package.js';
 import { type SoftwareBackend, SoftwareClient } from './software.js';
@@ -123,6 +127,7 @@ async function noticeStatus(
 }
 // Only exact local readers bypass recovery. External probes, writes and executions remain fenced.
 const recoveryReads = new Set([
+  '/api/model/saved',
   '/api/notes/status',
   '/api/notes/list',
   '/api/notes/read',
@@ -165,6 +170,7 @@ const recoveryReads = new Set([
   '/api/mcp/bindings',
   '/api/mcp/calls',
   '/api/mcp/receipt',
+  '/api/search/saved',
 ]);
 
 async function body(
@@ -292,6 +298,9 @@ export async function startPrototype({
   if (host && (computers || desktop)) throw new Fault('AGENT_REMOTE_REQUIRED');
   await mkdir(host ? modelDir : profileDir, { recursive: true, mode: 0o700 });
   const settings = new ModelSettings(path.join(modelDir, 'credentials.json'));
+  const searches = new SearchSettings(path.join(modelDir, 'search.json'), settings);
+  // Search configuration is optional; its status endpoint reports corruption without blocking ordinary Host startup.
+  await searches.status().catch(() => undefined);
   const authority = new Authority(path.join(modelDir, 'control-token'));
   const appAuthority = host ? new Authority(path.join(modelDir, 'app-control-token')) : undefined;
   const token = authority.token;
@@ -602,6 +611,7 @@ export async function startPrototype({
           groupVersion >= 28 &&
           groupVersion <= managedProtocol;
         const coordinatedWork = groupVersion >= 39 && groupVersion <= managedProtocol;
+        const conversationAware = groupVersion >= 46 && groupVersion <= managedProtocol;
         const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
         if (mcp) {
           if (recovery && !recovery.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -1196,18 +1206,29 @@ export async function startPrototype({
               return json(res, await models.chats.receipt(data.bot, data.id));
             if (
               url.pathname === '/api/chats/history' &&
-              Object.keys(data).every((key) => ['bot', 'revision', 'before', 'runId'].includes(key))
+              Object.keys(data).every((key) =>
+                ['bot', 'revision', 'before', 'runId', 'modelAccess'].includes(key),
+              )
             ) {
               if (
                 typeof data.revision !== 'number' ||
                 (data.before !== undefined && typeof data.before !== 'string') ||
-                (data.runId !== undefined && typeof data.runId !== 'string')
+                (data.runId !== undefined && typeof data.runId !== 'string') ||
+                (data.modelAccess !== undefined && data.modelAccess !== true)
               )
                 throw new Fault('INVALID_CHAT_QUERY', 400);
-              return json(
-                res,
-                await models.chatHistory(data.bot, data.revision, data.before, data.runId),
+              const page = await models.chatHistory(
+                data.bot,
+                data.revision,
+                data.before,
+                data.runId,
               );
+              // Legacy readers reject unknown history fields; the accepted hint changes schema, never authorization.
+              if (data.modelAccess !== true)
+                page.items = page.items.map(
+                  ({ attemptSummary: _attempts, rootRunId: _root, ...item }) => item,
+                );
+              return json(res, page);
             }
             throw new Fault('INVALID_CHAT_REQUEST', 400);
           }
@@ -1471,6 +1492,42 @@ export async function startPrototype({
               return json(res, await schedules.run(data.id, data.requestId));
             throw new Fault('INVALID_SCHEDULE', 400);
           }
+          if (
+            [
+              '/api/model/saved',
+              '/api/model/fallback',
+              '/api/model/remove',
+              '/api/model/diagnose',
+            ].includes(url.pathname)
+          ) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+          }
+          if (url.pathname.startsWith('/api/search/')) {
+            if (url.search) throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+            const action = url.pathname.slice('/api/search/'.length);
+            if (!['status', 'configure', 'check', 'saved'].includes(action))
+              throw new Fault('NOT_FOUND', 404);
+            if (req.method !== (action === 'status' ? 'GET' : 'POST'))
+              throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (action === 'status') {
+              if (
+                req.headers['transfer-encoding'] ||
+                (req.headers['content-length'] && req.headers['content-length'] !== '0')
+              )
+                throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+              return json(res, await searches.status());
+            }
+            const data = await body(req, 16384);
+            if (action === 'configure' && isSearchUpdate(data))
+              return json(res, await searches.configure(data));
+            if (action === 'check' && isSearchCheckRequest(data))
+              // The Host owns a durably accepted check even if this requesting window or connection closes.
+              return json(res, await searches.check(data));
+            if (action === 'saved' && isSearchReceiptQuery(data))
+              return json(res, await searches.saved(data));
+            throw new Fault('SEARCH_INVALID_SETTINGS', 400);
+          }
           if (url.pathname === '/api/model/settings') {
             if (req.method === 'GET')
               return json(res, await settings.status(url.searchParams.get('catalog') === '1'));
@@ -1479,6 +1536,17 @@ export async function startPrototype({
           }
           if (url.pathname === '/api/model/configure' && req.method === 'POST')
             return json(res, await settings.configure(await body(req)));
+          if (url.pathname === '/api/model/saved' && req.method === 'POST')
+            return json(res, await settings.saved(await body(req)));
+          if (url.pathname === '/api/model/fallback' && req.method === 'POST')
+            return json(res, await settings.fallback(await body(req)));
+          if (url.pathname === '/api/model/remove' && req.method === 'POST') {
+            if (!models) throw new Fault('STARTING', 503);
+            await models.ready;
+            return json(res, await settings.remove(await body(req)));
+          }
+          if (url.pathname === '/api/model/diagnose' && req.method === 'POST')
+            return json(res, await settings.diagnose(await body(req)));
           if (url.pathname === '/api/model/inspect' && req.method === 'POST')
             return json(res, await settings.inspect(await body(req)));
           if (url.pathname === '/api/model/check' && req.method === 'POST') {
@@ -1509,7 +1577,13 @@ export async function startPrototype({
           }
           if (url.pathname === '/api/bots') {
             if (!models) throw new Fault('STARTING', 503);
-            if (req.method === 'GET') return json(res, await models.profiles.list());
+            if (req.method === 'GET')
+              return json(
+                res,
+                (await models.profiles.list()).filter(
+                  (profile) => conversationAware || profile.kind !== 'chat',
+                ),
+              );
             if (req.method === 'POST')
               return json(res, await models.profiles.register(await body(req)));
             throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -1536,6 +1610,7 @@ export async function startPrototype({
                       bots: {},
                     }),
               botCapabilities: true,
+              searchSettings: true,
               clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
               ...(host
                 ? {
@@ -1551,7 +1626,10 @@ export async function startPrototype({
               ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
               notices: await noticeStatus(models, groups),
               chats: models
-                ? await models.chats.status()
+                ? {
+                    ...(await models.chats.status()),
+                    ...(conversationAware ? { conversations: models.journal.conversations() } : {}),
+                  }
                 : { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' },
               ...(recovery ? { recovery: recovery.status() } : {}),
               mcp: models
@@ -1596,7 +1674,11 @@ export async function startPrototype({
                     documentParsing: !!host?.execution || platform() === 'linux',
                   }
                 : { available: false, documentParsing: false },
-              profiles: models ? await models.profiles.list() : [],
+              profiles: models
+                ? (await models.profiles.list()).filter(
+                    (profile) => conversationAware || profile.kind !== 'chat',
+                  )
+                : [],
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
               // Capability metadata stays outside saved-model status so older clients can still validate that status.
@@ -2050,6 +2132,7 @@ export async function startPrototype({
         computer: runtime instanceof Computers ? runtime.facade : undefined,
         workspace: files,
         settings,
+        search: searches,
         origin,
         dir: modelDir,
       });
@@ -2095,7 +2178,8 @@ export async function startPrototype({
         path.join(modelDir, 'groups.sqlite'),
         {
           member: (bot) => models!.profiles.get(bot),
-          directory: () => models!.profiles.list(),
+          directory: async () =>
+            (await models!.profiles.list()).filter((profile) => profile.kind !== 'chat'),
           source: (bot, runId, group) => models!.groupSource(bot, runId, group),
           running: (bot) => models!.running(bot),
           groupRunning: (group) => models!.groupRunning(group),

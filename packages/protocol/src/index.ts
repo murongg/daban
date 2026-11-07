@@ -1,7 +1,20 @@
 export * from './goals.js';
+export * from './model-access.js';
+export * from './search.js';
 
 import type { GoalProgress } from './goals.js';
 import type { LocalComputerCommand, LocalComputerStatus } from './local-computer.js';
+import {
+  isModelAccess,
+  isModelAttempts,
+  type ModelAccess,
+  type ModelAttempt,
+  type ModelDiagnoseRequest,
+  type ModelFallbackRequest,
+  type ModelRemoveRequest,
+  type ModelSavedRequest,
+} from './model-access.js';
+import type { SearchCommand } from './search.js';
 import {
   isSkillPackage,
   isSkillPackageInfo,
@@ -38,7 +51,7 @@ export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 45;
+export const managedProtocol = 46;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1354,6 +1367,8 @@ export function isRunTurn(value: unknown): value is RunTurn {
   );
 }
 export interface RuntimeTask {
+  attemptSummary?: ModelAttempt[];
+  rootRunId?: string;
   goal?: GoalProgress;
   planning?: boolean;
   elapsedMs?: number;
@@ -1381,6 +1396,8 @@ export interface RuntimeTask {
   inserts?: RunInsert[];
 }
 export interface RuntimeTaskSummary {
+  attemptSummary?: ModelAttempt[];
+  rootRunId?: string;
   elapsedMs?: number;
   chatRevision?: number;
   conversationId?: string;
@@ -1528,6 +1545,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
 }
 export interface RuntimeSnapshot {
   appConnections?: AppConnectionsCapability;
+  searchSettings?: true;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -1557,6 +1575,9 @@ export interface RuntimeSnapshot {
   error?: string;
   protocolVersion: number;
   model: {
+    modelAccess?: ModelAccess;
+    fallbackModel?: ModelId;
+    probeRevision?: number;
     configured: boolean;
     available: boolean;
     provider: string;
@@ -1587,6 +1608,8 @@ export function recoveryBlocked(snapshot: Pick<RuntimeSnapshot, 'reboot' | 'reco
   );
 }
 export function recoveryReader(command: RuntimeCommand) {
+  if (command.type === 'model.saved') return true;
+  if (command.type === 'search.status' || command.type === 'search.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
     'app.catalog',
@@ -1702,7 +1725,14 @@ export interface ChatStatus {
   available: boolean;
   revision: number;
   items: ChatState[];
+  conversations?: ConversationSummary[];
   error?: string;
+}
+export interface ConversationSummary {
+  bot: string;
+  revision: number;
+  title: string;
+  updatedAt: string;
 }
 export interface ChatPage {
   bot: string;
@@ -2024,7 +2054,9 @@ export function isChatAck(value: unknown): value is ChatAck {
 export function isChatStatus(value: unknown): value is ChatStatus {
   return (
     profileObject(value) &&
-    Object.keys(value).every((key) => ['available', 'revision', 'items', 'error'].includes(key)) &&
+    Object.keys(value).every((key) =>
+      ['available', 'revision', 'items', 'error', 'conversations'].includes(key),
+    ) &&
     typeof value.available === 'boolean' &&
     Number.isSafeInteger(value.revision) &&
     Number(value.revision) >= 0 &&
@@ -2032,7 +2064,27 @@ export function isChatStatus(value: unknown): value is ChatStatus {
     value.items.length <= 10000 &&
     value.items.every(isChatState) &&
     new Set(value.items.map((item) => item.bot)).size === value.items.length &&
+    (value.conversations === undefined ||
+      (Array.isArray(value.conversations) &&
+        value.conversations.length <= 1000 &&
+        value.conversations.every(isConversationSummary) &&
+        new Set(value.conversations.map((item) => `${item.bot}:${item.revision}`)).size ===
+          value.conversations.length)) &&
     browserCode(value.error)
+  );
+}
+export function isConversationSummary(value: unknown): value is ConversationSummary {
+  return (
+    profileObject(value) &&
+    Object.keys(value).every((key) => ['bot', 'revision', 'title', 'updatedAt'].includes(key)) &&
+    validAgentId(value.bot) &&
+    Number.isSafeInteger(value.revision) &&
+    Number(value.revision) >= 0 &&
+    typeof value.title === 'string' &&
+    value.title.length <= 120 &&
+    !value.title.includes('\0') &&
+    typeof value.updatedAt === 'string' &&
+    Number.isFinite(Date.parse(value.updatedAt))
   );
 }
 export function isChatPage(value: unknown): value is ChatPage {
@@ -2061,11 +2113,15 @@ export function isChatPage(value: unknown): value is ChatPage {
             'response',
             'turns',
             'elapsedMs',
+            'attemptSummary',
+            'rootRunId',
           ].includes(key),
         ) &&
         item.chatRevision === value.revision &&
         validAgentId(item.runId) &&
         validAgentId(item.requestId) &&
+        (item.attemptSummary === undefined || isModelAttempts(item.attemptSummary)) &&
+        (item.rootRunId === undefined || validAgentId(item.rootRunId)) &&
         typeof item.phase === 'string' &&
         ['completed', 'failed', 'stopped', 'interrupted'].includes(item.phase) &&
         typeof item.prompt === 'string' &&
@@ -2140,6 +2196,7 @@ export function isGroupSend(value: unknown): value is GroupSend {
   );
 }
 export interface BotProfileInput {
+  kind?: 'chat';
   id: string;
   name: string;
   instructions: string;
@@ -2170,7 +2227,7 @@ export interface BotLifecycleAck {
   receipt: BotLifecycleState & { bot: string; error?: 'BOT_ARCHIVE_INCOMPLETE' };
   profile: BotProfile;
 }
-export type BotProfilePatch = Partial<Omit<BotProfileInput, 'id' | 'model'>> & {
+export type BotProfilePatch = Partial<Omit<BotProfileInput, 'id' | 'model' | 'kind'>> & {
   model?: ModelId | null;
 };
 export interface BotCopyRequest {
@@ -2449,6 +2506,9 @@ export const isModelConnections = (value: unknown): value is ModelConnection[] =
   value.every(isModelConnection) &&
   new Set(value.map((connection) => connection.id)).size === value.length;
 export interface ModelStatus {
+  modelAccess?: ModelAccess;
+  fallbackModel?: ModelId;
+  probeRevision?: number;
   provider: string;
   model: ModelId;
   configured: boolean;
@@ -2586,11 +2646,24 @@ export function isModelStatus(value: unknown): value is ModelStatus {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['provider', 'model', 'configured', 'revision', 'requestId', 'connections'].includes(key),
+      [
+        'provider',
+        'model',
+        'configured',
+        'revision',
+        'requestId',
+        'connections',
+        'modelAccess',
+        'fallbackModel',
+        'probeRevision',
+      ].includes(key),
     ) &&
     validAgentId(value.provider) &&
     isModelId(value.model) &&
     typeof value.configured === 'boolean' &&
+    (value.modelAccess === undefined || isModelAccess(value.modelAccess)) &&
+    (value.fallbackModel === undefined || isModelId(value.fallbackModel)) &&
+    (value.probeRevision === undefined || modelRevision(value.probeRevision)) &&
     (value.connections === undefined || isModelConnections(value.connections)) &&
     modelRevision(value.revision) &&
     (value.requestId === undefined || validAgentId(value.requestId))
@@ -2621,14 +2694,15 @@ function profileFields(value: Record<string, unknown>) {
     !value.memory.includes('\0') &&
     typeof value.color === 'string' &&
     ['mint', 'violet', 'orange', 'blue', 'teal', 'pink'].includes(value.color) &&
-    (value.model === undefined || isModelId(value.model))
+    (value.model === undefined || isModelId(value.model)) &&
+    (value.kind === undefined || value.kind === 'chat')
   );
 }
 export function isBotProfileInput(value: unknown): value is BotProfileInput {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['id', 'name', 'instructions', 'memory', 'color', 'model'].includes(key),
+      ['id', 'name', 'instructions', 'memory', 'color', 'model', 'kind'].includes(key),
     ) &&
     profileFields(value)
   );
@@ -2649,6 +2723,7 @@ export function isBotProfile(value: unknown): value is BotProfile {
         'updatedAt',
         'archived',
         'lifecycle',
+        'kind',
       ].includes(key),
     ) &&
     profileFields(value) &&
@@ -3051,7 +3126,10 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
 }
 export interface TaskRequest {
   approvalMode?: ApprovalMode;
+  // The latest boundary fences the send; contextRevision explicitly selects a retained conversation.
   chatRevision?: number;
+  contextRevision?: number;
+  model?: ModelId;
   requestId: string;
   prompt: string;
   retryOf?: string;
@@ -4015,7 +4093,12 @@ export type RuntimeCommand =
   | { type: 'group.cancel'; group: string; sourceId: string }
   | { type: 'group.action'; request: GroupActionRequest }
   | { type: 'group.receipt'; group: string; id: string }
+  | SearchCommand
   | { type: 'model.configure'; input: ModelUpdate }
+  | { type: 'model.saved'; input: ModelSavedRequest }
+  | { type: 'model.fallback.configure'; input: ModelFallbackRequest }
+  | { type: 'model.remove'; input: ModelRemoveRequest }
+  | { type: 'model.diagnose'; input: ModelDiagnoseRequest }
   | { type: 'model.check'; revision: number }
   | { type: 'model.inspect'; input: ModelInspectionRequest }
   | { type: 'clipboard.write'; text: string }

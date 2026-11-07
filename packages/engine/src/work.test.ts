@@ -428,18 +428,45 @@ test('item, operation receipt and global revision commit atomically and cancella
 test('stable bounded pages retain old items through edits, literal search and the retained-item quota', async () => {
   const f = await fixture();
   try {
-    for (let index = 0; index < 1000; index++)
-      await f.store.write(
-        {
-          ...create(`mock-item-${index}`, `mock-create-${index}`),
-          value: {
-            ...fields,
-            title: index === 0 ? 'MOCK_100% LITERAL' : `合成待办 ${index}`,
-            progress: '合'.repeat(4000),
-          },
-        },
-        human,
-      );
+    const input = (index: number) => ({
+      ...create(`mock-item-${index}`, `mock-create-${index}`),
+      revision: 0 as const,
+      value: {
+        ...fields,
+        title: index === 0 ? 'MOCK_100% LITERAL' : `合成待办 ${index}`,
+        progress: '合'.repeat(4000),
+      },
+    });
+    await f.store.write(input(0), human);
+    const db = drizzle({ client: new DatabaseSync(f.file) });
+    try {
+      const item = db.select().from(workItems).get()!,
+        operation = db.select().from(workOperations).get()!;
+      // Avoid 1,000 durable commits on Windows; exercise the capacity boundary through real store writes.
+      db.transaction((tx) => {
+        for (let index = 1; index < 999; index++) {
+          const request = input(index);
+          tx.insert(workItems)
+            .values({ ...item, seq: undefined, id: request.item, title: request.value.title })
+            .run();
+          tx.insert(workOperations)
+            .values({
+              ...operation,
+              id: request.id,
+              item: request.item,
+              signature: createHash('sha256').update(workKey(request, human)).digest('hex'),
+            })
+            .run();
+        }
+        tx.update(workMeta).set({ revision: 999 }).where(eq(workMeta.id, 1)).run();
+      });
+    } finally {
+      db.$client.close();
+    }
+    await f.reopen();
+    expect(await f.store.status()).toStrictEqual({ available: true, revision: 999, count: 999 });
+    await f.store.write(input(999), human);
+    expect(await f.store.status()).toStrictEqual({ available: true, revision: 1000, count: 1000 });
     const first = await f.store.list({ filter: 'all', limit: 50 });
     expect(first.items.length).toBe(50);
     expect.assert(first.nextBefore);

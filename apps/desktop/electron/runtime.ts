@@ -7,6 +7,7 @@ import {
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  diagnosticModel,
   disconnected,
   groupCopyKey,
   imageProtocol,
@@ -61,10 +62,13 @@ import {
   isMcpSaved,
   isMcpStatus,
   isMemoryPage,
+  isModelAccess,
+  isModelAttempts,
   isModelCheck,
   isModelConnection,
   isModelId,
   isModelInspection,
+  isModelSaved,
   isModelStatus,
   isNoteAvailability,
   isNoteCommand,
@@ -84,6 +88,9 @@ import {
   isRuntimeNoticeStatus,
   isSchedule,
   isScheduleFiring,
+  isSearchCommand,
+  isSearchReceipt,
+  isSearchStatus,
   isSkillArchiveResult,
   isSkillBindingResult,
   isSkillCatalogResult,
@@ -171,6 +178,11 @@ async function localRequest(url: string, init: RequestInit = {}): Promise<Respon
 
 function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   if (
+    (task.attemptSummary !== undefined && !isModelAttempts(task.attemptSummary)) ||
+    (task.rootRunId !== undefined && !validAgentId(task.rootRunId))
+  )
+    throw new Error('INVALID_RUNTIME_STATE');
+  if (
     task.chatRevision !== undefined &&
     (!Number.isSafeInteger(task.chatRevision) || task.chatRevision < 0)
   )
@@ -187,6 +199,8 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
   )
     throw new Error('INVALID_RUNTIME_STATE');
   return {
+    ...(isModelAttempts(task.attemptSummary) ? { attemptSummary: task.attemptSummary } : {}),
+    ...(task.rootRunId ? { rootRunId: task.rootRunId } : {}),
     ...(typeof task.planning === 'boolean' ? { planning: task.planning } : {}),
     ...(isGoalProgress(task.goal) ? { goal: task.goal } : {}),
     chatRevision: task.chatRevision,
@@ -214,6 +228,8 @@ function runtimeTask(task: Partial<RuntimeTask> = {}): RuntimeTask {
       ? { inserts: task.inserts }
       : {}),
     history: (task.history || []).map((item) => ({
+      ...(isModelAttempts(item.attemptSummary) ? { attemptSummary: item.attemptSummary } : {}),
+      ...(validAgentId(item.rootRunId) ? { rootRunId: item.rootRunId } : {}),
       chatRevision: item.chatRevision,
       ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       runId: item.runId,
@@ -246,6 +262,7 @@ export class RuntimeClient {
   private readonly tokenProvider?: Options['tokenProvider'];
   private authenticating?: Promise<unknown>;
   private readonly agent: boolean;
+  private stateProtocol = 28;
   constructor({ origin, serverOrigin = origin, fetcher, tokenProvider, agent = false }: Options) {
     const url = new URL(origin);
     if (agent && !fetcher) throw new Error('AGENT_TRANSPORT_REQUIRED');
@@ -335,9 +352,11 @@ export class RuntimeClient {
       signal: AbortSignal.timeout(
         route === '/api/host/recovery'
           ? 600000
-          : route.startsWith('/api/bundles/')
-            ? 120000
-            : 20000,
+          : route === '/api/search/check'
+            ? 35000
+            : route.startsWith('/api/bundles/')
+              ? 120000
+              : 20000,
       ),
     });
     const decode = async () =>
@@ -369,14 +388,22 @@ export class RuntimeClient {
   }
   async status(): Promise<RuntimeSnapshot> {
     try {
-      const [data, settings] = (await Promise.all([
-        this.api('/api/state'),
+      let [data, settings] = (await Promise.all([
+        this.api('/api/state', undefined, true, this.stateProtocol),
         this.api('/api/model/settings'),
       ])) as [Record<string, unknown>, { configured?: boolean }];
+      const protocol =
+        Number.isSafeInteger(data.clientProtocol) && Number(data.clientProtocol) >= 46 ? 46 : 28;
+      if (this.stateProtocol !== protocol) {
+        // Older services downgrade future group shapes; negotiate before asking for the new chat catalogue.
+        this.stateProtocol = protocol;
+        data = (await this.api('/api/state', undefined, true, protocol)) as Record<string, unknown>;
+      }
       const raw = data as unknown as {
         clientProtocol?: number;
         botCapabilities?: unknown;
         appConnections?: unknown;
+        searchSettings?: unknown;
         localComputer?: unknown;
         chats?: unknown;
         notices?: unknown;
@@ -404,6 +431,9 @@ export class RuntimeClient {
         computerError?: unknown;
         sharedLogin?: boolean;
         model?: {
+          modelAccess?: unknown;
+          fallbackModel?: unknown;
+          probeRevision?: unknown;
           connections?: unknown;
           inspection?: unknown;
           revision?: number;
@@ -467,6 +497,13 @@ export class RuntimeClient {
       if ((raw.clientProtocol || 0) >= 13 && !isModelStatus(settings))
         throw new Error('INVALID_RUNTIME_STATE');
       if (
+        (raw.model?.modelAccess !== undefined && !isModelAccess(raw.model.modelAccess)) ||
+        (raw.model?.fallbackModel !== undefined && !isModelId(raw.model.fallbackModel)) ||
+        (raw.model?.probeRevision !== undefined &&
+          (!Number.isSafeInteger(raw.model.probeRevision) || Number(raw.model.probeRevision) < 0))
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
         raw.model?.connections !== undefined &&
         (!Array.isArray(raw.model.connections) ||
           raw.model.connections.length > 20 ||
@@ -482,6 +519,7 @@ export class RuntimeClient {
           throw new Error('INVALID_RUNTIME_STATE');
         snapshot.appConnections = raw.appConnections;
       }
+      if (raw.searchSettings === true) snapshot.searchSettings = true;
       if (this.agent && raw.localComputer !== undefined)
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer
@@ -651,6 +689,17 @@ export class RuntimeClient {
               model: settings.model,
               provider: settings.provider,
               revision: settings.revision,
+              ...(raw.model?.revision === settings.revision && isModelAccess(raw.model.modelAccess)
+                ? {
+                    modelAccess: raw.model.modelAccess,
+                    ...(isModelId(raw.model.fallbackModel)
+                      ? { fallbackModel: raw.model.fallbackModel }
+                      : {}),
+                    ...(typeof raw.model.probeRevision === 'number'
+                      ? { probeRevision: raw.model.probeRevision }
+                      : {}),
+                  }
+                : {}),
               ...(raw.model?.inspection === true ? { inspection: true } : {}),
               ...(Array.isArray(raw.model?.connections) && raw.model.revision === settings.revision
                 ? { connections: raw.model.connections }
@@ -850,6 +899,51 @@ export class RuntimeClient {
       if (!['app.catalog', 'app.directory', 'app.oauth.status'].includes(command.type))
         throw new Error('OAUTH_INTERACTIVE_REQUIRED');
       return this.appRequest(command);
+    }
+    if (command.type.startsWith('search.')) {
+      if (!isSearchCommand(command)) throw new Error('INVALID_COMMAND');
+      // Keep the original request ID and revisions across status/authentication waits and lost replies.
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.searchSettings !== true) throw new Error('RUNTIME_TOO_OLD');
+      if (
+        (captured.type === 'search.configure' || captured.type === 'search.check') &&
+        recoveryBlocked(state)
+      )
+        throw new Error('RUNTIME_RECOVERY_PENDING');
+      if (captured.type === 'search.status') {
+        const value = await this.api('/api/search/status');
+        if (!isSearchStatus(value)) throw new Error('INVALID_RUNTIME_STATE');
+        return value;
+      }
+      const value = await this.api(
+        `/api/search/${captured.type.slice('search.'.length)}`,
+        captured.type === 'search.saved' ? captured.query : captured.input,
+      );
+      if (!isSearchReceipt(value)) throw new Error('INVALID_RUNTIME_STATE');
+      if (captured.type === 'search.saved') {
+        if (value.kind !== captured.query.kind || value.requestId !== captured.query.requestId)
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (captured.type === 'search.configure') {
+        if (
+          value.kind !== 'configure' ||
+          value.phase !== 'saved' ||
+          value.requestId !== captured.input.requestId ||
+          value.revision !== captured.input.revision + 1 ||
+          value.status?.provider !== captured.input.provider ||
+          value.status.enabled !== captured.input.enabled
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (
+        value.kind !== 'check' ||
+        value.phase === 'superseded' ||
+        value.requestId !== captured.input.requestId ||
+        value.revision !== captured.input.revision ||
+        value.checkRevision !== captured.input.checkRevision + 1
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
     }
     if (this.agent && command.type.startsWith('recovery.')) {
       const captured = structuredClone(command);
@@ -1087,6 +1181,7 @@ export class RuntimeClient {
       if (command.type === 'chat.history') {
         if (command.runId && state.protocolVersion < 30) throw new Error('RUNTIME_TOO_OLD');
         const value = await this.api('/api/chats/history', {
+          ...(state.model.modelAccess ? { modelAccess: true } : {}),
           bot: command.bot,
           revision: command.revision,
           before: command.before,
@@ -1562,6 +1657,58 @@ export class RuntimeClient {
       }
       return result;
     }
+    if (
+      command.type === 'model.saved' ||
+      command.type === 'model.fallback.configure' ||
+      command.type === 'model.remove' ||
+      command.type === 'model.diagnose'
+    ) {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!state.model.modelAccess) throw new Error('RUNTIME_TOO_OLD');
+      if (state.model.modelAccess.scope !== command.input.scope)
+        throw new Error('RUNTIME_SESSION_CHANGED');
+      const route =
+        command.type === 'model.fallback.configure'
+          ? 'fallback'
+          : command.type.slice('model.'.length);
+      const value = await this.api(`/api/model/${route}`, command.input);
+      if (command.type === 'model.fallback.configure') {
+        if (
+          !isModelStatus(value) ||
+          value.requestId !== command.input.requestId ||
+          value.revision !== command.input.revision + 1 ||
+          value.fallbackModel !== (command.input.model || undefined)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else {
+        if (
+          !isModelSaved(value) ||
+          value.scope !== command.input.scope ||
+          value.requestId !== command.input.requestId ||
+          value.revision !== command.input.revision
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.saved' &&
+          (value.connection !== command.input.connection || value.model !== command.input.model)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.remove' &&
+          (value.kind !== 'remove' || value.connection !== command.input.connection)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+        if (
+          command.type === 'model.diagnose' &&
+          (value.kind !== 'diagnose' ||
+            value.connection !== command.input.connection.id ||
+            value.model !== diagnosticModel(command.input))
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      }
+      return value;
+    }
     if (command.type === 'model.inspect') {
       const state = await this.status();
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
@@ -1866,6 +2013,12 @@ export class RuntimeClient {
       if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (state.protocolVersion < 3) throw new Error('RUNTIME_TOO_OLD');
       if (
+        command.type === 'bot.register' &&
+        command.profile.kind === 'chat' &&
+        state.protocolVersion < 46
+      )
+        throw new Error('RUNTIME_TOO_OLD');
+      if (
         state.protocolVersion < 14 &&
         (command.type === 'bot.register'
           ? command.profile.model !== undefined
@@ -1918,6 +2071,11 @@ export class RuntimeClient {
         if (command.task.approvalMode !== undefined && current.protocolVersion < 44)
           throw new Error('RUNTIME_TOO_OLD');
         if (
+          (command.task.contextRevision !== undefined || command.task.model !== undefined) &&
+          current.protocolVersion < 46
+        )
+          throw new Error('RUNTIME_TOO_OLD');
+        if (
           current.protocolVersion < 11 &&
           command.task.files?.some((file) => file.attachmentId !== undefined)
         )
@@ -1952,7 +2110,8 @@ export class RuntimeClient {
           raw.conversationId !== undefined ||
           receipt.requestId !== command.task.requestId ||
           receipt.prompt !== command.task.prompt ||
-          (receipt.chatRevision ?? 0) !== (command.task.chatRevision ?? 0)
+          (receipt.chatRevision ?? 0) !==
+            (command.task.contextRevision ?? command.task.chatRevision ?? 0)
         )
           throw new Error('INVALID_TASK_ACK');
         return receipt;

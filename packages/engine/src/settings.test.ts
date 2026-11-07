@@ -387,7 +387,8 @@ test('API and catalog failures do not replace existing credentials or reveal res
   try {
     const settings = new ModelSettings(path.join(dir, 'credentials.json'), async () => response());
     await settings.save({ apiKey: 'synthetic-existing-key' });
-    const before = await readFile(settings.file, 'utf8');
+    const before = await settings.resolve();
+    let attempt = 0;
     const input = {
       model: 'deepseek-flash',
       apiKey: 'synthetic-rejected-key',
@@ -401,29 +402,39 @@ test('API and catalog failures do not replace existing credentials or reveal res
       [500, 'MODEL_API_UNAVAILABLE'],
     ] as const) {
       response = () => new Response('synthetic-rejected-key', { status });
-      await expect(settings.configure(input)).rejects.toMatchObject({ code, message: code });
-      expect(await readFile(settings.file, 'utf8')).toBe(before);
+      await expect(
+        settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+      ).rejects.toMatchObject({ code, message: code });
+      expect(await settings.resolve()).toStrictEqual(before);
     }
     response = () => Response.json({ data: [{ id: 'different-model' }] });
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_MODEL_UNAVAILABLE',
     });
     response = () => new Response('{broken');
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_INVALID_RESPONSE',
     });
     response = () => new Response('x'.repeat(65537));
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_INVALID_RESPONSE',
     });
     response = () => {
       throw new Error('synthetic-rejected-key');
     };
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-rejected-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_UNAVAILABLE',
       message: 'MODEL_API_UNAVAILABLE',
     });
-    expect(await readFile(settings.file, 'utf8')).toBe(before);
+    expect(await settings.resolve()).toStrictEqual(before);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -459,12 +470,21 @@ test('a change during validation cannot overwrite the newer setting or publish a
               revision,
               requestId: 'mock-racing-write',
             });
-      const rejected = expect(pending).rejects.toMatchObject({ code: 'MODEL_SETTINGS_CONFLICT' });
       await started;
-      await settings.save({ apiKey: 'synthetic-newer-key' });
-      release();
-      await rejected;
-      expect((await settings.privateConfig())?.apiKey).toBe('synthetic-newer-key');
+      if (action === 'check') {
+        const rejected = expect(pending).rejects.toMatchObject({ code: 'MODEL_SETTINGS_CONFLICT' });
+        await settings.save({ apiKey: 'synthetic-newer-key' });
+        release();
+        await rejected;
+        expect((await settings.privateConfig())?.apiKey).toBe('synthetic-newer-key');
+      } else {
+        await expect(settings.save({ apiKey: 'synthetic-newer-key' })).rejects.toMatchObject({
+          code: 'MODEL_SETTINGS_BUSY',
+        });
+        release();
+        await pending;
+        expect((await settings.privateConfig())?.apiKey).toBe('synthetic-pending-key');
+      }
     }
   } finally {
     release?.();
@@ -651,7 +671,7 @@ test('pending legacy settings receipts remain replayable after the provider cata
   }
 });
 
-test('model resolution binds supplier, endpoint, abilities and search credentials without exposing them in status', async () => {
+test('model resolution binds supplier, endpoint, abilities independently of unrelated search credentials without exposing them in status', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-provider-resolution-'));
   try {
     const settings = new ModelSettings(path.join(dir, 'credentials.json'), async () =>
@@ -671,14 +691,14 @@ test('model resolution binds supplier, endpoint, abilities and search credential
     expect(first.vision).toBe(true);
     expect(first.contextWindow).toBe(65536);
     expect(first.maxTokens).toBe(4096);
-    expect(first.searchApiKey).toBe(undefined);
+    expect(await settings.searchConnection()).toBe(undefined);
     expect(first.secrets).toStrictEqual(['synthetic-primary-key']);
     await settings.save({ apiKey: 'synthetic-search-key' });
     const next = await settings.resolve();
     expect(next.model).toBe(first.model);
     expect(next.apiKey).toBe(first.apiKey);
-    expect(next.searchApiKey).toBe('synthetic-search-key');
-    expect(next.binding).not.toBe(first.binding);
+    expect((await settings.searchConnection())?.key).toBe('synthetic-search-key');
+    expect(next.binding).toBe(first.binding);
     expect(new Set(next.secrets)).toStrictEqual(
       new Set(['synthetic-primary-key', 'synthetic-search-key']),
     );
@@ -886,7 +906,8 @@ test('completion fallback never hides authorization, balance, rate, malformed re
       return reply();
     });
     await settings.save({ apiKey: 'synthetic-preserved-key' });
-    const before = await readFile(settings.file, 'utf8');
+    const before = await settings.resolve();
+    let attempt = 0;
     const input = {
       model: 'provider:mock-provider:mock-text',
       connection: syntheticConnection(),
@@ -904,9 +925,11 @@ test('completion fallback never hides authorization, balance, rate, malformed re
     ] as const) {
       reply = () => new Response('synthetic-failing-key', { status });
       calls.length = 0;
-      await expect(settings.configure(input)).rejects.toMatchObject({ code, message: code });
+      await expect(
+        settings.configure({ ...input, requestId: `mock-completion-failure-${++attempt}` }),
+      ).rejects.toMatchObject({ code, message: code });
       expect(calls.length).toBe(1);
-      expect(await readFile(settings.file, 'utf8')).toBe(before);
+      expect(await settings.resolve()).toStrictEqual(before);
     }
     for (const response of [
       () => Response.json({ choices: [] }),
@@ -917,13 +940,15 @@ test('completion fallback never hides authorization, balance, rate, malformed re
     ]) {
       calls.length = 0;
       reply = () => (calls.length === 1 ? new Response(null, { status: 404 }) : response());
-      await expect(settings.configure(input)).rejects.toSatisfy(
+      await expect(
+        settings.configure({ ...input, requestId: `mock-completion-failure-${++attempt}` }),
+      ).rejects.toSatisfy(
         (error: unknown) =>
           error instanceof Error &&
           ['MODEL_API_INVALID_RESPONSE', 'MODEL_API_UNAVAILABLE'].includes(error.message),
       );
       expect(calls.length).toBe(2);
-      expect(await readFile(settings.file, 'utf8')).toBe(before);
+      expect(await settings.resolve()).toStrictEqual(before);
     }
     calls.length = 0;
     reply = () =>
@@ -943,11 +968,13 @@ test('completion fallback never hides authorization, balance, rate, malformed re
               ],
             })
           : new Response(null, { status: 403 });
-    await expect(settings.configure(input)).rejects.toMatchObject({
+    await expect(
+      settings.configure({ ...input, requestId: `mock-completion-failure-${++attempt}` }),
+    ).rejects.toMatchObject({
       code: 'MODEL_API_UNAUTHORIZED',
     });
     expect(calls.length).toBe(3);
-    expect(await readFile(settings.file, 'utf8')).toBe(before);
+    expect(await settings.resolve()).toStrictEqual(before);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -970,7 +997,7 @@ test('official search follows the explicitly configured official endpoint even w
         requestId: 'mock-first-official-search',
       });
       const firstRoute = await settings.resolve();
-      expect(firstRoute.searchApiKey).toBe('synthetic-first-search-key');
+      expect((await settings.searchConnection())?.key).toBe('synthetic-first-search-key');
       await settings.configure({
         model: 'provider:mock-generated-second:mock-text',
         connection: syntheticConnection('mock-generated-second', 'https://api.deepseek.com/v1/'),
@@ -979,7 +1006,7 @@ test('official search follows the explicitly configured official endpoint even w
         requestId: 'mock-second-official-search',
       });
       const secondRoute = await settings.resolve();
-      expect(secondRoute.searchApiKey).toBe('synthetic-second-search-key');
+      expect((await settings.searchConnection())?.key).toBe('synthetic-second-search-key');
       expect(secondRoute.binding).not.toBe(firstRoute.binding);
       await settings.configure({
         model: 'provider:mock-custom:mock-text',
@@ -989,21 +1016,25 @@ test('official search follows the explicitly configured official endpoint even w
         requestId: 'mock-custom-search',
       });
       const customRoute = await settings.resolve();
-      expect(customRoute.searchApiKey).toBe(
+      expect((await settings.searchConnection())?.key).toBe(
         legacy ? 'synthetic-legacy-search-key' : 'synthetic-first-search-key',
       );
       const restarted = new ModelSettings(settings.file);
-      expect((await restarted.resolve()).searchApiKey).toBe(customRoute.searchApiKey);
-      expect(
-        (await restarted.resolve('provider:mock-generated-second:mock-text')).searchApiKey,
-      ).toBe('synthetic-second-search-key');
+      expect((await restarted.searchConnection())?.key).toBe(
+        (await settings.searchConnection())?.key,
+      );
+      expect((await restarted.searchConnection('mock-generated-second'))?.key).toBe(
+        'synthetic-second-search-key',
+      );
       await settings.configure({
         model: customRoute.model,
         connection: { ...first, name: 'Renamed synthetic connection' },
         revision: (await settings.status()).revision,
         requestId: 'mock-rename-official-search',
       });
-      expect((await settings.resolve()).searchApiKey).toBe(customRoute.searchApiKey);
+      expect((await settings.searchConnection())?.key).toBe(
+        legacy ? 'synthetic-legacy-search-key' : 'synthetic-first-search-key',
+      );
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

@@ -213,3 +213,84 @@ test('the turn carries current computer availability rather than advertising una
   expect(taskPrompt('chief', '/synthetic/run', input)).toMatch(/No computer is connected/);
   expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/A computer is connected/);
 });
+
+test('restart retains a durable clean fence for explicit recovery while interrupting every running attempt', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-clean-restart-'));
+  try {
+    const journal = new TaskJournal(root);
+    await journal.load();
+    await journal.put({
+      bot: 'mock-bot',
+      runId: 'mock-run',
+      prompt: 'Synthetic accepted request',
+      phase: 'running',
+      running: true,
+      result: '',
+      error: '',
+      trace: [],
+      createdAt: new Date().toISOString(),
+      activeMs: 1200,
+      attemptSummary: [
+        {
+          attemptId: 'mock-attempt',
+          model: 'deepseek-flash',
+          phase: 'running',
+          fence: 'clean',
+          usage: 'unknown',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    const restored = new TaskJournal(root);
+    await restored.load();
+    expect(restored.findRequest('mock-bot', 'mock-run')).toBeUndefined();
+    const record = await restored.read('mock-bot', 'mock-run');
+    expect(record?.phase).toBe('interrupted');
+    expect(record?.attemptSummary?.[0]).toMatchObject({ phase: 'interrupted', fence: 'clean' });
+    expect(record?.activeMs).toBeGreaterThanOrEqual(1200);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('search journal metadata survives restart while invalid optional metadata never hides the task', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-search-journal-'));
+  const record = {
+    bot: 'mock-bot',
+    runId: 'mock-search-run',
+    prompt: 'synthetic',
+    phase: 'completed',
+    running: false,
+    result: 'synthetic result',
+    error: '',
+    trace: [],
+    search: { provider: 'brave' as const, revision: 3 },
+  };
+  try {
+    const journal = new TaskJournal(dir);
+    await journal.load();
+    await journal.put(record);
+    const loaded = new TaskJournal(dir);
+    await loaded.load();
+    expect(loaded.records.get(record.runId)?.search).toEqual(record.search);
+    await writeFile(
+      path.join(dir, 'mock-corrupt.json'),
+      JSON.stringify({
+        version: 1,
+        task: {
+          ...record,
+          runId: 'mock-corrupt',
+          search: { provider: 'brave', revision: 3, key: 'synthetic-secret' },
+        },
+      }),
+    );
+    await loaded.load();
+    expect(loaded.records.get('mock-corrupt')?.result).toBe(record.result);
+    expect(loaded.records.get('mock-corrupt')?.search).toBe(undefined);
+    await expect(
+      journal.put({ ...record, search: { provider: 'brave', revision: -1 } }),
+    ).rejects.toMatchObject({ code: 'INVALID_SEARCH_SNAPSHOT' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

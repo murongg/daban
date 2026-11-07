@@ -36,6 +36,14 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { type Mention, readMentions, rebaseMentions, resolveMentions } from '../../shared/mentions';
+import {
+  type ConversationDraft,
+  conversationEditor,
+  conversationKey,
+  saveConversationEditor,
+  selectConversation,
+  selectedConversation,
+} from '../features/chat/conversations';
 import { taskFile } from '../features/files/files';
 import { type NotesAction, type NotesState, reduceNotes } from '../features/notes/notes-state';
 import {
@@ -48,7 +56,14 @@ import { t } from '../i18n/locale';
 import { type Organization, type OrganizationAction, organization, organize } from './organization';
 
 export type Color = 'mint' | 'violet' | 'orange' | 'blue' | 'teal' | 'pink';
-export function chatRevision(state: Pick<State, 'chatStates'>, bot: string, latest?: ChatStatus) {
+export function chatRevision(
+  state: Pick<State, 'chatStates' | 'conversationSelections'>,
+  bot: string,
+  latest?: ChatStatus,
+) {
+  return selectedConversation(state, bot) ?? chatBoundary(state, bot, latest);
+}
+export function chatBoundary(state: Pick<State, 'chatStates'>, bot: string, latest?: ChatStatus) {
   return Math.max(
     state.chatStates[bot]?.revision ?? 0,
     latest?.items.find((item) => item.bot === agentId(bot))?.revision ?? 0,
@@ -126,6 +141,7 @@ export type Owner = 'agent' | 'human';
 export type Theme = 'light' | 'dark';
 export type View = 'chat' | 'inbox' | 'settings' | 'tasks' | 'gallery';
 export interface Bot {
+  kind?: 'chat';
   archived?: boolean;
   model?: ModelId;
   id: string;
@@ -209,6 +225,10 @@ export interface QueuedTask {
   verify?: QueuedInsertTarget;
 }
 export interface State {
+  conversationSelections?: Record<string, number>;
+  conversationDrafts?: Record<string, ConversationDraft>;
+  conversationModels?: Record<string, ModelId>;
+  conversationTitles?: Record<string, string>;
   sampleRevision?: 1 | 2;
   comments?: CommentsState;
   notes?: Record<string, NotesState | undefined>;
@@ -348,11 +368,15 @@ export type Action =
   | { type: 'profile-local'; bot: string; name: string; instructions: string }
   | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
   | { type: 'approval-mode'; bot: string; revision: number; mode: ApprovalMode }
-  | { type: 'chats'; items: ChatState[] }
+  | { type: 'chats'; items: ChatState[]; keepSelection?: boolean }
+  | { type: 'chat-select'; bot: string; revision: number }
+  | { type: 'chat-open'; bot: string; chat: ChatState; previous: number }
+  | { type: 'chat-model'; bot: string; revision: number; model?: ModelId }
+  | { type: 'chat-title'; bot: string; revision: number; title: string }
   | { type: 'chat-pending'; bot: string; request: ChatRequest }
   | { type: 'chat-clear'; bot: string; id: string }
   | { type: 'runtime-clear'; bot: string }
-  | { type: 'attachment-uploading'; bot: string; uploading: boolean }
+  | { type: 'attachment-uploading'; bot: string; uploading: boolean; revision?: number }
   | { type: 'runtime-task'; bot: string; task: RuntimeTaskSummary }
   | { type: 'select'; bot: string }
   | { type: 'view'; view: View }
@@ -385,16 +409,21 @@ export type Action =
       color: Color;
       members?: string[];
       model?: ModelId;
+      kind?: 'chat';
     }
   | { type: 'routine-add'; routine: Routine }
   | { type: 'routine-toggle'; id: string }
   | { type: 'routine-remove'; id: string }
   | { type: 'approval'; id: string; status: 'approved' | 'rejected' }
-  | { type: 'attach'; bot: string; file: WorkspaceFile }
+  | { type: 'attach'; bot: string; file: WorkspaceFile; revision?: number }
   | { type: 'detach'; bot: string; file: string };
 
 export function initialState(): State {
   return {
+    conversationSelections: {},
+    conversationDrafts: {},
+    conversationModels: {},
+    conversationTitles: {},
     sampleRevision: 2,
     organization: organization(),
     lifecycleRequests: {},
@@ -436,6 +465,31 @@ export function initialState(): State {
 export function reduce(state: State, action: Action): State {
   // Target the Bot explicitly: changing the selected screen must never transfer ownership or route async work elsewhere.
   if ('bot' in action && !state.bots.some((b) => b.id === action.bot)) return state;
+  if (
+    action.type.startsWith('queue-') &&
+    'bot' in action &&
+    'id' in action &&
+    !messageQueue(state, action.bot).some((item) => item.id === action.id)
+  ) {
+    const current = chatRevision(state, action.bot);
+    const parked = Object.entries(state.conversationDrafts ?? {}).find(
+      ([key, draft]) =>
+        key.startsWith(`${action.bot}:`) &&
+        key !== conversationKey(action.bot, current) &&
+        draft.queued.some((item) => item.id === action.id),
+    );
+    if (parked) {
+      // Queue acknowledgements keep the originating conversation even after its editor is off screen.
+      const revision = Number(parked[0].slice(parked[0].lastIndexOf(':') + 1));
+      const updated = reduce(selectConversation(state, action.bot, revision, current), action);
+      return {
+        ...selectConversation(updated, action.bot, current, revision),
+        selected: state.selected,
+        view: state.view,
+        panel: state.panel,
+      };
+    }
+  }
   switch (action.type) {
     case 'comment-draft':
     case 'comment-pending':
@@ -484,16 +538,74 @@ export function reduce(state: State, action: Action): State {
     }
     case 'chats': {
       const chatStates = { ...state.chatStates };
+      const conversationSelections = { ...state.conversationSelections };
       let changed = false;
       for (const chat of action.items) {
         const bot = state.bots.find((bot) => !bot.members && agentId(bot.id) === chat.bot);
         if (!bot || !isChatState(chat) || chat.revision <= (chatStates[bot.id]?.revision ?? -1))
           continue;
+        // Another client may create a topic; polling must not move this editor or its draft into it.
+        if (
+          action.keepSelection &&
+          chatStates[bot.id] &&
+          !Object.hasOwn(conversationSelections, bot.id)
+        )
+          conversationSelections[bot.id] = chatStates[bot.id].revision;
         chatStates[bot.id] = chat;
         changed = true;
       }
-      return changed ? { ...state, chatStates } : state;
+      return changed
+        ? { ...state, chatStates, ...(action.keepSelection ? { conversationSelections } : {}) }
+        : state;
     }
+    case 'chat-select': {
+      // Cached conversations remain readable offline; sending still requires the authoritative backend boundary.
+      if (
+        !Number.isSafeInteger(action.revision) ||
+        action.revision < 0 ||
+        (action.revision > chatBoundary(state, action.bot) &&
+          !Object.hasOwn(
+            state.conversationDrafts ?? {},
+            conversationKey(action.bot, action.revision),
+          ) &&
+          !state.messages[action.bot].some(
+            (message) => (message.chatRevision ?? 0) === action.revision,
+          ))
+      )
+        return state;
+      return selectConversation(
+        state,
+        action.bot,
+        action.revision,
+        chatRevision(state, action.bot),
+      );
+    }
+    case 'chat-open': {
+      // A delayed receipt cannot move the boundary backwards or clear a newer conversation's editor.
+      if (
+        !isChatState(action.chat) ||
+        action.chat.bot !== agentId(action.bot) ||
+        action.chat.revision < chatBoundary(state, action.bot)
+      )
+        return state;
+      const switched = selectConversation(state, action.bot, action.chat.revision, action.previous);
+      return { ...switched, chatStates: { ...switched.chatStates, [action.bot]: action.chat } };
+    }
+    case 'chat-model': {
+      const models = { ...state.conversationModels };
+      const key = conversationKey(action.bot, action.revision);
+      if (action.model) models[key] = action.model;
+      else delete models[key];
+      return { ...state, conversationModels: models };
+    }
+    case 'chat-title':
+      return {
+        ...state,
+        conversationTitles: {
+          ...state.conversationTitles,
+          [conversationKey(action.bot, action.revision)]: action.title.trim().slice(0, 120),
+        },
+      };
     case 'chat-pending':
       return isChatRequest(action.request) &&
         action.request.bot === agentId(action.bot) &&
@@ -779,6 +891,7 @@ export function reduce(state: State, action: Action): State {
             name: profile.name,
             role: profile.instructions,
             color: profile.color,
+            kind: profile.kind,
           });
           next = { ...created, selected: next.selected, view: next.view, panel: next.panel };
           bot = next.bots.find((entry) => entry.id === profile.id);
@@ -792,6 +905,7 @@ export function reduce(state: State, action: Action): State {
           bot.role === profile.instructions &&
           bot.color === profile.color &&
           bot.model === profile.model &&
+          bot.kind === profile.kind &&
           !!bot.archived === !!profile.archived &&
           next.memories[id] === profile.memory &&
           next.memoryDrafts[id] === draft &&
@@ -809,6 +923,7 @@ export function reduce(state: State, action: Action): State {
               archived: !!profile.archived,
               role: profile.instructions,
               color: profile.color,
+              kind: profile.kind,
             };
             if (profile.model) updated.model = profile.model;
             else delete updated.model;
@@ -866,10 +981,19 @@ export function reduce(state: State, action: Action): State {
         runtimeRefs: { ...state.runtimeRefs, [action.bot]: undefined },
       };
     case 'attachment-uploading':
-      return {
-        ...state,
-        attachmentUploads: { ...state.attachmentUploads, [action.bot]: action.uploading },
-      };
+      return saveConversationEditor(
+        state,
+        action.bot,
+        action.revision ?? chatRevision(state, action.bot),
+        {
+          ...conversationEditor(
+            state,
+            action.bot,
+            action.revision ?? chatRevision(state, action.bot),
+          ),
+          uploading: action.uploading,
+        },
+      );
     case 'runtime-task': {
       const task = action.task,
         entries = [...state.messages[action.bot]],
@@ -999,37 +1123,35 @@ export function reduce(state: State, action: Action): State {
       const pending = state.runtimeRequests[action.bot];
       const acknowledged = pending?.requestId === task.requestId;
       // An old accepted receipt settles uncertainty; it cannot erase work drafted in a later conversation.
-      const sameContext = (task.chatRevision ?? 0) === chatRevision(state, action.bot);
+      const revision = task.chatRevision ?? 0;
+      const editor = conversationEditor(state, action.bot, revision);
       const sentFiles = pending?.files || [];
-      const currentFiles = state.attachments[action.bot]
+      const currentFiles = editor.attachments
         .map((id) => state.files.find((file) => file.id === id))
         .filter((file): file is WorkspaceFile => !!file);
       const clearAttachments =
         acknowledged &&
-        sameContext &&
         !pending.retryOf &&
         currentFiles.length === sentFiles.length &&
         currentFiles.every(
           (file, index) => JSON.stringify(taskFile(file)) === JSON.stringify(sentFiles[index]),
         );
       if (!changed && !acknowledged) return state;
+      const updated =
+        acknowledged && !pending.retryOf
+          ? saveConversationEditor(state, action.bot, revision, {
+              ...editor,
+              text: editor.text.trim() === pending.prompt.trim() ? '' : editor.text,
+              attachments: clearAttachments ? [] : editor.attachments,
+            })
+          : state;
       return {
-        ...state,
+        ...updated,
         files,
         messages: { ...state.messages, [action.bot]: entries },
         runtimeRequests: acknowledged
           ? { ...state.runtimeRequests, [action.bot]: undefined }
           : state.runtimeRequests,
-        drafts:
-          acknowledged &&
-          sameContext &&
-          !pending.retryOf &&
-          state.drafts[action.bot].trim() === pending.prompt.trim()
-            ? { ...state.drafts, [action.bot]: '' }
-            : state.drafts,
-        attachments: clearAttachments
-          ? { ...state.attachments, [action.bot]: [] }
-          : state.attachments,
       };
     }
     case 'select':
@@ -1318,11 +1440,13 @@ export function reduce(state: State, action: Action): State {
       if (!name || state.bots.some((b) => b.id === action.id)) return state;
       const members = action.members?.filter(
         (id, index, all) =>
-          state.bots.some((b) => b.id === id && !b.members) && all.indexOf(id) === index,
+          state.bots.some((b) => b.id === id && !b.members && b.kind !== 'chat') &&
+          all.indexOf(id) === index,
       );
       if (members && members.length < 2) return state;
       const bot: Bot = {
         id: action.id,
+        ...(action.kind ? { kind: action.kind } : {}),
         name,
         role: members
           ? t('state.groupBots', { 0: members.length })
@@ -1377,23 +1501,24 @@ export function reduce(state: State, action: Action): State {
       };
     }
     case 'attach': {
+      const revision = action.revision ?? chatRevision(state, action.bot);
+      const editor = conversationEditor(state, action.bot, revision);
       if (
         !Object.hasOwn(state.attachments, action.bot) ||
-        state.attachments[action.bot].length >= 4 ||
+        editor.attachments.length >= 4 ||
         state.files.some((file) => file.id === action.file.id)
       )
         return state;
       const names = new Set(
-        state.attachments[action.bot].map((id) => state.files.find((file) => file.id === id)?.name),
+        editor.attachments.map((id) => state.files.find((file) => file.id === id)?.name),
       );
       const name = uniqueFileName(action.file.name, names);
       return {
-        ...state,
+        ...saveConversationEditor(state, action.bot, revision, {
+          ...editor,
+          attachments: [...editor.attachments, action.file.id],
+        }),
         files: [...state.files, { ...action.file, name }],
-        attachments: {
-          ...state.attachments,
-          [action.bot]: [...state.attachments[action.bot], action.file.id],
-        },
       };
     }
     case 'detach':

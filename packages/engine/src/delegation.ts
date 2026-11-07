@@ -2,6 +2,7 @@ export const name = 'daban-delegation';
 export const inject = ['agents', 'tools', 'subagents'];
 interface Agent {
   id: string;
+  session?: { id: string };
 }
 interface Execution {
   agent?: Agent;
@@ -43,6 +44,25 @@ const reads = new Set([
     'task_catalog',
   ].map((name) => `mcp__computer__${name}`),
 ]);
+function ownedRoot(agents: Context['agents'], candidate: unknown) {
+  const roots = agents.roots();
+  if (
+    roots.length !== 1 ||
+    !candidate ||
+    typeof candidate !== 'object' ||
+    !('id' in candidate) ||
+    typeof candidate.id !== 'string' ||
+    agents.get(candidate.id) !== candidate
+  )
+    return undefined;
+  const root = roots[0];
+  if (agents.get(root.id) !== root) return undefined;
+  return candidate === root || agents.isOwnedBy(candidate.id, root) ? root : undefined;
+}
+export function readOwner(agents: Context['agents'], candidate: unknown, tool: string) {
+  // Root-session mapping carries read authority only; the real execution agent keeps its write guard.
+  return reads.has(tool) ? ownedRoot(agents, candidate) : undefined;
+}
 export function apply(ctx: Context) {
   ctx.on('agent/turn-stopping', async ({ agent, signal }) => {
     if (ctx.agents.roots()[0] !== agent || signal.aborted) return;
@@ -52,13 +72,10 @@ export function apply(ctx: Context) {
   });
   // A monotonic guard runs after extensible approval hooks; no later listener can re-enable a delegated write.
   ctx.tools.guard((exec) => {
-    const roots = ctx.agents.roots(),
-      agent = exec.agent;
-    if (roots.length !== 1 || !agent || ctx.agents.get(agent.id) !== agent)
-      return 'DELEGATION_OWNER_UNAVAILABLE';
-    const root = roots[0];
+    const agent = exec.agent;
+    const root = ownedRoot(ctx.agents, agent);
+    if (!root || !agent) return 'DELEGATION_OWNER_UNAVAILABLE';
     if (agent === root) return;
-    if (!ctx.agents.isOwnedBy(agent.id, root)) return 'DELEGATION_OWNER_UNAVAILABLE';
     const args = exec.arguments;
     if (
       exec.name === 'send_message' &&

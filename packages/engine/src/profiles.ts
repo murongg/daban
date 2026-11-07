@@ -18,6 +18,7 @@ import {
   type MemoryPage,
   type MemoryQuery,
   type MemoryVersion,
+  type ModelId,
   validAgentId,
 } from '@daban/protocol';
 import { Fault } from './control.js';
@@ -87,6 +88,7 @@ function snapshot(profile: BotProfile, source: MemoryVersion['source']): MemoryV
 }
 
 export class BotProfiles {
+  modelGuard?: (model: ModelId, write: () => Promise<BotProfile>) => Promise<BotProfile>;
   readonly ready: Promise<unknown>;
   private readonly records = new Map<string, BotProfile>();
   private readonly corrupt = new Set<string>();
@@ -145,7 +147,22 @@ export class BotProfiles {
       }
     }
   }
-  private async commit(
+  private commit(
+    profile: BotProfile,
+    signal?: AbortSignal,
+    origin = this.origins.get(profile.id),
+    source: 'edit' | 'agent' = 'edit',
+  ) {
+    const write = () => this.writeProfile(profile, signal, origin, source);
+    return this.modelGuard && profile.model && profile.model !== this.records.get(profile.id)?.model
+      ? this.modelGuard(profile.model, write)
+      : write();
+  }
+  modelReferences() {
+    // Removal reads the durable snapshot without waiting on a queued write that may be waiting for model admission.
+    return [...this.records.values()].flatMap((profile) => (profile.model ? [profile.model] : []));
+  }
+  private async writeProfile(
     profile: BotProfile,
     signal?: AbortSignal,
     origin = this.origins.get(profile.id),
@@ -410,22 +427,43 @@ export class BotProfiles {
       );
     });
   }
-  register(input: unknown) {
-    if (!isBotProfileInput(input)) return Promise.reject(new Fault('INVALID_BOT_PROFILE', 400));
+  register(input: unknown, cause?: { bot: string; signal: AbortSignal; origin: ImportOrigin }) {
+    if (
+      !isBotProfileInput(input) ||
+      (cause && (!validAgentId(cause.bot) || !importOrigin(cause.origin)))
+    )
+      return Promise.reject(new Fault('INVALID_BOT_PROFILE', 400));
     const value = structuredClone(input);
+    const accepted = cause ? { ...cause, origin: structuredClone(cause.origin) } : undefined;
     return this.mutate(async () => {
+      accepted?.signal.throwIfAborted();
+      if (accepted) {
+        this.assertRegistered(accepted.bot);
+        this.assertActive(accepted.bot);
+      }
       if (this.corrupt.has(value.id)) throw new Fault('BOT_PROFILE_CORRUPT');
       const existing = this.records.get(value.id);
+      if (existing && accepted) {
+        const origin = this.origins.get(value.id);
+        // Receipts survive edits and archives; a different payload must never overwrite or recreate the Bot.
+        if (origin?.id !== accepted.origin.id || origin.sha256 !== accepted.origin.sha256)
+          throw new Fault('BOT_REQUEST_ID_REUSED');
+      }
       // Client migration creates missing records only; a late import must never overwrite a newer edit.
       if (existing) return structuredClone(existing);
+      if (accepted && this.records.size >= 2000) throw new Fault('BOT_LIMIT');
       const now = new Date().toISOString();
-      return this.commit({
-        ...value,
-        name: value.name.trim(),
-        revision: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
+      return this.commit(
+        {
+          ...value,
+          name: value.name.trim(),
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+        accepted?.signal,
+        accepted?.origin,
+      );
     });
   }
   async history(id: string, query: MemoryQuery): Promise<MemoryPage> {

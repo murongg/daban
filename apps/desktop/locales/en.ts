@@ -1,4 +1,102 @@
 export const english = {
+  'search.duckduckgoOption': 'DuckDuckGo (no API key)',
+  'search.keylessCredential': 'Keyless search; no credentials needed',
+  'search.keylessHint':
+    'No API key needed. Searches DuckDuckGo public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
+  'search.confirmKeyless':
+    'Send one fixed search without personal content to DuckDuckGo. No search API key is needed. This will not retry automatically or switch providers.',
+  'search.healthKeylessForbidden':
+    'DuckDuckGo restricted this request or requires verification. Try again later explicitly.',
+
+  'search.independentKeyRequired':
+    'Enter an independent API key for this search provider. The previous credential cannot be reused for this save.',
+  'search.keyReplacementHint': 'This save needs a new independent key; it cannot be left blank.',
+
+  'search.legacyInUse':
+    'Search still uses this DeepSeek connection. Add an independent search key or disable search before changing its destination or protocol.',
+  'search.title': 'Search',
+  'search.description': 'Choose a search service separately from your chat model.',
+  'search.legacyHost':
+    'This service does not support independent search settings yet. Update the Host service. Legacy search still follows model connections.',
+  'search.offline': 'Connect to the Host service to manage search.',
+  'search.loading': 'Reading search settings…',
+  'search.enabled': 'Enable search',
+  'search.provider': 'Search provider',
+  'search.key': 'Search API Key',
+  'search.keyHint':
+    'Leave blank to keep the saved key for this provider. Changing provider requires a new key. Unsaved keys are cleared when Settings closes.',
+  'search.legacyCredential': 'Linked to the previous DeepSeek model connection',
+  'search.independentCredential': 'Independent search credential configured',
+  'search.noCredential': 'No search credential configured',
+  'search.fetchIndependent':
+    'When search is off, public URL reading and the browser still follow their own permissions.',
+  'search.save': 'Save search settings',
+  'search.saving': 'Saving…',
+  'search.saved': 'Search settings saved. No remote test has run.',
+  'search.refresh': 'Refresh search status',
+  'search.check': 'Test search',
+  'search.checking': 'Testing search…',
+  'search.confirmTitle': 'Test search?',
+  'search.confirmCost':
+    'One fixed search without personal content will be sent to the current provider. It may incur one search charge. There is no automatic retry or provider switch.',
+  'search.confirm': 'Confirm and test once',
+  'search.cancel': 'Cancel',
+  'search.receipt': 'Look up operation receipt',
+  'search.pending':
+    'The result is unconfirmed. Look up the original receipt before making another change. No request will be resent automatically.',
+  'search.claimed':
+    'The Host accepted this test. Look up its receipt to check progress; another test will not start.',
+  'search.superseded':
+    'This receipt is no longer retained. Review the current settings before explicitly starting another operation.',
+  'search.failure':
+    'Could not confirm the search operation. Check the Host connection and look up the original receipt.',
+  'search.storageFailure':
+    'The operation ID could not be saved locally. No change or search was sent. Check local storage and try again.',
+  'search.conflict':
+    'Search settings changed elsewhere. Your input is kept; review the current provider before saving again.',
+  'search.useCurrentRevision': 'Keep input and use the current version',
+  'search.saveFirst': 'Save your changes before testing the configured provider.',
+  'search.checkedAt': 'Last test: {0}',
+  'search.testScope':
+    'A successful test is a point-in-time result, not a promise of continued availability or quota.',
+  'search.healthDisabled': 'Search is disabled',
+  'search.healthUnconfigured': 'Search needs a credential',
+  'search.healthUnchecked': 'Not tested remotely',
+  'search.healthReady': 'Test passed; search is available',
+  'search.healthEmpty': 'Test passed with no results',
+  'search.healthUnauthorized': 'Authentication failed. Replace this search key.',
+  'search.healthForbidden': 'This key lacks search permission. Check the provider account.',
+  'search.healthRateLimited': 'Search is rate limited. Wait before explicitly testing again.',
+  'search.retryAfter': 'The provider suggests waiting {0} seconds.',
+  'search.healthUnavailable': 'Search service is unavailable. Check the connection and test again.',
+  'search.healthTimeout': 'The search timed out. You can explicitly test again.',
+  'search.healthInvalid': 'The provider returned an invalid response. No source was trusted.',
+  'search.healthChanged':
+    'The configuration changed during this operation. Review the current settings.',
+  'search.healthCancelled': 'This search was cancelled.',
+  'search.healthUnknown': 'The test outcome is unknown. It will not be resent automatically.',
+  'conversations.newChat': 'New chat',
+  'conversations.untitled': 'New conversation',
+  'conversations.recent': 'Recent conversations',
+  'conversations.recentList': 'Recent conversation list',
+  'conversations.placeholder': 'Send a message or describe a task…',
+  'conversations.startTitle': 'What would you like to work on?',
+  'conversations.startHint': 'Ask a question or give me a task. Tools are available when needed.',
+  'conversations.welcomeHint':
+    'Start a conversation, or choose a Bot for an ongoing collaboration.',
+  'conversations.continue': 'Continue this conversation',
+  'conversations.historyHint':
+    'Open a conversation to continue with its saved context. Opening it does not run tasks.',
+  'conversations.otherTask':
+    'Another conversation with this Bot is running. You can draft a message while it finishes.',
+  'conversations.openRunning': 'Open running conversation',
+  'conversations.model': 'Conversation model',
+  'conversations.modelHint':
+    'Applies to future messages in this conversation. The Bot default stays the same.',
+  'conversations.modelSaved': 'Conversation model saved',
+  'conversations.rename': 'Rename conversation',
+  'conversations.saveTitle': 'Save',
+  'conversations.plainContext': 'Conversation · Tools available',
   'vm.managed':
     'Daban manages this Linux computer automatically. Its connection settings do not need editing.',
   'setup.windowsResources': '{0} GB memory while running · {1} GB virtual disk, grows as needed',
@@ -2329,7 +2427,7 @@ export const english = {
   'models.testing': 'Testing…',
   'models.testingSendsFixedShortPromptMayIncur':
     'Testing sends a fixed short prompt and may incur a small API charge. It includes no chat content and does not save settings.',
-  'models.testModel': 'Test model {0}',
+  'models.testModel': 'Test model {0} (may incur charges)',
   'models.title': 'Models & providers',
   'models.updateLocalAgentLoadModelsTestCalls':
     'Update the local Agent to load models, test calls, and match context limits.',
@@ -3218,7 +3316,7 @@ export const english = {
   'workspace.viewBotSComputerFilesAppsTake':
     "View the Bot's computer, files and apps. Take over when needed and hand back when finished to continue working together.",
   'workspace.weekdays': 'Weekdays',
-  'workspace.welcomeTitle': 'Start with your first Bot',
+  'workspace.welcomeTitle': 'Start a conversation',
   'workspace.workBetterTogether': 'Work better together',
   'workspace.workHappensHere': 'Work happens here',
   'workspace.workPreferences': 'Work preferences',
@@ -3335,6 +3433,82 @@ export const english = {
     'The service rejected these permissions. Review account access and reconnect explicitly.',
   'apps.publisher': 'Publisher: {0}',
   'apps.retryDisconnect': 'Check and retry this disconnect',
+  'models.connectionChecks': 'Connection checks',
+  'models.checkSavedModel': 'Check saved model: {0}',
+  'models.fallbackManagement': 'Fallback and connection management',
+  'models.fallbackDisabled': 'Fallback off',
+  'models.fallbackTitle': 'Fallback model',
+  'models.fallbackOff': 'Automatic fallback off',
+  'models.fallbackSave': 'Save fallback policy',
+  'models.fallbackConfirmTitle': 'Enable fallback model?',
+  'models.fallbackEnable': 'Enable fallback model',
+  'models.fallbackConsent':
+    'If the primary fails before output or tools and has stopped, switch to {0} at most once. Task context and attachments may be sent to its connection.',
+  'models.fallbackHint':
+    'Off by default. Fallback retains the task, permissions and remaining budget. Output or tool activity requires explicit recovery.',
+  'models.fallbackSaved': 'Fallback policy saved for the next task.',
+  'models.fallbackInvalid': 'Choose a different, configured API model as the fallback.',
+  'models.unknownTools': 'Tool support is unknown; tasks with tools will not switch automatically.',
+  'models.credentialsSaved': 'API key saved',
+  'models.cliDisabled':
+    'CLI sign-in has not passed restricted-tool verification. Use an API connection.',
+  'models.removeConnection': 'Remove {0}',
+  'models.removeTitle': 'Remove model connection?',
+  'models.removeConfirm':
+    'Remove local credentials for {0}. Bot, fallback, search or running-task references prevent removal.',
+  'models.disconnectAll': 'Disconnect all models',
+  'models.connectionRemoved': 'Connection removed.',
+  'models.connectionReferenced':
+    'Connection is still referenced by {0}. Change those bindings first.',
+  'models.reference.default': 'the default model',
+  'models.reference.bot': 'Bot models',
+  'models.reference.fallback': 'the fallback model',
+  'models.reference.search': 'search',
+  'models.reference.running': 'running tasks',
+  'models.queryReceipt': 'Check save receipt',
+  'models.queryDiagnostic': 'Check diagnostic receipt',
+  'models.operationUnknown':
+    'The outcome is unconfirmed. Keep the existing configuration and query the receipt without resending validation.',
+  'models.probeDirectory': 'Check model directory',
+  'models.probeInference': 'Test inference (may incur charges)',
+  'models.directoryPassed': 'Directory visible · {0}. This does not prove inference works.',
+  'models.inferencePassed': 'Inference passed · {0}',
+  'models.inferenceCostHint':
+    'Inference testing sends a short request and may incur charges. An uncertain outcome is checked through its original receipt.',
+  'models.configureCostHint':
+    'Saving validates the models and may send a small inference request when a directory endpoint is absent.',
+  'models.busy': 'Another model configuration is being validated. Wait and check its receipt.',
+  'models.diagnosticsChanged':
+    'The diagnostic revision changed. Check the latest receipt before choosing a new test.',
+  'models.credentialsRevoked':
+    'The captured credentials changed or were removed. No further attempt was started.',
+  'models.fallbackUnavailable':
+    'The fallback is no longer available. The task stopped; check the connection and remaining budget.',
+  'models.shutdownUnconfirmed':
+    'The previous attempt could not be confirmed stopped, so the fallback was not started.',
+  'models.fenceUnavailable':
+    'Tool ownership could not be durably confirmed. The tool was not executed; inspect the task record.',
+  'models.attempts': 'Model attempts',
+  'models.actualModel': 'Actual model: {0}',
+  'models.usageUnknown': 'Billable usage is unconfirmed. Failed requests may still incur charges.',
+  'models.failure.auth': 'authentication failed',
+  'models.failure.quota': 'quota exhausted',
+  'models.failure.rateLimit': 'rate limited',
+  'models.failure.unavailable': 'service unavailable',
+  'models.failure.timeout': 'model request timed out',
+  'models.failure.unknown': 'outcome unknown',
+  'models.recoverSelected': 'Continue with selected model',
+  'models.unknownToolRecovery':
+    'Inspect progress and operation receipts first. Tools with unknown outcomes cannot be rerun directly.',
+  'models.removeAction': 'Remove connection',
+  'models.fallbackVisionRequired':
+    "The fallback does not support this task's image input. Task context was not sent.",
+  'models.fallbackContextRequired':
+    'The fallback context window is too small. Task context was not sent.',
+  'models.fallbackToolsRequired':
+    'The fallback does not support the required tools. Task context was not sent.',
+  'models.fallbackToolsUnknown':
+    'Fallback tool support is unconfirmed. Tasks with tools do not switch automatically.',
 };
 
 export type MessageKey = keyof typeof english;

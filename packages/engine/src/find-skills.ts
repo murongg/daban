@@ -54,13 +54,11 @@ const content = previousContent
     '5. Newly installed skills apply to the next task.',
     '5. After confirmation, read the newly installed SKILL.md with skill_read and continue the current task. Manual-only invocation policies still apply.',
   );
-export const builtinSkills: readonly SkillDefault[] = [
-  {
-    id: 'builtin-find-skills',
-    previousDigests: [inspectSkillPackage(previousPackage).digest],
-    package: {
-      root: 'find-skills',
-      files: [{ path: 'SKILL.md', data: Buffer.from(content).toString('base64') }],
-    },
+export const findSkillsSkill: SkillDefault = {
+  id: 'builtin-find-skills',
+  previousDigests: [inspectSkillPackage(previousPackage).digest],
+  package: {
+    root: 'find-skills',
+    files: [{ path: 'SKILL.md', data: Buffer.from(content).toString('base64') }],
   },
-];
+};

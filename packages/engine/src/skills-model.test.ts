@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
+import { modelPhase, observeSearch } from './model-timing.fixture.js';
 import { ModelSettings } from './settings.js';
 
 test('captured Bot skills use native plugins, change only the next task, and fence resumed sessions without losing chat', async () => {
@@ -56,18 +57,19 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     Harness,
   };
   let models = new ModelRuns(options);
+  observeSearch(models.search);
   async function turn(bot: string, requestId: string, prompt: string) {
-    await models.start(bot, { requestId, prompt });
+    await modelPhase(`skills:${requestId}:start`, () => models.start(bot, { requestId, prompt }));
     const job = models.jobs.get(bot)!;
-    await job.done;
+    await modelPhase(`skills:${requestId}:done`, () => job.done);
     expect(job.phase).toBe('completed');
     return job.sessionId;
   }
   const document = (body: string) =>
     `---\nname: mock-summary\ndescription: 合成汇总\n---\n${body}\n`;
   try {
-    await settings.save({ apiKey: 'synthetic-skills-key' });
-    await models.ready;
+    await modelPhase('skills:settings', () => settings.save({ apiKey: 'synthetic-skills-key' }));
+    await modelPhase('skills:ready', () => models.ready);
     const released: unknown[] = [],
       tools = models.tools.skills!,
       originalRelease = Reflect.get(tools, 'release');
@@ -92,11 +94,13 @@ test('captured Bot skills use native plugins, change only the next task, and fen
       release = () => resolve(undefined);
     });
     hold = true;
-    await models.start('mock-a', {
-      requestId: 'mock-skill-held',
-      prompt: '/mock-summary 合成汇总',
-    });
-    await ready;
+    await modelPhase('skills:held:start', () =>
+      models.start('mock-a', {
+        requestId: 'mock-skill-held',
+        prompt: '/mock-summary 合成汇总',
+      }),
+    );
+    await modelPhase('skills:held:entered', () => ready);
     const held = models.jobs.get('mock-a')!;
     expect(held.sessionId).not.toBe(plain);
     const row = patches.at(-1)!.rows.find((item) => item.id === 'daban-skills')!;
@@ -121,7 +125,7 @@ test('captured Bot skills use native plugins, change only the next task, and fen
     );
     hold = false;
     release();
-    await held.done;
+    await modelPhase('skills:held:done', () => held.done);
     await turn('mock-b', 'mock-other-no-skills', '合成其他 Bot 问候');
     expect(
       (
@@ -129,12 +133,13 @@ test('captured Bot skills use native plugins, change only the next task, and fen
           skills: { name: string }[];
         }
       ).skills.map((item) => item.name),
-    ).toStrictEqual(['find-skills']);
+    ).toStrictEqual(['bot-manager', 'find-skills', 'skill-creator']);
     const changed = await turn('mock-a', 'mock-skill-updated', '按启用技能处理合成记录');
     expect(changed).not.toBe(held.sessionId);
     expect(resumed.includes(held.sessionId!)).toBe(false);
     await models.close();
     models = new ModelRuns(options);
+    observeSearch(models.search);
     await models.ready;
     expect(await turn('mock-a', 'mock-skill-restart', '合成后续任务')).toBe(changed);
     expect.assert(resumed.includes(changed!));
@@ -152,13 +157,13 @@ test('captured Bot skills use native plugins, change only the next task, and fen
           skills: { name: string }[];
         }
       ).skills.map((item) => item.name),
-    ).toStrictEqual(['find-skills']);
+    ).toStrictEqual(['bot-manager', 'find-skills', 'skill-creator']);
     expect(models.journal.history('mock-a').length).toBe(5);
   } finally {
     hold = false;
     release?.();
-    await models.close();
-    await rm(root, { recursive: true, force: true });
+    await modelPhase('skills:close', () => models.close());
+    await modelPhase('skills:cleanup', () => rm(root, { recursive: true, force: true }));
   }
 });
 
@@ -192,6 +197,7 @@ test('unreadable skills leave ordinary conversation available and never resume t
     Harness,
   };
   let models = new ModelRuns(options);
+  observeSearch(models.search);
   const file = path.join(root, 'model/skills.sqlite'),
     corrupt = Buffer.from('SYNTHETIC-UNREADABLE-SKILLS');
   try {
@@ -213,17 +219,22 @@ test('unreadable skills leave ordinary conversation available and never resume t
       bindingRevision: 0,
       enabled: true,
     });
-    await models.start('mock-bot', { requestId: 'mock-before-corrupt', prompt: '合成任务' });
-    await models.jobs.get('mock-bot')!.done;
+    await modelPhase('skills:corrupt:before:start', () =>
+      models.start('mock-bot', { requestId: 'mock-before-corrupt', prompt: '合成任务' }),
+    );
+    await modelPhase('skills:corrupt:before:done', () => models.jobs.get('mock-bot')!.done);
     const previous = models.jobs.get('mock-bot')!.sessionId;
     await models.close();
     await writeFile(file, corrupt, { mode: 0o600 });
     models = new ModelRuns(options);
+    observeSearch(models.search);
     await models.ready;
     expect((await models.skills.status()).available).toBe(false);
-    await models.start('mock-bot', { requestId: 'mock-after-corrupt', prompt: '合成普通问候' });
+    await modelPhase('skills:corrupt:after:start', () =>
+      models.start('mock-bot', { requestId: 'mock-after-corrupt', prompt: '合成普通问候' }),
+    );
     const job = models.jobs.get('mock-bot')!;
-    await job.done;
+    await modelPhase('skills:corrupt:after:done', () => job.done);
     expect(job.phase).toBe('completed');
     expect(job.sessionId).not.toBe(previous);
     expect.assert(prompt.includes('The skill service is unavailable for this turn'));
