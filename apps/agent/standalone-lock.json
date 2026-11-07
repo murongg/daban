@@ -1,12 +1,12 @@
 {
   "name": "@daban/agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@daban/agent",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@daban/engine": "file:./vendor/engine",
         "@daban/protocol": "file:./vendor/protocol",
@@ -10626,7 +10626,7 @@
     },
     "vendor/engine": {
       "name": "@daban/engine",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "@daban/protocol": "file:../protocol",
         "@mixmark-io/domino": "2.2.0",
@@ -10646,7 +10646,7 @@
     },
     "vendor/protocol": {
       "name": "@daban/protocol",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "license": "AGPL-3.0-only"
     }
   }
