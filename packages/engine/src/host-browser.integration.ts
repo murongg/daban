@@ -66,6 +66,8 @@ test('standalone browser preserves login, transfers task reports and supports fe
         },
       },
     });
+    if (suppliedRoot)
+      assert.equal(actual.embedded, true, 'The native workflow must not fall back to headless');
     return actual;
   };
   const profile = path.join(root, 'browser');

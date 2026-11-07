@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { builtinModules, createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,8 @@ const requireDesktop = createRequire(path.join(root, 'apps/desktop/package.json'
 const electron: string = requireDesktop('electron');
 const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-check-'));
 const fixture = path.join(root, 'outputs/embedded-browser/fixture.cjs');
+const profile = path.join(directory, 'workflow');
+const stop = path.join(profile, 'stop-browser-fixture');
 function exit(child: ChildProcess, milliseconds = 120000) {
   return new Promise<unknown>((resolve, reject) => {
     let timedOut = false;
@@ -93,10 +95,9 @@ try {
     env: { ...process.env, DABAN_BROWSER_SMOKE_ROOT: path.join(directory, 'smoke') },
   });
   await exit(smoke, process.env.DABAN_BROWSER_HOLD === '1' ? 180000 : 40000);
-  const profile = path.join(directory, 'workflow');
   server = spawn(electron, [fixture], {
     cwd: root,
-    stdio: ['pipe', 'pipe', 'inherit'],
+    stdio: ['ignore', 'pipe', 'inherit'],
     env: { ...process.env, DABAN_BROWSER_SERVER_ROOT: profile },
   });
   stopped = exit(server);
@@ -113,7 +114,6 @@ try {
       reject(new Error('Embedded browser stopped during startup'));
     });
     server!.stdout!.on('data', (chunk: Buffer) => {
-      process.stdout.write(chunk);
       output = (output + chunk.toString()).slice(-4096);
       if (output.includes('EMBEDDED_BROWSER_READY')) {
         clearTimeout(timeout);
@@ -127,40 +127,10 @@ try {
     { cwd: root, stdio: 'inherit', env: { ...process.env, DABAN_EMBEDDED_BROWSER_ROOT: profile } },
   );
   await exit(test);
-  server.stdin!.end('close\n');
+  await writeFile(stop, 'stop');
   await stopped;
   server = undefined;
   stopped = undefined;
-  if (process.platform === 'win32') {
-    const { DatabaseSync } = await import('node:sqlite');
-    for (const entry of await readdir(profile, { recursive: true })) {
-      if (path.basename(entry) !== 'Cookies') continue;
-      const database = new DatabaseSync(path.join(profile, entry), { readOnly: true });
-      try {
-        console.log(
-          'SYNTHETIC_COOKIE_DATABASE',
-          entry,
-          database
-            .prepare(
-              'SELECT name, host_key, is_persistent, has_expires, length(value) as plain_size, length(encrypted_value) as encrypted_size FROM cookies',
-            )
-            .all(),
-        );
-      } finally {
-        database.close();
-      }
-    }
-    const preferences = JSON.parse(
-      await readFile(path.join(profile, 'Local State'), 'utf8'),
-    ) as Record<string, unknown>;
-    console.log(
-      'SYNTHETIC_LOCAL_STATE_KEYS',
-      Object.keys(preferences),
-      preferences.os_crypt && typeof preferences.os_crypt === 'object'
-        ? Object.keys(preferences.os_crypt)
-        : [],
-    );
-  }
   await exit(
     spawn(electron, [fixture], {
       cwd: root,
@@ -169,8 +139,8 @@ try {
     }),
   );
 } finally {
-  server?.stdin?.end('close\n');
   if (server && stopped) {
+    await writeFile(stop, 'stop').catch(() => server!.kill('SIGKILL'));
     const timer = setTimeout(() => server!.kill('SIGKILL'), 10000);
     try {
       await stopped.catch(() => undefined);
