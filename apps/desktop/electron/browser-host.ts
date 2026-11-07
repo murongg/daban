@@ -384,8 +384,10 @@ export class BrowserHost {
     // Navigation replaces RenderWidgetHosts. Reapply the setter after each frame
     // loads so hidden widgets are shown for painting, not merely marked unthrottled.
     contents.on('did-frame-finish-load', () => {
+      contents.backgroundThrottling = true;
       contents.backgroundThrottling = false;
     });
+    contents.backgroundThrottling = true;
     contents.backgroundThrottling = false;
     contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     contents.debugger.attach('1.3');
@@ -435,6 +437,11 @@ export class BrowserHost {
     if (!opener) await contents.loadURL('about:blank');
     return {
       command: async (method, params, child) => {
+        if (method === 'Page.captureScreenshot' && !child) {
+          // Reset the hidden widget state as well as scheduler throttling before capture.
+          contents.backgroundThrottling = true;
+          contents.backgroundThrottling = false;
+        }
         const result = (await contents.debugger.sendCommand(method, params, child)) as Record<
           string,
           unknown
