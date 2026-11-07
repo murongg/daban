@@ -41,7 +41,7 @@ import { attachmentAccept, canParseDocuments } from '../files/files';
 import { modelName as displayModel, modelIcon } from '../models/model-options';
 import { Requests } from '../requests/Requests';
 import { ApprovalMode } from './ApprovalMode';
-import { conversationModel } from './conversations';
+import { conversationModel, conversationPending, conversationState } from './conversations';
 import { Execution } from './Execution';
 import { useFollow } from './follow';
 import { useHistory } from './history';
@@ -100,6 +100,7 @@ export function Conversation({
   pending = false,
   onLifecycle,
   onNewChat,
+  onTrashRecovery,
 }: {
   state: State;
   bot: Bot;
@@ -118,6 +119,7 @@ export function Conversation({
   pending?: boolean;
   onLifecycle?: () => unknown;
   onNewChat?: () => unknown;
+  onTrashRecovery?: () => unknown;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -139,8 +141,10 @@ export function Conversation({
     runtime.snapshot.profiles.find((profile) => profile.id === target),
   );
   const lifecycleReadOnly = !!bot.archived || !!operation;
-  const readOnly = lifecycleReadOnly || !!state.chatRequests[bot.id];
   const revision = chatRevision(state, bot.id, runtime.snapshot.chats);
+  const trashPending = conversationPending(state, bot.id, revision);
+  const trashed = conversationState(state, bot.id, revision, runtime.snapshot.chats)?.trashed;
+  const readOnly = lifecycleReadOnly || !!state.chatRequests[bot.id] || !!trashPending || !!trashed;
   const recovering = recoveryBlocked(runtime.snapshot);
   const computerChanging =
     runtime.snapshot.computers?.items.some(
@@ -470,6 +474,16 @@ export function Conversation({
             {onNewChat && (
               <button type="button" className="secondary" onClick={onNewChat}>
                 {t('common.verifyConversationAction')}
+              </button>
+            )}
+          </div>
+        )}
+        {(trashPending || trashed) && (
+          <div className="archive-banner">
+            <p>{t(trashPending ? 'trash.pending' : 'trash.trashed')}</p>
+            {onTrashRecovery && (
+              <button type="button" className="secondary" onClick={onTrashRecovery}>
+                {t('trash.title')}
               </button>
             )}
           </div>

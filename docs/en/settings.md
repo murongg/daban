@@ -13,6 +13,7 @@ Open the sidebar settings button or press Cmd + , / Ctrl + ,. Settings appear in
 | Computer & permissions | Connectivity, OS permissions, Linux diagnostics and recovery |
 | External tools | MCP connections and per-Bot tool selection |
 | Archives | Archived Bots and groups |
+| Conversation trash | Restore conversations moved out of recent conversations |
 | Data & storage | Client data scope and workspace export |
 | About | Version and capability boundaries |
 

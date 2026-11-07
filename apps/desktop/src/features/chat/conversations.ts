@@ -11,6 +11,21 @@ export interface ConversationDraft {
   uploading?: boolean;
 }
 export const conversationKey = (bot: string, revision: number) => `${bot}:${revision}`;
+export function conversationState(
+  state: State,
+  bot: string,
+  revision: number,
+  status?: ChatStatus,
+) {
+  const cached = state.conversationStates?.[conversationKey(bot, revision)];
+  const remote = status?.lifecycle?.find(
+    (item) => item.bot === agentId(bot) && item.revision === revision,
+  );
+  return remote && remote.version > (cached?.version ?? 0) ? remote : cached;
+}
+export function conversationPending(state: State, bot: string, revision: number) {
+  return state.conversationRequests?.[conversationKey(bot, revision)];
+}
 export function selectedConversation(state: Pick<State, 'conversationSelections'>, bot: string) {
   return state.conversationSelections && Object.hasOwn(state.conversationSelections, bot)
     ? state.conversationSelections[bot]
@@ -94,6 +109,7 @@ export function recentConversations(state: State, status?: ChatStatus) {
     { bot: string; revision: number; title: string; updatedAt: string }
   >();
   const add = (bot: string, revision: number, title: string, updatedAt: string) => {
+    if (conversationState(state, bot, revision, status)?.trashed) return;
     const key = conversationKey(bot, revision);
     const savedTitle = state.conversationTitles?.[key];
     rows.set(key, {
@@ -103,6 +119,12 @@ export function recentConversations(state: State, status?: ChatStatus) {
       updatedAt,
     });
   };
+  for (const item of Object.values(state.conversationStates ?? {})) {
+    const bot = state.bots.find(
+      (bot) => !bot.members && !bot.archived && agentId(bot.id) === item.bot,
+    );
+    if (bot && !item.trashed) add(bot.id, item.revision, item.title, item.updatedAt);
+  }
   for (const row of status?.conversations ?? []) {
     const bot = state.bots.find(
       (bot) => !bot.members && !bot.archived && agentId(bot.id) === row.bot,

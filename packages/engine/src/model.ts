@@ -851,11 +851,16 @@ export class ModelRuns {
     this.tools.notes = new NotesTools(this.notes, (bot) => {
       this.profiles.assertRegistered(bot);
     });
-    this.chats = new Chats(path.join(dir, 'chats.sqlite'), (bot) => {
+    this.chats = new Chats(path.join(dir, 'chats.sqlite'), (bot, revision) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
       this.profiles.assertActive(bot);
       const job = this.jobs.get(bot);
-      if (job?.running && !job.conversationId) throw new Fault('CHAT_BUSY');
+      if (
+        job?.running &&
+        !job.conversationId &&
+        (revision === undefined || (job.chatRevision ?? 0) === revision)
+      )
+        throw new Fault('CHAT_BUSY');
     });
     this.skills = new Skills(path.join(dir, 'skills.sqlite'), builtinSkills);
     this.bundles = new BotBundles({
@@ -1168,6 +1173,7 @@ export class ModelRuns {
     )
       throw new Fault('INVALID_CHAT_QUERY', 400);
     if (revision > this.chats.current(bot).revision) throw new Fault('CHAT_NOT_FOUND', 404);
+    this.chats.assertVisible(bot, revision);
     const exact = runId ? await this.journal.read(bot, runId) : undefined;
     const rows = (runId ? (exact ? [exact] : []) : await this.journal.all(bot))
       .filter(
@@ -1674,6 +1680,7 @@ export class ModelRuns {
       : this.chats.assertCurrent(bot, task ? task.chatRevision : this.chats.current(bot).revision);
     // A historical context is explicit; the latest boundary still fences stale and raced sends.
     const chatRevision = task?.contextRevision ?? boundary;
+    if (!scope) this.chats.assertVisible(bot, chatRevision ?? 0);
     if (this.running(bot)) throw new Fault('MODEL_ALREADY_RUNNING');
     if (!this.Harness && !existsSync(this.sdkFile)) throw new Fault('DSH_NOT_INSTALLED', 503);
     const id = `${Date.now()}-${randomBytes(4).toString('hex')}`;

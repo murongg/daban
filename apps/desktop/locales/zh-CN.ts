@@ -1,6 +1,30 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'trash.retry': '重试',
+  'trash.title': '对话回收站',
+  'trash.description': '查看移入回收站的对话，随时恢复。',
+  'trash.retention': '对话会一直保留，恢复后可继续使用。消息、草稿和文件不会被清除。',
+  'trash.empty': '回收站里还没有对话。',
+  'trash.restore': '恢复对话',
+  'trash.moved': '对话已移到回收站',
+  'trash.restored': '对话已恢复',
+  'trash.undo': '撤销',
+  'trash.unavailable': '连接支持回收站的后台后可整理和恢复对话。当前显示本机保留的记录。',
+  'trash.taskRunning': '这段对话还有任务在运行或等待确认，请在任务结束后整理。',
+  'trash.viewTask': '查看任务',
+  'trash.botArchived': '请先恢复这段对话所属的 Bot，再恢复对话。',
+  'trash.otherPending': '请先核对发送或其他操作的结果，并等待附件上传完成。',
+  'trash.pending': '操作结果待核对，记录和草稿已保留。',
+  'trash.changed': '这段对话的状态已更新，请在回收站核对后再操作。',
+  'trash.trashed': '这段对话已移到回收站，恢复后可继续。',
+  'trash.invalidAck': '操作回执未通过校验，请核对操作结果。',
+  'trash.invalidRequest': '对话操作无效，请核对当前状态后重试。',
+
+  'conversations.add': '新增对话',
+  'conversations.actions': '整理对话 {0}',
+  'trash.move': '移到回收站',
+
   'search.duckduckgoOption': 'DuckDuckGo（免 Key）',
   'search.keylessCredential': '免 Key 搜索，无需配置凭据',
   'search.keylessHint':

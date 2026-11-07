@@ -1,4 +1,33 @@
 export const english = {
+  'trash.retry': 'Try again',
+  'trash.title': 'Conversation trash',
+  'trash.description': 'Review conversations in trash and restore them at any time.',
+  'trash.retention':
+    'Conversations stay here until restored. Messages, drafts, and files are retained.',
+  'trash.empty': 'There are no conversations in trash.',
+  'trash.restore': 'Restore conversation',
+  'trash.moved': 'Conversation moved to trash',
+  'trash.restored': 'Conversation restored',
+  'trash.undo': 'Undo',
+  'trash.unavailable':
+    'Connect to a backend that supports conversation trash to organize and restore conversations. Locally retained records are shown.',
+  'trash.taskRunning':
+    'This conversation has a running task or is awaiting confirmation. Organize it after the task ends.',
+  'trash.viewTask': 'View task',
+  'trash.botArchived': 'Restore the Bot before restoring its conversation.',
+  'trash.otherPending':
+    'Verify pending sends or other operations and wait for attachments to finish uploading.',
+  'trash.pending': 'The operation needs verification. Records and drafts have been retained.',
+  'trash.changed': 'The conversation state has changed. Review it in trash before trying again.',
+  'trash.trashed': 'This conversation is in trash. Restore it to continue.',
+  'trash.invalidAck': 'The operation receipt failed validation. Verify the operation result.',
+  'trash.invalidRequest':
+    'The conversation action is invalid. Review its current state and try again.',
+
+  'conversations.add': 'New conversation',
+  'conversations.actions': 'Organize conversation {0}',
+  'trash.move': 'Move to trash',
+
   'search.duckduckgoOption': 'DuckDuckGo (no API key)',
   'search.keylessCredential': 'Keyless search; no credentials needed',
   'search.keylessHint':

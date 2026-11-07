@@ -46,12 +46,19 @@ export * from './work-compat.js';
 import { validAgentId } from './id.js';
 import type { NoteAvailability, NoteCommand } from './notes.js';
 
+export * from './conversations.js';
 export { validAgentId } from './id.js';
 export * from './notes.js';
 export * from './skill-sources.js';
 export * from './skills.js';
 
-export const managedProtocol = 46;
+import {
+  type ConversationRequest,
+  type ConversationState,
+  isConversationState,
+} from './conversations.js';
+
+export const managedProtocol = 47;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1622,6 +1629,7 @@ export function recoveryReader(command: RuntimeCommand) {
     'notes.read',
     'notes.receipt',
     'chat.receipt',
+    'conversation.receipt',
     'chat.history',
     'transcript.statistics',
     'transcript.list',
@@ -1712,6 +1720,7 @@ export interface ChatStatus {
   revision: number;
   items: ChatState[];
   conversations?: ConversationSummary[];
+  lifecycle?: ConversationState[];
   error?: string;
 }
 export interface ConversationSummary {
@@ -2041,7 +2050,7 @@ export function isChatStatus(value: unknown): value is ChatStatus {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['available', 'revision', 'items', 'error', 'conversations'].includes(key),
+      ['available', 'revision', 'items', 'error', 'conversations', 'lifecycle'].includes(key),
     ) &&
     typeof value.available === 'boolean' &&
     Number.isSafeInteger(value.revision) &&
@@ -2050,6 +2059,12 @@ export function isChatStatus(value: unknown): value is ChatStatus {
     value.items.length <= 10000 &&
     value.items.every(isChatState) &&
     new Set(value.items.map((item) => item.bot)).size === value.items.length &&
+    (value.lifecycle === undefined ||
+      (Array.isArray(value.lifecycle) &&
+        value.lifecycle.length <= 10000 &&
+        value.lifecycle.every(isConversationState) &&
+        new Set(value.lifecycle.map((item) => `${item.bot}:${item.revision}`)).size ===
+          value.lifecycle.length)) &&
     (value.conversations === undefined ||
       (Array.isArray(value.conversations) &&
         value.conversations.length <= 1000 &&
@@ -4032,6 +4047,7 @@ export type RuntimeCommand =
   | { type: 'transcript.list'; query: TranscriptQuery }
   | { type: 'transcript.content'; query: TranscriptContentQuery }
   | { type: 'chat.new'; request: ChatRequest }
+  | { type: 'conversation.action' | 'conversation.receipt'; request: ConversationRequest }
   | { type: 'chat.receipt'; bot: string; id: string }
   | { type: 'chat.history'; bot: string; revision: number; before?: string; runId?: string }
   | { type: 'bot.export'; input: BotExportRequest }

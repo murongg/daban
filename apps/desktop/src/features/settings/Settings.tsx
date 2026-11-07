@@ -9,6 +9,7 @@ import {
   Search as SearchIcon,
   Settings2,
   Sun,
+  Trash2,
   Waypoints,
 } from 'lucide-react';
 import { type Dispatch, useState } from 'react';
@@ -19,6 +20,8 @@ import { serialize } from '../../app/storage';
 import { Dialog } from '../../components/controls/Dialog';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
 import { ArchiveList } from '../bots/Archive';
+import { TrashList } from '../chat/ConversationTrash';
+import type { TrashController } from '../chat/useTrash';
 import { Diagnostics } from '../computer/Diagnostics';
 import { RecoveryEntry } from '../computer/Recovery';
 import { download } from '../files/files';
@@ -40,6 +43,7 @@ export function Settings({
   active = true,
   onLifecycle,
   onRecovery,
+  trash,
 }: {
   state: State;
   dispatch: Dispatch<Action>;
@@ -47,6 +51,7 @@ export function Settings({
   active?: boolean;
   onLifecycle?: (bot: string) => unknown;
   onRecovery?: () => unknown;
+  trash?: TrashController;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -240,6 +245,17 @@ export function Settings({
       description: t('settings.viewArchivedBotsGroupsRestoreThemWhen'),
       content: <ArchiveList state={state} dispatch={dispatch} onAction={onLifecycle} />,
     },
+    ...(trash
+      ? [
+          {
+            id: 'trash',
+            label: t('trash.title'),
+            icon: Trash2,
+            description: t('trash.description'),
+            content: <TrashList state={state} trash={trash} onLifecycle={onLifecycle} />,
+          },
+        ]
+      : []),
     {
       id: 'data',
       label: t('settings.dataStorage'),

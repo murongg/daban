@@ -10,6 +10,8 @@ import {
   type ChatRequest,
   type ChatState,
   type ChatStatus,
+  type ConversationRequest,
+  type ConversationState,
   type Group,
   type GroupActionRequest,
   type GroupCopyRequest,
@@ -40,10 +42,12 @@ import {
   type ConversationDraft,
   conversationEditor,
   conversationKey,
+  conversationState,
   saveConversationEditor,
   selectConversation,
   selectedConversation,
 } from '../features/chat/conversations';
+import { reduceTrash, type TrashAction } from '../features/chat/trash';
 import { taskFile } from '../features/files/files';
 import { type NotesAction, type NotesState, reduceNotes } from '../features/notes/notes-state';
 import {
@@ -225,6 +229,8 @@ export interface QueuedTask {
   verify?: QueuedInsertTarget;
 }
 export interface State {
+  conversationStates?: Record<string, ConversationState>;
+  conversationRequests?: Record<string, ConversationRequest>;
   conversationSelections?: Record<string, number>;
   conversationDrafts?: Record<string, ConversationDraft>;
   conversationModels?: Record<string, ModelId>;
@@ -337,6 +343,7 @@ export function lifecycleRequest(
   };
 }
 export type Action =
+  | TrashAction
   | CommentAction
   | NotesAction
   | WorkAction
@@ -424,6 +431,8 @@ export function initialState(): State {
     conversationDrafts: {},
     conversationModels: {},
     conversationTitles: {},
+    conversationStates: {},
+    conversationRequests: {},
     sampleRevision: 2,
     organization: organization(),
     lifecycleRequests: {},
@@ -558,9 +567,28 @@ export function reduce(state: State, action: Action): State {
         ? { ...state, chatStates, ...(action.keepSelection ? { conversationSelections } : {}) }
         : state;
     }
+    case 'conversation-pending':
+    case 'conversation-clear':
+      return reduceTrash(state, action);
+    case 'conversation-sync':
+    case 'conversation-result': {
+      const chats = action.type === 'conversation-result' ? [action.ack.chat] : action.chats;
+      // The first authoritative boundary must still preserve the editor that was open at revision zero.
+      const pinned = { ...state, conversationSelections: { ...state.conversationSelections } };
+      for (const chat of chats) {
+        const bot = state.bots.find((bot) => !bot.members && agentId(bot.id) === chat.bot);
+        if (bot && !Object.hasOwn(pinned.conversationSelections, bot.id))
+          pinned.conversationSelections[bot.id] = chatRevision(state, bot.id);
+      }
+      return reduceTrash(
+        reduce(pinned, { type: 'chats', items: chats, keepSelection: true }),
+        action,
+      );
+    }
     case 'chat-select': {
       // Cached conversations remain readable offline; sending still requires the authoritative backend boundary.
       if (
+        conversationState(state, action.bot, action.revision)?.trashed ||
         !Number.isSafeInteger(action.revision) ||
         action.revision < 0 ||
         (action.revision > chatBoundary(state, action.bot) &&

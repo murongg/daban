@@ -21,6 +21,7 @@ export function ChatHistory({
   initialRevision,
   runId,
   onContinue,
+  trashedRevisions = [],
 }: {
   bot: Bot;
   revision: number;
@@ -32,6 +33,7 @@ export function ChatHistory({
   initialRevision?: number;
   runId?: string;
   onContinue?: (revision: number) => unknown;
+  trashedRevisions?: number[];
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -46,6 +48,7 @@ export function ChatHistory({
     working = useRef(false),
     epoch = useRef(0);
   const selected = Number(number) - 1;
+  const trashed = trashedRevisions.includes(selected);
   const local =
     page && !runId
       ? cached.filter(
@@ -64,7 +67,7 @@ export function ChatHistory({
     [runtime.command],
   );
   async function read(before?: string) {
-    if (working.current || !available || !valid) return;
+    if (working.current || !available || !valid || trashed) return;
     const ticket = epoch.current;
     working.current = true;
     setBusy(true);
@@ -139,7 +142,11 @@ export function ChatHistory({
               max={Math.max(1, revision)}
               disabled={busy}
             />
-            <button type="submit" className="secondary" disabled={busy || !available || !valid}>
+            <button
+              type="submit"
+              className="secondary"
+              disabled={busy || !available || !valid || trashed}
+            >
               {t('chathistory.loadRecords')}
             </button>
           </div>
@@ -151,6 +158,11 @@ export function ChatHistory({
         </p>
       )}
       {!revision && <p className="inline-note">{t('chathistory.noEarlierConversationsYet')}</p>}
+      {trashed && (
+        <p className="inline-note" role="status">
+          {t('trash.trashed')}
+        </p>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -161,7 +173,7 @@ export function ChatHistory({
           {t('common.loading')}
         </p>
       )}
-      {page && (
+      {page && !trashed && !trashedRevisions.includes(page.revision) && (
         <section aria-label={t('chathistory.conversationHistory', { 0: page.revision + 1 })}>
           {!!local.length && (
             <details

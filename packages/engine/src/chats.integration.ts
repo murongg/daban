@@ -75,7 +75,7 @@ test('personal conversation boundaries and receipt/history reads require authent
     );
     assert.equal(olderState.chats.conversations, undefined);
     const modernState = await (
-      await fetch(app.url + '/api/state', {
+      await fetch(`${app.url}/api/state`, {
         headers: {
           'x-prototype-token': app.token,
           'x-daban-client-protocol': String(managedProtocol),
@@ -87,6 +87,42 @@ test('personal conversation boundaries and receipt/history reads require authent
       'chat',
     );
     assert.deepEqual(modernState.chats.conversations, []);
+    const trash = {
+      id: 'mock-api-trash',
+      bot,
+      revision: 0,
+      version: 0,
+      action: 'trash',
+      title: 'SYNTHETIC API TOPIC',
+    };
+    assert.equal((await call('/api/chats/action', trash, false)).status, 403);
+    assert.equal((await call('/api/chats/action', { ...trash, unknown: true })).status, 400);
+    const deleted = await call('/api/chats/action', trash);
+    assert.equal(deleted.status, 200);
+    const ack = await deleted.json();
+    assert.equal(ack.conversation.trashed, true);
+    assert.deepEqual(await (await call('/api/chats/action-receipt', trash)).json(), ack);
+    assert.equal((await call('/api/chats/history', { bot, revision: 0 })).status, 409);
+    assert.equal((await (await call('/api/state')).json()).chats.lifecycle, undefined);
+    const lifecycleState = await (
+      await fetch(`${app.url}/api/state`, {
+        headers: {
+          'x-prototype-token': app.token,
+          'x-daban-client-protocol': String(managedProtocol),
+        },
+      })
+    ).json();
+    assert.equal(lifecycleState.chats.lifecycle[0].trashed, true);
+    const restored = await (
+      await call('/api/chats/action', {
+        ...trash,
+        id: 'mock-api-restore',
+        action: 'restore',
+        version: 1,
+      })
+    ).json();
+    assert.equal(restored.conversation.trashed, false);
+    assert.equal((await call('/api/chats/history', { bot, revision: 0 })).status, 200);
   } finally {
     await app.close();
     await rm(root, { recursive: true, force: true });

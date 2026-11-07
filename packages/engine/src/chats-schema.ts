@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { check, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export const chats = sqliteTable('chats', {
   bot: text().primaryKey(),
@@ -9,6 +9,21 @@ export const chats = sqliteTable('chats', {
 export const chatReceipts = sqliteTable('chat_receipts', {
   id: text().primaryKey(),
   bot: text().notNull(),
+  value: text().notNull(),
+});
+
+export const conversationStates = sqliteTable(
+  'conversation_states',
+  {
+    bot: text().notNull(),
+    revision: integer().notNull(),
+    value: text().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.bot, table.revision] })],
+);
+
+export const conversationReceipts = sqliteTable('conversation_receipts', {
+  id: text().primaryKey(),
   value: text().notNull(),
 });
 

@@ -17,6 +17,7 @@ import {
   isBrowserInput,
   isChatRequest,
   isComputerRequest,
+  isConversationRequest,
   isDocumentUpload,
   isGroupActionRequest,
   isGroupCopyRequest,
@@ -137,6 +138,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
     'group.send': ['type', 'input'],
     'group.cancel': ['type', 'group', 'sourceId'],
     'chat.new': ['type', 'request'],
+    'conversation.action': ['type', 'request'],
+    'conversation.receipt': ['type', 'request'],
     'chat.receipt': ['type', 'bot', 'id'],
     'chat.history': ['type', 'bot', 'revision', 'before', 'runId'],
     'transcript.statistics': ['type', 'query'],
@@ -273,6 +276,11 @@ export function parseCommand(value: unknown): RuntimeCommand {
   if ((v.type === 'work.write' || v.type === 'work.receipt') && !isWorkWrite(v.request))
     return fail();
   if (v.type === 'chat.new' && !isChatRequest(v.request)) return fail();
+  if (
+    (v.type === 'conversation.action' || v.type === 'conversation.receipt') &&
+    !isConversationRequest(v.request)
+  )
+    return fail();
   if (
     (v.type === 'transcript.list' || v.type === 'transcript.statistics') &&
     !isTranscriptQuery(v.query)

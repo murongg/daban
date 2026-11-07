@@ -23,6 +23,7 @@ import {
   isBrowserInput,
   isChatRequest,
   isComputerRequest,
+  isConversationRequest,
   isDocumentUpload,
   isExecutionSnapshot,
   isGroupCopyRequest,
@@ -108,6 +109,26 @@ async function groupStatus(groups: Groups | undefined, modern: boolean) {
     ? status
     : { ...status, items: status.items.filter((group) => !group.archived).map(legacyGroup) };
 }
+
+async function chatStatus(models: ModelRuns, conversationAware: boolean, trashAware: boolean) {
+  const status = await models.chats.status();
+  if (!status.available) return status;
+  const { lifecycle = [], ...legacy } = status;
+  const trashed = new Set(
+    lifecycle.filter((item) => item.trashed).map((item) => `${item.bot}:${item.revision}`),
+  );
+  return {
+    ...legacy,
+    ...(conversationAware
+      ? {
+          conversations: models.journal
+            .conversations()
+            .filter((item) => !trashed.has(`${item.bot}:${item.revision}`)),
+        }
+      : {}),
+    ...(trashAware ? { lifecycle } : {}),
+  };
+}
 async function noticeStatus(
   models: ModelRuns | undefined,
   groups: Groups | undefined,
@@ -141,6 +162,7 @@ const recoveryReads = new Set([
   '/api/groups/input',
   '/api/groups/action-receipt',
   '/api/chats/receipt',
+  '/api/chats/action-receipt',
   '/api/chats/history',
   '/api/transcripts/statistics',
   '/api/transcripts/list',
@@ -608,6 +630,7 @@ export async function startPrototype({
           groupVersion <= managedProtocol;
         const coordinatedWork = groupVersion >= 39 && groupVersion <= managedProtocol;
         const conversationAware = groupVersion >= 46 && groupVersion <= managedProtocol;
+        const trashAware = groupVersion >= 47 && groupVersion <= managedProtocol;
         const mcp = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]{1,80})$/);
         if (mcp) {
           if (recovery && !recovery.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -1129,6 +1152,18 @@ export async function startPrototype({
           if (url.pathname.startsWith('/api/chats/') && req.method === 'POST') {
             if (!models) throw new Fault('CHAT_UNAVAILABLE', 503);
             const data = await body(req);
+            if (
+              url.pathname === '/api/chats/action' ||
+              url.pathname === '/api/chats/action-receipt'
+            ) {
+              if (!isConversationRequest(data))
+                throw new Fault('INVALID_CONVERSATION_REQUEST', 400);
+              if (url.pathname === '/api/chats/action-receipt')
+                return json(res, await models.chats.actionReceipt(data));
+              if (!(await models.profiles.get(data.bot)))
+                throw new Fault('BOT_PROFILE_NOT_FOUND', 404);
+              return json(res, await models.chats.action(data));
+            }
             if (url.pathname === '/api/chats/new') {
               if (!isChatRequest(data)) throw new Fault('INVALID_CHAT_REQUEST', 400);
               if (!(await models.profiles.get(data.bot)))
@@ -1564,10 +1599,7 @@ export async function startPrototype({
               ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
               notices: await noticeStatus(models, groups),
               chats: models
-                ? {
-                    ...(await models.chats.status()),
-                    ...(conversationAware ? { conversations: models.journal.conversations() } : {}),
-                  }
+                ? await chatStatus(models, conversationAware, trashAware)
                 : { available: false, revision: 0, items: [], error: 'CHAT_UNAVAILABLE' },
               ...(recovery ? { recovery: recovery.status() } : {}),
               mcp: models

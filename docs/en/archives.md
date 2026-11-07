@@ -8,7 +8,7 @@ Archiving puts an item aside and prevents new work through it. Manage archived i
 
 1. Finish active tasks and relevant unfinished collaboration.
 2. Save desktop application content and stop that Bot's computer.
-3. Open the Bot profile, choose archive, review the impact, and confirm.
+3. Choose **Archive Bot** from the Bot row menu or open the Bot profile, review the impact, and confirm.
 4. Verify the archived state and inspect history when needed.
 
 Archiving retains conversations, drafts, and related material rather than permanently deleting them. Automation is affected; review and manually re-enable it after restoration. Restoration does not renew old native desktop or external-tool authority automatically.
@@ -26,6 +26,8 @@ Select an archived Bot or group to restore it. For uncertain operations, verify 
 Review the current profile if another window changed it. Do not force an old archive result over a newer state.
 
 ## Different from feature-specific trash
+
+Conversations have their own **Settings → Conversation trash** with undo and restoration; see [Conversations](conversations.md).
 
 Knowledge, skills, notes, tasks, attachments, and external connections have their own trash or archive controls. They are not all managed on this page; follow their individual restoration and permission rules.
 

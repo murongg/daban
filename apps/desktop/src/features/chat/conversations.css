@@ -20,10 +20,10 @@
   color: var(--ink);
   text-align: left;
 }
-.recent-conversation:hover {
+.recent-entry:hover {
   background: var(--hover);
 }
-.recent-conversation.selected {
+.recent-entry.selected {
   background: var(--selected);
 }
 .recent-conversation > svg {
@@ -61,4 +61,29 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recent-entry {
+  display: flex;
+  align-items: center;
+  border-radius: 12px;
+}
+.recent-entry .recent-conversation {
+  min-width: 0;
+  flex: 1;
+}
+.recent-menu {
+  margin-right: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+}
+.recent-entry:hover .recent-menu,
+.recent-entry:focus-within .recent-menu,
+.recent-menu[aria-expanded="true"] {
+  opacity: 1;
+}
+@media (hover: none) {
+  .recent-menu {
+    opacity: 1;
+  }
 }

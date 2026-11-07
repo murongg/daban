@@ -28,6 +28,7 @@ import {
   isChatStatus,
   isComputerAck,
   isComputerStatus,
+  isConversationAck,
   isDiagnosticReport,
   isDocumentOriginal,
   isGoalProgress,
@@ -110,6 +111,7 @@ import {
   type RuntimeSnapshot,
   type RuntimeTask,
   recoveryBlocked,
+  sameConversationRequest,
   sameTranscriptScope,
   unavailableLocalComputer,
   validAgentId,
@@ -1038,6 +1040,21 @@ export class RuntimeClient {
         value.offset !== (command.query.offset ?? 0)
       )
         throw new Error('INVALID_TRANSCRIPT_CONTENT');
+      return value;
+    }
+    if (command.type === 'conversation.action' || command.type === 'conversation.receipt') {
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.protocolVersion < 47) throw new Error('RUNTIME_TOO_OLD');
+      const value = await this.api(
+        command.type === 'conversation.action' ? '/api/chats/action' : '/api/chats/action-receipt',
+        command.request,
+      );
+      if (
+        !isConversationAck(value) ||
+        !sameConversationRequest(value.receipt.request, command.request)
+      )
+        throw new Error('INVALID_CONVERSATION_ACK');
       return value;
     }
     if (

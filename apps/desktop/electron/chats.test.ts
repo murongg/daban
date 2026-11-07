@@ -1,7 +1,40 @@
-import { isBotProfileInput, isChatAck, isChatPage, recoveryReader } from '@daban/protocol';
+import {
+  isBotProfileInput,
+  isChatAck,
+  isChatPage,
+  isConversationAck,
+  recoveryReader,
+} from '@daban/protocol';
 import { expect, it } from 'vitest';
 import { parseCommand } from './ipc';
 import { RuntimeClient } from './runtime';
+
+it('validates conversation trash commands and allows only exact receipt inspection during recovery', () => {
+  const request = {
+    id: 'mock-trash-ipc',
+    bot: 'mock-alpha',
+    revision: 0,
+    version: 0,
+    action: 'trash',
+    title: 'SYNTHETIC TOPIC',
+  };
+  expect(parseCommand({ type: 'conversation.action', request })).toEqual({
+    type: 'conversation.action',
+    request,
+  });
+  expect(recoveryReader(parseCommand({ type: 'conversation.receipt', request }))).toBe(true);
+  expect(recoveryReader(parseCommand({ type: 'conversation.action', request }))).toBe(false);
+  for (const patch of [
+    { version: -1 },
+    { revision: 1.5 },
+    { action: 'delete' },
+    { extra: true },
+    { title: 'x'.repeat(121) },
+  ])
+    expect(() =>
+      parseCommand({ type: 'conversation.action', request: { ...request, ...patch } }),
+    ).toThrow('INVALID_COMMAND');
+});
 
 it('accepts classified ordinary conversations and requires a current boundary for explicit historical continuation', () => {
   expect(
@@ -197,6 +230,91 @@ it('strictly binds private conversation commands and validates history and ackno
   version = 46;
   result = { ...(result as object), requestId: 'mock-accepted' };
   expect(await client.invoke(continued)).toMatchObject({ chatRevision: 0 });
+  version = 47;
+  const action = parseCommand({
+    type: 'conversation.action',
+    request: {
+      title: 'SYNTHETIC TOPIC',
+      action: 'trash',
+      version: 0,
+      revision: 0,
+      bot: request.bot,
+      id: 'mock-ui-order',
+    },
+  });
+  result = {
+    chat: ack.chat,
+    conversation: {
+      bot: request.bot,
+      revision: 0,
+      version: 1,
+      trashed: true,
+      title: 'SYNTHETIC TOPIC',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+    receipt: {
+      request: {
+        id: 'mock-ui-order',
+        bot: request.bot,
+        revision: 0,
+        version: 0,
+        action: 'trash',
+        title: 'SYNTHETIC TOPIC',
+      },
+      version: 1,
+      completedAt: '2026-01-01T00:00:00Z',
+    },
+  };
+  expect(await client.invoke(action)).toEqual(result);
+  result = {
+    runId: 'mock-accepted-run',
+    requestId: 'mock-accepted',
+    prompt: 'SYNTHETIC OLD',
+    phase: 'completed',
+    running: false,
+    chatRevision: 0,
+    result: 'SYNTHETIC DONE',
+    error: '',
+    files: [],
+  };
+
   result = { ...(result as object), chatRevision: 2 };
   await expect(client.invoke(continued)).rejects.toThrow('INVALID_TASK_ACK');
+});
+
+it('rejects a receipt whose matching lifecycle version contradicts its action', () => {
+  const request = {
+    id: 'mock-invariant',
+    bot: 'mock-alpha',
+    revision: 0,
+    version: 0,
+    action: 'trash',
+    title: 'SYNTHETIC TOPIC',
+  };
+  const at = '2026-01-01T00:00:00Z';
+  const ack = {
+    chat: { bot: request.bot, revision: 1, updatedAt: at },
+    conversation: {
+      bot: request.bot,
+      revision: 0,
+      version: 1,
+      trashed: true,
+      title: request.title,
+      updatedAt: at,
+    },
+    receipt: { request, version: 1, completedAt: at },
+  };
+  expect(isConversationAck(ack)).toBe(true);
+  expect(isConversationAck({ ...ack, conversation: { ...ack.conversation, trashed: false } })).toBe(
+    false,
+  );
+  expect(
+    isConversationAck({ ...ack, conversation: { ...ack.conversation, title: 'SYNTHETIC OTHER' } }),
+  ).toBe(false);
+  expect(
+    isConversationAck({
+      ...ack,
+      conversation: { ...ack.conversation, version: 2, trashed: false },
+    }),
+  ).toBe(true);
 });

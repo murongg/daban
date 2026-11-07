@@ -13,4 +13,14 @@ export const migrations: Migration[] = [
     hash: 'e70981e1ab2d23cc205775648156f35ab8ed55168a9114332067634290e1378b',
     name: '20261103130159_baseline',
   },
+  {
+    sql: [
+      'CREATE TABLE `conversation_receipts` (\n\t`id` text PRIMARY KEY,\n\t`value` text NOT NULL\n);\n',
+      '\nCREATE TABLE `conversation_states` (\n\t`bot` text NOT NULL,\n\t`revision` integer NOT NULL,\n\t`value` text NOT NULL,\n\tCONSTRAINT `conversation_states_pk` PRIMARY KEY(`bot`, `revision`)\n);\n',
+    ],
+    bps: true,
+    folderMillis: 1794015654000,
+    hash: '3ef9e235e1d3b40c516bf626bd3998a1aa40955a7d4f846640d1c44c0520cd1f',
+    name: '20261107014054_conversation-trash',
+  },
 ];
