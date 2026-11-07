@@ -1,5 +1,6 @@
 import type { RuntimeBridge, RuntimeSnapshot } from '@daban/protocol';
 import { contextBridge, ipcRenderer } from 'electron';
+import type { BrowserBridge } from '../shared/browser';
 import type { LocaleBridge } from '../shared/locale';
 import { isNoticeMessage, type NoticeBridge } from '../shared/notifications';
 import { isUpdateMessage, type UpdateBridge } from '../shared/updates';
@@ -28,6 +29,9 @@ const titlebar = {
   setTheme: (theme: 'light' | 'dark'): Promise<boolean> =>
     ipcRenderer.invoke('daban:titlebar-theme', theme),
 };
+const browser: BrowserBridge = {
+  invoke: (command) => ipcRenderer.invoke('daban:browser', command),
+};
 const updates: UpdateBridge = {
   invoke: (command) => ipcRenderer.invoke('daban:updates', command),
   subscribe(callback) {
@@ -40,5 +44,13 @@ const updates: UpdateBridge = {
 };
 contextBridge.exposeInMainWorld(
   'daban',
-  Object.freeze({ platform: process.platform, runtime, notifications, locale, updates, titlebar }),
+  Object.freeze({
+    platform: process.platform,
+    runtime,
+    notifications,
+    locale,
+    updates,
+    titlebar,
+    browser,
+  }),
 );

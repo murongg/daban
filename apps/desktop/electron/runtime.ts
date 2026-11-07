@@ -36,6 +36,7 @@ import {
   isGroupActionAck,
   isGroupCopyReceipt,
   isGroupPage,
+  isHostBrowserStatus,
   isInteraction,
   isKnowledgeDocument,
   isKnowledgeFile,
@@ -389,6 +390,7 @@ export class RuntimeClient {
         botCapabilities?: unknown;
         searchSettings?: unknown;
         localComputer?: unknown;
+        hostBrowser?: unknown;
         chats?: unknown;
         notices?: unknown;
         recovery?: unknown;
@@ -503,6 +505,10 @@ export class RuntimeClient {
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer
           : unavailableLocalComputer('LOCAL_INVALID_STATUS');
+      if (this.agent && raw.hostBrowser !== undefined)
+        snapshot.hostBrowser = isHostBrowserStatus(raw.hostBrowser)
+          ? raw.hostBrowser
+          : { available: false, connections: [], error: 'HOST_BROWSER_INVALID_STATUS' };
       if (this.agent) {
         if (
           raw.agent &&
@@ -1431,6 +1437,74 @@ export class RuntimeClient {
         result.receipt.id !== expected.id ||
         result.receipt.bot !== expected.bot ||
         result.state.bot !== expected.bot
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return result;
+    }
+    if (command.type === 'hostBrowser') {
+      const current = await this.status();
+      if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!this.agent || !current.hostBrowser?.available)
+        throw new Error('HOST_BROWSER_UNAVAILABLE');
+      const request = command.request;
+      const result = await this.api('/api/host-browser', request);
+      if (request.action === 'open' || request.action === 'close') {
+        if (
+          !isHostBrowserStatus(result) ||
+          !result.available ||
+          (request.action === 'open'
+            ? !result.connections.some((item) => item.bot === request.bot)
+            : result.connections.some((item) => item.bot === request.bot))
+        )
+          throw new Error('HOST_BROWSER_INVALID_STATUS');
+      } else if (request.action === 'state') {
+        if (!isBrowserState(result) || result.bot !== request.bot)
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (request.action === 'view') {
+        if (!isBrowserView(result) || result.bot !== request.bot)
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (request.action === 'target') {
+        if (
+          !result ||
+          typeof result !== 'object' ||
+          Object.keys(result).length !== 1 ||
+          !('target' in result) ||
+          typeof result.target !== 'string' ||
+          !/^[a-zA-Z0-9_-]{1,128}$/.test(result.target)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (request.action === 'command' || request.action === 'answer') {
+        const instance =
+          request.action === 'command'
+            ? request.request.instance
+            : request.request.binding.instance;
+        if (
+          !isBrowserAck(result) ||
+          result.id !== request.request.id ||
+          result.state.bot !== request.bot ||
+          result.state.instance !== instance
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (request.action === 'receipt') {
+        if (!isBrowserReceipt(result) || result.id !== request.id || result.bot !== request.bot)
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (request.action === 'control') {
+        if (
+          !result ||
+          typeof result !== 'object' ||
+          Object.keys(result).some((key) => !['owner', 'epoch'].includes(key)) ||
+          !('owner' in result) ||
+          result.owner !== request.owner ||
+          !('epoch' in result) ||
+          result.epoch !== request.epoch + 1
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (
+        !result ||
+        typeof result !== 'object' ||
+        Object.keys(result).some((key) => key !== 'ok') ||
+        !('ok' in result) ||
+        result.ok !== true
       )
         throw new Error('INVALID_RUNTIME_STATE');
       return result;

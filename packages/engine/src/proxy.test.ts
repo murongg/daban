@@ -40,6 +40,20 @@ const close = (server: Server) =>
     server.close(() => resolve(undefined));
   });
 
+test('a standalone host proxy has no loopback fixture exception', async () => {
+  const proxy = await createProxy({});
+  try {
+    for (const url of [
+      'http://127.0.0.1:8766/fixture/page',
+      'http://localhost:8766/fixture/page',
+      'http://192.168.1.2/fixture/page',
+    ])
+      expect((await get(proxy.url, url)).status).toBe(403);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test('browser proxy recognizes public addresses without accepting private, mapped or transition destinations', async () => {
   for (const value of ['93.184.216.34', '1.1.1.1', '2606:4700:4700::1111', '2400:3200::1'])
     expect(publicAddress(value), value).toBe(true);

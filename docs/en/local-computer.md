@@ -8,7 +8,7 @@ Native mode controls your real primary display and applications available to the
 
 1. Select an image-capable model for the Bot and let its current task finish.
 2. Open the computer panel and select the native Mac or Windows mode.
-3. On macOS, use the system-permissions entry to grant screen recording and accessibility access. OS permissions and the Bot's temporary control authorization are separate.
+3. On macOS, follow the two-step guide: choose **Enable Accessibility**, then **Enable screen recording**, and enable each permission for the current Daban app in System Settings. Daban checks permissions when you return; you can also choose **Check permissions again**. Reopen the app if macOS asks you to. OS permissions and the Bot's temporary control authorization are separate.
 4. Connect and review the Bot, provider, and model in the consent dialog. Authorization allows observing the primary display, sending screen images to that model service, and using keyboard and mouse input.
 5. Specify the application and task. Keep the computer unlocked and awake.
 

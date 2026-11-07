@@ -672,6 +672,7 @@ interface SearchExecution {
   result: Promise<{ accepted: true; searchReceipt?: { claimId: string } }>;
 }
 interface ModelOptions {
+  hostBrowser?: ComputerFacade;
   search?: SearchSettings;
   nativeOnly?: boolean;
   localComputer?: LocalComputerClient;
@@ -757,6 +758,7 @@ export class ModelRuns {
     documents,
     localComputer,
     nativeOnly,
+    hostBrowser,
   }: ModelOptions) {
     this.runtime = runtime;
     this.settings = settings;
@@ -788,7 +790,7 @@ export class ModelRuns {
                 runtime?.screens.screen('a').workspace ||
                 path.resolve(dir, '../workspace'),
             );
-    this.tools = new AgentTools(computer, this.workspace, { execution, nativeOnly });
+    this.tools = new AgentTools(computer, this.workspace, { execution, nativeOnly, hostBrowser });
     this.tools.localComputer = localComputer;
     if (localComputer)
       localComputer.modelRevision = async () => (await this.settings.status()).revision ?? 0;
@@ -1857,6 +1859,16 @@ export class ModelRuns {
       job.abort.signal.throwIfAborted();
       await inputDirectory.verify();
       await this.tools.open(job);
+      if (this.tools.hostSelected(job.bot, job))
+        // Browser file and vision tools change the SDK catalog; never resume a context with obsolete permissions.
+        job.binding = createHash('sha256')
+          .update(
+            `${job.binding}:host-browser-v3:${this.tools
+              .list(job.bot, job.model, job.conversationId, job)
+              .map((tool) => tool.name)
+              .join(',')}`,
+          )
+          .digest('hex');
       // A Mac grant and a VM connection must never resume each other's native SDK tool context.
       // Transport binding must retain the search and approval identities captured above.
       if (this.tools.localSelected(job.bot, job))

@@ -38,7 +38,9 @@ function setup(view: (bot: string) => Promise<BrowserView>) {
         ? snapshot
         : command.type === 'browser.view'
           ? await view(command.bot)
-          : { ok: true },
+          : command.type === 'hostBrowser' && command.request.action === 'view'
+            ? await view(command.request.bot)
+            : { ok: true },
   }));
   Object.defineProperty(window, 'daban', {
     configurable: true,
@@ -172,6 +174,29 @@ it('keeps expanded remote-screen Escape routing distinct from ordinary modal dis
   expect(close).not.toHaveBeenCalled();
   fireEvent.keyDown(surface, { key: 'Escape' });
   const field = screen.getByRole('textbox', { name: '发送文字到浏览器' });
+  expect(field).toHaveFocus();
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.keyDown(field, { key: 'Escape' });
+  expect(close).toHaveBeenCalledTimes(1);
+});
+
+it('opens the compact host text input on Escape before allowing the modal to close', async () => {
+  setup(async (bot) => image(bot));
+  const close = vi.fn();
+  render(
+    <RuntimeProvider>
+      <Dialog title="合成浏览器窗口" onClose={close}>
+        <LiveBrowser {...props} host />
+      </Dialog>
+    </RuntimeProvider>,
+  );
+  const picture = await screen.findByRole('img', { name: '合成 A的浏览器' });
+  fireEvent.load(picture);
+  const surface = screen.getByRole('application');
+  surface.focus();
+  fireEvent.keyDown(surface, { key: 'Escape' });
+  const field = screen.getByRole('textbox', { name: '发送文字到浏览器' });
+  expect(field.closest('details')).toHaveAttribute('open');
   expect(field).toHaveFocus();
   expect(close).not.toHaveBeenCalled();
   fireEvent.keyDown(field, { key: 'Escape' });

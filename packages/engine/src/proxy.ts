@@ -16,7 +16,7 @@ import { dialAddress, resolvePublic } from './network.js';
 export { publicAddress } from './network.js';
 
 export interface ProxyOptions {
-  fixtureOrigin: string;
+  fixtureOrigin?: string;
   upstream?: string;
   resolve?: (host: string, options: { all: true; order: 'verbatim' }) => Promise<LookupAddress[]>;
   dial?: (address: string, port: number, signal: AbortSignal) => Promise<Duplex>;
@@ -27,20 +27,21 @@ export class PublicProxy {
   readonly server = createServer();
   private readonly sockets = new Set<Duplex>();
   private readonly pending = new Set<AbortController>();
-  private readonly fixture: URL;
+  private readonly fixture?: URL;
   private readonly upstream?: URL;
   private closed = false;
   url = '';
   constructor(private readonly options: ProxyOptions) {
-    this.fixture = new URL(options.fixtureOrigin);
+    this.fixture = options.fixtureOrigin ? new URL(options.fixtureOrigin) : undefined;
     if (
-      this.fixture.protocol !== 'http:' ||
-      this.fixture.hostname !== '127.0.0.1' ||
-      this.fixture.username ||
-      this.fixture.password ||
-      this.fixture.pathname !== '/' ||
-      this.fixture.search ||
-      this.fixture.hash
+      this.fixture &&
+      (this.fixture.protocol !== 'http:' ||
+        this.fixture.hostname !== '127.0.0.1' ||
+        this.fixture.username ||
+        this.fixture.password ||
+        this.fixture.pathname !== '/' ||
+        this.fixture.search ||
+        this.fixture.hash)
     )
       throw denied();
     if (options.upstream) {
@@ -110,7 +111,10 @@ export class PublicProxy {
     const host = hostname(url),
       port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
     const fixture =
-      !connectRequest && url.origin === this.fixture.origin && url.pathname.startsWith('/fixture/');
+      !connectRequest &&
+      !!this.fixture &&
+      url.origin === this.fixture.origin &&
+      url.pathname.startsWith('/fixture/');
     if (fixture) return { address: host, port, fixture };
     let addresses: LookupAddress[];
     try {

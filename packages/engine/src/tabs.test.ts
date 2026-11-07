@@ -23,6 +23,7 @@ test('cancelling a blocked read releases the lease and a late password query can
     frames: () => [
       {
         locator: () => ({
+          count: async () => 0,
           evaluateAll: () => {
             started();
             return delayed;

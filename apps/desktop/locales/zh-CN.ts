@@ -1,6 +1,40 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'hostBrowser.title': '浏览器',
+  'hostBrowser.nativeLoading': '正在打开网页…',
+  'hostBrowser.nativeUnavailable': '网页暂时无法显示，请重试或重新打开浏览器。',
+  'hostBrowser.retry': '重试',
+  'hostBrowser.verificationHelp':
+    '可直接操作网页。遇到登录或验证码请自行填写，完成后再交还给 Bot。',
+  'hostBrowser.description':
+    '直接在搭伴内浏览网页，无需 Linux 或本机屏幕权限。需要时交给 Bot 操作。',
+  'hostBrowser.startTitle': '打开网页，随时让 Bot 帮忙',
+  'hostBrowser.signInHelp':
+    '打开后可直接浏览、登录和填写验证码。需要 Bot 操作时，再交还控制。登录保存在本机，各 Bot 共用登录、分别管理标签。',
+  'hostBrowser.consent':
+    '交还后，Bot 可使用此浏览器中的账号和页面，并按任务上传、下载工作区文件。页面及读取的文件内容会发送给所选模型。此浏览器与个人 Chrome 分开。',
+  'hostBrowser.open': '打开浏览器',
+  'hostBrowser.openPanel': '打开浏览器面板',
+  'hostBrowser.navigation': '浏览器导航',
+  'hostBrowser.handBackShort': '交还',
+  'hostBrowser.takeOverShort': '接管',
+  'hostBrowser.humanShort': '由你控制',
+  'hostBrowser.profileLabel': '独立配置 · 登录保存在本机',
+  'hostBrowser.about': '使用说明',
+  'hostBrowser.textInput': '文字输入',
+  'hostBrowser.consentBrief': '交还后，Bot 可使用登录账号，页面内容会发送给所选模型。',
+  'hostBrowser.takeOver': '接管浏览器',
+  'hostBrowser.disconnect': '断开浏览器',
+  'hostBrowser.connected': 'Bot 可操作浏览器',
+  'hostBrowser.humanControl': '由你控制，Bot 等待交还',
+  'hostBrowser.handbackHelp':
+    '完成登录或验证码后交还给 Bot。关掉面板不会断开浏览器；断开会关闭这位 Bot 的标签并保留登录。',
+  'hostBrowser.startFailed':
+    '浏览器未能启动。请重新打开搭伴后重试；独立后台模式需安装 Chrome、Edge 或 Chromium。',
+  'hostBrowser.disconnected': '浏览器已断开。重新打开后核对页面，再继续任务。',
+  'hostBrowser.unavailable': '浏览器能力暂不可用，请更新或重新连接后台。',
+  'hostBrowser.switchFirst': '请先在浏览器面板断开连接，再授权本机桌面。',
   'trash.retry': '重试',
   'trash.title': '对话回收站',
   'trash.description': '查看移入回收站的对话，随时恢复。',
@@ -1991,6 +2025,23 @@ export const chinese = {
   'localComputer.screenPermission': '屏幕录制',
   'localComputer.inputPermission': '辅助功能',
   'localComputer.permissions': '设置权限',
+  'localComputer.permissionsTitle': '设置本机权限',
+  'localComputer.permissionsIntro': '完成以下两项设置，让 Bot 观察屏幕并操作当前登录的应用。',
+  'localComputer.inputPurpose': '允许 Daban 点击和输入，用于操作浏览器及其他应用。',
+  'localComputer.screenPurpose': '允许 Daban 观察主显示器，让 Bot 根据实际画面操作。',
+  'localComputer.permissionAllowed': '已允许',
+  'localComputer.permissionMissing': '未开启',
+  'localComputer.enableInput': '开启辅助功能',
+  'localComputer.enableScreen': '开启屏幕录制',
+  'localComputer.checkPermissions': '重新检查权限',
+  'localComputer.permissionsInstructions':
+    '点击下方按钮进入系统设置，在「隐私与安全性」中找到当前使用的 Daban，并打开开关。',
+  'localComputer.permissionsReturn':
+    '返回 Daban 后会自动检测。两项就绪后，点击「连接本机」确认本次 Bot 授权。',
+  'localComputer.permissionsReady': '系统权限已就绪，连接后可授权 Bot 操作本机。',
+  'localComputer.permissionsTrouble': '已开启但仍未检测到？',
+  'localComputer.permissionsRecovery':
+    '如果 macOS 提示退出并重新打开，请按提示重开 Daban。列表中没有当前应用时，点击「+」添加它；更新开发版后仍无效，可移除旧条目再添加当前应用。',
   'localComputer.connect': '连接本机',
   'localComputer.disconnect': '断开本机',
   'localComputer.connected': '本机已连接',
