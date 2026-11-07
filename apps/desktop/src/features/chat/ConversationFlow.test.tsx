@@ -160,13 +160,9 @@ it('opens another local conversation from the header while connecting and retain
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC SECOND DRAFT');
   const recent = screen.getByRole('navigation', { name: '最近对话列表' });
-  await userEvent.click(
-    within(recent).getByRole('button', { name: '新对话', exact: true, current: false }),
-  );
+  await userEvent.click(within(recent).getByRole('button', { name: '新对话', current: false }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC FIRST DRAFT');
-  await userEvent.click(
-    within(recent).getByRole('button', { name: '新对话', exact: true, current: false }),
-  );
+  await userEvent.click(within(recent).getByRole('button', { name: '新对话', current: false }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC SECOND DRAFT');
   expect(
     invoke.mock.calls.some(
