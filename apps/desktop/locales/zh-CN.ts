@@ -3230,6 +3230,9 @@ export const chinese = {
   'apps.connect': '连接 {0}',
   'apps.adminApproval':
     'monday.com 自定义客户端需要管理员批准。请在官方页面完成批准，完成回调前账号不会显示为已授权。',
+  'apps.browserAuthorization': '浏览器授权',
+  'apps.requiresAdmin': '需管理员批准',
+  'apps.unavailable': '暂不可连接',
   'apps.details': '连接详情',
   'apps.restart': '重新发起授权',
   'apps.upgradeRequired': '请更新 Host 后连接这些应用。旧版连接与自定义 Bearer 仍可使用。',
@@ -3268,6 +3271,7 @@ export const chinese = {
   'apps.browserUnavailable': '系统浏览器未能打开。可使用原请求重新打开本次授权。',
   'apps.conflict': '连接或归属已变化。请刷新列表并重新检查。',
   'apps.metadataRejected': '授权服务信息未通过验证，未打开授权页面。',
+  'apps.scopeLabel': '授权范围',
   'apps.scope': '授权范围：{0}',
   'apps.scopeRequired': '服务拒绝了本次权限，请核对账号权限并明确重新授权。',
   'apps.publisher': '发布方：{0}',

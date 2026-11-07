@@ -18,7 +18,10 @@ import { RuntimeProvider } from '../../app/Runtime';
 import { AppCatalog } from './AppCatalog';
 import { Integrations } from './Integrations';
 
-afterEach(() => Reflect.deleteProperty(window, 'daban'));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  Reflect.deleteProperty(window, 'daban');
+});
 function fixture({ native = true, connected = false, failure = '' } = {}) {
   const commands: RuntimeCommand[] = [];
   const snapshot = disconnected('ready');
@@ -174,12 +177,12 @@ function fixture({ native = true, connected = false, failure = '' } = {}) {
     },
   };
 }
-function show(f: ReturnType<typeof fixture>) {
+function show(f: ReturnType<typeof fixture>, rows: McpConnection[] = []) {
   return render(
     <RuntimeProvider>
       <AppCatalog
         bot="mock-a"
-        rows={[]}
+        rows={rows}
         onCustom={() => {}}
         onChanged={f.changed}
         onDirty={() => {}}
@@ -188,13 +191,75 @@ function show(f: ReturnType<typeof fixture>) {
     </RuntimeProvider>,
   );
 }
+it('shows branded app cards with named icon-only connect actions and disclosed technical details', async () => {
+  const f = fixture();
+  show(f);
+  const catalog = await screen.findByRole('list', { name: '添加应用' });
+  const cards = await within(catalog).findAllByRole('listitem');
+  expect(cards).toHaveLength(appProviders.length);
+  for (const provider of appProviders) {
+    const card = cards.find((item) =>
+      within(item).queryByRole('heading', { name: provider.publisher }),
+    );
+    expect(card).toBeDefined();
+    const action = within(card!).getByRole('button', { name: `连接 ${provider.publisher}` });
+    expect(action.textContent).toBe('');
+    expect(action.querySelector('svg')).not.toBeNull();
+    const logo = card!.querySelector('img');
+    expect(logo).toHaveAttribute('src', `/apps/${provider.id}.svg`);
+    expect(logo).toHaveAttribute('alt', '');
+    const details = within(card!).getByText('连接详情').closest('details');
+    expect(details).not.toHaveAttribute('open');
+    if (provider.scope) {
+      expect(details).toContainElement(within(card!).getByText(`授权范围：${provider.scope}`));
+    }
+    if (provider.id === 'notion') expect(action).toBeDisabled();
+    else expect(action).toBeEnabled();
+  }
+});
+it('loads the authorization logo beside the packaged desktop document', async () => {
+  vi.stubEnv('BASE_URL', './');
+  const f = fixture();
+  show(f);
+  await userEvent.click(await screen.findByRole('button', { name: '连接 Sentry' }));
+  const logo = screen.getByRole('dialog', { name: '连接 Sentry' }).querySelector('img');
+  expect(logo).not.toBeNull();
+  expect(
+    new URL(logo!.getAttribute('src')!, 'file:///synthetic-desktop/dist/index.html').href,
+  ).toBe('file:///synthetic-desktop/dist/apps/sentry.svg');
+});
+it('shows readable authorization scopes and lets the user dismiss before starting OAuth', async () => {
+  const f = fixture();
+  show(f);
+  const opener = await screen.findByRole('button', { name: '连接 Sentry' });
+  await userEvent.click(opener);
+  const dialog = screen.getByRole('dialog', { name: '连接 Sentry' });
+  const scopes = within(dialog).getByRole('list', { name: '授权范围' });
+  const requested = appProviders.find((provider) => provider.id === 'sentry')!.scope!;
+  expect(
+    within(scopes)
+      .getAllByRole('listitem')
+      .map((item) => item.textContent),
+  ).toEqual(requested.split(/\s+/));
+  expect(within(dialog).getByRole('button', { name: '取消' })).toHaveFocus();
+  expect(
+    within(dialog).getByText('先授权账号，再检查并选择工具。每次工具调用仍需单独批准。'),
+  ).toBeVisible();
+  await userEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(opener).toHaveFocus();
+  await userEvent.click(opener);
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(opener).toHaveFocus();
+  expect(f.commands.some((command) => command.type === 'app.oauth.connect')).toBe(false);
+});
 for (const app of ['linear', 'sentry', 'todoist', 'miro', 'monday'] as AppId[]) {
   it(`authorizes ${app} explicitly with its own identity and no automatic check or tool grant`, async () => {
     const f = fixture();
     show(f);
     const publisher = appProviders.find((p) => p.id === app)!.publisher;
     await userEvent.click(await screen.findByRole('button', { name: `连接 ${publisher}` }));
-    expect(screen.getByRole('textbox', { name: '连接名称' })).toHaveValue(publisher);
     if (app === 'monday')
       expect(within(screen.getByRole('dialog')).getByText(/管理员/)).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
@@ -324,6 +389,19 @@ it('shows one account row and changes the primary next step only after an explic
   expect(f.commands.some((c) => c.type === 'mcp.bind')).toBe(false);
 });
 
+it('uses the next available application name when authorizing another account', async () => {
+  const f = fixture();
+  show(f, [
+    { ...f.row, id: 'mock-sentry-one', name: 'Sentry' },
+    { ...f.row, id: 'mock-sentry-two', name: 'Sentry 2' },
+  ]);
+  await userEvent.click(await screen.findByRole('button', { name: '连接 Sentry' }));
+  await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
+  await screen.findByText('请在系统浏览器中完成授权');
+  expect(f.commands.filter((command) => command.type === 'app.oauth.connect')).toMatchObject([
+    { input: { app: 'sentry', name: 'Sentry 3' } },
+  ]);
+});
 it('returns a definite name conflict to the editor instead of trapping an unstarted authorization nonce', async () => {
   const f = fixture();
   f.rejectName();
@@ -353,7 +431,7 @@ it('keeps a terminal authorization failure visible while allowing an explicit ch
   const next = screen.getByRole('button', { name: '连接 Sentry' });
   expect(next).toBeEnabled();
   await userEvent.click(next);
-  expect(screen.getByRole('textbox', { name: '连接名称' })).toHaveValue('Sentry');
+  expect(screen.getByRole('dialog', { name: '连接 Sentry' })).toBeVisible();
   expect(f.commands.filter((command) => command.type === 'app.oauth.connect')).toHaveLength(1);
 });
 

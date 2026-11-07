@@ -262,12 +262,6 @@ function BotIntegrations({
           )}
         </p>
       )}
-      <details>
-        <summary>{t('apps.transportDetails')}</summary>
-        <p className="field-help">
-          {t('integrations.currentlySupportsPublicHttpsStreamableHttpLocal')}
-        </p>
-      </details>
       {!available && (
         <p className="inline-note">
           {runtime.snapshot.protocolVersion < 21 || runtime.snapshot.botCapabilities !== true
@@ -305,6 +299,12 @@ function BotIntegrations({
           onArchive={setArchiving}
         />
       )}
+      <details className="integration-requirements">
+        <summary>{t('apps.transportDetails')}</summary>
+        <p className="field-help">
+          {t('integrations.currentlySupportsPublicHttpsStreamableHttpLocal')}
+        </p>
+      </details>
       <div className="integration-actions">
         {!runtime.snapshot.appConnections?.catalog && (
           <button className="secondary" type="button" disabled={blocked} onClick={() => edit()}>

@@ -159,11 +159,13 @@ it('starts one explicit authorization and cancels its original attempt without g
   const connect = await screen.findByRole('button', { name: '连接 Notion' });
   await waitFor(() => expect(connect).toBeEnabled());
   await userEvent.click(connect);
-  await userEvent.type(screen.getByRole('textbox', { name: '连接名称' }), 'Synthetic App');
+  expect(screen.getByRole('button', { name: '在系统浏览器中授权' })).toBeEnabled();
   await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
   await userEvent.click(await screen.findByRole('button', { name: '取消授权' }));
   await waitFor(() => expect(f.commands.some((c) => c.type === 'app.oauth.cancel')).toBe(true));
-  expect(f.commands.filter((c) => c.type === 'app.oauth.start')).toHaveLength(1);
+  expect(f.commands.filter((c) => c.type === 'app.oauth.start')).toMatchObject([
+    { input: { name: 'Notion' } },
+  ]);
   expect(
     f.commands.some(
       (c) => c.type === 'mcp.check' || c.type === 'mcp.bind' || c.type === 'task.stop',
@@ -193,7 +195,6 @@ it('keeps the original nonce after an uncertain start and returns keyboard focus
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(opener).toHaveFocus();
   await userEvent.click(opener);
-  await userEvent.type(screen.getByRole('textbox', { name: '连接名称' }), 'Synthetic');
   await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
   await screen.findByRole('alert');
   await userEvent.click(screen.getByRole('button', { name: '核对并重新打开本次授权' }));
@@ -227,7 +228,6 @@ it('discards a start acknowledgement after changing Bot and never grants or prob
   const connect = await screen.findByRole('button', { name: '连接 Notion' });
   await waitFor(() => expect(connect).toBeEnabled());
   await userEvent.click(connect);
-  await userEvent.type(screen.getByRole('textbox', { name: '连接名称' }), 'Synthetic');
   await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
   await waitFor(() => expect(f.commands.some((c) => c.type === 'app.oauth.start')).toBe(true));
   view.rerender(app('mock-b'));
