@@ -83,6 +83,8 @@ export const chinese = {
   'conversations.rename': '重命名对话',
   'conversations.saveTitle': '保存',
   'conversations.plainContext': '普通对话 · 可使用工具',
+  'conversations.connectToSend': '连接后台后即可发送，当前草稿会保留。',
+  'conversations.updateToSend': '请更新后台运行组件后发送，当前草稿会保留。',
   'vm.managed': '这台 Linux 电脑由搭伴自动管理，无需填写或修改连接参数。',
   'setup.windowsResources': '运行时使用 {0} GB 内存 · {1} GB 虚拟磁盘，按实际使用增长',
   'setup.windowsSpace': '至少需要 {0} GB 可用空间 · 当前可用 {1} GB',

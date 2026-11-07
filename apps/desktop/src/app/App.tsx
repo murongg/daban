@@ -294,17 +294,7 @@ function Workbench() {
         )?.title
       : undefined;
   function createChat() {
-    if (
-      runtime.enabled &&
-      (runtime.snapshot.phase !== 'ready' || runtime.snapshot.protocolVersion < 46)
-    ) {
-      notify(
-        runtimeError(
-          new Error(runtime.snapshot.phase !== 'ready' ? 'RUNTIME_OFFLINE' : 'RUNTIME_TOO_OLD'),
-        ),
-      );
-      return;
-    }
+    // The editor is local until its first send; workspace startup must not prevent saving a draft.
     dispatch({
       type: 'create',
       id: `chat_${crypto.randomUUID()}`,
@@ -315,6 +305,14 @@ function Workbench() {
     });
     setSidebarOpen(false);
     closeModal();
+  }
+  function openChats() {
+    const chat = [...state.bots]
+      .reverse()
+      .find((entry) => entry.kind === 'chat' && !entry.archived);
+    if (chat) dispatch({ type: 'select', bot: chat.id });
+    else createChat();
+    setSidebarOpen(false);
   }
   function newConversation() {
     if (bot?.kind === 'chat') createChat();
@@ -882,6 +880,7 @@ function Workbench() {
           setModal({ type: 'create', group: !!group });
         }}
         onNewChat={createChat}
+        onChats={openChats}
         open={sidebarOpen}
         close={() => setSidebarOpen(false)}
       />
@@ -919,9 +918,10 @@ function Workbench() {
                         : t('common.newConversation')
                     }
                     disabled={
-                      !runtime.enabled ||
-                      runtime.snapshot.protocolVersion < 29 ||
-                      (historyOnly && !state.chatRequests[bot.id])
+                      bot.kind !== 'chat' &&
+                      (!runtime.enabled ||
+                        runtime.snapshot.protocolVersion < 29 ||
+                        (historyOnly && !state.chatRequests[bot.id]))
                     }
                     onClick={newConversation}
                   >

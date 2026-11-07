@@ -1461,7 +1461,7 @@ export function reduce(state: State, action: Action): State {
         ...state,
         selected: action.id,
         view: 'chat',
-        panel: members ? null : state.panel,
+        panel: members || action.kind === 'chat' ? null : state.panel,
         bots: [...state.bots, bot],
         messages: { ...state.messages, [action.id]: [] },
         drafts: { ...state.drafts, [action.id]: '' },
