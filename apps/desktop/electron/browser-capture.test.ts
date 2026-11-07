@@ -1,56 +1,82 @@
 import { expect, it, vi } from 'vitest';
 import { captureBrowser } from './browser-capture';
 
-it('wakes the hidden guest before CDP capture and returns only the original masked CDP image', async () => {
-  let awake = false;
-  let finish!: (value: unknown) => unknown;
-  const image = { data: 'SYNTHETIC_MASKED_CDP_IMAGE' };
+function fixture(scale = 2) {
+  let captured = { width: 960, height: 640 };
+  const image = {
+    isEmpty: () => false,
+    getScaleFactors: () => [1],
+    getSize: () => ({ width: captured.width * scale, height: captured.height * scale }),
+    resize: vi.fn(),
+    toJPEG: vi.fn(() => Buffer.from('synthetic-jpeg')),
+    toPNG: vi.fn(() => Buffer.from('synthetic-png')),
+  };
+  image.resize.mockReturnValue(image);
   const contents = {
-    capturePage: vi.fn(() => {
-      awake = true;
-      return new Promise((resolve) => {
-        finish = resolve;
-      });
-    }),
     debugger: {
-      sendCommand: vi.fn(async () => {
-        expect(awake).toBe(true);
-        return image;
-      }),
+      sendCommand: vi.fn(async () => ({
+        visualViewport: { pageX: 100, pageY: 300, scale: 1 },
+      })),
     },
+    capturePage: vi.fn(async (rect: { width: number; height: number }) => {
+      captured = rect;
+      return image;
+    }),
   };
-  const params = {
-    format: 'jpeg',
-    quality: 75,
-    clip: { x: 100, y: 300, width: 960, height: 640, scale: 0.5 },
-    captureBeyondViewport: false,
-  };
-  const pending = captureBrowser(contents as never, params);
-  expect(contents.capturePage).toHaveBeenCalledWith(undefined, {
-    stayHidden: false,
-    stayAwake: true,
-  });
-  expect(contents.debugger.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', params);
-  finish({ syntheticNativeFrame: 'MUST_NOT_BE_RETURNED' });
-  expect(await pending).toBe(image);
+  return { contents, image };
+}
+
+it('captures a hidden guest at CSS resolution after scrolling, including mislabeled Retina bitmaps', async () => {
+  const { contents, image } = fixture();
+  const result = await captureBrowser(
+    contents as never,
+    { width: 960, height: 640 },
+    {
+      format: 'jpeg',
+      quality: 75,
+      clip: { x: 100, y: 300, width: 960, height: 640, scale: 0.5 },
+      captureBeyondViewport: false,
+    },
+  );
+  expect(contents.capturePage).toHaveBeenCalledWith(
+    { x: 0, y: 0, width: 960, height: 640 },
+    { stayHidden: false, stayAwake: true },
+  );
+  expect(image.resize).toHaveBeenCalledWith({ width: 960, height: 640 });
+  expect(image.toJPEG).toHaveBeenCalledWith(75);
+  expect(result).toEqual({ data: Buffer.from('synthetic-jpeg').toString('base64') });
 });
 
-it.each(['wake', 'cdp'])(
-  'propagates %s capture failures instead of returning an uncertain image',
-  async (failure) => {
-    const error = new Error('SYNTHETIC_CAPTURE_FAILURE');
-    const contents = {
-      capturePage: vi.fn(async () => {
-        if (failure === 'wake') throw error;
-        return undefined;
-      }),
-      debugger: {
-        sendCommand: vi.fn(async () => {
-          if (failure === 'cdp') throw error;
-          return { data: 'SYNTHETIC_CDP_IMAGE' };
-        }),
-      },
-    };
-    await expect(captureBrowser(contents as never, {})).rejects.toThrow(error);
-  },
-);
+it('maps a zoomed document clip into the native viewport', async () => {
+  const { contents, image } = fixture(1);
+  contents.debugger.sendCommand.mockResolvedValue({
+    visualViewport: { pageX: 100, pageY: 300, scale: 2 },
+  });
+  await captureBrowser(
+    contents as never,
+    { width: 960, height: 640 },
+    {
+      format: 'png',
+      clip: { x: 120, y: 310, width: 100, height: 50, scale: 2 },
+    },
+  );
+  expect(contents.capturePage).toHaveBeenCalledWith(
+    { x: 40, y: 20, width: 200, height: 100 },
+    { stayHidden: false, stayAwake: true },
+  );
+  expect(image.resize).toHaveBeenCalledWith({ width: 200, height: 100 });
+  expect(image.toPNG).toHaveBeenCalledOnce();
+});
+
+it('rejects capture outside the owned viewport and unreasonable output scales', async () => {
+  const { contents } = fixture();
+  for (const clip of [
+    { x: 99, y: 300, width: 100, height: 100, scale: 1 },
+    { x: 100, y: 300, width: 961, height: 640, scale: 1 },
+    { x: 100, y: 300, width: 960, height: 640, scale: 100 },
+  ])
+    await expect(
+      captureBrowser(contents as never, { width: 960, height: 640 }, { clip }),
+    ).rejects.toThrow('BROWSER_CAPTURE_UNSUPPORTED');
+  expect(contents.capturePage).not.toHaveBeenCalled();
+});

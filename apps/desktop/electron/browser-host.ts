@@ -430,7 +430,8 @@ export class BrowserHost {
     if (!opener) await contents.loadURL('about:blank');
     return {
       command: async (method, params, child) => {
-        if (method === 'Page.captureScreenshot' && !child) return captureBrowser(contents, params);
+        if (method === 'Page.captureScreenshot' && !child)
+          return captureBrowser(contents, view.getBounds(), params);
         const result = (await contents.debugger.sendCommand(method, params, child)) as Record<
           string,
           unknown
