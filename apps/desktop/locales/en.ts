@@ -268,6 +268,7 @@ export const english = {
   'updates.unsupported': 'This build cannot install updates. Install a supported release.',
   'updates.browserPreview': 'Web previews cannot check for or install updates.',
   'updates.download': 'Download update',
+  'updates.update': 'Update and restart',
   'updates.cancelDownload': 'Cancel download',
   'updates.downloadProgress': 'Update download progress',
   'updates.restart': 'Restart and install',

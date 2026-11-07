@@ -2,6 +2,7 @@ import {
   ArrowDownToLine,
   ArrowUpRight,
   Check,
+  CircleArrowUp,
   LoaderCircle,
   RefreshCw,
   RotateCw,
@@ -181,6 +182,100 @@ export function UpdatesPanel({
     </div>
   );
 }
+export function UpdateButton() {
+  useLocale();
+  const { enabled, status, command } = useUpdates();
+  const [open, setOpen] = useState(false);
+  const [nested, setNested] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const busy = pending || ['downloading', 'preparing', 'installing'].includes(status.phase);
+  const percent = Math.round(status.percent ?? 0);
+  // A completed check can retain nextVersion, so cached release metadata alone is not an update.
+  const available =
+    enabled &&
+    !!status.nextVersion &&
+    ['available', 'downloading', 'downloaded', 'preparing', 'installing'].includes(status.phase);
+  const update = async () => {
+    if (busy) return;
+    setPending(true);
+    setError('');
+    setOpen(true);
+    try {
+      const result = status.phase === 'available' ? await command({ type: 'download' }) : status;
+      // Cancelled or failed downloads return without a verified package; never install those.
+      if (result.phase === 'downloaded') await command({ type: 'install' });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      setError(t(errors[code as UpdateError] ?? 'updates.installFailed'));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <>
+      {available && (
+        <IconButton
+          label={t('updates.update')}
+          title={
+            status.phase === 'downloading'
+              ? `${t('updates.downloading')} ${percent}%`
+              : busy
+                ? t(phases[status.phase], { 0: status.nextVersion ?? '' })
+                : t('updates.update')
+          }
+          className="update-button"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-busy={busy}
+          // Keep the busy opener focusable so the progress dialog can restore keyboard focus.
+          aria-disabled={busy}
+          onClick={update}
+        >
+          {status.phase === 'downloading' ? (
+            <span
+              className="update-ring"
+              role="progressbar"
+              aria-label={t('updates.downloadProgress')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle className="update-ring-track" cx="12" cy="12" r="9" />
+                <circle
+                  className="update-ring-value"
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  pathLength="100"
+                  strokeDasharray="100"
+                  strokeDashoffset={100 - percent}
+                  transform="rotate(-90 12 12)"
+                />
+              </svg>
+            </span>
+          ) : busy ? (
+            <LoaderCircle className="update-spin" />
+          ) : (
+            <CircleArrowUp />
+          )}
+        </IconButton>
+      )}
+      {open && (
+        <Dialog title={t('updates.title')} onClose={() => setOpen(false)} active={!nested} motion>
+          {error && !status.error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <UpdatesPanel onDialogChange={setNested} />
+        </Dialog>
+      )}
+    </>
+  );
+}
+
 export function UpdateNotice() {
   useLocale();
   const { status } = useUpdates();
