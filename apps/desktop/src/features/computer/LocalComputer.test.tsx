@@ -186,15 +186,19 @@ it('preserves the guide and connection lock when checking permissions fails', as
 
 it('refreshes permissions on returning to the app without requesting additional access', async () => {
   const backend = fixture(false);
-  const mounted = render(
-    <RuntimeProvider>
-      <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
-    </RuntimeProvider>,
+  // Flush the initial snapshot and its effects before simulating a return to the window.
+  const mounted = await act(async () =>
+    render(
+      <RuntimeProvider>
+        <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
+      </RuntimeProvider>,
+    ),
   );
   await screen.findByRole('button', { name: '开启辅助功能' });
   backend.permissions(true, true, false);
   fireEvent.focus(window);
   expect(await screen.findByRole('status')).toHaveTextContent('系统权限已就绪');
+  expect(backend.invoke).toHaveBeenCalledWith({ type: 'local.status' });
   expect(screen.getByRole('button', { name: '连接本机' })).toBeEnabled();
   expect(
     backend.invoke.mock.calls.some(([command]) =>
