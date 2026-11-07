@@ -1050,6 +1050,35 @@ it('shows actual attempts and unknown billing without reading private SDK conten
   );
   expect(await screen.findByText('费用用量未确认；失败请求也可能产生费用。')).toBeInTheDocument();
   expect(screen.getByText(/实际模型/)).toBeInTheDocument();
+  const previousAttempts = screen.getByText('模型尝试').closest('details');
+  expect(previousAttempts).not.toHaveAttribute('open');
+  expect(previousAttempts).toHaveTextContent('认证失败');
+});
+
+it('keeps a single model attempt compact while retaining its status and billing note', () => {
+  bridge(() => ({ ...scope, state: 'complete', items: [] }));
+  render(
+    <RuntimeProvider>
+      <Execution
+        scope={scope}
+        attemptSummary={[
+          {
+            attemptId: 'mock-current',
+            model: 'deepseek-v4-pro',
+            phase: 'running',
+            fence: 'clean',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            usage: 'unknown',
+          },
+        ]}
+      />
+    </RuntimeProvider>,
+  );
+
+  const attempts = screen.getByRole('region', { name: '模型尝试' });
+  expect(attempts).toHaveTextContent(/实际模型：.*执行中/);
+  expect(attempts.querySelector('ol')).not.toBeInTheDocument();
+  expect(attempts).toHaveTextContent('费用用量未确认；失败请求也可能产生费用。');
 });
 
 it('requires receipt inspection instead of direct continuation after an unknown tool outcome', async () => {

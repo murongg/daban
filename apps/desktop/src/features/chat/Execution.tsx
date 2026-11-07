@@ -549,25 +549,34 @@ export function Execution(props: {
       ? active
       : active?.history.find((row) => row.runId === scope.runId);
   const attempts = props.attemptSummary || matching?.attemptSummary;
+  const validAttempts = isModelAttempts(attempts) ? attempts : undefined;
+  const latest = validAttempts?.at(-1);
   return (
     <>
-      {isModelAttempts(attempts) && (
-        <section aria-label={t('models.attempts')} className="field-help">
-          <p>
+      {validAttempts && latest && (
+        <section aria-label={t('models.attempts')} className="execution-model-meta field-help">
+          <p className="execution-model-current">
             {t('models.actualModel', {
-              0: modelName(attempts.at(-1)!.model, runtime.snapshot.model.connections),
-            })}
+              0: modelName(latest.model, runtime.snapshot.model.connections),
+            })}{' '}
+            · {taskPhase(latest.phase)}
+            {latest.failure ? ` · ${t(failureLabels[latest.failure])}` : ''}
           </p>
-          <ol>
-            {attempts.map((attempt) => (
-              <li key={attempt.attemptId}>
-                {modelName(attempt.model, runtime.snapshot.model.connections)} ·{' '}
-                {taskPhase(attempt.phase)}
-                {attempt.failure ? ` · ${t(failureLabels[attempt.failure])}` : ''}
-              </li>
-            ))}
-          </ol>
-          <p>{t('models.usageUnknown')}</p>
+          {validAttempts.length > 1 && (
+            <details className="execution-attempts">
+              <summary>{t('models.attempts')}</summary>
+              <ol>
+                {validAttempts.slice(0, -1).map((attempt) => (
+                  <li key={attempt.attemptId}>
+                    {modelName(attempt.model, runtime.snapshot.model.connections)} ·{' '}
+                    {taskPhase(attempt.phase)}
+                    {attempt.failure ? ` · ${t(failureLabels[attempt.failure])}` : ''}
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+          <p className="execution-usage-note">{t('models.usageUnknown')}</p>
         </section>
       )}
       <Disclosure
