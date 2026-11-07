@@ -19,6 +19,10 @@ import { browserIpc } from '../electron/browser-ipc';
 import { browserPartition } from '../shared/browser';
 
 app.commandLine.appendSwitch('disable-quic');
+if (process.platform === 'win32' && process.env.DABAN_BROWSER_RESTART_CHECK === '1') {
+  app.commandLine.appendSwitch('enable-logging', 'stderr');
+  app.commandLine.appendSwitch('v', '1');
+}
 // The runner, rather than a transient render-host window, owns fixture shutdown.
 app.on('window-all-closed', () => {});
 
@@ -63,6 +67,12 @@ async function verifyBrowser() {
           { headers: { authorization: `Bearer ${endpoint.token}` }, timeout: 15000 },
         );
         const cookies = await restored.contexts()[0].cookies();
+        console.log('SYNTHETIC_RESTART_STORAGE', {
+          userData: app.getPath('userData'),
+          sessionData: app.getPath('sessionData'),
+          storage: partition.getStoragePath(),
+          cookies,
+        });
         await restored.close();
         assert.ok(
           cookies.some(
@@ -79,6 +89,15 @@ async function verifyBrowser() {
         process.stdin.once('data', () => resolve(undefined));
         process.stdin.once('end', () => resolve(undefined));
       });
+      const partition = electronSession.fromPartition(browserPartition);
+      await partition.cookies.set({
+        url: 'https://example.test',
+        name: 'synthetic_persistent_probe',
+        value: 'accepted',
+        expirationDate: Date.now() / 1000 + 86400,
+        secure: true,
+      });
+      console.log('SYNTHETIC_CLOSING_COOKIES', await partition.cookies.get({}));
       return;
     }
     const endpoint = JSON.parse(await readFile(path.join(root, 'browser-bridge.json'), 'utf8')) as {

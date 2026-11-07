@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { builtinModules, createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -113,6 +113,7 @@ try {
       reject(new Error('Embedded browser stopped during startup'));
     });
     server!.stdout!.on('data', (chunk: Buffer) => {
+      process.stdout.write(chunk);
       output = (output + chunk.toString()).slice(-4096);
       if (output.includes('EMBEDDED_BROWSER_READY')) {
         clearTimeout(timeout);
@@ -130,6 +131,36 @@ try {
   await stopped;
   server = undefined;
   stopped = undefined;
+  if (process.platform === 'win32') {
+    const { DatabaseSync } = await import('node:sqlite');
+    for (const entry of await readdir(profile, { recursive: true })) {
+      if (path.basename(entry) !== 'Cookies') continue;
+      const database = new DatabaseSync(path.join(profile, entry), { readOnly: true });
+      try {
+        console.log(
+          'SYNTHETIC_COOKIE_DATABASE',
+          entry,
+          database
+            .prepare(
+              'SELECT name, host_key, is_persistent, has_expires, length(value) as plain_size, length(encrypted_value) as encrypted_size FROM cookies',
+            )
+            .all(),
+        );
+      } finally {
+        database.close();
+      }
+    }
+    const preferences = JSON.parse(
+      await readFile(path.join(profile, 'Local State'), 'utf8'),
+    ) as Record<string, unknown>;
+    console.log(
+      'SYNTHETIC_LOCAL_STATE_KEYS',
+      Object.keys(preferences),
+      preferences.os_crypt && typeof preferences.os_crypt === 'object'
+        ? Object.keys(preferences.os_crypt)
+        : [],
+    );
+  }
   await exit(
     spawn(electron, [fixture], {
       cwd: root,
