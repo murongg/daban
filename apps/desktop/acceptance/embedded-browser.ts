@@ -127,6 +127,26 @@ async function verifyBrowser() {
     await page.locator('#note').click({ timeout: 3000 });
     await page.locator('#note').fill('AI synthetic input');
     assert.equal(await page.locator('#note').inputValue(), 'AI synthetic input');
+    const protectedBox = await page.locator('#code').boundingBox();
+    assert.ok(protectedBox);
+    const masked = nativeImage.createFromBuffer(
+      await page.screenshot({
+        type: 'png',
+        scale: 'css',
+        mask: [page.locator('#code')],
+        maskColor: '#000000',
+      }),
+    );
+    assert.equal(masked.getSize().width, 960);
+    const pixel =
+      (Math.floor(protectedBox.y + protectedBox.height / 2) * 960 +
+        Math.floor(protectedBox.x + protectedBox.width / 2)) *
+      4;
+    assert.deepEqual(
+      [...masked.toBitmap().subarray(pixel, pixel + 3)],
+      [0, 0, 0],
+      'Native capture must wait for Playwright to paint the protected-input mask',
+    );
     const sibling = await context.newPage();
     await sibling.setContent('<label>Synthetic sibling<input id="sibling"></label>');
     stage = 'overlapping background pages';
