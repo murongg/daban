@@ -28,6 +28,7 @@ import { WindowList } from '../components/collection/WindowList';
 import { IconButton } from '../components/controls/Button';
 import { Avatar, Brand } from '../features/bots/Avatar';
 import { RecentConversations } from '../features/chat/RecentConversations';
+import { UpdateButton } from '../features/settings/Updates';
 import { t, useLocale } from '../i18n/locale';
 import { useRuntime } from './Runtime';
 import { SectionDialog, type SectionEdit } from './SectionDialog';
@@ -539,19 +540,21 @@ export function Sidebar({
                 </span>
               </div>
             </div>
-            <span className="spacer" />
-            <IconButton
-              label={t('settings.title')}
-              className={settingsOpen || state.view === 'settings' ? 'active' : ''}
-              aria-haspopup="dialog"
-              aria-expanded={settingsOpen}
-              onClick={() => {
-                dispatch({ type: 'view', view: 'settings' });
-                close();
-              }}
-            >
-              <Settings />
-            </IconButton>
+            <div className="workspace-actions">
+              <UpdateButton />
+              <IconButton
+                label={t('settings.title')}
+                className={settingsOpen || state.view === 'settings' ? 'active' : ''}
+                aria-haspopup="dialog"
+                aria-expanded={settingsOpen}
+                onClick={() => {
+                  dispatch({ type: 'view', view: 'settings' });
+                  close();
+                }}
+              >
+                <Settings />
+              </IconButton>
+            </div>
           </div>
         </footer>
       </aside>

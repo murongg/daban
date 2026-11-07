@@ -223,6 +223,7 @@ export const chinese = {
   'updates.unsupported': '此构建暂不支持在线安装，请安装正式客户端。',
   'updates.browserPreview': '网页预览不检查或安装更新。',
   'updates.download': '下载更新',
+  'updates.update': '更新并重启',
   'updates.cancelDownload': '取消下载',
   'updates.downloadProgress': '更新下载进度',
   'updates.restart': '重启并安装',
