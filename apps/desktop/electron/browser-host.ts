@@ -22,6 +22,7 @@ export class BrowserHost {
   private cdp?: BrowserCdp;
   private partition?: Electron.Session;
   private background?: BrowserWindow;
+  private backgroundReady?: Promise<unknown>;
   private readonly token = randomBytes(32).toString('hex');
   private readonly views = new Map<string, WebContentsView>();
   private readonly guests = new Set<WebContentsView>();
@@ -360,7 +361,7 @@ export class BrowserHost {
   private park(view: WebContentsView) {
     // Windows needs a window-backed compositor for animation frames and Playwright's
     // stability checks. Keep AI pages rendering in a hidden, unfocusable host.
-    if (!this.background || this.background.isDestroyed())
+    if (!this.background || this.background.isDestroyed()) {
       this.background = new BrowserWindow({
         width: 960,
         height: 640,
@@ -370,12 +371,16 @@ export class BrowserHost {
         paintWhenInitiallyHidden: true,
         webPreferences: this.preferences(),
       });
+      // Initialize the host document before guests depend on its compositor.
+      this.backgroundReady = this.background.loadURL('about:blank');
+    }
     this.background.contentView.addChildView(view);
     view.setVisible(true);
   }
   private async preparePage(view: WebContentsView, opener?: string): Promise<CdpPage> {
     const cycle = this.cycle;
     const contents = view.webContents;
+    await this.backgroundReady;
     contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     contents.debugger.attach('1.3');
     const { targetInfo } = (await contents.debugger.sendCommand('Target.getTargetInfo')) as {
@@ -563,6 +568,7 @@ export class BrowserHost {
     this.views.clear();
     this.background?.destroy();
     this.background = undefined;
+    this.backgroundReady = undefined;
   }
   async close() {
     if (this.stopped) return;

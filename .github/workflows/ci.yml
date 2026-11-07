@@ -68,16 +68,16 @@ jobs:
             sudo install -m 0644 "$RUNNER_TEMP/daban-playwright-tests" /etc/apparmor.d/daban-playwright-tests
             sudo apparmor_parser -r /etc/apparmor.d/daban-playwright-tests
           fi
-      - run: npx vitest run --maxWorkers=2
       - name: Verify standalone browser file workflows and visual takeover
         run: node --experimental-sqlite --test packages/engine/dist/host-browser.integration.js
       - name: Verify embedded browser input, verification and file workflows
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a npm run test:browser:embedded
+            xvfb-run -a dbus-run-session -- sh -c 'openbox >/dev/null 2>&1 & npm run test:browser:embedded'
           else
             npm run test:browser:embedded
           fi
+      - run: npx vitest run --maxWorkers=2
       - run: node --experimental-strip-types --test tools/roles.integration.ts
       - name: Verify idle-only host update handoff
         if: runner.os == 'macOS'
