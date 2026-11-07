@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { LocalComputerClient, localComputerPaths, startNativeAgent } from '@daban/engine/agent';
 import { privateServer, secureDirectory } from '@daban/engine/local-computer';
+import { type ExecutionSnapshot, executionCapabilities } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { resolveSdk } from './sdk.js';
 
@@ -78,6 +79,7 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
   await channel.publish();
   if (process.platform !== 'win32') await chmod(locations.socket, 0o600);
   let modelCalls = 0;
+  let scenario: 'native' | 'chat' | 'linux' = 'native';
   model = createServer(async (req, res) => {
     if (req.method === 'GET') {
       res.setHeader('content-type', 'application/json');
@@ -89,7 +91,17 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
     const input = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
       tools?: { function?: { name?: string } }[];
     };
-    const kind = modelCalls++ === 0 ? 'screenshot' : modelCalls === 2 ? 'act' : undefined;
+    const step = modelCalls++;
+    const kind =
+      scenario === 'native'
+        ? step === 0
+          ? 'screenshot'
+          : step === 1
+            ? 'act'
+            : undefined
+        : scenario === 'linux' && step === 0
+          ? 'shell'
+          : undefined;
     const name = kind
       ? input.tools?.find((tool) => tool.function?.name?.endsWith(kind))?.function?.name
       : undefined;
@@ -104,18 +116,26 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
               function: {
                 name,
                 arguments: JSON.stringify(
-                  kind === 'screenshot'
-                    ? { surface: 'desktop' }
-                    : {
-                        surface: 'desktop',
-                        actions: [{ type: 'text', text: 'SYNTHETIC NATIVE INPUT' }],
-                      },
+                  kind === 'shell'
+                    ? { command: 'cat input.csv' }
+                    : kind === 'screenshot'
+                      ? { surface: 'desktop' }
+                      : {
+                          surface: 'desktop',
+                          actions: [{ type: 'text', text: 'SYNTHETIC NATIVE INPUT' }],
+                        },
                 ),
               },
             },
           ],
         }
-      : { role: 'assistant', content: 'SYNTHETIC NATIVE LOOP COMPLETE' };
+      : {
+          role: 'assistant',
+          content:
+            scenario === 'linux'
+              ? 'SYNTHETIC LINUX LOOP COMPLETE'
+              : 'SYNTHETIC NATIVE LOOP COMPLETE',
+        };
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.write(
       `data: ${JSON.stringify({ id: 'mock-completion', object: 'chat.completion.chunk', created: 1, model: 'mock-vision', choices: [{ index: 0, delta: message, finish_reason: null }] })}\n\n`,
@@ -132,6 +152,31 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
     process.platform === 'win32'
       ? String.raw`\\.\pipe\daban-agent-${createHash('sha256').update(root).digest('hex').slice(0, 24)}`
       : path.join(root, 'a.sock');
+  const linuxCalls: { method: string; params: Record<string, unknown> }[] = [];
+  let linuxSnapshot: ExecutionSnapshot = {
+    role: 'executor',
+    version: 1,
+    boot: 'mock-linux-boot',
+    nonce: 'mock-linux-nonce',
+    capabilities: [...executionCapabilities, 'model-capabilities-v1'],
+    computer: {
+      mode: 'agent',
+      sharedLogin: false,
+      viewport: { width: 1280, height: 800 },
+      environment: {
+        platform: 'linux',
+        arch: 'arm64',
+        kernel: 'synthetic',
+        node: 'synthetic',
+        browser: '',
+      },
+      events: [],
+      bots: {},
+    },
+    status: { available: true, limit: 2, revision: 0, items: [] },
+  };
+  const observations: Promise<unknown>[] = [];
+  let coldBoot = true;
   agent = await startNativeAgent({
     dataRoot: root,
     socketPath,
@@ -139,6 +184,56 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
     sdkFile: resolveSdk(),
     nativeWorkspace: path.join(root, 'workspace'),
     localComputer: new LocalComputerClient(root),
+    execution: {
+      get ready(): Promise<ExecutionSnapshot> {
+        throw new Error('SYNTHETIC_UNEXPECTED_VM_START');
+      },
+      get snapshot() {
+        return linuxSnapshot;
+      },
+      available: async () => true,
+      refresh: async () => linuxSnapshot,
+      call: async (method, params) => {
+        linuxCalls.push({ method, params });
+        if (['workspace.base', 'workspace.create'].includes(method) && coldBoot) {
+          coldBoot = false;
+          linuxSnapshot = {
+            ...linuxSnapshot,
+            boot: 'mock-linux-new-boot',
+            nonce: 'mock-linux-new-nonce',
+          };
+          observations.push(agent!.refreshExecution());
+        }
+        if (method === 'workspace.base') return '/synthetic-linux/shared';
+        if (method === 'workspace.create')
+          return {
+            root: '/synthetic-linux/shared',
+            path: `/synthetic-linux/shared/${(params.parts as string[]).join('/')}`,
+            canonical: `/synthetic-linux/shared/${(params.parts as string[]).join('/')}`,
+            handleId: 'mock-directory',
+          };
+        if (method === 'tools.open')
+          return {
+            tools: [
+              {
+                name: 'shell',
+                description: 'Synthetic Linux shell',
+                inputSchema: {
+                  type: 'object',
+                  properties: { command: { type: 'string' } },
+                  required: ['command'],
+                },
+              },
+            ],
+          };
+        if (method === 'tools.invoke')
+          return {
+            phase: 'settled',
+            result: { content: [{ type: 'text', text: 'group,total\nsynthetic,6\n' }] },
+          };
+        return { ok: true };
+      },
+    },
   });
   await agent.models.settings.configure({
     model: 'provider:mock-provider:mock-vision',
@@ -205,4 +300,33 @@ test('real DSH dispatches vision tools to the selected native bridge without a V
   await expect(
     readFile(path.join(agent.models.dir, 'runs', job.id, 'mock-bot', 'dsh-startup.json')),
   ).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(linuxCalls).toEqual([]);
+  for (const next of ['chat', 'linux'] as const) {
+    scenario = next;
+    modelCalls = 0;
+    await agent.models.start('mock-bot', {
+      requestId: `mock-${next}-request`,
+      prompt:
+        next === 'chat'
+          ? 'Give a brief synthetic answer without tools.'
+          : 'Read the supplied CSV using the Linux shell, then finish.',
+      approvalMode: 'full',
+      chatRevision: 0,
+      ...(next === 'linux'
+        ? { files: [{ name: 'input.csv', content: 'group,total\nsynthetic,6\n' }] }
+        : {}),
+    });
+    const current = agent.models.jobs.get('mock-bot')!;
+    await current.done;
+    expect(current.phase, current.error).toBe('completed');
+    if (next === 'chat') expect(linuxCalls).toEqual([]);
+  }
+  expect(linuxCalls.filter((call) => call.method === 'tools.invoke')).toHaveLength(1);
+  expect(linuxCalls.find((call) => call.method === 'tools.invoke')?.params.args).toEqual({
+    command: 'cat input.csv',
+  });
+  expect(
+    linuxCalls.filter((call) => call.method === 'workspace.write').map((call) => call.params.name),
+  ).toEqual(['input.csv']);
+  await Promise.all(observations);
 });

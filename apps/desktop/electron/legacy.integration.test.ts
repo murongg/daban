@@ -25,6 +25,7 @@ vi.mock('electron', () => ({
 
 import { daemonScope } from './daemon';
 import { runtimeService } from './service';
+import { prepareAgentUpdate } from './upgrade';
 
 const run = promisify(execFile);
 it.skipIf(process.platform !== 'darwin' || process.env.DABAN_LAUNCHD_TEST !== '1')(
@@ -111,7 +112,15 @@ it.skipIf(process.platform !== 'darwin' || process.env.DABAN_LAUNCHD_TEST !== '1
         { senderFrame: frame, sender },
         { type: 'agent.upgrade', confirmed: true },
       );
-      expect(reply).toMatchObject({ ok: true, value: { phase: 'ready', protocolVersion: 43 } });
+      expect(reply, JSON.stringify(reply)).toMatchObject({
+        ok: true,
+        value: {
+          phase: 'ready',
+          protocolVersion: 43,
+          agent: { execution: 'local-workspace' },
+          setup: { required: false, target: 'linux', phase: 'existing' },
+        },
+      });
       expect(await readFile(path.join(root, 'user-work.txt'), 'utf8')).toBe(
         'SYNTHETIC WORKSPACE RETAINED',
       );
@@ -121,6 +130,11 @@ it.skipIf(process.platform !== 'darwin' || process.env.DABAN_LAUNCHD_TEST !== '1
     } finally {
       await service?.close();
       await run('/bin/launchctl', ['bootout', target]).catch(() => {});
+      // The native replacement is detached from launchd and must also leave the disposable scope.
+      await prepareAgentUpdate({
+        ...config,
+        scope: daemonScope(config.dataRoot, config.vmConfig),
+      }).catch(() => {});
       mock.windows.length = 0;
       await rm(root, { recursive: true, force: true });
     }

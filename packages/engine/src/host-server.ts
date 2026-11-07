@@ -142,10 +142,10 @@ export async function startNativeAgent(options: HostComposition & { nativeWorksp
   return {
     url: prototype.url,
     models: prototype.models!,
-    recovery: prototype.recovery,
-    refreshExecution: async () => {
-      throw new Fault('LOCAL_VM_UNAVAILABLE');
+    get recovery() {
+      return prototype.executionRecovery ?? prototype.recovery;
     },
+    refreshExecution: prototype.refreshExecution!,
     close: prototype.close,
   };
 }

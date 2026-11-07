@@ -4,7 +4,9 @@ import path from 'node:path';
 import { turnLimit } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
 import { Fault } from './control.js';
+import { LinuxTools } from './linux-tools.js';
 import { editorShowsFile, ModelRuns, sdkPatch, verifyOutput, verifyTask } from './model.js';
+import { NativeWorkspace } from './native-workspace.js';
 import { secureDirectory } from './private-files.js';
 import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
@@ -1280,6 +1282,33 @@ test('model preparation and output collection use guest workspace references whi
     expect(failed.phase).toBe('failed');
     expect(failed.error).toBe('EXECUTOR_DRAIN_UNAVAILABLE');
     failDrain = false;
+    await models.close();
+    const nativeWorkspace = new NativeWorkspace(path.join(root, 'native-workspace'));
+    const native = new ModelRuns({
+      settings,
+      workspace: nativeWorkspace,
+      nativeOnly: true,
+      dir: path.join(root, 'model'),
+      origin: 'http://127.0.0.1:12345',
+      Harness,
+    });
+    native.tools.linux = new LinuxTools(execution, nativeWorkspace, native.tools);
+    native.tools.linux.enabled = true;
+    try {
+      await native.start('mock-bot', {
+        requestId: 'mock-native-upgrade-retry',
+        prompt: 'Continue the retained Linux input task.',
+        retryOf: job.id,
+      });
+      const resumed = native.jobs.get('mock-bot')!;
+      await resumed.done;
+      expect(resumed.phase, resumed.error).toBe('completed');
+      expect(await readFile(path.join(resumed.workdir, 'mock-input.txt'), 'utf8')).toBe(
+        'SYNTHETIC INPUT',
+      );
+    } finally {
+      await native.close();
+    }
   } finally {
     await models.close();
     await rm(temporary, { recursive: true, force: true });

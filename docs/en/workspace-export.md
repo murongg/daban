@@ -18,7 +18,7 @@ Open **Settings → Data & storage → Export workspace**. This downloads a JSON
 | Private-chat caches, drafts, preferences, and settings | Includes the part saved in the client |
 | Attachment references | May include references, not the originals |
 | Complete backend group history, knowledge, and databases | No complete copy |
-| Attachment originals, Linux outputs, and VM disks | Excluded |
+| Attachment originals, native and Linux outputs, and VM disks | Excluded |
 | API keys and native desktop authority | Not exported as transferable authorization |
 
 Do not treat this file as a guarantee of one-click restoration of all history, accounts, and runtime state. A complete environment import/restore flow is not currently provided.

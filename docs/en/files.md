@@ -21,15 +21,17 @@ Example: “Generate a CSV from the attachment, save it, and check its headers a
 
 ## Sharing and paths
 
-The backend manages Linux task and shared directories. Bots can list, read, write, and process files through workspace tools. Task directories can differ. Ask the Bot to locate an earlier output or shared file instead of guessing an old path.
+Ordinary tasks use the application-managed native workspace. Bots can list, read, write, and export knowledge text there without starting a VM. These tools grant neither arbitrary host-file access nor a host shell.
+
+Linux keeps separate task and shared directories. A Bot starts installed Linux when commands or Linux software are needed, explicitly transfers additional inputs, and brings outputs back. The whole native workspace is never synchronized automatically. Task directories can differ. Ask the Bot to locate an earlier output or shared file instead of guessing an old path. Retained Linux files remain in Linux and can be found with the Linux file tools.
 
 Independent screens do not isolate files. Overwriting, moving, or deleting shared material can affect other Bots. Host files do not automatically appear in the VM simply because they exist in a Mac or Windows folder; use attachments, downloads, or an explicit transfer.
 
 ## Limits
 
-- Windows native mode does not offer Linux workspace file, shell, or process tools. Real files remain usable through GUI applications, with supported text and image inputs.
+- Native file tools are limited to the application workspace. Linux shells, processes, and complex document parsing require Linux to be installed and start it on actual use. Native applications and files outside the workspace still require separately authorized desktop control.
 - Previews do not replace specialized applications. Large, binary, or complex formats may need downloading.
 - Historical links refer to retained current files rather than an immutable complete backup.
-- Workspace export excludes Linux files and VM disks. See [Workspace export](workspace-export.md).
+- Workspace export excludes native and Linux work files and VM disks. Download important outputs separately. See [Workspace export](workspace-export.md).
 
 See [Attachments](attachments.md) for retained attachment cleanup and [Knowledge](knowledge.md) for document management.

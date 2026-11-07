@@ -5,11 +5,42 @@ import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  type ExecutionSnapshot,
+  executionCapabilities,
+  skillPackageCapability,
+} from '@daban/protocol';
 import { expect, type TestContext, test } from 'vitest';
 import { startNativeAgent } from './host-server.js';
 import { privateClientOptions } from './private-channel.js';
 
-async function fixture(t: TestContext) {
+const linuxSnapshot: ExecutionSnapshot = {
+  role: 'executor',
+  version: 1,
+  boot: 'mock-linux-boot',
+  nonce: 'mock-linux-nonce',
+  capabilities: [...executionCapabilities, skillPackageCapability],
+  computer: {
+    mode: 'agent',
+    sharedLogin: false,
+    viewport: { width: 1280, height: 800 },
+    environment: {
+      platform: 'linux',
+      arch: 'arm64',
+      kernel: 'synthetic',
+      node: 'synthetic',
+      browser: '',
+    },
+    events: [],
+    bots: {},
+  },
+  status: { available: true, revision: 0, limit: 2, items: [] },
+};
+
+async function fixture(
+  t: TestContext,
+  execution?: Parameters<typeof startNativeAgent>[0]['execution'],
+) {
   const temporary = await mkdtemp(path.join(tmpdir(), 'mock-native-agent-'));
   const root = path.join(temporary, 'private');
   const socketPath =
@@ -27,6 +58,7 @@ async function fixture(t: TestContext) {
     socketPath,
     sdkFile: fileURLToPath(import.meta.url),
     scope: createHash('sha256').update(root).digest('hex'),
+    ...(execution ? { execution } : {}),
   });
   const token = (await readFile(path.join(root, 'model/control-token'), 'utf8')).trim();
   const tls = await privateClientOptions(path.join(root, 'model/control-certificate.pem'));
@@ -83,7 +115,129 @@ test('native-only agent starts without a Linux executor or VM and reports its re
   ).toBe(process.platform === 'linux');
 });
 
-test('native knowledge remains readable without advertising an unavailable workspace export', async (t) => {
+test('native composition does not resolve the Linux ready promise or open a guest lease for ordinary files', async (t) => {
+  const calls: string[] = [];
+  const execution = {
+    get ready(): Promise<import('@daban/protocol').ExecutionSnapshot> {
+      throw new Error('SYNTHETIC_UNEXPECTED_VM_WAKE');
+    },
+    available: async () => true,
+    refresh: async (): Promise<import('@daban/protocol').ExecutionSnapshot> => {
+      throw new Error('SYNTHETIC_VM_STOPPED');
+    },
+    call: async (method: string) => {
+      calls.push(method);
+      throw new Error('SYNTHETIC_UNEXPECTED_VM_CALL');
+    },
+  };
+  const { agent, call } = await fixture(t, execution);
+  expect((await call('/api/state')).status).toBe(200);
+  const task = await agent.models.tools.workspace.create(['mock-native-only']);
+  await task.write('input.txt', 'SYNTHETIC LOCAL INPUT');
+  const run = {
+    id: 'mock-run',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 5,
+    seen: {},
+    trace: [],
+    workdir: task.path,
+    canonicalRoot: task.canonical,
+  };
+  await task.close();
+  await agent.models.tools.open(run);
+  expect(
+    await agent.models.tools.invoke(run, 'read_file', { path: 'input.txt' }),
+  ).not.toHaveProperty('isError', true);
+  await agent.models.tools.drain(run);
+  expect(calls).toEqual([]);
+});
+
+test('the first Linux shell prepares only captured inputs and uses the existing approval and guest lease', async (t) => {
+  const calls: { method: string; params: Record<string, unknown> }[] = [];
+  let approved = 0;
+  const execution = {
+    get ready(): Promise<import('@daban/protocol').ExecutionSnapshot> {
+      throw new Error('SYNTHETIC_UNEXPECTED_VM_WAKE');
+    },
+    available: async () => true,
+    snapshot: linuxSnapshot,
+    refresh: async () => linuxSnapshot,
+    call: async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      if (method === 'workspace.base') return '/synthetic-linux/shared';
+      if (method === 'workspace.create')
+        return {
+          root: '/synthetic-linux/shared',
+          path: '/synthetic-linux/shared/mock-task',
+          canonical: '/synthetic-linux/shared/mock-task',
+          handleId: 'mock-handle',
+        };
+      if (method === 'tools.open')
+        return {
+          tools: [
+            {
+              name: 'shell',
+              description: 'Synthetic Linux shell',
+              inputSchema: { type: 'object' },
+            },
+          ],
+        };
+      if (method === 'tools.invoke') {
+        expect(approved).toBe(1);
+        return {
+          phase: 'settled',
+          result: { content: [{ type: 'text', text: 'SYNTHETIC LINUX RESULT' }] },
+        };
+      }
+      return { ok: true };
+    },
+  };
+  const { agent } = await fixture(t, execution);
+  const tools = agent.models.tools;
+  tools.executeRemote = async (run, name, args, wireId, dispatch) => {
+    expect(run.workdir).toBe('/synthetic-linux/shared/mock-task');
+    expect(name).toBe('shell');
+    expect(args).toEqual({ command: 'cat input.csv' });
+    expect(wireId).toBe('mock-wire');
+    approved++;
+    return dispatch();
+  };
+  const task = await tools.workspace.create(['mock-linux-inputs']);
+  await task.write('input.csv', 'kind,total\nsynthetic,9\n');
+  await task.write('unrelated.txt', 'SYNTHETIC UNRELATED FILE');
+  const run = {
+    id: 'mock-run',
+    bot: 'mock-bot',
+    inputs: ['input.csv'],
+    sessionId: 'mock-session',
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 5,
+    seen: {},
+    trace: [],
+    workdir: task.path,
+    canonicalRoot: task.canonical,
+  };
+  await task.close();
+  await tools.open(run);
+  expect(calls).toEqual([]);
+  expect(tools.list(run.bot).map((tool) => tool.name)).toContain('shell');
+  expect(
+    await tools.invoke(run, 'shell', { command: 'cat input.csv' }, 'mock-wire'),
+  ).not.toHaveProperty('isError', true);
+  expect(
+    calls.filter((call) => call.method === 'workspace.write').map((call) => call.params.name),
+  ).toEqual(['input.csv']);
+  expect(calls.filter((call) => call.method === 'tools.invoke')).toHaveLength(1);
+  expect(run.toolCount).toBe(1);
+  expect(run.workdir).toBe(task.path);
+  await tools.drain(run);
+  expect(calls.filter((call) => call.method === 'tools.drain')).toHaveLength(1);
+});
+
+test('native knowledge exports into the owned task workspace without a Linux executor', async (t) => {
   const { agent, root } = await fixture(t);
   const tools = agent.models.tools;
   await agent.models.profiles.register({
@@ -109,7 +263,7 @@ test('native knowledge remains readable without advertising an unavailable works
     workdir: path.join(root, 'workspace'),
     canonicalRoot: await realpath(path.join(root, 'workspace')),
   };
-  expect(tools.list('mock-a').map((tool) => tool.name)).not.toContain('bot_knowledge_export');
+  expect(tools.list('mock-a').map((tool) => tool.name)).toContain('bot_knowledge_export');
   expect(await tools.invoke(run, 'bot_knowledge_read', { id: document.id })).not.toHaveProperty(
     'isError',
     true,
@@ -119,14 +273,175 @@ test('native knowledge remains readable without advertising an unavailable works
     revision: 1,
     target: 'output.md',
   });
-  expect(exported).toMatchObject({
-    isError: true,
-    content: [{ type: 'text', text: 'KNOWLEDGE_EXPORT_UNAVAILABLE' }],
-  });
-  expect(await readdir(path.join(root, 'workspace'))).not.toContain('output.md');
+  expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
+  expect(await readdir(path.join(root, 'workspace'))).toContain('output.md');
+  expect(await readFile(path.join(root, 'workspace/output.md'), 'utf8')).toBe(
+    'SYNTHETIC KNOWLEDGE',
+  );
   expect((await agent.models.knowledge.read('mock-a', document.id)).content).toBe(
     'SYNTHETIC KNOWLEDGE',
   );
+});
+
+test('native file tools read and write owned inputs without exposing a host shell or unrelated paths', async (t) => {
+  const { agent, root } = await fixture(t);
+  const task = await agent.models.tools.workspace.create(['mock-task']);
+  await task.write('input.csv', 'category,total\nmock,7\n');
+  const run: Parameters<typeof agent.models.tools.invoke>[0] = {
+    id: 'mock-files',
+    bot: 'mock-bot',
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    workdir: task.path,
+    canonicalRoot: task.canonical,
+  };
+  await task.close();
+  const offered = agent.models.tools.list(run.bot).map((tool) => tool.name);
+  expect(offered).toContain('read_file');
+  expect(offered).toContain('write_file');
+  expect(offered).not.toContain('shell');
+  expect(
+    await agent.models.tools.invoke(run, 'read_file', { path: 'input.csv' }),
+  ).not.toHaveProperty('isError', true);
+  expect(
+    await agent.models.tools.invoke(run, 'write_file', {
+      path: 'output.md',
+      content: 'Synthetic result: 7',
+    }),
+  ).not.toHaveProperty('isError', true);
+  expect(await readFile(path.join(task.path, 'output.md'), 'utf8')).toBe('Synthetic result: 7');
+  expect(
+    await agent.models.tools.invoke(run, 'read_file', {
+      path: path.join(root, 'model/control-token'),
+    }),
+  ).toHaveProperty('isError', true);
+  expect(
+    await agent.models.tools.invoke(run, 'write_file', {
+      path: '../escape.txt',
+      content: 'synthetic',
+    }),
+  ).toHaveProperty('isError', true);
+  expect(await agent.models.tools.invoke(run, 'shell', { command: 'synthetic' })).toHaveProperty(
+    'isError',
+    true,
+  );
+});
+
+test('retained Linux output links keep their origin after native-first upgrade while file listing stays native', async (t) => {
+  const calls: string[] = [];
+  const output = 'model-runs/mock-old/mock-bot/report.txt';
+  const execution = {
+    get ready(): Promise<import('@daban/protocol').ExecutionSnapshot> {
+      throw new Error('SYNTHETIC_UNEXPECTED_VM_WAKE');
+    },
+    available: async () => true,
+    refresh: async (): Promise<import('@daban/protocol').ExecutionSnapshot> => {
+      throw new Error('EXECUTOR_OFFLINE');
+    },
+    call: async (method: string, params: Record<string, unknown>) => {
+      calls.push(method);
+      expect(method).toBe('workspace.read');
+      expect(params.path).toBe(output);
+      return {
+        path: output,
+        name: 'report.txt',
+        size: 16,
+        modified: '2026-01-01T00:00:00Z',
+        content: 'SYNTHETIC OUTPUT',
+      };
+    },
+  };
+  const { agent, call } = await fixture(t, execution);
+  await agent.models.journal.put({
+    bot: 'mock-bot',
+    runId: 'mock-old',
+    prompt: 'Synthetic previous task',
+    phase: 'completed',
+    running: false,
+    result: '',
+    error: '',
+    trace: [],
+    outputDirectory: '/synthetic-linux/shared/model-runs/mock-old/mock-bot',
+    files: [{ path: output, name: 'report.txt', size: 16, modified: '2026-01-01T00:00:00Z' }],
+  });
+  expect((await call('/api/files')).status).toBe(200);
+  expect(calls).toEqual([]);
+  expect(await call('/api/files/read', { path: output })).toMatchObject({
+    status: 200,
+    value: { content: 'SYNTHETIC OUTPUT' },
+  });
+  expect(calls).toEqual(['workspace.read']);
+});
+
+test('an explicitly requested Linux skill stays separate from an authorized native desktop', async (t) => {
+  const execution = {
+    get ready(): Promise<ExecutionSnapshot> {
+      throw new Error('SYNTHETIC_UNEXPECTED_VM_WAKE');
+    },
+    available: async () => true,
+    snapshot: linuxSnapshot,
+    refresh: async () => linuxSnapshot,
+    call: async (method: string, params: Record<string, unknown>) => {
+      if (method === 'workspace.base') return '/synthetic-linux/shared';
+      if (method === 'workspace.create')
+        return {
+          root: '/synthetic-linux/shared',
+          path: '/synthetic-linux/shared/task',
+          canonical: '/synthetic-linux/shared/task',
+          handleId: 'mock-directory',
+        };
+      if (method === 'workspace.skill') return `${params.root}/.skills-mock`;
+      return { ok: true };
+    },
+  };
+  const { agent } = await fixture(t, execution);
+  const tools = agent.models.tools;
+  tools.localComputer = {
+    list: [],
+    selected: () => true,
+    prepare: async () => true,
+    invoke: async () => {
+      throw new Error('SYNTHETIC_UNREQUESTED_DESKTOP_ACTION');
+    },
+    cancel: async () => {},
+  };
+  const skill = await agent.models.skills.import(
+    '---\nname: mock-linux-skill\ndescription: Synthetic Linux skill\n---\nSynthetic instructions.',
+  );
+  await agent.models.skills.bind('mock-bot', {
+    id: skill.id,
+    revision: skill.revision,
+    bindingRevision: 0,
+    enabled: true,
+  });
+  const task = await tools.workspace.create(['mock-skill-task']);
+  await task.close();
+  const run = {
+    id: 'mock-run',
+    bot: 'mock-bot',
+    skills: await agent.models.skills.capture('mock-bot'),
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    workdir: task.path,
+    canonicalRoot: task.canonical,
+  };
+  await tools.open(run);
+  expect(tools.localSelected(run.bot, run)).toBe(true);
+  const result = await tools.invoke(run, 'skill_prepare', {
+    skill: 'mock-linux-skill',
+    target: 'linux',
+  });
+  expect(result.isError, JSON.stringify(result)).not.toBe(true);
+  expect(JSON.parse((result.content[0] as { type: 'text'; text: string }).text)).toMatchObject({
+    execution: 'linux-workspace',
+    directory: '/synthetic-linux/shared/task/.skills-mock',
+  });
 });
 
 test('VM-only Bot routes report an unavailable Linux capability in native mode and retain authentication', async (t) => {

@@ -30,6 +30,7 @@ import { imageInput } from './images.js';
 import type { IntegrationTools } from './integration-tools.js';
 import type { McpSnapshot } from './integrations.js';
 import type { KnowledgeTools } from './knowledge-tools.js';
+import type { LinuxTools } from './linux-tools.js';
 import type { LocalComputerPort } from './local-computer.js';
 import type { MemoryTools } from './memory.js';
 import type { NotesTools } from './notes-tools.js';
@@ -43,6 +44,7 @@ import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  inputs?: string[];
   executionId?: string;
   beforeTool?: () => Promise<unknown>;
   vision?: boolean;
@@ -139,6 +141,7 @@ const workspacePath = (root: string, file: string) =>
   path.relative(root, file).split(path.sep).join('/');
 
 export class AgentTools {
+  linux?: LinuxTools;
   readonly browser?: BrowserTools;
   localComputer?: LocalComputerPort;
   private readonly localRequests = new WeakMap<AgentToolRun, Set<string>>();
@@ -190,6 +193,7 @@ export class AgentTools {
   }
   hasComputer(bot: string, model?: ModelId, vision?: boolean, run?: AgentToolRun) {
     if (this.localSelected(bot, run)) return vision ?? (!model || modelHasVision(model));
+    if (this.linux?.hasComputer(bot)) return vision ?? (!model || modelHasVision(model));
     if (this.options.execution)
       return (
         (vision ?? (!model || modelHasVision(model))) &&
@@ -206,6 +210,7 @@ export class AgentTools {
   }
   hasBrowser(bot: string, run?: AgentToolRun) {
     if (this.localSelected(bot, run)) return false;
+    if (this.linux?.hasComputer(bot)) return true;
     if (this.options.execution)
       return !!this.remoteCatalogs.get(bot)?.some((tool) => tool.name === 'browser_snapshot');
     if (!this.browser || !this.computer) return false;
@@ -224,13 +229,12 @@ export class AgentTools {
   list(bot: string, model?: ModelId, conversationId?: string, run?: AgentToolRun) {
     const tools = this.options.execution
       ? this.remoteCatalogs.get(bot) || workspaceToolList
-      : this.hasComputer(bot, model, run?.vision)
+      : this.hasComputer(bot, model, run?.vision) &&
+          (!this.options.nativeOnly || this.localSelected(bot, run))
         ? agentToolList
         : workspaceToolList;
     const local = this.localSelected(bot, run);
-    const offered = this.options.nativeOnly
-      ? tools.filter((tool) => !workspaceToolList.some((item) => item.name === tool.name))
-      : tools;
+    const offered = this.options.nativeOnly ? tools.filter((tool) => tool.name !== 'shell') : tools;
     const visible = offered.filter(
       (tool) => tool.name !== 'read_image' || (run?.vision ?? (!model || modelHasVision(model))),
     );
@@ -246,6 +250,9 @@ export class AgentTools {
         ? this.localComputer?.list || []
         : []),
       ...(!this.options.execution && this.hasBrowser(bot, run) ? this.browser?.list || [] : []),
+      ...(this.linux?.enabled
+        ? this.linux.listFor(bot, run?.vision ?? (!model || modelHasVision(model)), local)
+        : []),
       ...(this.schedules ? scheduleToolList : []),
       ...(this.memory?.list || []),
       ...(run?.task ? this.bots?.list || [] : []),
@@ -368,6 +375,7 @@ export class AgentTools {
   }
   async drain(run: AgentToolRun) {
     await Promise.allSettled([...(this.active.get(run) || [])]);
+    await this.linux?.drain(run);
     if (this.localRuns.get(run)) await this.localComputer?.cancel(run);
     // An active call may still be opening its lease; capture it only after that call has settled.
     const id = this.opened.get(run);
@@ -377,6 +385,7 @@ export class AgentTools {
     }
   }
   async cancel(run: AgentToolRun) {
+    await this.linux?.cancel(run);
     if (this.localRuns.get(run)) await this.localComputer?.cancel(run);
     const id = this.opened.get(run);
     if (this.options.execution && id)
@@ -591,7 +600,6 @@ export class AgentTools {
     }
   }
   async writeText(run: AgentToolRun, value: unknown, content: unknown, createOnly = false) {
-    if (this.options.nativeOnly) throw new Fault('NATIVE_WORKSPACE_TOOL_UNAVAILABLE');
     if (
       typeof value !== 'string' ||
       !value ||
@@ -778,8 +786,14 @@ export class AgentTools {
     args: Record<string, unknown>,
     wireId?: string,
   ): Promise<ToolResult> {
+    if (
+      this.linux?.owns(name) &&
+      (!this.localSelected(run.bot, run) ||
+        (!computerToolList.some((tool) => tool.name === name) && !name.startsWith('browser_')))
+    )
+      return this.linux.invoke(run, name, args, wireId);
     const unavailable =
-      this.options.nativeOnly && (Object.hasOwn(fields, name) || name.startsWith('process_'))
+      this.options.nativeOnly && (name === 'shell' || name.startsWith('process_'))
         ? 'NATIVE_WORKSPACE_TOOL_UNAVAILABLE'
         : this.localRuns.get(run) && name.startsWith('browser_')
           ? 'LOCAL_BROWSER_SURFACE_UNAVAILABLE'

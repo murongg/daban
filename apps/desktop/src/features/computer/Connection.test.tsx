@@ -130,6 +130,35 @@ it('connects an ordinary registered Bot only after an explicit click and clears 
   expect(pendingComputer(bot)).toBeUndefined();
 });
 
+it('offers an explicit Linux connection while its optional executor is asleep, without starting it on mount', async () => {
+  const initial = { ...state(), linux: { available: true } };
+  initial.computers = {
+    available: false,
+    revision: 0,
+    limit: 2,
+    items: [],
+    error: 'LOCAL_VM_UNAVAILABLE',
+  };
+  const mock = bridge(initial, async (command) => {
+    mock.update(state(connected));
+    return { receipt: { id: command.request.id, bot, phase: 'settled' }, state: connected };
+  });
+  render(
+    <RuntimeProvider>
+      <Connection bot={bot} name="合成 Bot" notify={vi.fn()} />
+    </RuntimeProvider>,
+  );
+  const button = await screen.findByRole('button', { name: '连接电脑' });
+  expect(button).toBeEnabled();
+  expect(mock.invoke.mock.calls.some(([command]) => command.type === 'computer.action')).toBe(
+    false,
+  );
+  await userEvent.click(button);
+  expect(
+    mock.invoke.mock.calls.filter(([command]) => command.type === 'computer.action'),
+  ).toHaveLength(1);
+});
+
 it('requires saved-content confirmation and never fills a stale stop dialog with a replacement binding', async () => {
   const mock = bridge(state(connected), async () => {
     mock.update(state({ ...connected, revision: 4, instance: 'mock-native-after' }));

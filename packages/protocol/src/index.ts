@@ -1540,6 +1540,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  linux?: { available: boolean };
   searchSettings?: true;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
