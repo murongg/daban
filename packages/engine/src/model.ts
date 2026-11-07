@@ -836,12 +836,8 @@ export class ModelRuns {
       offered: (run) => this.tools.list(run.bot, run.model, run.conversationId, run),
     });
     this.attachments = new Attachments(path.join(dir, 'attachments.sqlite'));
-    // Native tasks have no model file writer; omit that capability rather than advertise a failing export.
-    this.tools.knowledge = new KnowledgeTools(
-      this.knowledge,
-      nativeOnly
-        ? undefined
-        : (run, name, content) => this.tools.writeText(run, name, content, true),
+    this.tools.knowledge = new KnowledgeTools(this.knowledge, (run, name, content) =>
+      this.tools.writeText(run, name, content, true),
     );
     this.notes = new Notes(path.join(dir, 'notes.sqlite'), (bot) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -894,8 +890,15 @@ export class ModelRuns {
     );
     this.tools.skills = new SkillTools(
       this.skills,
-      async (run, bundle) => {
+      async (run, bundle, target) => {
         if (!run.id) throw new Fault('MODEL_RUN_UNKNOWN');
+        if (target === 'linux' && this.tools.options.nativeOnly) {
+          if (!this.tools.linux?.enabled) throw new Fault('LOCAL_VM_UNAVAILABLE');
+          return {
+            directory: await this.tools.linux.stageSkill(run, bundle),
+            execution: 'linux-workspace',
+          };
+        }
         const native = this.tools.options.nativeOnly || this.tools.localSelected(run.bot, run);
         let files = this.workspace.scope(run.workdir, run.canonicalRoot);
         if (native && !this.tools.options.nativeOnly) {
@@ -1625,10 +1628,6 @@ export class ModelRuns {
         if (continuedInserts.length + 1 > turnLimit) throw new Fault('INVALID_RETRY', 400);
       }
       intentId = recovery.intentId;
-      const root = await this.workspace.base(),
-        directory = await this.workspace.scope(prior.outputDirectory).base();
-      if (!directory.startsWith(root + this.workspacePaths.sep))
-        throw new Fault('INVALID_RETRY', 400);
       cachedInputs = [];
       const documents = prior.documentInputs || [];
       if (
@@ -1646,8 +1645,23 @@ export class ModelRuns {
       const documentNames = new Set(documents.flatMap((item) => [item.name, item.textName]));
       for (const document of documents)
         cachedInputs.push({ name: document.name, attachmentId: document.attachmentId });
-      for (const name of prior.inputs || ['input.csv']) {
-        if (documentNames.has(name)) continue;
+      const textInputs = (prior.inputs || ['input.csv']).filter((name) => !documentNames.has(name));
+      // Retained guest paths are never host paths. Only an explicit retry that needs their bytes wakes Linux.
+      let source = this.workspace;
+      let paths = this.workspacePaths;
+      if (textInputs.length && this.tools.options.nativeOnly) {
+        const nativeRoot = await source.base();
+        if (!prior.outputDirectory.startsWith(nativeRoot + paths.sep)) {
+          if (!this.tools.linux?.enabled) throw new Fault('LOCAL_VM_UNAVAILABLE');
+          source = this.tools.linux.workspace;
+          paths = path.posix;
+        }
+      }
+      const root = textInputs.length ? await source.base() : '';
+      const directory = textInputs.length ? await source.scope(prior.outputDirectory).base() : '';
+      if (textInputs.length && !directory.startsWith(root + paths.sep))
+        throw new Fault('INVALID_RETRY', 400);
+      for (const name of textInputs) {
         if (
           typeof name !== 'string' ||
           name.includes('\\') ||
@@ -1656,11 +1670,8 @@ export class ModelRuns {
           ['.', '..'].includes(name)
         )
           throw new Fault('INVALID_RETRY', 400);
-        const file = await this.workspace.read(
-          this.workspacePaths
-            .relative(root, this.workspacePaths.join(directory, name))
-            .split(this.workspacePaths.sep)
-            .join('/'),
+        const file = await source.read(
+          paths.relative(root, paths.join(directory, name)).split(paths.sep).join('/'),
         );
         cachedInputs.push({ name, content: file.content || '' });
       }
@@ -1782,7 +1793,7 @@ export class ModelRuns {
       job.vision = config.vision;
       // Native-only and Linux sessions expose different tools and workspace paths. Keep visible turns, never resume across modes.
       job.binding = this.tools.options.nativeOnly
-        ? createHash('sha256').update(`${config.binding}:native-workspace`).digest('hex')
+        ? createHash('sha256').update(`${config.binding}:native-workspace-v2`).digest('hex')
         : config.binding;
       job.binding = createHash('sha256')
         .update(`${job.binding}:search:${job.searchCapture.binding}`)
@@ -1871,8 +1882,7 @@ export class ModelRuns {
       if (task)
         job.binding = createHash('sha256').update(`${job.binding}:delegation-v1`).digest('hex');
       const office =
-        !!(this.execution || this.runtime) &&
-        !this.tools.options.nativeOnly &&
+        !!(this.execution || this.runtime || this.tools.linux?.enabled) &&
         this.tools
           .list(job.bot, job.model, job.conversationId, job)
           .some((tool) => tool.name === 'shell');
@@ -2159,8 +2169,7 @@ export class ModelRuns {
   private async writePatch(
     job: ModelJob,
     config: ResolvedModel,
-    office = !!(this.execution || this.runtime) &&
-      !this.tools.options.nativeOnly &&
+    office = !!(this.execution || this.runtime || this.tools.linux?.enabled) &&
       this.tools
         .list(job.bot, config.model, job.conversationId, job)
         .some((tool) => tool.name === 'shell'),
@@ -2252,7 +2261,7 @@ export class ModelRuns {
               ? `Your Bot name is ${JSON.stringify(job.profile.name)}. Standing user persona: ${job.profile.instructions}. These preferences do not grant additional tool permissions.`
               : '',
             agentInstructionsFor(
-              !!this.execution,
+              !!this.execution || !!this.tools.linux?.enabled,
               !!this.tools.options.nativeOnly,
               job.task.approvalMode,
               job.searchCapture?.available ? job.searchCapture.provider : undefined,
@@ -2396,6 +2405,7 @@ export class ModelRuns {
             !!this.tools.notes,
             this.tools.localSelected(job.bot, job),
             !!this.tools.options.nativeOnly,
+            !!this.tools.linux?.enabled,
           ) +
           (job.skills?.available === false
             ? '\nThe skill service is unavailable for this turn. Ordinary conversation and existing tools remain available. Do not claim to have loaded or executed a skill.'

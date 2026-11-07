@@ -79,6 +79,21 @@ test('reads resources progressively and materializes relative paths without runn
         (await tools.invoke(run, 'skill_prepare', { skill: 'mock-tools' })).content[0].text,
       ).directory,
     ).toBe(prepared.directory);
+    const targets: unknown[] = [];
+    const destinations = new SkillTools(store, async (...values: unknown[]) => {
+      targets.push(values[2]);
+      return {
+        directory:
+          values[2] === 'linux' ? '/synthetic-linux/skill' : path.join(root, 'native-skill'),
+        execution: values[2] === 'linux' ? 'linux-workspace' : 'native-gui',
+      };
+    });
+    await destinations.invoke(run, 'skill_prepare', { skill: 'mock-tools' });
+    await destinations.invoke(run, 'skill_prepare', { skill: 'mock-tools', target: 'linux' });
+    expect(targets).toEqual([undefined, 'linux']);
+    await expect(
+      destinations.invoke(run, 'skill_prepare', { skill: 'mock-tools', target: 'host-shell' }),
+    ).rejects.toMatchObject({ code: 'INVALID_SKILL_TARGET' });
     await expect(
       tools.invoke({ ...run, skills: await store.capture('mock-b') }, 'skill_read', {
         skill: 'mock-tools',

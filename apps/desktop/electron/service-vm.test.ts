@@ -77,8 +77,10 @@ vi.mock('./host-selection', () => ({
 vi.mock('./upgrade', () => ({ prepareAgentUpdate: mock.update }));
 vi.mock('./unix', () => ({
   readAgentToken: async () => 'a'.repeat(64),
-  unixFetch: (_socket: string, options: { certificateFile?: string }) => async () => {
+  unixFetch: (_socket: string, options: { certificateFile?: string }) => async (url: string) => {
     if (!options.certificateFile) throw new Error('SYNTHETIC MISSING TLS CERTIFICATE');
+    if (url.endsWith('/api/host/environment'))
+      return Response.json({ required: false, target: 'linux', phase: 'existing' });
     return Response.json(mock.identity);
   },
 }));
@@ -87,76 +89,76 @@ import { daemonScope } from './daemon';
 import { runtimeService } from './service';
 import { controlSocket } from './socket';
 
-it.skipIf(process.platform !== 'win32')(
-  'routes Windows VM settings through the detached host and keeps native mode when a busy handoff is refused',
-  async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'mock-service-vm-'));
-    const userData = await secureDirectory(path.join(root, 'private'));
-    const frame = { url: 'file:///mock/index.html' },
-      sender = { mainFrame: frame, send: vi.fn() };
-    mock.windows.push({ webContents: sender });
-    const service = runtimeService(
-      userData,
-      frame.url,
-      path.join(root, 'unused-environment'),
-      undefined,
-      {
-        entry: path.join(root, 'mock-main'),
-        executable: path.join(root, 'mock-node'),
-        nativeFirst: true,
-      },
-    );
-    const scope = daemonScope(path.join(userData, 'agent'), path.join(userData, 'runtime.json'));
-    mock.identity = {
-      role: 'agent',
-      scope,
-      dataRoot: path.join(userData, 'agent'),
-      socketPath: controlSocket(path.join(userData, 'agent.sock'), scope),
+it('routes Windows VM settings through the detached host and keeps native mode when a busy handoff is refused', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-service-vm-'));
+  const userData = await secureDirectory(path.join(root, 'private'));
+  const frame = { url: 'file:///mock/index.html' },
+    sender = { mainFrame: frame, send: vi.fn() };
+  mock.windows.push({ webContents: sender });
+  const service = runtimeService(
+    userData,
+    frame.url,
+    path.join(root, 'unused-environment'),
+    undefined,
+    {
+      entry: path.join(root, 'mock-main'),
+      executable: path.join(root, 'mock-node'),
+      nativeFirst: true,
+    },
+    undefined,
+    'win32',
+  );
+  const scope = daemonScope(path.join(userData, 'agent'), path.join(userData, 'runtime.json'));
+  mock.identity = {
+    role: 'agent',
+    scope,
+    dataRoot: path.join(userData, 'agent'),
+    socketPath: controlSocket(path.join(userData, 'agent.sock'), scope),
+  };
+  const connection: VmConnection = {
+    provider: 'qemu',
+    enabled: true,
+    vmId: '11111111-2222-4333-8444-555555555555',
+    host: '127.0.0.1',
+    sshPort: 22,
+    user: 'mock-bot',
+    identityFile: path.join(root, 'mock-key'),
+    hostKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  };
+  const invoke = (command: unknown) => mock.handler!({ sender, senderFrame: frame }, command);
+  try {
+    mock.modes.length = 0;
+    await saveVmConnection(path.join(userData, 'runtime.json'), connection);
+    await service.connect();
+    mock.busy = true;
+    expect(await invoke({ type: 'vm.native' })).toEqual({
+      ok: false,
+      error: 'AGENT_UPDATE_BUSY',
+    });
+    expect(await invoke({ type: 'vm.status' })).toEqual({
+      ok: true,
+      value: { supported: true, connection },
+    });
+    mock.busy = false;
+    expect(mock.modes.at(-1)).toBe('native');
+    const report = (await invoke({ type: 'runtime.inspect' })) as {
+      ok: boolean;
+      value: DiagnosticReport;
     };
-    const connection: VmConnection = {
-      provider: 'qemu',
-      enabled: true,
-      vmId: '11111111-2222-4333-8444-555555555555',
-      host: '127.0.0.1',
-      sshPort: 22,
-      user: 'mock-bot',
-      identityFile: path.join(root, 'mock-key'),
-      hostKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-    };
-    const invoke = (command: unknown) => mock.handler!({ sender, senderFrame: frame }, command);
-    try {
-      mock.modes.length = 0;
-      await saveVmConnection(path.join(userData, 'runtime.json'), connection);
-      await service.connect();
-      mock.busy = true;
-      expect(await invoke({ type: 'vm.native' })).toEqual({
-        ok: false,
-        error: 'AGENT_UPDATE_BUSY',
-      });
-      expect(await invoke({ type: 'vm.status' })).toEqual({
-        ok: true,
-        value: { supported: true, connection },
-      });
-      mock.busy = false;
-      expect(mock.modes.at(-1)).toBe('vm');
-      const report = (await invoke({ type: 'runtime.inspect' })) as {
-        ok: boolean;
-        value: DiagnosticReport;
-      };
-      expect(report.ok).toBe(true);
-      expect(report.value.checks.find((check) => check.id === 'agent')?.state).toBe('ready');
-      mock.vmFailure = 'EXECUTOR_SSH_HOST_KEY';
-      expect((await service.connect()).error).toBe('vm.hostKeyChanged');
-      mock.vmFailure = '';
-      await service.connect();
-      await service.prepareUpdate();
-      expect(mock.update).toHaveBeenCalled();
-      await service.resumeAfterUpdate();
-      expect(await invoke({ type: 'vm.native' })).toMatchObject({ ok: true });
-      expect(mock.modes.at(-1)).toBe('native');
-    } finally {
-      await service.close();
-      await rm(root, { recursive: true, force: true });
-    }
-  },
-);
+    expect(report.ok).toBe(true);
+    expect(report.value.checks.find((check) => check.id === 'agent')?.state).toBe('ready');
+    mock.vmFailure = 'EXECUTOR_SSH_HOST_KEY';
+    expect((await service.connect()).phase).toBe('ready');
+    expect(mock.modes.every((mode) => mode === 'native')).toBe(true);
+    mock.vmFailure = '';
+    await service.connect();
+    await service.prepareUpdate();
+    expect(mock.update).toHaveBeenCalled();
+    await service.resumeAfterUpdate();
+    expect(await invoke({ type: 'vm.native' })).toMatchObject({ ok: true });
+    expect(mock.modes.at(-1)).toBe('native');
+  } finally {
+    await service.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
