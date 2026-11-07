@@ -7,6 +7,7 @@ import { documentLimit, publicUrl, validAgentId } from '@daban/protocol';
 import { BrowserWindow, type Rectangle, session, WebContentsView } from 'electron';
 import { WebSocket, WebSocketServer } from 'ws';
 import { browserPartition } from '../shared/browser';
+import { captureBrowser } from './browser-capture';
 import { BrowserCdp, type CdpPage } from './browser-cdp';
 
 interface Guard {
@@ -429,6 +430,7 @@ export class BrowserHost {
     if (!opener) await contents.loadURL('about:blank');
     return {
       command: async (method, params, child) => {
+        if (method === 'Page.captureScreenshot' && !child) return captureBrowser(contents, params);
         const result = (await contents.debugger.sendCommand(method, params, child)) as Record<
           string,
           unknown
