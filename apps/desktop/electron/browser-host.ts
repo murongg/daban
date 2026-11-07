@@ -363,14 +363,22 @@ export class BrowserHost {
     // stability checks. Keep AI pages rendering in a hidden, unfocusable host.
     if (!this.background || this.background.isDestroyed()) {
       this.background = new BrowserWindow({
+        x: -16384,
+        y: -16384,
         width: 960,
         height: 640,
         show: false,
+        frame: false,
+        opacity: 0,
         focusable: false,
         skipTaskbar: true,
         paintWhenInitiallyHidden: true,
         webPreferences: this.preferences(),
       });
+      this.background.setIgnoreMouseEvents(true);
+      // A never-shown native window may have no compositor surface. Map the
+      // unfocusable host outside the desktop; opacity also hides it on macOS/Windows.
+      this.background.showInactive();
       // Initialize the host document before guests depend on its compositor.
       this.backgroundReady = this.background.loadURL('about:blank');
     }
