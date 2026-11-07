@@ -151,6 +151,10 @@ export function Conversation({
       (item) => item.bot === target && ['connecting', 'stopping'].includes(item.phase),
     ) === true;
   const live = runtime.enabled && !bot.members;
+  const chatUnsupported = bot.kind === 'chat' && runtime.snapshot.protocolVersion < 46;
+  const sendBlocked =
+    live &&
+    (runtime.snapshot.phase !== 'ready' || !runtime.snapshot.model.configured || chatUnsupported);
   const currentTask = live ? agentTask(runtime.snapshot, bot.id) : undefined;
   const task =
     currentTask?.conversationId || (currentTask?.chatRevision ?? 0) !== revision
@@ -255,7 +259,7 @@ export function Conversation({
   function send() {
     if (readOnly || recovering) return;
     // Enter submits through this handler too, so the disabled button alone cannot fence startup.
-    if (live && (runtime.snapshot.phase !== 'ready' || !runtime.snapshot.model.configured)) return;
+    if (sendBlocked) return;
     if (state.attachmentUploads[bot.id]) {
       notify(t('common.waitUntilAttachmentsReadySending'));
       return;
@@ -451,6 +455,15 @@ export function Conversation({
     <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
       <Transcript scope={`${bot.id}:${revision}`} entries={rows} scroll={scroll} />
       <div className="composer-wrap">
+        {live && bot.kind === 'chat' && (runtime.snapshot.phase !== 'ready' || chatUnsupported) && (
+          <p className="inline-note" role="status">
+            {t(
+              runtime.snapshot.phase !== 'ready'
+                ? 'conversations.connectToSend'
+                : 'conversations.updateToSend',
+            )}
+          </p>
+        )}
         {busyElsewhere && (
           <div className="live-task" role="status">
             <span>{t('conversations.otherTask')}</span>
@@ -800,10 +813,7 @@ export function Conversation({
                 !!busyInGroup ||
                 busyElsewhere ||
                 (!draft.trim() && !attachments.length) ||
-                !!(
-                  live &&
-                  (runtime.snapshot.phase !== 'ready' || !runtime.snapshot.model.configured)
-                )
+                sendBlocked
               }
             >
               <ArrowUp />

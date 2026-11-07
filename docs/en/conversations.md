@@ -4,6 +4,8 @@
 
 Choose **New chat** in the sidebar to start an ordinary conversation without creating a Bot. Ordinary conversations can use authorized tools too. Questions, writing, and content organization do not require connecting a computer; connect one when a task needs a graphical application.
 
+Choose **Chats** in the sidebar to open an existing ordinary conversation, or create one if none exists. While the workspace is connecting or offline, **New chat** and the header’s **New conversation** can still open local drafts. Send after the connection is ready; reconnecting never sends a draft automatically.
+
 Choose a Bot for a lasting role, memory, and reference library. An ordinary conversation keeps its own context and does not automatically include another chat or Bot's private material.
 
 ## Send a task

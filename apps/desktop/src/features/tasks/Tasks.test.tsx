@@ -207,7 +207,7 @@ it('browses shared tasks in list and board without starting work or changing a c
   ).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '回收站' }));
   expect(screen.getByRole('button', { name: '列表' })).toHaveAttribute('aria-pressed', 'true');
-  await userEvent.click(screen.getByRole('button', { name: '对话' }));
+  await userEvent.click(screen.getByRole('button', { name: '研究员' }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('MOCK-CHAT-DRAFT');
   expect(live.write).not.toHaveBeenCalled();
   expect(live.calls.some((call) => ['task.start', 'computer.action'].includes(call.type))).toBe(
@@ -228,7 +228,7 @@ it('persists an exact create intent before effect and retains task edits across 
     expect(restore(localStorage.getItem(storageKey)).work?.pending).toBeUndefined(),
   );
   await userEvent.type(screen.getByRole('textbox', { name: '最新进展' }), 'MOCK UNSAVED PROGRESS');
-  await userEvent.click(screen.getByRole('button', { name: '对话' }));
+  await userEvent.click(screen.getByRole('button', { name: '研究员' }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('MOCK-CHAT-DRAFT');
   mounted.unmount();
   render(<App />);

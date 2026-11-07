@@ -638,7 +638,7 @@ textarea.field {
 .local-workspace {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .local-icon {
   display: grid;
@@ -651,11 +651,20 @@ textarea.field {
   font-size: 12px;
 }
 .workspace-info {
+  flex: 1;
   min-width: 0;
 }
 .workspace-status {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  margin-right: -8px;
+}
+.workspace-actions .icon-button {
+  width: 28px;
 }
 .demo-label {
   white-space: nowrap;

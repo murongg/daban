@@ -1,3 +1,25 @@
+.icon-button.update-button {
+  color: var(--success);
+}
+.update-ring {
+  display: inline-flex;
+}
+.icon-button .update-ring svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+}
+.update-ring circle {
+  stroke-width: 2.5px;
+}
+.update-ring-track {
+  stroke: var(--line-strong);
+}
+.update-ring-value {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.2s linear;
+}
 .update-status {
   display: flex;
   align-items: center;
@@ -79,7 +101,8 @@
   .update-spin {
     animation: none;
   }
-  .update-progress span {
+  .update-progress span,
+  .update-ring-value {
     transition: none;
   }
 }

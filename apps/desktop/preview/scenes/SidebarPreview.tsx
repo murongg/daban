@@ -14,6 +14,7 @@ import { reduce } from '../../src/app/state';
 import { serialize, storageKey } from '../../src/app/storage';
 import { demoState as initialState } from '../../src/test/fixtures';
 import { previewSnapshot } from '../runtime';
+import { updatePreview } from '../updates';
 import '../../src/styles/tokens.css';
 import '../../src/styles/styles.css';
 
@@ -109,7 +110,7 @@ const bridge: RuntimeBridge = {
 };
 Object.defineProperty(window, 'daban', {
   configurable: true,
-  value: { platform: 'darwin', runtime: bridge },
+  value: { platform: 'darwin', runtime: bridge, updates: updatePreview() },
 });
 let sequence = 0;
 const eventPrefix = `mock-sidebar-${crypto.randomUUID()}`;
