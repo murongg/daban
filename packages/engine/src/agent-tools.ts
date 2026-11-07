@@ -784,15 +784,18 @@ export class AgentTools {
       await directory.verify();
       // Pin the parent before O_CREAT; checking only the opened file would already leave an empty file outside the workspace.
       const target = path.join(base, path.basename(file));
+      const previous = await lstat(target).catch((error: unknown) => {
+        if (errorCode(error) !== 'ENOENT') throw error;
+        return undefined;
+      });
+      // Windows creating opens can follow dangling links even with O_EXCL; reject reparse points before any create.
+      if (previous?.isSymbolicLink()) throw new Fault('INVALID_FILE', 400);
       const flags = constants.O_RDWR | constants.O_NOFOLLOW;
-      let handle: FileHandle;
-      try {
-        handle = await open(target, flags | constants.O_CREAT | constants.O_EXCL, 0o600);
-      } catch (error) {
-        if (createOnly || errorCode(error) !== 'EEXIST') throw error;
-        // Without O_NOFOLLOW (Windows), O_CREAT could create a dangling link's private target before validation.
-        handle = await open(target, flags);
-      }
+      const handle = await open(
+        target,
+        previous && !createOnly ? flags : flags | constants.O_CREAT | constants.O_EXCL,
+        0o600,
+      );
       try {
         const info = await handle.stat();
         const named = await lstat(target);
@@ -806,6 +809,7 @@ export class AgentTools {
           named.nlink !== 1 ||
           named.ino !== info.ino ||
           named.dev !== info.dev ||
+          (previous && (previous.ino !== info.ino || previous.dev !== info.dev)) ||
           !inside(run.canonicalRoot, opened)
         )
           throw new Fault('INVALID_FILE', 400);

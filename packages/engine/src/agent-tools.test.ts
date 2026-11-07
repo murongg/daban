@@ -8,7 +8,7 @@ import { expect, test, vi } from 'vitest';
 import { type AgentToolRun, AgentTools, agentToolList, validWindowsPath } from './agent-tools.js';
 import { Commands } from './commands.js';
 import type { ComputerFacade, ToolResult } from './computer-tools.js';
-import { Control } from './control.js';
+import { Control, errorCode } from './control.js';
 import { Interactions } from './interactions.js';
 import { NativeWorkspace } from './native-workspace.js';
 import { WorkspaceFiles } from './workspace.js';
@@ -680,10 +680,26 @@ test('task writes never create a dangling link target when the filesystem has no
   await mkdir(path.join(root, 'private'));
   const outside = path.join(root, 'private', 'must-not-exist.txt');
   await symlink(outside, path.join(task.path, 'link.txt'));
+  expect(
+    await fs.access(outside).then(
+      () => true,
+      () => false,
+    ),
+  ).toBe(false);
   const original = fs.open;
-  vi.spyOn(fs, 'open').mockImplementation((file, flags, mode) =>
-    original(file, typeof flags === 'number' ? flags & ~constants.O_NOFOLLOW : flags, mode),
-  );
+  vi.spyOn(fs, 'open').mockImplementation(async (file, flags, mode) => {
+    if (typeof flags !== 'number') return original(file, flags, mode);
+    let compatible = flags & ~constants.O_NOFOLLOW;
+    if (compatible & constants.O_CREAT) {
+      const entry = await fs.lstat(file).catch((error: unknown) => {
+        if (errorCode(error) !== 'ENOENT') throw error;
+        return undefined;
+      });
+      // Model Windows' creating-open behavior, rather than POSIX O_EXCL's stronger symlink handling.
+      if (entry?.isSymbolicLink()) compatible &= ~constants.O_EXCL;
+    }
+    return original(file, compatible, mode);
+  });
   syncBuiltinESMExports();
   t.onTestFinished(async () => {
     vi.restoreAllMocks();
@@ -705,7 +721,10 @@ test('task writes never create a dangling link target when the filesystem has no
   await expect(
     tools.writeText(run, 'link.txt', 'SYNTHETIC MUST NOT ESCAPE'),
   ).rejects.toThrowError();
-  await expect(fs.access(outside)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(
+    fs.access(outside),
+    'A refused link must not create its private target',
+  ).rejects.toMatchObject({ code: 'ENOENT' });
   await tools.writeText(run, 'result.txt', 'SYNTHETIC FIRST');
   await symlink(path.join(task.path, 'result.txt'), path.join(task.path, 'inside-link.txt'));
   await expect(
