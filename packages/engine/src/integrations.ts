@@ -1,17 +1,29 @@
+import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, mkdir, open } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  type AppConnect,
+  type AppId,
+  type AppOAuthPhase,
+  type AppOAuthReceipt,
+  type AppTarget,
+  appProvider,
+  isAppConnect,
+  isAppOAuthReceipt,
+  isAppTarget,
   isMcpReceipt,
+  legacyMcpCatalogToolLimit,
   type McpBindingInput,
   type McpConnection,
   type McpReceipt,
   type McpSave,
+  type McpView,
   validAgentId,
 } from '@daban/protocol';
-import { and, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { Fault } from './control.js';
 import { configure, type Database, migrate, tables } from './database.js';
 import { migrations } from './integrations-migrations.js';
@@ -21,11 +33,27 @@ import {
   integrationBindings,
   integrationMeta,
   integrations,
+  oauthAttempts,
+  oauthGrants,
 } from './integrations-schema.js';
 import { canonicalJson, type McpTool, mcpCatalog, mcpDigest } from './mcp-catalog.js';
 import { publicAddress } from './network.js';
 
 export type { McpBindingInput, McpConnection, McpSave } from '@daban/protocol';
+export interface OAuthGrant {
+  app?: AppId;
+  issuer: string;
+  resource: string;
+  clientId: string;
+  clientSecret?: string;
+  redirectUri: string;
+  tokenEndpoint: string;
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  scope: string;
+  identity?: string;
+}
 export interface McpCapture {
   connection: string;
   revision: number;
@@ -86,7 +114,11 @@ function endpoint(value: unknown) {
     throw new Fault('INVALID_MCP_CONFIG', 400);
   }
 }
-export function mcpSecrets(config: { endpoint: string; bearer?: string }) {
+export function mcpSecrets(config: {
+  endpoint: string;
+  bearer?: string;
+  secrets?: readonly string[];
+}) {
   const url = new URL(config.endpoint);
   return [
     ...new Set(
@@ -95,12 +127,15 @@ export function mcpSecrets(config: { endpoint: string; bearer?: string }) {
         ...url.searchParams.values(),
         ...url.pathname.split('/').filter((value) => value.length >= 8),
         config.bearer ?? '',
+        ...(config.secrets ?? []),
       ].filter(Boolean),
     ),
   ];
 }
-const storeTables =
+const legacyStoreTables =
   'call_receipts,config_commands,integration_bindings,integration_meta,integrations';
+const storeTables = `${legacyStoreTables},oauth_attempts,oauth_grants`;
+const pendingOAuth = ['preparing', 'waiting', 'exchanging'];
 const legacyColumns = [
   'id',
   'revision',
@@ -121,7 +156,7 @@ const legacyColumns = [
 // Pre-ORM files carried user_version 1 or 2; version 1 gains the owner column and owner-scoped names.
 function legacy(client: DatabaseSync) {
   const version = Number(client.prepare('PRAGMA user_version').get()!.user_version);
-  if (![1, 2].includes(version) || tables(client).join(',') !== storeTables)
+  if (![1, 2].includes(version) || tables(client).join(',') !== legacyStoreTables)
     throw new Error('invalid schema');
   const columns = client
     .prepare('PRAGMA table_info(integrations)')
@@ -142,6 +177,623 @@ function legacy(client: DatabaseSync) {
 }
 
 export class Integrations {
+  private oauthReceipt(row: typeof oauthAttempts.$inferSelect): AppOAuthReceipt {
+    return {
+      bot: row.bot,
+      connection: row.connection,
+      revision: row.revision,
+      requestId: row.requestId,
+      attempt: row.attempt,
+      phase: row.phase as AppOAuthPhase,
+      ...(row.error ? { error: row.error } : {}),
+    };
+  }
+  private attemptRow(target: AppTarget, attempt: string) {
+    if (!isAppTarget(target) || !validAgentId(attempt))
+      throw new Fault('OAUTH_ATTEMPT_NOT_FOUND', 404);
+    const row = this.available()
+      .select()
+      .from(oauthAttempts)
+      .where(eq(oauthAttempts.attempt, attempt))
+      .get();
+    if (
+      !row ||
+      row.bot !== target.bot ||
+      row.connection !== target.connection ||
+      row.revision !== target.revision
+    )
+      throw new Fault('OAUTH_ATTEMPT_NOT_FOUND', 404);
+    return row;
+  }
+  private reserved(nameKey: string, bot: string | undefined, except?: string) {
+    return (
+      bot !== undefined &&
+      this.available()
+        .select()
+        .from(oauthAttempts)
+        .where(
+          and(
+            eq(oauthAttempts.bot, bot),
+            eq(oauthAttempts.nameKey, nameKey),
+            inArray(oauthAttempts.phase, pendingOAuth),
+          ),
+        )
+        .all()
+        .some((a) => a.connection !== except)
+    );
+  }
+  private expireOAuth() {
+    this.available()
+      .update(oauthAttempts)
+      .set({ phase: 'expired', error: 'OAUTH_EXPIRED' })
+      .where(
+        and(inArray(oauthAttempts.phase, pendingOAuth), lte(oauthAttempts.deadline, Date.now())),
+      )
+      .run();
+  }
+  async beginOAuth(input: AppConnect, deadline: number): Promise<AppOAuthReceipt> {
+    await this.ready;
+    if (
+      !isAppConnect(input) ||
+      !Number.isSafeInteger(deadline) ||
+      deadline <= Date.now() ||
+      deadline > Date.now() + 610000
+    )
+      throw new Fault('OAUTH_INVALID_REQUEST', 400);
+    const db = this.available(),
+      fingerprint = mcpDigest({
+        ...JSON.parse(JSON.stringify(input)),
+        ...(input.revision === 0 ? { name: input.name!.trim() } : {}),
+      });
+    this.expireOAuth();
+    const prior = db
+      .select()
+      .from(oauthAttempts)
+      .where(eq(oauthAttempts.requestId, input.requestId))
+      .get();
+    if (prior) {
+      if (prior.hash !== fingerprint) throw new Fault('OAUTH_REQUEST_ID_REUSED');
+      return this.oauthReceipt(prior);
+    }
+    const row = db.select().from(integrations).where(eq(integrations.id, input.connection)).get();
+    if (row) {
+      this.scoped(input.connection, input.bot);
+      if (row.owner !== input.bot || row.authKind !== 'oauth')
+        throw new Fault('OAUTH_CONNECTION_MISMATCH');
+      const grant = db.select().from(oauthGrants).where(eq(oauthGrants.connection, row.id)).get();
+      if (!grant || grant.app !== input.app) throw new Fault('OAUTH_CONNECTION_MISMATCH');
+      if (row.deleted || row.revision !== input.revision) throw new Fault('OAUTH_CONFLICT');
+    } else if (input.revision !== 0) throw new Fault('OAUTH_CONFLICT');
+    if (
+      db
+        .select()
+        .from(oauthAttempts)
+        .where(
+          and(
+            eq(oauthAttempts.connection, input.connection),
+            inArray(oauthAttempts.phase, pendingOAuth),
+          ),
+        )
+        .get()
+    )
+      throw new Fault('OAUTH_PENDING');
+    const name = row?.name ?? input.name!.trim(),
+      nameKey = name.normalize('NFC').toLowerCase();
+    if (
+      this.reserved(nameKey, input.bot) ||
+      db
+        .select()
+        .from(integrations)
+        .where(
+          and(
+            eq(integrations.owner, input.bot),
+            eq(integrations.nameKey, nameKey),
+            ne(integrations.id, input.connection),
+          ),
+        )
+        .get()
+    )
+      throw new Fault('MCP_NAME_CONFLICT');
+    const reservations = db
+      .select()
+      .from(oauthAttempts)
+      .where(inArray(oauthAttempts.phase, pendingOAuth))
+      .all();
+    if (
+      !row &&
+      db.select({ count: count() }).from(integrations).get()!.count +
+        reservations.filter((a) => a.revision === 0).length >=
+        50
+    )
+      throw new Fault('MCP_CONNECTION_LIMIT');
+    if (db.select({ count: count() }).from(oauthAttempts).get()!.count >= 10000)
+      throw new Fault('MCP_STORAGE_LIMIT');
+    const attempt = randomUUID();
+    this.transaction(() =>
+      db
+        .insert(oauthAttempts)
+        .values({
+          ...input,
+          name,
+          nameKey,
+          hash: fingerprint,
+          attempt,
+          deadline,
+          phase: 'preparing',
+          error: null,
+        })
+        .run(),
+    );
+    return this.oauthAttempt(
+      { bot: input.bot, connection: input.connection, revision: input.revision },
+      attempt,
+    );
+  }
+  async oauthAttempt(target: AppTarget, attempt: string): Promise<AppOAuthReceipt> {
+    await this.ready;
+    this.expireOAuth();
+    return this.oauthReceipt(this.attemptRow(target, attempt));
+  }
+  async oauthRegistration(target: AppTarget, app: AppId) {
+    await this.ready;
+    const row = this.available()
+      .select()
+      .from(oauthAttempts)
+      .where(
+        and(
+          eq(oauthAttempts.bot, target.bot),
+          eq(oauthAttempts.connection, target.connection),
+          eq(oauthAttempts.revision, target.revision),
+          eq(oauthAttempts.app, app),
+          isNotNull(oauthAttempts.clientId),
+          isNotNull(oauthAttempts.redirectUri),
+          ne(oauthAttempts.phase, 'cancelled'),
+        ),
+      )
+      .orderBy(desc(oauthAttempts.deadline))
+      .get();
+    return row?.clientId && row.redirectUri
+      ? {
+          clientId: row.clientId,
+          clientSecret: row.clientSecret,
+          redirectUri: row.redirectUri,
+        }
+      : undefined;
+  }
+  async rememberOAuthRegistration(
+    target: AppTarget,
+    attempt: string,
+    client: {
+      clientId: string;
+      clientSecret?: string;
+      redirectUri: string;
+    },
+  ) {
+    await this.ready;
+    const operation = this.attemptRow(target, attempt);
+    if (operation.phase !== 'preparing' || operation.deadline <= Date.now())
+      throw new Fault('OAUTH_ATTEMPT_INACTIVE');
+    const uri = new URL(client.redirectUri);
+    if (
+      ![client.clientId, client.clientSecret].every(
+        (value) => value === undefined || /^[\x21-\x7e]{1,8192}$/.test(value),
+      ) ||
+      uri.protocol !== 'http:' ||
+      uri.hostname !== '127.0.0.1' ||
+      !uri.port ||
+      uri.username ||
+      uri.password ||
+      uri.search ||
+      uri.hash ||
+      !/^\/oauth\/[a-f0-9]{48}$/.test(uri.pathname)
+    )
+      throw new Fault('OAUTH_CLIENT_REJECTED');
+    this.available()
+      .update(oauthAttempts)
+      .set({ ...client, clientSecret: client.clientSecret ?? null })
+      .where(eq(oauthAttempts.attempt, attempt))
+      .run();
+  }
+  async oauthPhase(target: AppTarget, attempt: string, phase: AppOAuthPhase, error?: string) {
+    await this.ready;
+    this.expireOAuth();
+    const row = this.attemptRow(target, attempt);
+    if (!pendingOAuth.includes(row.phase)) return this.oauthReceipt(row);
+    const transitions: Record<string, string[]> = {
+      preparing: ['waiting', 'cancelled', 'expired', 'failed', 'interrupted'],
+      waiting: ['exchanging', 'cancelled', 'expired', 'failed', 'interrupted'],
+      exchanging: ['cancelled', 'expired', 'failed', 'interrupted'],
+    };
+    if (!transitions[row.phase]?.includes(phase)) throw new Fault('OAUTH_ATTEMPT_INACTIVE');
+    this.transaction(() =>
+      this.available()
+        .update(oauthAttempts)
+        .set({
+          phase,
+          error: error ?? null,
+          ...(phase === 'cancelled'
+            ? { clientId: null, clientSecret: null, redirectUri: null }
+            : {}),
+        })
+        .where(eq(oauthAttempts.attempt, attempt))
+        .run(),
+    );
+    return this.oauthReceipt(this.attemptRow(target, attempt));
+  }
+  async oauthCommit(
+    target: AppTarget,
+    attempt: string,
+    grant: OAuthGrant,
+  ): Promise<AppOAuthReceipt> {
+    await this.ready;
+    this.expireOAuth();
+    const db = this.available(),
+      operation = this.attemptRow(target, attempt);
+    if (operation.phase !== 'exchanging') throw new Fault('OAUTH_ATTEMPT_INACTIVE');
+    const provider = appProvider(operation.app);
+    if (
+      !provider ||
+      (grant.app !== undefined && grant.app !== provider.id) ||
+      grant.issuer !== provider.issuer ||
+      grant.resource !== provider.resource ||
+      grant.tokenEndpoint !== provider.token
+    )
+      throw new Fault('OAUTH_CONNECTION_MISMATCH');
+    const old = db.select().from(integrations).where(eq(integrations.id, target.connection)).get();
+    // The callback never restores authority after a concurrent disconnect, archive or configuration edit.
+    if (
+      (old?.revision ?? 0) !== target.revision ||
+      old?.deleted ||
+      (old && old.owner !== target.bot)
+    )
+      throw new Fault('OAUTH_CONFLICT');
+    if (
+      db
+        .select()
+        .from(integrations)
+        .where(
+          and(
+            eq(integrations.owner, target.bot),
+            eq(integrations.nameKey, operation.nameKey),
+            ne(integrations.id, target.connection),
+          ),
+        )
+        .get()
+    )
+      throw new Fault('MCP_NAME_CONFLICT');
+    const epoch = (old?.credentialEpoch ?? 0) + 1,
+      now = new Date().toISOString();
+    this.transaction(() => {
+      if (!old)
+        db.insert(integrations)
+          .values({
+            id: target.connection,
+            revision: 1,
+            name: operation.name,
+            nameKey: operation.nameKey,
+            owner: target.bot,
+            endpoint: grant.resource,
+            authKind: 'oauth',
+            credentialEpoch: epoch,
+            bearer: null,
+            deleted: 0,
+            health: 'unchecked',
+            catalog: '[]',
+            created: now,
+            updated: now,
+          })
+          .run();
+      else
+        db.update(integrations)
+          .set({
+            revision: target.revision + 1,
+            credentialEpoch: epoch,
+            health: 'unchecked',
+            catalog: '[]',
+            digest: null,
+            checked: null,
+            error: null,
+            updated: now,
+          })
+          .where(eq(integrations.id, target.connection))
+          .run();
+      db.insert(oauthGrants)
+        .values({
+          ...grant,
+          app: provider.id,
+          expiresAt: grant.expiresAt ?? null,
+          connection: target.connection,
+          epoch,
+          state: 'connected',
+          clientSecret: grant.clientSecret ?? null,
+          refreshToken: grant.refreshToken ?? null,
+          identity: grant.identity ?? null,
+        })
+        .onConflictDoUpdate({
+          target: oauthGrants.connection,
+          set: {
+            ...grant,
+            app: provider.id,
+            expiresAt: grant.expiresAt ?? null,
+            epoch,
+            state: 'connected',
+            clientSecret: grant.clientSecret ?? null,
+            refreshToken: grant.refreshToken ?? null,
+            identity: grant.identity ?? null,
+          },
+        })
+        .run();
+      db.update(integrationBindings)
+        .set({ enabled: 0, revision: sql`${integrationBindings.revision} + 1` })
+        .where(eq(integrationBindings.connection, target.connection))
+        .run();
+      db.update(oauthAttempts)
+        .set({ phase: 'connected' })
+        .where(eq(oauthAttempts.attempt, attempt))
+        .run();
+    });
+    await this.notify(target.connection, undefined, 'config');
+    return this.oauthReceipt(this.attemptRow(target, attempt));
+  }
+  async oauthGrant(connection: string) {
+    await this.ready;
+    return this.available()
+      .select()
+      .from(oauthGrants)
+      .where(eq(oauthGrants.connection, connection))
+      .get();
+  }
+  async oauthRefreshBegin(connection: string, epoch: number) {
+    await this.ready;
+    const result = this.available()
+      .update(oauthGrants)
+      .set({ state: 'refreshing' })
+      .where(
+        and(
+          eq(oauthGrants.connection, connection),
+          eq(oauthGrants.epoch, epoch),
+          eq(oauthGrants.state, 'connected'),
+        ),
+      )
+      .run();
+    if (Number(result.changes) !== 1) throw new Fault('OAUTH_RECONNECT_REQUIRED');
+  }
+  async oauthRefreshCommit(
+    connection: string,
+    epoch: number,
+    token: Pick<OAuthGrant, 'accessToken' | 'refreshToken' | 'expiresAt' | 'scope'>,
+  ) {
+    await this.ready;
+    const db = this.available();
+    let changed = false;
+    this.transaction(() => {
+      // No await may separate these authority reads from the write: revocation must fence old tokens.
+      const row = this.row(connection),
+        grant = db.select().from(oauthGrants).where(eq(oauthGrants.connection, connection)).get();
+      if (
+        !grant ||
+        grant.epoch !== epoch ||
+        row.credentialEpoch !== epoch ||
+        row.deleted ||
+        row.authKind !== 'oauth' ||
+        grant.state !== 'refreshing'
+      )
+        throw new Fault('OAUTH_CONFLICT');
+      changed = grant.scope !== token.scope;
+      const updatedGrant = db
+        .update(oauthGrants)
+        .set({
+          ...token,
+          expiresAt: token.expiresAt ?? null,
+          refreshToken: token.refreshToken ?? null,
+          state: 'connected',
+          epoch: epoch + Number(changed),
+        })
+        .where(
+          and(
+            eq(oauthGrants.connection, connection),
+            eq(oauthGrants.epoch, epoch),
+            eq(oauthGrants.state, 'refreshing'),
+          ),
+        )
+        .run();
+      if (Number(updatedGrant.changes) !== 1) throw new Fault('OAUTH_CONFLICT');
+      if (changed) {
+        const updatedConnection = db
+          .update(integrations)
+          .set({
+            revision: sql`${integrations.revision} + 1`,
+            credentialEpoch: epoch + 1,
+            health: 'unchecked',
+            catalog: '[]',
+            digest: null,
+            checked: null,
+          })
+          .where(
+            and(
+              eq(integrations.id, connection),
+              eq(integrations.revision, row.revision),
+              eq(integrations.credentialEpoch, epoch),
+              eq(integrations.deleted, 0),
+            ),
+          )
+          .run();
+        if (Number(updatedConnection.changes) !== 1) throw new Fault('OAUTH_CONFLICT');
+        db.update(integrationBindings)
+          .set({ enabled: 0, revision: sql`${integrationBindings.revision} + 1` })
+          .where(eq(integrationBindings.connection, connection))
+          .run();
+      }
+    });
+    if (changed) await this.notify(connection, undefined, 'config');
+  }
+  async oauthReconnectRequired(connection: string, epoch: number) {
+    await this.ready;
+    this.transaction(() =>
+      this.available()
+        .update(oauthGrants)
+        .set({ state: 'reconnect-required', accessToken: '', refreshToken: null })
+        .where(
+          and(
+            eq(oauthGrants.connection, connection),
+            eq(oauthGrants.epoch, epoch),
+            ne(oauthGrants.state, 'disconnected'),
+          ),
+        )
+        .run(),
+    );
+    await this.notify(connection, undefined, 'config');
+  }
+  async oauthStates(bot: string, directory = false) {
+    await this.ready;
+    if (!validAgentId(bot)) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+    this.expireOAuth();
+    const db = this.available(),
+      pending = db
+        .select()
+        .from(oauthAttempts)
+        .where(and(eq(oauthAttempts.bot, bot), inArray(oauthAttempts.phase, pendingOAuth)))
+        .all();
+    return db
+      .select()
+      .from(integrations)
+      .where(
+        and(
+          eq(integrations.owner, bot),
+          eq(integrations.authKind, 'oauth'),
+          eq(integrations.deleted, 0),
+        ),
+      )
+      .all()
+      .map((row) => {
+        const grant = db.select().from(oauthGrants).where(eq(oauthGrants.connection, row.id)).get();
+        const provider = appProvider(grant?.app);
+        if (!provider) throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+        // Legacy clients identify every advertised OAuth account as Notion. Only v2 can name another provider.
+        if (!directory && provider.id !== 'notion') return undefined;
+        const state = pending.some((a) => a.connection === row.id)
+          ? ('authorizing' as const)
+          : grant?.state === 'connected' || grant?.state === 'refreshing'
+            ? ('connected' as const)
+            : grant?.state === 'disconnected'
+              ? ('disconnected' as const)
+              : ('reconnect-required' as const);
+        return {
+          connection: row.id,
+          ...(directory ? { app: provider.id, name: row.name, revision: row.revision } : {}),
+          state,
+          ...(grant?.scope ? { scope: grant.scope } : {}),
+          ...(grant?.expiresAt ? { expiresAt: grant.expiresAt } : {}),
+        };
+      })
+      .filter((entry) => entry !== undefined);
+  }
+  async pendingOAuth(bot: string, directory = false) {
+    await this.ready;
+    if (!validAgentId(bot)) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+    this.expireOAuth();
+    return this.available()
+      .select()
+      .from(oauthAttempts)
+      .where(
+        and(
+          eq(oauthAttempts.bot, bot),
+          inArray(
+            oauthAttempts.phase,
+            directory ? [...pendingOAuth, 'expired', 'interrupted', 'failed'] : pendingOAuth,
+          ),
+          directory ? undefined : eq(oauthAttempts.app, 'notion'),
+        ),
+      )
+      .orderBy(desc(oauthAttempts.deadline))
+      .limit(51)
+      .all()
+      .map((row) => ({
+        input: {
+          bot: row.bot,
+          connection: row.connection,
+          revision: row.revision,
+          requestId: row.requestId,
+          app: appProvider(row.app)!.id,
+          ...(row.revision === 0 ? { name: row.name } : {}),
+        },
+        receipt: this.oauthReceipt(row),
+      }));
+  }
+  async disconnectOAuth(target: AppTarget, requestId: string) {
+    await this.ready;
+    if (!isAppTarget(target) || !validAgentId(requestId))
+      throw new Fault('OAUTH_INVALID_REQUEST', 400);
+    const db = this.available(),
+      fingerprint = mcpDigest(['app.disconnect', target]),
+      prior = db.select().from(configCommands).where(eq(configCommands.id, requestId)).get();
+    const receipt = {
+      ...target,
+      requestId,
+      disconnected: true as const,
+      revocation: 'unconfirmed' as const,
+    };
+    if (prior) {
+      if (prior.hash !== fingerprint || prior.connection !== target.connection)
+        throw new Fault('OAUTH_REQUEST_ID_REUSED');
+      this.scoped(target.connection, target.bot);
+      return receipt;
+    }
+    const row = this.scoped(target.connection, target.bot);
+    if (row.owner !== target.bot || row.authKind !== 'oauth')
+      throw new Fault('OAUTH_CONNECTION_MISMATCH');
+    if (row.revision !== target.revision || row.deleted) throw new Fault('OAUTH_CONFLICT');
+    this.transaction(() => {
+      db.update(integrations)
+        .set({
+          revision: target.revision + 1,
+          credentialEpoch: sql`${integrations.credentialEpoch} + 1`,
+          health: 'unchecked',
+          catalog: '[]',
+          digest: null,
+          checked: null,
+        })
+        .where(eq(integrations.id, target.connection))
+        .run();
+      db.update(oauthGrants)
+        .set({
+          state: 'disconnected',
+          accessToken: '',
+          clientSecret: null,
+          refreshToken: null,
+          epoch: sql`${oauthGrants.epoch} + 1`,
+        })
+        .where(eq(oauthGrants.connection, target.connection))
+        .run();
+      db.update(integrationBindings)
+        .set({ enabled: 0, revision: sql`${integrationBindings.revision} + 1` })
+        .where(eq(integrationBindings.connection, target.connection))
+        .run();
+      db.update(oauthAttempts)
+        .set({ clientId: null, clientSecret: null, redirectUri: null })
+        .where(eq(oauthAttempts.connection, target.connection))
+        .run();
+      db.update(oauthAttempts)
+        .set({ phase: 'cancelled', error: 'OAUTH_DISCONNECTED' })
+        .where(
+          and(
+            eq(oauthAttempts.connection, target.connection),
+            inArray(oauthAttempts.phase, pendingOAuth),
+          ),
+        )
+        .run();
+      db.insert(configCommands)
+        .values({
+          id: requestId,
+          hash: fingerprint,
+          connection: target.connection,
+          revision: target.revision + 1,
+        })
+        .run();
+    });
+    await this.notify(target.connection, undefined, 'config');
+    return receipt;
+  }
   // shortcut: one runtime writes a data root; add a process lease before allowing multiple services.
   readonly ready: Promise<unknown>;
   onChange?: (connection: string, bot?: string, kind?: 'config' | 'catalog' | 'binding') => unknown;
@@ -189,6 +841,16 @@ export class Integrations {
       this.db = migrate(client, migrations, legacy);
       // Only the baseline seeds revision authority; recreating it on reopen would hide corruption.
       this.verify(this.db);
+      this.db
+        .update(oauthAttempts)
+        .set({ phase: 'interrupted', error: 'OAUTH_INTERRUPTED' })
+        .where(inArray(oauthAttempts.phase, pendingOAuth))
+        .run();
+      this.db
+        .update(oauthGrants)
+        .set({ state: 'reconnect-required', accessToken: '', refreshToken: null })
+        .where(eq(oauthGrants.state, 'refreshing'))
+        .run();
       // Neither an uncommitted decision nor a dispatched external effect is replayed after service reconstruction.
       const dispatched = sql`${callReceipts.phase} = 'dispatched'`;
       this.db
@@ -214,6 +876,67 @@ export class Integrations {
     for (const row of db.select().from(integrations).all()) {
       this.config(row);
       this.public(row);
+    }
+    for (const row of db.select().from(oauthGrants).all()) {
+      const connection = this.row(row.connection);
+      const uri = new URL(row.redirectUri);
+      const provider = appProvider(row.app);
+      if (
+        connection.authKind !== 'oauth' ||
+        row.epoch !== connection.credentialEpoch ||
+        !['connected', 'refreshing', 'disconnected', 'reconnect-required'].includes(row.state) ||
+        !provider ||
+        row.issuer !== provider.issuer ||
+        row.resource !== provider.resource ||
+        row.tokenEndpoint !== provider.token ||
+        uri.protocol !== 'http:' ||
+        uri.hostname !== '127.0.0.1' ||
+        !uri.port ||
+        uri.username ||
+        uri.password ||
+        uri.search ||
+        uri.hash ||
+        (row.expiresAt !== null && (!Number.isSafeInteger(row.expiresAt) || row.expiresAt <= 0)) ||
+        row.scope.length > 4096 ||
+        !row.clientId ||
+        [row.clientId, row.clientSecret, row.refreshToken].some(
+          (v) => v !== null && (!/^[\x21-\x7e]+$/.test(v) || v.length > 8192),
+        ) ||
+        (row.state === 'connected' && !row.accessToken) ||
+        row.accessToken.length > 4096 ||
+        (row.accessToken && !/^[\x21-\x7e]+$/.test(row.accessToken))
+      )
+        throw new Error('invalid OAuth grant');
+    }
+    if (db.select({ count: count() }).from(oauthAttempts).get()!.count > 10000)
+      throw new Error('OAuth store limit');
+    for (const row of db.select().from(oauthAttempts).all()) {
+      const registered = row.clientId !== null;
+      const redirect = row.redirectUri ? new URL(row.redirectUri) : undefined;
+      if (
+        !appProvider(row.app) ||
+        (registered &&
+          (!row.clientId ||
+            !/^[\x21-\x7e]{1,8192}$/.test(row.clientId) ||
+            !redirect ||
+            redirect.protocol !== 'http:' ||
+            redirect.hostname !== '127.0.0.1' ||
+            !redirect.port ||
+            redirect.username ||
+            redirect.password ||
+            redirect.hash ||
+            redirect.search ||
+            !/^\/oauth\/[a-f0-9]{48}$/.test(redirect.pathname))) ||
+        (!registered && (row.clientSecret !== null || row.redirectUri !== null)) ||
+        (row.clientSecret !== null && !/^[\x21-\x7e]{1,8192}$/.test(row.clientSecret)) ||
+        !isAppOAuthReceipt(this.oauthReceipt(row)) ||
+        !hash(row.hash) ||
+        !Number.isSafeInteger(row.deadline) ||
+        !row.name.trim() ||
+        row.name.length > 60 ||
+        row.nameKey !== row.name.normalize('NFC').toLowerCase()
+      )
+        throw new Error('invalid OAuth attempt');
     }
     for (const row of db.select().from(integrationBindings).all()) {
       const connection = validAgentId(row.connection)
@@ -296,11 +1019,44 @@ export class Integrations {
       !row.name.trim() ||
       row.name.length > 60 ||
       ![0, 1].includes(Number(row.deleted)) ||
-      !['unchecked', 'ready', 'unavailable'].includes(String(row.health))
+      !['unchecked', 'ready', 'unavailable'].includes(String(row.health)) ||
+      !['bearer', 'oauth'].includes(String(row.authKind)) ||
+      !revision(row.credentialEpoch, true)
+    )
+      throw new Fault('MCP_STORE_UNAVAILABLE', 503);
+    const grant =
+      row.authKind === 'oauth'
+        ? this.available()
+            .select()
+            .from(oauthGrants)
+            .where(eq(oauthGrants.connection, String(row.id)))
+            .get()
+        : undefined;
+    const secrets = [
+      grant?.accessToken,
+      grant?.refreshToken,
+      grant?.clientSecret,
+      grant?.clientId,
+    ].filter((value): value is string => !!value);
+    const provider = appProvider(grant?.app);
+    if (
+      row.authKind === 'oauth' &&
+      (!this.owner(row) ||
+        !grant ||
+        !provider ||
+        grant.issuer !== provider.issuer ||
+        grant.resource !== provider.resource ||
+        row.endpoint !== grant.resource ||
+        grant.tokenEndpoint !== provider.token)
     )
       throw new Fault('MCP_STORE_UNAVAILABLE', 503);
     const url = endpoint(row.endpoint),
-      bearer = row.bearer === null ? undefined : row.bearer;
+      bearer =
+        row.authKind === 'oauth'
+          ? grant?.accessToken || undefined
+          : row.bearer === null
+            ? undefined
+            : row.bearer;
     if (
       bearer !== undefined &&
       (typeof bearer !== 'string' || !/^[\x21-\x7e]+$/.test(bearer) || bearer.length > 4096)
@@ -311,7 +1067,7 @@ export class Integrations {
     const tools = mcpCatalog(
       String(row.id),
       parsed,
-      mcpSecrets({ endpoint: url, bearer: bearer as string | undefined }),
+      mcpSecrets({ endpoint: url, bearer: bearer as string | undefined, secrets }),
     );
     if (
       (row.digest !== null && (!hash(row.digest) || row.digest !== mcpDigest(tools))) ||
@@ -324,6 +1080,11 @@ export class Integrations {
       name: row.name,
       endpoint: url,
       bearer: bearer as string | undefined,
+      secrets,
+      authKind: String(row.authKind),
+      // Rotation changes credentials, not the Bot's reviewed tool authority; concurrent users join the same refresh.
+      authenticated:
+        row.authKind !== 'oauth' || grant?.state === 'connected' || grant?.state === 'refreshing',
       deleted: row.deleted === 1,
       tools,
       catalogDigest: row.digest === null ? undefined : String(row.digest),
@@ -355,6 +1116,22 @@ export class Integrations {
       updatedAt: String(row.updated),
     };
   }
+  private publicView(row: Row, view: McpView) {
+    // This is a decoder projection, not deletion: app clients and storage retain every connection.
+    // Validate before projecting so an unsupported view cannot hide corrupt stored state.
+    const connection = this.public(row);
+    if (
+      view === 'bearer' &&
+      (row.authKind !== 'bearer' || connection.toolCount > legacyMcpCatalogToolLimit)
+    )
+      return undefined;
+    return connection;
+  }
+  private requireView(row: Row, view: McpView) {
+    const connection = this.publicView(row, view);
+    if (!connection) throw new Fault('MCP_APP_VIEW_REQUIRED');
+    return connection;
+  }
   async status() {
     await this.ready;
     try {
@@ -363,11 +1140,11 @@ export class Integrations {
       return { available: false, error: 'MCP_STORE_UNAVAILABLE' };
     }
   }
-  async read(id: string, bot?: string) {
+  async read(id: string, bot?: string, view: McpView = 'apps') {
     await this.ready;
-    return this.public(this.scoped(id, bot));
+    return this.requireView(this.scoped(id, bot), view);
   }
-  async list(includeDeleted = false, bot?: string) {
+  async list(includeDeleted = false, bot?: string, view: McpView = 'apps') {
     await this.ready;
     if (bot !== undefined && !validAgentId(bot)) throw new Fault('INVALID_MCP_CONFIG', 400);
     return {
@@ -378,19 +1155,22 @@ export class Integrations {
         .where(and(eq(integrations.deleted, Number(includeDeleted)), this.visible(bot)))
         .orderBy(integrations.name)
         .all()
-        .map((row) => this.public(row)),
+        .flatMap((row) => {
+          const connection = this.publicView(row, view);
+          return connection ? [connection] : [];
+        }),
     };
   }
   async privateConfig(id: string) {
     await this.ready;
     return this.config(this.row(id));
   }
-  async catalogView(id: string, bot?: string) {
+  async catalogView(id: string, bot?: string, view: McpView = 'apps') {
     await this.ready;
     const row = this.scoped(id, bot);
-    return { current: this.public(row), tools: this.config(row).tools };
+    return { current: this.requireView(row, view), tools: this.config(row).tools };
   }
-  async saved(id: string, connection: string, bot?: string) {
+  async saved(id: string, connection: string, bot?: string, view: McpView = 'apps') {
     await this.ready;
     if (!validAgentId(id) || !validAgentId(connection)) throw new Fault('INVALID_MCP_CONFIG', 400);
     const receipt = this.available()
@@ -401,7 +1181,7 @@ export class Integrations {
     if (!receipt) throw new Fault('MCP_SAVE_NOT_FOUND', 404);
     return {
       receipt: { id, connection, revision: Number(receipt.revision) },
-      current: this.public(this.scoped(connection, bot)),
+      current: this.requireView(this.scoped(connection, bot), view),
     };
   }
   async save(input: McpSave, bot?: string) {
@@ -428,6 +1208,7 @@ export class Integrations {
     )
       throw new Fault('INVALID_MCP_CONFIG', 400);
     if (input.endpoint !== undefined) endpoint(input.endpoint);
+    this.expireOAuth();
     const db = this.available(),
       fingerprint = mcpDigest(JSON.parse(JSON.stringify(bot === undefined ? input : [bot, input])));
     const prior = db
@@ -447,6 +1228,7 @@ export class Integrations {
     if (row) {
       this.scoped(input.id, bot);
       if (bot !== undefined && !this.owner(row)) throw new Fault('MCP_SHARED_READ_ONLY', 409);
+      if (row.authKind === 'oauth') throw new Fault('OAUTH_MANAGED_CONNECTION');
     }
     if ((row?.revision ?? 0) !== input.revision) throw new Fault('MCP_CONFLICT');
     if (row?.deleted === 1) throw new Fault('MCP_ARCHIVED');
@@ -461,6 +1243,7 @@ export class Integrations {
       name = input.name.trim(),
       nameKey = name.normalize('NFC').toLowerCase();
     const scope = row ? this.owner(row) : bot;
+    if (this.reserved(nameKey, scope, input.id)) throw new Fault('MCP_NAME_CONFLICT');
     if (
       db
         .select({ id: integrations.id })
@@ -526,13 +1309,13 @@ export class Integrations {
       current: this.public(this.row(input.id)),
     };
   }
-  async catalog(id: string, expected: number, input: unknown) {
+  async catalog(id: string, expected: number, input: unknown, view: McpView = 'apps') {
     await this.ready;
     const row = this.row(id);
     if (row.revision !== expected) throw new Fault('MCP_CONFLICT');
     if (row.deleted === 1) throw new Fault('MCP_ARCHIVED');
     const config = this.config(row),
-      tools = mcpCatalog(id, input, mcpSecrets(config)),
+      tools = mcpCatalog(id, input, mcpSecrets(config), view),
       digest = mcpDigest(tools),
       changed = digest !== row.digest;
     this.transaction(() =>
@@ -573,7 +1356,7 @@ export class Integrations {
       .where(and(eq(integrationBindings.bot, bot), eq(integrationBindings.connection, id)))
       .get();
   }
-  async assignments(bot: string) {
+  async assignments(bot: string, view: McpView = 'apps') {
     await this.ready;
     if (!validAgentId(bot)) throw new Fault('INVALID_MCP_CONFIG', 400);
     return {
@@ -585,20 +1368,24 @@ export class Integrations {
         .where(and(eq(integrations.deleted, 0), this.visible(bot)))
         .orderBy(integrations.name)
         .all()
-        .map((row) => {
-          const connection = this.public(row),
-            binding = this.binding(bot, connection.id);
-          return {
-            connection,
-            revision: Number(binding?.revision ?? 0),
-            enabled: binding?.enabled === 1,
-            tools: binding ? (JSON.parse(String(binding.tools)) as string[]) : [],
-            catalogDigest: binding?.digest ? String(binding.digest) : undefined,
-            available:
-              binding?.enabled === 1 &&
-              binding.configRevision === connection.revision &&
-              binding.digest === connection.catalogDigest,
-          };
+        .flatMap((row) => {
+          const connection = this.publicView(row, view);
+          if (!connection) return [];
+          const binding = this.binding(bot, connection.id);
+          return [
+            {
+              connection,
+              revision: Number(binding?.revision ?? 0),
+              enabled: binding?.enabled === 1,
+              tools: binding ? (JSON.parse(String(binding.tools)) as string[]) : [],
+              catalogDigest: binding?.digest ? String(binding.digest) : undefined,
+              available:
+                binding?.enabled === 1 &&
+                this.config(row).authenticated &&
+                binding.configRevision === connection.revision &&
+                binding.digest === connection.catalogDigest,
+            },
+          ];
         }),
     };
   }
@@ -639,7 +1426,8 @@ export class Integrations {
         !input.tools.length ||
         !hash(input.catalogDigest) ||
         input.catalogDigest !== config.catalogDigest ||
-        row.health !== 'ready'
+        row.health !== 'ready' ||
+        !config.authenticated
       )
         throw new Fault('MCP_REVIEW_REQUIRED');
       if (input.tools.some((name) => !config.tools.some((tool) => tool.name === name)))
@@ -699,6 +1487,8 @@ export class Integrations {
         db.update(integrations)
           .set({
             deleted: Number(value),
+            credentialEpoch:
+              Number(row.credentialEpoch) + Number(value && row.authKind === 'oauth'),
             revision: sql`${integrations.revision} + 1`,
             updated: new Date().toISOString(),
           })
@@ -709,6 +1499,28 @@ export class Integrations {
             .set({ enabled: 0, revision: sql`${integrationBindings.revision} + 1` })
             .where(eq(integrationBindings.connection, id))
             .run();
+        if (value && row.authKind === 'oauth') {
+          db.update(oauthAttempts)
+            .set({ clientId: null, clientSecret: null, redirectUri: null })
+            .where(eq(oauthAttempts.connection, id))
+            .run();
+          db.update(oauthGrants)
+            .set({
+              state: 'disconnected',
+              accessToken: '',
+              clientSecret: null,
+              refreshToken: null,
+              epoch: sql`${oauthGrants.epoch} + 1`,
+            })
+            .where(eq(oauthGrants.connection, id))
+            .run();
+          db.update(oauthAttempts)
+            .set({ phase: 'cancelled', error: 'OAUTH_ARCHIVED' })
+            .where(
+              and(eq(oauthAttempts.connection, id), inArray(oauthAttempts.phase, pendingOAuth)),
+            )
+            .run();
+        }
       });
     await this.notify(id, undefined, 'config');
     return this.public(this.row(id));
@@ -736,6 +1548,7 @@ export class Integrations {
           config = this.config(row);
         if (
           config.deleted ||
+          !config.authenticated ||
           binding.configRevision !== config.revision ||
           !config.catalogDigest ||
           binding.digest !== config.catalogDigest
@@ -789,6 +1602,7 @@ export class Integrations {
       binding = this.binding(bot, capture.connection);
     if (
       config.deleted ||
+      !config.authenticated ||
       config.revision !== capture.revision ||
       config.catalogDigest !== capture.catalogDigest ||
       !binding ||

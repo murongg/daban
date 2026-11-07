@@ -13,7 +13,13 @@ const origin = 'http://127.0.0.1:8766';
 const uploadLimit = Math.ceil(botBundleLimit / 3) * 4 + 4 * 1024 * 1024;
 const aborted = () => new DOMException('Agent request aborted', 'AbortError');
 
-export async function readAgentToken(dataRoot: string) {
+export function readAgentToken(dataRoot: string) {
+  return readPrivateToken(dataRoot, 'control-token');
+}
+export function readAppControlToken(dataRoot: string) {
+  return readPrivateToken(dataRoot, 'app-control-token');
+}
+async function readPrivateToken(dataRoot: string, name: 'control-token' | 'app-control-token') {
   // Returning undefined would authorize RuntimeClient's legacy HTML-token fallback.
   const uid = process.getuid?.();
   if ((process.platform !== 'win32' && uid === undefined) || !isAbsolute(dataRoot))
@@ -29,14 +35,14 @@ export async function readAgentToken(dataRoot: string) {
         throw new Error('AGENT_AUTH_UNAVAILABLE');
     }
     const file = await fs.open(
-      join(dataRoot, 'model/control-token'),
+      join(dataRoot, 'model', name),
       constants.O_RDONLY | constants.O_NOFOLLOW,
     );
     try {
       const info = await file.stat();
       if (
         !info.isFile() ||
-        !(await privateMetadata(join(dataRoot, 'model/control-token'), info, 0o600)) ||
+        !(await privateMetadata(join(dataRoot, 'model', name), info, 0o600)) ||
         info.nlink !== 1 ||
         info.size < 64 ||
         info.size > 65

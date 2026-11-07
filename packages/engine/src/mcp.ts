@@ -1,4 +1,11 @@
-import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import {
+  Client,
+  InsufficientScopeError,
+  SdkHttpError,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from '@modelcontextprotocol/client';
+import { Fault } from './control.js';
 import { McpFetch, type McpFetchOptions } from './mcp-fetch.js';
 
 export class McpRemote {
@@ -29,19 +36,36 @@ export class McpRemote {
   }
   async start(signal: AbortSignal) {
     signal.throwIfAborted();
-    await this.client.connect(this.transport, { signal, timeout: 20000 });
+    await this.request(() => this.client.connect(this.transport, { signal, timeout: 20000 }));
+  }
+  private async request<T>(action: () => Promise<T>) {
+    try {
+      return await action();
+    } catch (error) {
+      if (
+        error instanceof UnauthorizedError ||
+        (error instanceof SdkHttpError && error.data.status === 401)
+      )
+        throw new Fault('MCP_RECONNECT_REQUIRED');
+      if (error instanceof InsufficientScopeError) throw new Fault('MCP_SCOPE_REQUIRED');
+      throw error;
+    }
   }
   async tools(signal: AbortSignal) {
-    const result = await this.client.listTools(undefined, {
-      signal,
-      timeout: 20000,
-      cacheMode: 'refresh',
-    });
+    const result = await this.request(() =>
+      this.client.listTools(undefined, {
+        signal,
+        timeout: 20000,
+        cacheMode: 'refresh',
+      }),
+    );
     return result.tools;
   }
   async call(name: string, args: Record<string, unknown>, signal: AbortSignal) {
     signal.throwIfAborted();
-    return await this.client.callTool({ name, arguments: args }, { signal, timeout: 30000 });
+    return await this.request(() =>
+      this.client.callTool({ name, arguments: args }, { signal, timeout: 30000 }),
+    );
   }
   async close() {
     await this.client.close();
