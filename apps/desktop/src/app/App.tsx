@@ -22,6 +22,7 @@ import {
   Archive as ArchiveIcon,
   Check,
   Download,
+  Globe,
   History,
   Info,
   Menu,
@@ -993,6 +994,19 @@ function Workbench() {
               </div>
               <span className="spacer" />
               <div className="header-actions">
+                {!bot.members && runtime.snapshot.hostBrowser?.available && (
+                  <button
+                    type="button"
+                    className="header-action"
+                    aria-label={t('hostBrowser.openPanel')}
+                    onClick={() =>
+                      setModal({ type: 'computer', bot: bot.id, surface: 'host-browser' })
+                    }
+                  >
+                    <Globe aria-hidden="true" />
+                    <span>{t('hostBrowser.title')}</span>
+                  </button>
+                )}
                 {!bot.members && (
                   <button
                     type="button"

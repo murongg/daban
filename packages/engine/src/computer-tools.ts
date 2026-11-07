@@ -131,6 +131,11 @@ export class ComputerTools {
   }
   async ready(run: ToolRun) {
     await this.authorize?.(run);
+    const available = () => {
+      if (this.runtime.available?.(run.bot) === false)
+        throw new Fault('COMPUTER_NOT_CONNECTED', 503);
+    };
+    available();
     await this.runtime.stopWorker?.(run.bot);
     const waiting = this.runtime.control.state(run.bot).owner !== 'agent';
     if (waiting) this.waiters.set(run, (this.waiters.get(run) || 0) + 1);
@@ -138,10 +143,13 @@ export class ComputerTools {
     try {
       run.onComputerWait?.();
       while (this.runtime.control.state(run.bot).owner !== 'agent') {
+        // A lost browser cannot be handed back; do not suspend the task budget forever after a crash.
+        available();
         if (run.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
       if (run.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+      available();
       await this.authorize?.(run);
       return this.runtime.control.state(run.bot);
     } finally {

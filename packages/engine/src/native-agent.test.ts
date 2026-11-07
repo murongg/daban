@@ -83,6 +83,32 @@ test('native-only agent starts without a Linux executor or VM and reports its re
   ).toBe(process.platform === 'linux');
 });
 
+test('native startup advertises an idle managed browser without launching it and closes the host request boundary', async (t) => {
+  const { agent, call } = await fixture(t);
+  const state = await call('/api/state');
+  expect(state.value.hostBrowser).toEqual({ available: true, connections: [] });
+  await agent.models.profiles.register({
+    id: 'mock-browser-bot',
+    name: 'Synthetic browser Bot',
+    instructions: '',
+    memory: '',
+    color: 'mint',
+  });
+  expect(
+    await call('/api/host-browser', {
+      action: 'open',
+      bot: 'mock-browser-bot',
+      executablePath: '/mock/forged',
+    }),
+  ).toMatchObject({ status: 400, value: { error: 'INVALID_BROWSER_REQUEST' } });
+  expect(
+    await call('/api/host-browser', { action: 'open', bot: 'mock-browser-bot' }, 'mock-invalid'),
+  ).toMatchObject({ status: 403, value: { error: 'UNAUTHORIZED' } });
+  expect(
+    await call('/api/host-browser', { action: 'open', bot: 'mock-unregistered' }),
+  ).toMatchObject({ status: 404, value: { error: 'BOT_PROFILE_NOT_FOUND' } });
+});
+
 test('native knowledge remains readable without advertising an unavailable workspace export', async (t) => {
   const { agent, root } = await fixture(t);
   const tools = agent.models.tools;

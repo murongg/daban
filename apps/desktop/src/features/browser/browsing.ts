@@ -16,9 +16,9 @@ export interface BrowserPending {
   epoch: number;
 }
 const key = 'daban-browser-pending-v1';
-function read(): Partial<Record<RuntimeBot, BrowserPending>> {
+function read(host = false): Partial<Record<RuntimeBot, BrowserPending>> {
   try {
-    const raw = clientCache().getItem(key);
+    const raw = clientCache().getItem(host ? 'daban-host-browser-pending-v1' : key);
     if (!raw) return {};
     if (raw.length > 600000) throw new Error();
     const value = JSON.parse(raw);
@@ -47,27 +47,27 @@ function read(): Partial<Record<RuntimeBot, BrowserPending>> {
     throw new Error('BROWSER_REQUEST_STORAGE_UNAVAILABLE');
   }
 }
-function write(value: Partial<Record<RuntimeBot, BrowserPending>>) {
+function write(value: Partial<Record<RuntimeBot, BrowserPending>>, host = false) {
   try {
-    clientCache().setItem(key, JSON.stringify(value));
+    clientCache().setItem(host ? 'daban-host-browser-pending-v1' : key, JSON.stringify(value));
   } catch {
     throw new Error('BROWSER_REQUEST_STORAGE_UNAVAILABLE');
   }
 }
-export function browserRequest(bot: RuntimeBot) {
-  const state = read();
+export function browserRequest(bot: RuntimeBot, host = false) {
+  const state = read(host);
   return Object.hasOwn(state, bot) ? state[bot] : undefined;
 }
-export function beginBrowserRequest(bot: RuntimeBot, pending: BrowserPending) {
-  const state = read();
+export function beginBrowserRequest(bot: RuntimeBot, pending: BrowserPending, host = false) {
+  const state = read(host);
   if (Object.hasOwn(state, bot)) throw new Error('BROWSER_OUTCOME_UNKNOWN');
-  write({ ...state, [bot]: pending });
+  write({ ...state, [bot]: pending }, host);
 }
-export function clearBrowserRequest(bot: RuntimeBot, id: string) {
-  const state = read();
+export function clearBrowserRequest(bot: RuntimeBot, id: string, host = false) {
+  const state = read(host);
   if (!Object.hasOwn(state, bot) || state[bot]?.id !== id) return;
   delete state[bot];
-  write(state);
+  write(state, host);
 }
 
 // Address edits remain in this renderer's memory; URL queries and human replies must not enter workspace exports.

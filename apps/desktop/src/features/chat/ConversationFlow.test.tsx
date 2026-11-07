@@ -99,6 +99,24 @@ function ready() {
   return snapshot;
 }
 
+it('opens the browser setup from the conversation without launching or authorizing it automatically', async () => {
+  localStorage.setItem(storageKey, serialize(demoState()));
+  const snapshot = ready();
+  snapshot.agent = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  snapshot.hostBrowser = { available: true, connections: [] };
+  const invoke = bridge(snapshot);
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '打开浏览器面板' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByRole('button', { name: '打开浏览器' })).toBeEnabled();
+  expect(invoke.mock.calls.some(([command]) => command.type === 'hostBrowser')).toBe(false);
+});
+
 it.each(['connecting', 'offline'] as const)(
   'opens local chat drafts while the workspace is %s and keeps sending fenced',
   async (phase) => {

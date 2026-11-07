@@ -1,4 +1,10 @@
-import { disconnected, type RuntimeBridge, type RuntimeCommand } from '@daban/protocol';
+import {
+  disconnected,
+  type HostBrowserStatus,
+  type RuntimeBridge,
+  type RuntimeCommand,
+  type RuntimeReply,
+} from '@daban/protocol';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -8,6 +14,101 @@ import { Conversation } from '../chat/Conversation';
 import { Computer } from './Computer';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
+
+it('opens a standalone browser without Linux or desktop permission and explicitly hands it back', async () => {
+  const snapshot = disconnected('ready');
+  snapshot.protocolVersion = 47;
+  snapshot.agent = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  snapshot.localComputer = {
+    platform: 'darwin',
+    available: true,
+    permissions: { screen: false, accessibility: false },
+    shortcut: true,
+  };
+  snapshot.hostBrowser = { available: true, connections: [] };
+  const bot = { ...initialState().bots[0], id: 'mock-browser-bot' };
+  let publish: (value: typeof snapshot) => unknown = () => {};
+  const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
+    if (command.type === 'status') return { ok: true, value: { ...snapshot } };
+    if (command.type !== 'hostBrowser') return { ok: false, error: 'SYNTHETIC_UNEXPECTED_COMMAND' };
+    const request = command.request;
+    if (request.action === 'open')
+      snapshot.hostBrowser = {
+        available: true,
+        connections: [
+          {
+            bot: bot.id,
+            owner: 'human',
+            epoch: 1,
+            state: {
+              bot: bot.id,
+              available: true,
+              instance: 'mock-instance',
+              revision: 0,
+              active: 'mock-tab',
+              tabs: [{ id: 'mock-tab', url: 'about:blank', title: '', generation: 0 }],
+            },
+          },
+        ],
+      };
+    const connection = snapshot.hostBrowser!.connections[0];
+    if (request.action === 'state') return { ok: true, value: connection.state };
+    if (request.action === 'view')
+      return {
+        ok: true,
+        value: {
+          bot: bot.id,
+          epoch: connection.epoch,
+          binding: { instance: 'mock-instance', tab: 'mock-tab', generation: 0 },
+          width: 960,
+          height: 640,
+          image: 'data:image/jpeg;base64,c3ludGhldGlj',
+        },
+      };
+    if (request.action === 'control') {
+      snapshot.hostBrowser = {
+        ...snapshot.hostBrowser!,
+        connections: [{ ...connection, owner: request.owner, epoch: request.epoch + 1 }],
+      };
+      publish({ ...snapshot });
+      return { ok: true, value: { owner: request.owner, epoch: request.epoch + 1 } };
+    }
+    publish({ ...snapshot });
+    return { ok: true, value: snapshot.hostBrowser as HostBrowserStatus };
+  });
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: {
+      platform: 'darwin',
+      runtime: {
+        invoke,
+        subscribe: (listener: typeof publish) => {
+          publish = listener;
+          return () => {};
+        },
+      } as RuntimeBridge,
+    },
+  });
+  render(
+    <RuntimeProvider>
+      <Computer bot={bot} notify={vi.fn()} />
+    </RuntimeProvider>,
+  );
+  expect(await screen.findByRole('textbox', { name: '网页地址' })).toBeDisabled();
+  expect(screen.getByRole('form', { name: '浏览器导航' })).toBeVisible();
+  await userEvent.click(await screen.findByRole('button', { name: '打开浏览器' }));
+  expect(await screen.findByRole('button', { name: '交还给 Bot' })).toBeEnabled();
+  await userEvent.click(screen.getByRole('button', { name: '交还给 Bot' }));
+  expect(await screen.findByRole('button', { name: '接管浏览器' })).toBeEnabled();
+  expect(invoke.mock.calls.map(([command]) => command.type)).not.toContain('local.permissions');
+  expect(invoke.mock.calls.map(([command]) => command.type)).not.toContain('setup.start');
+  expect(invoke.mock.calls.map(([command]) => command.type)).not.toContain('computer.action');
+});
 
 it('shows an unavailable computer without disabling ordinary conversation or advertising takeover', async () => {
   const snapshot = disconnected('ready');

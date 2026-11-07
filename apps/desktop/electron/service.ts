@@ -599,11 +599,17 @@ export function runtimeService(
     if (isLocalComputerCommand(command)) {
       if (!local || !agentConfig || !state.localComputer)
         throw new Error('LOCAL_AGENT_UPDATE_REQUIRED');
-      if (command.type === 'local.status') return local.status();
-      if (command.type === 'local.permissions') return local.requestPermissions();
+      if (command.type === 'local.status' || command.type === 'local.permissions') {
+        const result =
+          command.type === 'local.status' ? local.status() : await local.requestPermissions();
+        publish({ ...state, localComputer: result });
+        return result;
+      }
       if (command.type === 'local.preview') return local.preview(command.session, command.revision);
       if (command.type === 'local.connect') {
         await refresh();
+        if (state.hostBrowser?.connections.some((item) => item.bot === command.bot))
+          throw new Error('HOST_BROWSER_CONNECTED');
         const profile = state.profiles.find((profile) => profile.id === command.bot);
         if (!profile || profile.archived) throw new Error('BOT_NOT_REGISTERED');
         if (state.agents[command.bot]?.running) throw new Error('LOCAL_TASK_BUSY');

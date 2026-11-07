@@ -96,6 +96,134 @@ function data(result: Awaited<ReturnType<AgentTools['invoke']>>) {
   expect(part.type).toBe('text');
   return JSON.parse(part.type === 'text' ? part.text : '') as Record<string, unknown>;
 }
+test('standalone host browsing is available to native text models and never falls back to another surface mid-run', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-host-dom-'));
+  const fake = mockRuntime();
+  let selected = true;
+  const tools = new AgentTools(undefined, new WorkspaceFiles(root), {
+    nativeOnly: true,
+    hostBrowser: { ...fake.value, available: () => selected },
+  });
+  const run: AgentToolRun = {
+    id: 'mock-host-run',
+    bot: 'a',
+    model: 'deepseek-v4-pro',
+    vision: false,
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    workdir: root,
+    canonicalRoot: await realpath(root),
+    task: { requestId: 'mock-host-task', prompt: 'Read the synthetic page.' },
+  };
+  try {
+    await tools.open(run);
+    const names = tools.list('a', run.model, undefined, run).map((tool) => tool.name);
+    expect(names).toContain('browser_snapshot');
+    for (const name of ['shell', 'read_file', 'screenshot', 'browser_upload', 'browser_download'])
+      expect(names).not.toContain(name);
+    expect(data(await tools.invoke(run, 'browser_snapshot', {})).id).toBe(observation.id);
+    selected = false;
+    expect((await tools.invoke(run, 'browser_snapshot', {})).isError).toBe(true);
+    expect(fake.calls).toHaveLength(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a native DSH task is told about the connected host browser while host shell and file tools remain absent', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-host-model-'));
+  const fake = mockRuntime();
+  const settings = new ModelSettings(path.join(root, 'settings.json'));
+  await settings.save({ apiKey: 'synthetic-host-model-key', model: 'deepseek-v4-pro' });
+  let received = '';
+  class Harness {
+    async start() {}
+    async close() {}
+    session(id = 'mock-host-session') {
+      return {
+        id,
+        run: async (prompt: unknown) => {
+          expect.assert(typeof prompt === 'string');
+          received = prompt;
+          return { sessionId: id, finalResponse: 'SYNTHETIC HOST BROWSER READY' };
+        },
+      };
+    }
+    async resumeSession(id: string) {
+      return this.session(id);
+    }
+  }
+  const models = new ModelRuns({
+    settings,
+    hostBrowser: { ...fake.value, available: () => true },
+    nativeOnly: true,
+    workspace: path.join(root, 'workspace'),
+    dir: path.join(root, 'model'),
+    origin: 'http://127.0.0.1:18766',
+    Harness,
+  });
+  try {
+    await models.start('a', {
+      requestId: 'mock-host-greeting',
+      prompt: 'Ordinary synthetic greeting.',
+    });
+    await models.jobs.get('a')!.done;
+    expect(models.jobs.get('a')!.phase).toBe('completed');
+    expect(received).toMatch(/real browser DOM tools are available/);
+    const names = models.tools
+      .list('a', 'deepseek-v4-pro', undefined, models.jobs.get('a')!)
+      .map((tool) => tool.name);
+    expect(names).toContain('browser_snapshot');
+    expect(names).not.toContain('shell');
+    expect(names).not.toContain('read_file');
+    expect(fake.calls).toHaveLength(0);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test('a disconnected host browser ends an outstanding handback wait', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-host-wait-'));
+  const fake = mockRuntime();
+  let selected = true;
+  const tools = new AgentTools(undefined, new WorkspaceFiles(root), {
+    nativeOnly: true,
+    hostBrowser: { ...fake.value, available: () => selected },
+  });
+  const run: AgentToolRun = {
+    id: 'mock-host-wait',
+    bot: 'a',
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    workdir: root,
+    canonicalRoot: await realpath(root),
+    task: { requestId: 'mock-wait-task', prompt: 'Read the synthetic page.' },
+  };
+  await tools.open(run);
+  await fake.value.control.transfer('a', 0, 'human');
+  const pending = tools.invoke(run, 'browser_snapshot', {});
+  try {
+    await vi.waitFor(() => expect(run.waitingForComputer).toBe(true));
+    selected = false;
+    const result = await Promise.race([
+      pending,
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 300)),
+    ]);
+    expect(result?.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/COMPUTER_NOT_CONNECTED/);
+  } finally {
+    run.abort.abort();
+    await pending;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('text models receive live DOM tools with exact Bot/run/lease routing through the shared budget and no images', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-tools-'));
   const fake = mockRuntime();

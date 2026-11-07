@@ -133,6 +133,8 @@ export const suites = {
     'proxy.test',
     'tabs.test',
     'browser-tools.test',
+    'host-browser.test',
+    'native-agent.test',
     'tab-store.test',
     'browser-client.test',
     'browser-prompts.test',

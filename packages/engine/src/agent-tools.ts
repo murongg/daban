@@ -156,6 +156,9 @@ export class AgentTools {
   software?: SoftwareTools;
   skills?: SkillTools;
   readonly computer: ComputerTools | undefined;
+  private readonly hostComputer?: ComputerTools;
+  private readonly hostBrowser?: BrowserTools;
+  private readonly hostRuns = new WeakMap<AgentToolRun, boolean>();
   authorizeComputer?: (run: ToolRun) => Promise<unknown>;
   executeRemote?: (
     run: AgentToolRun,
@@ -174,7 +177,11 @@ export class AgentTools {
   constructor(
     runtime: ComputerFacade | undefined,
     readonly workspace: AgentWorkspace,
-    readonly options: { execution?: WorkspaceExecutor; nativeOnly?: boolean } = {},
+    readonly options: {
+      execution?: WorkspaceExecutor;
+      nativeOnly?: boolean;
+      hostBrowser?: ComputerFacade;
+    } = {},
   ) {
     if (runtime) {
       this.computer = new ComputerTools(runtime);
@@ -184,12 +191,30 @@ export class AgentTools {
           write: (run, name, bytes) => this.browserOutput(run, name, bytes),
         });
     }
+    if (options.hostBrowser?.browser.tabs) {
+      this.hostComputer = new ComputerTools(options.hostBrowser);
+      this.hostComputer.authorize = (run) => this.authorizeComputer?.(run) ?? Promise.resolve();
+      this.hostBrowser = new BrowserTools(this.hostComputer, options.hostBrowser.browser.tabs, {
+        read: async () => {
+          throw new Fault('HOST_BROWSER_FILE_UNAVAILABLE');
+        },
+        write: async () => {
+          throw new Fault('HOST_BROWSER_FILE_UNAVAILABLE');
+        },
+      });
+    }
+  }
+  hostSelected(bot: string, run?: AgentToolRun) {
+    return run
+      ? this.hostRuns.get(run) === true
+      : this.options.hostBrowser?.available?.(bot) === true;
   }
   localSelected(bot: string, run?: AgentToolRun) {
     return run ? this.localRuns.get(run) === true : this.localComputer?.selected(bot) === true;
   }
   hasComputer(bot: string, model?: ModelId, vision?: boolean, run?: AgentToolRun) {
     if (this.localSelected(bot, run)) return vision ?? (!model || modelHasVision(model));
+    if (this.hostSelected(bot, run)) return false;
     if (this.options.execution)
       return (
         (vision ?? (!model || modelHasVision(model))) &&
@@ -206,6 +231,8 @@ export class AgentTools {
   }
   hasBrowser(bot: string, run?: AgentToolRun) {
     if (this.localSelected(bot, run)) return false;
+    if (this.hostSelected(bot, run))
+      return !!this.hostBrowser && this.options.hostBrowser?.available?.(bot) === true;
     if (this.options.execution)
       return !!this.remoteCatalogs.get(bot)?.some((tool) => tool.name === 'browser_snapshot');
     if (!this.browser || !this.computer) return false;
@@ -228,6 +255,7 @@ export class AgentTools {
         ? agentToolList
         : workspaceToolList;
     const local = this.localSelected(bot, run);
+    const hosted = this.hostSelected(bot, run);
     const offered = this.options.nativeOnly
       ? tools.filter((tool) => !workspaceToolList.some((item) => item.name === tool.name))
       : tools;
@@ -235,7 +263,7 @@ export class AgentTools {
       (tool) => tool.name !== 'read_image' || (run?.vision ?? (!model || modelHasVision(model))),
     );
     return [
-      ...(local
+      ...(local || hosted
         ? visible.filter(
             (tool) =>
               !computerToolList.some((item) => item.name === tool.name) &&
@@ -245,7 +273,15 @@ export class AgentTools {
       ...(local && (run?.vision ?? (!model || modelHasVision(model)))
         ? this.localComputer?.list || []
         : []),
-      ...(!this.options.execution && this.hasBrowser(bot, run) ? this.browser?.list || [] : []),
+      ...(this.hasBrowser(bot, run)
+        ? hosted
+          ? this.hostBrowser!.list.filter(
+              (tool) => !['browser_upload', 'browser_download'].includes(tool.name),
+            )
+          : !this.options.execution
+            ? this.browser?.list || []
+            : []
+        : []),
       ...(this.schedules ? scheduleToolList : []),
       ...(this.memory?.list || []),
       ...(run?.task ? this.bots?.list || [] : []),
@@ -267,6 +303,8 @@ export class AgentTools {
     ];
   }
   async open(run: AgentToolRun) {
+    // Capture the selected surface once; a disconnect must never reroute an accepted task to the VM browser.
+    if (!this.hostRuns.has(run)) this.hostRuns.set(run, this.hostSelected(run.bot));
     if (!this.localRuns.has(run))
       this.localRuns.set(run, (await this.localComputer?.prepare(run)) ?? false);
     if (!this.options.execution) return;
@@ -779,11 +817,13 @@ export class AgentTools {
     wireId?: string,
   ): Promise<ToolResult> {
     const unavailable =
-      this.options.nativeOnly && (Object.hasOwn(fields, name) || name.startsWith('process_'))
-        ? 'NATIVE_WORKSPACE_TOOL_UNAVAILABLE'
-        : this.localRuns.get(run) && name.startsWith('browser_')
-          ? 'LOCAL_BROWSER_SURFACE_UNAVAILABLE'
-          : undefined;
+      this.hostSelected(run.bot, run) && computerToolList.some((tool) => tool.name === name)
+        ? 'HOST_DESKTOP_UNAVAILABLE'
+        : this.options.nativeOnly && (Object.hasOwn(fields, name) || name.startsWith('process_'))
+          ? 'NATIVE_WORKSPACE_TOOL_UNAVAILABLE'
+          : this.localRuns.get(run) && name.startsWith('browser_')
+            ? 'LOCAL_BROWSER_SURFACE_UNAVAILABLE'
+            : undefined;
     if (name === 'read_image' && !(run.vision ?? (!run.model || modelHasVision(run.model))))
       return { isError: true, content: [{ type: 'text', text: 'MODEL_IMAGE_UNSUPPORTED' }] };
     if (!unavailable && this.localRuns.get(run)) {
@@ -822,7 +862,7 @@ export class AgentTools {
       this.options.execution &&
       (Object.hasOwn(fields, name) ||
         computerToolList.some((tool) => tool.name === name) ||
-        name.startsWith('browser_') ||
+        (name.startsWith('browser_') && !this.hostSelected(run.bot, run)) ||
         name.startsWith('process_'))
     )
       return this.remote(run, name, args, wireId);
@@ -847,7 +887,11 @@ export class AgentTools {
       this.software,
       this.skills,
       this.groups,
-      this.hasBrowser(run.bot) ? this.browser : undefined,
+      this.hasBrowser(run.bot, run)
+        ? this.hostSelected(run.bot, run)
+          ? this.hostBrowser
+          : this.browser
+        : undefined,
     ].find((tools) => tools && Object.hasOwn(tools.fields, name));
     const external = this.integrations?.owns(run, name);
     const surface = external ? 'integration' : dataTool?.surface || 'workspace';
@@ -951,7 +995,7 @@ export class AgentTools {
         }
       }
       const failed =
-        dataTool === this.browser &&
+        (dataTool === this.browser || dataTool === this.hostBrowser) &&
         result &&
         typeof result === 'object' &&
         'error' in result &&

@@ -16,6 +16,9 @@ import { TabStore } from './tab-store.js';
 import { Tabs } from './tabs.js';
 
 export interface BrowserOptions {
+  networkFile?: string;
+  executablePath?: string;
+  publicOnly?: boolean;
   bots?: readonly string[];
   control?: Control;
   profileDir: string;
@@ -34,6 +37,9 @@ export async function createBrowser({
   proxy: suppliedProxy,
   bots,
   control,
+  executablePath,
+  publicOnly = false,
+  networkFile = path.resolve(profileDir, '../model/network.json'),
 }: BrowserOptions) {
   const ids = bots ?? ['a', 'b'];
   if (ids.length > 16 || !ids.every(validAgentId) || new Set(ids).size !== ids.length)
@@ -42,9 +48,7 @@ export async function createBrowser({
   let proxyOptions = suppliedProxy;
   if (!proxyOptions) {
     try {
-      const network: unknown = JSON.parse(
-        await readFile(path.resolve(profileDir, '../model/network.json'), 'utf8'),
-      );
+      const network: unknown = JSON.parse(await readFile(networkFile, 'utf8'));
       if (!network || typeof network !== 'object' || Array.isArray(network))
         throw new Fault('BROWSER_PROXY_CONFIG_INVALID', 503);
       const upstream = 'proxy' in network ? network.proxy : undefined;
@@ -58,11 +62,15 @@ export async function createBrowser({
   }
   const downloads = path.join(profileDir, '.downloads');
   await mkdir(downloads, { recursive: true, mode: 0o700 });
-  const proxy = await createProxy({ ...proxyOptions, fixtureOrigin: origin });
+  const proxy = await createProxy({
+    ...proxyOptions,
+    ...(publicOnly ? {} : { fixtureOrigin: origin }),
+  });
   let context: BrowserContext | undefined;
   try {
     context = await chromium.launchPersistentContext(profileDir, {
       headless: true,
+      ...(executablePath ? { executablePath } : {}),
       viewport: { width: 960, height: 640 },
       deviceScaleFactor: 1,
       chromiumSandbox: true,
@@ -104,7 +112,7 @@ export async function createBrowser({
       context,
       pages,
       browser.control,
-      origin,
+      publicOnly ? '' : origin,
       (bot) => browser.changed(bot),
       fixture
         ? undefined

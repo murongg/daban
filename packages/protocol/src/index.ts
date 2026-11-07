@@ -26,6 +26,7 @@ import {
 } from './skills.js';
 
 export * from './execution.js';
+export * from './host-browser.js';
 export * from './local-computer.js';
 export * from './vm.js';
 export * from './windows.js';
@@ -43,6 +44,7 @@ export * from './comments.js';
 export * from './work.js';
 export * from './work-compat.js';
 
+import type { HostBrowserRequest, HostBrowserStatus } from './host-browser.js';
 import { validAgentId } from './id.js';
 import type { NoteAvailability, NoteCommand } from './notes.js';
 
@@ -1540,6 +1542,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  hostBrowser?: HostBrowserStatus;
   searchSettings?: true;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
@@ -1603,6 +1606,11 @@ export function recoveryBlocked(snapshot: Pick<RuntimeSnapshot, 'reboot' | 'reco
   );
 }
 export function recoveryReader(command: RuntimeCommand) {
+  if (command.type === 'hostBrowser')
+    return (
+      ['state', 'view', 'receipt'].includes(command.request.action) ||
+      (command.request.action === 'input' && command.request.input.type === 'release')
+    );
   if (command.type === 'model.saved') return true;
   if (command.type === 'search.status' || command.type === 'search.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
@@ -4072,6 +4080,7 @@ export type RuntimeCommand =
   | { type: 'skill.recycle' | 'skill.restore'; bot: string; id: string; revision: number }
   | { type: 'skill.bind'; bot: string; binding: SkillBinding }
   | LocalComputerCommand
+  | { type: 'hostBrowser'; request: HostBrowserRequest }
   | { type: 'computer.action'; request: ComputerRequest }
   | { type: 'computer.receipt'; id: string; bot: string }
   | ({ type: 'browser.answer'; bot: RuntimeBot } & BrowserAnswerRequest)
