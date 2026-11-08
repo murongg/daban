@@ -84,6 +84,13 @@ async function fixture(t: TestContext) {
 
 test('Linux transfers preserve origins, verify downloaded bytes and never overwrite native outputs', async (t) => {
   const { tools, run, files, calls } = await fixture(t);
+  expect(tools.linux?.list[0]?.description).toMatch(
+    /Use only when.*Linux command.*Linux-only package.*Linux desktop/i,
+  );
+  expect(tools.linux?.list[0]?.description).toMatch(/mentioning code or Linux alone/i);
+  expect(tools.linux?.list[1]?.description).toMatch(
+    /Use only for a long-running command after choosing Linux execution/i,
+  );
   expect(await tools.invoke(run, 'linux_upload', { path: '../outside.txt' })).toHaveProperty(
     'isError',
     true,

@@ -2,7 +2,7 @@ export const processToolList = [
   {
     name: 'process_start',
     description:
-      'Start a persistent Bash command in the Linux guest, with the actual task directory as cwd. Use relative output paths or the actual task directory from the request; /workspace and /shared are file-tool aliases and are not mounted here. Full guest files, network and passwordless sudo are available. Returns a process id; poll it rather than starting the command again. When using noclobber, create and write a new file in one step; do not precreate it before >, or bypass an existing-file conflict.',
+      'Use only for a long-running command after choosing Linux execution for the task. Start a persistent Bash command in the Linux guest, with the actual task directory as cwd. Use relative output paths or the actual task directory from the request; /workspace and /shared are file-tool aliases and are not mounted here. Full guest files, network and passwordless sudo are available. Returns a process id; poll it rather than starting the command again. When using noclobber, create and write a new file in one step; do not precreate it before >, or bypass an existing-file conflict.',
     inputSchema: {
       type: 'object',
       properties: { command: { type: 'string', maxLength: 64000 } },
