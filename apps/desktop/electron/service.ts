@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readVmConnection } from '@daban/engine/host';
 import { secureDirectory } from '@daban/engine/local-computer';
 import {
+  type BrowserBinding,
   type DiagnosticReport,
   diagnosticIds,
   disconnected,
@@ -612,11 +613,17 @@ export function runtimeService(
     if (isLocalComputerCommand(command)) {
       if (!local || !agentConfig || !state.localComputer)
         throw new Error('LOCAL_AGENT_UPDATE_REQUIRED');
-      if (command.type === 'local.status') return local.status();
-      if (command.type === 'local.permissions') return local.requestPermissions();
+      if (command.type === 'local.status' || command.type === 'local.permissions') {
+        const result =
+          command.type === 'local.status' ? local.status() : await local.requestPermissions();
+        publish({ ...state, localComputer: result });
+        return result;
+      }
       if (command.type === 'local.preview') return local.preview(command.session, command.revision);
       if (command.type === 'local.connect') {
         await refresh();
+        if (state.hostBrowser?.connections.some((item) => item.bot === command.bot))
+          throw new Error('HOST_BROWSER_CONNECTED');
         const profile = state.profiles.find((profile) => profile.id === command.bot);
         if (!profile || profile.archived) throw new Error('BOT_NOT_REGISTERED');
         if (state.agents[command.bot]?.running) throw new Error('LOCAL_TASK_BUSY');
@@ -872,6 +879,14 @@ export function runtimeService(
   }
   return {
     connect,
+    async browserTarget(bot: string, epoch: number, binding: BrowserBinding) {
+      if (!client || state.phase !== 'ready' || closed || updating || recoveryBlocked(state))
+        throw new Error('RUNTIME_OFFLINE');
+      return (await client.invoke({
+        type: 'hostBrowser',
+        request: { action: 'target', bot, epoch, binding },
+      })) as { target: string };
+    },
     releaseInputs,
     async prepareUpdate() {
       if (closed || !agentConfig) throw new Error('AGENT_UPDATE_UNAVAILABLE');

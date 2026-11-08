@@ -136,6 +136,42 @@ test('guest tools retain an operation receipt instead of executing a retried wri
   await client.call('tools.drain', { runId: 'mock-run' });
 });
 
+test('browser bytes publish atomically into the opened run and cannot overwrite, escape or write after drain', async (t) => {
+  const { client } = await fixture(t);
+  expect(client.snapshot?.capabilities).toContain('browser-files-v1');
+  const directory = await client.call<{ path: string; canonical: string }>('workspace.create', {
+    parts: ['mock-browser-files', 'mock-a'],
+  });
+  const runId = 'mock-browser-files';
+  await client.call('tools.open', {
+    id: runId,
+    bot: 'mock-a',
+    workdir: directory.path,
+    canonicalRoot: directory.canonical,
+    limit: 10,
+  });
+  const bytes = Buffer.from([0, 47, 255, 0, 71]);
+  const request = { runId, name: 'synthetic.bin', data: bytes.toString('base64') };
+  expect(await client.call('tools.publish', request)).toEqual({
+    path: path.join(directory.canonical, request.name),
+    bytes: bytes.length,
+  });
+  expect(await readFile(path.join(directory.path, request.name))).toEqual(bytes);
+  await expect(client.call('tools.publish', request)).rejects.toMatchObject({
+    code: 'BROWSER_FILE_EXISTS',
+  });
+  await expect(
+    client.call('tools.publish', { ...request, name: '../escape.bin' }),
+  ).rejects.toMatchObject({ code: 'EXECUTION_INVALID_REQUEST' });
+  await client.call('tools.drain', { runId });
+  await expect(
+    client.call('tools.publish', { ...request, name: 'late.bin' }),
+  ).rejects.toMatchObject({ code: 'EXECUTION_RUN_UNKNOWN' });
+  await expect(readFile(path.join(directory.path, 'late.bin'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  });
+});
+
 test('full guest catalog offers persistent process tools and retains process input receipts', async (t) => {
   const { client } = await fixture(t);
   const directory = await client.call<{ path: string; canonical: string }>('workspace.create', {

@@ -9,6 +9,7 @@ import {
   type SearchSource,
   searchRequiresKey,
 } from '@daban/protocol';
+import { bingResults } from './bing.js';
 import { Fault } from './control.js';
 import { duckDuckGoResults } from './duckduckgo.js';
 import { dialAddress, publicAddress, resolvePublic } from './network.js';
@@ -20,6 +21,7 @@ const endpoints = {
   deepseek: 'https://api.deepseek.com/v1/tools/search',
   brave: 'https://api.search.brave.com/res/v1/web/search',
   duckduckgo: 'https://lite.duckduckgo.com/lite/',
+  bing: 'https://cn.bing.com/search',
 } as const;
 
 class SearchFault extends Fault {
@@ -370,8 +372,9 @@ export class SearchClient {
     try {
       signal.throwIfAborted();
       const endpoint = new URL(endpoints[provider]);
+      const keyless = !searchRequiresKey(provider);
       const headers = new Headers({
-        accept: provider === 'duckduckgo' ? 'text/html' : 'application/json',
+        accept: keyless ? 'text/html' : 'application/json',
       });
       const init: RequestInit = {
         method: provider === 'deepseek' ? 'POST' : 'GET',
@@ -391,12 +394,21 @@ export class SearchClient {
           count: String(maxResults),
           result_filter: 'web',
         }).toString();
-      } else {
+      } else if (provider === 'duckduckgo') {
         headers.set('user-agent', 'Mozilla/5.0 (compatible; Daban)');
         // Match the Lite page's search form; query text belongs in the POST body.
         headers.set('content-type', 'application/x-www-form-urlencoded');
         init.method = 'POST';
         init.body = new URLSearchParams({ q: query }).toString();
+      } else {
+        // Bing can return an empty shell to generic HTTP clients; use its ordinary desktop HTML representation.
+        headers.set(
+          'user-agent',
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        );
+        headers.set('accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+        headers.set('accept-language', 'zh-CN,zh;q=0.9');
+        endpoint.search = new URLSearchParams({ q: query }).toString();
       }
       guard();
       const response = await bounded(this.request(endpoint.href, init, guard), signal);
@@ -404,12 +416,13 @@ export class SearchClient {
         signal.throwIfAborted();
         statusFailure(response);
         let value: unknown;
-        if (provider === 'duckduckgo') {
+        if (keyless) {
           if (
             response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'text/html'
           )
             invalidResponse();
-          value = { results: duckDuckGoResults(await responseText(response, signal)) };
+          const html = await responseText(response, signal);
+          value = { results: provider === 'bing' ? bingResults(html) : duckDuckGoResults(html) };
         } else value = await responseJSON(response, signal);
         guard();
         const result = project(provider, value, key, maxResults);

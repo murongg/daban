@@ -43,7 +43,7 @@ test('the public contract accepts credential-free DuckDuckGo and rejects mismatc
   ).toBe(false);
 });
 
-test('missing search configuration defaults to DuckDuckGo even with an existing official model key', async () => {
+test('missing search configuration defaults to Bing even with an existing official model key', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-keyless-default-'));
   try {
     const models = new ModelSettings(path.join(root, 'models.json'));
@@ -53,7 +53,7 @@ test('missing search configuration defaults to DuckDuckGo even with an existing 
     const search = new SearchSettings(path.join(root, 'search.json'), models, { query });
     expect(await search.status()).toMatchObject({
       enabled: true,
-      provider,
+      provider: 'bing',
       health: 'unchecked',
       credentialConfigured: false,
       credentialSource: 'none',
@@ -132,7 +132,7 @@ test.each(['deepseek', 'brave'] as const)(
         provider: selected,
         key: 'synthetic-selected-key',
       });
-      const before = await readFile(search.file, 'utf8');
+      const before = await search.capture();
       await expect(search.query(await search.capture(), 'synthetic')).rejects.toMatchObject({
         code: 'SEARCH_UNAVAILABLE',
       });
@@ -148,7 +148,11 @@ test.each(['deepseek', 'brave'] as const)(
       expect(await new SearchSettings(search.file, models, { query }).status()).toMatchObject({
         provider: selected,
       });
-      expect(await readFile(search.file, 'utf8')).toBe(before);
+      expect(await search.capture()).toEqual(before);
+      expect(await search.status()).toMatchObject({
+        health: 'unavailable',
+        error: 'SEARCH_UNAVAILABLE',
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -175,7 +179,7 @@ test('an old auto-created empty DeepSeek configuration adopts the keyless defaul
     const query = vi.fn(async () => ({ sources: [], truncated: false }));
     const search = new SearchSettings(file, models, { query });
     expect(await search.status()).toMatchObject({
-      provider: 'duckduckgo',
+      provider: 'bing',
       revision: 1,
       health: 'unchecked',
       credentialConfigured: false,
@@ -210,3 +214,25 @@ test.each([
     }
   },
 );
+
+test('an existing DuckDuckGo choice remains selected when Bing becomes the new-user default', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-preserved-duckduckgo-'));
+  try {
+    const { writeFile } = await import('node:fs/promises');
+    const models = new ModelSettings(path.join(root, 'models.json'));
+    const file = path.join(root, 'search.json');
+    const bytes = JSON.stringify({
+      version: 1,
+      revision: 0,
+      checkRevision: 0,
+      enabled: true,
+      provider: 'duckduckgo',
+    });
+    await writeFile(file, bytes, { mode: 0o600 });
+    const search = new SearchSettings(file, models);
+    expect(await search.status()).toMatchObject({ provider: 'duckduckgo', health: 'unchecked' });
+    expect(await readFile(file, 'utf8')).toBe(bytes);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

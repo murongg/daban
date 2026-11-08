@@ -23,6 +23,7 @@ import {
   isGroupCopyRequest,
   isGroupInput,
   isGroupSend,
+  isHostBrowserRequest,
   isKnowledgeWrite,
   isLocalComputerCommand,
   isMcpCommand,
@@ -85,6 +86,10 @@ export function safeRelative(value: unknown): value is string {
 }
 export function parseCommand(value: unknown): RuntimeCommand {
   if (!object(value) || typeof value.type !== 'string') return fail();
+  if (value.type === 'hostBrowser')
+    return keys(value, ['type', 'request']) && isHostBrowserRequest(value.request)
+      ? (value as Extract<RuntimeCommand, { type: 'hostBrowser' }>)
+      : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();

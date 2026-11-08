@@ -35,6 +35,7 @@ interface Connection {
     epoch: number,
     binding: BrowserBinding,
     input: DesktopInput,
+    host?: boolean,
   ) => Promise<unknown>;
 }
 const unavailable = async (): Promise<never> => {
@@ -104,10 +105,25 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     [command],
   );
   const browserInput = useCallback(
-    (bot: RuntimeBot, epoch: number, binding: BrowserBinding, value: DesktopInput) => {
+    (
+      bot: RuntimeBot,
+      epoch: number,
+      binding: BrowserBinding,
+      value: DesktopInput,
+      host = false,
+    ) => {
       const next = (tails.current.get(bot) || Promise.resolve())
         .catch(() => {})
-        .then(() => command({ type: 'browser.input', bot, epoch, binding, input: value }));
+        .then(() =>
+          command(
+            host
+              ? {
+                  type: 'hostBrowser',
+                  request: { action: 'input', bot, epoch, binding, input: value },
+                }
+              : { type: 'browser.input', bot, epoch, binding, input: value },
+          ),
+        );
       tails.current.set(bot, next);
       return next;
     },
@@ -132,6 +148,13 @@ export function runtimeMessage(code: string, fallback = code) {
   const key = taskErrorKey(code);
   if (key) return t(key);
   const messages: Record<string, string> = {
+    HOST_BROWSER_START_FAILED: t('hostBrowser.startFailed'),
+    HOST_BROWSER_DESKTOP_UNAVAILABLE: t('hostBrowser.nativeUnavailable'),
+    HOST_BROWSER_DISCONNECTED: t('hostBrowser.disconnected'),
+    HOST_BROWSER_UNAVAILABLE: t('hostBrowser.unavailable'),
+    HOST_BROWSER_NOT_CONNECTED: t('hostBrowser.disconnected'),
+    HOST_BROWSER_INVALID_STATUS: t('hostBrowser.unavailable'),
+    HOST_BROWSER_CONNECTED: t('hostBrowser.switchFirst'),
     SEARCH_LEGACY_IN_USE: t('search.legacyInUse'),
     SEARCH_CONFIG_CHANGED: t('search.healthChanged'),
     AGENT_LEGACY_RESTART_REQUIRED: t('agentUpgrade.required'),
@@ -442,6 +465,7 @@ export function runtimeMessage(code: string, fallback = code) {
     STALE_CONTROL: t('errors.controlOwnershipChangedOldOperationWasRejected'),
     INVALID_BROWSER_FILE: t('errors.selectUpFilesNoPathsTheirNames'),
     INVALID_BROWSER_URL: t('errors.invalidWebpageUrlUsePublicHttpHttps'),
+    BROWSER_NAVIGATION_FAILED: t('browser.navigationFailed'),
     BROWSER_HUMAN_REQUIRED: t('errors.webpageNeedsAttentionTakeOverBrowserPanel'),
     BROWSER_VIEW_STALE: t('errors.pageChangedInputOldScreenWasRejected'),
     BROWSER_INSTANCE_CHANGED: t('errors.browserRestartedCheckCurrentPageContinuing'),

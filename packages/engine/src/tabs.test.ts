@@ -1,3 +1,4 @@
+import { isBrowserState } from '@daban/protocol';
 import type { BrowserContext, Page } from 'playwright';
 import { expect, test } from 'vitest';
 import { Control } from './control.js';
@@ -23,6 +24,7 @@ test('cancelling a blocked read releases the lease and a late password query can
     frames: () => [
       {
         locator: () => ({
+          count: async () => 0,
           evaluateAll: () => {
             started();
             return delayed;
@@ -109,6 +111,28 @@ test('browser metadata never waits for JavaScript execution or a dialog-blocked 
   try {
     await tabs.state('a');
     expect(reads).toBe(0);
+  } finally {
+    tabs.dispose();
+  }
+});
+
+test('a page registered while showing an internal error starts with safe browser metadata', async () => {
+  const page = {
+    on: () => {},
+    once: () => {},
+    isClosed: () => false,
+    url: () => 'chrome-error://chromewebdata/',
+  } as unknown as Page;
+  const tabs = new Tabs(
+    { on: () => {}, removeListener: () => {} } as unknown as BrowserContext,
+    new Map([['a', page]]),
+    new Control(['a']),
+    'http://127.0.0.1:18766',
+  );
+  try {
+    const state = await tabs.state('a');
+    expect(isBrowserState(state)).toBe(true);
+    expect(state.tabs[0].url).toBe('about:blank');
   } finally {
     tabs.dispose();
   }

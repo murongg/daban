@@ -4,8 +4,10 @@ import { constants } from 'node:fs';
 import { type FileHandle, link, lstat, open, realpath, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  browserFilesCapability,
   browserTaskCapability,
   documentLimit,
+  isRuntimeDownload,
   isTaskFileName,
   type ModelId,
   modelExecutionCapability,
@@ -16,6 +18,7 @@ import type { BotTools } from './bot-tools.js';
 import { BrowserTools } from './browser-tools.js';
 import type { CatalogTools } from './catalog.js';
 import {
+  browserComputerToolList,
   type ComputerFacade,
   ComputerTools,
   computerToolList,
@@ -139,12 +142,22 @@ const inside = (root: string, file: string) => file === root || file.startsWith(
 // Workspace paths are protocol values, including when the host filesystem uses backslashes.
 const workspacePath = (root: string, file: string) =>
   path.relative(root, file).split(path.sep).join('/');
+const windowsName = (name: string) =>
+  !/[<>:"|?*]/.test(name) &&
+  !/[. ]$/.test(name) &&
+  !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
+export const validWindowsPath = (value: string) =>
+  // Only an absolute drive prefix may contain a colon; other colons can address NTFS alternate streams.
+  value
+    .replace(/^[a-z]:\//i, '')
+    .split('/')
+    .every((name) => !name || windowsName(name));
 
 export class AgentTools {
   linux?: LinuxTools;
   readonly browser?: BrowserTools;
   localComputer?: LocalComputerPort;
-  private readonly localRequests = new WeakMap<AgentToolRun, Set<string>>();
+  private readonly computerRequests = new WeakMap<AgentToolRun, Set<string>>();
   private readonly localRuns = new WeakMap<AgentToolRun, boolean>();
   groups?: GroupTools;
   bots?: BotTools;
@@ -159,6 +172,9 @@ export class AgentTools {
   software?: SoftwareTools;
   skills?: SkillTools;
   readonly computer: ComputerTools | undefined;
+  private readonly hostComputer?: ComputerTools;
+  private readonly hostBrowser?: BrowserTools;
+  private readonly hostRuns = new WeakMap<AgentToolRun, boolean>();
   authorizeComputer?: (run: ToolRun) => Promise<unknown>;
   executeRemote?: (
     run: AgentToolRun,
@@ -177,22 +193,40 @@ export class AgentTools {
   constructor(
     runtime: ComputerFacade | undefined,
     readonly workspace: AgentWorkspace,
-    readonly options: { execution?: WorkspaceExecutor; nativeOnly?: boolean } = {},
+    readonly options: {
+      execution?: WorkspaceExecutor;
+      nativeOnly?: boolean;
+      hostBrowser?: ComputerFacade;
+    } = {},
   ) {
     if (runtime) {
       this.computer = new ComputerTools(runtime);
       if (runtime.browser.tabs)
         this.browser = new BrowserTools(this.computer, runtime.browser.tabs, {
           read: (run, file) => this.browserInput(run, file),
-          write: (run, name, bytes) => this.browserOutput(run, name, bytes),
+          write: (run, name, bytes) => this.writeBinary(run, name, bytes),
         });
     }
+    if (options.hostBrowser?.browser.tabs) {
+      this.hostComputer = new ComputerTools(options.hostBrowser);
+      this.hostComputer.authorize = (run) => this.authorizeComputer?.(run) ?? Promise.resolve();
+      this.hostBrowser = new BrowserTools(this.hostComputer, options.hostBrowser.browser.tabs, {
+        read: (run, file) => this.browserInput(run, file),
+        write: (run, name, bytes) => this.writeBinary(run, name, bytes),
+      });
+    }
+  }
+  hostSelected(bot: string, run?: AgentToolRun) {
+    return run
+      ? this.hostRuns.get(run) === true
+      : this.options.hostBrowser?.available?.(bot) === true;
   }
   localSelected(bot: string, run?: AgentToolRun) {
     return run ? this.localRuns.get(run) === true : this.localComputer?.selected(bot) === true;
   }
   hasComputer(bot: string, model?: ModelId, vision?: boolean, run?: AgentToolRun) {
     if (this.localSelected(bot, run)) return vision ?? (!model || modelHasVision(model));
+    if (this.hostSelected(bot, run)) return false;
     if (this.linux?.hasComputer(bot)) return vision ?? (!model || modelHasVision(model));
     if (this.options.execution)
       return (
@@ -210,6 +244,8 @@ export class AgentTools {
   }
   hasBrowser(bot: string, run?: AgentToolRun) {
     if (this.localSelected(bot, run)) return false;
+    if (this.hostSelected(bot, run))
+      return !!this.hostBrowser && this.options.hostBrowser?.available?.(bot) === true;
     if (this.linux?.hasComputer(bot)) return true;
     if (this.options.execution)
       return !!this.remoteCatalogs.get(bot)?.some((tool) => tool.name === 'browser_snapshot');
@@ -234,12 +270,13 @@ export class AgentTools {
         ? agentToolList
         : workspaceToolList;
     const local = this.localSelected(bot, run);
+    const hosted = this.hostSelected(bot, run);
     const offered = this.options.nativeOnly ? tools.filter((tool) => tool.name !== 'shell') : tools;
     const visible = offered.filter(
       (tool) => tool.name !== 'read_image' || (run?.vision ?? (!model || modelHasVision(model))),
     );
     return [
-      ...(local
+      ...(local || hosted
         ? visible.filter(
             (tool) =>
               !computerToolList.some((item) => item.name === tool.name) &&
@@ -249,9 +286,21 @@ export class AgentTools {
       ...(local && (run?.vision ?? (!model || modelHasVision(model)))
         ? this.localComputer?.list || []
         : []),
-      ...(!this.options.execution && this.hasBrowser(bot, run) ? this.browser?.list || [] : []),
+      ...(hosted && (run?.vision ?? (!model || modelHasVision(model)))
+        ? browserComputerToolList
+        : []),
+      ...(this.hasBrowser(bot, run)
+        ? hosted
+          ? this.hostBrowser!.list.filter(
+              (tool) =>
+                this.browserFiles() || !['browser_upload', 'browser_download'].includes(tool.name),
+            )
+          : !this.options.execution
+            ? this.browser?.list || []
+            : []
+        : []),
       ...(this.linux?.enabled
-        ? this.linux.listFor(bot, run?.vision ?? (!model || modelHasVision(model)), local)
+        ? this.linux.listFor(bot, run?.vision ?? (!model || modelHasVision(model)), local || hosted)
         : []),
       ...(this.schedules ? scheduleToolList : []),
       ...(this.memory?.list || []),
@@ -274,6 +323,8 @@ export class AgentTools {
     ];
   }
   async open(run: AgentToolRun) {
+    // Capture the selected surface once; a disconnect must never reroute an accepted task to the VM browser.
+    if (!this.hostRuns.has(run)) this.hostRuns.set(run, this.hostSelected(run.bot));
     if (!this.localRuns.has(run))
       this.localRuns.set(run, (await this.localComputer?.prepare(run)) ?? false);
     if (!this.options.execution) return;
@@ -499,7 +550,26 @@ export class AgentTools {
       value.split('/').includes('..')
     )
       throw new Fault('INVALID_FILE', 400);
+    if (!this.options.execution && process.platform === 'win32' && !validWindowsPath(value))
+      throw new Fault('INVALID_FILE', 400);
     const root = await this.workspace.base();
+    if (this.options.execution) {
+      const canonical = await this.workspace.scope(run.workdir, run.canonicalRoot).base();
+      if (canonical !== run.canonicalRoot || !canonical.startsWith(`${root}/`))
+        throw new Fault('TASK_DIRECTORY_MOVED');
+      const shared = value === '/shared' || value.startsWith('/shared/');
+      const current = value === '/workspace' || value.startsWith('/workspace/');
+      if (shared && write) throw new Fault('INVALID_FILE', 400);
+      const file = shared
+        ? path.posix.resolve(root, value.slice('/shared'.length).replace(/^\/+/, ''))
+        : current
+          ? path.posix.resolve(canonical, value.slice('/workspace'.length).replace(/^\/+/, ''))
+          : path.posix.resolve(canonical, value);
+      const boundary = write ? canonical : root;
+      if (file !== boundary && !file.startsWith(`${boundary}/`))
+        throw new Fault('INVALID_FILE', 400);
+      return { root, file };
+    }
     if ((await realpath(run.workdir)) !== run.canonicalRoot || !inside(root, run.canonicalRoot))
       throw new Fault('TASK_DIRECTORY_MOVED');
     const shared = value === '/shared' || value.startsWith('/shared/');
@@ -516,9 +586,23 @@ export class AgentTools {
     return { root, file };
   }
   private async browserInput(run: AgentToolRun, value: unknown) {
+    if (this.hostSelected(run.bot, run) && !this.browserFiles())
+      throw new Fault('EXECUTION_UPGRADE_REQUIRED');
     run.abort.signal.throwIfAborted();
     const { root, file } = await this.target(run, value);
-    const source = await this.workspace.download(workspacePath(root, file));
+    const reference = this.options.execution
+      ? path.posix.relative(root, file)
+      : workspacePath(root, file);
+    const source = await this.workspace.download(reference);
+    // Verify transferred bytes before exposing them to a website in the signed-in browser.
+    if (!isRuntimeDownload(source) || source.path !== reference)
+      throw new Fault('INVALID_EXECUTOR_RESPONSE');
+    const buffer = Buffer.from(source.data, 'base64');
+    if (
+      buffer.toString('base64') !== source.data ||
+      createHash('sha256').update(buffer).digest('hex') !== source.sha256
+    )
+      throw new Fault('INVALID_EXECUTOR_RESPONSE');
     run.abort.signal.throwIfAborted();
     const types: Record<string, string> = {
       pdf: 'application/pdf',
@@ -533,10 +617,56 @@ export class AgentTools {
     return {
       name: source.name,
       mimeType: types[source.name.split('.').at(-1)!.toLowerCase()] || 'application/octet-stream',
-      buffer: Buffer.from(source.data, 'base64'),
+      buffer,
     };
   }
-  private async browserOutput(run: AgentToolRun, name: string, bytes: Buffer) {
+  private browserFiles() {
+    // Older executors reject unknown RPCs; keep DOM browsing available without advertising unsupported transfers.
+    return (
+      !this.options.execution ||
+      this.options.execution.snapshot?.capabilities.includes(browserFilesCapability) === true
+    );
+  }
+  private async directory(parent: string) {
+    const identity = await lstat(parent);
+    if (!identity.isDirectory() || identity.isSymbolicLink())
+      throw new Fault('TASK_DIRECTORY_MOVED');
+    // Windows cannot open directories as ordinary file handles; retain canonical identity checks around each write.
+    const handle =
+      process.platform === 'win32'
+        ? undefined
+        : await open(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const base = process.platform === 'linux' ? `/proc/self/fd/${handle!.fd}` : parent;
+    const verify = async () => {
+      const current = await lstat(parent);
+      if (
+        !current.isDirectory() ||
+        current.isSymbolicLink() ||
+        current.ino !== identity.ino ||
+        current.dev !== identity.dev ||
+        (await realpath(base)) !== parent
+      )
+        throw new Fault('TASK_DIRECTORY_MOVED');
+    };
+    try {
+      await verify();
+      return {
+        path: base,
+        verify,
+        close: async () => {
+          await handle?.close();
+        },
+      };
+    } catch (error) {
+      await handle?.close();
+      throw error;
+    }
+  }
+  async writeBinary(
+    run: AgentToolRun,
+    name: string,
+    bytes: Buffer,
+  ): Promise<{ path: string; bytes: number }> {
     if (
       !isTaskFileName(name) ||
       name.startsWith('.') ||
@@ -544,16 +674,37 @@ export class AgentTools {
       bytes.length > documentLimit
     )
       throw new Fault('INVALID_BROWSER_FILE', 400);
+    if (this.options.execution) {
+      if (!this.browserFiles()) throw new Fault('EXECUTION_UPGRADE_REQUIRED');
+      await this.open(run);
+      const runId = this.opened.get(run);
+      if (!runId) throw new Fault('EXECUTION_RUN_CLOSED');
+      const result = await this.options.execution.call(
+        'tools.publish',
+        { runId, name, data: bytes.toString('base64') },
+        run.abort.signal,
+      );
+      const expected = path.posix.join(run.canonicalRoot, name);
+      if (
+        !result ||
+        typeof result !== 'object' ||
+        !('path' in result) ||
+        result.path !== expected ||
+        !('bytes' in result) ||
+        result.bytes !== bytes.length
+      )
+        throw new Fault('INVALID_EXECUTOR_RESPONSE');
+      return { path: expected, bytes: bytes.length };
+    }
+    if (process.platform === 'win32' && !windowsName(name))
+      throw new Fault('INVALID_BROWSER_FILE', 400);
     const { file } = await this.target(run, name, true);
-    const directory = await open(
-      run.canonicalRoot,
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-    );
-    const base = process.platform === 'linux' ? `/proc/self/fd/${directory.fd}` : run.canonicalRoot;
+    const directory = await this.directory(run.canonicalRoot);
+    const base = directory.path;
     const temporary = path.join(base, `.browser-download-${randomUUID()}`);
     let handle: FileHandle | undefined;
     try {
-      if ((await realpath(base)) !== run.canonicalRoot) throw new Fault('TASK_DIRECTORY_MOVED');
+      await directory.verify();
       run.abort.signal.throwIfAborted();
       handle = await open(
         temporary,
@@ -575,10 +726,11 @@ export class AgentTools {
         source.ino !== identity.ino ||
         source.dev !== identity.dev ||
         !source.isFile() ||
-        source.nlink !== 1 ||
-        (await realpath(base)) !== run.canonicalRoot
+        source.nlink !== 1
       )
         throw new Fault('TASK_DIRECTORY_MOVED');
+      await directory.verify();
+      run.abort.signal.throwIfAborted();
       // Publish complete bytes with a create-only link; cancellation and filename collisions cannot overwrite an input.
       await link(temporary, path.join(base, name));
       return { path: file, bytes: bytes.length };
@@ -629,29 +781,42 @@ export class AgentTools {
   ) {
     const parent = await realpath(path.dirname(file));
     if (!inside(run.canonicalRoot, parent)) throw new Fault('INVALID_FILE', 400);
-    const directory = await open(
-      parent,
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-    );
+    const directory = await this.directory(parent);
     try {
-      const base = process.platform === 'linux' ? `/proc/self/fd/${directory.fd}` : parent;
-      if ((await realpath(base)) !== parent) throw new Fault('TASK_DIRECTORY_MOVED');
+      const base = directory.path;
+      await directory.verify();
       // Pin the parent before O_CREAT; checking only the opened file would already leave an empty file outside the workspace.
+      const target = path.join(base, path.basename(file));
+      const previous = await lstat(target).catch((error: unknown) => {
+        if (errorCode(error) !== 'ENOENT') throw error;
+        return undefined;
+      });
+      // Windows creating opens can follow dangling links even with O_EXCL; reject reparse points before any create.
+      if (previous?.isSymbolicLink()) throw new Fault('INVALID_FILE', 400);
+      const flags = constants.O_RDWR | constants.O_NOFOLLOW;
       const handle = await open(
-        path.join(base, path.basename(file)),
-        constants.O_RDWR |
-          constants.O_CREAT |
-          constants.O_NOFOLLOW |
-          (createOnly ? constants.O_EXCL : 0),
+        target,
+        previous && !createOnly ? flags : flags | constants.O_CREAT | constants.O_EXCL,
         0o600,
       );
       try {
         const info = await handle.stat();
+        const named = await lstat(target);
         const opened = await realpath(
           process.platform === 'linux' ? `/proc/self/fd/${handle.fd}` : file,
         );
-        if (!info.isFile() || info.nlink !== 1 || !inside(run.canonicalRoot, opened))
+        if (
+          !info.isFile() ||
+          info.nlink !== 1 ||
+          named.isSymbolicLink() ||
+          named.nlink !== 1 ||
+          named.ino !== info.ino ||
+          named.dev !== info.dev ||
+          (previous && (previous.ino !== info.ino || previous.dev !== info.dev)) ||
+          !inside(run.canonicalRoot, opened)
+        )
           throw new Fault('INVALID_FILE', 400);
+        await directory.verify();
         run.abort.signal.throwIfAborted();
         await handle.truncate(0);
         await handle.writeFile(content, 'utf8');
@@ -786,39 +951,50 @@ export class AgentTools {
     args: Record<string, unknown>,
     wireId?: string,
   ): Promise<ToolResult> {
-    if (
-      this.linux?.owns(name) &&
-      (!this.localSelected(run.bot, run) ||
-        (!computerToolList.some((tool) => tool.name === name) && !name.startsWith('browser_')))
-    )
+    const hosted = this.hostSelected(run.bot, run);
+    const hostInput = hosted && ['screenshot', 'act'].includes(name) && args?.surface === 'browser';
+    const linuxOnly = name === 'shell' || name.startsWith('process_') || name.startsWith('linux_');
+    // Shared GUI names follow the task's captured surface; Linux-only tools stay on the VM.
+    if (this.linux?.owns(name) && (linuxOnly || (!this.localSelected(run.bot, run) && !hosted)))
       return this.linux.invoke(run, name, args, wireId);
-    const unavailable =
-      this.options.nativeOnly && (name === 'shell' || name.startsWith('process_'))
-        ? 'NATIVE_WORKSPACE_TOOL_UNAVAILABLE'
-        : this.localRuns.get(run) && name.startsWith('browser_')
-          ? 'LOCAL_BROWSER_SURFACE_UNAVAILABLE'
-          : undefined;
+    const computer = computerToolList.some((tool) => tool.name === name);
+    const vision = run.vision ?? (!run.model || modelHasVision(run.model));
+    let unavailable: string | undefined;
+    if (hosted && computer) {
+      if (!hostInput) unavailable = 'HOST_DESKTOP_UNAVAILABLE';
+      else if (!vision) unavailable = 'MODEL_COMPUTER_UNSUPPORTED';
+    } else if (
+      hosted &&
+      ['browser_upload', 'browser_download'].includes(name) &&
+      !this.browserFiles()
+    ) {
+      unavailable = 'EXECUTION_UPGRADE_REQUIRED';
+    } else if (this.options.nativeOnly && (name === 'shell' || name.startsWith('process_'))) {
+      unavailable = 'NATIVE_WORKSPACE_TOOL_UNAVAILABLE';
+    } else if (this.localRuns.get(run) && name.startsWith('browser_')) {
+      unavailable = 'LOCAL_BROWSER_SURFACE_UNAVAILABLE';
+    }
     if (name === 'read_image' && !(run.vision ?? (!run.model || modelHasVision(run.model))))
       return { isError: true, content: [{ type: 'text', text: 'MODEL_IMAGE_UNSUPPORTED' }] };
-    if (!unavailable && this.localRuns.get(run)) {
+    if (!unavailable && (this.localRuns.get(run) || hostInput)) {
       if (computerToolList.some((tool) => tool.name === name)) {
         await this.authorizeComputer?.(run);
-        if (!this.localComputer) throw new Fault('LOCAL_CLIENT_UNAVAILABLE');
+        if (!hostInput && !this.localComputer) throw new Fault('LOCAL_CLIENT_UNAVAILABLE');
         if (wireId) {
-          let requests = this.localRequests.get(run);
+          let requests = this.computerRequests.get(run);
           if (!requests) {
             requests = new Set();
-            this.localRequests.set(run, requests);
+            this.computerRequests.set(run, requests);
           }
           const identity = createHash('sha256').update(wireId).digest('hex');
-          // Replayed MCP identities must neither repeat desktop effects nor present an old image as a fresh observation.
+          // Replayed MCP identities must neither repeat GUI effects nor present an old image as a fresh observation.
           if (requests.has(identity))
             return {
               isError: true,
               content: [
                 {
                   type: 'text',
-                  text: 'LOCAL_REQUEST_REPLAYED: capture a fresh screenshot in a new tool call.',
+                  text: `${hostInput ? 'BROWSER_REQUEST_REPLAYED' : 'LOCAL_REQUEST_REPLAYED'}: capture a fresh screenshot in a new tool call.`,
                 },
               ],
             };
@@ -828,7 +1004,9 @@ export class AgentTools {
           }
           requests.add(identity);
         }
-        return this.localComputer.invoke(run, name, args);
+        return hostInput
+          ? this.hostComputer!.invoke(run, name, args)
+          : this.localComputer!.invoke(run, name, args);
       }
     }
     if (
@@ -836,13 +1014,13 @@ export class AgentTools {
       this.options.execution &&
       (Object.hasOwn(fields, name) ||
         computerToolList.some((tool) => tool.name === name) ||
-        name.startsWith('browser_') ||
+        (name.startsWith('browser_') && !this.hostSelected(run.bot, run)) ||
         name.startsWith('process_'))
     )
       return this.remote(run, name, args, wireId);
     if (this.schedules && scheduleToolList.some((tool) => tool.name === name))
       return this.schedules.invoke(run, name, args);
-    if (computerToolList.some((tool) => tool.name === name)) {
+    if (!unavailable && computerToolList.some((tool) => tool.name === name)) {
       // Screen actions return images; a text-only route must not operate blindly or receive unsupported image content.
       if (!(run.vision ?? (!run.model || modelHasVision(run.model))))
         return { isError: true, content: [{ type: 'text', text: 'MODEL_COMPUTER_UNSUPPORTED' }] };
@@ -861,7 +1039,11 @@ export class AgentTools {
       this.software,
       this.skills,
       this.groups,
-      this.hasBrowser(run.bot) ? this.browser : undefined,
+      this.hasBrowser(run.bot, run)
+        ? this.hostSelected(run.bot, run)
+          ? this.hostBrowser
+          : this.browser
+        : undefined,
     ].find((tools) => tools && Object.hasOwn(tools.fields, name));
     const external = this.integrations?.owns(run, name);
     const surface = external ? 'integration' : dataTool?.surface || 'workspace';
@@ -965,7 +1147,7 @@ export class AgentTools {
         }
       }
       const failed =
-        dataTool === this.browser &&
+        (dataTool === this.browser || dataTool === this.hostBrowser) &&
         result &&
         typeof result === 'object' &&
         'error' in result &&

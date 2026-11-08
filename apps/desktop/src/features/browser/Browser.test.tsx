@@ -86,6 +86,32 @@ const app = () => (
     <Browser bot="a" name="合成 Bot" notify={() => {}} />
   </RuntimeProvider>
 );
+it('explains a failed page load while retaining the address and never replaying navigation', async () => {
+  const { state, invoke } = setup();
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command) => {
+    if (command.type === 'browser.command')
+      return {
+        ok: true,
+        value: { id: command.id, state, error: 'BROWSER_NAVIGATION_FAILED', uncertain: true },
+      };
+    return original(command);
+  });
+  const user = userEvent.setup();
+  render(app());
+  const address = await screen.findByRole('textbox', { name: '网页地址' });
+  await waitFor(() => expect(address).toBeEnabled());
+  await user.type(address, 'https://example.test/unavailable');
+  await user.click(screen.getByRole('button', { name: '打开网页' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '网页未能加载，请检查网址和网络连接。你可以修改地址或手动重新加载。',
+  );
+  expect(address).toBeEnabled();
+  expect(address).toHaveValue('https://example.test/unavailable');
+  expect(invoke.mock.calls.filter(([command]) => command.type === 'browser.command')).toHaveLength(
+    1,
+  );
+});
 it.each(['ack', 'receipt', 'receipt-without-metadata', 'receipt-unreadable'])(
   'keeps an uncertain settled %s distinct from a safe retry',
   async (source) => {

@@ -95,7 +95,7 @@ function configValue(value: unknown): value is Config {
   )
     return false;
   if (value.credential !== undefined) {
-    if (value.provider === 'duckduckgo') return false;
+    if (!searchRequiresKey(value.provider)) return false;
     const credential = value.credential;
     if (!object(credential)) return false;
     if (credential.kind === 'key') {
@@ -130,7 +130,8 @@ function configValue(value: unknown): value is Config {
     value.check !== undefined &&
     (!receipt(value.check, 'check') ||
       value.check.result.revision! > value.revision ||
-      value.check.result.checkRevision !== value.checkRevision ||
+      // A retained check receipt may predate task health, but can never describe a future observation.
+      value.check.result.checkRevision! > value.checkRevision ||
       (value.check.result.revision === value.revision && !matches(value.check.result.status!)))
   )
     return false;
@@ -143,6 +144,7 @@ function configValue(value: unknown): value is Config {
   );
 }
 const failures: Record<string, { health: SearchHealth; error: SearchErrorCode }> = {
+  SEARCH_UNAVAILABLE: { health: 'unavailable', error: 'SEARCH_UNAVAILABLE' },
   SEARCH_UNAUTHORIZED: { health: 'unauthorized', error: 'SEARCH_UNAUTHORIZED' },
   SEARCH_FORBIDDEN: { health: 'forbidden', error: 'SEARCH_FORBIDDEN' },
   SEARCH_RATE_LIMITED: { health: 'rate-limited', error: 'SEARCH_RATE_LIMITED' },
@@ -153,10 +155,25 @@ const failures: Record<string, { health: SearchHealth; error: SearchErrorCode }>
 };
 const testQuery = 'synthetic search connectivity test';
 
+function failureOutcome(error: unknown) {
+  const outcome: Pick<SearchStatus, 'health' | 'error' | 'retryAfter'> = {
+    ...(failures[errorCode(error) ?? ''] ?? failures.SEARCH_UNAVAILABLE),
+  };
+  if (
+    object(error) &&
+    Number.isSafeInteger(error.retryAfter) &&
+    Number(error.retryAfter) >= 0 &&
+    Number(error.retryAfter) <= 86400
+  )
+    outcome.retryAfter = Number(error.retryAfter);
+  return outcome;
+}
+
 export class SearchSettings {
   private writing: Promise<unknown> = Promise.resolve();
   private initialized = false;
   private generation = 0;
+  private observation = 0;
   private readonly checks = new Map<
     string,
     { fingerprint: string; promise: Promise<SearchReceipt> }
@@ -227,7 +244,7 @@ export class SearchSettings {
           revision: 0,
           checkRevision: 0,
           enabled: true,
-          provider: 'duckduckgo',
+          provider: 'bing',
         };
         await this.persist(config);
       }
@@ -243,7 +260,7 @@ export class SearchSettings {
         !config.health
       ) {
         // Earlier versions created this empty default on reads; it records no saved provider choice.
-        config = { ...config, provider: 'duckduckgo', revision: 1 };
+        config = { ...config, provider: 'bing', revision: 1 };
         this.generation++;
         await this.persist(config);
       }
@@ -262,7 +279,8 @@ export class SearchSettings {
           error: 'SEARCH_OUTCOME_UNKNOWN' as const,
         };
         config.check.result = { ...prior, phase: 'unknown', status };
-        if (config.revision === prior.revision) config.health = status;
+        if (config.revision === prior.revision && config.checkRevision === prior.checkRevision)
+          config.health = status;
         await this.persist(config);
       }
       this.initialized = true;
@@ -464,6 +482,67 @@ export class SearchSettings {
     maxResults = 5,
     beforeSend?: () => unknown,
   ): Promise<SearchResult> {
+    const observation = ++this.observation;
+    const generation = this.generation;
+    const guard = () => {
+      if (this.generation !== generation) throw new Fault('SEARCH_CONFIG_CHANGED');
+      if (signal?.aborted) throw new Fault('SEARCH_CANCELLED');
+      beforeSend?.();
+    };
+    try {
+      const result = await this.execute(snapshot, query, signal, maxResults, beforeSend);
+      await this.recordHealth(snapshot, observation, guard, {
+        health: result.sources.length ? 'ready' : 'empty',
+      });
+      // Health persistence yields too; stopped or reconfigured tasks must never regain source authority.
+      await this.current(snapshot);
+      guard();
+      return result;
+    } catch (error) {
+      const code = errorCode(error);
+      if (code && failures[code] && code !== 'SEARCH_CONFIG_CHANGED' && code !== 'SEARCH_CANCELLED')
+        await this.recordHealth(snapshot, observation, guard, failureOutcome(error));
+      throw error;
+    }
+  }
+  private async recordHealth(
+    snapshot: SearchCapture,
+    observation: number,
+    beforePublish: () => unknown,
+    outcome: Pick<SearchStatus, 'health' | 'error' | 'retryAfter'>,
+  ) {
+    return this.serial(async () => {
+      const config = await this.read();
+      const key = await this.key(config);
+      if (
+        observation !== this.observation ||
+        snapshot.provider !== config.provider ||
+        snapshot.revision !== config.revision ||
+        snapshot.binding !==
+          digest([config.revision, config.provider, config.enabled, key ? digest(key) : null])
+      )
+        return;
+      const { error: _error, retryAfter: _retryAfter, ...baseline } = await this.statusOf(config);
+      if (observation !== this.observation) return;
+      beforePublish();
+      // Health has its own order; retained test receipts stay immutable and cannot restore an earlier result.
+      config.checkRevision++;
+      config.health = {
+        ...baseline,
+        ...outcome,
+        checkRevision: config.checkRevision,
+        checkedAt: new Date().toISOString(),
+      };
+      await this.persist(config);
+    });
+  }
+  private async execute(
+    snapshot: SearchCapture,
+    query: string,
+    signal?: AbortSignal,
+    maxResults = 5,
+    beforeSend?: () => unknown,
+  ): Promise<SearchResult> {
     const generation = this.generation;
     const guard = () => {
       // The final transport gate cannot await a config read; owner writes invalidate every earlier read synchronously.
@@ -527,6 +606,7 @@ export class SearchSettings {
         ]),
       };
       config.checkRevision++;
+      const observation = ++this.observation;
       const result: SearchReceipt = {
         kind: 'check',
         requestId: input.requestId,
@@ -538,28 +618,16 @@ export class SearchSettings {
       config.check = { fingerprint, result };
       // Commit the claim durably before the first provider request can leave this owner.
       await this.persist(config);
-      return { snapshot, claimed: result };
+      return { snapshot, claimed: result, observation };
     });
     if (claim.result) return claim.result;
     const claimed = claim.claimed!;
     let outcome: Pick<SearchStatus, 'health' | 'error' | 'retryAfter'>;
     try {
-      const result = await this.query(claim.snapshot!, testQuery);
+      const result = await this.execute(claim.snapshot!, testQuery);
       outcome = { health: result.sources.length ? 'ready' : 'empty' };
     } catch (error) {
-      outcome = {
-        ...(failures[errorCode(error) ?? ''] ?? {
-          health: 'unavailable' as const,
-          error: 'SEARCH_UNAVAILABLE' as const,
-        }),
-      };
-      if (
-        object(error) &&
-        Number.isSafeInteger(error.retryAfter) &&
-        Number(error.retryAfter) >= 0 &&
-        Number(error.retryAfter) <= 86400
-      )
-        outcome.retryAfter = Number(error.retryAfter);
+      outcome = failureOutcome(error);
     }
     return this.serial(async () => {
       const config = await this.read();
@@ -579,7 +647,8 @@ export class SearchSettings {
         config.check.fingerprint === fingerprint
       ) {
         config.check.result = result;
-        if (config.revision === input.revision) config.health = status;
+        if (config.revision === input.revision && this.observation === claim.observation)
+          config.health = status;
         await this.persist(config);
       }
       return structuredClone(result);

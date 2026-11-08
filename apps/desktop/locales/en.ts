@@ -1,4 +1,42 @@
 export const english = {
+  'hostBrowser.title': 'Browser',
+  'hostBrowser.nativeLoading': 'Opening webpage…',
+  'hostBrowser.nativeUnavailable':
+    'The webpage could not be displayed. Try again or reopen the browser.',
+  'hostBrowser.retry': 'Try again',
+  'hostBrowser.verificationHelp':
+    'Use the page directly. Complete sign-in or verification yourself, then hand control back to the Bot.',
+  'hostBrowser.description':
+    'Browse inside Daban without Linux or screen permissions. Hand control to your Bot when needed.',
+  'hostBrowser.startTitle': 'Browse here, ask your Bot when you need help',
+  'hostBrowser.signInHelp':
+    'Browse, sign in and complete verification directly. Hand control back when you want the Bot to act. Sign-ins stay on this computer; Bots share sign-ins and manage separate tabs.',
+  'hostBrowser.consent':
+    'After handback, the Bot can use accounts and pages in this browser and transfer workspace files for your task. Page content and files it reads are sent to the selected model. This browser is separate from your personal Chrome.',
+  'hostBrowser.open': 'Open browser',
+  'hostBrowser.openPanel': 'Open browser panel',
+  'hostBrowser.navigation': 'Browser navigation',
+  'hostBrowser.handBackShort': 'Hand back',
+  'hostBrowser.takeOverShort': 'Take over',
+  'hostBrowser.humanShort': 'You have control',
+  'hostBrowser.profileLabel': 'Dedicated profile · Sign-ins stay on this computer',
+  'hostBrowser.about': 'How it works',
+  'hostBrowser.textInput': 'Text input',
+  'hostBrowser.consentBrief':
+    'After handback, the Bot can use signed-in accounts and send page content to your selected model.',
+  'hostBrowser.takeOver': 'Take over browser',
+  'hostBrowser.disconnect': 'Disconnect browser',
+  'hostBrowser.connected': 'Bot can use the browser',
+  'hostBrowser.humanControl': 'You have control; Bot awaits handback',
+  'hostBrowser.handbackHelp':
+    'Hand back after signing in or completing verification. Closing this panel keeps the browser connected. Disconnect closes this Bot’s tabs and keeps sign-ins.',
+  'hostBrowser.startFailed':
+    'The browser could not start. Reopen Daban and try again. Standalone service mode requires Chrome, Edge or Chromium.',
+  'hostBrowser.disconnected':
+    'The browser disconnected. Reopen and check the page before continuing the task.',
+  'hostBrowser.unavailable':
+    'The browser is unavailable. Update or reconnect the background service.',
+  'hostBrowser.switchFirst': 'Disconnect in the browser panel before authorizing desktop control.',
   'trash.retry': 'Try again',
   'trash.title': 'Conversation trash',
   'trash.description': 'Review conversations in trash and restore them at any time.',
@@ -28,14 +66,15 @@ export const english = {
   'conversations.actions': 'Organize conversation {0}',
   'trash.move': 'Move to trash',
 
+  'search.bingOption': 'Bing (no API key)',
   'search.duckduckgoOption': 'DuckDuckGo (no API key)',
   'search.keylessCredential': 'Keyless search; no credentials needed',
   'search.keylessHint':
-    'No API key needed. Searches DuckDuckGo public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
+    'No API key needed. Searches {0} public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
   'search.confirmKeyless':
-    'Send one fixed search without personal content to DuckDuckGo. No search API key is needed. This will not retry automatically or switch providers.',
+    'Send one fixed search without personal content to {0}. No search API key is needed. This will not retry automatically or switch providers.',
   'search.healthKeylessForbidden':
-    'DuckDuckGo restricted this request or requires verification. Try again later explicitly.',
+    '{0} restricted this request or requires verification. Try again later explicitly or switch search providers.',
 
   'search.independentKeyRequired':
     'Enter an independent API key for this search provider. The previous credential cannot be reused for this save.',
@@ -85,14 +124,14 @@ export const english = {
     'Search settings changed elsewhere. Your input is kept; review the current provider before saving again.',
   'search.useCurrentRevision': 'Keep input and use the current version',
   'search.saveFirst': 'Save your changes before testing the configured provider.',
-  'search.checkedAt': 'Last test: {0}',
+  'search.checkedAt': 'Last search: {0}',
   'search.testScope':
-    'A successful test is a point-in-time result, not a promise of continued availability or quota.',
+    'Status reflects the latest search or test, not a promise of continued availability or quota.',
   'search.healthDisabled': 'Search is disabled',
   'search.healthUnconfigured': 'Search needs a credential',
   'search.healthUnchecked': 'Not tested remotely',
-  'search.healthReady': 'Test passed; search is available',
-  'search.healthEmpty': 'Test passed with no results',
+  'search.healthReady': 'The latest search succeeded',
+  'search.healthEmpty': 'The latest search returned no results',
   'search.healthUnauthorized': 'Authentication failed. Replace this search key.',
   'search.healthForbidden': 'This key lacks search permission. Check the provider account.',
   'search.healthRateLimited': 'Search is rate limited. Wait before explicitly testing again.',
@@ -525,6 +564,8 @@ export const english = {
   'browser.newBrowserTab': 'New browser tab',
   'browser.nextPage': 'Next page',
   'browser.openWebpage': 'Open webpage',
+  'browser.navigationFailed':
+    'The webpage could not load. Check the address and network connection. You can change the address or reload manually.',
   'browser.operationMayHaveOccurredWillNotRetried':
     'The operation may have occurred and will not be retried automatically. Verify webpage state before deciding what to do next.',
   'browser.operationResultUnconfirmedSystemWillNotRetry':
@@ -2236,6 +2277,26 @@ export const english = {
   'localComputer.screenPermission': 'Screen recording',
   'localComputer.inputPermission': 'Accessibility',
   'localComputer.permissions': 'Set permissions',
+  'localComputer.permissionsTitle': 'Set up local permissions',
+  'localComputer.permissionsIntro':
+    'Complete these two settings so the Bot can observe your screen and use your signed-in apps.',
+  'localComputer.inputPurpose': 'Allow Daban to click and type in your browser and other apps.',
+  'localComputer.screenPurpose':
+    'Allow Daban to observe the primary display so the Bot can act on the actual screen.',
+  'localComputer.permissionAllowed': 'Allowed',
+  'localComputer.permissionMissing': 'Not enabled',
+  'localComputer.enableInput': 'Enable Accessibility',
+  'localComputer.enableScreen': 'Enable screen recording',
+  'localComputer.checkPermissions': 'Check permissions again',
+  'localComputer.permissionsInstructions':
+    'Use the button below to open System Settings. Under Privacy & Security, find the Daban app you are using and turn on its switch.',
+  'localComputer.permissionsReturn':
+    'Permissions are checked when you return to Daban. Once both are ready, choose Connect this computer to review this Bot’s access.',
+  'localComputer.permissionsReady':
+    'System permissions are ready. Connect to review this Bot’s local access.',
+  'localComputer.permissionsTrouble': 'Enabled but still not detected?',
+  'localComputer.permissionsRecovery':
+    'If macOS asks you to quit and reopen, reopen Daban as prompted. If the current app is missing, use + to add it. After a development build update, remove the old entry and add the current app if needed.',
   'localComputer.connect': 'Connect this computer',
   'localComputer.disconnect': 'Disconnect this computer',
   'localComputer.connected': 'Local computer connected',

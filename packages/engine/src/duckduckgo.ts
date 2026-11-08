@@ -1,11 +1,7 @@
-import { createRequire } from 'node:module';
 import type { SearchSource } from '@daban/protocol';
 import { errorCode, Fault } from './control.js';
-import { checkHtmlDepth } from './webpage.js';
+import { searchDocument } from './search-page.js';
 
-const { createDocument } = createRequire(import.meta.url)('@mixmark-io/domino') as {
-  createDocument(html: string): Document;
-};
 const origin = 'https://lite.duckduckgo.com';
 const invalid = () => new Fault('SEARCH_INVALID_RESPONSE', 502);
 
@@ -26,24 +22,10 @@ function destination(href: string) {
 
 export function duckDuckGoResults(html: string): SearchSource[] {
   try {
-    checkHtmlDepth(html);
-    const document = createDocument(html);
-    // Small tags can create many nodes within the byte cap; bound work before running selectors.
-    const pending: Node[] = [document.body];
-    let nodes = 0;
-    while (pending.length) {
-      const node = pending.pop()!;
-      if (++nodes > 50000 || pending.length > 50000) throw invalid();
-      for (let child = node.firstChild; child; child = child.nextSibling) pending.push(child);
-    }
-    if (
-      document.querySelector(
-        '#challenge-form,#anomaly-modal,.anomaly-modal,form[action*="anomaly.js"]',
-      )
-    )
-      throw new Fault('SEARCH_FORBIDDEN', 403);
-    for (const node of Array.from(document.querySelectorAll('script,style,noscript,template')))
-      node.parentNode?.removeChild(node);
+    const document = searchDocument(
+      html,
+      '#challenge-form,#anomaly-modal,.anomaly-modal,form[action*="anomaly.js"]',
+    );
     const links = Array.from(document.querySelectorAll('a.result-link,a.result__a'));
     if (links.length > 100) throw invalid();
     const sources: SearchSource[] = [];

@@ -8,14 +8,20 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import type { BrowserContext, Page } from 'playwright';
+import { connectDesktop, type DesktopBrowser } from './browser-desktop.js';
 import { Control, errorCode, Fault } from './control.js';
+import { imageInput } from './images.js';
 import { browserEngine } from './playwright-input.js';
 import { createProxy, type ProxyOptions, type PublicProxy } from './proxy.js';
 import type { LegacySnapshot } from './snapshot.js';
 import { TabStore } from './tab-store.js';
-import { Tabs } from './tabs.js';
+import { inspect, secretInputs, Tabs, verificationRequired } from './tabs.js';
 
 export interface BrowserOptions {
+  endpointFile?: string;
+  networkFile?: string;
+  executablePath?: string;
+  publicOnly?: boolean;
   bots?: readonly string[];
   control?: Control;
   profileDir: string;
@@ -34,6 +40,10 @@ export async function createBrowser({
   proxy: suppliedProxy,
   bots,
   control,
+  executablePath,
+  publicOnly = false,
+  networkFile = path.resolve(profileDir, '../model/network.json'),
+  endpointFile,
 }: BrowserOptions) {
   const ids = bots ?? ['a', 'b'];
   if (ids.length > 16 || !ids.every(validAgentId) || new Set(ids).size !== ids.length)
@@ -42,9 +52,7 @@ export async function createBrowser({
   let proxyOptions = suppliedProxy;
   if (!proxyOptions) {
     try {
-      const network: unknown = JSON.parse(
-        await readFile(path.resolve(profileDir, '../model/network.json'), 'utf8'),
-      );
+      const network: unknown = JSON.parse(await readFile(networkFile, 'utf8'));
       if (!network || typeof network !== 'object' || Array.isArray(network))
         throw new Fault('BROWSER_PROXY_CONFIG_INVALID', 503);
       const upstream = 'proxy' in network ? network.proxy : undefined;
@@ -58,24 +66,32 @@ export async function createBrowser({
   }
   const downloads = path.join(profileDir, '.downloads');
   await mkdir(downloads, { recursive: true, mode: 0o700 });
-  const proxy = await createProxy({ ...proxyOptions, fixtureOrigin: origin });
+  const proxy = await createProxy({
+    ...proxyOptions,
+    ...(publicOnly ? {} : { fixtureOrigin: origin }),
+  });
   let context: BrowserContext | undefined;
+  let desktop: DesktopBrowser | undefined;
   try {
-    context = await chromium.launchPersistentContext(profileDir, {
-      headless: true,
-      viewport: { width: 960, height: 640 },
-      deviceScaleFactor: 1,
-      chromiumSandbox: true,
-      acceptDownloads: true,
-      downloadsPath: downloads,
-      proxy: { server: proxy.url },
-      // Chromium normally bypasses a proxy for loopback. All page traffic must cross the same private-address boundary.
-      args: [
-        '--proxy-bypass-list=<-loopback>',
-        '--disable-quic',
-        '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-      ],
-    });
+    desktop = endpointFile ? await connectDesktop(endpointFile, proxy.url, chromium) : undefined;
+    context =
+      desktop?.context ??
+      (await chromium.launchPersistentContext(profileDir, {
+        headless: true,
+        ...(executablePath ? { executablePath } : {}),
+        viewport: { width: 960, height: 640 },
+        deviceScaleFactor: 1,
+        chromiumSandbox: true,
+        acceptDownloads: true,
+        downloadsPath: downloads,
+        proxy: { server: proxy.url },
+        // Chromium normally bypasses a proxy for loopback. All page traffic must cross the same private-address boundary.
+        args: [
+          '--proxy-bypass-list=<-loopback>',
+          '--disable-quic',
+          '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+        ],
+      }));
     await context.route('**/*', (route) => {
       try {
         const url = new URL(route.request().url());
@@ -98,13 +114,20 @@ export async function createBrowser({
         pages.set(id, page);
       }),
     );
-    for (const page of context.pages()) if (![...pages.values()].includes(page)) await page.close();
-    const browser = new Browser(context, pages, interval, workerAction, { origin, proxy, control });
+    if (!desktop)
+      for (const page of context.pages())
+        if (![...pages.values()].includes(page)) await page.close();
+    const browser = new Browser(context, pages, interval, workerAction, {
+      origin,
+      proxy,
+      control,
+      desktop,
+    });
     browser.tabs = new Tabs(
       context,
       pages,
       browser.control,
-      origin,
+      publicOnly ? '' : origin,
       (bot) => browser.changed(bot),
       fixture
         ? undefined
@@ -118,7 +141,8 @@ export async function createBrowser({
     return browser;
   } catch (error) {
     try {
-      await context?.close();
+      if (desktop) await desktop.close();
+      else await context?.close();
     } finally {
       await proxy.close();
     }
@@ -155,7 +179,12 @@ export class Browser {
     interval: number,
     workerAction: NonNullable<BrowserOptions['workerAction']> = async (_id, page) =>
       page.locator('#increment').click(),
-    private readonly resources: { origin?: string; proxy?: PublicProxy; control?: Control } = {},
+    private readonly resources: {
+      origin?: string;
+      proxy?: PublicProxy;
+      control?: Control;
+      desktop?: DesktopBrowser;
+    } = {},
   ) {
     this.context = context;
     this.origin = resources.origin;
@@ -192,6 +221,10 @@ export class Browser {
     return this.tabs.attach(id);
   }
   async detach(id: string) {
+    if (this.resources.desktop && this.tabs) {
+      const lease = this.control.state(id);
+      await this.resources.desktop.control(id, this.tabs.instance, lease.epoch, 'handoff');
+    }
     await this.stopWorker(id);
     await this.tabs?.detach(id);
     await this.releasePointer(id);
@@ -247,16 +280,48 @@ export class Browser {
     });
   }
   async transfer(id: string, epoch: number, owner: string, settle?: () => Promise<unknown>) {
+    const before = this.control.state(id);
+    if (
+      before.epoch !== epoch ||
+      before.owner === owner ||
+      before.owner === 'handoff' ||
+      !['human', 'agent'].includes(owner)
+    )
+      throw new Fault('STALE_CONTROL');
+    // Stop native user input before granting AI control, including while its queue drains.
+    if (this.resources.desktop && this.tabs)
+      await this.resources.desktop.control(id, this.tabs.instance, epoch + 1, 'handoff');
     const lease = await this.control.transfer(id, epoch, owner, async () => {
       if (!this.tabs?.prompts.blocked(id)) await this.releasePointer(id);
       await settle?.();
     });
     this.tabs?.invalidate(id);
+    if (this.resources.desktop && this.tabs)
+      await this.resources.desktop.control(id, this.tabs.instance, lease.epoch, lease.owner);
     this.log(
       id,
       owner === 'human' ? '已暂停 Agent，用户获得页面控制权' : '用户已交还，Agent 可以继续操作',
     );
     return lease;
+  }
+  get embedded() {
+    return !!this.resources.desktop;
+  }
+  async target(id: string, epoch: number, binding: BrowserBinding) {
+    if (!this.embedded || !this.tabs) throw new Fault('HOST_BROWSER_DESKTOP_UNAVAILABLE', 503);
+    return this.control.execute(id, 'human', epoch, async () => {
+      this.tabs!.assertBinding(id, binding);
+      const session = await this.context.newCDPSession(this.page(id));
+      try {
+        const { targetInfo } = await session.send('Target.getTargetInfo');
+        this.tabs!.assertBinding(id, binding);
+        if (this.control.state(id).owner !== 'human' || this.control.state(id).epoch !== epoch)
+          throw new Fault('STALE_CONTROL');
+        return { target: targetInfo.targetId };
+      } finally {
+        await session.detach();
+      }
+    });
   }
   async input(
     id: string,
@@ -305,20 +370,25 @@ export class Browser {
       if (input.type === 'key') await page.keyboard.press(input.key!);
     });
   }
-  async view(id: string): Promise<BrowserView> {
+  async view(id: string, redact = false): Promise<BrowserView> {
     if (!this.tabs) throw new Fault('BROWSER_UNAVAILABLE', 503);
     const binding = this.tabs.binding(id),
       { epoch } = this.control.state(id);
     let image: Buffer | undefined;
-    if (!this.tabs.prompts.blocked(id)) {
+    if (!this.tabs.prompts.blocked(id) && !(redact && (await this.tabs.humanRequired(id)))) {
       try {
-        image = await this.frame(id);
+        // Model images must not reuse an unmasked human-view frame from the shared capture cache.
+        image = redact ? await this.tabs.frame(id, true) : await this.frame(id);
       } catch (error) {
         if (!this.tabs.prompts.blocked(id)) throw error;
       }
     }
     this.tabs.assertBinding(id, binding);
     if (this.control.state(id).epoch !== epoch) throw new Fault('STALE_CONTROL');
+    const size =
+      this.embedded && image
+        ? imageInput({ name: 'browser.jpg', data: image.toString('base64') })
+        : undefined;
     return {
       bot: id,
       epoch,
@@ -326,8 +396,8 @@ export class Browser {
       ...(image
         ? { image: `data:image/jpeg;base64,${image.toString('base64')}` }
         : { paused: true as const }),
-      width: 960,
-      height: 640,
+      width: size?.width ?? 960,
+      height: size?.height ?? 640,
     };
   }
   async boundInput(
@@ -347,6 +417,19 @@ export class Browser {
         this.tabs!.input(id, async (signal) => {
           await this.releasing.get(id);
           this.tabs!.assertBinding(id, binding);
+          if (actor === 'agent' && (await verificationRequired(page, signal)))
+            throw new Fault('BROWSER_HUMAN_REQUIRED');
+          if (actor === 'agent' && (input.type === 'text' || input.type === 'key')) {
+            // Isolated selectors keep page-script overrides from disabling the password/OTP boundary across frames and shadow roots.
+            const protectedFocus = await inspect(
+              () =>
+                Promise.all(
+                  page.frames().map((frame) => frame.locator(`:is(${secretInputs}):focus`).count()),
+                ),
+              signal,
+            );
+            if (protectedFocus.some(Boolean)) throw new Fault('BROWSER_HUMAN_REQUIRED');
+          }
           if (input.type !== 'pointer') await this.releasePointer(id, signal);
           if (input.type === 'click')
             await page.mouse.click(input.x, input.y, {
@@ -498,7 +581,8 @@ export class Browser {
     await Promise.allSettled(this.frames.values());
     this.tabs?.dispose();
     try {
-      await this.context.close();
+      if (this.resources.desktop) await this.resources.desktop.close();
+      else await this.context.close();
     } finally {
       try {
         await this.tabs?.closeStorage();

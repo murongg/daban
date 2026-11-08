@@ -580,6 +580,7 @@ import type { RequestListener } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { privateServer, secureDirectory } from '@daban/engine/local-computer';
+import { LocalComputer } from './local-computer';
 
 function agentClient(config: { dataRoot: string; socketPath: string }) {
   return new RuntimeClient({
@@ -802,6 +803,68 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
     },
   };
 }
+
+it('publishes fresh local permission checks and requests without connecting a Bot', async () => {
+  const fixture = await agentFixture();
+  await fs.unlink(fixture.config.vmConfig);
+  let allowed = false;
+  const local = new LocalComputer(
+    {
+      supported: true,
+      platform: 'darwin',
+      permissions: () => ({ screen: allowed, accessibility: allowed }),
+      requestPermissions: async () => {
+        allowed = true;
+      },
+      capture: async () => {
+        throw Error('SYNTHETIC UNEXPECTED CAPTURE');
+      },
+      context: async () => '',
+      input: async () => {},
+      openApp: async () => {},
+      release: async () => {},
+      hide: async () => {},
+    },
+    true,
+  );
+  const snapshot = { ...disconnected('ready'), localComputer: local.status() };
+  mocks.nativeEnsure.mockResolvedValue({
+    status: async () => snapshot,
+    releaseInputs: async () => {},
+  });
+  const frame = { url: 'file:///mock/index.html' };
+  const sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(
+    fixture.root,
+    frame.url,
+    '/mock/resources',
+    undefined,
+    fixture.config,
+    local,
+    'win32',
+  );
+  try {
+    await service.connect();
+    const invoke = (type: 'local.status' | 'local.permissions' | 'status') =>
+      mocks.handlers.get('daban:runtime')!({ sender, senderFrame: frame }, { type });
+    await invoke('local.permissions');
+    expect(await invoke('status')).toMatchObject({
+      ok: true,
+      value: { localComputer: { permissions: { screen: true, accessibility: true } } },
+    });
+    allowed = false;
+    await invoke('local.status');
+    expect(await invoke('status')).toMatchObject({
+      ok: true,
+      value: { localComputer: { permissions: { screen: false, accessibility: false } } },
+    });
+    expect(local.status().session).toBeUndefined();
+  } finally {
+    await service.close();
+    await fixture.close();
+  }
+});
 
 it('routes model settings through the host Unix agent and leaves the daemon running when the UI closes', async () => {
   const fixture = await agentFixture();

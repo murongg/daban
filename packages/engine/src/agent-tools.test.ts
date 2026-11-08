@@ -1,15 +1,35 @@
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isExecutionParams } from '@daban/protocol';
 import { expect, test, vi } from 'vitest';
-import { type AgentToolRun, AgentTools, agentToolList } from './agent-tools.js';
+import { type AgentToolRun, AgentTools, agentToolList, validWindowsPath } from './agent-tools.js';
 import { Commands } from './commands.js';
 import type { ComputerFacade, ToolResult } from './computer-tools.js';
-import { Control } from './control.js';
+import { Control, errorCode } from './control.js';
 import { Interactions } from './interactions.js';
+import { NativeWorkspace } from './native-workspace.js';
 import { WorkspaceFiles } from './workspace.js';
+
+test('Windows workspace references preserve drive prefixes without allowing streams or reserved filenames', () => {
+  for (const value of [
+    '',
+    '/workspace/summary.csv',
+    '/shared/source.csv',
+    'C:/synthetic/shared/report.csv',
+  ])
+    expect(validWindowsPath(value), value).toBe(true);
+  for (const value of [
+    'C:relative.csv',
+    'C:/synthetic/shared/report.csv:extra',
+    '/workspace/CON.txt',
+    'C:/synthetic/trailing.',
+    '/workspace/file?.csv',
+  ])
+    expect(validWindowsPath(value), value).toBe(false);
+});
 
 test('host negotiates model capabilities before sending new execution fields to older Linux guests', async () => {
   const calls: Record<string, unknown>[] = [];
@@ -647,6 +667,72 @@ test('a parent replaced after validation cannot make a tool create even an empty
   await expect(tools.writeText(run, 'nested/new.txt', 'SYNTHETIC-ATTACK')).rejects.toThrowError();
   expect(redirected).toBe(true);
   await expect(fs.access(path.join(privateRoot, 'new.txt'))).rejects.toThrowError();
+});
+
+test('task writes never create a dangling link target when the filesystem has no no-follow flag', async (t) => {
+  const fs = (await import('node:fs/promises')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-native-write-link-'));
+  const workspace = new NativeWorkspace(path.join(root, 'workspace'));
+  await workspace.prepare();
+  const task = await workspace.create(['mock-run']);
+  await task.close();
+  await mkdir(path.join(root, 'private'));
+  const outside = path.join(root, 'private', 'must-not-exist.txt');
+  await symlink(outside, path.join(task.path, 'link.txt'));
+  expect(
+    await fs.access(outside).then(
+      () => true,
+      () => false,
+    ),
+  ).toBe(false);
+  const original = fs.open;
+  vi.spyOn(fs, 'open').mockImplementation(async (file, flags, mode) => {
+    if (typeof flags !== 'number') return original(file, flags, mode);
+    let compatible = flags & ~constants.O_NOFOLLOW;
+    if (compatible & constants.O_CREAT) {
+      const entry = await fs.lstat(file).catch((error: unknown) => {
+        if (errorCode(error) !== 'ENOENT') throw error;
+        return undefined;
+      });
+      // Model Windows' creating-open behavior, rather than POSIX O_EXCL's stronger symlink handling.
+      if (entry?.isSymbolicLink()) compatible &= ~constants.O_EXCL;
+    }
+    return original(file, compatible, mode);
+  });
+  syncBuiltinESMExports();
+  t.onTestFinished(async () => {
+    vi.restoreAllMocks();
+    syncBuiltinESMExports();
+    await rm(root, { recursive: true, force: true });
+  });
+  const tools = new AgentTools(undefined, workspace);
+  const run: AgentToolRun = {
+    id: 'mock-native-write-link',
+    bot: 'mock-a',
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 8,
+    seen: {},
+    trace: [],
+    workdir: task.path,
+    canonicalRoot: task.canonical,
+  };
+  await expect(
+    tools.writeText(run, 'link.txt', 'SYNTHETIC MUST NOT ESCAPE'),
+  ).rejects.toThrowError();
+  await expect(
+    fs.access(outside),
+    'A refused link must not create its private target',
+  ).rejects.toMatchObject({ code: 'ENOENT' });
+  await tools.writeText(run, 'result.txt', 'SYNTHETIC FIRST');
+  await symlink(path.join(task.path, 'result.txt'), path.join(task.path, 'inside-link.txt'));
+  await expect(
+    tools.writeText(run, 'inside-link.txt', 'SYNTHETIC ALIAS WRITE'),
+  ).rejects.toThrowError();
+  expect(await readFile(path.join(task.path, 'result.txt'), 'utf8')).toBe('SYNTHETIC FIRST');
+  await tools.writeText(run, 'result.txt', 'SYNTHETIC SECOND');
+  expect(await readFile(path.join(task.path, 'result.txt'), 'utf8')).toBe('SYNTHETIC SECOND');
 });
 
 test('an explicitly selected host computer is pinned to the run and never falls back to VM inputs', async () => {

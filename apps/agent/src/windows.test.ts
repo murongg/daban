@@ -38,6 +38,37 @@ test('a failed shared Windows probe is retried instead of retaining a rejected o
   expect(run).toHaveBeenCalledTimes(2);
 });
 
+test('cold Windows capability initialization can finish after twenty seconds', async () => {
+  vi.useFakeTimers();
+  try {
+    const host = new WindowsHost({
+      run: async (_program, _args, options) =>
+        new Promise<{ stdout: string }>((resolve, reject) => {
+          const deadline = setTimeout(() => {
+            clearTimeout(completed);
+            reject(new Error('SYNTHETIC_PROBE_TIMEOUT'));
+          }, options.timeout);
+          const completed = setTimeout(() => {
+            clearTimeout(deadline);
+            resolve({
+              stdout: JSON.stringify({
+                architecture: 9,
+                firmware: true,
+                feature: true,
+                hypervisor: true,
+              }),
+            });
+          }, 20000);
+        }),
+    });
+    const result = host.probe().catch(() => 'failed');
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(await result).toBe('ready');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('a recycled Windows PID is not mistaken for the managed QEMU process, while unobservable processes stay uncertain', async () => {
   const expected = path.resolve('mock-private/tools/qemu-system-x86_64.exe');
   let observation: { exists: boolean; image: string | null } = {

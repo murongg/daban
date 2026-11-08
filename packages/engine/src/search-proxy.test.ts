@@ -48,7 +48,7 @@ beforeEach(() => {
     return tls;
   });
   transport.request.mockImplementation(
-    (_input: unknown, callback: (response: EventEmitter) => unknown) => {
+    (input: { hostname: string }, callback: (response: EventEmitter) => unknown) => {
       const response = Object.assign(new EventEmitter(), {
         statusCode: 200,
         headers: { 'content-type': 'text/html' },
@@ -56,7 +56,14 @@ beforeEach(() => {
       const request = Object.assign(new EventEmitter(), {
         end: () => {
           callback(response);
-          response.emit('data', Buffer.from('<p class="no-results">Synthetic empty result</p>'));
+          response.emit(
+            'data',
+            Buffer.from(
+              input.hostname === 'cn.bing.com'
+                ? '<ol id="b_results"><li class="b_no">Synthetic empty result</li></ol>'
+                : '<p class="no-results">Synthetic empty result</p>',
+            ),
+          );
           response.emit('end');
         },
         destroy: (error?: Error) => {

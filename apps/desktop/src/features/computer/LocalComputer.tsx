@@ -7,7 +7,7 @@ import {
   modelCatalog,
   modelHasVision,
 } from '@daban/protocol';
-import { Check, CircleAlert, Monitor, Pause, Play, Power, ShieldCheck } from 'lucide-react';
+import { Monitor, Pause, Play, Power, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
@@ -15,6 +15,7 @@ import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { t } from '../../i18n/locale';
 import { modelName } from '../models/model-options';
+import { Permissions } from './Permissions';
 
 type Consent = {
   command: Extract<LocalComputerCommand, { type: 'local.connect' }>;
@@ -40,6 +41,21 @@ export function LocalComputer({ bot }: { bot: Bot }) {
   const other = status?.session && !session;
   const sessionId = session?.id,
     sessionRevision = session?.revision;
+  useEffect(() => {
+    if (status?.platform !== 'darwin' || permissions) return;
+    let active = true;
+    const check = () => {
+      // Returning from System Settings only observes permissions; it never opens settings or grants a session.
+      runtime.command({ type: 'local.status' }).catch((error) => {
+        if (active) setError(runtimeError(error));
+      });
+    };
+    window.addEventListener('focus', check);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', check);
+    };
+  }, [status?.platform, permissions, runtime.command]);
   useEffect(() => {
     const ticket = ++epoch.current;
     setFrame(undefined);
@@ -110,26 +126,12 @@ export function LocalComputer({ bot }: { bot: Bot }) {
       </div>
       <p className="panel-description">{t('localComputer.description')}</p>
       {status.platform === 'darwin' && (
-        <div className="local-permissions">
-          <span>
-            {status.permissions.screen ? <Check /> : <CircleAlert />}
-            {t('localComputer.screenPermission')}
-          </span>
-          <span>
-            {status.permissions.accessibility ? <Check /> : <CircleAlert />}
-            {t('localComputer.inputPermission')}
-          </span>
-          {!permissions && (
-            <button
-              type="button"
-              className="text-button"
-              disabled={busy}
-              onClick={() => perform({ type: 'local.permissions' })}
-            >
-              {t('localComputer.permissions')}
-            </button>
-          )}
-        </div>
+        <Permissions
+          status={status}
+          busy={busy}
+          request={() => perform({ type: 'local.permissions' })}
+          check={() => perform({ type: 'local.status' })}
+        />
       )}
       {error && (
         <p className="form-error" role="alert">
