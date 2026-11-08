@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { chmod, mkdir, open, readFile, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { arch, platform, release } from 'node:os';
 import path from 'node:path';
@@ -78,6 +79,7 @@ import { Groups } from './groups.js';
 import { HostBrowser } from './host-browser.js';
 import { integrationCommand } from './integration-api.js';
 import { BotLifecycle } from './lifecycle.js';
+import { LinuxTools } from './linux-tools.js';
 import { Machine } from './machine.js';
 import { ModelRuns } from './model.js';
 import { NativeWorkspace } from './native-workspace.js';
@@ -244,6 +246,7 @@ export interface Prototype<
   groups?: Groups;
   lifecycle?: BotLifecycle;
   recovery?: Recovery;
+  executionRecovery?: Recovery;
   refreshExecution?: () => Promise<ExecutionSnapshot>;
   close: () => Promise<unknown>;
 }
@@ -282,7 +285,8 @@ export interface HostComposition {
   dataRoot: string;
   socketPath: string;
   scope: string;
-  execution?: Pick<Executor, 'ready' | 'snapshot' | 'refresh'> & WorkspaceExecutor;
+  execution?: Pick<Executor, 'ready' | 'snapshot' | 'refresh'> &
+    WorkspaceExecutor & { available?(): Promise<boolean> };
   sdkFile: string;
   stdioEntry?: string;
 }
@@ -347,10 +351,12 @@ export async function startPrototype({
   let groups: Groups | undefined;
   let lifecycle: BotLifecycle | undefined;
   let recovery: Recovery | undefined;
+  let linuxRecovery: Recovery | undefined;
+  let linuxAvailable = false;
   let commands: Commands | undefined;
   let files: AgentWorkspace | undefined;
   let executionSnapshot: ExecutionSnapshot | undefined;
-  let computerAvailable = !host?.offlineWorkspaceRoot;
+  let computerAvailable = !host?.nativeWorkspace && !host?.offlineWorkspaceRoot;
   let replacingRecovery = false;
   const upgrade = new UpgradeGate();
   let refreshingExecution: Promise<ExecutionSnapshot> | undefined;
@@ -399,28 +405,44 @@ export async function startPrototype({
         try {
           await Promise.allSettled(
             [...(models?.jobs.values() || [])]
-              .filter((job) => models!.running(job.bot))
+              .filter(
+                (job) =>
+                  models!.running(job.bot) &&
+                  (!host?.nativeWorkspace || models!.tools.linux?.restarted(job, snapshot)),
+              )
               .map((job) => models!.stop(job.bot, 'execution-restarted')),
           );
           executionSnapshot = snapshot;
           if (snapshot.boot !== previous.boot) {
-            await recovery?.close();
-            recovery = createHostRecovery(snapshot);
-            await recovery.ready;
+            if (host.nativeWorkspace) {
+              await linuxRecovery?.close();
+              linuxRecovery = createHostRecovery(snapshot);
+              await linuxRecovery.ready;
+            } else {
+              await recovery?.close();
+              recovery = createHostRecovery(snapshot);
+              await recovery.ready;
+            }
           }
         } finally {
           replacingRecovery = false;
         }
       } else executionSnapshot = snapshot;
+      if (host.nativeWorkspace && !linuxRecovery) {
+        linuxRecovery = createHostRecovery(snapshot);
+        await linuxRecovery.ready;
+      }
       if (host.offlineWorkspaceRoot) {
         const root = await host.execution!.call('workspace.base', {});
         if (root !== host.offlineWorkspaceRoot) throw new Fault('WORKSPACE_CHANGED');
       }
       computerAvailable = true;
+      if (models?.tools.linux) models.tools.linux.online = true;
       return snapshot;
     })()
       .catch((error) => {
         computerAvailable = false;
+        if (models?.tools.linux) models.tools.linux.online = false;
         throw error;
       })
       .finally(() => {
@@ -435,6 +457,7 @@ export async function startPrototype({
     } catch {
       computerAvailable = false;
     }
+    if (host?.nativeWorkspace && !computerAvailable) return nativeSnapshot();
     if (!executionSnapshot) throw new Fault('EXECUTION_UNAVAILABLE');
     const { computer } = executionSnapshot;
     const { mode, sharedLogin, viewport, environment, bots, browsers } = computer;
@@ -448,6 +471,27 @@ export async function startPrototype({
       events: [],
       ...(!computerAvailable ? { computerError: 'COMPUTER_START_FAILED' } : {}),
     };
+  }
+  function nativeSnapshot() {
+    return {
+      mode: 'agent' as const,
+      sharedLogin: false,
+      viewport: { width: 1280, height: 800 },
+      environment: {
+        platform: platform(),
+        arch: arch(),
+        kernel: release(),
+        node: process.version,
+        browser: '',
+      },
+      events: [],
+      bots: {},
+    };
+  }
+  async function optionalLinux() {
+    if (!host?.nativeWorkspace) return;
+    linuxAvailable = (await host.execution?.available?.()) ?? false;
+    if (models?.tools.linux) models.tools.linux.enabled = linuxAvailable;
   }
   async function hostRebootStatus() {
     const status = await host!.reboot!.status();
@@ -485,9 +529,9 @@ export async function startPrototype({
     }),
     computers: () => {
       if (!host && !(runtime instanceof Computers)) return { state: 'unsupported' };
-      if (host?.nativeWorkspace) return { state: 'unsupported' };
-      const status = host ? executionSnapshot!.status : (runtime as Computers).status();
-      if (!status.available || (host && !computerAvailable)) return { state: 'unavailable' };
+      if (host?.nativeWorkspace && !linuxAvailable) return { state: 'unsupported' };
+      const status = host ? executionSnapshot?.status : (runtime as Computers).status();
+      if (!status?.available || (host && !computerAvailable)) return { state: 'unavailable' };
       const affected = status.items.filter((row) =>
         ['failed', 'interrupted'].includes(row.phase),
       ).length;
@@ -544,6 +588,7 @@ export async function startPrototype({
         const url = new URL(req.url || '/', origin);
         if (
           host?.nativeWorkspace &&
+          !host.execution &&
           (/^\/api\/(computers|browser|native|worker|control)(?:\/|$)/.test(url.pathname) ||
             /^\/api\/(frame|app)$/.test(url.pathname))
         )
@@ -569,6 +614,7 @@ export async function startPrototype({
             () =>
               replacingRecovery ||
               !(recovery?.admit() ?? true) ||
+              !(linuxRecovery?.admit() ?? true) ||
               changing.size > 0 ||
               !!models?.bundles.busy ||
               !!host.environment?.busy ||
@@ -822,7 +868,8 @@ export async function startPrototype({
               ['/api/computers/action', '/api/computers/receipt'].includes(url.pathname))
           ) {
             const execution = host.execution;
-            if (!execution) throw new Fault('LOCAL_VM_UNAVAILABLE', 503);
+            if (!execution || (host.nativeWorkspace && !linuxAvailable))
+              throw new Fault('LOCAL_VM_UNAVAILABLE', 503);
             if (!models) throw new Fault('STARTING', 503);
             if (!['GET', 'POST'].includes(req.method || ''))
               throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -859,6 +906,7 @@ export async function startPrototype({
                 path: url.pathname + url.search,
                 ...(data ? { body: data } : {}),
               });
+              if (action) await refreshExecution();
               if (
                 remoteRoute &&
                 req.method === 'GET' &&
@@ -1579,11 +1627,26 @@ export async function startPrototype({
             const data = await body(req);
             if (typeof data.path !== 'string' || Object.keys(data).some((key) => key !== 'path'))
               throw new Fault('INVALID_FILE', 400);
+            let source = files;
+            if (host?.nativeWorkspace && models) {
+              const root = await files.base();
+              // History retains guest-relative links. An explicit read may wake Linux; listing native files never does.
+              const guest = [...models.journal.records.values()].some(
+                (record) =>
+                  record.outputDirectory &&
+                  !record.outputDirectory.startsWith(root + path.sep) &&
+                  record.files?.some((file) => file.path === data.path),
+              );
+              if (guest) {
+                if (!models.tools.linux?.enabled) throw new Fault('LOCAL_VM_UNAVAILABLE');
+                source = models.tools.linux.workspace;
+              }
+            }
             return json(
               res,
               url.pathname.endsWith('/download')
-                ? await files.download(data.path)
-                : await files.read(data.path),
+                ? await source.download(data.path)
+                : await source.read(data.path),
             );
           }
           if (url.pathname === '/api/bots') {
@@ -1599,7 +1662,8 @@ export async function startPrototype({
               return json(res, await models.profiles.register(await body(req)));
             throw new Fault('METHOD_NOT_ALLOWED', 405);
           }
-          if (req.method === 'GET' && url.pathname === '/api/state')
+          if (req.method === 'GET' && url.pathname === '/api/state') {
+            await optionalLinux();
             return json(res, {
               ...(host?.execution
                 ? await remoteComputerSnapshot()
@@ -1634,8 +1698,11 @@ export async function startPrototype({
                   }
                 : {}),
               ...(host?.localComputer ? { localComputer: await host.localComputer.status() } : {}),
+              ...(host?.nativeWorkspace ? { linux: { available: linuxAvailable } } : {}),
               ...(hostBrowser ? { hostBrowser: await hostBrowser.status() } : {}),
-              ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
+              ...(host?.reboot && (!host.nativeWorkspace || linuxAvailable)
+                ? { reboot: await hostRebootStatus() }
+                : {}),
               notices: await noticeStatus(models, groups),
               chats: models
                 ? await chatStatus(models, conversationAware, trashAware)
@@ -1650,21 +1717,22 @@ export async function startPrototype({
                 : { available: false, error: 'SKILLS_UNAVAILABLE' },
               ...(host
                 ? {
-                    computers: host.nativeWorkspace
-                      ? {
-                          available: false,
-                          revision: 0,
-                          limit: 1,
-                          items: [],
-                          error: 'LOCAL_VM_UNAVAILABLE',
-                        }
-                      : computerAvailable
-                        ? executionSnapshot!.status
-                        : {
-                            ...executionSnapshot!.status,
+                    computers:
+                      host.nativeWorkspace && !computerAvailable
+                        ? {
                             available: false,
-                            error: 'COMPUTER_RUNTIME_UNAVAILABLE',
-                          },
+                            revision: 0,
+                            limit: 1,
+                            items: [],
+                            error: 'LOCAL_VM_UNAVAILABLE',
+                          }
+                        : computerAvailable
+                          ? executionSnapshot!.status
+                          : {
+                              ...executionSnapshot!.status,
+                              available: false,
+                              error: 'COMPUTER_RUNTIME_UNAVAILABLE',
+                            },
                   }
                 : runtime instanceof Computers
                   ? { computers: runtime.status() }
@@ -1679,7 +1747,9 @@ export async function startPrototype({
               knowledge: models
                 ? {
                     ...(await models.knowledge.status()),
-                    documentParsing: !!host?.execution || platform() === 'linux',
+                    documentParsing:
+                      (host?.nativeWorkspace ? linuxAvailable : !!host?.execution) ||
+                      platform() === 'linux',
                   }
                 : { available: false, documentParsing: false },
               profiles: models
@@ -1692,6 +1762,7 @@ export async function startPrototype({
               // Capability metadata stays outside saved-model status so older clients can still validate that status.
               model: { ...models?.status(), ...(await settings.status(true)), inspection: true },
             });
+          }
           const browserRoute = url.pathname.match(
             /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/browser-(state|view|command|answer|receipt|bound-input|input)$/,
           );
@@ -1982,6 +2053,7 @@ export async function startPrototype({
     // A failed owner must not prevent the remaining stores, computer and HTTP listener from closing.
     for (const owner of [
       recovery,
+      linuxRecovery,
       lifecycle,
       documents,
       groups,
@@ -2004,16 +2076,65 @@ export async function startPrototype({
   try {
     // Publish only after binding: a pre-existing listener must never receive the new credential.
     await authority.publish();
-    if (host?.execution) {
+    if (host?.execution && !host.nativeWorkspace) {
       const snapshot = await host.execution!.ready;
       if (!isExecutionSnapshot(snapshot)) throw new Fault('EXECUTION_INVALID_RESPONSE');
       executionSnapshot = snapshot;
       recovery = createHostRecovery(snapshot);
       await recovery.ready;
     } else if (host?.nativeWorkspace) {
+      await optionalLinux();
+      const cached = host.execution?.snapshot;
+      if (cached && isExecutionSnapshot(cached)) {
+        executionSnapshot = cached;
+        linuxRecovery = createHostRecovery(cached);
+        await linuxRecovery.ready;
+      }
+      const nativeBoot = `native-${host.scope.slice(0, 24)}`;
+      const nativeRecoveryFile = path.join(modelDir, 'native-recovery.json');
+      // Keep old Linux recovery receipts in place. Copy a known native receipt so pending native work stays fenced.
+      const previousFile = await open(
+        path.join(modelDir, 'recovery.json'),
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      ).catch((error: unknown) => {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+          return undefined;
+        throw error;
+      });
+      let previous: string | undefined;
+      if (previousFile) {
+        try {
+          const info = await previousFile.stat();
+          if (!info.isFile() || info.nlink !== 1 || info.size > 128 * 1024)
+            throw new Fault('RECOVERY_STORE_UNAVAILABLE');
+          previous = await previousFile.readFile('utf8');
+        } finally {
+          await previousFile.close();
+        }
+      }
+      if (previous) {
+        let value: { receipt?: { review?: { boot?: string } } } | undefined;
+        try {
+          value = JSON.parse(previous);
+        } catch {
+          /* Linux recovery validates its own legacy file. */
+        }
+        if (value?.receipt?.review?.boot === nativeBoot)
+          await writeFile(nativeRecoveryFile, previous, { flag: 'wx', mode: 0o600 }).catch(
+            (error: unknown) => {
+              if (
+                !error ||
+                typeof error !== 'object' ||
+                !('code' in error) ||
+                error.code !== 'EEXIST'
+              )
+                throw error;
+            },
+          );
+      }
       recovery = new Recovery({
-        file: path.join(modelDir, 'recovery.json'),
-        boot: `native-${host.scope.slice(0, 24)}`,
+        file: nativeRecoveryFile,
+        boot: nativeBoot,
         instance: `native-${randomBytes(18).toString('base64url')}`,
         quiesce: async () => {
           await Promise.all([groups?.drain(), schedules?.drain()]);
@@ -2123,7 +2244,7 @@ export async function startPrototype({
         admit: () =>
           upgrade.admit() &&
           !replacingRecovery &&
-          (!host || computerAvailable) &&
+          (!host || !!host.nativeWorkspace || computerAvailable) &&
           (recovery?.admit() ?? true),
         ...(host
           ? {
@@ -2155,7 +2276,11 @@ export async function startPrototype({
             resolve: async (request) => models?.reviewModel(request.bot, request.runId) ?? null,
           }).review,
           assertLive: (run) => {
-            if (replacingRecovery || !recovery!.admit())
+            if (
+              replacingRecovery ||
+              !recovery!.admit() ||
+              (linuxRecovery && !linuxRecovery.admit())
+            )
               throw new Fault('RUNTIME_RECOVERY_PENDING');
             models!.profiles.assertActive(run.bot);
             const job = models!.jobs.get(run.bot);
@@ -2165,6 +2290,13 @@ export async function startPrototype({
         });
         await commands.ready;
         models.tools.executeRemote = commands.invoke.bind(commands);
+        if (host.nativeWorkspace) {
+          models.tools.linux = new LinuxTools(host.execution, files, models.tools, async () => {
+            await refreshExecution();
+            if (!linuxRecovery?.admit()) throw new Fault('RUNTIME_RECOVERY_PENDING');
+          });
+          models.tools.linux.enabled = linuxAvailable;
+        }
       }
       schedules = new Schedules({
         file: path.join(modelDir, 'schedules.sqlite'),
@@ -2218,6 +2350,8 @@ export async function startPrototype({
               throw new Fault('BOT_COMPUTER_CONNECTED');
             if (hostBrowser?.selected(bot)) throw new Fault('BOT_COMPUTER_CONNECTED');
             if (host?.nativeWorkspace) {
+              if (executionSnapshot?.status.items.some((item) => item.bot === bot && item.reserved))
+                throw new Fault('BOT_COMPUTER_CONNECTED');
               if (await groups!.hasPendingBot(bot)) throw new Fault('BOT_GROUP_PENDING');
               return;
             }
@@ -2257,6 +2391,9 @@ export async function startPrototype({
     lifecycle,
     get recovery() {
       return recovery;
+    },
+    get executionRecovery() {
+      return linuxRecovery;
     },
     ...(host ? { refreshExecution } : {}),
     close,

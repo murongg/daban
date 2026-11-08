@@ -333,7 +333,7 @@ export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
         />
       ) : source === 'local' && local ? (
         <LocalComputer bot={props.bot} />
-      ) : nativeOnly && optionalLinux ? (
+      ) : nativeOnly && optionalLinux && runtime.snapshot.setup?.required ? (
         <LinuxSetup />
       ) : (
         <VirtualComputer {...props} />

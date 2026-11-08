@@ -1542,6 +1542,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
   searchSettings?: true;
   botCapabilities?: true;

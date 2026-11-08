@@ -1,4 +1,5 @@
 import {
+  agentId,
   disconnected,
   type HostBrowserStatus,
   type RuntimeBridge,
@@ -302,4 +303,46 @@ it('preserves a composed message while a computer change prevents starting anoth
   await userEvent.keyboard('{Enter}');
   expect(send).not.toHaveBeenCalled();
   expect(input).toHaveValue('合成等待发送的内容');
+});
+
+it('shows the connection state for installed but unavailable Linux instead of an empty installer', async () => {
+  const bot = initialState().bots[0]!;
+  const snapshot = disconnected('ready');
+  snapshot.protocolVersion = 47;
+  snapshot.agent = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  snapshot.setup = { required: false, target: 'linux', phase: 'existing' };
+  snapshot.linux = { available: false };
+  snapshot.computers = { available: false, revision: 0, limit: 2, items: [] };
+  snapshot.profiles = [
+    {
+      id: agentId(bot.id),
+      name: '合成 Bot',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+      revision: 1,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+  ];
+  const invoke = vi.fn(async (command: RuntimeCommand) => ({
+    ok: true,
+    value: command.type === 'status' ? snapshot : {},
+  }));
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { platform: 'darwin', runtime: { invoke, subscribe: () => () => {} } },
+  });
+  render(
+    <RuntimeProvider>
+      <Computer bot={bot} notify={vi.fn()} />
+    </RuntimeProvider>,
+  );
+  expect(await screen.findByRole('button', { name: '连接电脑' })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command.type === 'computer.action')).toBe(false);
 });

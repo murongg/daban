@@ -78,6 +78,7 @@ function ConnectionControl({
   const live = useRef(true),
     restored = useRef<string | undefined>(undefined);
   const ready = runtime.snapshot.phase === 'ready';
+  const available = status?.available || runtime.snapshot.linux?.available === true;
   const running = runtime.snapshot.agents[bot]?.running === true;
   const changing = ['connecting', 'stopping'].includes(computer.phase);
   const registered = runtime.snapshot.profiles.some((profile) => profile.id === bot);
@@ -146,7 +147,7 @@ function ConnectionControl({
     });
   }, [pending, ready, inspect]);
   async function run(action: 'connect' | 'stop') {
-    if (busy || running || changing || !ready || !status?.available || storageError) return;
+    if (busy || running || changing || !ready || !available || storageError) return;
     try {
       const existing = pendingComputer(bot);
       if (existing) {
@@ -208,7 +209,7 @@ function ConnectionControl({
     running ||
     changing ||
     !ready ||
-    !status?.available ||
+    !available ||
     !!pending ||
     storageError ||
     recoveryBlocked(runtime.snapshot);

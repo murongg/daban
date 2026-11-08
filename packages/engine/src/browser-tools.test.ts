@@ -292,11 +292,18 @@ test('standalone browser downloads can be read, transformed and uploaded only th
     'item,count\nSYNTHETIC,47',
   );
   const unrelated = new AgentTools(undefined, workspace, { nativeOnly: true });
-  expect(unrelated.list('a').some((tool) => tool.name === 'read_file')).toBe(false);
+  expect(unrelated.list('a').some((tool) => tool.name === 'read_file')).toBe(true);
   expect(
     (
       await unrelated.invoke({ ...run, abort: new AbortController() }, 'read_file', {
         path: 'input.csv',
+      })
+    ).isError,
+  ).not.toBe(true);
+  expect(
+    (
+      await unrelated.invoke({ ...run, abort: new AbortController() }, 'shell', {
+        command: 'echo synthetic',
       })
     ).isError,
   ).toBe(true);

@@ -214,6 +214,16 @@ test('the turn carries current computer availability rather than advertising una
   expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/A computer is connected/);
 });
 
+test('native-first sessions select Linux tools only for Linux-specific work', () => {
+  const prompt = agentInstructionsFor(true, true);
+  expect(prompt).toMatch(/choose Linux tools only when the task requires/i);
+  expect(prompt).toMatch(
+    /Linux command.*Linux-only package.*files that exist only in the Linux workspace.*Linux desktop/i,
+  );
+  expect(prompt).toMatch(/ordinary conversation.*simple calculations.*file-only work/i);
+  expect(prompt).toMatch(/mentioning Linux or code alone does not require a Linux call/i);
+});
+
 test('restart retains a durable clean fence for explicit recovery while interrupting every running attempt', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-clean-restart-'));
   try {

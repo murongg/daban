@@ -20,11 +20,13 @@ function connect(
   agent?: RuntimeSnapshot['agent'],
   setup?: RuntimeSnapshot['setup'],
   searchSettings = false,
+  linux?: RuntimeSnapshot['linux'],
 ) {
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = 39;
   snapshot.agent = agent;
   snapshot.setup = setup;
+  snapshot.linux = linux;
   if (searchSettings) snapshot.searchSettings = true;
   snapshot.model = {
     configured: true,
@@ -280,6 +282,26 @@ it('explains native-only setup without offering Linux installation or VM recover
     within(panel).getByText('在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。'),
   ).toBeVisible();
   expect(within(dialog).queryByRole('button', { name: '检查并恢复' })).toBeNull();
+});
+
+it('keeps Linux recovery reachable when ordinary tasks use the native workspace', async () => {
+  const invoke = connect(
+    false,
+    { location: 'host', execution: 'local-workspace', privilege: 'workspace', approvals: 'host' },
+    { required: false, target: 'linux', phase: 'existing' },
+    false,
+    { available: true },
+  );
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  const settings = await screen.findByRole('dialog', { name: '设置' });
+  await userEvent.click(within(settings).getByRole('tab', { name: '电脑与权限' }));
+  expect(within(settings).getByRole('button', { name: '检查并恢复' })).toBeVisible();
+  expect(
+    invoke.mock.calls.some(([command]) =>
+      ['recovery.restart', 'recovery.start', 'computer.action'].includes(command.type),
+    ),
+  ).toBe(false);
 });
 
 it('keeps a search key only while Settings is open and never stops a background task on close', async () => {

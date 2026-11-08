@@ -5,7 +5,7 @@ import { isSkillPackage, isTaskFileName, type SkillPackage, validAgentId } from 
 import { Fault } from './control.js';
 import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './workspace.js';
 
-// Native tasks have no host shell. Browser file tools stay confined to this managed workspace.
+// Native tasks may edit only this owned workspace; it grants neither a host shell nor arbitrary host paths.
 export class NativeWorkspace implements AgentWorkspace {
   canonical: string | null;
   private readonly files: WorkspaceFiles;

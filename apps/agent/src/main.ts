@@ -18,11 +18,18 @@ import type {
   RuntimeCommand,
   VmConnection,
 } from '@daban/protocol';
-import { type BootstrapOptions, bootstrapAgent, writeSetupRecord } from './bootstrap.js';
+import {
+  type BootstrapOptions,
+  bootstrapAgent,
+  parseVmConfig,
+  readSetupRecord,
+  writeSetupRecord,
+} from './bootstrap.js';
 import { ExecutionConnection } from './connection.js';
 import { Environment } from './environment.js';
 import { startupErrorCode, writeStartupFailure } from './failure.js';
 import { linuxAssets } from './linux.js';
+import { LinuxExecution } from './linux-execution.js';
 import { HostPower, type PowerOptions } from './power.js';
 import { QemuLink } from './qemu.js';
 import { QemuSetup } from './qemu-setup.js';
@@ -77,9 +84,12 @@ interface Power {
 export interface MainDependencies {
   platform?: NodeJS.Platform;
   qemu?: (config: VmConnection, directory: string) => Link;
-  native?: (
-    options: Parameters<typeof startNativeAgent>[0],
-  ) => Promise<{ close(): Promise<unknown> }>;
+  native?: (options: Parameters<typeof startNativeAgent>[0]) => Promise<{
+    close(): Promise<unknown>;
+    models?: Core['models'];
+    recovery?: Core['recovery'];
+    refreshExecution?: Core['refreshExecution'];
+  }>;
   tools(options: {
     dataRoot: string;
     vmConfigFile: string;
@@ -266,32 +276,84 @@ export async function startAgentProcess(
                 ),
             })
           : undefined;
-    const native = await (factory.native ?? startNativeAgent)({
-      environment,
-      identity: {
+    let native: Awaited<ReturnType<NonNullable<MainDependencies['native']>>> | undefined;
+    const execution = new LinuxExecution({
+      dataRoot: options.dataRoot,
+      connection: factory.connection,
+      power: factory.power,
+      owner: () =>
+        native?.models && native.refreshExecution
+          ? {
+              models: native.models,
+              recovery: native.recovery,
+              refreshExecution: native.refreshExecution,
+              close: native.close,
+            }
+          : undefined,
+      load: async () => {
+        if ((factory.platform ?? process.platform) === 'win32') {
+          const config = await readVmConnection(options.vmConfigFile);
+          if (!config?.enabled) throw new Error('LOCAL_VM_UNAVAILABLE');
+          return {
+            target: vmConnectionTarget(config),
+            link:
+              factory.qemu?.(config, options.dataRoot) ?? new QemuLink(config, options.dataRoot),
+          };
+        }
+        const value = await readSetupRecord(options.vmConfigFile);
+        if (value === undefined) throw new Error('LOCAL_VM_UNAVAILABLE');
+        const config = parseVmConfig(value);
+        return {
+          target: agentVmTarget(config),
+          link: factory.link(config, path.join(options.dataRoot, 'executor-tunnel.sock')),
+        };
+      },
+    });
+    let closingNative: Promise<unknown> | undefined;
+    const closeNative = () => {
+      closingNative ??= (async () => {
+        let failure: unknown;
+        for (const owner of [environment, native, execution]) {
+          try {
+            await owner?.close();
+          } catch (error) {
+            failure ??= error;
+          }
+        }
+        if (failure) throw failure;
+      })();
+      return closingNative;
+    };
+    try {
+      native = await (factory.native ?? startNativeAgent)({
+        environment,
+        execution,
+        reboot: {
+          status: () => execution.recoveryStatus(),
+          invoke: (command) => execution.recover(command),
+        },
+        identity: {
+          dataRoot: options.dataRoot,
+          socketPath: options.socketPath,
+          entry: fileURLToPath(import.meta.url),
+          executable: process.execPath,
+        },
+        onUpdate,
         dataRoot: options.dataRoot,
         socketPath: options.socketPath,
-        entry: fileURLToPath(import.meta.url),
-        executable: process.execPath,
-      },
-      onUpdate,
-      dataRoot: options.dataRoot,
-      socketPath: options.socketPath,
-      scope,
-      sdkFile: factory.sdk(),
-      stdioEntry: mcpStdioEntry,
-      nativeWorkspace: path.join(options.dataRoot, 'workspace'),
-      localComputer: new LocalComputerClient(options.dataRoot),
-    });
-    // Only the process that acquired the private server may resume an interrupted installer.
-    await environment?.resumePending();
-    return {
-      scope,
-      close: async () => {
-        await environment?.close();
-        await native.close();
-      },
-    };
+        scope,
+        sdkFile: factory.sdk(),
+        stdioEntry: mcpStdioEntry,
+        nativeWorkspace: path.join(options.dataRoot, 'workspace'),
+        localComputer: new LocalComputerClient(options.dataRoot),
+      });
+      // Only the process that acquired the private server may resume an interrupted installer.
+      await environment?.resumePending();
+      return { scope, close: closeNative };
+    } catch (error) {
+      await closeNative().catch(() => console.error('Native startup cleanup failed'));
+      throw error;
+    }
   }
   let link: Link | undefined,
     connection: Connection | undefined,

@@ -234,19 +234,31 @@ export function runtimeService(
     if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
     if (component && !files) files = await component.prepare(componentChanged);
     if (closed) throw Error('RUNTIME_CLOSED');
-    const configured = await access(vmConfig).then(
-      () => true,
-      (error) => {
-        if (error && typeof error === 'object' && error.code === 'ENOENT') return false;
-        throw error;
-      },
-    );
-    const windowsVm = platform === 'win32' ? await readVmConnection(vmConfig) : undefined;
-    const desiredNative = platform === 'win32' ? !windowsVm?.enabled : nativeFirst && !configured;
+    const windowsVm =
+      platform === 'win32' && !nativeFirst ? await readVmConnection(vmConfig) : undefined;
+    const exists = (file: string) =>
+      access(file).then(
+        () => true,
+        (error: unknown) => {
+          if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+            return false;
+          throw error;
+        },
+      );
+    // Pre-host Mac installations still need the existing data migration before native stores can open.
+    const legacyData =
+      nativeFirst &&
+      platform === 'darwin' &&
+      (await exists(vmConfig)) &&
+      !(await exists(join(dataRoot, 'model/control-token')));
+    // Installing Linux adds a capability; it must not change ordinary tasks into guest tasks.
+    const desiredNative =
+      (nativeFirst && !legacyData) || (platform === 'win32' && !windowsVm?.enabled);
     if (nativeFirst) {
       const changed = await reconcileAgent({ ...agentConfig, scope: agentScope! }, desiredNative);
       if (changed) {
         client = undefined;
+        reboot = undefined;
         publish(disconnected('connecting'));
         await daemon?.close();
         daemon = undefined;
@@ -302,7 +314,8 @@ export function runtimeService(
     await daemon.ensure();
     if (closed) throw new Error('RUNTIME_CLOSED');
     nativeMode = false;
-    if (nativeFirst) setupState = { required: false, target: 'linux', phase: 'complete' };
+    if (nativeFirst || setupState?.target === 'linux')
+      setupState = { required: false, target: 'linux', phase: 'complete' };
     return privateClient();
   }
   async function inspectAgent(): Promise<DiagnosticReport> {
@@ -367,6 +380,7 @@ export function runtimeService(
   }
   function publish(next: RuntimeSnapshot) {
     if (closed) return;
+    if (nativeMode && next.linux?.available === false) reboot = undefined;
     if (reboot) next = { ...next, reboot };
     if (setupState) next = { ...next, setup: setupState };
     const changed = JSON.stringify(state) !== JSON.stringify(next);
@@ -398,8 +412,7 @@ export function runtimeService(
     return changed;
   }
   async function refreshReboot() {
-    // Native workspaces have no VM recovery authority; their own recovery snapshot still fences effects.
-    if (nativeMode) return;
+    if (nativeMode && !state.reboot) return;
     const ticket = ++rebootRequested,
       epoch = connection,
       current = client;
@@ -452,7 +465,7 @@ export function runtimeService(
           client = await owner.connect();
         }
         await refresh();
-        pendingHandoff = false;
+        pendingHandoff = nativeFirst && !nativeMode;
         legacyHost = false;
       } catch (error) {
         if (
@@ -700,7 +713,7 @@ export function runtimeService(
       command.type === 'recovery.cancel' ||
       command.type === 'recovery.start'
     ) {
-      if (nativeMode) throw new Error('RECOVERY_UNAVAILABLE');
+      if (nativeMode && !state.reboot) throw new Error('RECOVERY_UNAVAILABLE');
       if (agentConfig) {
         if (!client) throw new Error('RUNTIME_OFFLINE');
         if (command.type === 'recovery.status') {
@@ -839,7 +852,7 @@ export function runtimeService(
           lastSetupPoll = Date.now();
           setupState = await environment.invoke('status');
           publish(state);
-          if (!setupState.required) await connect();
+          // The native owner discovers optional Linux without replacing its running conversations.
         } catch {
           /* A transient setup poll must not disconnect ordinary chat. */
         }

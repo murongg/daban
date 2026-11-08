@@ -141,7 +141,8 @@ export function Settings({
         : t('settings.manageLocalLinuxConnectionStateActionPermissions'),
       content: (
         <>
-          {runtime.snapshot.agent?.execution === 'linux-vm' && (
+          {(runtime.snapshot.agent?.execution === 'linux-vm' ||
+            runtime.snapshot.linux?.available) && (
             <div className="settings-section">
               <h2>{t('settings.executionEnvironmentPermissions')}</h2>
               <div className="setting-row">
@@ -221,7 +222,7 @@ export function Settings({
           <AgentUpgradePanel onDialogChange={setConnectionDialog} />
           <LinuxSetup />
           <VirtualMachine />
-          {!nativeOnly && (
+          {(!nativeOnly || runtime.snapshot.linux?.available) && (
             <div className="settings-section">
               <h2>{t('settings.runtime')}</h2>
               <Diagnostics />

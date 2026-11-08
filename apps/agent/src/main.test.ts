@@ -766,3 +766,94 @@ test('Windows native startup offers QEMU setup without resolving the Mac Linux p
     await f.cleanup();
   }
 });
+
+test('an installed Linux environment stays optional during native startup and observations', async () => {
+  const f = await fixture();
+  await writeSetupRecord(f.options.vmConfigFile, config);
+  let captured: Parameters<typeof startNativeAgent>[0] | undefined;
+  const owner = await startAgentProcess(
+    { ...f.options, mode: 'native' },
+    {
+      ...f.dependencies,
+      platform: 'darwin',
+      native: async (options) => {
+        captured = options;
+        return { close: async () => {} };
+      },
+    },
+  );
+  try {
+    expect(
+      captured?.execution,
+      'native tasks must retain an optional Linux tool transport',
+    ).toBeDefined();
+    expect(f.events).toEqual([]);
+    await expect(captured!.execution!.refresh()).rejects.toThrow('EXECUTOR_OFFLINE');
+    expect(f.events).not.toContain('ensure');
+    expect(f.events).not.toContain('vm-start');
+    expect(f.events).not.toContain('bootstrap');
+    expect(f.events).not.toContain('tools');
+  } finally {
+    await owner.close();
+    expect(f.events).not.toContain('vm-stop');
+    await f.cleanup();
+  }
+});
+
+test('failed native startup releases its optional Linux tunnel without stopping the VM', async () => {
+  const f = await fixture();
+  await writeSetupRecord(f.options.vmConfigFile, config);
+  try {
+    await expect(
+      startAgentProcess(
+        { ...f.options, mode: 'native' },
+        {
+          ...f.dependencies,
+          platform: 'darwin',
+          native: async (options) => {
+            await options.execution!.refresh().catch(() => {});
+            throw new Error('SYNTHETIC_NATIVE_START_FAILED');
+          },
+        },
+      ),
+    ).rejects.toThrow('SYNTHETIC_NATIVE_START_FAILED');
+    expect(f.events).toContain('connection-close');
+    expect(f.events).not.toContain('vm-stop');
+    expect(f.events).not.toContain('vm-start');
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test.each(['pause', 'recovery'] as const)(
+  'optional Linux refuses to wake across an existing %s fence',
+  async (fence) => {
+    const f = await fixture();
+    await writeSetupRecord(f.options.vmConfigFile, config);
+    if (fence === 'pause')
+      await writeSetupRecord(path.join(f.options.dataRoot, 'cancel.json'), { cancelled: true });
+    else f.claim();
+    let captured: Parameters<typeof startNativeAgent>[0] | undefined;
+    const owner = await startAgentProcess(
+      { ...f.options, mode: 'native' },
+      {
+        ...f.dependencies,
+        platform: 'darwin',
+        native: async (options) => {
+          captured = options;
+          return { close: async () => {} };
+        },
+      },
+    );
+    try {
+      await expect(
+        captured!.execution!.call('workspace.create', { parts: ['mock-task'] }),
+      ).rejects.toThrow(fence === 'pause' ? 'AGENT_SETUP_PAUSED' : 'RUNTIME_RECOVERY_PENDING');
+      expect(f.events).not.toContain('ensure');
+      expect(f.events).not.toContain('vm-start');
+    } finally {
+      await owner.close();
+      await f.cleanup();
+    }
+  },
+);

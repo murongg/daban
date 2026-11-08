@@ -1391,7 +1391,76 @@ it('keeps first-use native model setup usable without probing an uninstalled VM 
   }
 });
 
-it('publishes macOS Linux startup progress while the background service is still connecting', async () => {
+it('keeps an installed Linux environment out of native-first desktop startup and passive reconnects', async () => {
+  const f = await agentFixture(47, 'local-workspace');
+  await fs.writeFile(
+    f.config.vmConfig,
+    JSON.stringify({
+      limactl: '/synthetic/bin/limactl',
+      limaHome: '/synthetic/lima',
+      vm: 'mock-linux',
+      port: 18766,
+    }),
+    { mode: 0o600 },
+  );
+  const client = agentClient(f.config);
+  mocks.nativeEnsure.mockResolvedValue(client);
+  const service = runtimeService(
+    f.root,
+    'file:///mock/index.html',
+    '/mock/environment',
+    undefined,
+    { ...f.config, nativeFirst: true },
+    undefined,
+    'darwin',
+  );
+  try {
+    expect((await service.connect()).agent?.execution).toBe('local-workspace');
+    expect((await service.connect()).phase).toBe('ready');
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
+    expect(
+      f.requests.some(
+        (row) => row.route.includes('/environment') && JSON.parse(row.body).action === 'start',
+      ),
+    ).toBe(false);
+  } finally {
+    await service.close();
+    await f.close();
+  }
+});
+
+it('completes pre-host Linux data migration before adopting native-first execution', async () => {
+  const f = await agentFixture(47);
+  const token = join(f.dataRoot, 'model/control-token');
+  await fs.unlink(token);
+  mocks.daemonEnsure.mockImplementationOnce(async () => {
+    // The legacy bootstrap migrates owned data before publishing the new host authority.
+    await fs.writeFile(token, 'a'.repeat(64), { mode: 0o600 });
+  });
+  mocks.nativeEnsure.mockResolvedValue(agentClient(f.config));
+  const service = runtimeService(
+    f.root,
+    'file:///mock/index.html',
+    '/mock/environment',
+    undefined,
+    { ...f.config, nativeFirst: true },
+    undefined,
+    'darwin',
+  );
+  try {
+    expect((await service.connect()).phase).toBe('ready');
+    expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1);
+    expect(mocks.nativeEnsure).not.toHaveBeenCalled();
+    expect((await service.connect()).phase).toBe('ready');
+    expect(mocks.nativeEnsure).toHaveBeenCalledTimes(1);
+    expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1);
+  } finally {
+    await service.close();
+    await f.close();
+  }
+});
+
+it('publishes legacy macOS Linux startup progress while its explicitly selected background service connects', async () => {
   const f = await agentFixture();
   const states: RuntimeSnapshot[] = [];
   let finish: () => unknown = () => {};
@@ -1408,7 +1477,7 @@ it('publishes macOS Linux startup progress while the background service is still
     async (state) => {
       states.push(state);
     },
-    { ...f.config, nativeFirst: true },
+    { ...f.config, nativeFirst: false },
     undefined,
     'darwin',
   );
@@ -1433,6 +1502,7 @@ it('publishes macOS Linux startup progress while the background service is still
 
 it('keeps a busy compatible host visible on first launch and defers its runtime handoff', async () => {
   const fixture = await agentFixture();
+  mocks.nativeEnsure.mockResolvedValue(agentClient(fixture.config));
   mocks.reconcile.mockRejectedValueOnce(Error('AGENT_UPDATE_BUSY'));
   const service = runtimeService(
     fixture.root,
@@ -1447,7 +1517,8 @@ it('keeps a busy compatible host visible on first launch and defers its runtime 
     expect(state.setup?.phase).toBe('waiting');
     expect(mocks.daemonEnsure).not.toHaveBeenCalled();
     expect((await service.connect()).phase).toBe('ready');
-    expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1);
+    expect(mocks.nativeEnsure).toHaveBeenCalledTimes(1);
+    expect(mocks.daemonEnsure).not.toHaveBeenCalled();
   } finally {
     await service.close();
     await fixture.close();
@@ -1484,6 +1555,7 @@ it.skipIf(process.platform !== 'darwin').each(['idle', 'running', 'queued-group'
   'a confirmed legacy upgrade rechecks accepted work without restarting the VM (%s)',
   async (condition) => {
     const f = await agentFixture(42);
+    mocks.nativeEnsure.mockResolvedValue(agentClient(f.config));
     mocks.reconcile.mockRejectedValueOnce(Error('AGENT_LEGACY_RESTART_REQUIRED'));
     const frame = { url: 'file:///mock/index.html' },
       sender = { mainFrame: undefined as unknown, send: vi.fn() };
@@ -1531,7 +1603,8 @@ it.skipIf(process.platform !== 'darwin').each(['idle', 'running', 'queued-group'
       expect(reply).toMatchObject(
         condition === 'idle' ? { ok: true } : { ok: false, error: 'AGENT_UPDATE_BUSY' },
       );
-      expect(mocks.daemonEnsure).toHaveBeenCalledTimes(condition === 'idle' ? 1 : 0);
+      expect(mocks.nativeEnsure).toHaveBeenCalledTimes(condition === 'idle' ? 1 : 0);
+      expect(mocks.daemonEnsure).not.toHaveBeenCalled();
       expect(
         f.power.commands.some((command) =>
           ['recovery.restart', 'recovery.start'].includes(command.type),

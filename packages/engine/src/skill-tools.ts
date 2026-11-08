@@ -26,7 +26,7 @@ export class SkillTools {
   readonly fields: Record<string, string[]> = {
     skill_files: ['skill'],
     skill_read: ['skill', 'path', 'offset', 'limit'],
-    skill_prepare: ['skill'],
+    skill_prepare: ['skill', 'target'],
   };
   readonly list = [
     {
@@ -52,14 +52,18 @@ export class SkillTools {
     {
       name: 'skill_prepare',
       description:
-        'Materialize the complete captured skill directory in this task workspace, preserving scripts/references/assets and relative paths. Does NOT run scripts or install dependencies. Run Linux scripts using existing shell/process tools from the returned directory, under normal approval. Native mode provides files for authorized GUI work, not a new host shell.',
-      inputSchema: object({ skill }),
+        'Materialize the complete captured skill directory, preserving scripts/references/assets and relative paths. Set target:"linux" for scripts or Office work in optional Linux; this starts installed Linux on demand. Omit target for the current workspace. Does NOT run scripts or install dependencies. Run Linux scripts with shell/process tools from the returned directory, under normal approval. Native files never grant a host shell.',
+      inputSchema: object({ skill, target: { type: 'string', enum: ['linux'] } }, ['skill']),
     },
   ];
   private readonly prepared = new WeakMap<AgentToolRun, Map<string, Promise<Prepared>>>();
   constructor(
     private readonly store: Skills,
-    private readonly stage: (run: AgentToolRun, bundle: SkillPackage) => Promise<Prepared>,
+    private readonly stage: (
+      run: AgentToolRun,
+      bundle: SkillPackage,
+      target?: 'linux',
+    ) => Promise<Prepared>,
     private readonly discovery?: SkillDiscovery,
   ) {
     if (discovery) {
@@ -102,18 +106,20 @@ export class SkillTools {
         files: await this.store.listCaptured(snapshot, selected.name),
       });
     if (name === 'skill_prepare') {
+      if (args.target !== undefined && args.target !== 'linux')
+        throw new Fault('INVALID_SKILL_TARGET');
       let pending = this.prepared.get(run);
       if (!pending) {
         pending = new Map();
         this.prepared.set(run, pending);
       }
       // Cache prepared files by captured version, not merely by a skill name reused during this task.
-      const preparationKey = this.store.capturedKey(snapshot, selected.name);
+      const preparationKey = `${this.store.capturedKey(snapshot, selected.name)}:${args.target ?? 'current'}`;
       let directory = pending.get(preparationKey);
       if (!directory) {
         directory = this.store
           .exportCaptured(snapshot, selected.name)
-          .then((bundle) => this.stage(run, bundle));
+          .then((bundle) => this.stage(run, bundle, args.target as 'linux' | undefined));
         pending.set(preparationKey, directory);
         directory.catch(() => {
           if (pending!.get(preparationKey) === directory) pending!.delete(preparationKey);

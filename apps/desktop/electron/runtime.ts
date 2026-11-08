@@ -390,6 +390,7 @@ export class RuntimeClient {
         botCapabilities?: unknown;
         searchSettings?: unknown;
         localComputer?: unknown;
+        linux?: unknown;
         hostBrowser?: unknown;
         chats?: unknown;
         notices?: unknown;
@@ -505,6 +506,17 @@ export class RuntimeClient {
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer
           : unavailableLocalComputer('LOCAL_INVALID_STATUS');
+      if (this.agent && raw.linux !== undefined) {
+        const linux = raw.linux;
+        snapshot.linux = {
+          available:
+            !!linux &&
+            typeof linux === 'object' &&
+            Object.keys(linux).length === 1 &&
+            'available' in linux &&
+            linux.available === true,
+        };
+      }
       if (this.agent && raw.hostBrowser !== undefined)
         snapshot.hostBrowser = isHostBrowserStatus(raw.hostBrowser)
           ? raw.hostBrowser
@@ -530,6 +542,10 @@ export class RuntimeClient {
             privilege: 'workspace',
             approvals: 'host',
           };
+          if (raw.reboot !== undefined) {
+            if (!isRebootStatus(raw.reboot)) throw new Error('INVALID_RUNTIME_STATE');
+            snapshot.reboot = raw.reboot;
+          }
         } else {
           if (!isRebootStatus(raw.reboot)) throw new Error('INVALID_RUNTIME_STATE');
           snapshot.reboot = raw.reboot;

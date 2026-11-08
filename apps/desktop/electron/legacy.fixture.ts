@@ -11,7 +11,8 @@ const dataRoot = values.get('--data')!,
   socketPath = values.get('--socket')!,
   config = values.get('--vm-config')!;
 const entry = fileURLToPath(import.meta.url),
-  legacy = path.basename(entry) === 'legacy.js';
+  legacy = path.basename(entry) === 'legacy.js',
+  native = !legacy && values.get('--mode') === 'native';
 const scope = createHash('sha256')
   .update(JSON.stringify([path.resolve(dataRoot), path.resolve(config)]))
   .digest('hex');
@@ -39,7 +40,13 @@ const server = createServer((req, res) => {
       ...(!legacy ? { entry, executable: process.execPath } : {}),
     });
   if (req.headers['x-prototype-token'] !== token) return reply({ error: 'UNAUTHORIZED' }, 403);
-  if (req.url === '/api/host/update') return reply({ error: 'NOT_FOUND' }, 404);
+  if (req.url === '/api/host/update') {
+    if (legacy) return reply({ error: 'NOT_FOUND' }, 404);
+    res.once('finish', () => server.close());
+    return reply({ scope, pid: process.pid });
+  }
+  if (!legacy && req.url === '/api/host/environment')
+    return reply({ required: false, target: 'linux', phase: 'existing' });
   if (req.url === '/api/model/settings')
     return reply({
       configured: true,
@@ -55,7 +62,12 @@ const server = createServer((req, res) => {
       mode: 'agent',
       sharedLogin: false,
       bots: {},
-      agent: { location: 'host', execution: 'linux-vm', privilege: 'sudo', approvals: 'host' },
+      agent: {
+        location: 'host',
+        execution: native ? 'local-workspace' : 'linux-vm',
+        privilege: native ? 'workspace' : 'sudo',
+        approvals: 'host',
+      },
       model: { available: true, provider: 'deepseek-official', model: 'deepseek-flash', bots: {} },
       reboot: { available: true, revision: 0, busy: false, vm: 'running' },
       computers: { available: true, revision: 0, limit: 2, items: [] },
