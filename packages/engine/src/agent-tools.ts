@@ -1086,8 +1086,12 @@ export class AgentTools {
         throw new Fault('INVALID_TOOL_ARGS', 400);
       trace = { name, surface, phase: 'running', at: new Date().toISOString() };
       run.trace.push(trace);
-      if (dataTool && (dataTool === this.software || dataTool === this.skills)) {
-        const response = await dataTool.invoke(run, name, args);
+      if (
+        dataTool &&
+        (dataTool === this.software || dataTool === this.skills || dataTool === this.localCommands)
+      ) {
+        // Command approvals and deduplication require the original model call identity.
+        const response = await dataTool.invoke(run, name, args, wireId);
         trace.phase = response.isError ? 'rejected' : 'settled';
         return response;
       }
