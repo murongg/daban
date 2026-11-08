@@ -1,6 +1,7 @@
 import {
   constants,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   open,
@@ -57,6 +58,54 @@ test('connected folders persist, belong to one Bot and revoke access immediately
   await expect(f.invoke('read', { path: 'nested/mock.txt' })).rejects.toThrow(
     'FOLDER_NOT_CONNECTED',
   );
+});
+
+test('folder metadata keeps exact filesystem identities across persistence', async (t) => {
+  const f = await fixture(t);
+  const state = JSON.parse(await readFile(f.file, 'utf8')) as {
+    folders: { dev: number | string; ino: number | string }[];
+  };
+  const info = await lstat(f.directory, { bigint: true });
+  expect(typeof state.folders[0].dev).toBe('string');
+  expect(typeof state.folders[0].ino).toBe('string');
+  expect(state.folders[0].dev).toBe(info.dev.toString());
+  expect(state.folders[0].ino).toBe(info.ino.toString());
+
+  const reopened = new Folders(f.file, [f.privateRoot]);
+  await expect(
+    reopened.invoke(
+      { bot: 'mock-alpha', id: 'mock-run', signal: new AbortController().signal },
+      'list',
+      { folder: f.grant.id, path: '' },
+      'mock-list',
+    ),
+  ).resolves.toMatchObject({ items: [{ path: 'nested' }] });
+});
+
+test('folder metadata accepts full-width decimal filesystem identities', async (t) => {
+  const f = await fixture(t);
+  const state = JSON.parse(await readFile(f.file, 'utf8')) as {
+    folders: { dev: number | string; ino: number | string }[];
+  };
+  state.folders[0].dev = '18446744073709551614';
+  state.folders[0].ino = '18446744073709551615';
+  await writeFile(f.file, JSON.stringify(state));
+
+  const reopened = new Folders(f.file, [f.privateRoot]);
+  expect((await reopened.status('mock-alpha')).folders).toEqual([f.grant]);
+});
+
+test('folder metadata upgrades existing safe numeric filesystem identities', async (t) => {
+  const f = await fixture(t);
+  const state = JSON.parse(await readFile(f.file, 'utf8')) as {
+    folders: { dev: number | string; ino: number | string }[];
+  };
+  state.folders[0].dev = 123;
+  state.folders[0].ino = 456;
+  await writeFile(f.file, JSON.stringify(state));
+
+  const reopened = new Folders(f.file, [f.privateRoot]);
+  expect((await reopened.status('mock-alpha')).folders).toEqual([f.grant]);
 });
 
 test('local reads and bounded filename/content searches work without commands or a VM', async (t) => {

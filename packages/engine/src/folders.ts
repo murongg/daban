@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, type Stats } from 'node:fs';
+import { type BigIntStats, constants } from 'node:fs';
 import {
   type FileHandle,
   link,
@@ -23,8 +23,8 @@ import {
 import { Fault } from './control.js';
 
 interface Grant extends LocalFolder {
-  dev: number;
-  ino: number;
+  dev: string;
+  ino: string;
   connected: boolean;
 }
 interface Receipt {
@@ -45,8 +45,28 @@ interface Run {
 }
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const within = (root: string, file: string) => file === root || file.startsWith(root + path.sep);
-const revision = (info: Stats) =>
-  hash(JSON.stringify([info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs, info.mode]));
+// Windows file IDs can exceed Number precision; keep them exact for durable grants and race checks.
+const stat = (file: string) => lstat(file, { bigint: true });
+const identity = (info: Pick<BigIntStats, 'dev' | 'ino'>) => ({
+  dev: info.dev.toString(),
+  ino: info.ino.toString(),
+});
+const persistedIdentity = (value: unknown) => {
+  if (typeof value === 'string' && /^\d+$/.test(value)) return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
+  return undefined;
+};
+const revision = (info: BigIntStats) =>
+  hash(
+    JSON.stringify([
+      info.dev.toString(),
+      info.ino.toString(),
+      info.size.toString(),
+      info.mtimeNs.toString(),
+      info.ctimeNs.toString(),
+      info.mode.toString(),
+    ]),
+  );
 const missing = (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
 const fileLimit = 1024 * 1024;
@@ -70,17 +90,17 @@ export async function localSnapshot(
 ) {
   signal.throwIfAborted();
   // Windows may ignore O_NOFOLLOW, so bind the open handle to the checked path before reading.
-  const before = await lstat(file);
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1)
+  const before = await stat(file);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n)
     throw new Fault('LOCAL_PATH_DENIED');
   const handle = await openFile(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const info = await handle.stat();
-    const named = await lstat(file);
+    const info = await handle.stat({ bigint: true });
+    const named = await stat(file);
     const canonical = await realpath(file);
     if (
       !info.isFile() ||
-      info.nlink !== 1 ||
+      info.nlink !== 1n ||
       info.dev !== before.dev ||
       info.ino !== before.ino ||
       named.isSymbolicLink() ||
@@ -91,7 +111,7 @@ export async function localSnapshot(
       throw new Fault('LOCAL_PATH_DENIED');
     signal.throwIfAborted();
     let content: string | undefined;
-    if (info.size <= fileLimit) {
+    if (info.size <= BigInt(fileLimit)) {
       const bytes = await handle.readFile();
       try {
         content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -100,8 +120,8 @@ export async function localSnapshot(
         content = undefined;
       }
     }
-    const after = await handle.stat();
-    const finalNamed = await lstat(file);
+    const after = await handle.stat({ bigint: true });
+    const finalNamed = await stat(file);
     const finalCanonical = await realpath(file);
     if (
       revision(info) !== revision(after) ||
@@ -139,12 +159,12 @@ export class Folders {
     );
     let before: Awaited<ReturnType<typeof lstat>>;
     try {
-      before = await lstat(this.file);
+      before = await stat(this.file);
     } catch (error) {
       if (missing(error)) return;
       throw new Fault('LOCAL_FOLDERS_UNAVAILABLE');
     }
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1)
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n)
       throw new Fault('LOCAL_FOLDERS_UNAVAILABLE');
     let handle: FileHandle;
     try {
@@ -153,20 +173,20 @@ export class Folders {
       throw new Fault('LOCAL_FOLDERS_UNAVAILABLE');
     }
     try {
-      const info = await handle.stat();
-      const named = await lstat(this.file);
+      const info = await handle.stat({ bigint: true });
+      const named = await stat(this.file);
       // The catalogue contains durable grants; never parse data reached through a replaced link.
       if (
         !info.isFile() ||
-        info.nlink !== 1 ||
+        info.nlink !== 1n ||
         info.dev !== before.dev ||
         info.ino !== before.ino ||
         named.isSymbolicLink() ||
         named.dev !== info.dev ||
         named.ino !== info.ino ||
-        info.size > 32 * 1024 * 1024 ||
+        info.size > 32n * 1024n * 1024n ||
         (process.platform !== 'win32' &&
-          (info.uid !== process.getuid?.() || (info.mode & 0o777) !== 0o600))
+          (info.uid !== BigInt(process.getuid?.() ?? -1) || (info.mode & 0o777n) !== 0o600n))
       )
         throw new Error('metadata');
       const value = JSON.parse(await handle.readFile('utf8')) as State;
@@ -175,19 +195,27 @@ export class Folders {
         !Array.isArray(value.folders) ||
         !Array.isArray(value.receipts) ||
         value.folders.length > 256 ||
-        value.receipts.length > 1000 ||
-        value.folders.some(
-          (item) =>
-            !isFolderStatus({
-              bot: item.bot,
-              folders: [{ id: item.id, bot: item.bot, name: item.name, path: item.path }],
-              operations: [],
-            }) ||
-            !path.isAbsolute(item.path) ||
-            !Number.isSafeInteger(item.dev) ||
-            !Number.isSafeInteger(item.ino) ||
-            typeof item.connected !== 'boolean',
-        ) ||
+        value.receipts.length > 1000
+      )
+        throw new Error('metadata');
+      const folders = value.folders.map((item) => {
+        const dev = persistedIdentity(item.dev);
+        const ino = persistedIdentity(item.ino);
+        if (
+          !dev ||
+          !ino ||
+          !isFolderStatus({
+            bot: item.bot,
+            folders: [{ id: item.id, bot: item.bot, name: item.name, path: item.path }],
+            operations: [],
+          }) ||
+          !path.isAbsolute(item.path) ||
+          typeof item.connected !== 'boolean'
+        )
+          throw new Error('metadata');
+        return { ...item, dev, ino };
+      });
+      if (
         value.receipts.some(
           (item) =>
             typeof item.key !== 'string' ||
@@ -200,7 +228,7 @@ export class Folders {
         )
       )
         throw new Error('metadata');
-      this.state = value;
+      this.state = { version: 1, folders, receipts: value.receipts };
     } catch {
       throw new Fault('LOCAL_FOLDERS_UNAVAILABLE');
     } finally {
@@ -275,14 +303,14 @@ export class Folders {
         )
       )
         throw new Fault('LOCAL_PATH_DENIED');
-      const info = await lstat(canonical);
+      const info = await stat(canonical);
       if (!info.isDirectory() || info.isSymbolicLink()) throw new Fault('LOCAL_PATH_DENIED');
       const existing = this.state.folders.find(
         (item) =>
           item.bot === bot &&
           item.path === canonical &&
-          item.dev === info.dev &&
-          item.ino === info.ino,
+          item.dev === info.dev.toString() &&
+          item.ino === info.ino.toString(),
       );
       if (existing?.connected) {
         await this.root(bot, existing.id);
@@ -308,8 +336,7 @@ export class Folders {
         bot,
         path: canonical,
         name: path.basename(canonical),
-        dev: info.dev,
-        ino: info.ino,
+        ...identity(info),
         connected: true,
       };
       this.state.folders.push(grant);
@@ -342,12 +369,12 @@ export class Folders {
       (item) => item.bot === bot && item.id === id && item.connected,
     );
     if (!grant) throw new Fault('FOLDER_NOT_CONNECTED', 403);
-    const info = await lstat(grant.path).catch(() => undefined);
+    const info = await stat(grant.path).catch(() => undefined);
     if (
       !info?.isDirectory() ||
       info.isSymbolicLink() ||
-      info.dev !== grant.dev ||
-      info.ino !== grant.ino ||
+      info.dev.toString() !== grant.dev ||
+      info.ino.toString() !== grant.ino ||
       (await realpath(grant.path)) !== grant.path
     )
       throw new Fault('LOCAL_FOLDER_CHANGED', 409);
@@ -357,7 +384,7 @@ export class Folders {
     return this.enqueue(async () => {
       const grant = await this.root(bot, id);
       const directory = await this.target(grant, relative ?? '', false, true);
-      const info = await lstat(directory);
+      const info = await stat(directory);
       if (!info.isDirectory() || info.isSymbolicLink()) throw new Fault('LOCAL_PATH_DENIED', 403);
       return { root: grant.path, cwd: directory };
     });
@@ -382,14 +409,14 @@ export class Folders {
       current = path.join(current, pieces[index]);
       if (this.denied.some((root) => within(path.resolve(root), current)))
         throw new Fault('LOCAL_PATH_DENIED', 403);
-      const info = await lstat(current).catch((error) => {
+      const info = await stat(current).catch((error) => {
         if (missing(error) && create && index === pieces.length - 1) return undefined;
         throw error;
       });
       if (
         info &&
         (info.isSymbolicLink() ||
-          (!info.isDirectory() && (!info.isFile() || info.nlink !== 1)) ||
+          (!info.isDirectory() && (!info.isFile() || info.nlink !== 1n)) ||
           (index < pieces.length - 1 && !info.isDirectory()))
       )
         throw new Fault('LOCAL_PATH_DENIED', 403);
@@ -465,20 +492,20 @@ export class Folders {
         this.check(run);
         if (entry.name === '.daban-trash' || entry.isSymbolicLink()) continue;
         const full = path.join(file, entry.name);
-        const info = await lstat(full);
-        if (info.isSymbolicLink() || (!info.isDirectory() && (!info.isFile() || info.nlink !== 1)))
+        const info = await stat(full);
+        if (info.isSymbolicLink() || (!info.isDirectory() && (!info.isFile() || info.nlink !== 1n)))
           continue;
         items.push({
           path: path.relative(grant.path, full).split(path.sep).join('/'),
           kind: info.isDirectory() ? 'directory' : 'file',
-          size: info.size,
+          size: Number(info.size),
           revision: revision(info),
         });
       }
       await this.target(grant, args.path ?? '', false, true);
       return { items, truncated: entries.length > 500 };
     }
-    const existing = await lstat(file).catch((error) => {
+    const existing = await stat(file).catch((error) => {
       if (missing(error)) return undefined;
       throw error;
     });
@@ -486,7 +513,9 @@ export class Folders {
     if (action === 'read') {
       if (!original) throw new Fault('LOCAL_FILE_REQUIRED');
       if (original.content === undefined)
-        throw new Fault(existing!.size > fileLimit ? 'LOCAL_FILE_TOO_LARGE' : 'LOCAL_FILE_BINARY');
+        throw new Fault(
+          existing!.size > BigInt(fileLimit) ? 'LOCAL_FILE_TOO_LARGE' : 'LOCAL_FILE_BINARY',
+        );
       const offset = args.offset ?? 0,
         limit = args.limit ?? 16000;
       if (
@@ -542,7 +571,7 @@ export class Folders {
     if (action === 'move') {
       destination = await this.target(grant, args.destination, true);
       if (
-        await lstat(destination).then(
+        await stat(destination).then(
           () => true,
           (error) => {
             if (missing(error)) return false;
@@ -573,12 +602,16 @@ export class Folders {
     await this.save();
     this.check(run);
     await this.target(grant, args.path, ['write', 'mkdir'].includes(action));
-    if (original && revision(await lstat(file)) !== original.revision)
+    if (original && revision(await stat(file)) !== original.revision)
       throw new Fault('LOCAL_FILE_CONFLICT', 409);
     if (action === 'mkdir') await mkdir(file, { mode: 0o755 });
     else if (action === 'write' || action === 'edit') {
       const temporary = path.join(path.dirname(file), `.daban-write-${randomUUID()}`);
-      const output = await open(temporary, 'wx', original ? original.info.mode & 0o777 : 0o644);
+      const output = await open(
+        temporary,
+        'wx',
+        original ? Number(original.info.mode & 0o777n) : 0o644,
+      );
       try {
         await output.writeFile(content!, 'utf8');
         await output.sync();
@@ -589,7 +622,7 @@ export class Folders {
         this.check(run);
         await this.target(grant, args.path, true);
         if (original) {
-          if (revision(await lstat(file)) !== original.revision)
+          if (revision(await stat(file)) !== original.revision)
             throw new Fault('LOCAL_FILE_CONFLICT', 409);
           await rename(temporary, file);
         } else {
@@ -623,21 +656,22 @@ export class Folders {
       if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'EEXIST')
         throw error;
     });
-    const info = await lstat(directory);
+    const info = await stat(directory);
     if (!info.isDirectory() || info.isSymbolicLink() || (await realpath(directory)) !== directory)
       throw new Fault('LOCAL_PATH_DENIED');
     return directory;
   }
-  private async move(source: string, destination: string, identity: Stats) {
+  private async move(source: string, destination: string, expected: BigIntStats) {
     // link is an atomic no-overwrite claim; rename would silently replace an existing destination.
     await link(source, destination);
-    const current = await lstat(source),
-      target = await lstat(destination);
+    const current = await stat(source),
+      target = await stat(destination),
+      expectedIdentity = identity(expected);
     if (
-      current.ino !== identity.ino ||
-      current.dev !== identity.dev ||
-      target.ino !== identity.ino ||
-      target.dev !== identity.dev ||
+      current.ino.toString() !== expectedIdentity.ino ||
+      current.dev.toString() !== expectedIdentity.dev ||
+      target.ino.toString() !== expectedIdentity.ino ||
+      target.dev.toString() !== expectedIdentity.dev ||
       target.isSymbolicLink()
     )
       throw new Fault('LOCAL_OUTCOME_UNKNOWN');
@@ -655,8 +689,8 @@ export class Folders {
       if (receipt.operation.state === 'restored') return { restored: true };
       const destination = await this.target(grant, receipt.operation.path, true);
       const source = path.join(await this.trash(grant), id);
-      const info = await lstat(source);
-      if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1)
+      const info = await stat(source);
+      if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1n)
         throw new Fault('LOCAL_PATH_DENIED');
       await this.move(source, destination, info);
       receipt.operation.state = 'restored';
@@ -713,7 +747,7 @@ export class Folders {
           continue;
         }
         const value = await this.snapshot(file, grant, run.signal);
-        bytes += value.info.size;
+        bytes += Number(value.info.size);
         if (value.content === undefined) continue;
         const lines = value.content.split('\n');
         for (let index = 0; index < lines.length; index++) {
