@@ -147,8 +147,10 @@ export class Interactions {
       }
       const now = new Date().toISOString();
       // Only the host's captured live-task policy can grant this; old records and questions never gain new authority.
+      // Folder access outlives a task and therefore always requires an actual native picker selection.
       const automatic =
         value.kind === 'approval' &&
+        value.tool !== 'local_folder' &&
         this.autoApprove?.(bot, runId, value.sessionId, conversationId) === true;
       return this.commit({
         ...value,

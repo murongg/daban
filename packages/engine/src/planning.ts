@@ -59,6 +59,10 @@ const reads = new Set([
     'work_read',
     'bot_schedule_list',
     'task_catalog',
+    'local_folders',
+    'local_list',
+    'local_read',
+    'local_search',
   ].map((name) => `mcp__computer__${name}`),
 ]);
 export function apply(ctx: Context, config: { active: boolean }) {

@@ -19,6 +19,7 @@ import {
   isComputerRequest,
   isConversationRequest,
   isDocumentUpload,
+  isFolderCommand,
   isGroupActionRequest,
   isGroupCopyRequest,
   isGroupInput,
@@ -90,6 +91,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     return keys(value, ['type', 'request']) && isHostBrowserRequest(value.request)
       ? (value as Extract<RuntimeCommand, { type: 'hostBrowser' }>)
       : fail();
+  if (value.type.startsWith('folders.')) return isFolderCommand(value) ? value : fail();
   if (value.type.startsWith('vm.')) return isVmCommand(value) ? value : fail();
   if (value.type.startsWith('local.')) return isLocalComputerCommand(value) ? value : fail();
   if (value.type.startsWith('notes.')) return isNoteCommand(value) ? value : fail();

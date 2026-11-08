@@ -67,19 +67,23 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { Authority, ViewerGrants } from './authority.js';
-import { Commands } from './commands.js';
+import { Commands, type HostCommandExecutor } from './commands.js';
 import { Computers } from './computers.js';
 import { errorCode, Fault } from './control.js';
 import { createDesktop, Desktop, type DesktopOptions } from './desktop.js';
 import { Diagnostics, desktopDependencies } from './diagnostics.js';
 import { Documents } from './documents.js';
 import type { Executor } from './execution.js';
+import { Folders } from './folders.js';
+import { folderRequest } from './folders-api.js';
 import { GroupTools } from './group-tools.js';
 import { Groups } from './groups.js';
 import { HostBrowser } from './host-browser.js';
 import { integrationCommand } from './integration-api.js';
 import { BotLifecycle } from './lifecycle.js';
 import { LinuxTools } from './linux-tools.js';
+import { LocalCommandTools } from './local-command-tools.js';
+import { LocalTools } from './local-tools.js';
 import { Machine } from './machine.js';
 import { ModelRuns } from './model.js';
 import { NativeWorkspace } from './native-workspace.js';
@@ -271,6 +275,7 @@ export interface HostComposition {
   };
   localComputer?: import('./local-computer.js').LocalComputerClient;
   nativeWorkspace?: string;
+  runLocalCommand?: HostCommandExecutor;
   offlineWorkspaceRoot?: string;
   identity?: {
     dataRoot: string;
@@ -354,6 +359,7 @@ export async function startPrototype({
   let linuxRecovery: Recovery | undefined;
   let linuxAvailable = false;
   let commands: Commands | undefined;
+  let localCommands: Commands | undefined;
   let files: AgentWorkspace | undefined;
   let executionSnapshot: ExecutionSnapshot | undefined;
   let computerAvailable = !host?.nativeWorkspace && !host?.offlineWorkspaceRoot;
@@ -926,6 +932,21 @@ export async function startPrototype({
             } finally {
               if (action) changing.delete(bot!);
             }
+          }
+          if (url.pathname.startsWith('/api/folders/')) {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            if (url.search) throw new Fault('INVALID_LOCAL_FILE_ARGS', 400);
+            const folders = models?.tools.localFiles?.folders;
+            if (!folders || !models) throw new Fault('LOCAL_FOLDERS_UNAVAILABLE', 503);
+            return json(
+              res,
+              await folderRequest(
+                folders,
+                models.profiles,
+                url.pathname.slice('/api/folders/'.length),
+                await body(req),
+              ),
+            );
           }
           if (url.pathname.startsWith('/api/notes/')) {
             if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
@@ -1698,6 +1719,7 @@ export async function startPrototype({
                   }
                 : {}),
               ...(host?.localComputer ? { localComputer: await host.localComputer.status() } : {}),
+              ...(models?.tools.localFiles ? { localFolders: true } : {}),
               ...(host?.nativeWorkspace ? { linux: { available: linuxAvailable } } : {}),
               ...(hostBrowser ? { hostBrowser: await hostBrowser.status() } : {}),
               ...(host?.reboot && (!host.nativeWorkspace || linuxAvailable)
@@ -2061,6 +2083,7 @@ export async function startPrototype({
       models,
       commands,
       hostBrowser,
+      localCommands,
       runtime,
     ]) {
       try {
@@ -2267,6 +2290,39 @@ export async function startPrototype({
         dir: modelDir,
       });
       await models.ready;
+      if (host?.nativeWorkspace) {
+        const folders = new Folders(path.join(modelDir, 'folders.json'), [host.dataRoot], (run) => {
+          if (!models || !upgrade.admit() || replacingRecovery || (recovery && !recovery.admit()))
+            throw new Fault('RUNTIME_RECOVERY_PENDING');
+          models.profiles.assertRegistered(run.bot);
+          models.profiles.assertActive(run.bot);
+          const job = models.jobs.get(run.bot);
+          if (!job?.running || job.id !== run.id || job.abort.signal.aborted)
+            throw new Fault('MODEL_CANCELLED');
+        });
+        models.tools.localFiles = new LocalTools(folders, models.interactions);
+        if (host.runLocalCommand && process.platform !== 'win32') {
+          localCommands = new Commands({
+            file: path.join(modelDir, 'local-commands.sqlite'),
+            interactions: models.interactions,
+            target: 'host-local',
+            assertLive: (run) => {
+              if (replacingRecovery || !upgrade.admit() || (recovery && !recovery.admit()))
+                throw new Fault('RUNTIME_RECOVERY_PENDING');
+              models!.profiles.assertActive(run.bot);
+              const job = models!.jobs.get(run.bot);
+              if (!job?.running || job.id !== run.id || job.abort !== run.abort)
+                throw new Fault('COMMAND_CANCELLED');
+            },
+          });
+          await localCommands.ready;
+          models.tools.localCommands = new LocalCommandTools(
+            folders,
+            localCommands,
+            host.runLocalCommand,
+          );
+        }
+      }
       if (host?.execution) {
         commands = new Commands({
           file: path.join(modelDir, 'commands.sqlite'),

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { isInteractionInput } from '@daban/protocol';
+import { isInteractionInput, matchesReply } from '@daban/protocol';
 import { drizzle } from 'drizzle-orm/node-sqlite';
 import { expect, test } from 'vitest';
 import type { CommandReview } from './commands.js';
@@ -32,6 +32,80 @@ test('VM approval records accept only exact bounded commands and absolute guest 
   expect(isInteractionInput({ ...approval, target: 'host' })).toBe(false);
   expect(isInteractionInput({ ...approval, env: { MOCK_PRIVATE: 'synthetic' } })).toBe(false);
 });
+
+test('local folder requests are bounded approvals tied to a host directory path', () => {
+  const approval = {
+    id: 'mock-folder-request',
+    sessionId: 'mock-session',
+    kind: 'approval',
+    tool: 'local_folder',
+    path: '/mock/project',
+  };
+  expect(isInteractionInput(approval)).toBe(true);
+  expect(isInteractionInput({ ...approval, path: '' })).toBe(false);
+  expect(isInteractionInput({ ...approval, path: '/mock/project\0' })).toBe(false);
+  expect(isInteractionInput({ ...approval, path: 'x'.repeat(4097) })).toBe(false);
+  expect(isInteractionInput({ ...approval, extra: true })).toBe(false);
+  const grant = { kind: 'folder_grant', folderId: 'mock-folder', path: '/mock/project' };
+  expect(matchesReply(approval as never, grant)).toBe(true);
+  expect(matchesReply(approval as never, { kind: 'decision', allow: true })).toBe(false);
+  expect(matchesReply(approval as never, { kind: 'decision', allow: false })).toBe(true);
+  expect(matchesReply(approval as never, { ...grant, path: '' })).toBe(false);
+  expect(
+    matchesReply(
+      { ...approval, tool: 'local_file', operation: 'local_write', arguments: '{}' } as never,
+      grant,
+    ),
+  ).toBe(false);
+});
+
+test('host commands require one-time human approval even in full mode', async () => {
+  const context = await fixture();
+  let dispatches = 0;
+  const options = {
+    ...context,
+    target: 'host-local' as const,
+    review: async () => 'allow' as const,
+  };
+  const commands = new Commands(options);
+  const current = {
+    ...run(),
+    root: '/synthetic/selected',
+    workdir: '/synthetic/selected',
+    task: { ...run().task, approvalMode: 'full' as const },
+  };
+  const pendingCall = commands.invoke(
+    current,
+    'local_shell',
+    { folder: 'mock-folder', cwd: '', command: 'python3 process.py' },
+    'mock-host-command',
+    async () => {
+      dispatches++;
+      return output;
+    },
+  );
+  try {
+    const approval = await pending(context.interactions);
+    expect(approval).toMatchObject({
+      tool: 'host_command',
+      command: 'python3 process.py',
+      cwd: '/synthetic/selected',
+      root: '/synthetic/selected',
+      target: 'host-local',
+    });
+    expect(dispatches).toBe(0);
+    await context.interactions.reply(current.bot, current.id, approval.id, {
+      kind: 'decision',
+      allow: true,
+    });
+    expect(await pendingCall).toEqual(output);
+    expect(dispatches).toBe(1);
+  } finally {
+    await commands.close();
+    await rm(context.root, { recursive: true, force: true });
+  }
+});
+
 const run = () => ({
   id: 'mock-run',
   bot: 'mock-bot',

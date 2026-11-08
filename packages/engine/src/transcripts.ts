@@ -93,13 +93,31 @@ export function projectInteraction(
                 purpose: item.purpose,
                 target: item.target,
               }
-            : {
-                tool: item.tool,
-                name: item.name,
-                origin: item.origin,
-                operation: item.operation,
-                arguments: transcriptText(item.arguments, redact),
-              };
+            : item.tool === 'host_command'
+              ? {
+                  tool: item.tool,
+                  command: item.command,
+                  cwd: item.cwd,
+                  root: item.root,
+                  purpose: item.purpose,
+                  target: item.target,
+                }
+              : item.tool === 'local_file'
+                ? {
+                    tool: item.tool,
+                    path: item.path,
+                    operation: item.operation,
+                    arguments: transcriptText(item.arguments, redact),
+                  }
+                : item.tool === 'local_folder'
+                  ? { tool: item.tool, path: item.path }
+                  : {
+                      tool: item.tool,
+                      name: item.name,
+                      origin: item.origin,
+                      operation: item.operation,
+                      arguments: transcriptText(item.arguments, redact),
+                    };
   return {
     source: `human:${item.id}:${item.status}:${item.updatedAt}`,
     kind: 'interaction',

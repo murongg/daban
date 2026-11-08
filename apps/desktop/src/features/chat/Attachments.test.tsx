@@ -349,14 +349,14 @@ it('accepts file drops inside the composer, announces the target and leaves plai
   const form = screen.getByRole('textbox', { name: '发送消息' }).closest('form')!;
   const transfer = { types: ['Files'], files: [syntheticFile()], items: [], dropEffect: 'none' };
   fireEvent.dragEnter(form, { dataTransfer: transfer });
-  expect(screen.getByText('松开即可添加附件')).toBeVisible();
+  expect(screen.getByText('松开即可添加附件或引用文件夹')).toBeVisible();
   fireEvent.dragEnter(screen.getByRole('textbox', { name: '发送消息' }), {
     dataTransfer: transfer,
   });
   fireEvent.dragLeave(screen.getByRole('textbox', { name: '发送消息' }), {
     dataTransfer: transfer,
   });
-  expect(screen.getByText('松开即可添加附件')).toBeVisible();
+  expect(screen.getByText('松开即可添加附件或引用文件夹')).toBeVisible();
   const drag = createEvent.dragOver(form, { dataTransfer: transfer });
   fireEvent(form, drag);
   expect(drag.defaultPrevented).toBe(true);
@@ -365,7 +365,7 @@ it('accepts file drops inside the composer, announces the target and leaves plai
   fireEvent(form, drop);
   expect(drop.defaultPrevented).toBe(true);
   expect(await screen.findByRole('button', { name: '预览附件 mock.pdf' })).toBeVisible();
-  expect(screen.queryByText('松开即可添加附件')).toBeNull();
+  expect(screen.queryByText('松开即可添加附件或引用文件夹')).toBeNull();
   const text = createEvent.drop(form, {
     dataTransfer: { types: ['text/plain'], files: [], items: [], getData: () => 'example.test' },
   });
@@ -374,6 +374,74 @@ it('accepts file drops inside the composer, announces the target and leaves plai
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'attachment.upload'),
   ).toHaveLength(1);
+});
+
+it('inserts a dropped folder link into the composer without uploading it as an attachment', async () => {
+  const backend = connect(30);
+  const bridge = window.daban!;
+  const getPathForFile = vi.fn(() => '/mock/project');
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { ...bridge, getPathForFile },
+  });
+  render(<App />);
+  await screen.findByRole('button', { name: /Bot 模型：/ });
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  const form = input.closest('form')!;
+  fireEvent.change(input, { target: { value: 'Please update this project' } });
+  const transfer = {
+    types: ['Files'],
+    files: [syntheticFile('mock-project')],
+    items: [
+      {
+        kind: 'file',
+        getAsFile: () => syntheticFile('mock-project'),
+        webkitGetAsEntry: () => ({ isDirectory: true, name: 'mock-project' }),
+      },
+    ],
+    dropEffect: 'none',
+  };
+  const drop = createEvent.drop(form, { dataTransfer: transfer });
+  fireEvent(form, drop);
+
+  expect(drop.defaultPrevented).toBe(true);
+  expect(getPathForFile).toHaveBeenCalledTimes(1);
+  expect(input).toHaveValue('Please update this project\n/mock/project');
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'attachment.upload'),
+  ).toHaveLength(0);
+});
+
+it('recognizes and references a folder drop exposed only as a local URI', async () => {
+  connect(30);
+  const { runtime } = window.daban!;
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { platform: 'darwin', runtime },
+  });
+  render(<App />);
+  await screen.findByRole('button', { name: /Bot 模型：/ });
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  const form = input.closest('form')!;
+  const drop = createEvent.drop(form, {
+    dataTransfer: {
+      types: [],
+      files: [],
+      items: [
+        {
+          kind: 'file',
+          getAsFile: () => null,
+          webkitGetAsEntry: () => ({ isDirectory: true, name: 'mock-project' }),
+        },
+      ],
+      dropEffect: 'none',
+      getData: (type: string) => (type === 'text/uri-list' ? 'file:///mock/project\r\n' : ''),
+    },
+  });
+  fireEvent(form, drop);
+
+  expect(drop.defaultPrevented).toBe(true);
+  expect(input).toHaveValue('file:///mock/project');
 });
 
 it('serializes overlapping paste/drop events and keeps a delayed upload with its originating Bot', async () => {

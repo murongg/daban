@@ -1,4 +1,10 @@
-import { agentId, type Interaction, matchesReply, type UserReply } from '@daban/protocol';
+import {
+  agentId,
+  type Interaction,
+  isFolderStatus,
+  matchesReply,
+  type UserReply,
+} from '@daban/protocol';
 import { Braces, Check, ChevronDown, Inbox, X } from 'lucide-react';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { Tab, TabList, TabPanel, Tabs } from 'react-aria-components';
@@ -18,7 +24,29 @@ function draftAnswer(drafts: State['replyDrafts'][string], id: string) {
 function Approval({ request }: { request: Extract<Interaction, { kind: 'approval' }> }) {
   return (
     <>
-      {request.tool === 'vm_command' && <Command request={request} />}
+      {(request.tool === 'vm_command' || request.tool === 'host_command') && (
+        <Command request={request} />
+      )}
+      {request.tool === 'local_file' && (
+        <>
+          <p className="approval-description">{t('folders.approvalDescription')}</p>
+          <p className="request-value">{request.path}</p>
+          <pre className="request-value">
+            {request.operation}
+            {'\n'}
+            {request.arguments}
+          </pre>
+        </>
+      )}
+      {request.tool === 'local_folder' && (
+        <>
+          <p className="approval-description">{t('folders.requestDescription')}</p>
+          <p className="request-value">{request.path}</p>
+          {request.reply?.kind === 'folder_grant' && (
+            <p className="request-value">{t('folders.connectedPath', { 0: request.reply.path })}</p>
+          )}
+        </>
+      )}
       {request.tool === 'web_fetch' && (
         <>
           <p className="approval-description">{t('requests.allowOnlyPublicWebpageReadDoesNot')}</p>
@@ -99,19 +127,20 @@ function Request({
   const settled = current.kind === 'approval' && current.status !== 'pending';
   const subject =
     current.kind === 'approval'
-      ? current.tool === 'vm_command' || current.tool === 'software_install'
+      ? current.tool === 'vm_command' ||
+        current.tool === 'host_command' ||
+        current.tool === 'software_install'
         ? current.purpose
-        : current.tool === 'mcp_call'
-          ? `${current.name} · ${current.operation}`
-          : current.url
+        : current.tool === 'local_file' || current.tool === 'local_folder'
+          ? current.path
+          : current.tool === 'mcp_call'
+            ? `${current.name} · ${current.operation}`
+            : current.url
       : '';
 
   const savedAnswers = current.reply?.kind === 'answer' ? current.reply.answers : [];
-  async function submit(reply: UserReply) {
-    if (saving) return;
-    const payload = submitted || reply;
+  async function sendReply(payload: UserReply) {
     setSubmitted(payload);
-    setSaving(true);
     setError('');
     try {
       const saved = await runtime.command<Interaction>({
@@ -140,6 +169,37 @@ function Request({
         )
           setSubmitted(undefined);
       }
+    }
+  }
+  async function submit(reply: UserReply) {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await sendReply(submitted || reply);
+    } finally {
+      if (mounted.current) setSaving(false);
+    }
+  }
+  async function grantFolder() {
+    if (saving || current.kind !== 'approval' || current.tool !== 'local_folder') return;
+    setSaving(true);
+    setError('');
+    try {
+      const folder = await runtime.command<unknown>({
+        type: 'folders.pick',
+        bot: current.bot,
+        suggestedPath: current.path,
+      });
+      if (folder === null) return;
+      const status = { bot: current.bot, folders: [folder], operations: [] };
+      if (!isFolderStatus(status)) throw new Error('INVALID_RUNTIME_STATE');
+      await sendReply({
+        kind: 'folder_grant',
+        folderId: status.folders[0].id,
+        path: status.folders[0].path,
+      });
+    } catch (failure) {
+      if (mounted.current) setError(runtimeError(failure));
     } finally {
       if (mounted.current) setSaving(false);
     }
@@ -168,13 +228,19 @@ function Request({
         <h3 className="approval-title">
           {current.kind === 'question'
             ? t('requests.addDetailsContinue')
-            : current.tool === 'vm_command'
-              ? t('requests.allowCommandLinuxVirtualMachine')
-              : current.tool === 'software_install'
-                ? t('requests.allowInstallationSoftware')
-                : current.tool === 'mcp_call'
-                  ? t('requests.allowExternalToolCall')
-                  : t('requests.allowReadingUrl')}
+            : current.tool === 'local_file'
+              ? t('folders.approvalTitle')
+              : current.tool === 'local_folder'
+                ? t('folders.requestTitle')
+                : current.tool === 'vm_command'
+                  ? t('requests.allowCommandLinuxVirtualMachine')
+                  : current.tool === 'host_command'
+                    ? t('requests.allowHostCommand')
+                    : current.tool === 'software_install'
+                      ? t('requests.allowInstallationSoftware')
+                      : current.tool === 'mcp_call'
+                        ? t('requests.allowExternalToolCall')
+                        : t('requests.allowReadingUrl')}
         </h3>
       )}
       {current.kind === 'approval' &&
@@ -287,13 +353,21 @@ function Request({
                     type="button"
                     className="primary"
                     disabled={saving}
-                    onClick={() => submit({ kind: 'decision', allow: true })}
+                    onClick={() =>
+                      current.tool === 'local_folder'
+                        ? grantFolder()
+                        : submit({ kind: 'decision', allow: true })
+                    }
                   >
-                    {current.tool === 'vm_command'
-                      ? t('requests.confirmExecution')
-                      : current.tool === 'software_install'
-                        ? t('requests.confirmInstallation')
-                        : t('requests.allowOnce')}
+                    {current.tool === 'local_folder'
+                      ? t('folders.chooseAndConnect')
+                      : current.tool === 'host_command'
+                        ? t('requests.confirmLocalExecution')
+                        : current.tool === 'vm_command'
+                          ? t('requests.confirmExecution')
+                          : current.tool === 'software_install'
+                            ? t('requests.confirmInstallation')
+                            : t('requests.allowOnce')}
                   </button>
                   <button
                     type="button"
@@ -318,16 +392,21 @@ function Request({
               </span>
             ) : (
               <span className="approval-state">
-                {current.reply?.kind === 'decision' && current.reply.allow ? (
+                {current.reply?.kind === 'folder_grant' ||
+                (current.reply?.kind === 'decision' && current.reply.allow) ? (
                   <>
                     <Check />
-                    {current.decisionSource === 'policy'
-                      ? t('approval.automaticallyApproved')
-                      : current.kind === 'approval' && current.tool === 'vm_command'
-                        ? t('requests.vmCommandApproved')
-                        : current.kind === 'approval' && current.tool === 'software_install'
-                          ? t('requests.installationApproved')
-                          : t('requests.allowedOnce')}
+                    {current.reply?.kind === 'folder_grant'
+                      ? t('folders.accessGranted')
+                      : current.decisionSource === 'policy'
+                        ? t('approval.automaticallyApproved')
+                        : current.kind === 'approval' && current.tool === 'vm_command'
+                          ? t('requests.vmCommandApproved')
+                          : current.kind === 'approval' && current.tool === 'host_command'
+                            ? t('requests.hostCommandApproved')
+                            : current.kind === 'approval' && current.tool === 'software_install'
+                              ? t('requests.installationApproved')
+                              : t('requests.allowedOnce')}
                   </>
                 ) : (
                   <>

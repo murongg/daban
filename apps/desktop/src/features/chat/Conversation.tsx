@@ -38,6 +38,7 @@ import { Tooltip } from '../../components/controls/Tooltip';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { Avatar } from '../bots/Avatar';
 import { attachmentAccept, canParseDocuments } from '../files/files';
+import { LocalFiles } from '../files/LocalFiles';
 import { modelName as displayModel, modelIcon } from '../models/model-options';
 import { Requests } from '../requests/Requests';
 import { ApprovalMode } from './ApprovalMode';
@@ -746,6 +747,9 @@ export function Conversation({
             }}
           />
           <div className="composer-bottom">
+            {!bot.members && (
+              <LocalFiles key={target} bot={target} disabled={readOnly || pending} />
+            )}
             <IconButton
               label={t('common.addAttachment')}
               title={

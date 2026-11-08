@@ -26,16 +26,91 @@ import {
 } from '../files/files';
 
 export function transferFiles(data: DataTransfer) {
-  const files = Array.from(data.files);
-  return files.length
-    ? files
-    : Array.from(data.items).flatMap((item) => {
-        const file = item.kind === 'file' ? item.getAsFile() : null;
+  const directories = directoryItems(data);
+  const directorySet = new Set(directories.map(({ item }) => item));
+  const files = directories.length
+    ? Array.from(data.items).flatMap((item) => {
+        if (item.kind !== 'file' || directorySet.has(item)) return [];
+        const file = item.getAsFile();
         return file ? [file] : [];
-      });
+      })
+    : Array.from(data.files);
+  if (files.length) return files;
+  return Array.from(data.items).flatMap((item) => {
+    if (item.kind !== 'file' || directorySet.has(item)) return [];
+    const file = item.getAsFile();
+    return file ? [file] : [];
+  });
 }
 function fileDrag(data: DataTransfer) {
-  return Array.from(data.types).includes('Files') || data.files.length > 0;
+  return (
+    Array.from(data.types).includes('Files') ||
+    data.files.length > 0 ||
+    Array.from(data.items).some((item) => item.kind === 'file')
+  );
+}
+type DroppedEntry = { isDirectory: boolean; name: string };
+type EntryItem = DataTransferItem & { webkitGetAsEntry?: () => DroppedEntry | null };
+function droppedEntry(item: DataTransferItem) {
+  try {
+    return (item as EntryItem).webkitGetAsEntry?.();
+  } catch {
+    // Clipboard shims can expose this API as an unimplemented stub.
+    return null;
+  }
+}
+function directoryItems(data: DataTransfer) {
+  return Array.from(data.items).flatMap((item) => {
+    const entry = droppedEntry(item);
+    return entry?.isDirectory ? [{ item, name: entry.name }] : [];
+  });
+}
+function localFileUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'file:' && !url.search && !url.hash ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function fileUrlName(value: string) {
+  try {
+    return decodeURIComponent(new URL(value).pathname.split('/').filter(Boolean).at(-1) || '');
+  } catch {
+    return '';
+  }
+}
+function transferFolders(data: DataTransfer) {
+  const directories = directoryItems(data);
+  if (!directories.length) return [];
+  let uriList = '';
+  try {
+    if (typeof data.getData === 'function') uriList = data.getData('text/uri-list');
+  } catch {
+    uriList = '';
+  }
+  const urls = uriList
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .flatMap((line) => {
+      const url = localFileUrl(line);
+      return url ? [url] : [];
+    });
+  return directories.flatMap(({ item, name }) => {
+    const file = item.getAsFile();
+    let path: string | undefined;
+    try {
+      if (file) path = window.daban?.getPathForFile?.(file);
+    } catch {
+      path = undefined;
+    }
+    if (path) return [path];
+    const index = urls.findIndex((url) => fileUrlName(url) === name);
+    const url =
+      index >= 0 ? urls.splice(index, 1)[0] : directories.length === 1 ? urls.shift() : undefined;
+    return url ? [url] : [];
+  });
 }
 
 export function useInputs(
@@ -196,8 +271,19 @@ export function useInputs(
       // File drops must never replace the renderer document, including while its target is read-only.
       event.preventDefault();
       resetDrag();
+      const folders = transferFolders(event.dataTransfer);
       const files = transferFiles(event.dataTransfer);
-      if (!blocked && !files.length) notify(t('inputs.noFileWasReadSelectAgainUsing'));
+      if (!blocked && folders.length) {
+        const current = state.drafts[bot.id];
+        // The dropped path is context only; local folder access still requires the native picker.
+        dispatch({
+          type: 'draft',
+          bot: bot.id,
+          text: [current.trimEnd(), ...folders].filter(Boolean).join('\n'),
+        });
+      }
+      if (!blocked && !files.length && !folders.length)
+        notify(t('inputs.noFileWasReadSelectAgainUsing'));
       await attach(files);
     },
   };

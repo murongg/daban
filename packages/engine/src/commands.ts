@@ -19,6 +19,7 @@ export interface CommandRun {
   sessionId?: string;
   conversationId?: string;
   workdir: string;
+  root?: string;
   abort: AbortController;
   task?: { prompt: string; approvalMode?: ApprovalMode };
   waitingForComputer?: boolean;
@@ -33,9 +34,20 @@ export interface CommandReview {
   args: Record<string, unknown>;
   command: string;
   cwd: string;
+  root?: string;
   purpose: string;
-  target: 'linux-vm';
+  target: 'host-local' | 'linux-vm';
 }
+export interface HostCommandRequest {
+  command: string;
+  cwd: string;
+  root: string;
+}
+export type HostCommandExecutor = (
+  request: HostCommandRequest,
+  signal: AbortSignal,
+) => Promise<ToolResult>;
+export type CommandTarget = CommandReview['target'];
 export type CommandDecision = 'allow' | 'ask' | 'deny';
 const failure = (code: string): ToolResult => ({
   isError: true,
@@ -69,6 +81,7 @@ export class Commands {
     readonly options: {
       file: string;
       interactions: Interactions;
+      target?: CommandTarget;
       review?: (request: CommandReview, signal?: AbortSignal) => Promise<CommandDecision>;
       assertLive?: (run: CommandRun) => unknown;
     },
@@ -154,9 +167,17 @@ export class Commands {
       )
         throw new Fault('COMMAND_INVALID_REQUEST');
       const input = structuredClone(args);
-      const fields = tool === 'process_input' ? ['id', 'data', 'eof'] : ['command'];
+      const target = this.options.target ?? 'linux-vm';
+      const fields =
+        tool === 'process_input'
+          ? ['id', 'data', 'eof']
+          : tool === 'local_shell'
+            ? ['command', 'folder', 'cwd']
+            : ['command'];
       if (
-        !['shell', 'process_start', 'process_input'].includes(tool) ||
+        !(target === 'host-local'
+          ? tool === 'local_shell'
+          : ['shell', 'process_start', 'process_input'].includes(tool)) ||
         Object.keys(input).some((key) => !fields.includes(key))
       )
         throw new Fault('COMMAND_INVALID_REQUEST');
@@ -171,9 +192,27 @@ export class Commands {
           throw new Fault('COMMAND_INVALID_REQUEST');
         command = `stdin ${input.id}\n${JSON.stringify(input.data)}${input.eof ? '\nEOF' : ''}`;
       } else {
-        if (typeof input.command !== 'string') throw new Fault('COMMAND_INVALID_REQUEST');
+        if (
+          typeof input.command !== 'string' ||
+          !input.command.length ||
+          input.command.length > 12000 ||
+          input.command.includes('\0')
+        )
+          throw new Fault('COMMAND_INVALID_REQUEST');
         command = input.command;
       }
+      if (
+        tool === 'local_shell' &&
+        (!validAgentId(input.folder) ||
+          (input.cwd !== undefined &&
+            (typeof input.cwd !== 'string' ||
+              input.cwd.length > 4096 ||
+              input.cwd.includes('\0') ||
+              input.cwd.includes('\\') ||
+              path.isAbsolute(input.cwd) ||
+              input.cwd.split('/').includes('..'))))
+      )
+        throw new Fault('COMMAND_INVALID_REQUEST');
       request = {
         ...(run.task?.approvalMode ? { approvalMode: run.task.approvalMode } : {}),
         bot: run.bot,
@@ -183,19 +222,36 @@ export class Commands {
         args: input,
         command,
         cwd: run.workdir,
-        purpose: run.task?.prompt.trim().slice(0, 500) || 'Execute the current Linux VM task.',
-        target: 'linux-vm',
+        ...(target === 'host-local' ? { root: run.root } : {}),
+        purpose:
+          run.task?.prompt.trim().slice(0, 500) ||
+          (target === 'host-local'
+            ? 'Run an approved command in a connected local folder.'
+            : 'Execute the current Linux VM task.'),
+        target,
       };
+      if (target === 'host-local' && !run.root) throw new Fault('COMMAND_INVALID_REQUEST');
       if (
         !isInteractionInput({
           id: 'mock-validation',
           sessionId: request.sessionId,
           kind: 'approval',
-          tool: 'vm_command',
-          command,
-          cwd: request.cwd,
-          purpose: request.purpose,
-          target: request.target,
+          ...(target === 'host-local'
+            ? {
+                tool: 'host_command',
+                command,
+                cwd: request.cwd,
+                root: request.root,
+                purpose: request.purpose,
+                target,
+              }
+            : {
+                tool: 'vm_command',
+                command,
+                cwd: request.cwd,
+                purpose: request.purpose,
+                target,
+              }),
         })
       )
         throw new Fault('COMMAND_INVALID_REQUEST');
@@ -239,7 +295,7 @@ export class Commands {
         .values({ id, fingerprint, request: canonical(request), phase: 'reviewing' })
         .run();
       const decision =
-        request.approvalMode === 'ask'
+        request.target === 'host-local' || request.approvalMode === 'ask'
           ? 'ask'
           : request.approvalMode === 'full'
             ? 'allow'
@@ -257,9 +313,10 @@ export class Commands {
             id,
             sessionId: run.sessionId!,
             kind: 'approval',
-            tool: 'vm_command',
+            tool: request.target === 'host-local' ? 'host_command' : 'vm_command',
             command: request.command,
             cwd: request.cwd,
+            ...(request.target === 'host-local' && request.root ? { root: request.root } : {}),
             purpose: request.purpose,
             target: request.target,
           },

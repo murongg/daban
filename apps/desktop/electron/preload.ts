@@ -1,5 +1,5 @@
 import type { RuntimeBridge, RuntimeSnapshot } from '@daban/protocol';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { BrowserBridge } from '../shared/browser';
 import type { LocaleBridge } from '../shared/locale';
 import { isNoticeMessage, type NoticeBridge } from '../shared/notifications';
@@ -32,6 +32,7 @@ const titlebar = {
 const browser: BrowserBridge = {
   invoke: (command) => ipcRenderer.invoke('daban:browser', command),
 };
+const getPathForFile = (file: File) => webUtils.getPathForFile(file);
 const updates: UpdateBridge = {
   invoke: (command) => ipcRenderer.invoke('daban:updates', command),
   subscribe(callback) {
@@ -52,5 +53,6 @@ contextBridge.exposeInMainWorld(
     updates,
     titlebar,
     browser,
+    getPathForFile,
   }),
 );

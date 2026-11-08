@@ -6,6 +6,7 @@ export type {
   BundleMigrationReceipt,
 } from './bundle-migration.js';
 export { migrateBundlePayloads } from './bundle-migration.js';
+export type { HostCommandExecutor, HostCommandRequest } from './commands.js';
 export type { Executor } from './execution.js';
 export { RemoteExecutor } from './execution.js';
 export type { AgentOptions } from './host-server.js';

@@ -117,7 +117,7 @@ const timeLimit = 300000;
 const sdkProvider = (route: Pick<ResolvedModel, 'provider' | 'api'>) =>
   route.api === 'google-generative-ai' ? 'google' : route.provider;
 // Risk-based approval replaces the all-command approval context; keep chat history, retire its SDK session.
-const sessionProfile = 'general-v11-risk-context';
+const sessionProfile = 'general-v12-local-files';
 const sessionKey = (bot: string, conversationId?: string, chatRevision = 0) =>
   JSON.stringify(
     conversationId || !chatRevision ? [bot, conversationId ?? null] : [bot, null, chatRevision],
@@ -3110,7 +3110,7 @@ export class ModelRuns {
         !isInteractionInput(rpc.params) ||
         rpc.params.sessionId !== job.sessionId ||
         (rpc.params.kind === 'approval' &&
-          ['software_install', 'vm_command'].includes(rpc.params.tool))
+          ['software_install', 'vm_command', 'local_file'].includes(rpc.params.tool))
       )
         throw new Fault('INVALID_INTERACTION', 400);
       await this.fenceAttempt(job, 'tool');

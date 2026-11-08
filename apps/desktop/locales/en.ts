@@ -37,6 +37,48 @@ export const english = {
   'hostBrowser.unavailable':
     'The browser is unavailable. Update or reconnect the background service.',
   'hostBrowser.switchFirst': 'Disconnect in the browser panel before authorizing desktop control.',
+  'folders.title': 'Local folders',
+  'folders.approvalTitle': 'Change a local file',
+  'folders.approvalDescription':
+    'Allow this operation on the connected local folder. Review the actual path and change preview below.',
+  'folders.requestTitle': 'Connect a local folder?',
+  'folders.requestDescription':
+    'The Bot requested this directory. The path is only a starting point; Daban connects the folder you select in the system dialog.',
+  'folders.chooseAndConnect': 'Choose and connect folder',
+  'folders.accessGranted': 'Folder access granted',
+  'folders.connectedPath': 'Connected folder: {0}',
+  'folders.description':
+    'Connect a folder so this Bot can search, read and edit the actual files on your computer.',
+  'folders.add': 'Add folder',
+  'folders.refresh': 'Refresh',
+  'folders.working': 'Working…',
+  'folders.loading': 'Loading connected folders…',
+  'folders.connected': 'Connected folders',
+  'folders.empty': 'No local folders connected',
+  'folders.scope':
+    'Access belongs to this Bot. Disconnecting keeps your files. Deleted files go to Daban trash inside the folder and can be restored here.',
+  'folders.disconnect': 'Disconnect {0}',
+  'folders.history': 'Recent file changes',
+  'folders.noHistory': 'File changes will appear here after the Bot works on a connected folder.',
+  'folders.write': 'Write file',
+  'folders.edit': 'Edit file',
+  'folders.mkdir': 'Create folder',
+  'folders.move': 'Move file',
+  'folders.trash': 'Move to Daban trash',
+  'folders.complete': 'Completed',
+  'folders.unknown': 'Needs verification',
+  'folders.unknownHint':
+    'The result could not be confirmed. Inspect the actual file before asking the Bot to continue; this operation will not run again automatically.',
+  'folders.restore': 'Restore file',
+  'folders.restored': 'Restored',
+  'folders.reconnect': 'Reconnect the original folder to restore this file.',
+  'folders.before': 'Before',
+  'folders.after': 'After',
+  'folders.denied':
+    'This path is outside the connected folder or is protected. Connect the folder you want to use.',
+  'folders.changed': 'The folder or file has changed. Read its current state before continuing.',
+  'folders.unavailable':
+    'Local folders are unavailable. Reconnect or update the local service and try again.',
   'trash.retry': 'Try again',
   'trash.title': 'Conversation trash',
   'trash.description': 'Review conversations in trash and restore them at any time.',
@@ -719,6 +761,11 @@ export const english = {
   'command.runsOnlyLinuxExecutionVmMayUse':
     'Runs only in the Linux execution VM and may use sudo. It does not run on the host or grant access to host files.',
   'command.scope': 'Linux VM · sudo allowed · This command only',
+  'command.localScope': 'This computer · Connected folder only · No network · Approve each command',
+  'command.authorizedFolder': 'Authorized local folder',
+  'command.localCommand': 'Local command',
+  'command.localRestrictions':
+    'Runs on this computer with access to the connected folder and standard system tools. It cannot access other user folders, the network, or sudo.',
   'command.details': 'View command and directory',
   'requests.viewOperationDetails': 'View operation details',
   'requests.viewArguments': 'View call parameters',
@@ -804,7 +851,7 @@ export const english = {
   'common.disable': 'Disable',
   'common.do': 'To do',
   'common.downloadExtractedText': 'Download extracted text',
-  'common.dropAddAttachments': 'Drop to add attachments',
+  'common.dropAddAttachments': 'Drop to attach files or reference a folder',
   'common.edit': 'Edit',
   'common.editNamedItem': 'Edit {0}',
   'common.enable': 'Enable',
@@ -2057,7 +2104,8 @@ export const english = {
   'inputs.attachmentsStillPreparingWaitAddingMore':
     'Attachments are still preparing. Wait before adding more.',
   'inputs.fileCouldNotReadSelectAgain': 'This file could not be read. Select it again.',
-  'inputs.noFileWasReadSelectAgainUsing': 'No file was read. Select it again using Add attachment.',
+  'inputs.noFileWasReadSelectAgainUsing':
+    'No file or folder path was read. Try Add attachment or paste the folder path.',
   'inputs.selectTextPdfOfficeDocumentsPngJpeg':
     'Select text, PDF/Office documents or PNG, JPEG, WebP or GIF images.',
   'inputs.upAttachmentsPerTask': 'Up to 4 attachments per task.',
@@ -2790,6 +2838,7 @@ export const english = {
   'requests.addDetailsContinue': 'Add details and continue',
   'requests.additionalAnswer': 'Additional answer',
   'requests.allowCommandLinuxVirtualMachine': 'Run a Linux command',
+  'requests.allowHostCommand': 'Run a command on this computer',
   'requests.allowedOnce': 'Allowed once',
   'requests.allowExternalToolCall': 'Call an external tool',
   'requests.allowInstallationSoftware': 'Install software',
@@ -2804,6 +2853,7 @@ export const english = {
   'requests.checkConnectionRetrySameReplyWillSubmitted':
     ' Check the connection and retry; the same reply will be submitted.',
   'requests.confirmExecution': 'Confirm execution',
+  'requests.confirmLocalExecution': 'Run once on this computer',
   'requests.confirmInstallation': 'Confirm installation',
   'requests.decline': 'Decline',
   'requests.installationApproved': 'Installation approved',
@@ -2821,6 +2871,7 @@ export const english = {
     'Task interrupted; this request can no longer be answered',
   'requests.toolCallParameters': 'Tool call parameters',
   'requests.vmCommandApproved': 'VM command approved',
+  'requests.hostCommandApproved': 'Local command approved once',
   'runtimefiles.addMessage': 'Add {0} to message',
   'runtimefiles.allBotsShareFilesAddTextPdf':
     'All Bots share these files. Add text, PDF/Office documents and PNG/JPEG images, up to 4 per upload. Text is limited to 200 KB and document originals to 5 MB.',

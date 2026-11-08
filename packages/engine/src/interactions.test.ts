@@ -78,6 +78,23 @@ test('full-access policy commits scoped automatic approvals but never answers qu
     await rm(directory, { recursive: true, force: true });
   }
 });
+test('full-access policy never auto-grants a persistent local folder connection', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-folder-policy-approval-'));
+  const store = new Interactions(directory, undefined, () => true);
+  try {
+    const request = await store.open('mock-bot', 'mock-run', {
+      id: 'mock-folder-access',
+      sessionId: 'mock-session',
+      kind: 'approval',
+      tool: 'local_folder',
+      path: '/mock/project',
+    });
+    expect(request).toMatchObject({ status: 'pending', tool: 'local_folder' });
+    expect(request.reply).toBeUndefined();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 test('external MCP approval keeps exact Bot/run/session/connection/tool/argument provenance and never authorizes a different request', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-mcp-approval-'));
   const store = new Interactions(directory);
