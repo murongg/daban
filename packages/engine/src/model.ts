@@ -2880,9 +2880,11 @@ export class ModelRuns {
     }
   }
   private async collectFiles(job: ModelJob) {
+    // User-data parents can be aliases; links must share the canonical root used by task directories.
     const inputs = new Set(job.inputs),
       paths = this.workspacePaths,
-      prefix = paths.relative(this.workspace.root, job.workdir).split(paths.sep).join('/');
+      root = await this.workspace.base(),
+      prefix = paths.relative(root, job.workdir).split(paths.sep).join('/');
     job.files = (await this.workspace.scope(job.workdir, job.canonicalRoot).list())
       .filter((file) => !inputs.has(file.path))
       .map((file) => ({

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { turnLimit } from '@daban/protocol';
@@ -1161,6 +1161,63 @@ test('host model admission fences computer changes and RPC cannot forge VM comma
     expect(await models.interactions.list()).toStrictEqual([]);
   } finally {
     release();
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('native output links remain downloadable when the workspace has an aliased parent directory', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-native-output-'));
+  const storage = path.join(root, 'storage');
+  const alias = path.join(root, 'alias');
+  await mkdir(storage);
+  await symlink(storage, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const workspace = new NativeWorkspace(path.join(alias, 'workspace'));
+  await workspace.prepare();
+  const settings = new ModelSettings(path.join(root, 'credentials.json'));
+  class Harness {
+    async start() {}
+    async close() {}
+    async resumeSession(id: string) {
+      return this.session(id);
+    }
+    session(id = 'mock-native-output-session') {
+      return {
+        id,
+        run: async () => {
+          const job = models.jobs.get('mock-bot')!;
+          const result = await models.tools.invoke(job, 'write_file', {
+            path: 'report.txt',
+            content: 'SYNTHETIC NATIVE OUTPUT',
+          });
+          expect(result.isError).not.toBe(true);
+          return { sessionId: id, finalResponse: 'Synthetic file created.' };
+        },
+      };
+    }
+  }
+  const models = new ModelRuns({
+    settings,
+    workspace,
+    nativeOnly: true,
+    dir: path.join(root, 'model'),
+    origin: 'http://127.0.0.1:12345',
+    Harness,
+  });
+  try {
+    await settings.save({ apiKey: 'synthetic-native-output-key' });
+    await models.start('mock-bot', {
+      requestId: 'mock-native-output-request',
+      prompt: 'Create a synthetic report.',
+    });
+    const job = models.jobs.get('mock-bot')!;
+    await job.done;
+    expect(job.phase, job.error).toBe('completed');
+    expect(job.files).toHaveLength(1);
+    expect(job.files[0].path.split('/')).not.toContain('..');
+    const downloaded = await workspace.download(job.files[0].path);
+    expect(Buffer.from(downloaded.data, 'base64').toString('utf8')).toBe('SYNTHETIC NATIVE OUTPUT');
+  } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
   }
