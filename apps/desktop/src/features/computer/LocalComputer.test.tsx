@@ -2,9 +2,10 @@ import {
   disconnected,
   type RuntimeBridge,
   type RuntimeCommand,
+  type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RuntimeProvider } from '../../app/Runtime';
@@ -45,7 +46,11 @@ function fixture(permissions = true) {
     shortcut: true,
   };
   const listeners = new Set<(value: RuntimeSnapshot) => unknown>();
-  const invoke = vi.fn(async (command: RuntimeCommand) => {
+  const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
+    if (command.type === 'local.status') {
+      for (const listener of listeners) listener(snapshot);
+      return { ok: true, value: snapshot.localComputer };
+    }
     if (command.type === 'local.connect') {
       snapshot = {
         ...snapshot,
@@ -79,7 +84,16 @@ function fixture(permissions = true) {
       } as RuntimeBridge,
     },
   });
-  return { invoke };
+  return {
+    invoke,
+    permissions: (screen: boolean, accessibility: boolean, publish = true) => {
+      snapshot = {
+        ...snapshot,
+        localComputer: { ...snapshot.localComputer!, permissions: { screen, accessibility } },
+      };
+      if (publish) for (const listener of listeners) listener(snapshot);
+    },
+  };
 }
 it('requires a concrete screen-sharing consent before connecting the selected Bot', async () => {
   const backend = fixture();
@@ -106,7 +120,7 @@ it('requires a concrete screen-sharing consent before connecting the selected Bo
     modelRevision: 1,
   });
 });
-it('does not grant host control when native OS permissions are absent', async () => {
+it('guides each missing permission from live status without granting host control', async () => {
   const backend = fixture(false);
   render(
     <RuntimeProvider>
@@ -114,11 +128,98 @@ it('does not grant host control when native OS permissions are absent', async ()
     </RuntimeProvider>,
   );
   expect(await screen.findByRole('button', { name: '连接本机' })).toBeDisabled();
-  await userEvent.click(screen.getByRole('button', { name: '设置权限' }));
+  const guide = screen.getByRole('region', { name: '设置本机权限' });
+  expect(within(guide).getByText(/允许 Daban 点击和输入/)).toBeVisible();
+  expect(within(guide).getByText(/允许 Daban 观察主显示器/)).toBeVisible();
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.permissions')).toBe(
+    false,
+  );
+  await userEvent.click(within(guide).getByRole('button', { name: '开启辅助功能' }));
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.permissions')).toBe(
     true,
   );
+  act(() => backend.permissions(false, true));
+  expect(within(guide).getByRole('button', { name: '开启屏幕录制' })).toBeEnabled();
+  expect(within(guide).queryByRole('button', { name: '开启辅助功能' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '连接本机' })).toBeDisabled();
+  await userEvent.click(within(guide).getByRole('button', { name: '开启屏幕录制' }));
+  act(() => backend.permissions(true, true));
+  expect(screen.getByRole('button', { name: '连接本机' })).toBeEnabled();
+  expect(screen.getByRole('status')).toHaveTextContent('系统权限已就绪');
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.connect')).toBe(
     false,
   );
+});
+
+it('rechecks current permissions without opening System Settings or starting a session', async () => {
+  const backend = fixture(false);
+  render(
+    <RuntimeProvider>
+      <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
+    </RuntimeProvider>,
+  );
+  await screen.findByRole('button', { name: '开启辅助功能' });
+  backend.permissions(true, true, false);
+  await userEvent.click(screen.getByRole('button', { name: '重新检查权限' }));
+  expect(await screen.findByRole('button', { name: '连接本机' })).toBeEnabled();
+  expect(
+    backend.invoke.mock.calls.some(([command]) =>
+      ['local.permissions', 'local.connect'].includes(command.type),
+    ),
+  ).toBe(false);
+});
+
+it('preserves the guide and connection lock when checking permissions fails', async () => {
+  const backend = fixture(false);
+  render(
+    <RuntimeProvider>
+      <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
+    </RuntimeProvider>,
+  );
+  await screen.findByRole('button', { name: '开启辅助功能' });
+  backend.invoke.mockImplementationOnce(async () => ({ ok: false, error: 'RUNTIME_OFFLINE' }));
+  await userEvent.click(screen.getByRole('button', { name: '重新检查权限' }));
+  expect(await screen.findByRole('alert')).toBeVisible();
+  expect(screen.getByRole('button', { name: '连接本机' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '开启辅助功能' })).toBeEnabled();
+});
+
+it('refreshes permissions on returning to the app without requesting additional access', async () => {
+  const backend = fixture(false);
+  // Flush the initial snapshot and its effects before simulating a return to the window.
+  const mounted = await act(async () =>
+    render(
+      <RuntimeProvider>
+        <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
+      </RuntimeProvider>,
+    ),
+  );
+  await screen.findByRole('button', { name: '开启辅助功能' });
+  backend.permissions(true, true, false);
+  fireEvent.focus(window);
+  expect(await screen.findByRole('status')).toHaveTextContent('系统权限已就绪');
+  expect(backend.invoke).toHaveBeenCalledWith({ type: 'local.status' });
+  expect(screen.getByRole('button', { name: '连接本机' })).toBeEnabled();
+  expect(
+    backend.invoke.mock.calls.some(([command]) =>
+      ['local.permissions', 'local.connect'].includes(command.type),
+    ),
+  ).toBe(false);
+  mounted.unmount();
+  backend.invoke.mockClear();
+  fireEvent.focus(window);
+  expect(backend.invoke).not.toHaveBeenCalled();
+});
+
+it('only offers the accessibility step if screen recording is already allowed', async () => {
+  const backend = fixture(false);
+  backend.permissions(true, false, false);
+  render(
+    <RuntimeProvider>
+      <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
+    </RuntimeProvider>,
+  );
+  expect(await screen.findByRole('button', { name: '开启辅助功能' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: '开启屏幕录制' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '连接本机' })).toBeDisabled();
 });

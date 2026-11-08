@@ -127,7 +127,7 @@ node --experimental-strip-types tools/windows.ts C:/build/Daban-win-x64 C:/build
 
 本机权限只保存在客户端内存中，按 Bot、模型和连接修订绑定。返回 Daban、锁屏、休眠或按 Ctrl + Alt / Option + Esc 暂停；关闭客户端撤销桌面授权。Windows 命名管道使用校验服务端证书的 TLS，公开证书在成功监听后发布到受 ACL 保护的用户目录，密钥不发送给未验证的监听者。
 
-Windows 本机模式尚无 Linux 工作区的 shell、文件和进程工具，桌面 GUI 仍可操作真实应用与文件。轻量客户端提供 QEMU/WHPX 环境按需下载及自动安装，见 [Windows Linux 电脑](windows-vm.md)。`Native desktop` 工作流构建轻量便携包；独立环境先按下节准备并发布，客户端发布流程会核对其固定摘要和大小，不能把不存在的地址作为可下载环境。
+Windows 本机模式不提供 shell 或进程工具；连接独立浏览器时提供受管理任务目录的文件工具和浏览器上传下载，桌面 GUI 可在单独授权后操作真实应用与文件。轻量客户端提供 QEMU/WHPX 环境按需下载及自动安装，见 [Windows Linux 电脑](windows-vm.md)。`Native desktop` 工作流构建轻量便携包；独立环境先按下节准备并发布，客户端发布流程会核对其固定摘要和大小，不能把不存在的地址作为可下载环境。
 
 ## Windows 独立 Linux 环境
 

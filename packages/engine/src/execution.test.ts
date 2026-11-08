@@ -1,4 +1,4 @@
-import { isExecutionSnapshot } from '@daban/protocol';
+import { isExecutionRequest, isExecutionSnapshot } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { RemoteExecutor } from './execution.js';
 
@@ -37,6 +37,42 @@ test('executor snapshots negotiate the bounded browser task capability without a
       capabilities: [...snapshot.capabilities, 'synthetic-unknown'],
     }),
   ).toBe(false);
+});
+
+test('browser file publication negotiates an optional capability and accepts only bounded run-owned binary requests', () => {
+  expect(
+    isExecutionSnapshot({
+      ...snapshot,
+      capabilities: [
+        ...snapshot.capabilities,
+        'model-capabilities-v1',
+        'skill-packages-v1',
+        'browser-task-v1',
+        'browser-files-v1',
+      ],
+    }),
+  ).toBe(true);
+  const request = {
+    role: 'executor',
+    version: 1,
+    id: 'mock-publication',
+    method: 'tools.publish',
+    params: {
+      runId: 'mock-run',
+      name: 'synthetic.csv',
+      data: Buffer.from('SYNTHETIC,47').toString('base64'),
+    },
+  };
+  expect(isExecutionRequest(request)).toBe(true);
+  for (const params of [
+    { ...request.params, runId: '../other' },
+    { ...request.params, name: '../private.csv' },
+    { ...request.params, name: '.private' },
+    { ...request.params, data: 'not base64!' },
+    { ...request.params, data: 'AB==' },
+    { ...request.params, workdir: '/private' },
+  ])
+    expect(isExecutionRequest({ ...request, params })).toBe(false);
 });
 
 test('remote executor rejects authority-shaped or mismatched role snapshots', async () => {

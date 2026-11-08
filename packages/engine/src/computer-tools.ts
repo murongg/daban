@@ -66,6 +66,23 @@ export const computerToolList = [
   },
 ];
 
+export const browserComputerToolList = computerToolList
+  .filter((tool) => tool.name !== 'open_app')
+  .map((tool) => ({
+    ...tool,
+    description:
+      tool.name === 'screenshot'
+        ? 'Observe this Bot’s connected browser (960x640) as pixels before coordinate input. Prefer browser_snapshot and observed-ref browser_act for ordinary webpages; use this for canvas or controls the DOM tools cannot identify. No desktop access is granted. Requires an image-capable model.'
+        : 'Operate the last observed browser screenshot with 1–4 sequential click/key/text/scroll/pointer inputs and inspect the returned image. Coordinates are viewport pixels. Use browser key names such as Enter, ArrowLeft and ControlOrMeta+A. Passwords, verification codes, dialogs and file pickers require human takeover; use browser_upload for authorized task files. After takeover, navigation, errors or uncertain effects, capture a fresh screenshot and never blindly replay an action. No desktop access is granted.',
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        surface: { type: 'string', enum: ['browser'] },
+      },
+    },
+  }));
+
 export interface ToolTrace {
   name: string;
   surface: string;
@@ -131,6 +148,11 @@ export class ComputerTools {
   }
   async ready(run: ToolRun) {
     await this.authorize?.(run);
+    const available = () => {
+      if (this.runtime.available?.(run.bot) === false)
+        throw new Fault('COMPUTER_NOT_CONNECTED', 503);
+    };
+    available();
     await this.runtime.stopWorker?.(run.bot);
     const waiting = this.runtime.control.state(run.bot).owner !== 'agent';
     if (waiting) this.waiters.set(run, (this.waiters.get(run) || 0) + 1);
@@ -138,10 +160,13 @@ export class ComputerTools {
     try {
       run.onComputerWait?.();
       while (this.runtime.control.state(run.bot).owner !== 'agent') {
+        // A lost browser cannot be handed back; do not suspend the task budget forever after a crash.
+        available();
         if (run.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
         await new Promise((resolve) => setTimeout(resolve, 80));
       }
       if (run.abort.signal.aborted) throw new Fault('MODEL_CANCELLED');
+      available();
       await this.authorize?.(run);
       return this.runtime.control.state(run.bot);
     } finally {
@@ -177,8 +202,8 @@ export class ComputerTools {
           text: JSON.stringify({
             bot: run.bot,
             surface,
-            width: surface === 'desktop' ? 1280 : 960,
-            height: surface === 'desktop' ? 800 : 640,
+            width: surface === 'desktop' ? 1280 : (view?.width ?? 960),
+            height: surface === 'desktop' ? 800 : (view?.height ?? 640),
             epoch,
           }),
         },
@@ -231,9 +256,11 @@ export class ComputerTools {
         throw new Fault('FRESH_SCREENSHOT_REQUIRED');
       trace = { name, surface, args, at: new Date().toISOString(), phase: 'running' };
       run.trace.push(trace);
+      const binding = run.browserSeen;
       try {
         // A failed refresh or lost action acknowledgement must never leave older coordinates authorized.
-        if (surface === 'desktop') delete run.seen.desktop;
+        delete run.seen[surface];
+        if (surface === 'browser') delete run.browserSeen;
         if (name === 'screenshot')
           return await this.runtime.control.execute(run.bot, 'agent', lease.epoch, () =>
             this.shot(run, surface, lease.epoch),
@@ -258,11 +285,10 @@ export class ComputerTools {
           });
         }
         // Each browser input uses the same lease queue, rather than nesting that queue.
-        if (this.runtime.browser.view && !run.browserSeen)
-          throw new Fault('FRESH_SCREENSHOT_REQUIRED');
+        if (this.runtime.browser.view && !binding) throw new Fault('FRESH_SCREENSHOT_REQUIRED');
         for (const input of args.actions as unknown[]) {
           await this.authorize?.(run);
-          await this.runtime.browser.input(run.bot, lease.epoch, input, 'agent', run.browserSeen);
+          await this.runtime.browser.input(run.bot, lease.epoch, input, 'agent', binding);
         }
         return await this.runtime.control.execute(run.bot, 'agent', lease.epoch, () =>
           this.shot(run, surface, lease.epoch),

@@ -41,8 +41,16 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: npm run build
+      - name: Verify embedded browser input, verification and file workflows
+        run: npm run test:browser:embedded
       - name: Verify real Windows prerequisite observation without elevation
         run: node --experimental-strip-types --test tools/windows.integration.ts
+      - name: Install standalone browser integration runtime
+        run: npx playwright install --only-shell chromium
+      - name: Verify Windows browser and file boundaries
+        run: npx vitest run --project node --maxWorkers=1 packages/engine/dist/agent-tools.test.js packages/engine/dist/browser-tools.test.js packages/engine/dist/browser-client.test.js
+      - name: Verify standalone browser file workflows and visual takeover
+        run: node --experimental-sqlite --test packages/engine/dist/host-browser.integration.js
       - name: Run Windows regression suite
         # Keep temp-file storms in one fixture from stalling another store's deadline.
         # Tests retain their own concurrent calls and the normal per-test timeout.

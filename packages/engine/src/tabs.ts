@@ -128,7 +128,7 @@ function actions(value: unknown): Action[] {
 }
 
 // Race only read-only inspection; mutating Playwright calls must use their native AbortSignal to prevent late effects.
-async function inspect<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
+export async function inspect<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
   const bounded = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
   bounded.throwIfAborted();
   let cancel: () => unknown = () => {};
@@ -141,6 +141,22 @@ async function inspect<T>(read: () => Promise<T>, signal: AbortSignal): Promise<
   } finally {
     bounded.removeEventListener('abort', cancel);
   }
+}
+
+const captchaInputs =
+  'input[name*="captcha" i],input[id*="captcha" i],input[aria-label*="captcha" i],input[aria-label*="验证码"]';
+export const secretInputs = `input[type="password" i],input[autocomplete="current-password" i],input[autocomplete="new-password" i],input[autocomplete="one-time-code" i],${captchaInputs}`;
+const captchaSurfaces = `${captchaInputs},iframe[src*="/recaptcha/api2/bframe"],iframe[src*="/recaptcha/enterprise/bframe"],iframe[src*="hcaptcha.com" i][title*="challenge" i],iframe[src*="challenges.cloudflare.com" i],form#challenge-form`;
+export async function verificationRequired(page: Page, signal: AbortSignal) {
+  // Ignore hidden challenge frames and passive badges; only visible verification controls stop automation.
+  const counts = await inspect(
+    () =>
+      Promise.all(
+        page.frames().map((frame) => frame.locator(`:is(${captchaSurfaces}):visible`).count()),
+      ),
+    signal,
+  );
+  return counts.some(Boolean);
 }
 
 export class Tabs {
@@ -195,7 +211,14 @@ export class Tabs {
     if (existing) return existing;
     if ([...this.records.values()].filter((tab) => tab.bot === bot).length >= 8)
       throw new Fault('BROWSER_TAB_LIMIT');
-    const tab: Tab = { id: randomUUID(), bot, page, generation: 0, url: page.url(), title: '' };
+    const tab: Tab = {
+      id: randomUUID(),
+      bot,
+      page,
+      generation: 0,
+      url: publicUrl(page.url()) ? page.url() : 'about:blank',
+      title: '',
+    };
     this.records.set(page, tab);
     this.guardDownloads(page);
     page.on('framenavigated', (frame) => {
@@ -478,6 +501,12 @@ export class Tabs {
       throw new Fault('INVALID_BROWSER_URL', 400);
     return url.href;
   }
+  private location(tab: Tab) {
+    if (tab.suspended) return 'about:blank';
+    const current = tab.page.url();
+    // Failed loads can leave about:blank or an internal error URL; keep the safe destination in public state.
+    return publicUrl(current) ? current : tab.url;
+  }
   async state(bot: string, signal = new AbortController().signal): Promise<BrowserTabs> {
     await inspect(() => Promise.allSettled([...this.adopting]), signal);
     signal.throwIfAborted();
@@ -495,7 +524,7 @@ export class Tabs {
         .filter((tab) => tab.bot === bot)
         .map((tab) => ({
           id: tab.id,
-          url: tab.page.url(),
+          url: this.location(tab),
           title: tab.title,
           generation: tab.generation,
           ...(tab.suspended ? { suspended: true, restoreUrl: tab.url } : {}),
@@ -513,14 +542,33 @@ export class Tabs {
     const tab = this.current(bot);
     return { instance: this.instance, tab: tab.id, generation: tab.generation };
   }
-  frame(bot: string) {
+  frame(bot: string, redact = false) {
     const tab = this.current(bot);
     return this.prompts.guard(tab, AbortSignal.timeout(4000), (signal) =>
-      tab.page.screenshot({ type: 'jpeg', quality: 75, timeout: 4000, signal }),
+      tab.page.screenshot({
+        type: 'jpeg',
+        // Native views can inherit Retina/DPI scaling; input coordinates remain CSS pixels.
+        scale: 'css',
+        quality: 75,
+        timeout: 4000,
+        signal,
+        ...(redact ? { mask: tab.page.frames().map((frame) => frame.locator(secretInputs)) } : {}),
+      }),
     );
   }
   input<T>(bot: string, action: (signal: AbortSignal) => Promise<T>) {
     return this.prompts.guard(this.current(bot), AbortSignal.timeout(5000), action);
+  }
+  async humanRequired(bot: string, signal = AbortSignal.timeout(5000)) {
+    if (this.prompts.blocked(bot)) return true;
+    try {
+      return await this.prompts.guard(this.current(bot), signal, (bounded) =>
+        verificationRequired(this.current(bot).page, bounded),
+      );
+    } catch (error) {
+      if (this.prompts.blocked(bot)) return true;
+      throw error;
+    }
   }
   assertBinding(bot: string, value: unknown) {
     const current = this.binding(bot);
@@ -630,40 +678,56 @@ export class Tabs {
     input: { action: string; tab?: string; url?: string },
     signal: AbortSignal,
   ) {
-    this.current(bot);
-    signal.throwIfAborted();
-    if (!['select', 'close'].includes(input.action)) this.prompts.clear(bot);
-    let tab: Tab;
-    if (input.action === 'open' || input.action === 'new') {
-      const page = await this.newPage(bot);
-      tab = this.records.get(page)!;
-      this.pages.set(bot, page);
-    } else tab = this.owned(bot, input.tab);
-    if (
-      ['navigate', 'back', 'forward', 'reload'].includes(input.action) &&
-      this.current(bot) !== tab
-    )
-      throw new Fault('BROWSER_VIEW_STALE');
-    if (input.action === 'select' || input.action === 'resume') this.pages.set(bot, tab.page);
-    this.invalidate(bot);
-    if (input.action === 'select') return;
-    if (input.action === 'close') {
-      if ([...this.records.values()].filter((value) => value.bot === bot).length === 1)
-        this.pages.set(bot, await this.newPage(bot));
-      await tab.page.close({ reason: 'Owned browser tab closed' });
-      return;
-    }
-    await this.prompts.guard(tab, signal, async (signal) => {
-      const options = { waitUntil: 'domcontentloaded' as const, timeout: 18000, signal };
-      if (input.action === 'open' || input.action === 'navigate')
-        await tab.page.goto(this.url(input.url), options);
-      if (input.action === 'resume') {
-        if (tab.suspended) await tab.page.goto(this.url(tab.url), options);
+    try {
+      this.current(bot);
+      signal.throwIfAborted();
+      if (!['select', 'close'].includes(input.action)) this.prompts.clear(bot);
+      let tab: Tab;
+      if (input.action === 'open' || input.action === 'new') {
+        const page = await this.newPage(bot);
+        tab = this.records.get(page)!;
+        this.pages.set(bot, page);
+      } else tab = this.owned(bot, input.tab);
+      if (
+        ['navigate', 'back', 'forward', 'reload'].includes(input.action) &&
+        this.current(bot) !== tab
+      )
+        throw new Fault('BROWSER_VIEW_STALE');
+      if (input.action === 'select' || input.action === 'resume') this.pages.set(bot, tab.page);
+      this.invalidate(bot);
+      if (input.action === 'select') return;
+      if (input.action === 'close') {
+        if ([...this.records.values()].filter((value) => value.bot === bot).length === 1)
+          this.pages.set(bot, await this.newPage(bot));
+        await tab.page.close({ reason: 'Owned browser tab closed' });
+        return;
       }
-      if (input.action === 'back') await tab.page.goBack(options);
-      if (input.action === 'forward') await tab.page.goForward(options);
-      if (input.action === 'reload') await tab.page.reload(options);
-    });
+      await this.prompts.guard(tab, signal, async (signal) => {
+        const options = { waitUntil: 'domcontentloaded' as const, timeout: 18000, signal };
+        if (input.action === 'open' || input.action === 'navigate') {
+          tab.url = this.url(input.url);
+          await tab.page.goto(tab.url, options);
+        }
+        if (input.action === 'resume') {
+          if (tab.suspended) await tab.page.goto(this.url(tab.url), options);
+        }
+        if (input.action === 'back') await tab.page.goBack(options);
+        if (input.action === 'forward') await tab.page.goForward(options);
+        if (input.action === 'reload') await tab.page.reload(options);
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Fault) &&
+        ((error instanceof Error &&
+          (error.name === 'TimeoutError' ||
+            /\bnet::ERR_(?!ABORTED\b)[A-Z_]+\b/.test(error.message))) ||
+          (signal.aborted &&
+            signal.reason instanceof Error &&
+            signal.reason.name === 'TimeoutError'))
+      )
+        throw new Fault('BROWSER_NAVIGATION_FAILED');
+      throw error;
+    }
   }
 
   private owned(bot: string, id: unknown) {
@@ -726,7 +790,10 @@ export class Tabs {
     run?: string,
     limit = 16000,
   ): Promise<BrowserObservation> {
-    if (this.prompts.blocked(bot)) {
+    if (
+      this.prompts.blocked(bot) ||
+      (actor === 'agent' && (await this.humanRequired(bot, signal)))
+    ) {
       signal.throwIfAborted();
       const tab = this.current(bot),
         text =
@@ -734,7 +801,7 @@ export class Tabs {
       return {
         id: randomUUID(),
         tab: tab.id,
-        url: tab.page.url(),
+        url: this.location(tab),
         title: tab.title,
         text,
         offset: 0,
@@ -757,9 +824,7 @@ export class Tabs {
                   .frames()
                   .map((frame) =>
                     frame
-                      .locator(
-                        'input[type="password"],input[autocomplete="current-password"],input[autocomplete="new-password"],input[autocomplete="one-time-code"]',
-                      )
+                      .locator(secretInputs)
                       .evaluateAll((elements) =>
                         elements
                           .map((element) => (element as HTMLInputElement).value)
@@ -784,7 +849,7 @@ export class Tabs {
             run,
             text: text.slice(0, 256000),
             total: text.length,
-            url: tab.page.url(),
+            url: this.location(tab),
             title: (await inspect(() => tab.page.title(), signal)).slice(0, 200),
             refs: new Set(),
           };
@@ -883,6 +948,8 @@ export class Tabs {
         await this.prompts.guard(tab, signal, async (signal) => {
           for (const step of steps) {
             signal.throwIfAborted();
+            if (actor === 'agent' && (await verificationRequired(tab.page, signal)))
+              throw new Fault('BROWSER_HUMAN_REQUIRED');
             if (this.current(bot) !== tab || tab.generation !== observed.generation)
               throw new Fault('BROWSER_OBSERVATION_STALE');
             const locator = 'ref' in step ? tab.page.locator(`aria-ref=${step.ref}`) : undefined;
@@ -950,6 +1017,8 @@ export class Tabs {
       const chooserStop = new AbortController();
       try {
         await this.prompts.guard(observed.tab, signal, async (signal) => {
+          if (actor === 'agent' && (await verificationRequired(observed.tab.page, signal)))
+            throw new Fault('BROWSER_HUMAN_REQUIRED');
           const locator = observed.tab.page.locator(`aria-ref=${ref}`);
           const type = await locator.getAttribute('type', { timeout: 4000, signal });
           if (type === 'file') {
@@ -1011,6 +1080,8 @@ export class Tabs {
         const observed = this.saved(bot, actor, epoch, id, run);
         if (!observed.refs.has(ref)) throw new Fault('BROWSER_REF_NOT_OBSERVED');
         await this.prompts.guard(observed.tab, signal, async (signal) => {
+          if (actor === 'agent' && (await verificationRequired(observed.tab.page, signal)))
+            throw new Fault('BROWSER_HUMAN_REQUIRED');
           this.invalidate(bot);
           page = observed.tab.page;
           this.expecting.set(page, {});

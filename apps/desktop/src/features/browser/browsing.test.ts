@@ -2,6 +2,17 @@ import { afterEach, expect, it } from 'vitest';
 import { beginBrowserRequest, browserRequest, clearBrowserRequest } from './browsing';
 
 afterEach(() => localStorage.clear());
+it('keeps host browser receipts separate from Linux receipts for the same Bot', () => {
+  const vm = { id: 'mock-vm-request', instance: 'mock-vm', epoch: 1 };
+  const host = { id: 'mock-host-request', instance: 'mock-host', epoch: 2 };
+  beginBrowserRequest('mock-bot', vm);
+  beginBrowserRequest('mock-bot', host, true);
+  expect(browserRequest('mock-bot')).toEqual(vm);
+  expect(browserRequest('mock-bot', true)).toEqual(host);
+  clearBrowserRequest('mock-bot', host.id, true);
+  expect(browserRequest('mock-bot', true)).toBeUndefined();
+  expect(browserRequest('mock-bot')).toEqual(vm);
+});
 it('retains only the owned request identity across remounts, prevents overwrite and clears by exact identity', () => {
   const first = { id: 'mock-request', instance: 'mock-instance', epoch: 3 };
   beginBrowserRequest('a', first);

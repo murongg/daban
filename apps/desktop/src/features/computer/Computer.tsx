@@ -15,11 +15,12 @@ import type { Bot } from '../../app/state';
 import { IconButton } from '../../components/controls/Button';
 import { t, useLocale } from '../../i18n/locale';
 import { Browser } from '../browser/Browser';
+import { HostBrowser } from '../browser/HostBrowser';
 import { LinuxSetup } from '../onboarding/LinuxSetup';
 import { Connection } from './Connection';
 import { LiveDesktop } from './LiveDesktop';
 import { LocalComputer } from './LocalComputer';
-export type ComputerSurface = 'desktop' | 'browser';
+export type ComputerSurface = 'desktop' | 'browser' | 'host-browser';
 
 function VirtualComputer({
   bot,
@@ -233,15 +234,57 @@ function VirtualComputer({
 export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
   const runtime = useRuntime();
   const local = runtime.snapshot.localComputer;
+  const browser = runtime.snapshot.hostBrowser;
   const optionalLinux = runtime.snapshot.setup?.target === 'linux';
   const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
   const canonical = agentId(props.bot.id);
-  const [source, setSource] = useState<'vm' | 'local'>(nativeOnly ? 'local' : 'vm');
+  const [source, setSource] = useState<'vm' | 'local' | 'browser'>(
+    props.expanded
+      ? props.initialView === 'host-browser'
+        ? 'browser'
+        : 'vm'
+      : browser?.available
+        ? 'browser'
+        : nativeOnly
+          ? 'local'
+          : 'vm',
+  );
   useEffect(() => {
-    if ((nativeOnly && !optionalLinux) || local?.session?.bot === canonical) setSource('local');
-  }, [nativeOnly, optionalLinux, local?.session?.bot, canonical]);
-  async function choose(next: 'vm' | 'local') {
-    if (next === 'vm' && local?.session?.bot === canonical) {
+    if (browser?.available && !props.expanded) setSource('browser');
+  }, [browser?.available, props.expanded]);
+  useEffect(() => {
+    if (props.expanded && props.initialView === 'host-browser') return;
+    if ((nativeOnly && !optionalLinux && !browser?.available) || local?.session?.bot === canonical)
+      setSource('local');
+  }, [
+    nativeOnly,
+    optionalLinux,
+    local?.session?.bot,
+    canonical,
+    browser?.available,
+    props.expanded,
+    props.initialView,
+  ]);
+  async function choose(next: 'vm' | 'local' | 'browser') {
+    const hosted = browser?.connections.find((item) => item.bot === canonical);
+    if (next !== 'browser' && hosted) {
+      if (runtime.snapshot.agents[canonical]?.running) return;
+      try {
+        await runtime.command({
+          type: 'hostBrowser',
+          request: {
+            action: 'close',
+            bot: canonical,
+            instance: hosted.state.instance,
+            epoch: hosted.epoch,
+          },
+        });
+      } catch (error) {
+        props.notify(runtimeError(error));
+        return;
+      }
+    }
+    if (next !== 'local' && local?.session?.bot === canonical) {
       if (runtime.snapshot.agents[canonical]?.running) return;
       try {
         await runtime.command({
@@ -258,19 +301,37 @@ export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
   }
   return (
     <>
-      {local && (!nativeOnly || optionalLinux) && !props.expanded && (
+      {(browser || (local && (!nativeOnly || optionalLinux))) && !props.expanded && (
         <nav className="computer-modes" aria-label={t('localComputer.source')}>
+          {browser && (
+            <button
+              type="button"
+              aria-pressed={source === 'browser'}
+              onClick={() => choose('browser')}
+            >
+              {t('hostBrowser.title')}
+            </button>
+          )}
           {(!nativeOnly || optionalLinux) && (
             <button type="button" aria-pressed={source === 'vm'} onClick={() => choose('vm')}>
               {t('localComputer.virtual')}
             </button>
           )}
-          <button type="button" aria-pressed={source === 'local'} onClick={() => choose('local')}>
-            {local.platform === 'win32' ? t('localComputer.windows') : t('localComputer.mac')}
-          </button>
+          {local && (
+            <button type="button" aria-pressed={source === 'local'} onClick={() => choose('local')}>
+              {local.platform === 'win32' ? t('localComputer.windows') : t('localComputer.mac')}
+            </button>
+          )}
         </nav>
       )}
-      {source === 'local' && local ? (
+      {source === 'browser' && browser ? (
+        <HostBrowser
+          bot={props.bot}
+          notify={props.notify}
+          expanded={props.expanded}
+          expand={props.expand ? () => props.expand?.('host-browser') : undefined}
+        />
+      ) : source === 'local' && local ? (
         <LocalComputer bot={props.bot} />
       ) : nativeOnly && optionalLinux ? (
         <LinuxSetup />

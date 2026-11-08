@@ -27,6 +27,7 @@ import {
   isDocumentUpload,
   isExecutionSnapshot,
   isGroupCopyRequest,
+  isHostBrowserRequest,
   isKnowledgeContent,
   isKnowledgeWrite,
   isLegacyWorkQuery,
@@ -74,6 +75,7 @@ import { Documents } from './documents.js';
 import type { Executor } from './execution.js';
 import { GroupTools } from './group-tools.js';
 import { Groups } from './groups.js';
+import { HostBrowser } from './host-browser.js';
 import { integrationCommand } from './integration-api.js';
 import { BotLifecycle } from './lifecycle.js';
 import { Machine } from './machine.js';
@@ -314,6 +316,9 @@ export async function startPrototype({
     ? path.join(host.dataRoot, 'browser', 'profile')
     : path.resolve(root, '../../work/browser/profile');
   const modelDir = host ? path.join(host.dataRoot, 'model') : path.resolve(profileDir, '../model');
+  const hostBrowser = host
+    ? new HostBrowser({ directory: path.join(host.dataRoot, 'browser') })
+    : undefined;
   if (host && (computers || desktop)) throw new Fault('AGENT_REMOTE_REQUIRED');
   await mkdir(host ? modelDir : profileDir, { recursive: true, mode: 0o700 });
   const settings = new ModelSettings(path.join(modelDir, 'credentials.json'));
@@ -732,6 +737,7 @@ export async function startPrototype({
           if (
             recovery &&
             req.method !== 'GET' &&
+            url.pathname !== '/api/host-browser' &&
             !recoveryReads.has(url.pathname) &&
             !/^\/api\/bots\/[a-zA-Z0-9_-]{1,80}\/(browser-receipt|lifecycle-receipt|copy-receipt)$/.test(
               url.pathname,
@@ -778,6 +784,38 @@ export async function startPrototype({
           const remoteRoute = url.pathname.match(
             /^\/api\/bots\/([a-zA-Z0-9_-]{1,80})\/(frame|browser-frame|control|input|app|browser-state|browser-view|browser-command|browser-answer|browser-receipt|browser-bound-input|browser-input)$/,
           );
+          if (url.pathname === '/api/host-browser') {
+            if (!hostBrowser || !models) throw new Fault('HOST_BROWSER_UNAVAILABLE', 503);
+            if (req.method !== 'POST' || url.search)
+              throw new Fault('INVALID_BROWSER_REQUEST', 400);
+            const request = await body(req);
+            if (!isHostBrowserRequest(request)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
+            if (
+              !['state', 'view', 'receipt'].includes(request.action) &&
+              !(request.action === 'input' && request.input.type === 'release')
+            )
+              releaseMutation = recovery?.enter();
+            models.profiles.assertRegistered(request.bot);
+            if (!['state', 'receipt'].includes(request.action))
+              models.profiles.assertActive(request.bot);
+            const changes = request.action === 'open' || request.action === 'close';
+            if (changes) {
+              if (models.running(request.bot)) throw new Fault('COMPUTER_BUSY');
+              if (changing.has(request.bot)) throw new Fault('COMPUTER_CHANGING');
+              changing.add(request.bot);
+            }
+            try {
+              if (
+                request.action === 'open' &&
+                (await host?.localComputer?.status())?.session?.bot === request.bot
+              )
+                throw new Fault('LOCAL_COMPUTER_BUSY');
+              if (changes) models.profiles.assertActive(request.bot);
+              return json(res, await hostBrowser.request(request));
+            } finally {
+              if (changes) changing.delete(request.bot);
+            }
+          }
           if (
             host &&
             (remoteRoute ||
@@ -1596,6 +1634,7 @@ export async function startPrototype({
                   }
                 : {}),
               ...(host?.localComputer ? { localComputer: await host.localComputer.status() } : {}),
+              ...(hostBrowser ? { hostBrowser: await hostBrowser.status() } : {}),
               ...(host?.reboot ? { reboot: await hostRebootStatus() } : {}),
               notices: await noticeStatus(models, groups),
               chats: models
@@ -1949,6 +1988,7 @@ export async function startPrototype({
       schedules,
       models,
       commands,
+      hostBrowser,
       runtime,
     ]) {
       try {
@@ -2098,6 +2138,7 @@ export async function startPrototype({
           : {}),
         runtime: runtime instanceof Desktop ? runtime : undefined,
         computer: runtime instanceof Computers ? runtime.facade : undefined,
+        hostBrowser: hostBrowser?.facade,
         workspace: files,
         settings,
         search: searches,
@@ -2175,6 +2216,7 @@ export async function startPrototype({
             if (changing.has(bot)) throw new Fault('BOT_COMPUTER_CONNECTED');
             if ((await host?.localComputer?.status())?.session?.bot === bot)
               throw new Fault('BOT_COMPUTER_CONNECTED');
+            if (hostBrowser?.selected(bot)) throw new Fault('BOT_COMPUTER_CONNECTED');
             if (host?.nativeWorkspace) {
               if (await groups!.hasPendingBot(bot)) throw new Fault('BOT_GROUP_PENDING');
               return;

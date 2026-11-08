@@ -7,6 +7,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 
 export default defineConfig(({ mode }) => ({
   publicDir: false,
+  resolve: { conditions: ['node'], mainFields: ['module', 'main'] },
   build: {
     target: 'node22',
     outDir: join(root, '../../dist-electron'),

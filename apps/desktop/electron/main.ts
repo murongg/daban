@@ -11,6 +11,8 @@ import {
   session,
 } from 'electron';
 import { type MessageKey, type Parameters, translate } from '../shared/locale';
+import { BrowserHost } from './browser-host';
+import { browserIpc } from './browser-ipc';
 import { Components, readComponentReference } from './components';
 import { LocalComputer } from './local-computer';
 import { localServer } from './local-server';
@@ -27,6 +29,7 @@ import { UpdateSave } from './update-save';
 import { Updates } from './updates';
 
 app.setName('Daban');
+app.commandLine.appendSwitch('disable-quic');
 // Honor Electron's explicit profile switch so acceptance can run without touching the user's saved workspace.
 const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath(
@@ -44,6 +47,8 @@ let windowReady = false;
 let nativeLaunchId: string | undefined;
 let localComputer: LocalComputer | undefined;
 let closeLocalServer: (() => Promise<unknown>) | undefined;
+let browserHost: BrowserHost | undefined;
+let closeBrowserIpc: (() => unknown) | undefined;
 const localShortcut = 'Control+Alt+Escape';
 app.on('ready', (_event, launchInfo) => {
   const value: unknown = launchInfo;
@@ -81,6 +86,7 @@ function createWindow() {
   mainWindow = window;
   windowReady = false;
   window.setMenuBarVisibility(false);
+  window.on('close', () => browserHost?.hideAll());
   window.once('closed', () => {
     if (mainWindow === window) {
       mainWindow = undefined;
@@ -88,6 +94,8 @@ function createWindow() {
     }
     localComputer?.revoke().catch(() => console.error('Local computer cleanup failed'));
     service?.releaseInputs().catch(() => console.error('Desktop input cleanup failed'));
+    // The hidden browser render host must not keep Windows/Linux running without a main window.
+    if (process.platform !== 'darwin' && !exiting) app.quit();
   });
   window.once('ready-to-show', () => {
     if (mainWindow === window) windowReady = true;
@@ -97,7 +105,7 @@ function createWindow() {
     localComputer?.interrupt().catch(() => console.error('Local computer pause failed'));
     notifications?.focus().catch(() => console.error('Notification focus cleanup failed'));
   });
-  // Bot webpages stay inside Linux; the privileged local renderer must never navigate.
+  // Dedicated guest views host webpages; the privileged app renderer must never navigate.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.loadFile(join(__dirname, '..', 'dist', 'index.html')).catch((error) => {
@@ -143,6 +151,12 @@ if (primary) {
       if (process.platform === 'darwin')
         app.dock?.setIcon(join(__dirname, '..', 'dist', 'app-icon.png'));
       const renderer = pathToFileURL(join(__dirname, '..', 'dist', 'index.html')).href;
+      browserHost = new BrowserHost(join(app.getPath('userData'), 'agent'));
+      await browserHost.start();
+      closeBrowserIpc = browserIpc(browserHost, renderer, async (bot, epoch, binding) => {
+        if (!service) throw new Error('RUNTIME_OFFLINE');
+        return service.browserTarget(bot, epoch, binding);
+      });
       closeTitlebarIpc = titlebarIpc(renderer);
       preferences = new LocalePreferences(join(app.getPath('userData'), 'locale.json'));
       await preferences.ready;
@@ -292,7 +306,7 @@ if (primary) {
       );
     });
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    if (process.platform !== 'darwin' && !exiting) app.quit();
   });
 
   app.on('before-quit', async (event) => {
@@ -302,6 +316,8 @@ if (primary) {
     try {
       globalShortcut.unregister(localShortcut);
       await closeLocalServer?.();
+      closeBrowserIpc?.();
+      await browserHost?.close();
       closeNoticeIpc?.();
       closeLocaleIpc?.();
       closeTitlebarIpc?.();

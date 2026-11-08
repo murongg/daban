@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import type { ExecutionRequest, ExecutionRun, ExecutionSnapshot } from '@daban/protocol';
 import {
+  browserFilesCapability,
   browserTaskCapability,
   executionCapabilities,
   executionKeys,
@@ -503,6 +504,7 @@ export async function startExecutor(options: ExecutorOptions = {}) {
           modelExecutionCapability,
           skillPackageCapability,
           browserTaskCapability,
+          browserFilesCapability,
         ],
         computer: {
           mode: raw.mode,
@@ -644,17 +646,20 @@ export async function startExecutor(options: ExecutorOptions = {}) {
       )
         return { ok: true };
       const value = runFor(params.runId);
-      if (value.closing && (method === 'tools.write' || method === 'tools.invoke'))
+      if (value.closing && ['tools.write', 'tools.publish', 'tools.invoke'].includes(method))
         throw new Fault('EXECUTION_RUN_CLOSED');
-      if (method === 'tools.write') {
+      if (method === 'tools.write' || method === 'tools.publish') {
         const cancel = () => value.run.abort.abort();
         signal.addEventListener('abort', cancel, { once: true });
-        const write = tools.writeText(
-          value.run,
-          params.path,
-          params.content,
-          Boolean(params.createOnly),
-        );
+        // Binary publication is bound to the accepted run, never a host-supplied destination directory.
+        const write =
+          method === 'tools.publish'
+            ? tools.writeBinary(
+                value.run,
+                String(params.name),
+                Buffer.from(String(params.data), 'base64'),
+              )
+            : tools.writeText(value.run, params.path, params.content, Boolean(params.createOnly));
         value.writes.add(write);
         try {
           return await write;

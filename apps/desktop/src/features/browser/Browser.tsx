@@ -7,8 +7,8 @@ import {
   type RuntimeBot,
   recoveryBlocked,
 } from '@daban/protocol';
-import { ArrowLeft, ArrowRight, CornerDownLeft, Plus, RefreshCw, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, CornerDownLeft, Globe, Plus, RefreshCw, X } from 'lucide-react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { IconButton } from '../../components/controls/Button';
 import { t, useLocale } from '../../i18n/locale';
@@ -22,9 +22,12 @@ import {
   clearBrowserRequest,
   forgetAddress,
 } from './browsing';
+import { EmbeddedBrowser } from './EmbeddedBrowser';
 import { LiveBrowser } from './LiveBrowser';
+import { useBrowserCommand } from './transport';
 
 function outcome({ error, uncertain }: Pick<BrowserAck, 'error' | 'uncertain'>) {
+  if (error === 'BROWSER_NAVIGATION_FAILED') return runtimeError(new Error(error));
   // A settled receipt may still have an unknown page outcome; it must not become retry advice.
   if (uncertain) return t('browser.operationMayHaveOccurredWillNotRetried');
   return error ? runtimeError(new Error(error)) : '';
@@ -35,15 +38,23 @@ export function Browser({
   name,
   notify,
   expanded = false,
+  host = false,
+  toolbar,
 }: {
   bot: RuntimeBot;
   name: string;
   notify: (message: string) => unknown;
   expanded?: boolean;
+  host?: boolean;
+  toolbar?: ReactNode;
 }) {
   useLocale();
   const runtime = useRuntime();
-  const incoming = runtime.snapshot.browsers?.[bot];
+  const command = useBrowserCommand(host);
+  const connection = host
+    ? runtime.snapshot.hostBrowser?.connections.find((item) => item.bot === bot)
+    : undefined;
+  const incoming = host ? connection?.state : runtime.snapshot.browsers?.[bot];
   const [data, setData] = useState<BrowserState | undefined>(incoming),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -55,12 +66,15 @@ export function Browser({
   currentBot.current = bot;
   const currentInstance = useRef(incoming?.instance);
   currentInstance.current = incoming?.instance;
-  const control = runtime.snapshot.bots[bot],
+  const control =
+      host && connection
+        ? { ...connection, instance: connection.state.instance }
+        : runtime.snapshot.bots[bot],
     human = control?.owner === 'human';
   const ready = runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion >= 16;
   const state = data?.bot === bot ? data : incoming;
   const selected = state?.tabs.find((tab) => tab.id === state.active);
-  const draftKey = `${bot}:${state?.instance}:${selected?.id}`;
+  const draftKey = `${host ? 'host' : 'vm'}:${bot}:${state?.instance}:${selected?.id}`;
   const address =
     addressDraft(draftKey) ??
     (selected?.suspended
@@ -98,15 +112,14 @@ export function Browser({
     setNonce(undefined);
     setStorageError(false);
     try {
-      setNonce(browserRequest(bot));
+      setNonce(browserRequest(bot, host));
     } catch (error) {
       setStorageError(true);
       setError(runtimeError(error));
     }
     setPrepared(true);
     if (ready)
-      runtime
-        .command<BrowserState>({ type: 'browser.state', bot })
+      command<BrowserState>({ type: 'browser.state', bot })
         .then((next) => {
           if (active) merge(next);
         })
@@ -116,13 +129,13 @@ export function Browser({
     return () => {
       active = false;
     };
-  }, [bot, ready, runtime.command, merge]);
+  }, [bot, host, ready, command, merge]);
   const inspect = useCallback(
     async (pending: BrowserPending) => {
       if (!pending) return;
       let receipt: BrowserReceipt | undefined;
       try {
-        receipt = await runtime.command<BrowserReceipt>({
+        receipt = await command<BrowserReceipt>({
           type: 'browser.receipt',
           bot,
           id: pending.id,
@@ -131,10 +144,10 @@ export function Browser({
           setError(t('browser.operationResultUnconfirmedSystemWillNotRetry'));
           return;
         }
-        clearBrowserRequest(bot, pending.id);
+        clearBrowserRequest(bot, pending.id, host);
         setNonce(undefined);
         setError(outcome(receipt));
-        merge(await runtime.command<BrowserState>({ type: 'browser.state', bot }));
+        merge(await command<BrowserState>({ type: 'browser.state', bot }));
       } catch {
         // Optional page refresh cannot weaken the outcome already recorded by the receipt.
         setError(
@@ -144,7 +157,7 @@ export function Browser({
         );
       }
     },
-    [bot, runtime.command, merge],
+    [bot, host, command, merge],
   );
   // Recovery reads only the saved identity; it never stores or resends the old URL, prompt answer or file bytes.
   useEffect(() => {
@@ -160,10 +173,10 @@ export function Browser({
     setError('');
     let claimed = false;
     try {
-      beginBrowserRequest(bot, pending);
+      beginBrowserRequest(bot, pending, host);
       claimed = true;
       setNonce(pending);
-      const command =
+      const requestCommand =
         'kind' in request
           ? { type: 'browser.answer' as const, bot, id, epoch: control.epoch, ...request }
           : {
@@ -174,8 +187,8 @@ export function Browser({
               epoch: control.epoch,
               ...request,
             };
-      const ack = await runtime.command<BrowserAck>(command);
-      clearBrowserRequest(bot, id);
+      const ack = await command<BrowserAck>(requestCommand);
+      clearBrowserRequest(bot, id, host);
       setNonce(undefined);
       merge(ack.state);
       if (ack.error || ack.uncertain) setError(outcome(ack));
@@ -205,8 +218,11 @@ export function Browser({
               aria-pressed={tab.id === state.active}
               onClick={() => send({ action: 'select', tab: tab.id })}
             >
-              {tab.title ||
-                (tab.suspended ? t('browser.pagesAwaitingRecovery') : t('common.newTab'))}
+              {host && <Globe size={13} />}
+              <span className="browser-tab-title">
+                {tab.title ||
+                  (tab.suspended ? t('browser.pagesAwaitingRecovery') : t('common.newTab'))}
+              </span>
             </button>
             <IconButton
               label={t('browser.close', { 0: tab.title || t('common.newTab') })}
@@ -227,6 +243,7 @@ export function Browser({
       </nav>
       <form
         className="browser-address"
+        aria-label={t('hostBrowser.navigation')}
         onSubmit={(event) => {
           event.preventDefault();
           if (!selected || blocked) return;
@@ -261,26 +278,30 @@ export function Browser({
         >
           <RefreshCw />
         </IconButton>
-        <input
-          aria-label={t('browser.webpageUrl')}
-          placeholder={t('browser.enterUrl')}
-          value={address}
-          disabled={blocked}
-          maxLength={2048}
-          spellCheck={false}
-          autoComplete="off"
-          onChange={(event) => {
-            addressDraft(draftKey, event.target.value);
-            setEdit((value) => value + 1);
-          }}
-        />
-        <button
-          type="submit"
-          aria-label={t('browser.openWebpage')}
-          disabled={blocked || !address.trim()}
-        >
-          <CornerDownLeft size={16} />
-        </button>
+        <div className="browser-location">
+          {host && <Globe size={14} />}
+          <input
+            aria-label={t('browser.webpageUrl')}
+            placeholder={t('browser.enterUrl')}
+            value={address}
+            disabled={blocked}
+            maxLength={2048}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => {
+              addressDraft(draftKey, event.target.value);
+              setEdit((value) => value + 1);
+            }}
+          />
+          <button
+            type="submit"
+            aria-label={t('browser.openWebpage')}
+            disabled={blocked || !address.trim()}
+          >
+            <CornerDownLeft size={16} />
+          </button>
+        </div>
+        {toolbar && <div className="browser-toolbar-actions">{toolbar}</div>}
       </form>
       {selected?.suspended && (
         <div className="browser-notice">
@@ -314,21 +335,21 @@ export function Browser({
               if (!control) return;
               setBusy(true);
               try {
-                const returned = await runtime.command<{ epoch: number }>({
+                const returned = await command<{ epoch: number }>({
                   type: 'control',
                   bot,
                   epoch: control.epoch,
                   ...(control.instance === undefined ? {} : { instance: control.instance }),
                   owner: 'agent',
                 });
-                await runtime.command({
+                await command({
                   type: 'control',
                   bot,
                   epoch: returned.epoch,
                   ...(control.instance === undefined ? {} : { instance: control.instance }),
                   owner: 'human',
                 });
-                clearBrowserRequest(bot, nonce.id);
+                clearBrowserRequest(bot, nonce.id, host);
                 setNonce(undefined);
                 setError('');
                 await runtime.command({ type: 'status' });
@@ -363,17 +384,31 @@ export function Browser({
           send={send}
         />
       ))}
-      <LiveBrowser
-        key={bot}
-        bot={bot}
-        name={name}
-        state={state}
-        owner={control?.owner || 'agent'}
-        epoch={control?.epoch || 0}
-        notify={notify}
-        disabled={blocked}
-      />
-      {!human && (
+      {host && human && runtime.snapshot.hostBrowser?.embedded && window.daban?.browser ? (
+        <EmbeddedBrowser
+          key={bot}
+          bot={bot}
+          name={name}
+          state={state}
+          owner={control?.owner || 'agent'}
+          epoch={control?.epoch || 0}
+          notify={notify}
+          disabled={blocked || !!state?.pending?.length}
+        />
+      ) : (
+        <LiveBrowser
+          key={bot}
+          bot={bot}
+          host={host}
+          name={name}
+          state={state}
+          owner={control?.owner || 'agent'}
+          epoch={control?.epoch || 0}
+          notify={notify}
+          disabled={blocked}
+        />
+      )}
+      {!human && !host && (
         <p className="inline-note browser-feedback">
           {t('browser.takeOverOpenWebpagesSwitchTabsHandle')}
         </p>

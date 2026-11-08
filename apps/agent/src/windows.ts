@@ -185,7 +185,8 @@ if ($p.ExitCode -ne 0) { throw 'FeatureEnableFailed' }
           '-EncodedCommand',
           Buffer.from(probeScript, 'utf16le').toString('base64'),
         ],
-        { env: powershellEnvironment(), timeout: 15000, windowsHide: true, maxBuffer: 65536 },
+        // A clean Windows host may spend over fifteen seconds initializing CIM and compiling the WHP interop type.
+        { env: powershellEnvironment(), timeout: 45000, windowsHide: true, maxBuffer: 65536 },
       );
       const value: unknown = JSON.parse(result.stdout.trim());
       if (
