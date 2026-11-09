@@ -68,11 +68,11 @@
   opacity: 0.5;
 }
 .select-trigger[data-focus-visible],
-.date-control:focus-within,
+.date-control:has(.date-segment:focus),
 .time-control:focus-within,
-.number-control:focus-within {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
+.number-control:has(> input:focus) {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 .control-popover {
   z-index: 120;
@@ -167,6 +167,8 @@
 .date-segment {
   padding: 1px 2px;
   border-radius: 3px;
+}
+.date-segment:focus {
   outline: none;
 }
 .date-segment[data-placeholder] {
@@ -297,8 +299,8 @@
   color: var(--on-strong);
 }
 .calendar-day[data-focus-visible] {
-  outline: 2px solid var(--ink);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
 }
 .calendar-day[data-disabled] {
   opacity: 0.4;

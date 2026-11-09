@@ -43,14 +43,9 @@ a {
   color: inherit;
   text-underline-offset: 3px;
 }
-button,
-input,
-textarea,
-select {
-  outline-offset: 4px;
-}
 :focus-visible {
   outline: 2px solid var(--focus);
+  outline-offset: 0;
 }
 ::selection {
   color: var(--ink);
@@ -251,8 +246,9 @@ button {
   padding: 10px 12px;
   font-size: 13px;
 }
-.field:focus {
-  border-color: var(--muted);
+.field:is(input, textarea):focus {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 textarea.field {
   resize: vertical;
@@ -1346,6 +1342,10 @@ textarea.field {
   height: 48px;
   overflow-x: auto;
   overflow-y: hidden;
+}
+.workspace-tab:focus-visible {
+  /* Keep the focus outline inside the scrollable tab strip. */
+  outline-offset: -2px;
 }
 .workspace-tab:hover {
   color: var(--ink);
@@ -3377,6 +3377,10 @@ textarea.skill-source {
   padding: 6px 8px;
   background: var(--canvas);
 }
+.live-text:has(> input:focus) {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
+}
 .live-text input {
   width: 100%;
   min-width: 0;
@@ -3781,10 +3785,6 @@ textarea.skill-source {
 .markdown-math-display .katex-display > .katex {
   text-align: start;
 }
-.markdown-math-display:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 3px;
-}
 .markdown-diagram {
   max-width: 100%;
   max-height: 480px;
@@ -4072,6 +4072,9 @@ textarea.skill-source {
   height: 34px;
   flex-shrink: 0;
 }
+.browser-tab > button:focus-visible {
+  outline-offset: -2px;
+}
 .browser-tab svg {
   width: 13px;
   height: 13px;
@@ -4100,10 +4103,17 @@ textarea.skill-source {
   width: 100%;
   min-width: 0;
   border: 0;
+  outline: none;
   background: transparent;
   color: var(--ink);
   padding: 6px;
   font-size: 12px;
+}
+/* The host has a separate address pill inside its navigation toolbar. */
+.browser-address:not(.host-browser *):has(.browser-location > input:focus),
+.host-browser .browser-location:has(> input:focus) {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 .browser-address button[type="submit"] {
   display: grid;
@@ -4851,8 +4861,13 @@ textarea.skill-source {
   width: 100%;
   min-width: 0;
   border: 0;
+  outline: none;
   background: transparent;
   font-size: 14px;
+}
+.task-search:focus-within {
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 .task-filters,
 .task-layout-switch {
@@ -5343,8 +5358,8 @@ textarea.skill-source {
   font-size: 13px;
 }
 .gallery-search:focus-within {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 .gallery-categories {
   display: flex;
