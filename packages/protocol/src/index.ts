@@ -1,4 +1,8 @@
+export * from './folders.js';
 export * from './goals.js';
+
+import type { FolderCommand } from './folders.js';
+
 export * from './model-access.js';
 export * from './search.js';
 
@@ -60,7 +64,7 @@ import {
   isConversationState,
 } from './conversations.js';
 
-export const managedProtocol = 47;
+export const managedProtocol = 50;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1542,6 +1546,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  localFolders?: true;
   linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
   searchSettings?: true;
@@ -2887,11 +2892,14 @@ export interface UserQuestion {
 }
 export type UserReply =
   | { kind: 'answer'; answers: { id: string; selected: string[]; custom?: string }[] }
-  | { kind: 'decision'; allow: boolean };
+  | { kind: 'decision'; allow: boolean }
+  | { kind: 'folder_grant'; folderId: string; path: string };
 export type InteractionInput = { id: string; sessionId: string } & (
   | { kind: 'question'; questions: UserQuestion[] }
   | { kind: 'approval'; tool: 'web_fetch'; url: string }
   | { kind: 'approval'; tool: 'software_install'; plan: SoftwarePlan; purpose: string }
+  | { kind: 'approval'; tool: 'local_file'; path: string; operation: string; arguments: string }
+  | { kind: 'approval'; tool: 'local_folder'; path: string }
   | {
       kind: 'approval';
       tool: 'vm_command';
@@ -2899,6 +2907,15 @@ export type InteractionInput = { id: string; sessionId: string } & (
       cwd: string;
       purpose: string;
       target: 'linux-vm';
+    }
+  | {
+      kind: 'approval';
+      tool: 'host_command';
+      command: string;
+      cwd: string;
+      root: string;
+      purpose: string;
+      target: 'host-local';
     }
   | {
       kind: 'approval';
@@ -2986,6 +3003,19 @@ export function isInteractionInput(value: unknown): value is InteractionInput {
       value.tool === 'web_fetch' &&
       publicUrl(value.url)
     );
+  if (value.kind === 'approval' && value.tool === 'local_file')
+    return (
+      exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'path', 'operation', 'arguments']) &&
+      boundedText(value.path, 4096) &&
+      ['local_write', 'local_edit', 'local_mkdir', 'local_move', 'local_trash'].includes(
+        String(value.operation),
+      ) &&
+      boundedText(value.arguments, 48000)
+    );
+  if (value.kind === 'approval' && value.tool === 'local_folder')
+    return (
+      exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'path']) && boundedText(value.path, 4096)
+    );
   if (value.kind === 'approval' && value.tool === 'software_install')
     return (
       exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'plan', 'purpose']) &&
@@ -3012,6 +3042,37 @@ export function isInteractionInput(value: unknown): value is InteractionInput {
       boundedText(value.purpose, 500) &&
       value.target === 'linux-vm'
     );
+  if (value.kind === 'approval' && value.tool === 'host_command') {
+    const absolutePath = (candidate: unknown): candidate is string => {
+      if (typeof candidate !== 'string' || !boundedText(candidate, 4096)) return false;
+      if (candidate.startsWith('/'))
+        return !candidate.includes('\\') && !candidate.split('/').includes('..');
+      if (!/^[A-Za-z]:[\\/]/.test(candidate)) return false;
+      return !candidate.split(/[\\/]/).includes('..');
+    };
+    if (
+      !exactKeys(value, [
+        'id',
+        'sessionId',
+        'kind',
+        'tool',
+        'command',
+        'cwd',
+        'root',
+        'purpose',
+        'target',
+      ]) ||
+      !boundedText(value.command, 12000) ||
+      !boundedText(value.purpose, 500) ||
+      value.target !== 'host-local' ||
+      !absolutePath(value.root) ||
+      !absolutePath(value.cwd)
+    )
+      return false;
+    const separator = value.root.includes('\\') ? '\\' : '/';
+    const root = value.root.endsWith(separator) ? value.root : `${value.root}${separator}`;
+    return value.cwd === value.root || value.cwd.startsWith(root);
+  }
   if (value.kind === 'approval' && value.tool === 'mcp_call') {
     if (!publicUrl(value.origin)) return false;
     const origin = new URL(value.origin);
@@ -3057,6 +3118,12 @@ export function isInteractionInput(value: unknown): value is InteractionInput {
 }
 export function isUserReply(value: unknown): value is UserReply {
   if (!profileObject(value)) return false;
+  if (value.kind === 'folder_grant')
+    return (
+      exactKeys(value, ['kind', 'folderId', 'path']) &&
+      validAgentId(value.folderId) &&
+      boundedText(value.path, 4096)
+    );
   if (value.kind === 'decision')
     return exactKeys(value, ['kind', 'allow']) && typeof value.allow === 'boolean';
   return (
@@ -3083,7 +3150,10 @@ export function isUserReply(value: unknown): value is UserReply {
 }
 export function matchesReply(input: InteractionInput, reply: unknown): reply is UserReply {
   if (!isUserReply(reply)) return false;
-  if (input.kind === 'approval') return reply.kind === 'decision';
+  if (input.kind === 'approval')
+    return input.tool === 'local_folder'
+      ? reply.kind === 'folder_grant' || (reply.kind === 'decision' && !reply.allow)
+      : reply.kind === 'decision';
   return (
     reply.kind === 'answer' &&
     reply.answers.length === input.questions.length &&
@@ -4051,6 +4121,7 @@ export function isBrowserInput(value: unknown): value is DesktopInput {
 }
 export type RuntimeCommand =
   | VmCommand
+  | FolderCommand
   | NoteCommand
   | WorkCommentCommand
   | { type: 'work.list'; query: WorkQuery }

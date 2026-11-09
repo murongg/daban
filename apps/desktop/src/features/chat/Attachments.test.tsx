@@ -349,14 +349,14 @@ it('accepts file drops inside the composer, announces the target and leaves plai
   const form = screen.getByRole('textbox', { name: '发送消息' }).closest('form')!;
   const transfer = { types: ['Files'], files: [syntheticFile()], items: [], dropEffect: 'none' };
   fireEvent.dragEnter(form, { dataTransfer: transfer });
-  expect(screen.getByText('松开即可添加附件')).toBeVisible();
+  expect(screen.getByText('松开即可添加附件或引用文件夹')).toBeVisible();
   fireEvent.dragEnter(screen.getByRole('textbox', { name: '发送消息' }), {
     dataTransfer: transfer,
   });
   fireEvent.dragLeave(screen.getByRole('textbox', { name: '发送消息' }), {
     dataTransfer: transfer,
   });
-  expect(screen.getByText('松开即可添加附件')).toBeVisible();
+  expect(screen.getByText('松开即可添加附件或引用文件夹')).toBeVisible();
   const drag = createEvent.dragOver(form, { dataTransfer: transfer });
   fireEvent(form, drag);
   expect(drag.defaultPrevented).toBe(true);
@@ -365,7 +365,7 @@ it('accepts file drops inside the composer, announces the target and leaves plai
   fireEvent(form, drop);
   expect(drop.defaultPrevented).toBe(true);
   expect(await screen.findByRole('button', { name: '预览附件 mock.pdf' })).toBeVisible();
-  expect(screen.queryByText('松开即可添加附件')).toBeNull();
+  expect(screen.queryByText('松开即可添加附件或引用文件夹')).toBeNull();
   const text = createEvent.drop(form, {
     dataTransfer: { types: ['text/plain'], files: [], items: [], getData: () => 'example.test' },
   });
@@ -374,6 +374,170 @@ it('accepts file drops inside the composer, announces the target and leaves plai
   expect(
     backend.invoke.mock.calls.filter(([command]) => command.type === 'attachment.upload'),
   ).toHaveLength(1);
+});
+
+it('keeps a dropped folder in a removable draft chip without uploading or granting access', async () => {
+  const backend = connect(30);
+  const bridge = window.daban!;
+  const getPathForFile = vi.fn(() => '/mock/project');
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { ...bridge, getPathForFile },
+  });
+  const mounted = render(<App />);
+  await screen.findByRole('button', { name: /Bot 模型：/ });
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  const form = input.closest('form')!;
+  fireEvent.change(input, { target: { value: 'Please update this project' } });
+  const transfer = {
+    types: ['Files'],
+    files: [syntheticFile('mock-project')],
+    get items() {
+      return [
+        {
+          kind: 'file',
+          getAsFile: () => syntheticFile('mock-project'),
+          webkitGetAsEntry: () => ({ isDirectory: true, name: 'mock-project' }),
+        },
+      ];
+    },
+    dropEffect: 'none',
+  };
+  const drop = createEvent.drop(form, { dataTransfer: transfer });
+  fireEvent(form, drop);
+
+  expect(drop.defaultPrevented).toBe(true);
+  expect(getPathForFile).toHaveBeenCalledTimes(1);
+  expect(input).toHaveValue('Please update this project');
+  expect(screen.getByRole('button', { name: '查看文件夹路径 project' })).toBeVisible();
+  fireEvent.drop(form, { dataTransfer: transfer });
+  expect(screen.getAllByRole('button', { name: '移除文件夹引用 project' })).toHaveLength(1);
+  expect(
+    screen.queryByText('请选择文本、PDF/Office 文档或 PNG、JPEG、WebP、GIF 图片。'),
+  ).toBeNull();
+  expect(
+    backend.invoke.mock.calls.filter(([command]) => command.type === 'attachment.upload'),
+  ).toHaveLength(0);
+  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'folders.pick')).toBe(
+    false,
+  );
+  mounted.unmount();
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '查看文件夹路径 project' }));
+  const details = await screen.findByRole('dialog', { name: '文件夹路径 project' });
+  expect(within(details).getByText('/mock/project')).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(screen.getByRole('button', { name: '移除文件夹引用 project' }));
+  expect(screen.queryByRole('button', { name: '查看文件夹路径 project' })).toBeNull();
+  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(
+    'Please update this project',
+  );
+});
+
+it('recognizes and references a folder drop exposed only as a local URI', async () => {
+  connect(30);
+  const { runtime } = window.daban!;
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { platform: 'darwin', runtime },
+  });
+  render(<App />);
+  await screen.findByRole('button', { name: /Bot 模型：/ });
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  const form = input.closest('form')!;
+  const drop = createEvent.drop(form, {
+    dataTransfer: {
+      types: [],
+      files: [],
+      items: [
+        {
+          kind: 'file',
+          getAsFile: () => null,
+          webkitGetAsEntry: () => ({ isDirectory: true, name: 'mock-project' }),
+        },
+      ],
+      dropEffect: 'none',
+      getData: (type: string) => (type === 'text/uri-list' ? 'file:///mock/project\r\n' : ''),
+    },
+  });
+  fireEvent(form, drop);
+
+  expect(drop.defaultPrevented).toBe(true);
+  expect(input).toHaveValue('');
+  expect(screen.getByRole('button', { name: '查看文件夹路径 project' })).toBeVisible();
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
+});
+
+it('sends directory context alongside authored text and mixed file attachments', async () => {
+  const backend = connect(28);
+  const bridge = window.daban!;
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { ...bridge, getPathForFile: () => 'C:\\synthetic\\mock-project' },
+  });
+  render(<App />);
+  await screen.findByRole('button', { name: /Bot 模型：/ });
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  fireEvent.change(input, { target: { value: 'Update the synthetic project' } });
+  const file = syntheticFile();
+  fireEvent.drop(input.closest('form')!, {
+    dataTransfer: {
+      types: ['Files'],
+      files: [syntheticFile('mock-project'), file],
+      items: [
+        {
+          kind: 'file',
+          getAsFile: () => syntheticFile('mock-project'),
+          webkitGetAsEntry: () => ({ isDirectory: true, name: 'mock-project' }),
+        },
+        { kind: 'file', getAsFile: () => file },
+      ],
+    },
+  });
+  expect(await screen.findByRole('button', { name: '预览附件 mock.pdf' })).toBeVisible();
+  expect(screen.getByRole('button', { name: '查看文件夹路径 mock-project' })).toBeVisible();
+  expect(input).toHaveValue('Update the synthetic project');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual(
+    expect.objectContaining({
+      type: 'task.start',
+      task: expect.objectContaining({
+        prompt: 'Update the synthetic project\nC:\\synthetic\\mock-project',
+        files: [{ name: 'mock.pdf', attachmentId: 'a'.repeat(64) }],
+      }),
+    }),
+  );
+});
+
+it('keeps the complete draft when adding a folder would exceed the prompt limit', async () => {
+  connect(30);
+  const bridge = window.daban!;
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { ...bridge, getPathForFile: () => '/mock/project' },
+  });
+  render(<App />);
+  await screen.findByRole('button', { name: /Bot 模型：/ });
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  fireEvent.change(input, { target: { value: 'x'.repeat(12000) } });
+  fireEvent.drop(input.closest('form')!, {
+    dataTransfer: {
+      types: ['Files'],
+      files: [],
+      items: [
+        {
+          kind: 'file',
+          getAsFile: () => syntheticFile('project'),
+          webkitGetAsEntry: () => ({ isDirectory: true, name: 'project' }),
+        },
+      ],
+    },
+  });
+  expect(input).toHaveValue('x'.repeat(12000));
+  expect(screen.queryByRole('button', { name: '移除文件夹引用 project' })).toBeNull();
+  expect(
+    await screen.findByText('消息和文件夹路径合计不能超过 12,000 字，请缩短消息后重试。'),
+  ).toBeVisible();
 });
 
 it('serializes overlapping paste/drop events and keeps a delayed upload with its originating Bot', async () => {

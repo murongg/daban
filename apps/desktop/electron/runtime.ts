@@ -31,6 +31,8 @@ import {
   isConversationAck,
   isDiagnosticReport,
   isDocumentOriginal,
+  isFolderCommand,
+  isFolderStatus,
   isGoalProgress,
   isGroup,
   isGroupActionAck,
@@ -389,6 +391,7 @@ export class RuntimeClient {
         clientProtocol?: number;
         botCapabilities?: unknown;
         searchSettings?: unknown;
+        localFolders?: unknown;
         localComputer?: unknown;
         linux?: unknown;
         hostBrowser?: unknown;
@@ -502,6 +505,7 @@ export class RuntimeClient {
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
       if (raw.searchSettings === true) snapshot.searchSettings = true;
+      if (this.agent && raw.localFolders === true) snapshot.localFolders = true;
       if (this.agent && raw.localComputer !== undefined)
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer
@@ -793,7 +797,49 @@ export class RuntimeClient {
     if (!isRecoveryReceipt(value) || value.id !== id) throw new Error('INVALID_RUNTIME_STATE');
     return value;
   }
+  // Called only by Electron after its native picker; renderer commands cannot provide a host path.
+  async connectFolder(bot: string, directory: string) {
+    const state = await this.status();
+    if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+    if (!this.agent || !state.localFolders) throw new Error('RUNTIME_TOO_OLD');
+    const value = await this.api('/api/folders/connect', { bot, path: directory });
+    if (!isFolderStatus({ bot, folders: [value], operations: [] }))
+      throw new Error('INVALID_RUNTIME_STATE');
+    return value;
+  }
   async invoke(command: RuntimeCommand): Promise<unknown> {
+    if (isFolderCommand(command)) {
+      const captured = structuredClone(command);
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!state.localFolders) throw new Error('RUNTIME_TOO_OLD');
+      if (captured.type === 'folders.pick') throw new Error('INVALID_COMMAND');
+      const value = await this.api(
+        `/api/folders/${captured.type.slice('folders.'.length)}`,
+        captured.type === 'folders.status'
+          ? { bot: captured.bot }
+          : { bot: captured.bot, id: captured.id },
+      );
+      if (
+        captured.type === 'folders.status' &&
+        (!isFolderStatus(value) || value.bot !== captured.bot)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        captured.type === 'folders.disconnect' &&
+        (!value ||
+          typeof value !== 'object' ||
+          !('disconnected' in value) ||
+          value.disconnected !== true)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        captured.type === 'folders.restore' &&
+        (!value || typeof value !== 'object' || !('restored' in value) || value.restored !== true)
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
     if (command.type.startsWith('search.')) {
       if (!isSearchCommand(command)) throw new Error('INVALID_COMMAND');
       // Keep the original request ID and revisions across status/authentication waits and lost replies.

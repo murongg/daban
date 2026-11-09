@@ -17,6 +17,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { readMentions } from '../../shared/mentions';
+import { draftPrompt, draftTextLimit } from '../features/chat/conversations';
 import { restoreNotes } from '../features/notes/notes-state';
 import { restoreComments } from '../features/tasks/comments-state';
 import { restoreWork } from '../features/tasks/work-state';
@@ -51,6 +52,12 @@ const strings = (value: unknown): value is string[] =>
 const textFields = (value: unknown, fields: string[]) =>
   record(value) && fields.every((key) => typeof value[key] === 'string');
 const choice = (value: unknown, choices: unknown[]) => choices.includes(value);
+function restoreFolders(value: unknown, text: string) {
+  const folders = strings(value) ? [...new Set(value.filter((path) => !!path))] : [];
+  return text.length <= draftTextLimit(folders) && draftPrompt(text, folders).length <= 12000
+    ? folders
+    : [];
+}
 
 export function restore(raw: string | null): State {
   try {
@@ -154,6 +161,7 @@ export function restore(raw: string | null): State {
               key,
               {
                 text: draft.text,
+                folders: restoreFolders(draft.folders, draft.text),
                 attachments: draft.attachments,
                 queued: [],
                 ...(isApprovalMode(draft.mode) ? { mode: draft.mode } : {}),
@@ -278,6 +286,15 @@ export function restore(raw: string | null): State {
       return initialState();
     for (const key of ['messages', 'drafts', 'controls', 'memories', 'attachments'])
       if (!record(s[key])) return initialState();
+    const folderDrafts = record(s.draftFolders) ? s.draftFolders : {};
+    s.draftFolders = Object.fromEntries(
+      Object.entries(folderDrafts)
+        .filter(([id]) => ids.includes(id))
+        .map(([id, folders]) => [
+          id,
+          restoreFolders(folders, String((s.drafts as Record<string, unknown>)[id] ?? '')),
+        ]),
+    );
     // Older v1 snapshots predate persistent form drafts; retain their saved work when extending the schema.
     if (s.memoryDrafts === undefined)
       s.memoryDrafts = { ...(s.memories as Record<string, string>) };

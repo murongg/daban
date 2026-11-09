@@ -28,6 +28,7 @@ import { AgentSetup } from './agent-setup';
 import type { PreparedAgentFiles, RuntimePreparation } from './components';
 import { Daemon, daemonScope } from './daemon';
 import { EnvironmentClient } from './environment-client';
+import { pickFolder } from './folder-picker';
 import { loadHost, type ManagedHost } from './host';
 import { reconcileAgent } from './host-selection';
 import { parseCommand, trustedSender } from './ipc';
@@ -597,6 +598,16 @@ export function runtimeService(
       }
       app.quit();
       return { restarting: true };
+    }
+    if (command.type === 'folders.pick') {
+      if (closed || !client || state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (!state.localFolders) throw new Error('RUNTIME_TOO_OLD');
+      const owner = client,
+        epoch = connection;
+      const selected = await pickFolder(agentTransport.signal, command.suggestedPath);
+      if (closed || client !== owner || connection !== epoch) throw new Error('RUNTIME_OFFLINE');
+      if (selected === null) return null;
+      return owner.connectFolder(command.bot, selected);
     }
     if (command.type === 'skill.pick') {
       if (closed || !client || state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');

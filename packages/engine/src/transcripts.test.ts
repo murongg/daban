@@ -17,6 +17,29 @@ import {
 import { transcriptRuns } from './transcripts-schema.js';
 
 const scope = { bot: 'mock-bot', runId: 'mock-run', chatRevision: 0 };
+test('local file approvals retain the operation path and redact content in history', () => {
+  const event = projectInteraction(
+    {
+      id: 'mock-local-approval',
+      sessionId: 'mock-session',
+      bot: 'mock-bot',
+      runId: 'mock-run',
+      kind: 'approval',
+      tool: 'local_file',
+      path: '/mock/project/mock.txt',
+      operation: 'local_edit',
+      arguments: '{"newText":"mock-secret"}',
+      status: 'resolved',
+      reply: { kind: 'decision', allow: true },
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:01Z',
+    },
+    (value) => value.replaceAll('mock-secret', '[redacted]'),
+  );
+  expect(event.text).toContain('/mock/project/mock.txt');
+  expect(event.text).toContain('local_edit');
+  expect(event.text).not.toContain('mock-secret');
+});
 const note = (seq: number, type: string, data: unknown, session = 'mock-session') => ({
   method: 'session.event',
   params: { sessionId: session, event: { seq, type, time: 1800000000000 + seq, data } },

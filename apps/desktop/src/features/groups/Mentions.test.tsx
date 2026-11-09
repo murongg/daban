@@ -8,15 +8,18 @@ import { Mentions, MentionText } from './Mentions';
 function Fixture({
   submit,
   members = [{ id: 'mock-a', name: 'Synthetic Alpha' }],
+  maxLength = 12000,
 }: {
   submit: () => unknown;
   members?: MentionMember[];
+  maxLength?: number;
 }) {
   const [value, setValue] = useState('');
   const [mentions, setMentions] = useState<Mention[]>([]);
   return (
     <Mentions
       value={value}
+      maxLength={maxLength}
       mentions={mentions}
       members={members}
       placeholder="Synthetic group draft"
@@ -107,6 +110,31 @@ it('pastes authored text literally and enforces the existing message length limi
   expect(input.querySelector('img')).toBeNull();
   await userEvent.paste('x'.repeat(12000));
   expect(input.textContent).toHaveLength(12000);
+});
+
+it('keeps the authored query when selecting a mention would exceed the folder-reserved budget', async () => {
+  render(<Fixture submit={vi.fn()} maxLength={8} />);
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  await userEvent.type(input, '@Syn');
+  await userEvent.keyboard('{Enter}');
+  expect(input.textContent).toBe('@Syn');
+  expect(screen.queryByRole('mark')).not.toBeInTheDocument();
+});
+
+it('keeps undo history available when a folder temporarily reduces the editable text budget', async () => {
+  const submit = vi.fn();
+  const view = render(<Fixture submit={submit} maxLength={40} />);
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  await userEvent.click(input);
+  await userEvent.paste('SYNTHETIC ORIGINAL DRAFT');
+  await userEvent.keyboard('{Control>}a{/Control}');
+  await userEvent.paste('short');
+  view.rerender(<Fixture submit={submit} maxLength={8} />);
+  await userEvent.keyboard('{Control>}z{/Control}');
+  expect(input.textContent).toBe('short');
+  view.rerender(<Fixture submit={submit} maxLength={40} />);
+  await userEvent.keyboard('{Control>}z{/Control}');
+  expect(input.textContent).toBe('SYNTHETIC ORIGINAL DRAFT');
 });
 
 it('selects and clears the whole draft including a trailing newline', async () => {

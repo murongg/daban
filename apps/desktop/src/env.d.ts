@@ -9,6 +9,7 @@ declare global {
     readonly daban?: Readonly<{
       platform: 'darwin' | 'win32' | 'linux';
       titlebar?: { setTheme: (theme: 'light' | 'dark') => Promise<boolean> };
+      getPathForFile?: (file: File) => string;
       runtime?: RuntimeBridge;
       browser?: BrowserBridge;
       notifications?: NoticeBridge;

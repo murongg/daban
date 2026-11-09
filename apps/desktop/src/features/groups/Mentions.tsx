@@ -10,7 +10,7 @@ import {
   resolveMentions,
 } from '../../../shared/mentions';
 import { t, useLocale } from '../../i18n/locale';
-import { transferFiles } from '../chat/inputs';
+import { fileDrag, transferFiles } from '../chat/inputs';
 import { editorSelection, readEditor, setEditorSelection, writeEditor } from './editor';
 
 export function MentionText({ text, mentions }: { text: string; mentions: readonly Mention[] }) {
@@ -40,6 +40,7 @@ export function MentionText({ text, mentions }: { text: string; mentions: readon
 
 export function Mentions({
   value,
+  maxLength = 12000,
   mentions,
   members,
   placeholder,
@@ -49,6 +50,7 @@ export function Mentions({
   onSubmit,
 }: {
   value: string;
+  maxLength?: number;
   mentions: Mention[];
   members: (MentionMember & { description?: string })[];
   placeholder: string;
@@ -133,8 +135,10 @@ export function Mentions({
   function undo(redo: boolean) {
     const from = redo ? history.current.future : history.current.past;
     const to = redo ? history.current.past : history.current.future;
-    const previous = from.pop();
-    if (!previous) return;
+    const previous = from.at(-1);
+    // Folder references can shrink the budget; retain the snapshot until it fits again.
+    if (!previous || previous.text.length > maxLength) return;
+    from.pop();
     to.push({ text: value, mentions, caret: selection.end });
     pendingCaret.current = { text: previous.text, caret: previous.caret };
     setSelection({ start: previous.caret, end: previous.caret });
@@ -144,7 +148,7 @@ export function Mentions({
   function edit(record = !composition.current) {
     if (!input.current || disabled) return;
     const next = readEditor(input.current);
-    const text = next.text.slice(0, 12000);
+    const text = next.text.slice(0, maxLength);
     setSelection(editorSelection(input.current));
     setDismissed(false);
     setIndex(0);
@@ -153,7 +157,10 @@ export function Mentions({
   function insertText(plain: string) {
     if (!input.current || disabled) return;
     const range = editorSelection(input.current);
-    const inserted = plain.slice(0, Math.max(0, 12000 - value.length + range.end - range.start));
+    const inserted = plain.slice(
+      0,
+      Math.max(0, maxLength - value.length + range.end - range.start),
+    );
     const text = value.slice(0, range.start) + inserted + value.slice(range.end);
     const caret = range.start + inserted.length;
     pendingCaret.current = { text, caret };
@@ -165,6 +172,7 @@ export function Mentions({
   function choose(member: MentionMember) {
     if (!query) return;
     const next = insertMention(value, query, member, mentions);
+    if (next.text.length > maxLength) return;
     pendingCaret.current = { text: next.text, caret: next.caret };
     update(next.text, next.mentions);
     setSelection({ start: next.caret, end: next.caret });
@@ -201,7 +209,8 @@ export function Mentions({
           if (files.length) await onFiles(files);
         }}
         onDrop={(event) => {
-          if (transferFiles(event.dataTransfer).length) return;
+          // The composer owns file and folder drops; plain-text insertion here would duplicate paths.
+          if (fileDrag(event.dataTransfer)) return;
           event.preventDefault();
           const point = document.caretRangeFromPoint?.(event.clientX, event.clientY);
           if (point && input.current?.contains(point.startContainer)) {

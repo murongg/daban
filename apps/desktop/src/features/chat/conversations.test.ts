@@ -7,6 +7,7 @@ import { conversationKey, recentConversations } from './conversations';
 it('keeps drafts, attachments, queues and approval grants within their original conversation', () => {
   let state = demoState();
   state = reduce(state, { type: 'draft', bot: 'research', text: 'SYNTHETIC FIRST DRAFT' });
+  state = reduce(state, { type: 'draft-folders-add', bot: 'research', folders: ['/mock/first'] });
   state = reduce(state, { type: 'approval-mode', bot: 'research', revision: 0, mode: 'full' });
   state = reduce(state, {
     type: 'chat-open',
@@ -16,11 +17,14 @@ it('keeps drafts, attachments, queues and approval grants within their original 
   });
   expect(chatRevision(state, 'research')).toBe(1);
   expect(state.drafts.research).toBe('');
+  expect(state.draftFolders?.research).toEqual([]);
   expect(state.approvalModes.research?.mode).not.toBe('full');
   state = reduce(state, { type: 'draft', bot: 'research', text: 'SYNTHETIC SECOND DRAFT' });
+  state = reduce(state, { type: 'draft-folders-add', bot: 'research', folders: ['/mock/second'] });
   state = reduce(state, { type: 'chat-select', bot: 'research', revision: 0 });
   expect(chatRevision(state, 'research')).toBe(0);
   expect(state.drafts.research).toBe('SYNTHETIC FIRST DRAFT');
+  expect(state.draftFolders?.research).toEqual(['/mock/first']);
   expect(state.approvalModes.research).toEqual({ revision: 0, mode: 'full' });
   state = reduce(state, { type: 'chat-select', bot: 'research', revision: 1 });
   expect(state.drafts.research).toBe('SYNTHETIC SECOND DRAFT');
@@ -38,6 +42,114 @@ it('keeps drafts, attachments, queues and approval grants within their original 
   const first = reduce(restored, { type: 'chat-select', bot: 'research', revision: 0 });
   const second = reduce(first, { type: 'chat-select', bot: 'research', revision: 1 });
   expect(second.drafts.research).toBe('SYNTHETIC SECOND DRAFT');
+  expect(second.draftFolders?.research).toEqual(['/mock/second']);
+  expect(first.draftFolders?.research).toEqual(['/mock/first']);
+});
+
+it('preserves folder chips across queue editing and retries and includes paths in inserted messages', () => {
+  let state = demoState();
+  state = reduce(state, { type: 'draft-folders-add', bot: 'research', folders: ['/mock/first'] });
+  state = reduce(state, {
+    type: 'queue-add',
+    bot: 'research',
+    task: { id: 'mock-queued-folder', prompt: '', files: [], folders: ['/mock/first'] },
+  });
+  expect(state.queued.research).toHaveLength(1);
+  expect(state.draftFolders?.research).toEqual([]);
+  state = reduce(state, { type: 'draft', bot: 'research', text: 'SYNTHETIC EDIT' });
+  state = reduce(state, {
+    type: 'draft-folders-add',
+    bot: 'research',
+    folders: ['/mock/second', '/mock/first'],
+  });
+  state = reduce(state, { type: 'queue-edit', bot: 'research', id: 'mock-queued-folder' });
+  expect(state.drafts.research).toBe('SYNTHETIC EDIT');
+  expect(state.draftFolders?.research).toEqual(['/mock/second', '/mock/first']);
+  state = reduce(state, {
+    type: 'queue-add',
+    bot: 'research',
+    task: {
+      id: 'mock-queued-folder',
+      prompt: state.drafts.research,
+      files: [],
+      folders: state.draftFolders?.research,
+    },
+  });
+  state = reduce(state, { type: 'queue-fail', bot: 'research', id: 'mock-queued-folder' });
+  state = reduce(state, { type: 'queue-retry', bot: 'research', id: 'mock-queued-folder' });
+  expect(state.queued.research[0].folders).toEqual(['/mock/second', '/mock/first']);
+  state = reduce(state, {
+    type: 'queue-insert',
+    bot: 'research',
+    id: 'mock-queued-folder',
+    revision: 0,
+  });
+  expect(state.messages.research.at(-1)?.text).toBe('SYNTHETIC EDIT\n/mock/second\n/mock/first');
+});
+
+it('retains queued references and authored text when their merged context would exceed the prompt limit', () => {
+  let state = demoState();
+  state = reduce(state, {
+    type: 'queue-add',
+    bot: 'research',
+    task: { id: 'mock-long-queue', prompt: '', files: [], folders: ['/mock/project'] },
+  });
+  state = reduce(state, { type: 'draft', bot: 'research', text: 'x'.repeat(12000) });
+  const before = state;
+  state = reduce(state, { type: 'queue-edit', bot: 'research', id: 'mock-long-queue' });
+  expect(state).toBe(before);
+  expect(state.queued.research[0].folders).toEqual(['/mock/project']);
+  expect(state.drafts.research).toHaveLength(12000);
+});
+
+it('does not reduce the editable text budget below an existing whitespace-heavy draft', () => {
+  let state = demoState();
+  const text = `${' '.repeat(11999)}x`;
+  state = reduce(state, { type: 'draft', bot: 'research', text });
+  const before = state;
+  state = reduce(state, { type: 'draft-folders-add', bot: 'research', folders: ['/mock/project'] });
+  expect(state).toBe(before);
+  expect(state.drafts.research).toBe(text);
+});
+
+it('clears only the exact acknowledged text and folder draft, preserving later directory changes', () => {
+  let state = demoState();
+  state = reduce(state, { type: 'draft', bot: 'research', text: 'SYNTHETIC SEND' });
+  state = reduce(state, { type: 'draft-folders-add', bot: 'research', folders: ['/mock/first'] });
+  const task = {
+    requestId: 'mock-folder-send',
+    prompt: 'SYNTHETIC SEND\n/mock/first',
+    chatRevision: 0,
+  };
+  state = reduce(state, { type: 'runtime-pending', bot: 'research', task });
+  const receipt = {
+    ...task,
+    runId: 'mock-folder-run',
+    phase: 'completed' as const,
+    result: 'SYNTHETIC',
+    error: '',
+  };
+  const settled = reduce(state, { type: 'runtime-task', bot: 'research', task: receipt });
+  expect(settled.drafts.research).toBe('');
+  expect(settled.draftFolders?.research).toEqual([]);
+  state = reduce(state, { type: 'draft-folder-remove', bot: 'research', folder: '/mock/first' });
+  state = reduce(state, { type: 'draft-folders-add', bot: 'research', folders: ['/mock/newer'] });
+  state = reduce(state, { type: 'runtime-task', bot: 'research', task: receipt });
+  expect(state.drafts.research).toBe('SYNTHETIC SEND');
+  expect(state.draftFolders?.research).toEqual(['/mock/newer']);
+});
+
+it('keeps legacy drafts when optional stored folder references are absent or damaged', () => {
+  const state = demoState();
+  state.drafts.research = 'SYNTHETIC LEGACY DRAFT';
+  const saved = JSON.parse(serialize(state));
+  saved.state.draftFolders = { research: ['/mock/project', '/mock/project'], writer: 123 };
+  const restored = restore(JSON.stringify(saved));
+  expect(restored.drafts.research).toBe('SYNTHETIC LEGACY DRAFT');
+  expect(restored.draftFolders?.research).toEqual(['/mock/project']);
+  expect(restored.draftFolders?.writer).toEqual([]);
+  delete saved.state.draftFolders;
+  expect(restore(JSON.stringify(saved)).drafts.research).toBe('SYNTHETIC LEGACY DRAFT');
 });
 
 it('does not lower the authoritative boundary or erase a newer draft after a delayed new-conversation acknowledgement', () => {

@@ -16,7 +16,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -33,6 +33,29 @@ const group: Group = {
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
+it('clears the acknowledged group folder context and preserves newer folder references', () => {
+  let state = initialState();
+  state = reduce(state, { type: 'draft', bot: 'crew', text: 'SYNTHETIC FOLDER MESSAGE' });
+  state = reduce(state, {
+    type: 'draft-folders-add',
+    bot: 'crew',
+    folders: ['/mock/group-project'],
+  });
+  const input = {
+    id: 'mock-group-folder-send',
+    group: 'crew',
+    prompt: 'SYNTHETIC FOLDER MESSAGE\n/mock/group-project',
+    recipients: ['a'],
+  };
+  state = reduce(state, { type: 'group-pending', group: 'crew', input });
+  const sent = reduce(state, { type: 'group-sent', group: 'crew', input });
+  expect(sent.drafts.crew).toBe('');
+  expect(sent.draftFolders?.crew).toEqual([]);
+  state = reduce(state, { type: 'draft-folders-add', bot: 'crew', folders: ['/mock/newer'] });
+  state = reduce(state, { type: 'group-sent', group: 'crew', input });
+  expect(state.drafts.crew).toBe('SYNTHETIC FOLDER MESSAGE');
+  expect(state.draftFolders?.crew).toEqual(['/mock/group-project', '/mock/newer']);
+});
 it('persists selected mention identities and preserves a newer mention draft after an older send acknowledgement', () => {
   let state = initialState();
   const mention = { id: 'a', name: 'Synthetic same-name Bot', start: 0, end: 24 };
@@ -129,6 +152,48 @@ it('retains group drafts while a global recovery fence blocks new collaboration'
   expect(input.textContent).toBe('SYNTHETIC-QUEUED-DRAFT');
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
   expect(fake.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
+});
+
+it('keeps a directory drop on the rich group editor as a chip and sends its path exactly once', async () => {
+  const backend = connect(false, false, 30);
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { ...window.daban, getPathForFile: () => '/mock/group-project' },
+  });
+  const state = initialState();
+  state.selected = 'crew';
+  state.panel = null;
+  state.drafts.crew = 'SYNTHETIC GROUP DRAFT';
+  localStorage.setItem(storageKey, serialize(state));
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  const directory = new File([], 'group-project');
+  fireEvent.drop(input, {
+    dataTransfer: {
+      types: ['Files', 'text/plain'],
+      files: [directory],
+      items: [
+        {
+          kind: 'file',
+          getAsFile: () => directory,
+          webkitGetAsEntry: () => ({ isDirectory: true, name: 'group-project' }),
+        },
+      ],
+      getData: (type: string) => (type === 'text/plain' ? '/mock/group-project' : ''),
+    },
+  });
+  expect(screen.getByRole('button', { name: '查看文件夹路径 group-project' })).toBeVisible();
+  expect(input.textContent).toBe('SYNTHETIC GROUP DRAFT');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual(
+    expect.objectContaining({
+      type: 'group.send',
+      input: expect.objectContaining({
+        prompt: 'SYNTHETIC GROUP DRAFT\n/mock/group-project',
+      }),
+    }),
+  );
+  expect(screen.queryByRole('button', { name: '查看文件夹路径 group-project' })).toBeNull();
 });
 function connect(archived = false, recovering = false, protocol = 15) {
   let snapshot = disconnected('ready');

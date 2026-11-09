@@ -27,7 +27,9 @@ import { IconButton } from '../../components/controls/Button';
 import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
 import { Avatar } from '../bots/Avatar';
+import { draftFolders, draftPrompt, draftTextLimit } from '../chat/conversations';
 import { Execution } from '../chat/Execution';
+import { FolderReferences } from '../chat/FolderReferences';
 import { useFollow } from '../chat/follow';
 import { useInputs } from '../chat/inputs';
 import { Plan } from '../chat/Plan';
@@ -104,6 +106,7 @@ export function GroupChat({
       ? availableMembers.length > 0
       : availableMembers.some((member) => member.id === target);
   const draft = state.drafts[bot.id];
+  const folders = draftFolders(state, bot.id);
   const selectedMentions = readMentions(state.groupMentions?.[bot.id], draft);
   const mentioned = resolveMentions(
     draft,
@@ -188,7 +191,7 @@ export function GroupChat({
     if (
       !pending &&
       (!validRecipients ||
-        (!draft.trim() && !attached.length) ||
+        (!draft.trim() && !attached.length && !folders.length) ||
         !runtime.snapshot.model.configured)
     )
       return;
@@ -196,7 +199,7 @@ export function GroupChat({
       revision: registered.revision,
       id: crypto.randomUUID(),
       group: bot.id,
-      prompt: draft.trim() || t('common.reviewFilesCompleteTaskIDescribed'),
+      prompt: draftPrompt(draft, folders) || t('common.reviewFilesCompleteTaskIDescribed'),
       recipients: mentioned.recipients.length
         ? mentioned.recipients
         : target === '*'
@@ -549,8 +552,15 @@ export function GroupChat({
               {t('common.dropAddAttachments')}
             </p>
           )}
-          {!!attached.length && (
+          {(attached.length > 0 || folders.length > 0) && (
             <div className="attachments">
+              <FolderReferences
+                folders={folders}
+                disabled={readOnly || sending || !!pending}
+                onRemove={(folder) =>
+                  dispatch({ type: 'draft-folder-remove', bot: bot.id, folder })
+                }
+              />
               {attached.map((file) => (
                 <span className="attachment" key={file.id}>
                   <Paperclip />
@@ -576,6 +586,7 @@ export function GroupChat({
           <Mentions
             placeholder={t('groupchat.messageWithMentions', { 0: bot.name })}
             value={draft}
+            maxLength={draftTextLimit(folders)}
             mentions={selectedMentions}
             members={availableMembers.map((member) => ({
               id: member.id,
@@ -679,7 +690,7 @@ export function GroupChat({
                 sending ||
                 !!state.attachmentUploads[bot.id] ||
                 !runtime.snapshot.model.configured ||
-                (!draft.trim() && !attached.length)
+                (!draft.trim() && !attached.length && !folders.length)
               }
             >
               <ArrowUp />

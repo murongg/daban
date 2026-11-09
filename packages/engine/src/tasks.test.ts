@@ -15,6 +15,8 @@ test('full guest instructions describe VM sudo and host approval without exposin
     /installation requires software_install|without credentials or network/,
   );
   expect(agentInstructionsFor(false)).toMatch(/installation requires software_install/);
+  expect(agentInstructionsFor(true)).toMatch(/local_request_folder/);
+  expect(agentInstructionsFor(true)).toMatch(/suggested path itself never grants access/);
 });
 
 import { TaskJournal, taskPrompt, validateTask } from './tasks.js';

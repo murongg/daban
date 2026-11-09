@@ -43,6 +43,9 @@ import {
   conversationEditor,
   conversationKey,
   conversationState,
+  draftFolders,
+  draftPrompt,
+  draftTextLimit,
   saveConversationEditor,
   selectConversation,
   selectedConversation,
@@ -224,6 +227,7 @@ export interface QueuedTask {
   id: string;
   prompt: string;
   files: string[];
+  folders?: string[];
   error?: boolean;
   sending?: boolean;
   verify?: QueuedInsertTarget;
@@ -262,6 +266,7 @@ export interface State {
   bots: Bot[];
   messages: Record<string, Message[]>;
   drafts: Record<string, string>;
+  draftFolders?: Record<string, string[]>;
   queued: Record<string, QueuedTask[]>;
   controls: Record<string, Owner>;
   memories: Record<string, string>;
@@ -391,6 +396,8 @@ export type Action =
   | { type: 'theme'; theme: Theme }
   | { type: 'control'; bot: string; owner: Owner }
   | { type: 'draft'; bot: string; text: string }
+  | { type: 'draft-folders-add'; bot: string; folders: string[]; revision?: number }
+  | { type: 'draft-folder-remove'; bot: string; folder: string; revision?: number }
   | { type: 'queue-add'; bot: string; task: QueuedTask }
   | { type: 'queue-edit'; bot: string; id: string }
   | { type: 'queue-remove'; bot: string; id: string }
@@ -458,6 +465,7 @@ export function initialState(): State {
     bots: [],
     messages: {},
     drafts: {},
+    draftFolders: {},
     queued: {},
     controls: {},
     memories: {},
@@ -760,7 +768,7 @@ export function reduce(state: State, action: Action): State {
     case 'group-target':
       return { ...state, groupTargets: { ...state.groupTargets, [action.group]: action.target } };
     case 'group-draft': {
-      const text = action.text.slice(0, 12000);
+      const text = action.text.slice(0, draftTextLimit(draftFolders(state, action.group)));
       return {
         ...state,
         drafts: { ...state.drafts, [action.group]: text },
@@ -794,7 +802,8 @@ export function reduce(state: State, action: Action): State {
       );
       // Identical draft text can now name a different same-named Bot; preserve that newer intent.
       const sameDraft =
-        state.drafts[action.group].trim() === action.input.prompt.trim() &&
+        draftPrompt(state.drafts[action.group], draftFolders(state, action.group)) ===
+          action.input.prompt.trim() &&
         !mentions.ambiguous.length &&
         (!mentions.recipients.length ||
           JSON.stringify(mentions.recipients) === JSON.stringify(action.input.recipients));
@@ -806,6 +815,9 @@ export function reduce(state: State, action: Action): State {
         ...state,
         groupRequests: { ...state.groupRequests, [action.group]: undefined },
         drafts: sameDraft ? { ...state.drafts, [action.group]: '' } : state.drafts,
+        draftFolders: sameDraft
+          ? { ...state.draftFolders, [action.group]: [] }
+          : state.draftFolders,
         groupMentions: sameDraft
           ? { ...state.groupMentions, [action.group]: [] }
           : state.groupMentions,
@@ -1165,11 +1177,15 @@ export function reduce(state: State, action: Action): State {
           (file, index) => JSON.stringify(taskFile(file)) === JSON.stringify(sentFiles[index]),
         );
       if (!changed && !acknowledged) return state;
+      // Match the complete captured context so a late receipt cannot erase newly referenced folders.
+      const clearDraft =
+        acknowledged && draftPrompt(editor.text, editor.folders) === pending.prompt.trim();
       const updated =
         acknowledged && !pending.retryOf
           ? saveConversationEditor(state, action.bot, revision, {
               ...editor,
-              text: editor.text.trim() === pending.prompt.trim() ? '' : editor.text,
+              text: clearDraft ? '' : editor.text,
+              folders: clearDraft ? [] : editor.folders,
               attachments: clearAttachments ? [] : editor.attachments,
             })
           : state;
@@ -1217,7 +1233,7 @@ export function reduce(state: State, action: Action): State {
     case 'control':
       return { ...state, controls: { ...state.controls, [action.bot]: action.owner } };
     case 'draft': {
-      const text = action.text.slice(0, 12000);
+      const text = action.text.slice(0, draftTextLimit(draftFolders(state, action.bot)));
       return {
         ...state,
         drafts: { ...state.drafts, [action.bot]: text },
@@ -1235,11 +1251,33 @@ export function reduce(state: State, action: Action): State {
           : {}),
       };
     }
+    case 'draft-folders-add':
+    case 'draft-folder-remove': {
+      const revision = action.revision ?? chatRevision(state, action.bot);
+      const editor = conversationEditor(state, action.bot, revision);
+      const folders =
+        action.type === 'draft-folders-add'
+          ? [...new Set([...(editor.folders ?? []), ...action.folders])]
+          : (editor.folders ?? []).filter((folder) => folder !== action.folder);
+      if (
+        editor.text.length > draftTextLimit(folders) ||
+        draftPrompt(editor.text, folders).length > 12000
+      )
+        return state;
+      return saveConversationEditor(state, action.bot, revision, { ...editor, folders });
+    }
     case 'queue-add': {
       const queue = messageQueue(state, action.bot);
       const task = action.task;
-      if (queue.length >= messageQueueLimit || !task.id || task.prompt.length > 12000) return state;
-      if (!task.prompt.trim() && !task.files.length) return state;
+      const prompt = draftPrompt(task.prompt, task.folders);
+      if (
+        queue.length >= messageQueueLimit ||
+        !task.id ||
+        task.prompt.length > draftTextLimit(task.folders ?? []) ||
+        prompt.length > 12000
+      )
+        return state;
+      if (!prompt && !task.files.length) return state;
       if (task.files.some((id) => !state.files.some((file) => file.id === id))) return state;
       return {
         ...state,
@@ -1248,6 +1286,7 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: [...queue, { ...task, prompt: task.prompt.trim() }],
         },
         drafts: { ...state.drafts, [action.bot]: '' },
+        draftFolders: { ...state.draftFolders, [action.bot]: [] },
         attachments: { ...state.attachments, [action.bot]: [] },
       };
     }
@@ -1276,8 +1315,10 @@ export function reduce(state: State, action: Action): State {
       if (!item || item.verify || item.sending) return state;
       const draft = state.drafts[action.bot] ?? '';
       const prompt = draft && item.prompt ? `${draft}\n${item.prompt}` : item.prompt || draft;
+      const folders = [...new Set([...draftFolders(state, action.bot), ...(item.folders ?? [])])];
       // Over-limit edits keep both the queued message and the draft instead of truncating text.
-      if (prompt.length > 12000) return state;
+      if (prompt.length > draftTextLimit(folders) || draftPrompt(prompt, folders).length > 12000)
+        return state;
       const merged = mergeAttachments(state.attachments[action.bot] ?? [], state.files, item.files);
       // A merge that would exceed the attachment cap or lose a file also keeps the queued message intact.
       if (!merged) return state;
@@ -1289,6 +1330,7 @@ export function reduce(state: State, action: Action): State {
           [action.bot]: queue.filter((entry) => entry.id !== action.id),
         },
         drafts: { ...state.drafts, [action.bot]: prompt },
+        draftFolders: { ...state.draftFolders, [action.bot]: folders },
         attachments: { ...state.attachments, [action.bot]: merged.attachments },
       };
     }
@@ -1317,7 +1359,7 @@ export function reduce(state: State, action: Action): State {
             {
               id: `inserted:${item.id}`,
               role: 'user',
-              text: item.prompt,
+              text: draftPrompt(item.prompt, item.folders),
               chatRevision: action.revision,
             },
           ],
@@ -1364,6 +1406,7 @@ export function reduce(state: State, action: Action): State {
         id: queue[index].id,
         prompt: queue[index].prompt,
         files: queue[index].files,
+        folders: queue[index].folders,
       };
       return { ...state, queued: { ...state.queued, [action.bot]: items } };
     }
@@ -1434,7 +1477,7 @@ export function reduce(state: State, action: Action): State {
         },
       };
     case 'send': {
-      const text = state.drafts[action.bot].trim();
+      const text = draftPrompt(state.drafts[action.bot], draftFolders(state, action.bot));
       const files = state.attachments[action.bot];
       if (!text && !files.length) return state;
       const message: Message = {
@@ -1451,6 +1494,7 @@ export function reduce(state: State, action: Action): State {
       return {
         ...state,
         drafts: { ...state.drafts, [action.bot]: '' },
+        draftFolders: { ...state.draftFolders, [action.bot]: [] },
         attachments: { ...state.attachments, [action.bot]: [] },
         messages: {
           ...state.messages,

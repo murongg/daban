@@ -15,6 +15,7 @@ import { Dialog } from '../../components/controls/Dialog';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { Attachments } from '../chat/Attachments';
 import { attachment, canParseDocuments, download, downloadBlob, stagedAttachment } from './files';
+import { LocalFiles } from './LocalFiles';
 
 export function RuntimeFiles({
   preview,
@@ -85,6 +86,7 @@ export function RuntimeFiles({
     <div className="panel-section">
       <div className="panel-heading">
         <h2>{t('common.workspaceFiles')}</h2>
+        {attachBot && <LocalFiles key={attachBot} bot={attachBot} />}
         {attachBot && (
           <button
             type="button"

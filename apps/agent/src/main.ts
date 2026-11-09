@@ -30,6 +30,7 @@ import { Environment } from './environment.js';
 import { startupErrorCode, writeStartupFailure } from './failure.js';
 import { linuxAssets } from './linux.js';
 import { LinuxExecution } from './linux-execution.js';
+import { LocalCommandRunner } from './local-command.js';
 import { HostPower, type PowerOptions } from './power.js';
 import { QemuLink } from './qemu.js';
 import { QemuSetup } from './qemu-setup.js';
@@ -325,6 +326,7 @@ export async function startAgentProcess(
       return closingNative;
     };
     try {
+      const localCommandRunner = new LocalCommandRunner();
       native = await (factory.native ?? startNativeAgent)({
         environment,
         execution,
@@ -346,6 +348,7 @@ export async function startAgentProcess(
         stdioEntry: mcpStdioEntry,
         nativeWorkspace: path.join(options.dataRoot, 'workspace'),
         localComputer: new LocalComputerClient(options.dataRoot),
+        runLocalCommand: (request, signal) => localCommandRunner.run(request, signal),
       });
       // Only the process that acquired the private server may resume an interrupted installer.
       await environment?.resumePending();

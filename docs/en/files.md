@@ -9,6 +9,22 @@ Open **Files** in a Bot's workspace. Actual work files, chat attachments, and kn
 | Workspace files | Task outputs and files for further work; Linux includes a shared area |
 | Chat attachments | Inputs for messages and retained attachment content |
 | Knowledge | Long-term textual references belonging to a Bot |
+| Local folders | Real computer directories connected to the current Bot for direct search, editing and organization |
+
+## Connect local folders
+
+1. Open **Local folders** next to the composer or in the Files panel, then choose **Add folder**.
+2. Select a directory in the native folder picker. Connections belong to the current Bot and can include several directories.
+3. You can also send the Bot a local directory path or `file://` link. If that directory is not connected, the Bot can request access; approve by selecting the actual directory in the native picker. The path in the request only points the picker to a starting location. Only the directory you select is connected.
+4. Describe the task, for example: “Find text files mentioning budget, change the project status to confirmed, then read it back.” These operations do not start Linux.
+5. Review recent changes in the same window. Short text changes retain before/after previews. Deleted regular files stay in `.daban-trash` inside their original directory; **Restore file** returns them without overwriting an existing destination.
+6. **Disconnect** revokes subsequent access and keeps the actual files. Reconnecting the same actual directory makes its earlier trash records available for restoration again.
+
+Local tools support directory listing, UTF-8 reads, filename globs and literal content search, text creation and exact edits, directory creation, regular-file moves/renames and recoverable trash. Existing files require the revision observed before a change, preventing overwrites of subsequent human edits. Ask-for-approval mode shows a local-file approval card before modifications.
+
+Connected folders can also enable `local_shell` for command-line processing with installed Python, Node, or other host tools. Each command requires its own approval. The card shows the full command, working directory and authorized folder; the sandbox limits file access to that folder and system tools, blocks network access, and provides no sudo. If the required OS sandbox is unavailable, the command is refused. This capability supports macOS and Linux and does not copy files into the Linux VM.
+
+Text reads/writes are limited to 1 MiB per file. Binary files can be listed, moved and trashed. Searches skip links, `.git`, `node_modules` and Daban trash; narrow searches when results report truncation. History displays the latest 100 changes. Verify actual files before continuing an operation with an uncertain outcome.
 
 ## Inspect and use files
 
@@ -29,7 +45,7 @@ Independent screens do not isolate files. Overwriting, moving, or deleting share
 
 ## Limits
 
-- Native file tools are limited to the application workspace. Linux shells, processes, and complex document parsing require Linux to be installed and start it on actual use. Native applications and files outside the workspace still require separately authorized desktop control.
+- Ordinary workspace tools stay inside application-managed directories. Separate local tools access only folders connected to the current Bot. Links and private application data are excluded. Local commands require approval each time and are supported on macOS/Linux; Windows is not enabled. Linux shells and processes run in the separate Linux VM, which starts on actual use. Native applications still require separately authorized desktop control.
 - Previews do not replace specialized applications. Large, binary, or complex formats may need downloading.
 - Historical links refer to retained current files rather than an immutable complete backup.
 - Workspace export excludes native and Linux work files and VM disks. Download important outputs separately. See [Workspace export](workspace-export.md).

@@ -42,6 +42,10 @@ const reads = new Set([
     'bot_notes_list',
     'bot_notes_read',
     'task_catalog',
+    'local_folders',
+    'local_list',
+    'local_read',
+    'local_search',
   ].map((name) => `mcp__computer__${name}`),
 ]);
 function ownedRoot(agents: Context['agents'], candidate: unknown) {

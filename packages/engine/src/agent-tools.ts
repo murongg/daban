@@ -34,7 +34,9 @@ import type { IntegrationTools } from './integration-tools.js';
 import type { McpSnapshot } from './integrations.js';
 import type { KnowledgeTools } from './knowledge-tools.js';
 import type { LinuxTools } from './linux-tools.js';
+import type { LocalCommandTools } from './local-command-tools.js';
 import type { LocalComputerPort } from './local-computer.js';
+import type { LocalTools } from './local-tools.js';
 import type { MemoryTools } from './memory.js';
 import type { NotesTools } from './notes-tools.js';
 import type { WorkspaceExecutor } from './remote-workspace.js';
@@ -158,6 +160,9 @@ export class AgentTools {
   readonly browser?: BrowserTools;
   localComputer?: LocalComputerPort;
   private readonly computerRequests = new WeakMap<AgentToolRun, Set<string>>();
+  localFiles?: LocalTools;
+  localCommands?: LocalCommandTools;
+  private readonly localRequests = new WeakMap<AgentToolRun, Set<string>>();
   private readonly localRuns = new WeakMap<AgentToolRun, boolean>();
   groups?: GroupTools;
   bots?: BotTools;
@@ -309,6 +314,8 @@ export class AgentTools {
       ...(this.knowledge?.list || []),
       ...(this.work?.list || []),
       ...(this.notes?.list || []),
+      ...(this.localFiles?.list || []),
+      ...(this.localCommands?.list || []),
       ...(this.software?.list || []),
       ...(run?.skills?.skills.length ? this.skills?.list || [] : []),
       ...(this.catalog?.list || []),
@@ -1035,6 +1042,8 @@ export class AgentTools {
       this.knowledge,
       this.work,
       this.notes,
+      this.localFiles,
+      this.localCommands,
       this.catalog,
       this.software,
       this.skills,
@@ -1077,8 +1086,12 @@ export class AgentTools {
         throw new Fault('INVALID_TOOL_ARGS', 400);
       trace = { name, surface, phase: 'running', at: new Date().toISOString() };
       run.trace.push(trace);
-      if (dataTool && (dataTool === this.software || dataTool === this.skills)) {
-        const response = await dataTool.invoke(run, name, args);
+      if (
+        dataTool &&
+        (dataTool === this.software || dataTool === this.skills || dataTool === this.localCommands)
+      ) {
+        // Command approvals and deduplication require the original model call identity.
+        const response = await dataTool.invoke(run, name, args, wireId);
         trace.phase = response.isError ? 'rejected' : 'settled';
         return response;
       }

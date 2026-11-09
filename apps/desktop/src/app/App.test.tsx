@@ -1075,6 +1075,38 @@ it('returns a queued message to the composer for editing', async () => {
   expect(screen.queryByRole('region', { name: '排队消息' })).not.toBeInTheDocument();
   expect(runtime.starts).toHaveLength(0);
 });
+it('keeps folder chips editable in the queue and sends their exact context when inserted', async () => {
+  const runtime = liveQueueRuntime();
+  const seed = seedDemoState();
+  seed.draftFolders = { research: ['/mock/project'] };
+  seed.drafts.research = 'SYNTHETIC FOLDER QUEUE';
+  localStorage.setItem(seedStorageKey, seedSerialize(seed));
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  expect(await screen.findByRole('button', { name: '查看文件夹路径 project' })).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  let queue = await screen.findByRole('region', { name: '排队消息' });
+  expect(screen.queryByRole('button', { name: '查看文件夹路径 project' })).toBeNull();
+  await userEvent.click(
+    within(queue).getByRole('button', { name: /编辑排队消息 SYNTHETIC FOLDER QUEUE/ }),
+  );
+  expect(input).toHaveValue('SYNTHETIC FOLDER QUEUE');
+  expect(screen.getByRole('button', { name: '查看文件夹路径 project' })).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  queue = await screen.findByRole('region', { name: '排队消息' });
+  await userEvent.click(
+    within(queue).getByRole('button', { name: /将排队消息 SYNTHETIC FOLDER QUEUE.*插入当前任务/s }),
+  );
+  await waitFor(() =>
+    expect(runtime.invoke.mock.calls.map(([command]) => command)).toContainEqual(
+      expect.objectContaining({
+        type: 'task.insert',
+        text: 'SYNTHETIC FOLDER QUEUE\n/mock/project',
+      }),
+    ),
+  );
+  expect(runtime.starts).toHaveLength(0);
+});
 it('lets the user move a queued message to the front so it is sent next', async () => {
   const runtime = liveQueueRuntime();
   render(<App />);

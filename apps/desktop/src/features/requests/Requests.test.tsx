@@ -7,6 +7,7 @@ seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemo
 import {
   disconnected,
   type Interaction,
+  type LocalFolder,
   type RuntimeBridge,
   type RuntimeCommand,
   type RuntimeReply,
@@ -91,6 +92,32 @@ const base = {
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
+it('shows the real local path and operation before allowing a local file change', async () => {
+  const request: Interaction = {
+    ...base,
+    id: 'mock-local-card',
+    bot: 'a',
+    runId: 'mock-run-a',
+    kind: 'approval',
+    tool: 'local_file',
+    path: '/mock/project/mock.txt',
+    operation: 'local_write',
+    arguments: '{"content":"SYNTHETIC PREVIEW"}',
+  };
+  const invoke = connect([request]);
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: '修改本地文件' })).toBeVisible();
+  expect(screen.getByText('/mock/project/mock.txt')).toBeVisible();
+  expect(screen.getByText(/SYNTHETIC PREVIEW/)).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '仅允许这一次' }));
+  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
+    type: 'interaction.reply',
+    bot: 'a',
+    runId: 'mock-run-a',
+    id: request.id,
+    reply: { kind: 'decision', allow: true },
+  });
+});
 const question: Interaction = {
   ...base,
   id: 'mock-question',
@@ -117,11 +144,18 @@ const approval: Interaction = {
 function connect(
   requests: Interaction[] = [question, approval],
   software?: RuntimeSnapshot['software'],
+  selectedFolder: LocalFolder | null = {
+    id: 'mock-selected-folder',
+    bot: 'a',
+    name: 'selected',
+    path: '/mock/selected',
+  },
 ) {
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 4;
   snapshot.model.configured = true;
   snapshot.interactions = requests;
+  snapshot.localFolders = true;
   snapshot.software = software;
   snapshot.agents.a = {
     phase: 'waiting',
@@ -155,6 +189,7 @@ function connect(
       for (const subscriber of subscribers) subscriber(snapshot);
       return { ok: true as const, value: updated };
     }
+    if (command.type === 'folders.pick') return { ok: true as const, value: selectedFolder };
     return {
       ok: true as const,
       value:
@@ -180,6 +215,60 @@ function connect(
   });
   return invoke;
 }
+
+it('connects the folder selected in the native picker before confirming the grant to the Bot', async () => {
+  const request = {
+    ...base,
+    id: 'mock-folder-approval',
+    bot: 'a',
+    runId: 'mock-run-a',
+    kind: 'approval',
+    tool: 'local_folder',
+    path: '/mock/requested',
+  } as unknown as Interaction;
+  const invoke = connect([request]);
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: '连接本地文件夹？' })).toBeVisible();
+  expect(screen.getByText('/mock/requested')).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '选择并连接文件夹' }));
+  const commands = invoke.mock.calls.map(([command]) => command);
+  const pickerIndex = commands.findIndex((command) => command.type === 'folders.pick');
+  const replyIndex = commands.findIndex((command) => command.type === 'interaction.reply');
+  expect(commands[pickerIndex]).toEqual({
+    type: 'folders.pick',
+    bot: 'a',
+    suggestedPath: '/mock/requested',
+  });
+  expect(commands[replyIndex]).toEqual({
+    type: 'interaction.reply',
+    bot: 'a',
+    runId: 'mock-run-a',
+    id: request.id,
+    reply: {
+      kind: 'folder_grant',
+      folderId: 'mock-selected-folder',
+      path: '/mock/selected',
+    },
+  });
+  expect(pickerIndex).toBeGreaterThanOrEqual(0);
+  expect(replyIndex).toBeGreaterThan(pickerIndex);
+});
+
+it('leaves a folder request pending when the native picker is cancelled', async () => {
+  const request = {
+    ...base,
+    id: 'mock-folder-cancelled',
+    bot: 'a',
+    runId: 'mock-run-a',
+    kind: 'approval',
+    tool: 'local_folder',
+    path: '/mock/requested',
+  } as unknown as Interaction;
+  const invoke = connect([request], undefined, null);
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '选择并连接文件夹' }));
+  expect(invoke.mock.calls.some(([command]) => command.type === 'interaction.reply')).toBe(false);
+});
 it('shows the native plan and preserves a question draft while switching Bots, then replies to the request owner from the inbox', async () => {
   const invoke = connect();
   render(<App />);
@@ -460,4 +549,43 @@ it('shows an exact Linux-only command before permission and does not describe ap
   await userEvent.click(screen.getByLabelText('合成命令验收 · 查看操作详情'));
   expect(screen.getByText('sudo npm install -g mock-cli@1.0.0')).toBeVisible();
   expect(screen.queryByRole('button', { name: '确认执行' })).not.toBeInTheDocument();
+});
+
+it('shows the local folder boundary and exact one-time command before host approval', async () => {
+  const card: Interaction = {
+    ...base,
+    id: 'mock-host-command',
+    bot: 'a',
+    runId: 'mock-run-a',
+    kind: 'approval',
+    tool: 'host_command',
+    command: 'python3 convert.py',
+    cwd: '/mock/project/nested',
+    root: '/mock/project',
+    purpose: 'Process a synthetic workbook.',
+    target: 'host-local',
+  };
+  const invoke = connect([card]);
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: '在本机运行命令' })).toBeVisible();
+  expect(screen.getByText('Process a synthetic workbook.')).toBeVisible();
+  expect(screen.getByText('本机 · 仅限已连接文件夹 · 禁止网络 · 每条命令单独确认')).toBeVisible();
+  expect(screen.getByText('python3 convert.py')).not.toBeVisible();
+  await userEvent.click(screen.getByLabelText('查看命令与目录'));
+  expect(screen.getByRole('region', { name: '本机执行范围' })).toBeVisible();
+  expect(
+    within(screen.getByRole('region', { name: '本机执行范围' })).getByText('/mock/project'),
+  ).toBeVisible();
+  expect(
+    within(screen.getByRole('region', { name: '执行目录' })).getByText('/mock/project/nested'),
+  ).toBeVisible();
+  expect(screen.getByText(/无法访问其他用户文件/)).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '在本机执行一次' }));
+  expect(invoke.mock.calls.map(([command]) => command)).toContainEqual({
+    type: 'interaction.reply',
+    bot: 'a',
+    runId: 'mock-run-a',
+    id: card.id,
+    reply: { kind: 'decision', allow: true },
+  });
 });
