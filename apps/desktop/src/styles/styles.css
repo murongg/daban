@@ -864,6 +864,9 @@ textarea.field {
 .transcript-window > .transcript-row {
   display: flow-root;
 }
+.history-loader {
+  text-align: center;
+}
 .message-date {
   text-align: center;
   color: var(--muted);

@@ -80,6 +80,11 @@ function connect(protocol = 34, pending = false) {
     async invoke<T>(command: RuntimeCommand): Promise<RuntimeReply<T>> {
       calls.push(command);
       if (command.type === 'status') return { ok: true, value: snapshot as T };
+      if (command.type === 'chat.history')
+        return {
+          ok: true,
+          value: { bot: command.bot, revision: command.revision, items: [] } as T,
+        };
       if (command.type === 'bot.copy')
         return { ok: true, value: (await copy(command.request)) as T };
       if (command.type === 'bot.copy.receipt')
@@ -138,7 +143,7 @@ it('previews saved persona/model and creates an independent profile with only th
   expect(saved.botCopy).toBeUndefined();
   expect(
     fake.calls.every((command) =>
-      ['status', 'bot.copy', 'bot.copy.receipt'].includes(command.type),
+      ['status', 'chat.history', 'bot.copy', 'bot.copy.receipt'].includes(command.type),
     ),
   ).toBe(true);
 });

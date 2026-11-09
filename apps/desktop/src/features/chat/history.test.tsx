@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { demoState } from '../../test/fixtures';
 import { useHistory } from './history';
@@ -39,8 +39,7 @@ it('pages before the oldest cached run, reuses transcript projection and leaves 
   const before = JSON.stringify(state);
   backend.command.mockResolvedValue({ bot: 'a', revision: 0, items: [old], nextBefore: 'run-1' });
   const { result } = renderHook(() => useHistory(state, 'research', 0, true));
-  expect(backend.command).not.toHaveBeenCalled();
-  await act(async () => result.current.load());
+  await waitFor(() => expect(result.current.more).toBe(true));
   expect(backend.command).toHaveBeenCalledExactlyOnceWith({
     type: 'chat.history',
     bot: 'a',
@@ -66,9 +65,10 @@ it('rejects foreign or non-progressing history pages without leaking their conte
   state.messages.research = [{ id: 'runtime-result:run-9', role: 'bot', text: 'SYNTHETIC LATEST' }];
   backend.command.mockResolvedValue({ bot: 'b', revision: 0, items: [old] });
   const { result } = renderHook(() => useHistory(state, 'research', 0, true));
-  await act(async () => result.current.load());
+  await waitFor(() => expect(result.current.error).toBeTruthy());
   expect(result.current.messages).toEqual([]);
-  expect(result.current.error).toBeTruthy();
+  expect(result.current.more).toBe(false);
+  expect(backend.command).toHaveBeenCalledTimes(1);
   backend.command.mockResolvedValue({
     bot: 'a',
     revision: 0,
@@ -83,26 +83,23 @@ it('rejects foreign or non-progressing history pages without leaking their conte
 it('drops a late page after switching the selected Bot and does not issue duplicate in-flight reads', async () => {
   const state = demoState();
   let release: (value: unknown) => unknown = () => {};
-  backend.command.mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        release = resolve;
-      }),
+  backend.command.mockImplementation(({ bot }: { bot: string }) =>
+    bot === 'a'
+      ? new Promise((resolve) => {
+          release = resolve;
+        })
+      : Promise.resolve({ bot, revision: 0, items: [] }),
   );
   const { result, rerender } = renderHook(({ bot }) => useHistory(state, bot, 0, true), {
     initialProps: { bot: 'research' },
-  });
-  let pending: Promise<unknown>;
-  act(() => {
-    pending = result.current.load();
   });
   await act(async () => result.current.load());
   expect(backend.command).toHaveBeenCalledTimes(1);
   rerender({ bot: 'writer' });
   await act(async () => {
     release({ bot: 'a', revision: 0, items: [old] });
-    await pending;
   });
+  expect(backend.command).toHaveBeenCalledTimes(2);
   expect(result.current.messages).toEqual([]);
   expect(result.current.busy).toBe(false);
 });

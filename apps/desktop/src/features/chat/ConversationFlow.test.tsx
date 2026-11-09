@@ -1,4 +1,10 @@
-import { agentId, disconnected, type RuntimeCommand, type RuntimeSnapshot } from '@daban/protocol';
+import {
+  agentId,
+  disconnected,
+  type RuntimeCommand,
+  type RuntimeReply,
+  type RuntimeSnapshot,
+} from '@daban/protocol';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -14,7 +20,7 @@ function bridge(
   snapshot: RuntimeSnapshot,
   listeners = new Set<(value: RuntimeSnapshot) => unknown>(),
 ) {
-  const invoke = vi.fn(async (command: RuntimeCommand) => {
+  const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
     if (command.type === 'status') return { ok: true, value: snapshot };
     if (command.type === 'bot.register') {
       const profile = {
@@ -328,6 +334,67 @@ it('starts an ordinary tool-capable conversation directly without a Bot setup fo
   await userEvent.type(name, 'SYNTHETIC RENAMED TOPIC');
   await userEvent.click(screen.getByRole('button', { name: '保存' }));
   expect(screen.getByRole('heading', { name: 'SYNTHETIC RENAMED TOPIC' })).toBeVisible();
+});
+
+it('loads recent messages on open and offers pagination above them only while more exist', async () => {
+  const state = demoState();
+  state.panel = null;
+  state.messages.research = [];
+  localStorage.setItem(storageKey, serialize(state));
+  const snapshot = ready();
+  const invoke = bridge(snapshot);
+  invoke.mockImplementation(async (command) => {
+    if (command.type === 'status') return { ok: true, value: snapshot };
+    if (command.type !== 'chat.history') return { ok: true, value: {} };
+    const record = {
+      chatRevision: command.revision,
+      runId: 'mock-earlier-run',
+      requestId: 'mock-earlier-request',
+      prompt: 'SYNTHETIC EARLIER QUESTION',
+      result: 'SYNTHETIC EARLIER ANSWER',
+      phase: 'completed' as const,
+      error: '',
+      files: [],
+    };
+    return {
+      ok: true,
+      value: {
+        bot: command.bot,
+        revision: command.revision,
+        items: command.before ? [] : [record],
+        nextBefore: command.before ? undefined : record.runId,
+      },
+    };
+  });
+  render(<App />);
+
+  const transcript = within(await screen.findByRole('log', { name: '对话记录' }));
+  const answer = await transcript.findByText('SYNTHETIC EARLIER ANSWER');
+  expect(invoke.mock.calls.filter(([command]) => command.type === 'chat.history')).toEqual([
+    [{ type: 'chat.history', bot: 'a', revision: 0, before: undefined }],
+  ]);
+  expect(transcript.queryByRole('button', { name: '安排今天的工作' })).not.toBeInTheDocument();
+  const paginate = transcript.getByRole('button', { name: '加载更早消息' });
+  expect(paginate.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await userEvent.click(paginate);
+  expect(transcript.queryByRole('button', { name: '加载更早消息' })).not.toBeInTheDocument();
+});
+
+it('shows only welcome content when the initial history page is empty', async () => {
+  const state = demoState();
+  state.panel = null;
+  state.messages.research = [];
+  localStorage.setItem(storageKey, serialize(state));
+  const invoke = bridge(ready());
+  render(<App />);
+
+  await waitFor(() =>
+    expect(invoke.mock.calls.filter(([command]) => command.type === 'chat.history')).toHaveLength(
+      1,
+    ),
+  );
+  expect(await screen.findByRole('button', { name: '安排今天的工作' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: '加载更早消息' })).not.toBeInTheDocument();
 });
 
 it('switches Bot topics without executing anything and explicitly continues the selected historical context', async () => {

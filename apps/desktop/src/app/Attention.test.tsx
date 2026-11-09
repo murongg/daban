@@ -53,6 +53,11 @@ function connect(initialStatus?: Promise<unknown>) {
         if (initialStatus) await initialStatus;
         return { ok: true, value: snapshot as T };
       }
+      if (command.type === 'chat.history')
+        return {
+          ok: true,
+          value: { bot: command.bot, revision: command.revision, items: [] } as T,
+        };
       return { ok: false, error: 'MOCK_UNEXPECTED_COMMAND' };
     },
     subscribe: (callback) => {
@@ -134,7 +139,11 @@ it('does not mark initial history unread, marks fresh private/group work and cle
   await act(() => fake.emit({ ...next }));
   expect(screen.queryByRole('status', { name: '写作搭档有未读消息' })).not.toBeInTheDocument();
   expect(screen.getByRole('status', { name: '周报协作有未读消息' })).toBeVisible();
-  expect(fake.invoke.mock.calls.map(([command]) => command.type)).toEqual(['status']);
+  expect(fake.invoke.mock.calls.map(([command]) => command)).toEqual([
+    { type: 'status' },
+    { type: 'chat.history', bot: 'a', revision: 0, before: undefined },
+    { type: 'chat.history', bot: 'b', revision: 0, before: undefined },
+  ]);
 });
 
 it('keeps manual unread across reconstruction and unavailable feeds, and treats group questions as group attention', async () => {
@@ -181,7 +190,9 @@ it('keeps manual unread across reconstruction and unavailable feeds, and treats 
   expect(await screen.findByRole('status', { name: '周报协作有未读消息' })).toBeVisible();
   expect(screen.queryByRole('status', { name: '研究员有未读消息' })).not.toBeInTheDocument();
   expect(screen.getByRole('status', { name: '写作搭档有未读消息' })).toBeVisible();
-  expect(fake.invoke.mock.calls.every(([command]) => command.type === 'status')).toBe(true);
+  expect(
+    fake.invoke.mock.calls.every(([command]) => ['status', 'chat.history'].includes(command.type)),
+  ).toBe(true);
 });
 
 it('does not read a new result hidden behind an editor, and reads the visible conversation on focus', async () => {
@@ -234,7 +245,11 @@ it('does not read a new result hidden behind an editor, and reads the visible co
       }),
     );
     expect(screen.queryByRole('status', { name: '研究员有未读消息' })).not.toBeInTheDocument();
-    expect(fake.invoke.mock.calls.every(([command]) => command.type === 'status')).toBe(true);
+    expect(
+      fake.invoke.mock.calls.every(([command]) =>
+        ['status', 'chat.history'].includes(command.type),
+      ),
+    ).toBe(true);
   } finally {
     view.unmount();
     root.remove();

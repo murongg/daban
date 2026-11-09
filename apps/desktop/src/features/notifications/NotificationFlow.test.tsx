@@ -67,17 +67,20 @@ function connect(interactions: Interaction[] = [], withGroup = false) {
           ? {
               bot: command.bot,
               revision: command.revision,
-              items: [
-                {
-                  chatRevision: command.revision,
-                  runId: 'mock-result-run',
-                  requestId: 'mock-result-request',
-                  prompt: 'SYNTHETIC QUESTION',
-                  phase: 'completed',
-                  result: 'SYNTHETIC NOTIFICATION RESULT',
-                  error: '',
-                },
-              ],
+              items:
+                command.bot === 'b'
+                  ? [
+                      {
+                        chatRevision: command.revision,
+                        runId: 'mock-result-run',
+                        requestId: 'mock-result-request',
+                        prompt: 'SYNTHETIC QUESTION',
+                        phase: 'completed',
+                        result: 'SYNTHETIC NOTIFICATION RESULT',
+                        error: '',
+                      },
+                    ]
+                  : [],
             }
           : command.type === 'group.read'
             ? { group, revision: 1, messages: [], deliveries: [] }
@@ -137,7 +140,8 @@ it('opens the exact read-only task result and never submits a model task or appr
       },
     }),
   );
-  expect(await screen.findByText('SYNTHETIC NOTIFICATION RESULT')).toBeVisible();
+  const result = within(await screen.findByRole('dialog'));
+  expect(await result.findByText('SYNTHETIC NOTIFICATION RESULT')).toBeVisible();
   expect(backend.runtime.mock.calls.map(([command]) => command)).toContainEqual({
     type: 'chat.history',
     bot: 'b',

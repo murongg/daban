@@ -230,7 +230,14 @@ export function Conversation({
     state,
     bot.id,
     revision,
-    live && runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion >= 29,
+    live &&
+      runtime.snapshot.phase === 'ready' &&
+      runtime.snapshot.protocolVersion >= 29 &&
+      !trashPending &&
+      !trashed &&
+      (bot.kind !== 'chat' ||
+        cached.length > 0 ||
+        runtime.snapshot.profiles.some((profile) => profile.id === target)),
   );
   const saved = useMemo(() => {
     const ids = new Set(cached.map((message) => message.id));
@@ -336,25 +343,30 @@ export function Conversation({
     );
   }
   const rows: TranscriptEntry[] = [];
-  if (
-    history.more &&
-    (bot.kind !== 'chat' ||
-      cached.length > 0 ||
-      runtime.snapshot.profiles.some((profile) => profile.id === target))
-  )
+  if (history.loading || history.error || (entries.length && history.more))
     rows.push({
       id: 'older',
       anchor: false,
       content: (
         <div className="history-loader">
-          <button
-            type="button"
-            className="text-button"
-            disabled={history.busy}
-            onClick={history.load}
-          >
-            {history.busy ? t('common.loading') : t('chat.loadEarlierMessages')}
-          </button>
+          {history.loading ? (
+            <p className="muted" role="status">
+              {t('common.loading')}
+            </p>
+          ) : (
+            <button
+              type="button"
+              className="text-button"
+              disabled={history.busy}
+              onClick={history.load}
+            >
+              {history.busy
+                ? t('common.loading')
+                : history.error
+                  ? t('chat.retryHistory')
+                  : t('chat.loadEarlierMessages')}
+            </button>
+          )}
           {history.error && (
             <p className="form-error" role="alert">
               {history.error}
@@ -379,7 +391,7 @@ export function Conversation({
         content: renderMessage(message),
       })),
     );
-  } else
+  } else if (!history.loading)
     rows.push({
       id: 'empty',
       anchor: false,
