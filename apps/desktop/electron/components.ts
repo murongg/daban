@@ -9,7 +9,7 @@ import {
   componentPayload,
 } from '@daban/engine/component';
 import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
-import { downloadPayload } from '@daban/engine/payload';
+import { downloadPayload, type PayloadOptions } from '@daban/engine/payload';
 import type { SetupStatus } from '@daban/protocol';
 import { componentPaths, extractComponent, verifyComponent } from './component-install';
 
@@ -36,6 +36,29 @@ export interface RuntimePreparation {
 }
 const absent = (error: unknown) =>
   !!error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
+
+async function archivePath(root: string, sha256: string) {
+  const downloads = await secureDirectory(path.join(root, 'downloads'));
+  return path.join(downloads, `${sha256}.zip`);
+}
+
+export async function prefetchComponent(
+  directory: string,
+  reference: unknown,
+  platform: string,
+  arch: string,
+  options: PayloadOptions & { current?: ComponentIndex },
+) {
+  const index = componentIndex(reference);
+  const payload = componentPayload(index.id, componentAsset(index, platform, arch));
+  const current = options.current && componentAsset(options.current, platform, arch);
+  // A shared archive belongs to the current client's setup, which may be downloading it already.
+  if (current?.sha256 === payload.sha256) return;
+  const root = await secureDirectory(directory);
+  // Cache only the archive. The next client still checks its embedded reference and verifies the installation.
+  return downloadPayload(await archivePath(root, payload.sha256), payload, options);
+}
+
 async function privateFile(file: string) {
   const info = await lstat(file).catch((error) => {
     if (absent(error)) return undefined;
@@ -130,8 +153,7 @@ export class Components implements RuntimePreparation {
       this.slot = await secureDirectory(
         path.join(this.root, `${this.id.slice(0, 24)}-${this.asset.platform}-${this.asset.arch}`),
       );
-      const downloads = await secureDirectory(path.join(this.root, 'downloads'));
-      this.archive = path.join(downloads, this.payload.sha256 + '.zip');
+      this.archive = await archivePath(this.root, this.payload.sha256);
     })();
     return this.initialize;
   }

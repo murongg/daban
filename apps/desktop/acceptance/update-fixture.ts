@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { componentAsset, componentIndex, componentPayload } from '@daban/engine/component';
 import { app } from 'electron';
 import { MacUpdater, NsisUpdater } from 'electron-updater';
+import { prefetchComponent, readComponentReference } from '../electron/components';
 import { Updates } from '../electron/updates';
 
 const config = JSON.parse(
@@ -31,18 +34,28 @@ app
     app.dock?.hide();
     mkdirSync(path.join(config.root, 'data'), { recursive: true });
     const sentinel = path.join(config.root, 'data/sentinel.txt');
+    const components = path.join(app.getPath('userData'), 'components');
     if (app.getVersion() === '1.1.0') {
       assert.equal(readFileSync(sentinel, 'utf8'), 'SYNTHETIC WORKSPACE CONTENT');
       assert.equal(
         readFileSync(path.join(config.root, 'data/saved.txt'), 'utf8'),
         'SYNTHETIC SAVED DRAFT',
       );
+      const reference = await readComponentReference(
+        path.join(process.resourcesPath, 'runtime.json'),
+      );
+      assert.ok(reference);
+      const asset = componentAsset(reference, process.platform, process.arch);
+      const archive = readFileSync(path.join(components, 'downloads', `${asset.sha256}.zip`));
+      assert.equal(archive.length, asset.bytes);
+      assert.equal(createHash('sha256').update(archive).digest('hex'), asset.sha256);
       writeFileSync(
         path.join(config.root, 'result.json'),
         JSON.stringify({
           version: app.getVersion(),
           workspacePreserved: true,
           savedBeforeRestart: true,
+          runtimeCachedBeforeRestart: true,
         }),
       );
       app.quit();
@@ -61,6 +74,7 @@ app
       ),
     );
     let busy = true;
+    let cached: string | undefined;
     const owner = new Updates({
       changed: (status) =>
         writeFileSync(
@@ -70,10 +84,22 @@ app
       version: app.getVersion(),
       supported: true,
       driver,
+      prefetchRuntime: async (reference, options) => {
+        const index = componentIndex(reference);
+        const asset = componentAsset(index, process.platform, process.arch);
+        cached = await prefetchComponent(components, reference, process.platform, process.arch, {
+          ...options,
+          fetcher: (input, init) => {
+            assert.equal(input, componentPayload(index.id, asset).url);
+            return fetch(new URL('/runtime-fixture.bin', config.feed), init);
+          },
+        });
+      },
       save: async () => {
         writeFileSync(path.join(config.root, 'data/saved.txt'), 'SYNTHETIC SAVED DRAFT');
       },
       prepare: async () => {
+        assert.ok(cached && existsSync(cached));
         if (busy) throw Error('AGENT_UPDATE_BUSY');
       },
       installing: () => {

@@ -2,7 +2,12 @@ import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
 import { type UpdateDriver, Updates } from './updates';
 
-function fixture(changelogFetch?: typeof fetch) {
+function fixture(
+  options: Pick<
+    ConstructorParameters<typeof Updates>[0],
+    'changelogFetch' | 'prefetchRuntime'
+  > = {},
+) {
   const events = new EventEmitter();
   const driver = Object.assign(events, {
     autoDownload: true,
@@ -20,13 +25,85 @@ function fixture(changelogFetch?: typeof fetch) {
     version: '1.0.0',
     supported: true,
     driver: driver as unknown as UpdateDriver,
-    changelogFetch,
+    ...options,
     save,
     prepare,
     restore,
   });
   return { events, driver, save, prepare, restore, owner };
 }
+
+const runtimeReference = {
+  version: 1,
+  id: 'a'.repeat(64),
+  assets: [{ platform: 'darwin', arch: 'arm64', bytes: 10, sha256: 'b'.repeat(64) }],
+};
+
+it('waits for the update runtime to be cached before enabling restart', async () => {
+  let finish: () => unknown = () => {};
+  const prefetchRuntime = vi.fn<
+    NonNullable<ConstructorParameters<typeof Updates>[0]['prefetchRuntime']>
+  >(async (_reference, { progress }) => {
+    progress?.({ received: 4, total: 10 });
+    return new Promise((resolve) => {
+      finish = () => resolve(undefined);
+    });
+  });
+  const { owner, events, driver, save, prepare } = fixture({ prefetchRuntime });
+  events.emit('update-available', { version: '1.1.0', vendor: { dabanRuntime: runtimeReference } });
+  expect(prefetchRuntime).not.toHaveBeenCalled();
+  driver.downloadUpdate.mockImplementationOnce(async () => {
+    events.emit('update-downloaded', { version: '1.1.0' });
+    return [];
+  });
+  const first = owner.invoke({ type: 'download' });
+  const second = owner.invoke({ type: 'download' });
+  await vi.waitFor(() =>
+    expect(owner.status()).toMatchObject({
+      phase: 'downloading',
+      downloadTarget: 'runtime',
+      percent: 40,
+    }),
+  );
+  expect(prefetchRuntime).toHaveBeenCalledExactlyOnceWith(runtimeReference, expect.any(Object));
+  await expect(owner.invoke({ type: 'install' })).rejects.toThrow('UPDATE_NOT_READY');
+  expect(save).not.toHaveBeenCalled();
+  expect(prepare).not.toHaveBeenCalled();
+  expect(driver.quitAndInstall).not.toHaveBeenCalled();
+  finish();
+  for (const download of [first, second])
+    await expect(download).resolves.toMatchObject({ phase: 'downloaded', nextVersion: '1.1.0' });
+});
+
+it('keeps runtime download cancellation and failure retryable', async () => {
+  const prefetchRuntime = vi
+    .fn<NonNullable<ConstructorParameters<typeof Updates>[0]['prefetchRuntime']>>()
+    .mockImplementationOnce(async (_reference, { signal }) => {
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    })
+    .mockRejectedValueOnce(Error('SYNTHETIC_RUNTIME_FAILURE'))
+    .mockResolvedValueOnce(undefined);
+  const { owner, events, driver } = fixture({ prefetchRuntime });
+  events.emit('update-available', { version: '1.1.0', vendor: { dabanRuntime: runtimeReference } });
+  const download = owner.invoke({ type: 'download' });
+  await vi.waitFor(() => expect(prefetchRuntime).toHaveBeenCalledOnce());
+  await owner.invoke({ type: 'cancel' });
+  await expect(download).resolves.toMatchObject({
+    phase: 'available',
+    error: undefined,
+    percent: undefined,
+  });
+  await expect(owner.invoke({ type: 'download' })).resolves.toMatchObject({
+    phase: 'available',
+    error: 'UPDATE_RUNTIME_DOWNLOAD_FAILED',
+    percent: undefined,
+  });
+  await expect(owner.invoke({ type: 'install' })).rejects.toThrow('UPDATE_NOT_READY');
+  expect(driver.quitAndInstall).not.toHaveBeenCalled();
+  await expect(owner.invoke({ type: 'download' })).resolves.toMatchObject({ phase: 'downloaded' });
+});
 it('loads the versioned changelogs once without waiting to download the update', async () => {
   let finish: (response: Response) => unknown = () => {};
   const fetcher = vi.fn<typeof fetch>(async (url) =>
@@ -36,7 +113,7 @@ it('loads the versioned changelogs once without waiting to download the update',
         })
       : new Response('**v1.1.0**\n\n- Synthetic English changes'),
   );
-  const { owner, events } = fixture(fetcher);
+  const { owner, events } = fixture({ changelogFetch: fetcher });
   const release = { version: '1.1.0', releaseNotes: 'Synthetic fallback' };
   events.emit('update-available', release);
   events.emit('update-available', release);
@@ -70,7 +147,7 @@ it('keeps fallback notes when localized assets are unavailable and ignores a sup
     if (String(url).endsWith('.en.md')) return new Response(null, { status: 404 });
     return new Response('x'.repeat(100001));
   });
-  const { owner, events } = fixture(fetcher);
+  const { owner, events } = fixture({ changelogFetch: fetcher });
   events.emit('update-available', { version: '1.1.0', releaseNotes: 'Synthetic old release' });
   events.emit('update-available', { version: '1.2.0', releaseNotes: 'Synthetic fallback' });
   finish(new Response('- Synthetic old changes'));
@@ -96,7 +173,14 @@ it('checks and downloads only on request and never installs on ordinary quit', a
     nextVersion: '1.1.0',
   });
   expect(driver.downloadUpdate).not.toHaveBeenCalled();
-  await owner.invoke({ type: 'download' });
+  let finish: (files: string[]) => unknown = () => {};
+  driver.downloadUpdate.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const download = owner.invoke({ type: 'download' });
   events.emit('download-progress', {
     percent: 42,
     bytesPerSecond: 1024,
@@ -105,12 +189,16 @@ it('checks and downloads only on request and never installs on ordinary quit', a
   });
   expect(owner.status()).toMatchObject({ phase: 'downloading', percent: 42 });
   events.emit('update-downloaded', { version: '1.1.0' });
+  expect(owner.status().phase).toBe('downloading');
+  finish([]);
+  await download;
   expect(owner.status().phase).toBe('downloaded');
   expect(driver.quitAndInstall).not.toHaveBeenCalled();
 });
 it('persists the renderer and drains the host before requesting installation', async () => {
   const { owner, events, save, prepare, driver } = fixture();
-  events.emit('update-downloaded', { version: '1.1.0' });
+  events.emit('update-available', { version: '1.1.0' });
+  await owner.invoke({ type: 'download' });
   await owner.invoke({ type: 'install' });
   expect(save).toHaveBeenCalledOnce();
   expect(prepare).toHaveBeenCalledOnce();
@@ -125,7 +213,8 @@ it('storage failure and busy tasks leave a downloaded update uninstalled', async
     (stage === 'save' ? save : prepare).mockRejectedValueOnce(
       Error(stage === 'save' ? 'UPDATE_SAVE_FAILED' : 'AGENT_UPDATE_BUSY'),
     );
-    events.emit('update-downloaded', { version: '1.1.0' });
+    events.emit('update-available', { version: '1.1.0' });
+    await owner.invoke({ type: 'download' });
     await expect(owner.invoke({ type: 'install' })).rejects.toThrow();
     expect(owner.status().phase).toBe('downloaded');
     expect(driver.quitAndInstall).not.toHaveBeenCalled();
@@ -158,7 +247,8 @@ it('does not expose raw updater errors or offer online installation in developme
 });
 it('keeps a downloaded update ready when the user checks again', async () => {
   const { owner, events, driver } = fixture();
-  events.emit('update-downloaded', { version: '1.1.0' });
+  events.emit('update-available', { version: '1.1.0' });
+  await owner.invoke({ type: 'download' });
   await owner.invoke({ type: 'check' });
   expect(owner.status().phase).toBe('downloaded');
   expect(driver.checkForUpdates).not.toHaveBeenCalled();
@@ -191,7 +281,8 @@ it('distinguishes an empty release feed from a failed check', async () => {
 
 it('keeps a legacy host restart requirement distinct from a generic installer failure', async () => {
   const { owner, events, prepare, driver } = fixture();
-  events.emit('update-downloaded', { version: '1.1.0' });
+  events.emit('update-available', { version: '1.1.0' });
+  await owner.invoke({ type: 'download' });
   prepare.mockRejectedValueOnce(Error('AGENT_LEGACY_RESTART_REQUIRED'));
   await expect(owner.invoke({ type: 'install' })).rejects.toThrow('AGENT_LEGACY_RESTART_REQUIRED');
   expect(owner.status()).toMatchObject({

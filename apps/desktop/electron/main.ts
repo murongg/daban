@@ -13,7 +13,7 @@ import {
 import { type MessageKey, type Parameters, translate } from '../shared/locale';
 import { BrowserHost } from './browser-host';
 import { browserIpc } from './browser-ipc';
-import { Components, readComponentReference } from './components';
+import { Components, prefetchComponent, readComponentReference } from './components';
 import { LocalComputer } from './local-computer';
 import { localServer } from './local-server';
 import { LocalePreferences } from './locale';
@@ -209,11 +209,12 @@ if (primary) {
           console.error('Local computer bridge unavailable');
         }
       }
+      const componentsDirectory = join(app.getPath('userData'), 'components');
       const reference = await readComponentReference(join(process.resourcesPath, 'runtime.json'));
       const agentSource = reference
         ? {
             runtime: new Components({
-              directory: join(app.getPath('userData'), 'components'),
+              directory: componentsDirectory,
               reference,
               platform: process.platform,
               arch: process.arch,
@@ -271,6 +272,11 @@ if (primary) {
         supported: updateSupported,
         driver: updateDriver,
         changelogFetch: fetch,
+        prefetchRuntime: (next, options) =>
+          prefetchComponent(componentsDirectory, next, process.platform, process.arch, {
+            ...options,
+            current: reference,
+          }),
         save: () => save.request(),
         prepare: async () => {
           if (!service) throw Error('AGENT_UPDATE_UNAVAILABLE');

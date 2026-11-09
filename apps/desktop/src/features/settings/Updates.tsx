@@ -36,6 +36,7 @@ const phases: Record<UpdatePhase, MessageKey> = {
 const errors: Record<UpdateError, MessageKey> = {
   UPDATE_CHECK_FAILED: 'updates.checkFailed',
   UPDATE_DOWNLOAD_FAILED: 'updates.downloadFailed',
+  UPDATE_RUNTIME_DOWNLOAD_FAILED: 'updates.runtimeDownloadFailed',
   UPDATE_SAVE_FAILED: 'updates.saveFailed',
   UPDATE_NOT_READY: 'updates.notReady',
   UPDATE_UNSUPPORTED: 'updates.unsupported',
@@ -127,7 +128,14 @@ export function UpdatesPanel({
         <span>
           {!enabled
             ? t('updates.browserPreview')
-            : t(phases[status.phase], { 0: status.nextVersion ?? '' })}
+            : t(
+                status.downloadTarget === 'runtime'
+                  ? 'updates.downloadingRuntime'
+                  : phases[status.phase],
+                {
+                  0: status.nextVersion ?? '',
+                },
+              )}
         </span>
       </div>
       {(error || status.error) && (
@@ -245,7 +253,7 @@ export function UpdateButton() {
           label={t('updates.update')}
           title={
             status.phase === 'downloading'
-              ? `${t('updates.downloading')} ${percent}%`
+              ? `${t(status.downloadTarget === 'runtime' ? 'updates.downloadingRuntime' : 'updates.downloading')} ${percent}%`
               : busy
                 ? t(phases[status.phase], { 0: status.nextVersion ?? '' })
                 : t('updates.update')

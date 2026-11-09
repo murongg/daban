@@ -18,6 +18,7 @@ export type UpdatePhase = (typeof updatePhases)[number];
 export const updateErrors = [
   'UPDATE_CHECK_FAILED',
   'UPDATE_DOWNLOAD_FAILED',
+  'UPDATE_RUNTIME_DOWNLOAD_FAILED',
   'UPDATE_SAVE_FAILED',
   'UPDATE_NOT_READY',
   'UPDATE_UNSUPPORTED',
@@ -34,6 +35,7 @@ export interface UpdateStatus {
   notes?: string;
   changelogs?: Partial<Record<Locale, string>>;
   percent?: number;
+  downloadTarget?: 'runtime';
   error?: UpdateError;
 }
 export type UpdateCommand =
@@ -80,9 +82,20 @@ export function isUpdateMessage(value: unknown): value is UpdateMessage {
   return (
     Object.keys(value).length === 2 &&
     Object.keys(status).every((key) =>
-      ['phase', 'version', 'nextVersion', 'notes', 'changelogs', 'percent', 'error'].includes(key),
+      [
+        'phase',
+        'version',
+        'nextVersion',
+        'notes',
+        'changelogs',
+        'percent',
+        'downloadTarget',
+        'error',
+      ].includes(key),
     ) &&
     updatePhases.includes(status.phase as UpdatePhase) &&
+    (status.downloadTarget === undefined ||
+      (status.phase === 'downloading' && status.downloadTarget === 'runtime')) &&
     typeof status.version === 'string' &&
     status.version.length <= 100 &&
     (status.nextVersion === undefined ||

@@ -7,7 +7,7 @@ import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
 import type { SetupStatus } from '@daban/protocol';
 import { afterEach, expect, it, vi } from 'vitest';
 import { componentPaths } from './component-install';
-import { Components, readComponentReference } from './components';
+import { Components, prefetchComponent, readComponentReference } from './components';
 
 const hooks = vi.hoisted(() => ({ pointer: undefined as undefined | (() => Promise<unknown>) }));
 vi.mock('node:fs/promises', async (original) => {
@@ -71,6 +71,33 @@ async function fixture(platform: 'darwin' | 'win32' = 'darwin') {
   });
   return { options, bytes, extract, verify };
 }
+
+it.each(['darwin', 'win32'] as const)(
+  'starts from the prefetched archive without fetching again (%s)',
+  async (platform) => {
+    const f = await fixture(platform);
+    const { directory, reference, arch, fetcher } = f.options;
+    await expect(
+      prefetchComponent(
+        directory,
+        { ...reference, url: 'https://example.test/untrusted' },
+        platform,
+        arch,
+        { fetcher },
+      ),
+    ).rejects.toThrow('COMPONENT_MANIFEST');
+    await prefetchComponent(directory, reference, platform, arch, { fetcher, current: reference });
+    expect(fetcher).not.toHaveBeenCalled();
+    await prefetchComponent(directory, reference, platform, arch, { fetcher });
+    expect(f.extract).not.toHaveBeenCalled();
+    expect(f.verify).not.toHaveBeenCalled();
+    const client = new Components(f.options, f);
+    const files = await client.prepare();
+    expect(await readFile(files.entry, 'utf8')).toBe('SYNTHETIC HOST MAIN');
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(f.verify).toHaveBeenCalledOnce();
+  },
+);
 
 it.each(['darwin', 'win32'] as const)(
   'prepares a component once and verifies cached startup without showing installation again (%s)',
