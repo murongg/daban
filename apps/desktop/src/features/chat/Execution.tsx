@@ -5,6 +5,7 @@ import {
   isTranscriptContent,
   isTranscriptPage,
   type ModelAttempt,
+  modelCatalog,
   type ReplyStream,
   type SessionStats,
   sameTranscriptScope,
@@ -14,13 +15,13 @@ import {
   type TranscriptPage,
   type TranscriptScope,
 } from '@daban/protocol';
-import { ChevronDown, ListChecks, RefreshCw } from 'lucide-react';
+import { ChevronDown, Info, ListChecks, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runtimeError, runtimeMessage as taskError, useRuntime } from '../../app/Runtime';
 import { IconButton } from '../../components/controls/Button';
+import { Tooltip } from '../../components/controls/Tooltip';
 import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import { taskPhase } from '../../i18n/tasks';
-import { modelName } from '../models/model-options';
 
 const failureLabels: Record<NonNullable<ModelAttempt['failure']>, MessageKey> = {
   auth: 'models.failure.auth',
@@ -551,43 +552,42 @@ export function Execution(props: {
   const attempts = props.attemptSummary || matching?.attemptSummary;
   const validAttempts = isModelAttempts(attempts) ? attempts : undefined;
   const latest = validAttempts?.at(-1);
+  const previous = validAttempts?.at(-2);
+  const models = latest && modelCatalog(runtime.snapshot.model?.connections);
+  const describe = (attempt: ModelAttempt, key: 'models.actualModel' | 'models.previousModel') => {
+    const name = models?.find((model) => model.id === attempt.model)?.name || attempt.model;
+    const label = t(key, { 0: name });
+    return attempt.failure ? `${label} · ${t(failureLabels[attempt.failure])}` : label;
+  };
+  const modelInfo = latest
+    ? [
+        describe(latest, 'models.actualModel'),
+        ...(previous ? [describe(previous, 'models.previousModel')] : []),
+        t('models.usageUnknown'),
+      ].join('\n')
+    : undefined;
   return (
-    <>
-      {validAttempts && latest && (
-        <section aria-label={t('models.attempts')} className="execution-model-meta field-help">
-          <p className="execution-model-current">
-            {t('models.actualModel', {
-              0: modelName(latest.model, runtime.snapshot.model.connections),
-            })}{' '}
-            · {taskPhase(latest.phase)}
-            {latest.failure ? ` · ${t(failureLabels[latest.failure])}` : ''}
-          </p>
-          {validAttempts.length > 1 && (
-            <details className="execution-attempts">
-              <summary>{t('models.attempts')}</summary>
-              <ol>
-                {validAttempts.slice(0, -1).map((attempt) => (
-                  <li key={attempt.attemptId}>
-                    {modelName(attempt.model, runtime.snapshot.model.connections)} ·{' '}
-                    {taskPhase(attempt.phase)}
-                    {attempt.failure ? ` · ${t(failureLabels[attempt.failure])}` : ''}
-                  </li>
-                ))}
-              </ol>
-            </details>
-          )}
-          <p className="execution-usage-note">{t('models.usageUnknown')}</p>
-        </section>
+    <div
+      className="execution-block"
+      key={JSON.stringify([
+        scope.bot,
+        scope.runId,
+        scope.chatRevision ?? null,
+        scope.conversationId ?? null,
+      ])}
+    >
+      <Disclosure {...props} />
+      {modelInfo && (
+        <Tooltip label={modelInfo} showOnPress>
+          <button
+            type="button"
+            className="icon-button execution-info"
+            aria-label={t('models.info')}
+          >
+            <Info aria-hidden="true" />
+          </button>
+        </Tooltip>
       )}
-      <Disclosure
-        key={JSON.stringify([
-          scope.bot,
-          scope.runId,
-          scope.chatRevision ?? null,
-          scope.conversationId ?? null,
-        ])}
-        {...props}
-      />
-    </>
+    </div>
   );
 }
