@@ -483,6 +483,50 @@ test('standalone browser preserves login, transfers task reports and supports fe
       .getByRole('heading', { name: 'SYNTHETIC UPLOAD ACCEPTED' })
       .waitFor();
     assert.equal(await actual.page('mock-a').evaluate(() => document.cookie), '');
+    await host.request({ action: 'autoStart', bot: 'mock-a', enabled: true });
+    await host.close();
+    host = new HostBrowser({ directory: profile, launch });
+    const autoTools = new AgentTools(undefined, workspace, {
+      nativeOnly: true,
+      hostBrowser: host.facade,
+    });
+    const autoRun: AgentToolRun = {
+      ...run,
+      id: 'mock-auto-start',
+      abort: new AbortController(),
+      toolCount: 0,
+      trace: [],
+    };
+    await autoTools.open(autoRun);
+    assert.equal(host.selected('mock-a'), false);
+    assert.match(
+      payload(await autoTools.invoke(autoRun, 'browser_navigate', { url })).text,
+      /SYNTHETIC UPLOAD ACCEPTED/,
+    );
+    assert.equal((await connection()).owner, 'agent');
+    assert.equal(
+      ((await host.request({ action: 'autoStart', bot: 'mock-b' })) as { enabled: boolean })
+        .enabled,
+      false,
+    );
+    await autoTools.drain(autoRun);
+    await host.request({ action: 'autoStart', bot: 'mock-a', enabled: false });
+    assert.equal(host.selected('mock-a'), false);
+    const fullRun: AgentToolRun = {
+      ...autoRun,
+      id: 'mock-full-browser',
+      abort: new AbortController(),
+      toolCount: 0,
+      trace: [],
+      task: { ...autoRun.task!, approvalMode: 'full', browserAutoStart: true },
+    };
+    await autoTools.open(fullRun);
+    assert.match(
+      payload(await autoTools.invoke(fullRun, 'browser_navigate', { url })).text,
+      /SYNTHETIC UPLOAD ACCEPTED/,
+    );
+    await autoTools.finish(fullRun);
+    assert.equal(host.selected('mock-a'), false);
   } finally {
     await host.close();
     server.closeAllConnections();

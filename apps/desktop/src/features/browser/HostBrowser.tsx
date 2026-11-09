@@ -1,4 +1,10 @@
-import { agentId, agentTask, type HostBrowserRequest, recoveryBlocked } from '@daban/protocol';
+import {
+  agentId,
+  agentTask,
+  browserApprovalProtocol,
+  type HostBrowserRequest,
+  recoveryBlocked,
+} from '@daban/protocol';
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,7 +18,7 @@ import {
   Search,
   ShieldCheck,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
 import { IconButton } from '../../components/controls/Button';
@@ -36,6 +42,32 @@ export function HostBrowser({
   const status = runtime.snapshot.hostBrowser;
   const connection = status?.connections.find((item) => item.bot === target);
   const task = agentTask(runtime.snapshot, bot.id);
+  const { command } = runtime;
+  const canReadPermission =
+    runtime.snapshot.phase === 'ready' &&
+    runtime.snapshot.protocolVersion >= browserApprovalProtocol &&
+    !!status?.available &&
+    !bot.archived;
+  const [permission, setPermission] = useState<{ bot: string; enabled: boolean }>();
+  const permissionHelp = useId();
+  useEffect(() => {
+    if (!canReadPermission) return;
+    let current = true;
+    command<{ bot: string; enabled: boolean }>({
+      type: 'hostBrowser',
+      request: { action: 'autoStart', bot: target },
+    })
+      .then((value) => {
+        if (current) setPermission(value);
+      })
+      .catch(() => {
+        // Older hosts do not support reading this setting.
+        if (current) setPermission(undefined);
+      });
+    return () => {
+      current = false;
+    };
+  }, [canReadPermission, command, target]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const blocked =
@@ -49,7 +81,13 @@ export function HostBrowser({
     setBusy(true);
     setError('');
     try {
-      await runtime.command({ type: 'hostBrowser', request });
+      if (request.action === 'autoStart') {
+        const saved = await command<{ bot: string; enabled: boolean }>({
+          type: 'hostBrowser',
+          request,
+        });
+        setPermission((current) => (current?.bot === saved.bot ? saved : current));
+      } else await command({ type: 'hostBrowser', request });
     } catch (error) {
       setError(runtimeError(error));
     } finally {
@@ -189,6 +227,23 @@ export function HostBrowser({
         </span>
         <details className="host-browser-about">
           <summary>{t('hostBrowser.about')}</summary>
+          {permission?.bot === target && (
+            <>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={permission.enabled}
+                  disabled={blocked || !!task?.running}
+                  aria-describedby={permissionHelp}
+                  onChange={(event) =>
+                    perform({ action: 'autoStart', bot: target, enabled: event.target.checked })
+                  }
+                />{' '}
+                {t('hostBrowser.autoStart')}
+              </label>
+              <p id={permissionHelp}>{t('hostBrowser.autoStartHelp')}</p>
+            </>
+          )}
           <p>{t('hostBrowser.signInHelp')}</p>
           <p>{t('hostBrowser.consent')}</p>
           <p>{t('hostBrowser.handbackHelp')}</p>

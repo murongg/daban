@@ -176,6 +176,9 @@ export function restore(raw: string | null): State {
                 attachments: draft.attachments,
                 queued: [],
                 ...(isApprovalMode(draft.mode) ? { mode: draft.mode } : {}),
+                ...(draft.mode === 'full' && draft.browserAutoStart === true
+                  ? { browserAutoStart: true }
+                  : {}),
               },
             ],
           ];

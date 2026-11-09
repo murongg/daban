@@ -11,7 +11,9 @@ The browser panel is for actual website interaction. The standalone browser need
 3. You have control when it opens. Enter a URL and complete sign-in or verification in the panel.
 4. Choose **Hand back to Bot**, then request a website task. The Bot uses the current sign-in to read pages, click and fill forms.
 
-Each Bot owns its tabs, while the Daban workspace shares standalone-browser sign-ins. Closing the panel keeps the browser connected. Disconnect closes that Bot’s tabs and retains the profile. After a backend restart, explicitly reopen and hand back; previous URLs await recovery and are not automatically revisited. Websites may still expire sign-ins.
+Each Bot owns its tabs, while the Daban workspace shares standalone-browser sign-ins. Closing the panel keeps the browser connected. Disconnect closes that Bot’s tabs and retains the profile. If automatic opening is off, reopen the browser and hand it back after a backend restart. Previous URLs await recovery and are not automatically revisited. Websites may still expire sign-ins.
+
+To let a Bot start the browser, expand **Browser settings** in its browser panel and select **Allow this Bot to open the browser**. The setting is off by default and saved locally for that Bot. Once enabled, the Bot can open the browser on its first browser tool call during a task and use sign-ins saved in Daban. After you take over, hand control back manually. Change this setting between tasks. Turning it off disconnects that Bot’s browser.
 
 Standalone, Linux and personal Chrome profiles are separate. Finish the current task and disconnect this Bot’s standalone browser before switching to the desktop or Linux. A running task never switches operation environments because its browser disconnected.
 

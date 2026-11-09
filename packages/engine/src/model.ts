@@ -1577,7 +1577,8 @@ export class ModelRuns {
       scope &&
       (task?.chatRevision !== undefined ||
         task?.contextRevision !== undefined ||
-        task?.model !== undefined)
+        task?.model !== undefined ||
+        task?.browserAutoStart)
     )
       throw new Fault('INVALID_CONVERSATION', 400);
     const data = task
@@ -1590,6 +1591,7 @@ export class ModelRuns {
           ...(task.retryTurn ? { retryTurn: task.retryTurn } : {}),
           ...(task.chatRevision === undefined ? {} : { chatRevision: task.chatRevision }),
           ...(task.approvalMode === undefined ? {} : { approvalMode: task.approvalMode }),
+          ...(task.browserAutoStart ? { browserAutoStart: true } : {}),
           ...(task.contextRevision === undefined ? {} : { contextRevision: task.contextRevision }),
           ...(task.model === undefined ? {} : { model: task.model }),
         }
@@ -2821,7 +2823,7 @@ export class ModelRuns {
           rm(file, { force: true }).catch(() => undefined),
         ),
       );
-      await this.tools.drain(job).catch(() => {
+      await this.tools.finish(job).catch(() => {
         this.markFence(job, 'unknown');
         job.phase = 'failed';
         job.error = 'EXECUTOR_DRAIN_UNAVAILABLE';

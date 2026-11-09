@@ -121,6 +121,14 @@ export interface ComputerFacade {
   };
   browser: {
     available?: (bot: string) => boolean;
+    autoStart?: {
+      allowed: (bot: string) => Promise<boolean>;
+      open: (
+        bot: string,
+        scope: 'bot' | 'task',
+        signal: AbortSignal,
+      ) => Promise<(() => Promise<unknown>) | undefined>;
+    };
     tabs?: BrowserDriver;
     frame: (bot: string) => Promise<Buffer>;
     view?: (bot: string) => Promise<BrowserView>;
@@ -140,7 +148,10 @@ export interface ToolResult {
 export class ComputerTools {
   authorize?: (run: ToolRun) => Promise<unknown>;
   private readonly waiters = new WeakMap<ToolRun, number>();
-  constructor(readonly runtime: ComputerFacade) {}
+  constructor(
+    readonly runtime: ComputerFacade,
+    private readonly prepare?: (run: ToolRun) => Promise<unknown> | undefined,
+  ) {}
   private assertDesktop(run: ToolRun) {
     const instance = this.runtime.screens.instance?.(run.bot);
     if (instance !== undefined && run.desktopSeen !== instance)
@@ -148,6 +159,8 @@ export class ComputerTools {
   }
   async ready(run: ToolRun) {
     await this.authorize?.(run);
+    run.abort.signal.throwIfAborted();
+    await this.prepare?.(run);
     const available = () => {
       if (this.runtime.available?.(run.bot) === false)
         throw new Fault('COMPUTER_NOT_CONNECTED', 503);

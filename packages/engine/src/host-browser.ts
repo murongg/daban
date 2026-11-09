@@ -1,11 +1,13 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { lstat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { type HostBrowserRequest, type HostBrowserStatus, validAgentId } from '@daban/protocol';
 import type { BrowserDriver } from './browser-tools.js';
 import type { ComputerFacade } from './computer-tools.js';
-import { Control, Fault } from './control.js';
-import { secureDirectory } from './private-files.js';
+import { Control, errorCode, Fault } from './control.js';
+import { privateMetadata, secureDirectory } from './private-files.js';
 import { type Browser, type BrowserOptions, createBrowser } from './runtime.js';
 
 function chromeExecutable() {
@@ -40,6 +42,7 @@ export class HostBrowser {
   private operations: Promise<unknown> = Promise.resolve();
   private error = '';
   private closed = false;
+  private permissions?: Promise<string>;
   readonly facade: ComputerFacade;
 
   constructor(readonly options: HostBrowserOptions) {
@@ -61,6 +64,24 @@ export class HostBrowser {
       screens: { input: unavailable, openApp: unavailable },
       browser: {
         available: (bot) => this.selected(bot),
+        autoStart: {
+          allowed: (bot) => this.autoStartAllowed(bot),
+          open: (bot, scope, signal) =>
+            this.change(async () => {
+              signal.throwIfAborted();
+              if (scope === 'bot' && !(await this.autoStartAllowed(bot)))
+                throw new Fault('HOST_BROWSER_NOT_CONNECTED', 503);
+              if (this.selected(bot)) return undefined;
+              await this.open(bot, 'agent', signal);
+              if (scope !== 'task' || !this.selected(bot)) return undefined;
+              const browser = this.browser(bot);
+              return () =>
+                this.change(async () => {
+                  if (this.current === browser && this.selected(bot))
+                    await this.disconnect(bot, browser);
+                });
+            }),
+        },
         tabs,
         frame: (bot) => this.browser(bot).tabs!.frame(bot, true),
         view: (bot) => this.browser(bot).view(bot, true),
@@ -108,8 +129,48 @@ export class HostBrowser {
       ...(this.error ? { error: this.error } : {}),
     };
   }
-  private async open(bot: string) {
+  private async permissionFile(bot: string) {
+    if (!validAgentId(bot)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
+    this.permissions ??= secureDirectory(this.options.directory)
+      .then((directory) => secureDirectory(path.join(directory, 'auto-start')))
+      .catch((error: unknown) => {
+        this.permissions = undefined;
+        throw error;
+      });
+    // Bot IDs are case-sensitive even on filesystems where names are not.
+    return path.join(await this.permissions, createHash('sha256').update(bot).digest('hex'));
+  }
+  private async autoStartAllowed(bot: string) {
+    const file = await this.permissionFile(bot);
+    try {
+      const info = await lstat(file);
+      return info.isFile() && info.size === 0 && (await privateMetadata(file, info, 0o600));
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return false;
+      throw error;
+    }
+  }
+  private async autoStart(bot: string, enabled?: boolean) {
+    const allowed = await this.autoStartAllowed(bot);
+    if (enabled === undefined || enabled === allowed) return { bot, enabled: allowed };
+    const file = await this.permissionFile(bot);
+    if (enabled) await writeFile(file, '', { flag: 'wx', mode: 0o600 });
+    else {
+      // Persist revocation before closing tabs, even if browser teardown fails.
+      await unlink(file);
+      if (this.selected(bot)) await this.disconnect(bot, this.browser(bot));
+    }
+    return { bot, enabled };
+  }
+  private async disconnect(bot: string, browser: Browser) {
+    await this.control.revoke(bot);
+    this.connected.delete(bot);
+    await browser.detach(bot);
+  }
+  private async open(bot: string, owner: 'human' | 'agent' = 'human', signal?: AbortSignal) {
+    signal?.throwIfAborted();
     if (this.closed) throw new Fault('HOST_BROWSER_UNAVAILABLE', 503);
+    // Auto-start cannot take over a connection the human already controls.
     if (this.selected(bot)) return this.status();
     if (this.connected.size >= 16) throw new Fault('BROWSER_TAB_LIMIT');
     this.control.register(bot);
@@ -141,16 +202,18 @@ export class HostBrowser {
         });
       }
       if (this.closed) throw new Fault('HOST_BROWSER_UNAVAILABLE', 503);
+      signal?.throwIfAborted();
       this.control.activate(bot);
       await this.current.attach(bot);
-      const lease = this.control.state(bot);
-      // Opening is a human setup action. Only explicit handback may let a task use the signed-in browser.
-      await this.current.transfer(bot, lease.epoch, 'human');
+      signal?.throwIfAborted();
+      if (owner === 'human')
+        await this.current.transfer(bot, this.control.state(bot).epoch, 'human');
       this.connected.add(bot);
       return this.status();
     } catch {
       await this.control.revoke(bot).catch(() => {});
       await this.current?.detach(bot).catch(() => {});
+      signal?.throwIfAborted();
       this.error = 'HOST_BROWSER_START_FAILED';
       throw new Fault(this.error, 503);
     }
@@ -158,6 +221,8 @@ export class HostBrowser {
   async request(request: HostBrowserRequest): Promise<unknown> {
     if (!validAgentId(request.bot)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
     if (request.action === 'open') return this.change(() => this.open(request.bot));
+    if (request.action === 'autoStart')
+      return this.change(() => this.autoStart(request.bot, request.enabled));
     const browser = this.browser(request.bot),
       tabs = browser.tabs!;
     if (request.action === 'close' || request.action === 'control') {
@@ -173,9 +238,7 @@ export class HostBrowser {
       }
       return this.change(async () => {
         check();
-        await this.control.revoke(request.bot);
-        await browser.detach(request.bot);
-        this.connected.delete(request.bot);
+        await this.disconnect(request.bot, browser);
         return this.status();
       });
     }

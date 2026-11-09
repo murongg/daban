@@ -13,6 +13,7 @@ import {
   modelExecutionCapability,
   modelHasVision,
   type TaskRequest,
+  validAgentId,
 } from '@daban/protocol';
 import type { BotTools } from './bot-tools.js';
 import { BrowserTools } from './browser-tools.js';
@@ -181,6 +182,10 @@ export class AgentTools {
   private readonly hostComputer?: ComputerTools;
   private readonly hostBrowser?: BrowserTools;
   private readonly hostRuns = new WeakMap<AgentToolRun, boolean>();
+  private readonly hostStarts = new WeakMap<
+    ToolRun,
+    { scope: 'bot' | 'task'; pending?: Promise<(() => Promise<unknown>) | undefined> }
+  >();
   authorizeComputer?: (run: ToolRun) => Promise<unknown>;
   executeRemote?: (
     run: AgentToolRun,
@@ -214,7 +219,14 @@ export class AgentTools {
         });
     }
     if (options.hostBrowser?.browser.tabs) {
-      this.hostComputer = new ComputerTools(options.hostBrowser);
+      const autoStart = options.hostBrowser.browser.autoStart;
+      this.hostComputer = new ComputerTools(options.hostBrowser, (run) => {
+        const start = this.hostStarts.get(run);
+        if (!start || !autoStart) return undefined;
+        // Once the run tries to open a browser, losing that instance cannot start a replacement.
+        start.pending ??= autoStart.open(run.bot, start.scope, run.abort.signal);
+        return start.pending;
+      });
       this.hostComputer.authorize = (run) => this.authorizeComputer?.(run) ?? Promise.resolve();
       this.hostBrowser = new BrowserTools(this.hostComputer, options.hostBrowser.browser.tabs, {
         read: (run, file) => this.browserInput(run, file),
@@ -251,7 +263,10 @@ export class AgentTools {
   hasBrowser(bot: string, run?: AgentToolRun) {
     if (this.localSelected(bot, run)) return false;
     if (this.hostSelected(bot, run))
-      return !!this.hostBrowser && this.options.hostBrowser?.available?.(bot) === true;
+      return (
+        !!this.hostBrowser &&
+        ((run && this.hostStarts.has(run)) || this.options.hostBrowser?.available?.(bot) === true)
+      );
     if (this.linux?.hasComputer(bot)) return true;
     if (this.options.execution)
       return !!this.remoteCatalogs.get(bot)?.some((tool) => tool.name === 'browser_snapshot');
@@ -331,10 +346,30 @@ export class AgentTools {
     ];
   }
   async open(run: AgentToolRun) {
-    // Capture the selected surface once; a disconnect must never reroute an accepted task to the VM browser.
-    if (!this.hostRuns.has(run)) this.hostRuns.set(run, this.hostSelected(run.bot));
     if (!this.localRuns.has(run))
       this.localRuns.set(run, (await this.localComputer?.prepare(run)) ?? false);
+    // Capture the surface once. Auto-start must not displace a connected computer.
+    if (!this.hostRuns.has(run)) {
+      const autoStart = this.options.hostBrowser?.browser.autoStart;
+      const connected = this.hostSelected(run.bot);
+      const eligible =
+        !!autoStart &&
+        !connected &&
+        !this.localSelected(run.bot, run) &&
+        !this.linux?.hasComputer(run.bot) &&
+        !!run.task?.prompt.trim() &&
+        validAgentId(run.id);
+      const saved = eligible && (await autoStart.allowed(run.bot).catch(() => false));
+      const task =
+        eligible &&
+        !run.conversationId &&
+        run.task?.approvalMode === 'full' &&
+        run.task.browserAutoStart === true;
+      if (!this.hostRuns.has(run)) {
+        this.hostRuns.set(run, connected || saved || task);
+        if (saved || task) this.hostStarts.set(run, { scope: saved ? 'bot' : 'task' });
+      }
+    }
     if (!this.options.execution) return;
     const id = run.executionId ?? run.id;
     if (!id) throw new Fault('EXECUTION_INVALID_REQUEST');
@@ -449,6 +484,17 @@ export class AgentTools {
     const id = this.opened.get(run);
     if (this.options.execution && id)
       await this.options.execution.call('tools.cancel', { runId: id });
+  }
+  async finish(run: AgentToolRun) {
+    try {
+      await this.drain(run);
+    } finally {
+      // Attempt fallback drains tools too; only final task shutdown releases this connection.
+      const start = this.hostStarts.get(run);
+      this.hostStarts.delete(run);
+      const release = await start?.pending?.catch(() => undefined);
+      await release?.();
+    }
   }
   private async remote(
     run: AgentToolRun,

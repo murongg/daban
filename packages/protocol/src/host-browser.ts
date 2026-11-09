@@ -26,6 +26,7 @@ export interface HostBrowserStatus {
 }
 export type HostBrowserRequest =
   | { action: 'open' | 'state' | 'view'; bot: string }
+  | { action: 'autoStart'; bot: string; enabled?: boolean }
   | { action: 'close'; bot: string; instance: string; epoch: number }
   | { action: 'control'; bot: string; instance: string; epoch: number; owner: 'human' | 'agent' }
   | { action: 'command'; bot: string; request: BrowserCommandRequest }
@@ -48,6 +49,11 @@ export function isHostBrowserRequest(value: unknown): value is HostBrowserReques
     case 'state':
     case 'view':
       return exact(value, ['action', 'bot']);
+    case 'autoStart':
+      return (
+        exact(value, ['action', 'bot', 'enabled']) &&
+        (value.enabled === undefined || typeof value.enabled === 'boolean')
+      );
     case 'close':
     case 'control':
       return (

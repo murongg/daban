@@ -4,7 +4,12 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { type BrowserState, disconnected, type RuntimeCommand } from '@daban/protocol';
+import {
+  type BrowserState,
+  browserApprovalProtocol,
+  disconnected,
+  type RuntimeCommand,
+} from '@daban/protocol';
 import {
   app,
   BrowserWindow,
@@ -224,6 +229,7 @@ async function verifyBrowser() {
     };
     let epoch = 2;
     let owner: 'human' | 'agent' = 'human';
+    let autoStart = false;
     let closing = false;
     const shots = new Set<Promise<Buffer>>();
     stopUi = async () => {
@@ -232,7 +238,7 @@ async function verifyBrowser() {
     };
     const snapshot = () => ({
       ...disconnected('ready'),
-      protocolVersion: 16,
+      protocolVersion: browserApprovalProtocol,
       hostBrowser: {
         available: true,
         embedded: true,
@@ -244,6 +250,11 @@ async function verifyBrowser() {
       if (value.type === 'status' || value.type === 'connect')
         return { ok: true, value: snapshot() };
       if (value.type === 'hostBrowser') {
+        if (value.request.action === 'autoStart') {
+          assert.equal(value.request.bot, state.bot);
+          autoStart = value.request.enabled ?? autoStart;
+          return { ok: true, value: { bot: state.bot, enabled: autoStart } };
+        }
         if (value.request.action === 'state') return { ok: true, value: state };
         if (value.request.action === 'control') {
           epoch++;
@@ -311,6 +322,31 @@ async function verifyBrowser() {
       path.resolve('outputs/embedded-browser/compact-shell.png'),
       (await window.capturePage()).toPNG(),
     );
+    stage = 'keyboard browser authorization';
+    window.setSize(414, 780);
+    const setting = 'document.querySelector(".host-browser-about input[type=checkbox]")';
+    await wait(`!!${setting}`);
+    await window.webContents.executeJavaScript(
+      `document.querySelector(".host-browser-about summary").focus()`,
+    );
+    for (const keyCode of ['Space', 'Tab', 'Space']) {
+      window.webContents.sendInputEvent({ type: 'keyDown', keyCode });
+      window.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+      if (keyCode === 'Tab') await wait(`document.activeElement === ${setting}`);
+    }
+    await wait(`${setting}.checked`);
+    assert.equal(autoStart, true);
+    assert.equal(
+      await window.webContents.executeJavaScript(
+        'document.querySelector(".host-browser").scrollWidth <= document.querySelector(".host-browser").clientWidth',
+      ),
+      true,
+    );
+    await window.webContents.executeJavaScript(
+      'document.querySelector(".host-browser-about").open = false',
+    );
+    window.setSize(1000, 780);
+    await wait('!!document.querySelector(\'[data-native-browser="attached"]\')');
     if (process.env.DABAN_BROWSER_HOLD === '1') {
       clearTimeout(watchdog);
       console.log('EMBEDDED_BROWSER_UI_READY');

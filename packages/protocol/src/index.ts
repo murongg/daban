@@ -65,7 +65,8 @@ import {
 } from './conversations.js';
 
 export const chatAssistantProtocol = 51;
-export const managedProtocol = chatAssistantProtocol;
+export const browserApprovalProtocol = 52;
+export const managedProtocol = browserApprovalProtocol;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -1616,6 +1617,7 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'hostBrowser')
     return (
       ['state', 'view', 'receipt'].includes(command.request.action) ||
+      (command.request.action === 'autoStart' && command.request.enabled === undefined) ||
       (command.request.action === 'input' && command.request.input.type === 'release')
     );
   if (command.type === 'model.saved') return true;
@@ -3211,6 +3213,8 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
 }
 export interface TaskRequest {
   approvalMode?: ApprovalMode;
+  // Older full-access choices did not authorize opening a signed-in browser.
+  browserAutoStart?: true;
   // The latest boundary fences the send; contextRevision explicitly selects a retained conversation.
   chatRevision?: number;
   contextRevision?: number;

@@ -851,7 +851,9 @@ export async function startPrototype({
               throw new Fault('INVALID_BROWSER_REQUEST', 400);
             const request = await body(req);
             if (!isHostBrowserRequest(request)) throw new Fault('INVALID_BROWSER_REQUEST', 400);
+            const autoStartRead = request.action === 'autoStart' && request.enabled === undefined;
             if (
+              !autoStartRead &&
               !['state', 'view', 'receipt'].includes(request.action) &&
               !(request.action === 'input' && request.input.type === 'release')
             )
@@ -859,7 +861,10 @@ export async function startPrototype({
             models.profiles.assertRegistered(request.bot);
             if (!['state', 'receipt'].includes(request.action))
               models.profiles.assertActive(request.bot);
-            const changes = request.action === 'open' || request.action === 'close';
+            const changes =
+              request.action === 'open' ||
+              request.action === 'close' ||
+              (request.action === 'autoStart' && !autoStartRead);
             if (changes) {
               if (models.running(request.bot)) throw new Fault('COMPUTER_BUSY');
               if (changing.has(request.bot)) throw new Fault('COMPUTER_CHANGING');

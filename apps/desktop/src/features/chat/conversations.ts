@@ -9,6 +9,7 @@ export interface ConversationDraft {
   attachments: string[];
   queued: QueuedTask[];
   mode?: ApprovalMode;
+  browserAutoStart?: true;
   uploading?: boolean;
 }
 export function draftFolders(state: Pick<State, 'draftFolders'>, bot: string): string[] {
@@ -67,6 +68,10 @@ export function conversationEditor(state: State, bot: string, revision: number):
         state.approvalModes[bot]?.revision === revision
           ? state.approvalModes[bot]?.mode
           : undefined,
+      browserAutoStart:
+        state.approvalModes[bot]?.revision === revision
+          ? state.approvalModes[bot]?.browserAutoStart
+          : undefined,
       uploading: state.attachmentUploads[bot],
     };
   return (
@@ -93,7 +98,14 @@ export function saveConversationEditor(
     draftFolders: { ...state.draftFolders, [bot]: editor.folders ?? [] },
     attachments: { ...state.attachments, [bot]: editor.attachments },
     queued: { ...state.queued, [bot]: editor.queued },
-    approvalModes: { ...state.approvalModes, [bot]: { revision, mode: editor.mode ?? 'auto' } },
+    approvalModes: {
+      ...state.approvalModes,
+      [bot]: {
+        revision,
+        mode: editor.mode ?? 'auto',
+        ...(editor.mode === 'full' && editor.browserAutoStart ? { browserAutoStart: true } : {}),
+      },
+    },
     attachmentUploads: { ...state.attachmentUploads, [bot]: !!editor.uploading },
   };
 }

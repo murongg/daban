@@ -95,7 +95,7 @@ import { RuntimeProvider, runtimeError, useRuntime } from './Runtime';
 import { Sidebar } from './Sidebar';
 import {
   type Action,
-  chatApprovalMode,
+  chatApproval,
   chatBoundary,
   chatRevision,
   initialState,
@@ -555,15 +555,12 @@ function Workbench() {
             }
           : {}),
         requestId: crypto.randomUUID(),
-        ...(runtime.snapshot.protocolVersion >= 44
-          ? {
-              approvalMode: chatApprovalMode(
-                state,
-                botId,
-                chatRevision(state, botId, runtime.snapshot.chats),
-              ),
-            }
-          : {}),
+        ...chatApproval(
+          state,
+          botId,
+          chatRevision(state, botId, runtime.snapshot.chats),
+          runtime.snapshot.protocolVersion,
+        ),
         prompt: text || t('common.reviewFilesCompleteTaskIDescribed'),
         ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
         files: attached.map(taskFile),
@@ -668,15 +665,12 @@ function Workbench() {
       requestId: crypto.randomUUID(),
       prompt,
       retryOf: task.runId,
-      ...(runtime.snapshot.protocolVersion >= 44
-        ? {
-            approvalMode: chatApprovalMode(
-              state,
-              botId,
-              chatRevision(state, botId, runtime.snapshot.chats),
-            ),
-          }
-        : {}),
+      ...chatApproval(
+        state,
+        botId,
+        task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats),
+        runtime.snapshot.protocolVersion,
+      ),
       ...(target && runtime.snapshot.protocolVersion >= 43 ? { retryTurn: target.id } : {}),
       ...(runtime.snapshot.protocolVersion >= 29
         ? {

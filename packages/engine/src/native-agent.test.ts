@@ -261,6 +261,23 @@ test('native startup advertises an idle managed browser without launching it and
   expect(
     await call('/api/host-browser', { action: 'open', bot: 'mock-unregistered' }),
   ).toMatchObject({ status: 404, value: { error: 'BOT_PROFILE_NOT_FOUND' } });
+  const permission = { action: 'autoStart', bot: 'mock-browser-bot' };
+  expect(await call('/api/host-browser', permission)).toMatchObject({
+    status: 200,
+    value: { bot: permission.bot, enabled: false },
+  });
+  expect(
+    await call('/api/host-browser', { ...permission, enabled: true }, 'mock-invalid'),
+  ).toMatchObject({ status: 403, value: { error: 'UNAUTHORIZED' } });
+  expect(await call('/api/host-browser', { ...permission, enabled: true })).toMatchObject({
+    status: 200,
+    value: { bot: permission.bot, enabled: true },
+  });
+  expect((await call('/api/state')).value.hostBrowser).toEqual(state.value.hostBrowser);
+  expect(await call('/api/host-browser', { ...permission, enabled: false })).toMatchObject({
+    status: 200,
+    value: { bot: permission.bot, enabled: false },
+  });
 });
 
 test('native knowledge exports into the owned task workspace without a Linux executor', async (t) => {

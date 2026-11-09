@@ -1,11 +1,14 @@
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { HostBrowserRequest } from '@daban/protocol';
 import type { BrowserContext } from 'playwright';
 import { expect, test, vi } from 'vitest';
-import { Control } from './control.js';
+import { type AgentToolRun, AgentTools } from './agent-tools.js';
+import { Control, Fault } from './control.js';
 import { HostBrowser } from './host-browser.js';
 import { Browser, type BrowserOptions } from './runtime.js';
+import { WorkspaceFiles } from './workspace.js';
 
 test('blocks native input before AI handback and publishes the new lease only after transfer', async () => {
   const control = new Control(['mock-a']);
@@ -61,6 +64,7 @@ test('host browser starts only on explicit open, shares one private context and 
         instance: 'mock-instance',
         has: (bot: string) => pages.has(bot),
         state: async (bot: string) => state(bot),
+        snapshot: async (bot: string) => ({ title: `Synthetic page for ${bot}` }),
       },
       attach: async (bot: string) => {
         pages.set(bot, {});
@@ -117,6 +121,114 @@ test('host browser starts only on explicit open, shares one private context and 
   expect(host.selected('mock-a')).toBe(false);
   expect(host.selected('mock-b')).toBe(true);
   expect(detach).toHaveBeenCalledWith('mock-a');
+
+  const permission = (bot: string, enabled?: boolean) =>
+    ({ action: 'autoStart', bot, enabled }) as unknown as HostBrowserRequest;
+  expect(await host.request(permission('mock-a'))).toEqual({ bot: 'mock-a', enabled: false });
+  expect(await host.request(permission('mock-a', true))).toEqual({ bot: 'mock-a', enabled: true });
+  expect(await host.request(permission('mock-b'))).toEqual({ bot: 'mock-b', enabled: false });
+  expect(host.selected('mock-a')).toBe(false);
+  await host.close();
+  const reopened = new HostBrowser({ directory: root, launch });
+  t.onTestFinished(() => reopened.close());
+  const tools = new AgentTools(undefined, new WorkspaceFiles(root), {
+    nativeOnly: true,
+    hostBrowser: reopened.facade,
+  });
+  const task = (bot: string): AgentToolRun => ({
+    id: `run-${bot}`,
+    bot,
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 10,
+    seen: {},
+    trace: [],
+    workdir: root,
+    canonicalRoot: root,
+    task: { requestId: `request-${bot}`, prompt: 'Read the synthetic page.' },
+  });
+  const allowed = task('mock-a');
+  const other = task('mock-b');
+  const local = task('mock-a');
+  tools.localComputer = {
+    list: [],
+    selected: () => true,
+    prepare: async () => true,
+    invoke: async () => ({ content: [] }),
+    cancel: async () => {},
+  };
+  await tools.open(local);
+  expect(tools.hostSelected(local.bot, local)).toBe(false);
+  tools.localComputer = undefined;
+  await tools.open(allowed);
+  await tools.open(other);
+  expect(tools.list(allowed.bot, undefined, undefined, allowed).map((item) => item.name)).toContain(
+    'browser_snapshot',
+  );
+  expect(tools.list(other.bot, undefined, undefined, other).map((item) => item.name)).not.toContain(
+    'browser_snapshot',
+  );
+  expect((await tools.invoke(other, 'browser_snapshot', {})).isError).toBe(true);
+  tools.authorizeComputer = async () => {
+    throw new Fault('WEB_APPROVAL_REJECTED');
+  };
+  expect(JSON.stringify(await tools.invoke(allowed, 'browser_snapshot', {}))).toContain(
+    'WEB_APPROVAL_REJECTED',
+  );
+  expect(launch).toHaveBeenCalledTimes(1);
+  tools.authorizeComputer = undefined;
+  expect(JSON.stringify(await tools.invoke(allowed, 'browser_snapshot', {}))).toContain(
+    'Synthetic page for mock-a',
+  );
+  expect(launch).toHaveBeenCalledTimes(2);
+  const auto = (await reopened.status()).connections[0];
+  expect(auto).toMatchObject({ bot: 'mock-a', owner: 'agent' });
+  const held = await reopened.request({
+    action: 'control',
+    bot: auto.bot,
+    instance: auto.state.instance,
+    epoch: auto.epoch,
+    owner: 'human',
+  });
+  const reading = tools.invoke(allowed, 'browser_snapshot', {});
+  try {
+    await vi.waitFor(() => expect(allowed.waitingForComputer).toBe(true));
+    expect(reopened.control.state(auto.bot)).toEqual(held);
+  } finally {
+    allowed.abort.abort();
+    await reading;
+  }
+  expect(await reopened.request(permission('mock-a', false))).toEqual({
+    bot: 'mock-a',
+    enabled: false,
+  });
+  expect(reopened.selected('mock-a')).toBe(false);
+  const later = task('mock-a');
+  await tools.open(later);
+  expect((await tools.invoke(later, 'browser_snapshot', {})).isError).toBe(true);
+  expect(launch).toHaveBeenCalledTimes(2);
+
+  const full = task('mock-a');
+  full.task = { ...full.task!, approvalMode: 'full', browserAutoStart: true };
+  await tools.open(full);
+  expect(tools.list(full.bot, undefined, undefined, full).map((item) => item.name)).toContain(
+    'browser_snapshot',
+  );
+  expect(reopened.selected(full.bot)).toBe(false);
+  expect(JSON.stringify(await tools.invoke(full, 'browser_snapshot', {}))).toContain(
+    'Synthetic page for mock-a',
+  );
+  expect(await reopened.request(permission(full.bot))).toEqual({ bot: full.bot, enabled: false });
+  await tools.drain(full);
+  expect(reopened.selected(full.bot)).toBe(true);
+  await tools.finish(full);
+  expect(reopened.selected(full.bot)).toBe(false);
+
+  const legacy = task('mock-a');
+  legacy.task = { ...legacy.task!, approvalMode: 'full' };
+  await tools.open(legacy);
+  expect((await tools.invoke(legacy, 'browser_snapshot', {})).isError).toBe(true);
+  expect(reopened.selected(legacy.bot)).toBe(false);
 });
 
 test('a failed launch leaves ordinary startup available and reports a bounded error without private paths', async (t) => {

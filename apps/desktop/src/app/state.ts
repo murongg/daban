@@ -7,6 +7,7 @@ import {
   type BotLifecycleRequest,
   type BotProfile,
   botCopyKey,
+  browserApprovalProtocol,
   type ChatRequest,
   type ChatState,
   type ChatStatus,
@@ -84,6 +85,23 @@ export function chatApprovalMode(
 ): ApprovalMode {
   const choice = Object.hasOwn(state.approvalModes, bot) ? state.approvalModes[bot] : undefined;
   return choice?.revision === revision ? choice.mode : 'auto';
+}
+export function chatApproval(
+  state: Pick<State, 'approvalModes'>,
+  bot: string,
+  revision: number,
+  protocol: number,
+): Pick<TaskRequest, 'approvalMode' | 'browserAutoStart'> {
+  if (protocol < 44) return {};
+  const approvalMode = chatApprovalMode(state, bot, revision);
+  return {
+    approvalMode,
+    ...(protocol >= browserApprovalProtocol &&
+    approvalMode === 'full' &&
+    state.approvalModes[bot]?.browserAutoStart === true
+      ? { browserAutoStart: true }
+      : {}),
+  };
 }
 export type Panel = 'computer' | 'files' | 'knowledge' | 'skills' | 'memory' | 'routines' | 'notes';
 export interface SkillDraft {
@@ -256,7 +274,7 @@ export interface State {
   groupRequests: Record<string, GroupSend | undefined>;
   groupActions: Record<string, GroupActionRequest | undefined>;
   chatStates: Record<string, ChatState>;
-  approvalModes: Record<string, { revision: number; mode: ApprovalMode }>;
+  approvalModes: Record<string, { revision: number; mode: ApprovalMode; browserAutoStart?: true }>;
   chatRequests: Record<string, ChatRequest | undefined>;
   groupRevisions: Record<string, number>;
   groupTargets: Record<string, string>;
@@ -383,7 +401,13 @@ export type Action =
   | { type: 'profiles'; profiles: BotProfile[] }
   | { type: 'profile-local'; bot: string; name: string; instructions: string }
   | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
-  | { type: 'approval-mode'; bot: string; revision: number; mode: ApprovalMode }
+  | {
+      type: 'approval-mode';
+      bot: string;
+      revision: number;
+      mode: ApprovalMode;
+      browserAutoStart?: boolean;
+    }
   | { type: 'chats'; items: ChatState[]; keepSelection?: boolean }
   | { type: 'chat-select'; bot: string; revision: number }
   | { type: 'chat-assistant'; bot: string; assistant?: string }
@@ -1055,7 +1079,13 @@ export function reduce(state: State, action: Action): State {
         ...state,
         approvalModes: {
           ...state.approvalModes,
-          [action.bot]: { revision: action.revision, mode: action.mode },
+          [action.bot]: {
+            revision: action.revision,
+            mode: action.mode,
+            ...(action.mode === 'full' && action.browserAutoStart
+              ? { browserAutoStart: true }
+              : {}),
+          },
         },
       };
     case 'runtime-pending':

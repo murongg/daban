@@ -493,6 +493,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
         'files',
         'chatRevision',
         'approvalMode',
+        'browserAutoStart',
         'contextRevision',
         'model',
       ]) ||
@@ -501,6 +502,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
+      (t.browserAutoStart !== undefined &&
+        (t.browserAutoStart !== true || t.approvalMode !== 'full')) ||
       (t.model !== undefined && !isModelId(t.model)) ||
       (t.contextRevision !== undefined &&
         (!Number.isSafeInteger(t.contextRevision) ||

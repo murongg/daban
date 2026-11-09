@@ -54,6 +54,7 @@ export function validateTask(input: unknown): TaskRequest {
           'files',
           'chatRevision',
           'approvalMode',
+          'browserAutoStart',
           'contextRevision',
           'model',
         ].includes(k),
@@ -76,6 +77,11 @@ export function validateTask(input: unknown): TaskRequest {
     fail();
   if (value.retryOf && value.files?.length) fail();
   if (value.approvalMode !== undefined && !isApprovalMode(value.approvalMode)) fail();
+  if (
+    value.browserAutoStart !== undefined &&
+    (value.browserAutoStart !== true || value.approvalMode !== 'full')
+  )
+    fail();
   if (value.model !== undefined && !isModelId(value.model)) fail();
   if (
     value.contextRevision !== undefined &&

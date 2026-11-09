@@ -1,8 +1,9 @@
-import { type Group, type GroupSend, isTaskFile } from '@daban/protocol';
+import { browserApprovalProtocol, type Group, type GroupSend, isTaskFile } from '@daban/protocol';
 import { describe, expect, it } from 'vitest';
 import { attachment, stagedAttachment, taskFile } from '../features/files/files';
 import { demoState as initialState } from '../test/fixtures';
 import {
+  chatApproval,
   chatApprovalMode,
   initialState as emptyState,
   knowledgeDraft,
@@ -34,6 +35,31 @@ it('keeps approval choice within one Bot conversation and preserves exact pendin
   const recovered = restore(JSON.stringify(raw));
   expect(chatApprovalMode(recovered, 'research', 0)).toBe('auto');
   expect(recovered.runtimeRequests.research).toEqual(task);
+});
+
+it('captures saved-browser authorization only for a conversation that opted in', () => {
+  const protocol = browserApprovalProtocol;
+  let state = reduce(initialState(), {
+    type: 'approval-mode',
+    bot: 'research',
+    revision: 0,
+    mode: 'full',
+  });
+  expect(chatApproval(state, 'research', 0, protocol)).toEqual({ approvalMode: 'full' });
+  state = reduce(state, {
+    type: 'approval-mode',
+    bot: 'research',
+    revision: 0,
+    mode: 'full',
+    browserAutoStart: true,
+  });
+  expect(chatApproval(restore(serialize(state)), 'research', 0, protocol)).toEqual({
+    approvalMode: 'full',
+    browserAutoStart: true,
+  });
+  expect(chatApproval(state, 'research', 0, protocol - 1)).toEqual({ approvalMode: 'full' });
+  expect(chatApproval(state, 'research', 1, protocol)).toEqual({ approvalMode: 'auto' });
+  expect(chatApproval(state, 'writer', 0, protocol)).toEqual({ approvalMode: 'auto' });
 });
 
 it('retains Bot history and drafts through authoritative lifecycle revisions and exact pending-operation recovery', () => {

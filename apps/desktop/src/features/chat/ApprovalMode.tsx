@@ -8,17 +8,22 @@ export function ApprovalMode({
   value,
   onChange,
   disabled = false,
+  browserApproval = false,
+  browserGranted = false,
 }: {
   value: Mode;
   onChange: (mode: Mode) => unknown;
   disabled?: boolean;
+  browserApproval?: boolean;
+  browserGranted?: boolean;
 }) {
   useLocale();
+  const previousFull = value === 'full' && browserApproval && !browserGranted;
   return (
     <Select
       label={t('approval.mode')}
       className="approval-choice"
-      value={value}
+      value={previousFull ? 'previous-full' : value}
       disabled={disabled}
       onValueChange={(mode) => {
         if (isApprovalMode(mode)) onChange(mode);
@@ -40,8 +45,24 @@ export function ApprovalMode({
           value: 'full',
           label: t('approval.full'),
           icon: <ShieldAlert className="approval-icon" />,
-          detail: <span className="approval-mode-detail">{t('approval.fullDescription')}</span>,
+          detail: (
+            <span className="approval-mode-detail">
+              {t(browserApproval ? 'approval.fullBrowserDescription' : 'approval.fullDescription')}
+            </span>
+          ),
         },
+        ...(previousFull
+          ? [
+              {
+                value: 'previous-full',
+                label: t('approval.previousFull'),
+                icon: <ShieldAlert className="approval-icon" />,
+                detail: (
+                  <span className="approval-mode-detail">{t('approval.fullDescription')}</span>
+                ),
+              },
+            ]
+          : []),
       ]}
     />
   );
