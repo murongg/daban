@@ -1,4 +1,5 @@
 import {
+  browserApprovalProtocol,
   disconnected,
   isBrowserView,
   isHostBrowserRequest,
@@ -68,20 +69,29 @@ it('accepts only closed host browser requests and rejects extra authority or uns
 
 it('validates the Bot and requested value in an auto-start setting reply', async () => {
   let reply = { bot: 'mock-other', enabled: true };
+  const fetcher = vi.fn(async () => Response.json(reply));
   const client = new RuntimeClient({
     origin: 'http://127.0.0.1:8766',
     agent: true,
     tokenProvider: async () => 'a'.repeat(64),
-    fetcher: async () => Response.json(reply),
+    fetcher,
   });
-  vi.spyOn(client, 'status').mockResolvedValue({
+  const status = {
     ...disconnected('ready'),
+    protocolVersion: browserApprovalProtocol,
     hostBrowser: { available: true, connections: [] },
+  };
+  const snapshot = vi.spyOn(client, 'status').mockResolvedValue({
+    ...status,
+    protocolVersion: browserApprovalProtocol - 1,
   });
   const command = {
     type: 'hostBrowser',
     request: { action: 'autoStart', bot: 'mock-bot', enabled: true },
   } as const;
+  await expect(client.invoke(parseCommand(command))).rejects.toThrow('RUNTIME_TOO_OLD');
+  expect(fetcher).not.toHaveBeenCalled();
+  snapshot.mockResolvedValue(status);
   await expect(client.invoke(parseCommand(command))).rejects.toThrow('INVALID_RUNTIME_STATE');
   reply = { bot: 'mock-bot', enabled: false };
   await expect(client.invoke(parseCommand(command))).rejects.toThrow('INVALID_RUNTIME_STATE');

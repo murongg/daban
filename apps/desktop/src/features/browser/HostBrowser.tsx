@@ -1,4 +1,10 @@
-import { agentId, agentTask, type HostBrowserRequest, recoveryBlocked } from '@daban/protocol';
+import {
+  agentId,
+  agentTask,
+  browserApprovalProtocol,
+  type HostBrowserRequest,
+  recoveryBlocked,
+} from '@daban/protocol';
 import {
   ArrowLeft,
   ArrowRight,
@@ -38,7 +44,10 @@ export function HostBrowser({
   const task = agentTask(runtime.snapshot, bot.id);
   const { command } = runtime;
   const canReadPermission =
-    runtime.snapshot.phase === 'ready' && !!status?.available && !bot.archived;
+    runtime.snapshot.phase === 'ready' &&
+    runtime.snapshot.protocolVersion >= browserApprovalProtocol &&
+    !!status?.available &&
+    !bot.archived;
   const [permission, setPermission] = useState<{ bot: string; enabled: boolean }>();
   const permissionHelp = useId();
   useEffect(() => {

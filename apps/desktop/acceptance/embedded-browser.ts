@@ -4,7 +4,12 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { type BrowserState, disconnected, type RuntimeCommand } from '@daban/protocol';
+import {
+  type BrowserState,
+  browserApprovalProtocol,
+  disconnected,
+  type RuntimeCommand,
+} from '@daban/protocol';
 import {
   app,
   BrowserWindow,
@@ -233,7 +238,7 @@ async function verifyBrowser() {
     };
     const snapshot = () => ({
       ...disconnected('ready'),
-      protocolVersion: 16,
+      protocolVersion: browserApprovalProtocol,
       hostBrowser: {
         available: true,
         embedded: true,

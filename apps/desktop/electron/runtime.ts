@@ -1512,6 +1512,8 @@ export class RuntimeClient {
       if (!this.agent || !current.hostBrowser?.available)
         throw new Error('HOST_BROWSER_UNAVAILABLE');
       const request = command.request;
+      if (request.action === 'autoStart' && current.protocolVersion < browserApprovalProtocol)
+        throw new Error('RUNTIME_TOO_OLD');
       const result = await this.api('/api/host-browser', request);
       if (request.action === 'autoStart') {
         if (
