@@ -5,6 +5,7 @@ import {
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  chatAssistantProtocol,
   diagnosticModel,
   disconnected,
   groupCopyKey,
@@ -380,8 +381,9 @@ export class RuntimeClient {
         this.api('/api/state', undefined, true, this.stateProtocol),
         this.api('/api/model/settings'),
       ])) as [Record<string, unknown>, { configured?: boolean }];
+      const available = Number.isSafeInteger(data.clientProtocol) ? Number(data.clientProtocol) : 0;
       const protocol =
-        Number.isSafeInteger(data.clientProtocol) && Number(data.clientProtocol) >= 46 ? 46 : 28;
+        available >= chatAssistantProtocol ? chatAssistantProtocol : available >= 46 ? 46 : 28;
       if (this.stateProtocol !== protocol) {
         // Older services downgrade future group shapes; negotiate before asking for the new chat catalogue.
         this.stateProtocol = protocol;
@@ -2035,7 +2037,7 @@ export class RuntimeClient {
       if (
         command.type === 'bot.register' &&
         command.profile.kind === 'chat' &&
-        state.protocolVersion < 46
+        state.protocolVersion < (command.profile.assistant ? chatAssistantProtocol : 46)
       )
         throw new Error('RUNTIME_TOO_OLD');
       if (
@@ -2046,7 +2048,7 @@ export class RuntimeClient {
       )
         throw new Error('RUNTIME_TOO_OLD');
       const profile = await (command.type === 'bot.register'
-        ? this.api('/api/bots', command.profile)
+        ? this.api('/api/bots', command.profile, true, this.stateProtocol)
         : this.api(`/api/bots/${command.bot}/profile`, {
             revision: command.revision,
             patch: command.patch,
@@ -2056,6 +2058,12 @@ export class RuntimeClient {
         profile.id !== (command.type === 'bot.register' ? command.profile.id : command.bot)
       )
         throw new Error('INVALID_RUNTIME_STATE');
+      if (
+        command.type === 'bot.register' &&
+        command.profile.kind === 'chat' &&
+        profile.assistant !== command.profile.assistant
+      )
+        throw new Error('BOT_PROFILE_CONFLICT');
       if (
         command.type === 'bot.update' &&
         Object.hasOwn(command.patch, 'model') &&

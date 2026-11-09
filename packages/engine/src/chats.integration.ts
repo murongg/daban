@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { managedProtocol } from '@daban/protocol';
+import { chatAssistantProtocol, managedProtocol } from '@daban/protocol';
 import { startPrototype } from './server.js';
 
 test('personal conversation boundaries and receipt/history reads require authenticated exact scope and preserve Bot state', async () => {
@@ -64,6 +64,7 @@ test('personal conversation boundaries and receipt/history reads require authent
       id: 'mock-ordinary',
       name: 'Synthetic conversation',
       kind: 'chat',
+      assistant: bot,
       instructions: '',
       memory: '',
       color: 'mint',
@@ -74,6 +75,19 @@ test('personal conversation boundaries and receipt/history reads require authent
       false,
     );
     assert.equal(olderState.chats.conversations, undefined);
+    const legacyChatState = await (
+      await fetch(`${app.url}/api/state`, {
+        headers: {
+          'x-prototype-token': app.token,
+          'x-daban-client-protocol': String(chatAssistantProtocol - 1),
+        },
+      })
+    ).json();
+    assert.equal(
+      legacyChatState.profiles.find((profile: { id: string }) => profile.id === 'mock-ordinary')
+        .assistant,
+      undefined,
+    );
     const modernState = await (
       await fetch(`${app.url}/api/state`, {
         headers: {
@@ -83,8 +97,9 @@ test('personal conversation boundaries and receipt/history reads require authent
       })
     ).json();
     assert.equal(
-      modernState.profiles.find((profile: { id: string }) => profile.id === 'mock-ordinary').kind,
-      'chat',
+      modernState.profiles.find((profile: { id: string }) => profile.id === 'mock-ordinary')
+        .assistant,
+      bot,
     );
     assert.deepEqual(modernState.chats.conversations, []);
     const trash = {

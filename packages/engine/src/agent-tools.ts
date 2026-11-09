@@ -49,6 +49,7 @@ import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
+  assistant?: string;
   inputs?: string[];
   executionId?: string;
   beforeTool?: () => Promise<unknown>;
@@ -308,10 +309,10 @@ export class AgentTools {
         ? this.linux.listFor(bot, run?.vision ?? (!model || modelHasVision(model)), local || hosted)
         : []),
       ...(this.schedules ? scheduleToolList : []),
-      ...(this.memory?.list || []),
+      ...(this.memory?.listFor(run?.assistant) || []),
       ...(run?.task ? this.bots?.list || [] : []),
       ...(this.history?.list || []),
-      ...(this.knowledge?.list || []),
+      ...(this.knowledge?.listFor(run?.assistant) || []),
       ...(this.work?.list || []),
       ...(this.notes?.list || []),
       ...(this.localFiles?.list || []),

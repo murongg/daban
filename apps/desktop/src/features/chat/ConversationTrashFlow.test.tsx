@@ -133,18 +133,20 @@ function setup(
   });
   return { invoke, snapshot, state };
 }
-async function trash() {
-  const recent = await screen.findByRole('navigation', { name: '最近对话列表' });
-  await userEvent.click(within(recent).getByRole('button', { name: `整理对话 ${topic}` }));
+async function trash(from: 'chat' | 'bot' = 'bot') {
+  if (from === 'chat') {
+    const recent = await screen.findByRole('navigation', { name: '最近对话列表' });
+    await userEvent.click(within(recent).getByRole('button', { name: `整理对话 ${topic}` }));
+  } else await userEvent.click(await screen.findByRole('button', { name: '更多操作' }));
   await userEvent.click(await screen.findByRole('menuitem', { name: '移到回收站' }));
 }
 it('trashes from the sidebar, undoes, and restores through settings while preserving the old editor', async () => {
-  const { invoke } = setup();
+  const { invoke } = setup({ local: true });
   render(<App />);
-  await trash();
+  await trash('chat');
   expect(await screen.findByText('对话已移到回收站')).toBeVisible();
   expect(
-    within(screen.getByRole('navigation', { name: '最近对话列表' })).queryByText(topic),
+    within(screen.getByRole('region', { name: '最近对话' })).queryByText(topic),
   ).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
   await userEvent.click(screen.getByRole('button', { name: '撤销' }));
@@ -160,7 +162,7 @@ it('trashes from the sidebar, undoes, and restores through settings while preser
     }),
   );
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC RETAINED DRAFT');
-  await trash();
+  await trash('chat');
   await screen.findByText('对话已移到回收站');
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
   await userEvent.click(screen.getByRole('tab', { name: '对话回收站' }));
@@ -214,7 +216,7 @@ it('protects a running conversation and offers its task without stopping or tras
 it('registers a local ordinary chat only for the explicit trash action and never starts a task', async () => {
   const { invoke } = setup({ local: true });
   render(<App />);
-  await trash();
+  await trash('chat');
   await screen.findByText('对话已移到回收站');
   expect(invoke.mock.calls.map(([command]) => command)).toContainEqual(
     expect.objectContaining({
@@ -226,9 +228,9 @@ it('registers a local ordinary chat only for the explicit trash action and never
 });
 
 it('opens the running task conversation when a different topic is selected', async () => {
-  const { invoke } = setup({ running: true, selectedRevision: 1 });
+  const { invoke } = setup({ running: true, selectedRevision: 1, local: true });
   render(<App />);
-  await trash();
+  await trash('chat');
   await userEvent.click(await screen.findByRole('button', { name: '查看任务' }));
   await waitFor(() =>
     expect(restore(localStorage.getItem(storageKey)!).conversationSelections?.research).toBe(0),

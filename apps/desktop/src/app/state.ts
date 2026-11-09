@@ -46,6 +46,7 @@ import {
   draftFolders,
   draftPrompt,
   draftTextLimit,
+  responderLocked,
   saveConversationEditor,
   selectConversation,
   selectedConversation,
@@ -149,6 +150,7 @@ export type Theme = 'light' | 'dark';
 export type View = 'chat' | 'inbox' | 'settings' | 'tasks' | 'gallery';
 export interface Bot {
   kind?: 'chat';
+  assistant?: string;
   archived?: boolean;
   model?: ModelId;
   id: string;
@@ -382,6 +384,7 @@ export type Action =
   | { type: 'approval-mode'; bot: string; revision: number; mode: ApprovalMode }
   | { type: 'chats'; items: ChatState[]; keepSelection?: boolean }
   | { type: 'chat-select'; bot: string; revision: number }
+  | { type: 'chat-assistant'; bot: string; assistant?: string }
   | { type: 'chat-open'; bot: string; chat: ChatState; previous: number }
   | { type: 'chat-model'; bot: string; revision: number; model?: ModelId }
   | { type: 'chat-title'; bot: string; revision: number; title: string }
@@ -424,6 +427,7 @@ export type Action =
       members?: string[];
       model?: ModelId;
       kind?: 'chat';
+      draft?: string;
     }
   | { type: 'routine-add'; routine: Routine }
   | { type: 'routine-toggle'; id: string }
@@ -615,6 +619,30 @@ export function reduce(state: State, action: Action): State {
         action.revision,
         chatRevision(state, action.bot),
       );
+    }
+    case 'chat-assistant': {
+      const chat = state.bots.find((bot) => bot.id === action.bot && bot.kind === 'chat');
+      if (
+        !chat ||
+        chat.archived ||
+        chat.assistant === action.assistant ||
+        responderLocked(state, chat.id)
+      )
+        return state;
+      if (
+        action.assistant &&
+        !state.bots.some(
+          (bot) =>
+            !bot.kind && !bot.members && !bot.archived && agentId(bot.id) === action.assistant,
+        )
+      )
+        return state;
+      return {
+        ...state,
+        bots: state.bots.map((bot) =>
+          bot === chat ? { ...chat, assistant: action.assistant } : bot,
+        ),
+      };
     }
     case 'chat-open': {
       // A delayed receipt cannot move the boundary backwards or clear a newer conversation's editor.
@@ -946,6 +974,7 @@ export function reduce(state: State, action: Action): State {
           bot.color === profile.color &&
           bot.model === profile.model &&
           bot.kind === profile.kind &&
+          bot.assistant === profile.assistant &&
           !!bot.archived === !!profile.archived &&
           next.memories[id] === profile.memory &&
           next.memoryDrafts[id] === draft &&
@@ -964,6 +993,7 @@ export function reduce(state: State, action: Action): State {
               role: profile.instructions,
               color: profile.color,
               kind: profile.kind,
+              assistant: profile.assistant,
             };
             if (profile.model) updated.model = profile.model;
             else delete updated.model;
@@ -1536,7 +1566,7 @@ export function reduce(state: State, action: Action): State {
         panel: members || action.kind === 'chat' ? null : state.panel,
         bots: [...state.bots, bot],
         messages: { ...state.messages, [action.id]: [] },
-        drafts: { ...state.drafts, [action.id]: '' },
+        drafts: { ...state.drafts, [action.id]: action.draft?.slice(0, draftTextLimit([])) ?? '' },
         controls: { ...state.controls, [action.id]: 'agent' },
         memories: { ...state.memories, [action.id]: '' },
         memoryDrafts: { ...state.memoryDrafts, [action.id]: '' },

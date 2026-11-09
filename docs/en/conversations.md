@@ -23,7 +23,11 @@ Ordinary chats inherit the workspace model; Bot conversations inherit the Bot's 
 
 The **＋ New conversation** button beside **Recent conversations** starts an ordinary chat and remains available when the list is empty.
 
-**Recent conversations** lists ordinary chats and Bot conversations together, with the Bot's name beside its topics. Selecting a conversation never runs tasks or replays tools. Titles come from the first message and can be renamed in the header menu. Custom titles and conversation model choices are stored on this device.
+**Recent conversations** lists independent conversations created with **New chat**. After opening a new chat, use **General assistant** below the composer to choose who replies before sending the first message. An independent chat with a Bot shows its name beside the title. It uses the Bot's role and default model and can read its memory and knowledge. Messages, drafts, and attachments belong to the independent chat. Manage the Bot's role, memory, and knowledge in its workspace.
+
+Open a Bot from the Bot list and use **Conversation history** to view or resume its workspace topics. Selecting a conversation never runs tasks or replays tools. Titles come from the first message and can be renamed in the header menu. Custom titles and conversation model choices are stored on this device.
+
+To pass part of a conversation to another Bot, select text in the chat transcript and choose **Start a new chat with selected text**. The new draft contains the selected text as a quote. Review or edit it, choose a Bot below the composer, and send when ready. Add any needed attachments in the new chat.
 
 Use **New conversation** in a Bot's header to start another topic. The previous topic retains its drafts, attachments, and approval choice. A Bot can have several conversations sharing its lasting role, [Memory](memory.md), and [Knowledge](knowledge.md).
 
@@ -31,7 +35,7 @@ Use **New conversation** in a Bot's header to start another topic. The previous 
 
 Switching conversations or closing the client does not stop running background work. A Bot handles one task at a time: you can draft in another topic and send once it finishes, or choose **Open running conversation** to return. Ordinary chats have separate execution identities. Queued messages stay with their original topic and are not sent automatically after reopening the client.
 
-Ordinary chats, unified recent conversations, and historical continuation require an updated background component. Older components continue to support existing Bot chats and read-only history.
+Ordinary chats, historical continuation, and choosing a Bot for an independent chat each require support from the background component. Older components continue to support existing Bot chats and read-only history.
 
 ## Conversation trash
 

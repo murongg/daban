@@ -7,7 +7,7 @@ import { type Action, chatRevision, type State } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { t } from '../../i18n/locale';
-import { conversationKey, recentConversations } from './conversations';
+import { chatAssistant, conversationKey, recentConversations } from './conversations';
 import './conversations.css';
 
 export function RecentConversations({
@@ -51,9 +51,10 @@ export function RecentConversations({
   const rows = recentConversations(state, unified ? runtime.snapshot.chats : undefined).filter(
     (row) => {
       const bot = state.bots.find((bot) => bot.id === row.bot);
+      const assistant = chatAssistant(state, bot);
       return (
-        (unified || bot?.kind === 'chat') &&
-        (!needle || `${row.title} ${bot?.name ?? ''}`.toLowerCase().includes(needle))
+        bot?.kind === 'chat' &&
+        (!needle || `${row.title} ${assistant?.name ?? ''}`.toLowerCase().includes(needle))
       );
     },
   );
@@ -85,6 +86,7 @@ export function RecentConversations({
             ]}
             renderItem={(row) => {
               const bot = state.bots.find((bot) => bot.id === row.bot)!;
+              const assistant = chatAssistant(state, bot);
               const task = agentTask(runtime.snapshot, row.bot);
               const active =
                 task?.running && !task.conversationId && (task.chatRevision ?? 0) === row.revision;
@@ -143,10 +145,10 @@ export function RecentConversations({
                     <MessageSquare aria-hidden="true" />
                     <span className="recent-conversation-copy">
                       <span className="recent-conversation-title">{row.title}</span>
-                      {(bot.kind !== 'chat' || active) && (
+                      {(assistant || active) && (
                         <span className="recent-conversation-detail">
-                          {bot.kind !== 'chat' && bot.name}
-                          {bot.kind !== 'chat' && active && ' · '}
+                          {assistant?.name}
+                          {assistant && active && ' · '}
                           {active &&
                             t(
                               task.phase === 'waiting'

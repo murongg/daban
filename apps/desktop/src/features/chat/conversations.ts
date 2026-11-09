@@ -1,6 +1,6 @@
 import { type ApprovalMode, agentId, type ChatStatus, type ModelId } from '@daban/protocol';
 import { demoIds } from '../../app/samples';
-import type { QueuedTask, State } from '../../app/state';
+import type { Bot, QueuedTask, State } from '../../app/state';
 import { t } from '../../i18n/locale';
 
 export interface ConversationDraft {
@@ -23,6 +23,19 @@ export function draftTextLimit(folders: readonly string[]) {
   return folders.length ? Math.max(0, 12000 - folders.join('\n').length - 1) : 12000;
 }
 export const conversationKey = (bot: string, revision: number) => `${bot}:${revision}`;
+export function chatAssistant(state: Pick<State, 'bots'>, chat?: Bot) {
+  if (chat?.assistant)
+    return state.bots.find(
+      (bot) => !bot.kind && !bot.members && agentId(bot.id) === chat.assistant,
+    );
+}
+export function responderLocked(state: State, chat: string) {
+  return (
+    !!state.runtimeRequests[chat] ||
+    Object.hasOwn(state.profileRevisions, agentId(chat)) ||
+    state.messages[chat]?.some((message) => message.role === 'user') === true
+  );
+}
 export function conversationState(
   state: State,
   bot: string,
@@ -155,11 +168,9 @@ export function recentConversations(state: State, status?: ChatStatus) {
         add(bot.id, revision, message.text.replace(/\s+/g, ' ').slice(0, 120), '');
     }
     const revision = selectedConversation(state, bot.id) ?? state.chatStates[bot.id]?.revision ?? 0;
-    // A new ordinary chat has no Bot row to return to after leaving its empty editor.
-    if (
-      (state.selected === bot.id || bot.kind === 'chat') &&
-      !rows.has(conversationKey(bot.id, revision))
-    )
+    const key = conversationKey(bot.id, revision);
+    // The Bot row already reopens an unnamed, empty Bot conversation.
+    if (!rows.has(key) && (bot.kind === 'chat' || state.conversationTitles?.[key]))
       add(bot.id, revision, '', '');
   }
   return [...rows.values()].sort((a, b) => {

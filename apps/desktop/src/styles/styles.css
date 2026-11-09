@@ -1136,7 +1136,32 @@ textarea.field {
   margin-top: 3px;
 }
 .composer-wrap {
+  position: relative;
   padding: 9px clamp(20px, 3vw, 44px) 13px;
+}
+.chat-excerpt {
+  position: absolute;
+  z-index: 2;
+  inset-inline-end: clamp(13px, 3vw, 44px);
+  bottom: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 26px);
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--canvas);
+  font-size: 12px;
+}
+button.chat-excerpt:hover {
+  background: var(--soft);
+}
+.chat-excerpt svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
 }
 .composer {
   border: 1px solid var(--line-strong);
@@ -1174,6 +1199,44 @@ textarea.field {
   width: 17px;
   height: 17px;
 }
+.chat-responder.select-field,
+.chat-responder-label {
+  min-width: 0;
+  max-width: min(40%, 170px);
+}
+.chat-responder.select-field {
+  width: fit-content;
+}
+.chat-responder .field.select-trigger,
+.chat-responder-label {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 7px;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chat-responder .select-trigger:hover,
+.chat-responder .select-trigger[aria-expanded="true"] {
+  background: var(--soft);
+}
+.chat-responder .bot-avatar,
+.chat-responder-label .bot-avatar {
+  width: 18px;
+  height: 18px;
+}
+.chat-responder-label {
+  display: flex;
+  align-items: center;
+}
+.chat-responder-label > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .model-label {
   display: flex;
   align-items: center;
@@ -1197,6 +1260,15 @@ textarea.field {
 }
 .model-label:hover {
   background: var(--soft);
+}
+.composer
+  .composer-bottom
+  :is(.select-trigger, .model-label):is(:focus-visible, [data-focus-visible]) {
+  /* Inline pickers keep a keyboard cue without a second outline inside the composer. */
+  outline: none;
+  background: var(--selected);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .send-button {
   width: 31px;

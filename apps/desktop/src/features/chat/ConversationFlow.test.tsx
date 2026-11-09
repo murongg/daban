@@ -5,7 +5,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -275,6 +275,108 @@ it.each(['ready', 'offline'] as const)(
   },
 );
 
+it('selects a Bot below a new chat without moving the Bot workspace into recent chats', async () => {
+  const state = demoState();
+  state.messages.writer = [
+    { id: 'mock-writer-workspace', role: 'user', text: 'SYNTHETIC WORKSPACE TOPIC' },
+  ];
+  localStorage.setItem(storageKey, serialize(state));
+  const snapshot = ready();
+  snapshot.protocolVersion = 51;
+  const invoke = bridge(snapshot);
+  render(<App />);
+  const bots = screen.getByRole('navigation', { name: 'Bot 列表' });
+  const recent = screen.getByRole('region', { name: '最近对话' });
+
+  await userEvent.click(within(bots).getByRole('button', { name: '写作搭档' }));
+  expect(screen.getByRole('heading', { name: '写作搭档' })).toBeVisible();
+
+  await userEvent.click(screen.getByRole('button', { name: '新对话' }));
+  const input = screen.getByRole('textbox', { name: '发送消息' });
+  expect(input).toHaveFocus();
+  await userEvent.type(input, 'SYNTHETIC INDEPENDENT TOPIC');
+  const responder = screen.getByRole('button', { name: /回复者/ });
+  expect(responder).toHaveTextContent('普通助手');
+  await userEvent.click(responder);
+  await userEvent.click(await screen.findByRole('option', { name: '写作搭档' }));
+  expect(input).toHaveValue('SYNTHETIC INDEPENDENT TOPIC');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  const topic = await within(recent).findByRole('button', {
+    name: /SYNTHETIC INDEPENDENT TOPIC.*写作搭档/,
+  });
+  expect(screen.queryByRole('button', { name: /回复者/ })).not.toBeInTheDocument();
+  expect(within(recent).queryByText('SYNTHETIC WORKSPACE TOPIC')).not.toBeInTheDocument();
+
+  await userEvent.click(within(bots).getByRole('button', { name: '写作搭档' }));
+  expect(screen.getByText('SYNTHETIC WORKSPACE TOPIC')).toBeVisible();
+  await userEvent.click(topic);
+  expect(screen.getByRole('heading', { name: 'SYNTHETIC INDEPENDENT TOPIC' })).toBeVisible();
+  const commands = invoke.mock.calls.map(([command]) => command);
+  const registration = commands.flatMap((command) =>
+    command.type === 'bot.register' && command.profile.kind === 'chat' ? [command.profile] : [],
+  )[0];
+  expect(registration).toMatchObject({ id: expect.stringMatching(/^chat_/), assistant: 'b' });
+  expect(commands.filter((command) => command.type === 'task.start')).toEqual([
+    expect.objectContaining({ bot: registration?.id }),
+  ]);
+  expect(invoke.mock.calls.some(([command]) => command.type === 'chat.new')).toBe(false);
+});
+
+it('opens selected message text as an editable draft for another Bot without sending it', async () => {
+  const state = demoState();
+  state.selected = 'writer';
+  state.drafts.writer = 'SYNTHETIC ORIGINAL DRAFT';
+  state.files.push({
+    id: 'mock-private-file',
+    name: 'synthetic-private.txt',
+    kind: 'TXT',
+    size: '1 KB',
+    modified: '',
+    content: 'SYNTHETIC FILE CONTENT',
+  });
+  state.messages.writer = [
+    {
+      id: 'mock-source-request',
+      role: 'user',
+      text: 'SKIP BEFORE SYNTHETIC QUESTION',
+      files: ['mock-private-file'],
+    },
+    { id: 'mock-source-reply', role: 'bot', text: 'SYNTHETIC ANSWER SKIP AFTER' },
+  ];
+  localStorage.setItem(storageKey, serialize(state));
+  const snapshot = ready();
+  snapshot.protocolVersion = 51;
+  const invoke = bridge(snapshot);
+  render(<App />);
+  const question = await screen.findByText('SKIP BEFORE SYNTHETIC QUESTION');
+  const answer = screen.getByText('SYNTHETIC ANSWER SKIP AFTER');
+  expect(screen.getByRole('button', { name: /synthetic-private.txt/ })).toBeVisible();
+  const selection = window.getSelection()!;
+  const range = document.createRange();
+  range.setStart(question.firstChild!, 'SKIP BEFORE '.length);
+  range.setEnd(answer.firstChild!, 'SYNTHETIC ANSWER'.length);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  fireEvent(document, new Event('selectionchange'));
+
+  await userEvent.click(screen.getByRole('button', { name: '用选中内容开启新对话' }));
+  const draft = screen.getByRole('textbox', { name: '发送消息' });
+  expect(draft).toHaveFocus();
+  expect(draft).toHaveValue('引用自上一段对话\n\n> SYNTHETIC QUESTION\n\n> SYNTHETIC ANSWER\n\n');
+  expect(screen.queryByRole('button', { name: /synthetic-private.txt/ })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /普通助手.*回复者/ }));
+  await userEvent.click(await screen.findByRole('option', { name: '研究员' }));
+  expect(draft).toHaveValue('引用自上一段对话\n\n> SYNTHETIC QUESTION\n\n> SYNTHETIC ANSWER\n\n');
+  expect(invoke.mock.calls.some(([command]) => command.type === 'task.start')).toBe(false);
+
+  await userEvent.click(
+    within(screen.getByRole('navigation', { name: 'Bot 列表' })).getByRole('button', {
+      name: '写作搭档',
+    }),
+  );
+  expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC ORIGINAL DRAFT');
+});
+
 it('allows a local draft with an older backend and explains why it cannot be sent', async () => {
   const state = demoState();
   state.panel = null;
@@ -426,12 +528,24 @@ it('switches Bot topics without executing anything and explicitly continues the 
   };
   const invoke = bridge(snapshot);
   render(<App />);
-  const recent = await screen.findByRole('navigation', { name: '最近对话列表' });
-  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC OLD TOPIC/ }));
+  async function openTopic(number: string) {
+    await userEvent.click(await screen.findByRole('button', { name: '更多操作' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: '历史对话' }));
+    const dialog = within(screen.getByRole('dialog'));
+    await dialog.findByRole('button', { name: '继续此对话' });
+    const field = dialog.getByRole('textbox', { name: '对话编号' });
+    if ((field as HTMLInputElement).value !== number) {
+      await userEvent.clear(field);
+      await userEvent.type(field, number);
+      await userEvent.click(dialog.getByRole('button', { name: '读取记录' }));
+    }
+    await userEvent.click(await dialog.findByRole('button', { name: '继续此对话' }));
+  }
+  await openTopic('1');
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC DRAFT');
-  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC NEW TOPIC/ }));
+  await openTopic('2');
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
-  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC OLD TOPIC/ }));
+  await openTopic('1');
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC DRAFT');
   expect(invoke.mock.calls.some(([command]) => command.type === 'task.start')).toBe(false);
   await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
@@ -456,7 +570,7 @@ it('switches Bot topics without executing anything and explicitly continues the 
     request: expect.objectContaining({ bot: 'a', revision: 1 }),
   });
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
-  await userEvent.click(within(recent).getByRole('button', { name: /^SYNTHETIC OLD TOPIC/ }));
+  await openTopic('1');
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(
     'SYNTHETIC OLD TOPIC DRAFT',
   );
