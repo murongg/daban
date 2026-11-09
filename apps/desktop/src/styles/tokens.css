@@ -53,3 +53,11 @@
   --code-string: #a2c6af;
   --code-number: #e7be83;
 }
+
+@media (forced-colors: active) {
+  :root,
+  :root[data-theme="dark"] {
+    /* Keep inset focus outlines distinct from the system-colored field borders. */
+    --focus: Highlight;
+  }
+}
